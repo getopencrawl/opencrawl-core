@@ -1,6 +1,6 @@
 {
   "name": "@1patch/opencrawl-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -9,7 +9,8 @@
     "./revision.json": "./revision.json",
     "./sessions": "./src/sessions/ingest.mjs",
     "./sessions/local-store": "./src/sessions/local-store.mjs",
-    "./sessions/s3-store": "./src/sessions/s3-store.mjs"
+    "./sessions/s3-store": "./src/sessions/s3-store.mjs",
+    "./mcp": "./src/mcp/server.mjs"
   },
   "files": [
     "src",
@@ -30,6 +31,15 @@
   "scripts": {
     "start": "node src/standalone.mjs",
     "test": "node --test test/*.test.mjs",
-    "sessions": "node src/sessions/standalone.mjs"
+    "sessions": "node src/sessions/standalone.mjs",
+    "mcp": "node src/mcp/standalone.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0"
   }
 }
