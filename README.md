@@ -21,6 +21,9 @@ Future product behavior, portable interfaces, reference adapters, and product UI
 belong here. Add each interface only when an implemented feature needs it. Do not
 add speculative storage, queue, crawling, billing, or plugin abstractions.
 
+`integrations/` holds operator tooling for connecting users' data sources through
+self-hosted Airbyte; see `integrations/README.md`. It is not part of the package.
+
 `web/tokens.css` and `web/assets` preserve the existing OpenCrawl Soft paper
 design system, initially copied from `1patch/OpenCrawl` at
 `b9f49281f98bdb75a8e8647d4ca887d8a6ac4542`. Tokens now belong to this core for v2;
