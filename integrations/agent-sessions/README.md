@@ -11,8 +11,8 @@ OpenCrawl indexer to read.
  Claude Desktop, Cursor, ... ───────── MCP ────────┘         any S3-compatible store
 ```
 
-Verified with Claude Code 2.1.305, Codex 0.166.0 and Node 20/22/24, against
-SeaweedFS 4.52's S3 API.
+Verified with Claude Code 2.1.305, Codex 0.166.0 and Node 20/22/24, against AWS
+S3 and SeaweedFS 4.52.
 
 | File | Purpose |
 | --- | --- |
@@ -30,7 +30,7 @@ list it and read and write `opencrawl/agent-sessions/*` (see "S3" below).
 
 ```sh
 cd integrations/agent-sessions
-cp .env.example .env          # set OPENCRAWL_LANDING_S3_BUCKET, _REGION, _ACCESS_KEY_ID, _SECRET_ACCESS_KEY
+cp .env.example .env   # then set the OPENCRAWL_LANDING_S3_* values
 ./local.sh up
 curl -fsSL http://127.0.0.1:7171/install.sh | sh
 node ~/.opencrawl/agent-sessions/collector.mjs status
@@ -40,21 +40,13 @@ node ~/.opencrawl/agent-sessions/collector.mjs status
 No bucket yet? `local.sh up --bundled-s3` runs a local S3 (SeaweedFS) for
 development and offline use.
 
-The install script downloads the collector to `~/.opencrawl/agent-sessions/`
-and starts it as a background service (launchd on macOS, a systemd user unit on
-Linux).
-
-Syncing works like an Airbyte connection. The first sync is a full sync of every
-existing session. After that, an incremental sync runs every hour and uploads only
-what changed since the last one. Change the schedule with `install --every 15m`.
-Run `collector.mjs sync` to sync immediately. The schedule continues across
-restarts: a restarted collector syncs only once an interval has passed since the
-last sync. A failed sync is retried after five minutes.
+The install script downloads the collector to `~/.opencrawl/agent-sessions/` and
+runs it as a background service (launchd on macOS, a systemd user unit on Linux).
 
 ```
 Receiver  http://127.0.0.1:7171 (up)
-Machine   shalins-macbook-pro
-Service   running (launchd)
+Machine   my-laptop
+Service   running (systemd)
 Schedule  every 1h
 Last sync incremental, 4.2 MB uploaded, 12 min ago; next in 48 min
 
@@ -63,17 +55,12 @@ claude-code        24    227 MB     1.1 MB
 codex              13    2.2 GB       0 B
 ```
 
-### Other machines
+## Sync
 
-Each machine with agents needs only the collector. To send one machine's sessions
-to a receiver running elsewhere, run this in a terminal on that machine. The token
-is a secret, so don't paste it into an agent chat.
-
-```sh
-curl -fsSL https://sessions.example.com/install.sh | OPENCRAWL_SESSIONS_TOKEN=… sh
-```
-
-The receiver must be reachable over TLS; see "Several machines or a team" below.
+Like an Airbyte connection: the first sync uploads every existing session, then an
+incremental sync runs every hour and uploads only what changed. `install --every
+15m` changes the schedule and `collector.mjs sync` syncs now. A restarted collector
+keeps its schedule, and a failed sync is retried after five minutes.
 
 ## Sources
 
@@ -85,15 +72,11 @@ The receiver must be reachable over TLS; see "Several machines or a team" below.
 | ChatGPT | Data export: `collector.mjs import <unzipped export>` |
 | Claude.ai | Data export: `collector.mjs import <unzipped export>` |
 | Claude Desktop, Cursor, other MCP clients | `save_conversation` MCP tool |
-| Conductor | Runs its bundled Claude Code and Codex, which write to `~/.claude` and `~/.codex`; captured as Claude Code and Codex sessions |
-| Paradev | Runs your own `claude` and `codex`; captured as above, including its per-account `~/.claude-<account>` and `~/.codex-<account>` directories |
 
-Desktop apps that drive these CLIs, such as Conductor, Paradev and IDE extensions,
-need nothing extra. Their workspaces show up in Claude Code project names, for
-example `-Users-me-conductor-workspaces-app-lisbon`. Agents that run on a remote
-machine, such as a Paradev cloud host, write transcripts there: install the
-collector on that machine, pointed at a receiver it can reach (see "Several
-machines or a team").
+Apps that run these CLIs, such as Conductor, Paradev and IDE extensions, need
+nothing extra. Agents on a remote machine, such as a Paradev cloud host, write
+transcripts there, so install the collector on that machine too (see "Several
+machines").
 
 To add an agent that keeps transcripts on disk, add an entry to `AGENTS` in
 `collector.mjs`. Files ending in `.jsonl` are treated as append-only and uploaded
@@ -173,21 +156,22 @@ the segments of a session that is being replaced.
 | `OPENCRAWL_LANDING_S3_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY`, `_SESSION_TOKEN` | Credentials. Omit them to use the AWS role where the receiver runs: EC2 instance role, ECS task role, EKS IRSA or Pod Identity |
 | `OPENCRAWL_LANDING_S3_ENDPOINT` | Only for S3-compatible stores other than AWS, such as Cloudflare R2 or Garage |
 
-**Several machines or a team.** Put the receiver behind TLS, set
-`OPENCRAWL_SESSIONS_TOKEN` and `OPENCRAWL_SESSIONS_PUBLIC_URL`, and install on each
-machine with:
+**Several machines.** Each machine with agents needs only the collector. Put one
+receiver behind TLS, set `OPENCRAWL_SESSIONS_TOKEN` and
+`OPENCRAWL_SESSIONS_PUBLIC_URL`, then run this on each machine. Run it in a
+terminal yourself, because the token is a secret and doesn't belong in an agent
+chat.
 
 ```sh
 curl -fsSL https://sessions.example.com/install.sh | OPENCRAWL_SESSIONS_TOKEN=… sh
 ```
 
-Each machine is stored under its host name. Pass `--machine` to `install` to
-choose another.
+Each machine is stored under its host name; `install --machine <name>` overrides it.
 
 **Privacy.** Transcripts contain whatever passed through the agent, including
 file contents, command output and occasionally secrets. They go only to the
-receiver you run and the bucket you configure. To skip a project, pass `--exclude <path fragment>` to
-`install`. You can repeat the flag.
+receiver you run and the bucket you configure. To skip a project, pass
+`--exclude <path fragment>` to `install`. You can repeat the flag.
 
 ## Operations
 
