@@ -98,3 +98,12 @@ UNLICENSED pending the repository's separate public-license decision.
 Prior art: OnePatch's npm/native launcher, device login, automatic refresh and
 background upgrades; Glen's small npm entry point for agents. No query command,
 agent hooks, MCP integration or background daemon is included in this release.
+
+
+### Session capture
+
+After signing in, run `opencrawl collect install` to install Claude Code and Codex hooks and the background transcript collector. Review the commands in Codex `/hooks` or desktop Settings > Hooks. The same local configuration covers desktop and terminal sessions.
+
+`opencrawl collect status --json` reports the enrolled identity, queued uploads, last receipt and errors. `collect sync` reconciles active transcripts; `collect flush` retries queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
+
+Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service derives ownership from login. Self-hosted users can supply `OPENCRAWL_SESSIONS_TOKEN` and `--api` for the portable receiver. See [capture architecture and limits](../docs/session-capture.md).

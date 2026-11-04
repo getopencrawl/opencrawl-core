@@ -140,7 +140,7 @@ async function main(args = process.argv.slice(2)) {
   const selected = activeRoot();
   // Delegate the launcher too, so later releases can fix bootstrap behavior.
   if (selected !== ROOT) {
-    const delegated = spawnSync(process.execPath, [path.join(selected, 'bin/opencrawl.cjs'), ...args], {stdio: 'inherit', windowsHide: true});
+    const delegated = spawnSync(process.execPath, [path.join(selected, 'bin/opencrawl.cjs'), ...args], {stdio: 'inherit', windowsHide: true, env: {...process.env, OPENCRAWL_LAUNCHER: process.env.OPENCRAWL_LAUNCHER || __filename, OPENCRAWL_NODE: process.execPath}});
     if (delegated.error) throw new Error('Could not start the cached launcher.');
     return delegated.signal === 'SIGINT' ? 130 : delegated.status ?? 1;
   }
@@ -153,7 +153,7 @@ async function main(args = process.argv.slice(2)) {
     return 0;
   }
   const root = activeRoot();
-  const result = spawnSync(binary(root), args, {stdio: 'inherit', windowsHide: true});
+  const result = spawnSync(binary(root), args, {stdio: 'inherit', windowsHide: true, env: {...process.env, OPENCRAWL_LAUNCHER: process.env.OPENCRAWL_LAUNCHER || __filename, OPENCRAWL_NODE: process.execPath}});
   scheduleUpdate();
   if (result.error) throw new Error('Could not start the OpenCrawl binary. Reinstall @getopencrawl/cli.');
   if (result.signal === 'SIGINT') return 130;

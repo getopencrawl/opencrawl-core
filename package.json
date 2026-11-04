@@ -1,12 +1,15 @@
 {
   "name": "@1patch/opencrawl-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
     ".": "./src/index.mjs",
     "./web/*": "./web/*",
-    "./revision.json": "./revision.json"
+    "./revision.json": "./revision.json",
+    "./sessions": "./src/sessions/ingest.mjs",
+    "./sessions/local-store": "./src/sessions/local-store.mjs",
+    "./sessions/s3-store": "./src/sessions/s3-store.mjs"
   },
   "files": [
     "src",
@@ -26,6 +29,7 @@
   },
   "scripts": {
     "start": "node src/standalone.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "sessions": "node src/sessions/standalone.mjs"
   }
 }

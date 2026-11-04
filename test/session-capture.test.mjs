@@ -1,0 +1,27 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createSessionIngest,digest} from '../src/sessions/ingest.mjs';
+import {createLocalSessionStore} from '../src/sessions/local-store.mjs';
+test('portable capture durably stores attachments and idempotent account-scoped batches',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'capture-core-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const principal={tenantId:'tenant1',userId:'owner1',name:'Owner'};
+ const ingest=createSessionIngest({store:createLocalSessionStore(dir)});
+ const attachment=Buffer.from('image fixture'),sha=digest(attachment);
+ const batch={schemaVersion:1,owner:principal,installationId:'device',sessionId:'session',harness:'claude-code',origin:'desktop',
+   events:[{id:'event',kind:'message',data:{role:'user',content:'fixture'}}],attachments:[{status:'captured',sha256:sha}]};
+ await assert.rejects(ingest.putBatch(principal,batch),/not uploaded/);
+ await assert.rejects(ingest.putAttachment(principal,'0'.repeat(64),attachment),/digest mismatch/);
+ await ingest.putAttachment(principal,sha,attachment);
+ const receipt=await ingest.putBatch(principal,batch);
+ assert.deepEqual(await ingest.putBatch(principal,batch),receipt);
+ const ids={...batch,batchId:receipt.batchId};
+ const restarted=createSessionIngest({store:createLocalSessionStore(dir)});
+ assert.equal((await restarted.getBatch(principal,ids)).events[0].data.content,'fixture');
+ assert.equal(await restarted.getBatch({...principal,tenantId:'tenant2'},ids),null);
+ assert.equal(await restarted.getBatch({...principal,userId:'owner2'},ids),null);
+ await assert.rejects(ingest.putBatch({...principal,userId:'owner2'},batch),/owner/);
+ await assert.rejects(ingest.putBatch(null,batch),/Authentication/);
+});
