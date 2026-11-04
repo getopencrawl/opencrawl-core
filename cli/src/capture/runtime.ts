@@ -52,14 +52,14 @@ function findTranscript(config:CaptureConfig,harness:Harness,sessionId:string):s
   const dirs=harness==='codex'?['sessions','archived_sessions']:['projects'];
   for(const d of dirs)for(const path of walk(join(config.roots[harness],d)))if(basename(path).includes(sessionId))return path;
 }
-function attachmentTransform(value:any, attachments:any[], cwd:string):any {
-  if(Array.isArray(value))return value.map(v=>attachmentTransform(v,attachments,cwd));
+function attachmentTransform(value:any, attachments:any[], cwd:string, localFiles=new Set<any>()):any {
+  if(Array.isArray(value))return value.map(v=>attachmentTransform(v,attachments,cwd,localFiles));
   if(!value || typeof value!=='object')return value;
   let bytes:Buffer|undefined, path:string|undefined, mime:string|undefined, reference:string|undefined;
   if(value.type==='base64' && typeof value.data==='string'){bytes=Buffer.from(value.data,'base64');mime=value.media_type;}
   const url=typeof value.image_url==='string'?value.image_url:value.image_url?.url;
   if(typeof url==='string' && url.startsWith('data:')){const m=/^data:([^;,]+);base64,(.*)$/s.exec(url);if(m){mime=m[1];bytes=Buffer.from(m[2],'base64');}}
-  if(['local_image','input_file','file'].includes(value.type) && typeof value.path==='string')path=resolve(cwd,value.path);
+  if(localFiles.has(value) && ['local_image','input_file','file'].includes(value.type) && typeof value.path==='string')path=resolve(cwd,value.path);
   if(path) {
     try{if(statSync(path).size>32*1024*1024){attachments.push({path,status:'too_large'});return value;}bytes=readFileSync(path);}
     catch{attachments.push({path,status:'missing'});return value;}
@@ -74,7 +74,7 @@ function attachmentTransform(value:any, attachments:any[], cwd:string):any {
   if(typeof url==='string')reference=url;
   if(value.type==='url' && typeof value.url==='string')reference=value.url;
   if(reference)attachments.push({url:reference,status:'remote_reference'});
-  return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,attachmentTransform(v,attachments,cwd)]));
+  return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,attachmentTransform(v,attachments,cwd,localFiles)]));
 }
 function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   if(!events.length)return;
@@ -130,7 +130,21 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
             let record;try{record=JSON.parse(line);}catch{throw new CliError('CAPTURE_INVALID_RECORD','Invalid transcript record; cursor retained');}
             metadata(record);
             const parsed=parseRecord(harness,record,position);
-            if(parsed)events.push(attachmentTransform(parsed,attachments,meta.cwd??dirname(path)));
+            if(parsed) {
+              // Only native attachment blocks may cause file reads. A tool argument/result can
+              // contain arbitrary JSON that resembles an attachment but was never opened.
+              const localFiles=new Set<any>();
+              function blocks(content:any) {
+                if(!Array.isArray(content))return;
+                for(const block of content) {
+                  if(block && ['local_image','input_file','file'].includes(block.type))localFiles.add(block);
+                  if(block?.type==='tool_result')blocks(block.content);
+                }
+              }
+              if(parsed.kind==='message')blocks(parsed.data?.content);
+              if(parsed.kind==='attachment' && parsed.data)localFiles.add(parsed.data);
+              events.push(attachmentTransform(parsed,attachments,meta.cwd??dirname(path),localFiles));
+            }
           }
           position+=Buffer.byteLength(line)+1;
           if(events.length>=200){enqueue(config,meta,events.splice(0),attachments.splice(0));}
