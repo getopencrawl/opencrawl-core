@@ -31,7 +31,8 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
 - Add fail-closed resource/scope tests with the first data-bearing operation.
   Prove a single-tenant path without hosted credentials for each product feature.
 - Keep the repository private and existing licensing unchanged until an explicit
-  release decision. Do not promise self-host readiness from the greeting smoke
+  release decision. Only `plugins/` has an approved public MIT release; see
+  `docs/PLUGIN-RELEASE.md`. Do not promise self-host readiness from the greeting smoke
   runner. Package, CLI and optional integration releases are distinct artifacts.
 - Describe placement and validation in each PR. Core runtime releases must be
   tested/published before the shell updates its package, lockfile and Git pin.

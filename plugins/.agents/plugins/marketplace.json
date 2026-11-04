@@ -1,0 +1,20 @@
+{
+  "name": "opencrawl",
+  "interface": {
+    "displayName": "OpenCrawl"
+  },
+  "plugins": [
+    {
+      "name": "opencrawl",
+      "source": {
+        "source": "local",
+        "path": "./opencrawl"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

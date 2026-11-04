@@ -1,0 +1,23 @@
+// Read-only discovery check. No registration, token exchange, or stored secrets.
+import assert from 'node:assert/strict';
+const resource = 'https://app.getopencrawl.com/mcp';
+const request = (url, options = {}) => fetch(url, {...options, redirect: 'error', signal: AbortSignal.timeout(10000)});
+const secure = value => {const u = new URL(value); assert.equal(u.protocol, 'https:'); assert(!u.username && !u.password && !u.hash); return u.href;};
+const probe = await request(resource, {method: 'POST', headers: {'Content-Type': 'application/json', Accept: 'application/json, text/event-stream'}, body: JSON.stringify({jsonrpc: '2.0', id: 1, method: 'initialize', params: {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'opencrawl-release-check', version: '0.1.0'}}})});
+assert.equal(probe.status, 401, `Expected OAuth challenge, got ${probe.status}; endpoint is not ready`);
+const metadataUrl = probe.headers.get('www-authenticate')?.match(/resource_metadata="([^"\r\n]+)"/)?.[1];
+assert(metadataUrl, 'Missing protected-resource discovery challenge');
+assert.equal(new URL(secure(metadataUrl)).origin, new URL(resource).origin);
+const response = await request(metadataUrl); assert(response.ok);
+const metadata = await response.json(); assert.equal(metadata.resource, resource);
+const issuer = metadata.authorization_servers?.[0]; assert(issuer);
+const issuerUrl = new URL(secure(issuer));
+const discovery = new URL(`/.well-known/oauth-authorization-server${issuerUrl.pathname === '/' ? '' : issuerUrl.pathname}`, issuerUrl.origin);
+const asResponse = await request(discovery); assert(asResponse.ok);
+const auth = await asResponse.json(); assert.equal(auth.issuer, issuer);
+assert(auth.code_challenge_methods_supported?.includes('S256'));
+assert(auth.grant_types_supported?.includes('refresh_token'));
+assert(auth.scopes_supported?.includes('offline_access'));
+assert(auth.registration_endpoint || auth.client_id_metadata_document_supported);
+secure(auth.authorization_endpoint); secure(auth.token_endpoint);
+console.log(JSON.stringify({resource, issuer, pkce: 'S256', refresh: true, dcr: Boolean(auth.registration_endpoint), cimd: auth.client_id_metadata_document_supported === true, verified: 'discovery only; user consent, refresh and cross-device behavior require host testing'}, null, 2));
