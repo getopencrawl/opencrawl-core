@@ -1,0 +1,27 @@
+# Landing store: Airbyte writes synced records here; the OpenCrawl indexer reads them.
+# Joins abctl's "kind" Docker network so Airbyte pods reach it as opencrawl-landing:5432.
+# Start it with ../local.sh up (which runs abctl first, creating the network).
+name: opencrawl-landing
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: opencrawl-landing
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${OPENCRAWL_LANDING_DATABASE:-landing}
+      POSTGRES_USER: ${OPENCRAWL_LANDING_USER:-airbyte}
+      POSTGRES_PASSWORD: ${OPENCRAWL_LANDING_PASSWORD:?set OPENCRAWL_LANDING_PASSWORD}
+    ports:
+      - "127.0.0.1:${OPENCRAWL_LANDING_LOCAL_PORT:-5433}:5432"
+    volumes:
+      - landing:/var/lib/postgresql/data
+    networks: [kind]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 20
+volumes:
+  landing:
+networks:
+  kind:
+    external: true
