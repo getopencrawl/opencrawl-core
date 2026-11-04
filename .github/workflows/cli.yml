@@ -36,6 +36,7 @@ jobs:
       - run: bun test cli
       - run: bun cli/scripts/build.ts --current
       - run: bun cli/scripts/smoke.ts
+      - run: bun cli/scripts/update-smoke.ts
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
     needs: checks
@@ -60,6 +61,7 @@ jobs:
       - run: bun test cli
       - run: bun cli/scripts/build.ts
       - run: bun cli/scripts/smoke.ts
+      - run: bun cli/scripts/update-smoke.ts
       - run: bun cli/scripts/publish.ts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
