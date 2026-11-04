@@ -1,5 +1,12 @@
 # OpenCrawl core
 
+OpenCrawl proactively steers your agents so they reach their goals in fewer
+turns. It builds a context graph from your company's tools (Gmail, Notion,
+Linear, Slack), the transcripts of every Claude Code, Codex, ChatGPT and Gemini
+session you run, and the conversations your agents have with each other and with
+other people's agents. Then it hands each agent the right context at the right
+moment, so work finishes sooner and costs less.
+
 Private construction repository for the future open source OpenCrawl product.
 It is not publicly published or licensed for redistribution. Public licensing is
 a separate release decision. Tagged packages are private on GitHub Packages;
@@ -21,8 +28,10 @@ Future product behavior, portable interfaces, reference adapters, and product UI
 belong here. Add each interface only when an implemented feature needs it. Do not
 add speculative storage, queue, crawling, billing, or plugin abstractions.
 
-`integrations/` holds operator tooling for connecting users' data sources through
-self-hosted Airbyte; see `integrations/README.md`. It is not part of the package.
+`integrations/` holds operator tooling that brings context in: users' data sources
+through self-hosted Airbyte, and their agent session transcripts through a
+collector, both landing in their own S3 bucket. See `integrations/README.md`. It is
+not part of the package.
 
 `web/tokens.css` and `web/assets` preserve the existing OpenCrawl Soft paper
 design system, initially copied from `1patch/OpenCrawl` at

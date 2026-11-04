@@ -1,0 +1,57 @@
+# Agent session receiver. Sessions land in the S3 bucket configured in .env (OPENCRAWL_LANDING_S3_*).
+# Start it with ./local.sh up. The bundled-s3 profile adds a local S3 for development and offline use.
+# Every port binds to loopback only.
+name: opencrawl-agent-sessions
+services:
+  receiver:
+    image: node:24-alpine
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "receiver.mjs"]
+    environment:
+      OPENCRAWL_LANDING_S3_BUCKET: ${OPENCRAWL_LANDING_S3_BUCKET:-}
+      OPENCRAWL_LANDING_S3_PATH: ${OPENCRAWL_LANDING_S3_PATH:-opencrawl}
+      OPENCRAWL_LANDING_S3_REGION: ${OPENCRAWL_LANDING_S3_REGION:-us-east-1}
+      OPENCRAWL_LANDING_S3_ENDPOINT: ${OPENCRAWL_LANDING_S3_ENDPOINT:-}
+      OPENCRAWL_LANDING_S3_ACCESS_KEY_ID: ${OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:-}
+      OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY: ${OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:-}
+      OPENCRAWL_LANDING_S3_SESSION_TOKEN: ${OPENCRAWL_LANDING_S3_SESSION_TOKEN:-}
+      OPENCRAWL_SESSIONS_TOKEN: ${OPENCRAWL_SESSIONS_TOKEN:-}
+      OPENCRAWL_SESSIONS_PUBLIC_URL: ${OPENCRAWL_SESSIONS_PUBLIC_URL:-}
+      # Without access keys, the receiver uses the AWS role of wherever it runs (ECS, EKS, EC2).
+      AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: ${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI:-}
+      AWS_CONTAINER_CREDENTIALS_FULL_URI: ${AWS_CONTAINER_CREDENTIALS_FULL_URI:-}
+      AWS_CONTAINER_AUTHORIZATION_TOKEN: ${AWS_CONTAINER_AUTHORIZATION_TOKEN:-}
+    ports:
+      - "127.0.0.1:${OPENCRAWL_SESSIONS_PORT:-7171}:7171"
+    volumes:
+      - ./receiver.mjs:/app/receiver.mjs:ro
+      - ./store.mjs:/app/store.mjs:ro
+      - ./collector.mjs:/app/collector.mjs:ro
+    depends_on:
+      s3: {condition: service_started, required: false}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7171/health"]
+      interval: 5s
+      retries: 30
+
+  s3:
+    # SeaweedFS (Apache-2.0): single-node S3 API with a password-protected admin console.
+    profiles: [bundled-s3]
+    image: chrislusf/seaweedfs:4.52
+    restart: unless-stopped
+    command: >-
+      mini -dir=/data -bucket=${OPENCRAWL_LANDING_S3_BUCKET:-opencrawl}
+      -admin.password=${OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:-}
+      -webdav=false -s3.port.iceberg=0 -s3.port.lance=0
+    environment:
+      AWS_ACCESS_KEY_ID: ${OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:-}
+    ports:
+      - "127.0.0.1:${OPENCRAWL_BUNDLED_S3_PORT:-8333}:8333"
+      - "127.0.0.1:${OPENCRAWL_BUNDLED_S3_CONSOLE_PORT:-12535}:12535"
+    volumes:
+      - s3:/data
+
+volumes:
+  s3:
