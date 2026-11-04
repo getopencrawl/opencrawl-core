@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "opencrawl": {
+      "type": "streamable-http",
+      "url": "https://app.getopencrawl.com/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "oauth",
+            "client": {
+              "mode": "cimd"
+            },
+            "resource": "https://app.getopencrawl.com/mcp",
+            "baseScopes": [
+              "offline_access"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "opencrawl",
+  "version": "0.1.0",
+  "description": "Understand OpenCrawl and verify an authenticated connection to its remote MCP server.",
+  "author": {
+    "name": "OpenCrawl",
+    "url": "https://getopencrawl.com"
+  },
+  "homepage": "https://github.com/1patch/opencrawl-plugins",
+  "repository": "https://github.com/1patch/opencrawl-plugins",
+  "license": "MIT",
+  "keywords": [
+    "opencrawl",
+    "mcp",
+    "context"
+  ],
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/opencrawl/SKILL.md",
+      "interface": {
+        "displayName": "OpenCrawl",
+        "shortDescription": "Connect to OpenCrawl and check your connection",
+        "longDescription": "Understand OpenCrawl and verify an authenticated connection to its remote MCP server.",
+        "developerName": "OpenCrawl",
+        "category": "Productivity",
+        "capabilities": [
+          "Read"
+        ],
+        "websiteURL": "https://getopencrawl.com",
+        "privacyPolicyURL": "https://app.getopencrawl.com/privacy",
+        "defaultPrompt": [
+          "Check my OpenCrawl connection.",
+          "What can I do with OpenCrawl?"
+        ],
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png"
+      }
+    }
+  }
+}
