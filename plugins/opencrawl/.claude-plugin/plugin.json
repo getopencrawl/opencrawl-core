@@ -1,0 +1,19 @@
+{
+  "name": "opencrawl",
+  "version": "0.1.0",
+  "description": "Understand OpenCrawl and verify an authenticated connection to its remote MCP server.",
+  "author": {
+    "name": "OpenCrawl",
+    "url": "https://getopencrawl.com"
+  },
+  "homepage": "https://github.com/1patch/opencrawl-plugins",
+  "repository": "https://github.com/1patch/opencrawl-plugins",
+  "license": "MIT",
+  "keywords": [
+    "opencrawl",
+    "mcp",
+    "context"
+  ],
+  "icon": "./assets/icon.png",
+  "privacyPolicyUrl": "https://app.getopencrawl.com/privacy"
+}

@@ -1,0 +1,19 @@
+{
+  "name": "opencrawl",
+  "owner": {
+    "name": "OpenCrawl",
+    "url": "https://getopencrawl.com"
+  },
+  "plugins": [
+    {
+      "name": "opencrawl",
+      "source": "./opencrawl",
+      "description": "Understand OpenCrawl and verify an authenticated connection to its remote MCP server.",
+      "version": "0.1.0",
+      "license": "MIT"
+    }
+  ],
+  "metadata": {
+    "description": "OpenCrawl overview and authenticated remote MCP connection."
+  }
+}

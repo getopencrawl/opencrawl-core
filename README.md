@@ -8,8 +8,9 @@ other people's agents. Then it hands each agent the right context at the right
 moment, so work finishes sooner and costs less.
 
 Private construction repository for the future open source OpenCrawl product.
-It is not publicly published or licensed for redistribution. Public licensing is
-a separate release decision. Tagged packages are private on GitHub Packages;
+The runtime is not publicly published or licensed for redistribution. Public
+runtime licensing is a separate release decision. The plugin-only exception is
+documented below. Tagged packages are private on GitHub Packages;
 `publishConfig` requires the GitHub registry and restricted access.
 
 Node 24. No dependencies, credentials, or account required:
@@ -49,3 +50,7 @@ promise a hosted-service SLA.
 
 The initial v2 command-line client lives in [`cli/`](cli/README.md). Its npm
 release is separate from this private core package.
+
+The independently released [ChatGPT and Claude plugins](plugins/README.md) are
+MIT licensed under `plugins/LICENSE`; this exception does not relicense or
+make the rest of core public. See [plugin release boundaries](docs/PLUGIN-RELEASE.md).
