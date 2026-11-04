@@ -14,10 +14,11 @@ import { parseArgs } from 'node:util';
 
 const USAGE = `Usage: node collector.mjs <command> [options]
 
-  install                 Save settings, start the background collector and backfill every session
-  status                  Show captured agents and what is still waiting to upload
-  push                    Upload new transcript data once
-  watch                   Upload new transcript data continuously (what the service runs)
+  install                 Save settings and start the background collector: a full sync now, then
+                          an incremental sync every hour
+  status                  Show the schedule, the last sync and what is waiting for the next one
+  sync                    Sync now: upload whatever is new since the last sync (the first is a full sync)
+  sync --every <time>     Sync on a schedule, e.g. 1h or 15m (what the background service runs)
   import <path>           Upload a ChatGPT or Claude.ai data export (conversations.json or its folder)
   mcp                     Run a stdio MCP server that forwards to the receiver
   uninstall               Stop the background collector (captured data stays in the store)
@@ -27,8 +28,8 @@ Options:
   --token <token>         Bearer token, if the receiver requires one
   --machine <name>        Name for this machine in the store (default: host name)
   --exclude <text>        Skip transcripts whose path contains <text>; repeatable
-  --agent <name>          Only push this agent (claude-code, codex, gemini-cli)
-  --interval <seconds>    Poll interval for watch (default 30)
+  --agent <name>          Only sync this agent (claude-code, codex, gemini-cli)
+  --every <time>          Sync schedule for install and sync (default 1h)
   --resync                Ignore the local cache and reconcile every file with the receiver`;
 
 /**
@@ -63,6 +64,24 @@ const SEGMENT_BYTES = 8 * 1024 * 1024;
 const TAIL_BYTES = 256;
 const DEFAULT_URL = 'http://127.0.0.1:7171';
 const SERVICE = 'dev.opencrawl.agent-sessions';
+const DEFAULT_EVERY = '1h';
+const RETRY_MS = 5 * 60_000;
+
+/** Parses a schedule like 30s, 15m or 1h into milliseconds. */
+export function parseEvery(text) {
+  const match = /^(\d+)(s|m|h)$/.exec(String(text).trim());
+  if (!match || Number(match[1]) === 0) throw new Error(`Invalid schedule "${text}"; use a duration such as 1h, 15m or 30s.`);
+  return Number(match[1]) * {s: 1000, m: 60_000, h: 3_600_000}[match[2]];
+}
+
+/**
+ * When the next scheduled sync is due, like an Airbyte connection's schedule: one interval after the
+ * last successful sync started, sooner after a failure, immediately if there has never been one.
+ */
+export function nextSyncAt(lastSync, everyMs) {
+  if (!lastSync) return 0;
+  return lastSync.ok ? Date.parse(lastSync.startedAt) + everyMs : Date.parse(lastSync.finishedAt) + Math.min(everyMs, RETRY_MS);
+}
 
 const home = () => join(process.env.OPENCRAWL_HOME || join(homedir(), '.opencrawl'), 'agent-sessions');
 const sha256 = data => createHash('sha256').update(data).digest('hex');
@@ -295,7 +314,7 @@ async function main() {
       machine: {type: 'string'},
       exclude: {type: 'string', multiple: true},
       agent: {type: 'string'},
-      interval: {type: 'string'},
+      every: {type: 'string'},
       resync: {type: 'boolean'},
       help: {type: 'boolean', short: 'h'},
     },
@@ -314,11 +333,13 @@ async function main() {
     token: opts.token ?? process.env.OPENCRAWL_SESSIONS_TOKEN ?? saved.token ?? '',
     machine: safeName(opts.machine || saved.machine || hostname()),
     exclude: opts.exclude || saved.exclude || [],
+    every: opts.every || saved.every || DEFAULT_EVERY,
   };
+  const everyMs = parseEvery(config.every);
   const client = createReceiverClient(config);
   const state = await loadJson(statePath, {files: {}, imports: {}});
 
-  async function push({verbose = false} = {}) {
+  async function upload({verbose = false} = {}) {
     const agents = opts.agent ? AGENTS.filter(a => a.agent === opts.agent) : AGENTS;
     if (!agents.length) fail(`Unknown agent ${opts.agent}. Known: ${AGENTS.map(a => a.agent).join(', ')}`);
     const files = await discover({agents, exclude: config.exclude});
@@ -340,25 +361,44 @@ async function main() {
     return totals;
   }
 
-  const commands = {
-    async push() {
-      if (!(await client.health())) fail(`No OpenCrawl receiver at ${client.base}. Start it with integrations/agent-sessions/local.sh up.`);
-      const totals = await push();
-      const lines = Object.entries(totals).map(([agent, bytes]) => `  ${agent.padEnd(12)} ${formatBytes(bytes)}`);
-      console.log(lines.length ? `Sent to ${client.base}:\n${lines.join('\n')}` : 'Everything is already uploaded.');
-    },
+  /** One sync, recorded in state.lastSync. The first one, with nothing uploaded yet, is a full sync. */
+  async function sync({verbose = false} = {}) {
+    const kind = Object.keys(state.files).length ? 'incremental' : 'full';
+    const startedAt = new Date().toISOString();
+    try {
+      if (!(await client.health())) throw new Error(`No OpenCrawl receiver at ${client.base}`);
+      const totals = await upload({verbose});
+      const bytes = Object.values(totals).reduce((a, b) => a + b, 0);
+      state.lastSync = {kind, startedAt, finishedAt: new Date().toISOString(), ok: true, bytes, agents: totals};
+      return state.lastSync;
+    } catch (error) {
+      state.lastSync = {kind, startedAt, finishedAt: new Date().toISOString(), ok: false, error: error.message};
+      throw error;
+    } finally {
+      await saveJson(statePath, state);
+    }
+  }
 
-    async watch() {
-      const interval = Number(opts.interval || 30) * 1000;
-      console.log(`${new Date().toISOString()} collecting as ${config.machine} into ${client.base} every ${interval / 1000}s`);
+  const commands = {
+    async sync() {
+      if (!opts.every) {
+        const result = await sync().catch(error => fail(`${error.message}. Start the receiver with integrations/agent-sessions/local.sh up.`));
+        const lines = Object.entries(result.agents).map(([agent, bytes]) => `  ${agent.padEnd(12)} ${formatBytes(bytes)}`);
+        return console.log(lines.length ? `${result.kind === 'full' ? 'Full' : 'Incremental'} sync to ${client.base}:\n${lines.join('\n')}` : 'Already up to date.');
+      }
+      const log = message => console.log(`${new Date().toISOString()} ${message}`);
+      log(`syncing ${config.machine} to ${client.base} every ${config.every}`);
       for (;;) {
-        try {
-          if (await client.health()) await push({verbose: true});
-          else console.log(`${new Date().toISOString()} receiver unreachable at ${client.base}; retrying`);
-        } catch (error) {
-          console.error(`${new Date().toISOString()} ${error.message}`);
+        // Poll the wall clock rather than one long timer, so a laptop waking from sleep syncs on time.
+        while (Date.now() < nextSyncAt(state.lastSync, everyMs)) {
+          await new Promise(resolve => setTimeout(resolve, Math.min(60_000, nextSyncAt(state.lastSync, everyMs) - Date.now())));
         }
-        await new Promise(resolve => setTimeout(resolve, interval));
+        try {
+          const result = await sync({verbose: true});
+          log(`${result.kind} sync done: ${formatBytes(result.bytes)} in ${Math.round((Date.parse(result.finishedAt) - Date.parse(result.startedAt)) / 1000)}s`);
+        } catch (error) {
+          log(`sync failed: ${error.message}; retrying in ${Math.min(everyMs, RETRY_MS) / 60_000} min`);
+        }
       }
     },
 
@@ -375,11 +415,21 @@ async function main() {
       const up = await client.health();
       console.log(`Receiver  ${client.base} ${up ? '(up)' : '(unreachable)'}`);
       console.log(`Machine   ${config.machine}`);
-      console.log(`Service   ${serviceStatus()}\n`);
+      console.log(`Service   ${serviceStatus()}`);
+      console.log(`Schedule  every ${config.every}`);
+      const last = state.lastSync;
+      if (last) {
+        const ago = Math.round((Date.now() - Date.parse(last.finishedAt)) / 60_000);
+        const next = Math.max(0, Math.round((nextSyncAt(last, everyMs) - Date.now()) / 60_000));
+        console.log(`Last sync ${last.kind}, ${last.ok ? `${formatBytes(last.bytes)} uploaded` : `failed: ${last.error}`}, ${ago} min ago; next in ${next} min`);
+      } else {
+        console.log('Last sync never');
+      }
+      console.log('');
       if (!files.length) return console.log('No agent transcripts found on this machine.');
-      console.log(`${'Agent'.padEnd(12)} ${'Sessions'.padStart(8)} ${'Size'.padStart(9)} ${'Waiting'.padStart(9)}`);
+      console.log(`${'Agent'.padEnd(12)} ${'Sessions'.padStart(8)} ${'Size'.padStart(9)} ${'Next sync'.padStart(10)}`);
       for (const [agent, row] of Object.entries(rows)) {
-        console.log(`${agent.padEnd(12)} ${String(row.sessions).padStart(8)} ${formatBytes(row.bytes).padStart(9)} ${formatBytes(row.pending).padStart(9)}`);
+        console.log(`${agent.padEnd(12)} ${String(row.sessions).padStart(8)} ${formatBytes(row.bytes).padStart(9)} ${formatBytes(row.pending).padStart(10)}`);
       }
       // A trailing partial line stays waiting until the agent finishes writing it.
     },
@@ -422,18 +472,18 @@ async function main() {
       if (!(await client.health())) {
         fail(`No OpenCrawl receiver at ${client.base}. Start it first (integrations/agent-sessions/local.sh up), or pass --url.`);
       }
-      await saveJson(configPath, {url: config.url, token: config.token, machine: config.machine, exclude: config.exclude});
+      await saveJson(configPath, {url: config.url, token: config.token, machine: config.machine, exclude: config.exclude, every: config.every});
       const target = join(home(), 'collector.mjs');
       const self = fileURLToPath(import.meta.url);
       if (self !== target) await copyFile(self, target);
-      const how = startService(target);
+      const how = startService(target, config.every);
       const files = await discover({exclude: config.exclude});
       const agents = [...new Set(files.map(f => f.agent))];
       console.log(`Collector installed for ${config.machine}, sending to ${client.base}.`);
       console.log(`Background service: ${how}.`);
       console.log(files.length
-        ? `Backfilling ${files.length} sessions from ${agents.join(', ')}. New sessions upload within 30 seconds.`
-        : 'No transcripts yet; new sessions will upload within 30 seconds.');
+        ? `Full sync of ${files.length} sessions from ${agents.join(', ')} started; then an incremental sync every ${config.every}.`
+        : `No transcripts yet; the collector syncs every ${config.every}.`);
       console.log(`Progress: node ${target} status`);
     },
 
@@ -469,9 +519,9 @@ const run = (cmd, args) => {
 };
 const hasSystemd = () => platform() === 'linux' && run('systemctl', ['--user', 'show-environment']);
 
-function startService(script) {
+function startService(script, every) {
   const paths = servicePaths();
-  const args = [process.execPath, script, 'watch'];
+  const args = [process.execPath, script, 'sync', '--every', every];
   stopService();
   if (platform() === 'darwin') {
     const xml = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -519,7 +569,7 @@ WantedBy=default.target
 }
 
 /** True if pid is our own collector, so a reused PID is never signalled. */
-const isCollector = pid => pid > 1 && run('sh', ['-c', `ps -p ${pid} -o args= | grep -q 'collector.mjs watch'`]);
+const isCollector = pid => pid > 1 && run('sh', ['-c', `ps -p ${pid} -o args= | grep -q 'collector.mjs sync --every'`]);
 const savedPid = path => (existsSync(path) ? Number(readFileSync(path, 'utf8')) : 0);
 
 function stopService() {

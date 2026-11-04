@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { signRequest, createObjectStore, awsCredentials } from '../integrations/agent-sessions/store.mjs';
 import { createReceiver, storeFromEnv } from '../integrations/agent-sessions/receiver.mjs';
-import { createReceiverClient, discover, syncFile, splitExport } from '../integrations/agent-sessions/collector.mjs';
+import { createReceiverClient, discover, syncFile, splitExport, parseEvery, nextSyncAt } from '../integrations/agent-sessions/collector.mjs';
 
 function memoryStore() {
   const objects = new Map();
@@ -285,6 +285,21 @@ test('splits ChatGPT and Claude.ai exports into conversations', () => {
   const claude = splitExport([{uuid: 'u1', name: 'B', chat_messages: []}]);
   assert.deepEqual(claude.map(c => [c.agent, c.session]), [['claude-ai', 'u1']]);
   assert.throws(() => splitExport([{foo: 1}]), /Unrecognized export/);
+});
+
+test('syncs on a schedule like an Airbyte connection: full first, then every interval', () => {
+  assert.equal(parseEvery('1h'), 3_600_000);
+  assert.equal(parseEvery('15m'), 900_000);
+  assert.equal(parseEvery('30s'), 30_000);
+  for (const bad of ['0h', '1d', 'hourly', '']) assert.throws(() => parseEvery(bad), /Invalid schedule/);
+
+  const hour = 3_600_000;
+  assert.equal(nextSyncAt(undefined, hour), 0, 'never synced: the full sync is due now');
+  const ok = {ok: true, startedAt: '2026-11-04T10:00:00Z', finishedAt: '2026-11-04T10:04:00Z'};
+  assert.equal(nextSyncAt(ok, hour), Date.parse('2026-11-04T11:00:00Z'), 'one interval after the last sync started');
+  const failed = {ok: false, startedAt: '2026-11-04T10:00:00Z', finishedAt: '2026-11-04T10:00:05Z'};
+  assert.equal(nextSyncAt(failed, hour), Date.parse('2026-11-04T10:05:05Z'), 'retried after five minutes');
+  assert.equal(nextSyncAt(failed, 60_000), Date.parse('2026-11-04T10:01:05Z'), 'or sooner if the schedule is shorter');
 });
 
 test('agent session tooling stays dependency-free and outside the core package', async () => {
