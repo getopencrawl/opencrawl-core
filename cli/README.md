@@ -81,8 +81,8 @@ bun scripts/build.ts             # all five platform packages
 ```
 
 The `v2` dist-tag keeps this new client separate from the existing v1 `latest`
-release. Publishing must never move that v1 tag. The dedicated CLI workflow publishes the five platform packages first, smoke
-tests the launcher, then publishes `@getopencrawl/cli` last. A failed platform
+release. Publishing must never move that v1 tag. The dedicated CLI workflow builds and signs on macOS, tests those same
+binaries on macOS/Linux/Windows, then publishes the five platform packages first, then publishes `@getopencrawl/cli` last. A failed platform
 publication cannot advertise an incomplete stable launcher. Retry skips already
 published immutable versions. Increment `cli/package.json` for every release.
 The main core package retains its separate private GitHub Packages release.

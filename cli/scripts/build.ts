@@ -15,7 +15,8 @@ for (const [os, arch, target] of selected) {
   const name = `${pkg.name}-${os}-${arch}`;
   const directory = join(dist, `${os}-${arch}`);
   mkdirSync(join(directory, 'bin'), {recursive: true});
-  const result = Bun.spawnSync(['bun', 'build', '--compile', `--target=${target}`, '--minify', '--define', `OPENCRAWL_VERSION=${JSON.stringify(pkg.version)}`, join(root, 'src/cli.ts'), '--outfile', join(directory, 'bin', os === 'win32' ? 'opencrawl.exe' : 'opencrawl')], {stdio: ['inherit', 'inherit', 'inherit']});
+  const targetArgs = process.argv.includes('--current') ? [] : [`--target=${target}`];
+  const result = Bun.spawnSync(['bun', 'build', '--compile', ...targetArgs, '--minify', '--define', `OPENCRAWL_VERSION=${JSON.stringify(pkg.version)}`, join(root, 'src/cli.ts'), '--outfile', join(directory, 'bin', os === 'win32' ? 'opencrawl.exe' : 'opencrawl')], {stdio: ['inherit', 'inherit', 'inherit']});
   if (result.exitCode !== 0) throw new Error(`Build failed for ${target}`);
   if (os === 'darwin') {
     if (process.platform !== 'darwin') throw new Error('Build release macOS binaries on macOS so their signatures can be repaired.');

@@ -9,7 +9,6 @@ const original = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const next = original.version.split('.').map(Number); next[2]++;
 const version = next.join('.');
 const platform = `${process.platform}-${process.arch}`;
-const nativeTarget = `bun-${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}${process.arch === 'x64' && process.platform !== 'darwin' ? '-baseline' : ''}`;
 const scratch = mkdtempSync(join(tmpdir(), 'opencrawl-upgrade-'));
 const env = {...process.env, OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config'), XDG_CACHE_HOME: join(scratch, 'cache')};
 const packages = new Map<string, Map<string, {pkg: any; bytes: Buffer}>>();
@@ -40,7 +39,7 @@ try {
     if (folder === 'cli') pkg.optionalDependencies = {[`${original.name}-${platform}`]: version};
     else {
       const binary = join(directory, 'bin', process.platform === 'win32' ? 'opencrawl.exe' : 'opencrawl');
-      sync(['bun', 'build', '--compile', `--target=${nativeTarget}`, '--minify', '--define', `OPENCRAWL_VERSION=${JSON.stringify(version)}`, join(root, 'src/cli.ts'), '--outfile', binary]);
+      sync(['bun', 'build', '--compile', '--minify', '--define', `OPENCRAWL_VERSION=${JSON.stringify(version)}`, join(root, 'src/cli.ts'), '--outfile', binary]);
       if (process.platform === 'darwin') sync(['codesign', '--force', '--sign', '-', binary]);
     }
     writeFileSync(join(directory, 'package.json'), JSON.stringify(pkg));
