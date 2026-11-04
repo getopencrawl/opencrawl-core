@@ -41,7 +41,7 @@ for (const folder of folders) {
     continue;
   }
   if (existing && !existing.stderr.toString().includes('E404')) throw new Error(`Could not determine publication state for ${pkg.name}.`);
-  const result = Bun.spawnSync(['npm', 'publish', ...(dryRun ? ['--dry-run'] : []), '--tag', channel, '--access', 'public', '--registry=https://registry.npmjs.org'], {cwd: directory, stdio: ['inherit', 'inherit', 'inherit']});
+  const result = Bun.spawnSync(dryRun ? ['npm', 'pack', '--dry-run'] : ['npm', 'publish', '--tag', channel, '--access', 'public', '--registry=https://registry.npmjs.org'], {cwd: directory, stdio: ['inherit', 'inherit', 'inherit']});
   if (result.exitCode) throw new Error(`Publication failed for ${pkg.name}; the launcher has not been promoted.`);
 }
 
