@@ -73,34 +73,26 @@ async function sourceDefinition(workspace, sourceType) {
   return definition;
 }
 
-/** The destination every connection writes to; the OpenCrawl indexer reads from it. */
+/** The S3 destination every connection writes JSONL to; the OpenCrawl indexer reads from it. */
 async function landingDestination(workspace) {
   const name = env('OPENCRAWL_LANDING_NAME') || 'OpenCrawl landing';
+  const bucket = required('OPENCRAWL_LANDING_S3_BUCKET');
   const {data} = await airbyte.listDestinations({workspaceIds: [workspace]});
   const existing = data.find(d => d.name === name);
-  if (existing) return existing;
-  const configuration = env('OPENCRAWL_LANDING_S3_BUCKET')
-    ? {
-        destinationType: 's3',
-        s3_bucket_name: env('OPENCRAWL_LANDING_S3_BUCKET'),
-        s3_bucket_path: env('OPENCRAWL_LANDING_S3_PATH') || 'opencrawl',
-        s3_bucket_region: env('OPENCRAWL_LANDING_S3_REGION') || 'us-east-1',
-        ...(env('OPENCRAWL_LANDING_S3_ACCESS_KEY_ID') && {
-          access_key_id: env('OPENCRAWL_LANDING_S3_ACCESS_KEY_ID'),
-          secret_access_key: required('OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY'),
-        }),
-        format: {format_type: 'JSONL', flattening: 'No flattening', compression: {compression_type: 'No Compression'}},
-      }
-    : {
-        destinationType: 'postgres',
-        host: env('OPENCRAWL_LANDING_HOST') || 'opencrawl-landing',
-        port: Number(env('OPENCRAWL_LANDING_PORT') || 5432),
-        database: env('OPENCRAWL_LANDING_DATABASE') || 'landing',
-        schema: env('OPENCRAWL_LANDING_SCHEMA') || 'public',
-        username: env('OPENCRAWL_LANDING_USER') || 'airbyte',
-        password: required('OPENCRAWL_LANDING_PASSWORD'),
-        ssl_mode: {mode: env('OPENCRAWL_LANDING_SSL_MODE') || 'disable'},
-      };
+  if (existing?.destinationType === 's3') return existing;
+  if (existing) fail(`Destination "${name}" exists but is ${existing.destinationType}, not S3. Delete it in the Airbyte UI or set OPENCRAWL_LANDING_NAME.`);
+  const configuration = {
+    destinationType: 's3',
+    s3_bucket_name: bucket,
+    s3_bucket_path: env('OPENCRAWL_LANDING_S3_PATH') || 'opencrawl',
+    s3_bucket_region: env('OPENCRAWL_LANDING_S3_REGION') || 'us-east-1',
+    // Without keys, Airbyte uses the instance role / default AWS credential chain.
+    ...(env('OPENCRAWL_LANDING_S3_ACCESS_KEY_ID') && {
+      access_key_id: env('OPENCRAWL_LANDING_S3_ACCESS_KEY_ID'),
+      secret_access_key: required('OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY'),
+    }),
+    format: {format_type: 'JSONL', flattening: 'No flattening', compression: {compression_type: 'No Compression'}},
+  };
   return airbyte.createDestination({workspaceId: workspace, name, configuration});
 }
 
@@ -253,7 +245,7 @@ const commands = {
       sourceId: source.sourceId,
       destinationId: destination.destinationId,
       name: `${source.name} → ${destination.name}`,
-      // Keep each source's tables apart in the landing store.
+      // One prefix per source in the bucket: <path>/<namespace>/<stream>/...
       namespaceDefinition: 'custom_format',
       namespaceFormat: `${(opts.name || sourceType).toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
       schedule: opts.cron ? {scheduleType: 'cron', cronExpression: opts.cron} : {scheduleType: 'manual'},
