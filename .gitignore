@@ -2,3 +2,4 @@ node_modules/
 .env*
 revision.json
 !.env.example
+cli/dist/

@@ -34,3 +34,6 @@ Before public release: select an OSI-approved license, review asset rights and
 dependencies, add contribution/security/support policies, and establish tagged
 releases and a supported upgrade path. Self-hosted community support does not
 promise a hosted-service SLA.
+
+The initial v2 command-line client lives in [`cli/`](cli/README.md). Its npm
+release is separate from this private core package.
