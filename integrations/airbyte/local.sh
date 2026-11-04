@@ -8,8 +8,9 @@
 #   ./local.sh destroy      remove Airbyte and its data (the S3 bucket is untouched)
 #
 # Settings (environment): AIRBYTE_PORT (8000), AIRBYTE_HOST (public hostname, optional),
-# AIRBYTE_CHART_VERSION, ABCTL_VERSION, ABCTL_LOW_RESOURCE=1. Set DO_NOT_TRACK=1 to opt
-# out of abctl's anonymous usage reporting.
+# AIRBYTE_CHART_VERSION, ABCTL_VERSION, ABCTL_LOW_RESOURCE=1, ABCTL_INSTALL_ARGS (extra
+# `abctl local install` flags, e.g. "--insecure-cookies"). Set DO_NOT_TRACK=1 before the
+# first `up` to opt out of anonymous usage reporting by both abctl and Airbyte.
 set -euo pipefail
 
 ABCTL_VERSION="${ABCTL_VERSION:-v0.30.4}"
@@ -55,6 +56,7 @@ abctl_bin() {
 # Prints "Email/Password/Client-Id/Client-Secret: value" lines without ANSI colors.
 credentials() {
   local out; out="$("$ABCTL" local credentials 2>&1)" || die "abctl local credentials failed: is Airbyte installed?"
+  # shellcheck disable=SC2001 # strips ANSI color codes, which need a regex
   sed 's/\x1b\[[0-9;]*m//g' <<<"$out" | grep -E '^\s*(Email|Password|Client-Id|Client-Secret):' | sed 's/^ *//'
 }
 
@@ -77,7 +79,9 @@ get_env() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || t
 installed() { local out; out="$("$ABCTL" local status 2>&1 || true)"; grep -q "Status: deployed" <<<"$out"; }
 
 up() {
-  command -v docker >/dev/null && docker info >/dev/null 2>&1 || die "Docker must be installed and running"
+  if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
+    die "Docker must be installed and running"
+  fi
   if [[ ! -f "$ENV_FILE" ]]; then
     cp "$HERE/.env.example" "$ENV_FILE"
   fi
@@ -91,15 +95,27 @@ up() {
     if [[ "${ABCTL_LOW_RESOURCE:-}" == 1 ]] || (( $(getconf _NPROCESSORS_ONLN) < 4 )); then
       args+=(--low-resource-mode)
     fi
+    if [[ "${DO_NOT_TRACK:-}" == 1 ]]; then
+      # Airbyte itself reports to Segment unless tracking strategy is `logging`.
+      local tracking_values
+      tracking_values="$(mktemp)"
+      printf 'global:\n  tracking:\n    strategy: logging\n' > "$tracking_values"
+      args+=(--values "$tracking_values")
+    fi
+    # shellcheck disable=SC2206 # intentional word splitting of extra flags
+    [[ -n "${ABCTL_INSTALL_ARGS:-}" ]] && args+=(${ABCTL_INSTALL_ARGS})
     log "Installing Airbyte chart $AIRBYTE_CHART_VERSION (first run takes 5-15 minutes)"
     "$ABCTL" "${args[@]}"
   fi
 
-  local creds
+  local creds client_id client_secret
   creds="$(credentials)"
+  client_id="$(awk -F': *' '/^Client-Id/{print $2}' <<<"$creds")"
+  client_secret="$(awk -F': *' '/^Client-Secret/{print $2}' <<<"$creds")"
+  [[ -n "$client_id" && -n "$client_secret" ]] || die "could not read API credentials from 'abctl local credentials'"
   set_env AIRBYTE_URL "http://localhost:${AIRBYTE_PORT}"
-  set_env AIRBYTE_CLIENT_ID "$(awk -F': *' '/^Client-Id/{print $2}' <<<"$creds")"
-  set_env AIRBYTE_CLIENT_SECRET "$(awk -F': *' '/^Client-Secret/{print $2}' <<<"$creds")"
+  set_env AIRBYTE_CLIENT_ID "$client_id"
+  set_env AIRBYTE_CLIENT_SECRET "$client_secret"
   if [[ -z "$(get_env OPENCRAWL_LANDING_S3_BUCKET)" ]]; then
     log "Set OPENCRAWL_LANDING_S3_BUCKET in $ENV_FILE before connecting sources"
   fi

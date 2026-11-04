@@ -10,6 +10,7 @@ Verified with Airbyte 2.4.0 (Helm chart 2.4.0), abctl v0.30.4 and Node 22/24.
 | `local.sh` | Install and run Airbyte on one machine |
 | `cli.mjs` | Connect sources (including OAuth sign-in), link them to the S3 landing bucket, run syncs |
 | `client.mjs` | Zero-dependency client for the Airbyte API |
+| `S3_LAYOUT.md` | Key layout, record format and sync semantics of landed data, for indexers |
 | `helm/` | Production values for Kubernetes (external Postgres and S3 for Airbyte's own state) |
 | `.env.example` | Every setting the scripts read |
 
@@ -51,7 +52,7 @@ Each connected source gets its own prefix.
 
 ```sh
 node integrations/airbyte/cli.mjs catalog notion        # find the source type
-node integrations/airbyte/cli.mjs connect notion --cron "0 0 */6 * * ?"
+node integrations/airbyte/cli.mjs connect notion --cron "0 0 */6 * * ?"   # every 6 hours, UTC
 ```
 
 `connect` performs these steps:
@@ -59,7 +60,7 @@ node integrations/airbyte/cli.mjs connect notion --cron "0 0 */6 * * ?"
 1. Creates the source.
 2. Creates the `OpenCrawl landing` destination, if it doesn't exist.
 3. Creates a connection with every stream enabled, on a manual schedule or the
-   Quartz `--cron` you give.
+   Quartz `--cron` you give. Airbyte evaluates cron schedules in UTC.
 4. With `--sync`, runs the first sync and waits for it.
 
 Connector settings go in `--config file.json`. The required fields are listed on
@@ -89,7 +90,10 @@ Three API details were verified against a live 2.4.0 install:
 
 - The public API's `POST /sources/initiateOAuth` and
   `PUT /workspaces/{id}/oauthCredentials` return **501** on Community. That is
-  why OAuth goes through the config API (`/api/v1/source_oauths/*`).
+  why OAuth goes through the config API (`/api/v1/source_oauths/*`). Airbyte
+  [has deprecated that API](https://docs.airbyte.com/platform/api-documentation)
+  and may change it without notice, so treat the OAuth flow as tested on 2.4.0
+  only and recheck it when upgrading. Everything else uses the public API.
 - `get_consent_url` and `complete_oauth` fail with a 500 unless
   `oAuthInputConfiguration` is sent, even as `{}`.
 - Sources are validated against the full spec, so the OAuth app's `client_id`
@@ -99,10 +103,10 @@ Three API details were verified against a live 2.4.0 install:
 
 Every connection writes to one S3 destination named `OpenCrawl landing`, an
 Airbyte-certified GA connector. Records are uncompressed JSONL at
-`<OPENCRAWL_LANDING_S3_PATH>/<source>/<stream>/`, one object per sync batch, each
-line carrying `_airbyte_raw_id`, `_airbyte_extracted_at`, `_airbyte_meta`,
-`_airbyte_generation_id` and the record under `_airbyte_data`. Omit the access
-keys to use the instance role. The indexer that turns landed
+`<OPENCRAWL_LANDING_S3_PATH>/<source>/<stream>/`; see [S3_LAYOUT.md](S3_LAYOUT.md)
+for the exact layout and record format. Omit the access keys to use the instance
+role, and set `OPENCRAWL_LANDING_S3_ENDPOINT` for S3-compatible stores such as
+MinIO or R2. The indexer that turns landed
 records into OpenCrawl documents is the next piece of work and does not exist yet.
 
 ## Production (Kubernetes)
@@ -111,7 +115,7 @@ Airbyte's Helm chart V2 is the only supported chart since Airbyte 2.1. Docker
 Compose deployments ended with Airbyte 1.0.
 
 ```sh
-cp integrations/airbyte/helm/secret.example.yaml secret.yaml   # fill in, keep out of git
+cp integrations/airbyte/helm/secret.example.yaml secret.yaml   # fill in every key, keep out of git
 kubectl create namespace airbyte
 kubectl apply -n airbyte -f secret.yaml
 helm repo add airbyte-v2 https://airbytehq.github.io/charts
@@ -121,10 +125,20 @@ helm upgrade --install airbyte airbyte-v2/airbyte --version 2.4.0 \
 
 `helm/values.yaml` sets up the following:
 
-- external Postgres 13–17 for Airbyte's own state
+- external Postgres 13–17 for Airbyte's own state. It **must accept SSL**: with
+  an external database, chart 2.4.0 always connects Temporal over TLS (RDS and
+  Cloud SQL do by default)
 - an S3 bucket for logs and state
-- fixed API credentials taken from the secret
+- the UI password, API client ID and secret, and token-signing key from the
+  secret. On first install the bootloader copies them into the
+  `airbyte-auth-secrets` secret that the server reads
+- telemetry kept local (`tracking.strategy: logging`)
 - nginx ingress with TLS
+
+These values were installed with Helm into a Kubernetes cluster against an
+SSL-enabled Postgres: every pod started, and the API accepted the client ID and
+secret from `secret.yaml`. The S3 and ingress settings were rendered with
+`helm template` but not exercised against real AWS.
 
 Point the CLI at that deployment with `AIRBYTE_URL=https://airbyte.example.com`
 and the client ID and secret from the secret. Use a hosted redirect URL for
@@ -132,8 +146,8 @@ OAuth apps, such as a page that shows the redirected URL so the user can paste
 it into the CLI.
 
 For a single VM, `local.sh up` with `AIRBYTE_HOST=airbyte.example.com` also
-works. Put TLS in front of it, or add `--insecure-cookies` for plain HTTP inside
-a private network.
+works. Put TLS in front of it, or set `ABCTL_INSTALL_ARGS=--insecure-cookies` for
+plain HTTP inside a private network.
 
 ## Operations
 
@@ -146,8 +160,10 @@ a private network.
 | Server logs | `docker exec airbyte-abctl-control-plane kubectl logs -n airbyte-abctl deploy/airbyte-abctl-server` |
 | Pin other versions | `ABCTL_VERSION=… AIRBYTE_CHART_VERSION=… local.sh up` |
 
-abctl keeps everything in `~/.airbyte/abctl`. It reports anonymous usage by
-default; set `DO_NOT_TRACK=1` to opt out.
+abctl keeps everything in `~/.airbyte/abctl`. Both abctl and Airbyte report
+anonymous usage by default (Airbyte to Segment). Set `DO_NOT_TRACK=1` for the
+first `local.sh up` to turn both off; see
+https://docs.airbyte.com/platform/operator-guides/telemetry.
 
 The `Error reading pgdata version file: permission denied` error appears when
 abctl reinstalls over existing data. `local.sh up` skips reinstalling if Airbyte

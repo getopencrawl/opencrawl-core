@@ -8,7 +8,7 @@ their agents can search all of it through one index.
 ```
  data sources ──► Airbyte (self-hosted) ──► S3 bucket ──────────┬──► OpenCrawl indexer ──► search / MCP
   Drive, Notion,   auth, sync schedules,     <path>/<source>/    │    (not built yet)
-  Slack, DBs ...   600 connectors                                │
+  Slack, DBs ...   583 sources                                   │
                                                                  │
  agent sessions ─► collector ─► receiver ──► S3 bucket ──────────┘
   Claude Code,      hourly sync  HTTP + MCP  <path>/agent-sessions/
@@ -27,12 +27,18 @@ indexer needs to read landed records, add that interface to the core then.
 
 ## Why Airbyte
 
-- It is the only open option with broad coverage: about 600 source connectors,
-  including OAuth sign-in, incremental sync, schedules and retries.
+- It is the only open option with broad coverage. Airbyte 2.4.0 Community lists
+  583 source connectors (65 certified by Airbyte, 518 community-maintained) and
+  53 destinations, with OAuth sign-in, incremental sync, schedules and retries.
+  Enterprise-only connectors are not part of that catalog.
 - Users run it themselves. Their tokens and data stay on their infrastructure,
-  with no OpenCrawl or third-party account in the path.
-- A public API covers sources, destinations, connections and jobs, so OpenCrawl
-  can drive it without users touching the Airbyte UI.
+  with no OpenCrawl or third-party account in the path. Airbyte and abctl send
+  anonymous usage data by default; `DO_NOT_TRACK=1` and the production Helm
+  values turn that off.
+- Its public API covers sources, destinations, connections and jobs, so OpenCrawl
+  can drive it without users touching the Airbyte UI. Source OAuth is the
+  exception: on Community it only works through Airbyte's deprecated config API
+  (see `airbyte/README.md`).
 
 ## Licensing
 

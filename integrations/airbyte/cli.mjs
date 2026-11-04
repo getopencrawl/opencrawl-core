@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
-import { createAirbyteClient, applyOAuthPayload, oAuthInputConfiguration } from './client.mjs';
+import { createAirbyteClient, applyOAuthPayload, landingPrefix, oAuthInputConfiguration } from './client.mjs';
 
 const envFile = new URL('./.env', import.meta.url);
 if (existsSync(envFile)) process.loadEnvFile(envFile);
@@ -86,6 +86,8 @@ async function landingDestination(workspace) {
     s3_bucket_name: bucket,
     s3_bucket_path: env('OPENCRAWL_LANDING_S3_PATH') || 'opencrawl',
     s3_bucket_region: env('OPENCRAWL_LANDING_S3_REGION') || 'us-east-1',
+    // S3-compatible stores (MinIO, R2, SeaweedFS); omit for AWS S3.
+    ...(env('OPENCRAWL_LANDING_S3_ENDPOINT') && {s3_endpoint: env('OPENCRAWL_LANDING_S3_ENDPOINT')}),
     // Without keys, Airbyte uses the instance role / default AWS credential chain.
     ...(env('OPENCRAWL_LANDING_S3_ACCESS_KEY_ID') && {
       access_key_id: env('OPENCRAWL_LANDING_S3_ACCESS_KEY_ID'),
@@ -230,6 +232,15 @@ const commands = {
     if (!sourceType) fail('Usage: cli.mjs connect <source-type> [--config file.json]');
     const workspace = await workspaceId();
     const definition = await sourceDefinition(workspace, sourceType);
+    // Check the landing prefix before sign-in so a conflict doesn't leave an orphaned source.
+    const prefix = landingPrefix(opts.name || sourceType);
+    if (!prefix || prefix === 'testing') fail(`"${opts.name || sourceType}" can't be used as a landing prefix; pass a different --name.`);
+    const destination = await landingDestination(workspace);
+    const {data: connections} = await airbyte.listConnections({workspaceIds: [workspace]});
+    const clash = connections.find(c => c.destinationId === destination.destinationId && c.namespaceFormat === prefix);
+    // Overwrite syncs delete older files under their prefix, so two sources must never share one.
+    if (clash) fail(`Connection "${clash.name}" already lands in ${prefix}/. Pass a different --name.`);
+
     const spec = await airbyte.getSourceSpec(workspace, definition.id);
     let configuration = opts.config ? JSON.parse(await readFile(opts.config, 'utf8')) : {};
     if (spec.advancedAuth?.authFlowType === 'oauth2.0' && !opts['no-oauth']) {
@@ -240,14 +251,13 @@ const commands = {
     });
     console.log(`Source ${source.name} ${source.sourceId}`);
 
-    const destination = await landingDestination(workspace);
     const connection = await airbyte.createConnection({
       sourceId: source.sourceId,
       destinationId: destination.destinationId,
       name: `${source.name} → ${destination.name}`,
-      // One prefix per source in the bucket: <path>/<namespace>/<stream>/...
+      // One prefix per source in the bucket: <path>/<prefix>/<stream>/...
       namespaceDefinition: 'custom_format',
-      namespaceFormat: `${(opts.name || sourceType).toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
+      namespaceFormat: prefix,
       schedule: opts.cron ? {scheduleType: 'cron', cronExpression: opts.cron} : {scheduleType: 'manual'},
     });
     console.log(`Connection ${connection.connectionId} (${connection.configurations?.streams?.length ?? 0} streams)`);

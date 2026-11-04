@@ -1,6 +1,7 @@
 # Production Airbyte for OpenCrawl: Helm chart V2 with external Postgres and S3.
-# Verified with `helm template` against airbyte-v2/airbyte 2.4.0. Replace every example.com
-# value, create the secret in secret.example.yaml, then:
+# Written against airbyte-v2/airbyte 2.4.0: every secretKeyRef the rendered chart
+# requires is present in secret.example.yaml. Replace every example.com value,
+# create the secret from secret.example.yaml, then:
 #
 #   helm repo add airbyte-v2 https://airbytehq.github.io/charts
 #   helm upgrade --install airbyte airbyte-v2/airbyte --version 2.4.0 \
@@ -18,6 +19,11 @@ global:
     name: airbyte
     userSecretKey: database-user
     passwordSecretKey: database-password
+    # The chart always wires a read replica; without these keys it requires
+    # CONFIG_DATABASE_REPLICA_USER/PASSWORD and pods fail to start.
+    replica:
+      userSecretKey: database-user
+      passwordSecretKey: database-password
 
   storage:
     type: s3
@@ -37,12 +43,20 @@ global:
 
   auth:
     enabled: true
+    # The bootloader reads these keys from this secret on install and copies them into
+    # the airbyte-auth-secrets secret that the server uses. This fixes the UI password
+    # and the API credentials for cli.mjs (AIRBYTE_CLIENT_ID / AIRBYTE_CLIENT_SECRET).
+    secretName: airbyte-config-secrets
     instanceAdmin:
-      secretName: airbyte-config-secrets
       passwordSecretKey: instance-admin-password
-      # Fixed API credentials for cli.mjs (AIRBYTE_CLIENT_ID / AIRBYTE_CLIENT_SECRET).
       clientIdSecretKey: instance-admin-client-id
       clientSecretSecretKey: instance-admin-client-secret
+    security:
+      jwtSignatureSecretSecretKey: jwt-signature-secret
+
+  # Airbyte sends anonymous usage data to Segment by default. `logging` keeps it local.
+  tracking:
+    strategy: logging
 
 # The bundled database is for evaluation only.
 postgresql:

@@ -12,32 +12,42 @@ export function createAirbyteClient({url, clientId, clientSecret, fetch: fetchIm
   const api = `${base}/api/public/v1`;
   let token = null;
   let tokenExpiresAt = 0;
+  let pendingToken = null;
 
-  async function accessToken() {
+  function accessToken({refresh = false} = {}) {
     // Refresh a minute early; tokens last 15 minutes on self-managed 2.x.
-    if (token && Date.now() < tokenExpiresAt - 60_000) return token;
-    const res = await fetchImpl(`${api}/applications/token`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', Accept: 'application/json'},
-      body: JSON.stringify({client_id: clientId, client_secret: clientSecret, 'grant-type': 'client_credentials'}),
+    if (!refresh && token && Date.now() < tokenExpiresAt - 60_000) return token;
+    // Concurrent callers share one token request.
+    pendingToken ||= (async () => {
+      const res = await fetchImpl(`${api}/applications/token`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', Accept: 'application/json'},
+        body: JSON.stringify({client_id: clientId, client_secret: clientSecret, 'grant-type': 'client_credentials'}),
+      });
+      if (!res.ok) throw await airbyteError(res, 'POST /applications/token');
+      const body = await res.json();
+      token = body.access_token;
+      tokenExpiresAt = Date.now() + (body.expires_in || 900) * 1000;
+      return token;
+    })().finally(() => {
+      pendingToken = null;
     });
-    if (!res.ok) throw await airbyteError(res, 'POST /applications/token');
-    const body = await res.json();
-    token = body.access_token;
-    tokenExpiresAt = Date.now() + (body.expires_in || 900) * 1000;
-    return token;
+    return pendingToken;
   }
 
   async function request(method, path, body, root = api) {
-    const res = await fetchImpl(`${root}${path}`, {
+    const send = async bearer => fetchImpl(`${root}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${await accessToken()}`,
+        Authorization: `Bearer ${bearer}`,
         Accept: 'application/json',
         ...(body === undefined ? {} : {'Content-Type': 'application/json'}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    let res = await send(await accessToken());
+    // Airbyte's guidance: on 401, get a new token and retry once.
+    if (res.status === 401) res = await send(await accessToken({refresh: true}));
     if (!res.ok) throw await airbyteError(res, `${method} ${path}`);
     const text = await res.text();
     return text ? JSON.parse(text) : null;
@@ -55,16 +65,34 @@ export function createAirbyteClient({url, clientId, clientSecret, fetch: fetchIm
     return text ? `?${text}` : '';
   };
 
+  /** Follows limit/offset pages; list endpoints otherwise return only the first 20 items. */
+  async function listAll(path, params = {}) {
+    const limit = 100;
+    const data = [];
+    for (let offset = 0; ; offset += limit) {
+      const page = await request('GET', `${path}${query({...params, limit, offset})}`);
+      data.push(...(page?.data || []));
+      if ((page?.data || []).length < limit) return {data};
+    }
+  }
+
   return {
     request,
-    health: async () => (await fetchImpl(`${api}/health`)).ok,
+    health: async () => {
+      try {
+        return (await fetchImpl(`${api}/health`)).ok;
+      } catch {
+        return false;
+      }
+    },
 
-    listWorkspaces: () => request('GET', '/workspaces'),
+    listWorkspaces: () => listAll('/workspaces'),
     listSourceDefinitions: workspaceId => request('GET', `/workspaces/${workspaceId}/definitions/sources`),
     listDestinationDefinitions: workspaceId => request('GET', `/workspaces/${workspaceId}/definitions/destinations`),
 
     // Source OAuth. The public API's /sources/initiateOAuth and /workspaces/{id}/oauthCredentials
     // return 501 on self-managed Community, so these use the config API that the Airbyte UI uses.
+    // Airbyte has deprecated that API and may change it without notice; verified on 2.4.0.
     getSourceSpec: (workspaceId, sourceDefinitionId) =>
       config('/source_definition_specifications/get', {workspaceId, sourceDefinitionId}),
     /** Upserts the workspace's own OAuth app (e.g. {client_id, client_secret}) for a source definition. */
@@ -77,27 +105,34 @@ export function createAirbyteClient({url, clientId, clientSecret, fetch: fetchIm
     completeSourceOAuth: ({workspaceId, sourceDefinitionId, redirectUrl, queryParams, oAuthInputConfiguration = {}}) =>
       config('/source_oauths/complete_oauth', {workspaceId, sourceDefinitionId, redirectUrl, queryParams, oAuthInputConfiguration}),
 
-    listSources: ({workspaceIds, limit, offset} = {}) => request('GET', `/sources${query({workspaceIds, limit, offset})}`),
+    listSources: ({workspaceIds} = {}) => listAll('/sources', {workspaceIds}),
     getSource: sourceId => request('GET', `/sources/${sourceId}`),
-    /** configuration must include sourceType, or pass definitionId. Pass secretId after an OAuth redirect. */
-    createSource: ({workspaceId, name, configuration, definitionId, secretId}) =>
-      request('POST', '/sources', {workspaceId, name, configuration, definitionId, secretId}),
+    /** configuration must include sourceType, or pass definitionId. */
+    createSource: ({workspaceId, name, configuration, definitionId}) =>
+      request('POST', '/sources', {workspaceId, name, configuration, definitionId}),
     deleteSource: sourceId => request('DELETE', `/sources/${sourceId}`),
 
-    listDestinations: ({workspaceIds, limit, offset} = {}) => request('GET', `/destinations${query({workspaceIds, limit, offset})}`),
+    listDestinations: ({workspaceIds} = {}) => listAll('/destinations', {workspaceIds}),
     createDestination: ({workspaceId, name, configuration, definitionId}) =>
       request('POST', '/destinations', {workspaceId, name, configuration, definitionId}),
     deleteDestination: destinationId => request('DELETE', `/destinations/${destinationId}`),
 
     getStreams: ({sourceId, destinationId}) => request('GET', `/streams${query({sourceId, destinationId})}`),
-    listConnections: ({workspaceIds, limit, offset} = {}) => request('GET', `/connections${query({workspaceIds, limit, offset})}`),
+    listConnections: ({workspaceIds} = {}) => listAll('/connections', {workspaceIds}),
     createConnection: connection => request('POST', '/connections', connection),
     deleteConnection: connectionId => request('DELETE', `/connections/${connectionId}`),
 
     sync: connectionId => request('POST', '/jobs', {connectionId, jobType: 'sync'}),
     getJob: jobId => request('GET', `/jobs/${jobId}`),
-    listJobs: ({connectionId, limit, offset} = {}) => request('GET', `/jobs${query({connectionId, limit, offset})}`),
+    /** Newest first; the API's default order is oldest first. */
+    listJobs: ({connectionId, limit = 20, offset} = {}) =>
+      request('GET', `/jobs${query({connectionId, limit, offset, orderBy: 'createdAt|DESC'})}`),
   };
+}
+
+/** The S3 prefix a source lands under: lowercase ASCII letters, digits and single underscores. */
+export function landingPrefix(name) {
+  return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
 /** Values a connector needs before consent, e.g. a Shopify shop name, read from its configuration. */
