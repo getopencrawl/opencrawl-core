@@ -22,7 +22,7 @@ for (const [os, arch, target] of selected) {
     const binary = join(directory, 'bin/opencrawl');
     if (Bun.spawnSync(['codesign', '--force', '--sign', '-', binary]).exitCode !== 0 || Bun.spawnSync(['codesign', '--verify', '--strict', binary]).exitCode !== 0) throw new Error('macOS signing failed.');
   }
-  writeFileSync(join(directory, 'package.json'), JSON.stringify({name, version: pkg.version, description: `OpenCrawl binary for ${os}/${arch}`, license: pkg.license, os: [os], cpu: [arch], files: ['bin'], publishConfig: pkg.publishConfig}, null, 2) + '\n');
+  writeFileSync(join(directory, 'package.json'), JSON.stringify({name, version: pkg.version, description: `OpenCrawl binary for ${os}/${arch}`, license: pkg.license, repository: pkg.repository, os: [os], cpu: [arch], files: [os === 'win32' ? 'bin/opencrawl.exe' : 'bin/opencrawl'], publishConfig: pkg.publishConfig}, null, 2) + '\n');
   copyFileSync(join(root, 'README.md'), join(directory, 'README.md'));
   optionalDependencies[name] = pkg.version;
 }
