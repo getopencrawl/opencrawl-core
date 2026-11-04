@@ -3,10 +3,29 @@
   "version": "0.1.0",
   "type": "module",
   "license": "UNLICENSED",
-  "exports": {".": "./src/index.mjs", "./web/*": "./web/*", "./revision.json": "./revision.json"},
-  "files": ["src", "web", "revision.json"],
-  "repository": {"type": "git", "url": "https://github.com/1patch/opencrawl-core.git"},
-  "publishConfig": {"registry": "https://npm.pkg.github.com", "access": "restricted"},
-  "engines": {"node": ">=24"},
-  "scripts": {"start": "node src/standalone.mjs", "test": "node --test"}
+  "exports": {
+    ".": "./src/index.mjs",
+    "./web/*": "./web/*",
+    "./revision.json": "./revision.json"
+  },
+  "files": [
+    "src",
+    "web",
+    "revision.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/1patch/opencrawl-core.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/standalone.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
 }

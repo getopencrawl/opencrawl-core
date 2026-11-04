@@ -1,0 +1,13 @@
+{
+  "name": "@opencrawl/cli",
+  "version": "0.1.0",
+  "description": "OpenCrawl CLI: sign in now, query the index as features become available",
+  "type": "module",
+  "license": "UNLICENSED",
+  "bin": {"opencrawl": "bin/opencrawl.cjs"},
+  "files": ["bin/opencrawl.cjs", "README.md"],
+  "repository": {"type": "git", "url": "https://github.com/1patch/opencrawl-core.git", "directory": "cli"},
+  "engines": {"node": ">=22"},
+  "publishConfig": {"access": "public", "registry": "https://registry.npmjs.org"},
+  "scripts": {"test": "bun test", "build": "bun scripts/build.ts"}
+}
