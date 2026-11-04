@@ -12,7 +12,7 @@ const {parseArgs} = require('node:util');
 const ROOT = path.resolve(__dirname, '..');
 const PACKAGE = '@getopencrawl/cli';
 const REGISTRY = 'https://registry.npmjs.org';
-const CHANNEL = 'v2';
+const CHANNEL = 'next';
 const DAY = 24 * 60 * 60 * 1000;
 const cacheRoot = () => path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'opencrawl');
 const stable = value => typeof value === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value);
@@ -39,7 +39,7 @@ function binary(root) {
   const localRequire = createRequire(path.join(root, 'package.json'));
   let manifest;
   try { manifest = localRequire.resolve(`${PACKAGE}-${key}/package.json`); }
-  catch { throw new Error('Missing platform package. Reinstall with npm install -g @getopencrawl/cli@v2 --include=optional.'); }
+  catch { throw new Error('Missing platform package. Reinstall with npm install -g @getopencrawl/cli@next --include=optional.'); }
   const pkg = read(manifest);
   if (pkg?.name !== `${PACKAGE}-${key}` || pkg.version !== read(path.join(root, 'package.json'))?.version) throw new Error('The platform package version does not match the CLI.');
   const file = path.join(path.dirname(manifest), 'bin', process.platform === 'win32' ? 'opencrawl.exe' : 'opencrawl');
@@ -161,7 +161,7 @@ async function main(args = process.argv.slice(2)) {
 }
 module.exports = {target, stable, compare, activeRoot, update, installRelease, binary, npmCli, main};
 if (require.main === module) main().then(code => { process.exitCode = code; }).catch(() => {
-  const message = 'Could not run or update OpenCrawl. Retry, or reinstall with npm install -g @getopencrawl/cli@v2 --include=optional.';
+  const message = 'Could not run or update OpenCrawl. Retry, or reinstall with npm install -g @getopencrawl/cli@next --include=optional.';
   if (process.argv.includes('--json')) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code: 'LAUNCHER_ERROR', message}}) + '\n');
   else process.stderr.write(`opencrawl: ${message}\n`);
   process.exitCode = 1;
