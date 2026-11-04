@@ -8,6 +8,7 @@ import { gunzipSync } from 'node:zlib';
 import { signRequest, createObjectStore, awsCredentials } from '../integrations/agent-sessions/store.mjs';
 import { createReceiver, storeFromEnv } from '../integrations/agent-sessions/receiver.mjs';
 import { createReceiverClient, discover, syncFile, splitExport, parseEvery, nextSyncAt } from '../integrations/agent-sessions/collector.mjs';
+import { aws, receiverPolicy, tlsOnlyPolicy, validBucketName } from '../integrations/agent-sessions/s3-setup.mjs';
 
 function memoryStore() {
   const objects = new Map();
@@ -300,6 +301,30 @@ test('syncs on a schedule like an Airbyte connection: full first, then every int
   const failed = {ok: false, startedAt: '2026-11-04T10:00:00Z', finishedAt: '2026-11-04T10:00:05Z'};
   assert.equal(nextSyncAt(failed, hour), Date.parse('2026-11-04T10:05:05Z'), 'retried after five minutes');
   assert.equal(nextSyncAt(failed, 60_000), Date.parse('2026-11-04T10:01:05Z'), 'or sooner if the schedule is shorter');
+});
+
+test('bucket setup grants the receiver only its own prefix and refuses plain HTTP', () => {
+  assert.deepEqual(receiverPolicy('acme', 'team').Statement.map(s => [s.Action, s.Resource]), [
+    ['s3:ListBucket', 'arn:aws:s3:::acme'],
+    [['s3:GetObject', 's3:PutObject', 's3:DeleteObject'], 'arn:aws:s3:::acme/team/agent-sessions/*'],
+  ]);
+  const tls = tlsOnlyPolicy('acme').Statement[0];
+  assert.equal(tls.Effect, 'Deny');
+  assert.deepEqual(tls.Condition, {Bool: {'aws:SecureTransport': 'false'}});
+  assert.ok(validBucketName('opencrawl-017535066453-us-east-1'));
+  for (const bad of ['Upper', 'a', 'has_underscore', 'double--hyphen', 'xn--x', 'end-']) assert.ok(!validBucketName(bad), bad);
+});
+
+test('bucket setup tells agents whether to sign in, rather than failing opaquely', async () => {
+  const exec = stderr => async () => { throw Object.assign(new Error('failed'), {stderr}); };
+  for (const stderr of ['Unable to locate credentials. You can configure credentials by running "aws login".',
+    'Error when retrieving token from sso: Token has expired and refresh failed',
+    'Error loading SSO Token: Token for onepatch does not exist']) {
+    await assert.rejects(aws(['sts', 'get-caller-identity'], {exec: exec(stderr)}), e => e.reason === 'signed-out');
+  }
+  await assert.rejects(aws(['s3api', 'create-bucket'], {exec: exec('BucketAlreadyExists')}), e => e.reason === 'aws-error');
+  await assert.rejects(aws(['sts'], {exec: async () => { throw Object.assign(new Error('spawn aws ENOENT'), {code: 'ENOENT'}); }}), e => e.reason === 'no-cli');
+  assert.deepEqual(await aws(['sts'], {exec: async () => ({stdout: '{"Account":"1"}'})}), {Account: '1'});
 });
 
 test('agent session tooling stays dependency-free and outside the core package', async () => {

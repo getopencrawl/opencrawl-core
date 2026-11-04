@@ -20,24 +20,43 @@ S3 and SeaweedFS 4.52.
 | `collector.mjs` | Runs on each machine with agents: finds transcripts, uploads new bytes, imports exports, bridges MCP |
 | `receiver.mjs` | HTTP API and MCP endpoint that write sessions to the store; serves the collector installer |
 | `store.mjs` | Zero-dependency S3 client (Signature V4) |
+| `s3-setup.mjs` | Lists, creates and connects the bucket through the user's AWS CLI; JSON output for agents |
+| `SETUP.md` | Setup runbook that coding agents follow |
 | `compose.yaml` | Receiver, plus SeaweedFS under the `bundled-s3` profile; bound to loopback |
 | `.env.example` | Every setting the receiver reads |
 
 ## Quickstart
 
-Requires Docker, Node 20 or newer, and an S3 bucket with an access key that can
-list it and read and write `opencrawl/agent-sessions/*` (see "S3" below).
+Requires Docker, Node 20 or newer, and an AWS account.
+
+### With your agent
+
+Paste this into Claude Code, Codex, Cursor or any agent with a shell:
+
+> Clone github.com/1patch/opencrawl-core and set up OpenCrawl agent session
+> capture as its AGENTS.md describes. Check with me before you create anything in
+> my AWS account.
+
+The agent follows [`SETUP.md`](SETUP.md). You sign in to AWS in your browser or
+terminal, choose or name the bucket, and approve what it creates.
+
+### By hand
 
 ```sh
 cd integrations/agent-sessions
-cp .env.example .env   # then set the OPENCRAWL_LANDING_S3_* values
+node s3-setup.mjs check                         # AWS CLI signed in?
+node s3-setup.mjs buckets                       # pick one, or create one:
+node s3-setup.mjs create my-opencrawl-bucket --region us-east-1
+node s3-setup.mjs connect my-opencrawl-bucket   # IAM user and key, written to .env
 ./local.sh up
 curl -fsSL http://127.0.0.1:7171/install.sh | sh
 node ~/.opencrawl/agent-sessions/collector.mjs status
 ```
 
-`local.sh up` checks that it can reach the bucket and refuses to start otherwise.
-No bucket yet? `local.sh up --bundled-s3` runs a local S3 (SeaweedFS) for
+With a bucket and key already, copy `.env.example` to `.env`, set the
+`OPENCRAWL_LANDING_S3_*` values and skip the `s3-setup.mjs` steps. `local.sh up`
+checks that it can reach the bucket and refuses to start otherwise.
+No AWS account? `local.sh up --bundled-s3` runs a local S3 (SeaweedFS) for
 development and offline use.
 
 The install script downloads the collector to `~/.opencrawl/agent-sessions/` and
