@@ -39,7 +39,7 @@ export function createSessionIngest({store, prefix = 'capture-v1'}) {
       const serialized = JSON.stringify(batch);
       if (Buffer.byteLength(serialized) > MAX_BATCH_BYTES) fail(413, 'Batch exceeds limit');
       const batchId = digest(serialized);
-      const key = `${keyPrefix}/${batch.harness}/${batch.installationId}/${batch.sessionId}/${batchId}.json.gz`;
+      const key = `${keyPrefix}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/${batchId}.json.gz`;
       // Immutable content-addressed batches: retries and simultaneous delivery do not duplicate or overwrite events.
       if (!await store.get(key)) {
         const record = {...batch, owner: {tenantId: principal.tenantId, userId: principal.userId,
@@ -50,7 +50,7 @@ export function createSessionIngest({store, prefix = 'capture-v1'}) {
     },
     async getBatch(principal, {harness, installationId, sessionId, batchId}) {
       if (!['claude-code','codex'].includes(harness) || !id(installationId) || !id(sessionId) || !/^[a-f0-9]{64}$/.test(batchId)) fail(400, 'Invalid receipt');
-      const data = await store.get(`${scope(principal)}/${harness}/${installationId}/${sessionId}/${batchId}.json.gz`);
+      const data = await store.get(`${scope(principal)}/${harness}/${digest(installationId)}/${digest(sessionId)}/${batchId}.json.gz`);
       return data ? JSON.parse(gunzipSync(data)) : null;
     }
   };

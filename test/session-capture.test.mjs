@@ -24,4 +24,8 @@ test('portable capture durably stores attachments and idempotent account-scoped 
  assert.equal(await restarted.getBatch({...principal,userId:'owner2'},ids),null);
  await assert.rejects(ingest.putBatch({...principal,userId:'owner2'},batch),/owner/);
  await assert.rejects(ingest.putBatch(null,batch),/Authentication/);
+ const odd={...batch,installationId:'..',sessionId:'..'};
+ const oddReceipt=await ingest.putBatch(principal,odd);
+ assert.ok(await ingest.getBatch(principal,{...odd,batchId:oddReceipt.batchId}));
+ assert.equal(await ingest.getBatch({...principal,userId:'owner2'},{...odd,batchId:oddReceipt.batchId}),null);
 });
