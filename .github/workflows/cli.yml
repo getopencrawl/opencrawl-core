@@ -72,7 +72,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
     needs: [build, checks]
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 50
     environment: npm
     permissions:
       contents: read
