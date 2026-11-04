@@ -8,6 +8,7 @@ const os = require('node:os');
 const {createRequire} = require('node:module');
 const {spawn, spawnSync} = require('node:child_process');
 const {randomUUID} = require('node:crypto');
+const {parseArgs} = require('node:util');
 const ROOT = path.resolve(__dirname, '..');
 const PACKAGE = '@getopencrawl/cli';
 const REGISTRY = 'https://registry.npmjs.org';
@@ -142,8 +143,10 @@ async function main(args = process.argv.slice(2)) {
     if (delegated.error) throw new Error('Could not start the cached launcher.');
     return delegated.signal === 'SIGINT' ? 130 : delegated.status ?? 1;
   }
-  if (args.includes('update')) {
-    if (args.filter(arg => arg !== '--json').join(' ') !== 'update') throw new Error('Usage: opencrawl update [--json]');
+  let parsed;
+  try { parsed = parseArgs({args, allowPositionals: true, options: {json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+  catch {} // The native parser produces the public, versioned usage error.
+  if (parsed?.positionals.length === 1 && parsed.positionals[0] === 'update' && !parsed.values.help && !parsed.values.version) {
     const data = await update({force: true});
     process.stdout.write(args.includes('--json') ? JSON.stringify({schemaVersion: 1, data}) + '\n' : data.busy ? 'An update is already running.\n' : data.updated ? `Installed opencrawl ${data.version}. Your next invocation will use it.\n` : `opencrawl ${data.version} is current.\n`);
     return 0;

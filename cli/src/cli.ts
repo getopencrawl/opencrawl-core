@@ -61,7 +61,7 @@ export async function main(args = process.argv.slice(2)) {
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
     if (!['login', 'logout', 'whoami', 'status', 'update'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
-    const api = apiOrigin(parsed.values.api as string || process.env.OPENCRAWL_API_URL || 'https://v2.getopencrawl.com');
+    const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL ?? 'https://v2.getopencrawl.com');
     if (command === 'logout') { await logout(api); emit({api, authenticated: false, localCredentialsRemoved: true}, 'Removed saved credentials from this machine.'); return 0; }
     if (command === 'login') {
       const auth = await discover(api);

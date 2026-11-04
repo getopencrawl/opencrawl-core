@@ -18,7 +18,9 @@ export function secureUrl(value: unknown): string {
 }
 
 export function apiOrigin(value: string): string {
-  const url = new URL(secureUrl(value));
+  let url: URL;
+  try { url = new URL(secureUrl(value)); }
+  catch { throw new CliError('INVALID_USAGE', '--api must be an HTTPS origin, or an HTTP loopback origin for development.', 64); }
   if (url.pathname !== '/' || url.search) throw new CliError('INVALID_USAGE', '--api must be an origin without a path or query.', 64);
   return url.origin;
 }
