@@ -1,21 +1,27 @@
 # Integrations
 
-Connects a self-hosted OpenCrawl to the data people already keep in other tools
-(Google Drive, Notion, Slack, GitHub, databases, and more), so their agents can
-search all of it through one index.
+Connects a self-hosted OpenCrawl to the context people already have: the data in
+their tools (Google Drive, Notion, Slack, GitHub, databases, and more) and the
+transcripts of the agent sessions they run. Both land in the same S3 bucket, so
+their agents can search all of it through one index.
 
 ```
- data sources ──► Airbyte (self-hosted) ──► S3 bucket ──────► OpenCrawl indexer ──► search / MCP
-  Drive, Notion,   auth, sync schedules,     JSONL, one        (not built yet)
-  Slack, DBs ...   600 connectors            prefix per source
+ data sources ──► Airbyte (self-hosted) ──► S3 bucket ──────────┬──► OpenCrawl indexer ──► search / MCP
+  Drive, Notion,   auth, sync schedules,     <path>/<source>/    │    (not built yet)
+  Slack, DBs ...   600 connectors                                │
+                                                                 │
+ agent sessions ─► collector ─► receiver ──► S3 bucket ──────────┘
+  Claude Code,      hourly sync  HTTP + MCP  <path>/agent-sessions/
+  Codex, ChatGPT    per machine
 ```
 
 | Directory | Status |
 | --- | --- |
 | [`airbyte/`](airbyte/README.md) | Working: local install, production Helm values, source sign-in, S3 landing, sync CLI |
+| [`agent-sessions/`](agent-sessions/README.md) | Working: Claude Code, Codex and Gemini CLI capture, ChatGPT and Claude.ai exports, MCP, S3 landing |
 
-This directory is operator tooling: scripts, deployment config and a small API
-client. It is not part of the published `@1patch/opencrawl-core` package, and
+This directory is operator tooling: scripts, deployment config and small API
+clients. It is not part of the published `@1patch/opencrawl-core` package, and
 `src/` does not import it. Like the core, it has no npm dependencies. When the
 indexer needs to read landed records, add that interface to the core then.
 
