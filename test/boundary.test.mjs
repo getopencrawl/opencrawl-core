@@ -15,7 +15,7 @@ function checkImports(source, file, root = sourceRoot) {
   for (const match of source.matchAll(/\b(?:from\s*|import\s*(?:\(\s*)?|require(?:\.resolve)?\s*\(\s*)["']([^"']+)["']/g)) {
     const specifier = match[1];
     assert.ok(!specifier.includes('\\'), `Escaped dependency needs review: ${specifier}`);
-    if (specifier.startsWith('node:')) continue;
+    if (specifier.startsWith('node:') || ['@modelcontextprotocol/server', '@modelcontextprotocol/server/ext/skills/node', '@modelcontextprotocol/node', 'zod'].includes(specifier)) continue;
     assert.ok(specifier.startsWith('./') || specifier.startsWith('../'), `Forbidden core dependency: ${specifier}`);
     assert.ok(new URL(specifier, file).href.startsWith(root.href), `Dependency escapes product runtime: ${specifier}`);
   }
@@ -35,11 +35,11 @@ test('core runs without any hosted service or credentials', () => {
   assert.equal(renderHello(), '<main><h1>hello world</h1></main>');
 });
 
-test('core runtime imports stay inside src or Node builtins, including nested modules', async () => {
+test('core runtime imports stay inside src, Node builtins, or reviewed portable libraries', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url)));
-  // This is the current dependency-free policy, not a permanent ban on portable
-  // libraries. Review runtime/optional/peer dependencies before changing it.
-  for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+  // Reviewed portable MCP SDK (Apache-2.0) and schema validation (MIT).
+  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@modelcontextprotocol/node', '@modelcontextprotocol/server', 'zod']);
+  for (const field of ['optionalDependencies', 'peerDependencies']) {
     assert.deepEqual(pkg[field] || {}, {}, `${field} require boundary review`);
   }
   await checkTree(sourceRoot);
