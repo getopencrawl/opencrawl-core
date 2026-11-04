@@ -1,0 +1,79 @@
+/* OpenCrawl Soft paper. The shared visual vocabulary for every product surface. */
+@font-face {
+  font-family: Geist;
+  src: url('/assets/geist-sans.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/assets/geist-mono.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+:root {
+  color-scheme: light dark;
+  --font-sans: Geist, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+  --text-xs: .75rem;
+  --text-sm: .8125rem;
+  --text-ui: .875rem;
+  --text-body: .9375rem;
+  --text-title: 1rem;
+  --text-heading: 1.125rem;
+  --text-welcome: 1.625rem;
+  --text-welcome-mobile: 1.5rem;
+  --text-brand: 1.3125rem;
+  --text-brand-compact: 1.1875rem;
+  --leading-ui: 1.5;
+  --leading-prose: 1.7;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --radius-badge: 4px;
+  --radius-control: 6px;
+  --radius-message: 10px;
+  --radius-panel: 12px;
+  --control-height: 40px;
+  --header-height: 56px;
+  --pane-inset: 24px;
+  --chat-width: 800px;
+  --motion-fast: 150ms ease-out;
+  --bg: light-dark(#f2f0f3, #17151b);
+  --surface: light-dark(#ffffff, #211e27);
+  --surface-subtle: light-dark(#f7f6f9, #2b2733);
+  --text: light-dark(#232129, #eeecf3);
+  --muted: light-dark(#645f6b, #bdb7c8);
+  --line: light-dark(#e1dde6, #49434f);
+  --control-line: light-dark(#96909f, #7f778c);
+  --accent: light-dark(#4f49cf, #b1adff);
+  --accent-hover: light-dark(#4138b6, #cecaff);
+  --primary: light-dark(#7d82ff, #969aff);
+  --primary-hover: light-dark(#6e74f2, #a8abff);
+  --on-primary: #0c0d2a;
+  --brand-face: #7d82ff;
+  --brand-coral: #ff6268;
+  --brand-cobalt: #164bff;
+  --wash: light-dark(#eae9ff, #35314c);
+  --selection: light-dark(#dcd9ff, #4c456e);
+  --success: light-dark(#32734b, #a0d7b0);
+  --success-wash: light-dark(#edf7ef, #25372b);
+  --pending: light-dark(#825a1f, #e6c088);
+  --pending-wash: light-dark(#fcf4e7, #3b3022);
+  --danger: light-dark(#ae3344, #ffabb8);
+  --danger-wash: light-dark(#fff0f2, #432a32);
+  --backdrop: light-dark(rgb(25 18 35 / .32), rgb(0 0 0 / .56));
+  --shadow-paper: 0 2px 6px light-dark(rgb(48 33 59 / .05), rgb(0 0 0 / .16));
+  --shadow-floating: 0 4px 16px light-dark(rgb(48 33 59 / .12), rgb(0 0 0 / .28));
+  --shadow-dialog: 0 16px 48px light-dark(rgb(25 18 35 / .2), rgb(0 0 0 / .4));
+}
+:root[data-appearance="light"] { color-scheme: light; }
+:root[data-appearance="dark"] { color-scheme: dark; }
