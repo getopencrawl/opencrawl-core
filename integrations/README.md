@@ -5,14 +5,14 @@ Connects a self-hosted OpenCrawl to the data people already keep in other tools
 search all of it through one index.
 
 ```
- data sources ──► Airbyte (self-hosted) ──► landing store ──► OpenCrawl indexer ──► search / MCP
-  Drive, Notion,   auth, sync schedules,     Postgres or S3     (not built yet)
-  Slack, DBs ...   600 connectors            one schema per source
+ data sources ──► Airbyte (self-hosted) ──► S3 bucket ──────► OpenCrawl indexer ──► search / MCP
+  Drive, Notion,   auth, sync schedules,     JSONL, one        (not built yet)
+  Slack, DBs ...   600 connectors            prefix per source
 ```
 
 | Directory | Status |
 | --- | --- |
-| [`airbyte/`](airbyte/README.md) | Working: local install, production Helm values, source sign-in, landing store, sync CLI |
+| [`airbyte/`](airbyte/README.md) | Working: local install, production Helm values, source sign-in, S3 landing, sync CLI |
 
 This directory is operator tooling: scripts, deployment config and a small API
 client. It is not part of the published `@1patch/opencrawl-core` package, and

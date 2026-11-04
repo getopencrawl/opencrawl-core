@@ -1,22 +1,21 @@
 # Airbyte
 
 Self-hosted [Airbyte](https://github.com/airbytehq/airbyte) moves data from users'
-tools into a landing store, which the OpenCrawl indexer reads from.
+tools into an S3 bucket, which the OpenCrawl indexer reads from.
 
 Verified with Airbyte 2.4.0 (Helm chart 2.4.0), abctl v0.30.4 and Node 22/24.
 
 | File | Purpose |
 | --- | --- |
-| `local.sh` | Install and run Airbyte plus the landing store on one machine |
-| `cli.mjs` | Connect sources (including OAuth sign-in), link them to the landing store, run syncs |
+| `local.sh` | Install and run Airbyte on one machine |
+| `cli.mjs` | Connect sources (including OAuth sign-in), link them to the S3 landing bucket, run syncs |
 | `client.mjs` | Zero-dependency client for the Airbyte API |
-| `landing/compose.yaml` | Postgres landing store on abctl's Docker network |
-| `helm/` | Production values for Kubernetes (external Postgres and S3) |
+| `helm/` | Production values for Kubernetes (external Postgres and S3 for Airbyte's own state) |
 | `.env.example` | Every setting the scripts read |
 
 ## Local quickstart
 
-Requires Docker. Airbyte recommends 4 CPUs and 8 GB of RAM. On smaller machines
+Requires Docker and an existing S3 bucket that synced data lands in. Airbyte recommends 4 CPUs and 8 GB of RAM. On smaller machines
 `local.sh` switches to `--low-resource-mode`, which disables the Connector Builder.
 
 ```sh
@@ -28,9 +27,11 @@ node integrations/airbyte/cli.mjs status
 
 1. Downloads abctl, pinned and checksum-verified.
 2. Installs Airbyte into a local kind cluster. The first run takes 5–15 minutes.
-3. Starts the landing Postgres.
-4. Writes `integrations/airbyte/.env` with mode 600. It contains the Airbyte API
-   credentials and a generated landing password.
+3. Writes `integrations/airbyte/.env` with mode 600. It contains the Airbyte API
+   credentials.
+
+Then set `OPENCRAWL_LANDING_S3_BUCKET` (and region, plus access keys unless the
+machine has an AWS role) in `.env`.
 
 Running `up` again is safe. The Airbyte UI is at http://localhost:8000; get the
 login with `local.sh credentials`.
@@ -43,8 +44,8 @@ node integrations/airbyte/cli.mjs connect faker --config /tmp/faker.json --name 
 node integrations/airbyte/cli.mjs list
 ```
 
-Records land in the `sample_data` schema of the landing database, at
-`127.0.0.1:5433` from the host. Each connected source gets its own schema.
+Records land as JSONL under `s3://<bucket>/opencrawl/sample_data/<stream>/`.
+Each connected source gets its own prefix.
 
 ## Connecting sources
 
@@ -96,14 +97,12 @@ Three API details were verified against a live 2.4.0 install:
 
 ## Landing store
 
-Every connection writes to one destination named `OpenCrawl landing`.
-
-- **Postgres (default).** Typed tables plus `_airbyte_raw_id`, `_airbyte_extracted_at`,
-  `_airbyte_meta` and `_airbyte_generation_id`. One schema per source.
-- **S3.** Set `OPENCRAWL_LANDING_S3_BUCKET` to land uncompressed JSONL instead.
-  Omit the access keys to use the instance role.
-
-Both are Airbyte-certified GA destinations. The indexer that turns landed
+Every connection writes to one S3 destination named `OpenCrawl landing`, an
+Airbyte-certified GA connector. Records are uncompressed JSONL at
+`<OPENCRAWL_LANDING_S3_PATH>/<source>/<stream>/`, one object per sync batch, each
+line carrying `_airbyte_raw_id`, `_airbyte_extracted_at`, `_airbyte_meta`,
+`_airbyte_generation_id` and the record under `_airbyte_data`. Omit the access
+keys to use the instance role. The indexer that turns landed
 records into OpenCrawl documents is the next piece of work and does not exist yet.
 
 ## Production (Kubernetes)

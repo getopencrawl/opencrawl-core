@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Run self-hosted Airbyte (via abctl) plus the OpenCrawl landing store on one machine.
+# Run self-hosted Airbyte (via abctl) on one machine. Syncs land in S3 (see .env.example).
 #
-#   ./local.sh up           install or start Airbyte and the landing store, write .env
+#   ./local.sh up           install or start Airbyte, write .env
 #   ./local.sh status       show what is running
 #   ./local.sh credentials  print the Airbyte UI login
-#   ./local.sh down         stop the landing store and uninstall Airbyte, keeping data
-#   ./local.sh destroy      remove Airbyte and landing data
+#   ./local.sh down         uninstall Airbyte, keeping its data
+#   ./local.sh destroy      remove Airbyte and its data (the S3 bucket is untouched)
 #
 # Settings (environment): AIRBYTE_PORT (8000), AIRBYTE_HOST (public hostname, optional),
 # AIRBYTE_CHART_VERSION, ABCTL_VERSION, ABCTL_LOW_RESOURCE=1. Set DO_NOT_TRACK=1 to opt
@@ -17,7 +17,6 @@ AIRBYTE_CHART_VERSION="${AIRBYTE_CHART_VERSION:-2.4.0}"
 AIRBYTE_PORT="${AIRBYTE_PORT:-8000}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$HERE/.env"
-COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$HERE/landing/compose.yaml")
 
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -101,13 +100,8 @@ up() {
   set_env AIRBYTE_URL "http://localhost:${AIRBYTE_PORT}"
   set_env AIRBYTE_CLIENT_ID "$(awk -F': *' '/^Client-Id/{print $2}' <<<"$creds")"
   set_env AIRBYTE_CLIENT_SECRET "$(awk -F': *' '/^Client-Secret/{print $2}' <<<"$creds")"
-  if [[ -z "$(get_env OPENCRAWL_LANDING_PASSWORD)" ]]; then
-    set_env OPENCRAWL_LANDING_PASSWORD "$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-  fi
-
   if [[ -z "$(get_env OPENCRAWL_LANDING_S3_BUCKET)" ]]; then
-    log "Starting the landing store"
-    "${COMPOSE[@]}" up -d --wait
+    log "Set OPENCRAWL_LANDING_S3_BUCKET in $ENV_FILE before connecting sources"
   fi
 
   log "Airbyte UI: http://localhost:${AIRBYTE_PORT} (login: ./local.sh credentials)"
@@ -116,7 +110,6 @@ up() {
 
 status() {
   "$ABCTL" local status 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E 'Status|Version|Chart|not found|Kubernetes' || true
-  [[ -f "$ENV_FILE" ]] && "${COMPOSE[@]}" ps 2>/dev/null || true
 }
 
 ABCTL="$(abctl_bin)"
@@ -124,14 +117,10 @@ case "${1:-}" in
   up) up ;;
   status) status ;;
   credentials) credentials ;;
-  down)
-    [[ -f "$ENV_FILE" ]] && "${COMPOSE[@]}" down || true
-    "$ABCTL" local uninstall
-    ;;
+  down) "$ABCTL" local uninstall ;;
   destroy)
-    read -r -p "Delete all Airbyte configuration and landing data? [y/N] " answer
+    read -r -p "Delete all Airbyte configuration and sync state? [y/N] " answer
     [[ "$answer" == [yY] ]] || exit 1
-    [[ -f "$ENV_FILE" ]] && "${COMPOSE[@]}" down -v || true
     "$ABCTL" local uninstall --persisted
     rm -rf "$HOME/.airbyte/abctl"
     ;;
