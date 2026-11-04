@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
-import { createAirbyteClient, applyOAuthPayload, oAuthInputConfiguration } from '../integrations/airbyte/client.mjs';
+import { createAirbyteClient, applyOAuthPayload, landingPrefix, oAuthInputConfiguration } from '../integrations/airbyte/client.mjs';
 
 function fakeFetch(routes) {
   const calls = [];
@@ -59,17 +59,64 @@ test('source OAuth uses the config API, which works on self-managed Community', 
   assert.deepEqual(calls.at(-1).body.oAuthInputConfiguration, {});
 });
 
-test('sync scopes list queries and posts a sync job', async () => {
+test('list calls follow every page', async () => {
+  const items = Array.from({length: 130}, (_, i) => ({connectionId: `c${i}`}));
   const {fetch, calls} = fakeFetch({
     'POST /api/public/v1/applications/token': token,
-    'GET /api/public/v1/connections': () => [200, {data: []}],
+    'GET /api/public/v1/connections': ({search}) => {
+      const params = new URLSearchParams(search);
+      const offset = Number(params.get('offset'));
+      return [200, {data: items.slice(offset, offset + Number(params.get('limit')))}];
+    },
+  });
+  const airbyte = createAirbyteClient({url: 'http://airbyte.test', clientId: 'id', clientSecret: 'secret', fetch});
+  const {data} = await airbyte.listConnections({workspaceIds: ['w1', 'w2']});
+  assert.equal(data.length, 130);
+  const pages = calls.filter(c => c.pathname.endsWith('/connections')).map(c => decodeURIComponent(c.search));
+  assert.deepEqual(pages, ['?workspaceIds=w1,w2&limit=100&offset=0', '?workspaceIds=w1,w2&limit=100&offset=100']);
+});
+
+test('lists jobs newest first and posts sync jobs', async () => {
+  const {fetch, calls} = fakeFetch({
+    'POST /api/public/v1/applications/token': token,
+    'GET /api/public/v1/jobs': () => [200, {data: []}],
     'POST /api/public/v1/jobs': () => [200, {jobId: 7, status: 'pending'}],
   });
   const airbyte = createAirbyteClient({url: 'http://airbyte.test', clientId: 'id', clientSecret: 'secret', fetch});
-  await airbyte.listConnections({workspaceIds: ['w1', 'w2'], limit: 5});
-  assert.equal(decodeURIComponent(calls.at(-1).search), '?workspaceIds=w1,w2&limit=5');
+  await airbyte.listJobs({connectionId: 'c1', limit: 1});
+  assert.equal(new URLSearchParams(calls.at(-1).search).get('orderBy'), 'createdAt|DESC');
   assert.deepEqual(await airbyte.sync('c1'), {jobId: 7, status: 'pending'});
   assert.deepEqual(calls.at(-1).body, {connectionId: 'c1', jobType: 'sync'});
+});
+
+test('gets a new token and retries once after a 401', async () => {
+  let issued = 0;
+  const {fetch, calls} = fakeFetch({
+    'POST /api/public/v1/applications/token': () => [200, {access_token: `tok${++issued}`, expires_in: 900}],
+    'GET /api/public/v1/sources/s1': ({headers}) => (headers.Authorization === 'Bearer tok1' ? [401, {detail: 'expired'}] : [200, {sourceId: 's1'}]),
+  });
+  const airbyte = createAirbyteClient({url: 'http://airbyte.test', clientId: 'id', clientSecret: 'secret', fetch});
+  assert.deepEqual(await airbyte.getSource('s1'), {sourceId: 's1'});
+  assert.equal(issued, 2);
+  assert.equal(calls.filter(c => c.pathname.endsWith('/sources/s1')).length, 2);
+});
+
+test('concurrent requests share one token request', async () => {
+  const {fetch, calls} = fakeFetch({
+    'POST /api/public/v1/applications/token': token,
+    'GET /api/public/v1/sources/s1': () => [200, {}],
+  });
+  const airbyte = createAirbyteClient({url: 'http://airbyte.test', clientId: 'id', clientSecret: 'secret', fetch});
+  await Promise.all([airbyte.getSource('s1'), airbyte.getSource('s1'), airbyte.getSource('s1')]);
+  assert.equal(calls.filter(c => c.pathname.endsWith('/applications/token')).length, 1);
+});
+
+test('health reports an unreachable server as down', async () => {
+  const fetch = async () => {
+    throw new TypeError('fetch failed');
+  };
+  const airbyte = createAirbyteClient({url: 'http://airbyte.test', clientId: 'id', clientSecret: 'secret', fetch});
+  assert.equal(await airbyte.health(), false);
 });
 
 // Shape of source-google-drive's advancedAuth as served by Airbyte 2.4.
@@ -107,6 +154,13 @@ test('reads pre-consent OAuth input from configuration', () => {
   }}}}};
   assert.deepEqual(oAuthInputConfiguration(spec, {shop: 'acme'}), {shop: 'acme'});
   assert.deepEqual(oAuthInputConfiguration(driveSpec, {}), {});
+});
+
+test('landing prefixes are stable, trimmed and may be empty for unusable names', () => {
+  assert.equal(landingPrefix('Acme GitHub'), 'acme_github');
+  assert.equal(landingPrefix('Acme!'), 'acme');
+  assert.equal(landingPrefix('  google-drive  '), 'google_drive');
+  assert.equal(landingPrefix('日本語'), '');
 });
 
 test('integrations stay dependency-free and outside the core package', async () => {
