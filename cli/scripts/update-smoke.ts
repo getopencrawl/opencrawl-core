@@ -46,10 +46,10 @@ try {
     writeFileSync(join(directory, 'package.json'), JSON.stringify(pkg));
     pack(directory);
   }
-  const server = Bun.serve({hostname: '127.0.0.1', port: 0, fetch(request) {
+  const server = Bun.serve({hostname: '127.0.0.1', port: 0, fetch(request): Response {
     const path = decodeURIComponent(new URL(request.url).pathname);
     for (const [name, releases] of packages) {
-      for (const [release, item] of releases) if (path === `/${name}/${release}.tgz`) return new Response(item.bytes);
+      for (const [release, item] of releases) if (path === `/${name}/${release}.tgz`) return new Response(Uint8Array.from(item.bytes));
       if (path === `/${name}`) return Response.json({name, 'dist-tags': {latest: version}, versions: Object.fromEntries([...releases].map(([release, item]) => [release, {...item.pkg, dist: {tarball: `${server.url.origin}/${name}/${release}.tgz`, integrity: 'sha512-' + createHash('sha512').update(item.bytes).digest('base64')}}]))});
     }
     return new Response('Not found', {status: 404});

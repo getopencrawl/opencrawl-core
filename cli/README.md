@@ -71,6 +71,8 @@ this release; distribute the npm command.
 ## Development and release
 
 ```sh
+bun install --cwd cli --frozen-lockfile --ignore-scripts
+bun run --cwd cli typecheck
 bun test cli
 cd cli
 bun run src/cli.ts --help

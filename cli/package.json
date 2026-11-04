@@ -4,10 +4,29 @@
   "description": "OpenCrawl CLI: sign in now, query the index as features become available",
   "type": "module",
   "license": "UNLICENSED",
-  "bin": {"opencrawl": "bin/opencrawl.cjs"},
+  "bin": {
+    "opencrawl": "bin/opencrawl.cjs"
+  },
   "files": ["bin/opencrawl.cjs", "README.md"],
-  "repository": {"type": "git", "url": "https://github.com/1patch/opencrawl-core.git", "directory": "cli"},
-  "engines": {"node": ">=22"},
-  "publishConfig": {"access": "public", "registry": "https://registry.npmjs.org"},
-  "scripts": {"test": "bun test", "build": "bun scripts/build.ts"}
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/1patch/opencrawl-core.git",
+    "directory": "cli"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "bun scripts/build.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "5.9.3"
+  }
 }

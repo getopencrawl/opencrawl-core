@@ -6,7 +6,7 @@ import {join, resolve} from 'node:path';
 test('real CLI processes sign in, rotate once concurrently, verify identity and log out without leaking tokens', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'opencrawl-flow-'));
   let refreshes = 0, polls = 0;
-  const server = Bun.serve({hostname: '127.0.0.1', port: 0, async fetch(request) {
+  const server = Bun.serve({hostname: '127.0.0.1', port: 0, async fetch(request): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (path === '/.well-known/opencrawl-cli') return Response.json({schemaVersion: 1, auth: {clientId: 'public', deviceAuthorizationEndpoint: `${server.url.origin}/device`, tokenEndpoint: `${server.url.origin}/token`}});
     if (path === '/device') return Response.json({device_code: 'never-print-device-secret', user_code: 'TEST-CODE', verification_uri: 'https://auth.example/device', interval: 1, expires_in: 60});

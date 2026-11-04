@@ -28,7 +28,7 @@ for (const [os, arch, target] of selected) {
 }
 const launcher = join(dist, 'cli');
 mkdirSync(join(launcher, 'bin'), {recursive: true});
-const {scripts, ...published} = pkg;
+const {scripts, devDependencies, ...published} = pkg;
 writeFileSync(join(launcher, 'package.json'), JSON.stringify({...published, optionalDependencies}, null, 2) + '\n');
 copyFileSync(join(root, 'bin/opencrawl.cjs'), join(launcher, 'bin/opencrawl.cjs'));
 chmodSync(join(launcher, 'bin/opencrawl.cjs'), 0o755);

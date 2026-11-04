@@ -21,10 +21,10 @@ try {
     const packed = JSON.parse(run(['npm', 'pack', '--json', '--pack-destination', scratch], directory))[0];
     artifacts.set(manifest.name, {pkg: manifest, bytes: readFileSync(join(scratch, packed.filename))});
   }
-  const server = Bun.serve({hostname: '127.0.0.1', port: 0, fetch(request) {
+  const server = Bun.serve({hostname: '127.0.0.1', port: 0, fetch(request): Response {
     const path = decodeURIComponent(new URL(request.url).pathname);
     for (const [name, artifact] of artifacts) {
-      if (path === `/${name}/tarball.tgz`) return new Response(artifact.bytes);
+      if (path === `/${name}/tarball.tgz`) return new Response(Uint8Array.from(artifact.bytes));
       if (path === `/${name}`) return Response.json({name, 'dist-tags': {latest: pkg.version}, versions: {[pkg.version]: {...artifact.pkg, dist: {tarball: `${server.url.origin}/${name}/tarball.tgz`, integrity: 'sha512-' + createHash('sha512').update(artifact.bytes).digest('base64')}}}});
     }
     return new Response('Not found', {status: 404});
