@@ -57,8 +57,8 @@ function activeRoot(root = ROOT) {
   }
   return root;
 }
-function npmCli() {
-  const candidates = [process.env.npm_execpath, path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'), path.resolve(path.dirname(process.execPath), '../lib/node_modules/npm/bin/npm-cli.js')];
+function npmCli(nodeExecutable = process.execPath) {
+  const candidates = [process.env.npm_execpath, path.join(path.dirname(nodeExecutable), 'node_modules/npm/bin/npm-cli.js'), path.resolve(path.dirname(nodeExecutable), '../lib/node_modules/npm/bin/npm-cli.js')];
   for (const directory of (process.env.PATH || '').split(path.delimiter)) candidates.push(path.join(directory, 'npm'));
   for (const file of candidates) {
     if (!file) continue;
@@ -159,7 +159,7 @@ async function main(args = process.argv.slice(2)) {
   if (result.signal === 'SIGINT') return 130;
   return result.status ?? 1;
 }
-module.exports = {target, stable, compare, activeRoot, update, installRelease, binary, main};
+module.exports = {target, stable, compare, activeRoot, update, installRelease, binary, npmCli, main};
 if (require.main === module) main().then(code => { process.exitCode = code; }).catch(() => {
   const message = 'Could not run or update OpenCrawl. Retry, or reinstall with npm install -g @getopencrawl/cli@v2 --include=optional.';
   if (process.argv.includes('--json')) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code: 'LAUNCHER_ERROR', message}}) + '\n');

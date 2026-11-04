@@ -4,12 +4,17 @@ import {readFileSync, mkdtempSync, rmSync, writeFileSync, mkdirSync} from 'node:
 import {join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
+import {createRequire} from 'node:module';
+const nodeExecutable = Bun.which('node');
+if (!nodeExecutable) throw new Error('Node is required for the npm install smoke test.');
+const npmCommand = [nodeExecutable, createRequire(import.meta.url)('../bin/opencrawl.cjs').npmCli(nodeExecutable)];
 const root = resolve(import.meta.dir, '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const scratch = mkdtempSync(join(tmpdir(), 'opencrawl-install-'));
 const platform = `${process.platform}-${process.arch}`;
 const artifacts = new Map<string, {bytes: Buffer; pkg: any}>();
 function run(command: string[], cwd?: string, env: Record<string, string | undefined> = {}) {
+  if (command[0] === 'npm') command = [...npmCommand, ...command.slice(1)];
   const result = Bun.spawnSync(command, {cwd, env: {...process.env, OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config'), XDG_CACHE_HOME: join(scratch, 'cache'), ...env}, stdout: 'pipe', stderr: 'pipe'});
   if (result.exitCode) throw new Error(`${command[0]} failed: ${result.stderr.toString()}`);
   return result.stdout.toString();
@@ -34,7 +39,7 @@ try {
     const install = join(scratch, 'install');
     mkdirSync(install);
     writeFileSync(join(install, 'package.json'), '{"private":true}');
-    const result = Bun.spawn(['npm', 'install', '--prefix', install, '--ignore-scripts', '--no-audit', '--no-fund', `--registry=${server.url.origin}`, `@getopencrawl/cli@${pkg.version}`], {cwd: install, env: {...process.env, npm_config_registry: server.url.origin}, stdout: 'pipe', stderr: 'pipe'});
+    const result = Bun.spawn([...npmCommand, 'install', '--prefix', install, '--ignore-scripts', '--no-audit', '--no-fund', `--registry=${server.url.origin}`, `@getopencrawl/cli@${pkg.version}`], {cwd: install, env: {...process.env, npm_config_registry: server.url.origin}, stdout: 'pipe', stderr: 'pipe'});
     const stderr = await new Response(result.stderr).text();
     if (await result.exited) throw new Error(`Packaged install failed: ${stderr}`);
     const command = ['node', join(install, 'node_modules/@getopencrawl/cli/bin/opencrawl.cjs')];

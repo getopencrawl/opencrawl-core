@@ -4,6 +4,10 @@ import {readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, cpSync} fro
 import {join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
+import {createRequire} from 'node:module';
+const nodeExecutable = Bun.which('node');
+if (!nodeExecutable) throw new Error('Node is required for the npm upgrade smoke test.');
+const npmCommand = [nodeExecutable, createRequire(import.meta.url)('../bin/opencrawl.cjs').npmCli(nodeExecutable)];
 const root = resolve(import.meta.dir, '..');
 const original = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const next = original.version.split('.').map(Number); next[2]++;
@@ -13,11 +17,13 @@ const scratch = mkdtempSync(join(tmpdir(), 'opencrawl-upgrade-'));
 const env = {...process.env, OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config'), XDG_CACHE_HOME: join(scratch, 'cache')};
 const packages = new Map<string, Map<string, {pkg: any; bytes: Buffer}>>();
 function sync(command: string[], cwd?: string) {
+  if (command[0] === 'npm') command = [...npmCommand, ...command.slice(1)];
   const child = Bun.spawnSync(command, {cwd, env, stdout: 'pipe', stderr: 'pipe'});
   if (child.exitCode) throw new Error(`${command[0]} failed: ${child.stderr.toString()}`);
   return child.stdout.toString().trim();
 }
 async function asyncRun(command: string[], cwd?: string) {
+  if (command[0] === 'npm') command = [...npmCommand, ...command.slice(1)];
   const child = Bun.spawn(command, {cwd, env, stdout: 'pipe', stderr: 'pipe'});
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   if (code) throw new Error(`${command[0]} failed: ${stderr}`);
