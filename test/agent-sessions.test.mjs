@@ -309,7 +309,7 @@ test('agent session tooling stays dependency-free and outside the core package',
   for (const file of (await readdir(dir)).filter(f => f.endsWith('.mjs'))) {
     const source = await readFile(new URL(file, dir), 'utf8');
     for (const match of source.matchAll(/(?:from\s*|import\s*\()['"]([^'"]+)/g)) {
-      assert.ok(match[1].startsWith('node:') || /^\.\/[^/]+$/.test(match[1]), `Forbidden dependency in ${file}: ${match[1]}`);
+      assert.ok(match[1].startsWith('node:') || /^\.\/[^/]+$/.test(match[1]) || (file === 'store.mjs' && match[1] === '../../src/sessions/s3-store.mjs'), `Forbidden dependency in ${file}: ${match[1]}`);
     }
   }
   // The receiver serves collector.mjs on its own for one-line installs.

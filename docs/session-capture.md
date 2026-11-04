@@ -41,3 +41,11 @@ The receiver defaults to loopback. Use HTTPS when exposing it remotely. The CLI 
 The hosted shell verifies the OAuth token and fresh verified WorkOS user. A signed organization claim also requires current active membership; otherwise the user has a personal tenant. The shared core enforces the resulting neutral principal. Each environment, tenant and user has a separate object prefix; attachment deduplication is scoped to that owner. The shell supplies the S3 adapter and deployment configuration. No WorkOS account or AWS dependency is required for the single-tenant offering.
 
 The HTTP protocol provides identity, attachment upload, immutable batch upload and receipt-based batch readback under /api/sessions/. Receipt readback is subject to the same owner scope as uploads.
+
+## Persistence, backup and versioning
+
+For the local receiver, stop writes before copying the entire configured session directory to a backup. Restore that directory with owner-only permissions and the same configured tenant/user identity, then restart the receiver; receipt readback verifies the restored records. Preserve the receiver token separately. Never merge backups belonging to different configured owners.
+
+Schema version 1 uses immutable batches and attachment objects; this first release requires no data migration. Keep existing objects when upgrading or rolling back the receiver. A binary without the capture API cannot serve these records, but does not erase them. Before downgrading the CLI to a version without capture, run collect uninstall to remove its hooks and scheduler. Hosted object lifecycle and backups remain the operator's responsibility.
+
+Revocation is checked at upload/read time. Queued background uploads re-authenticate and must match the enrollment identity. Hosted organization membership is checked on every request; removing membership rejects subsequent requests. Existing valid OAuth access tokens retain their ordinary token lifetime, while a failed refresh stops later uploads. Local collection continues until uninstall; failed uploads remain queued.

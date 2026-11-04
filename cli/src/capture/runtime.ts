@@ -78,6 +78,7 @@ function attachmentTransform(value:any, attachments:any[], cwd:string):any {
 }
 function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   if(!events.length)return;
+  if(!meta.sessionId)throw new CliError('CAPTURE_SESSION_UNKNOWN','Transcript has no session identity');
   const batch={schemaVersion:1,owner:config.owner,installationId:config.installationId,host:hostname(),...meta,events,attachments};
   const size=Buffer.byteLength(JSON.stringify(batch));
   if(size>16*1024*1024)throw new CliError('CAPTURE_BATCH_TOO_LARGE','A capture record exceeds the upload limit; retained locally for retry');
@@ -94,11 +95,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     if(st.size<offset || (old.ino && old.ino!==st.ino))offset=0;
     const fd=openSync(path,'r');
     let meta:any=old.meta??{harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path};
-    try {
-      // Metadata lives at the beginning and is inexpensive to reread, even on multi-GB rollouts.
-      const head=Buffer.alloc(Math.min(st.size,65536));readSync(fd,head,0,head.length,0);
-      for(const line of head.toString('utf8').split('\n')) {
-        let r;try{r=JSON.parse(line);}catch{continue;}
+    function metadata(r:any) {
         const p=r.payload??r;
         if(harness==='codex' && r.type==='session_meta') {
           meta.sessionId=p.id;meta.parentSessionId=p.forked_from_id??p.source?.subagent?.thread_spawn?.parent_thread_id??null;
@@ -109,8 +106,15 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
         const origin=detectOrigin(harness,r);
         if(origin.origin!=='unknown'){meta.origin=origin.origin;meta.originEvidence=origin.evidence;}
         if(p.cwd || r.cwd)meta.cwd=p.cwd??r.cwd;
+      if(p.cli_version || r.version)meta.harnessVersion=p.cli_version??r.version;
+    }
+    try {
+      // Metadata lives at the beginning and is inexpensive to reread, even on multi-GB rollouts.
+      const head=Buffer.alloc(Math.min(st.size,65536));readSync(fd,head,0,head.length,0);
+      for(const line of head.toString('utf8').split('\n')) {
+        let r;try{r=JSON.parse(line);}catch{continue;}
+        metadata(r);
       }
-      if(!meta.sessionId)throw new CliError('CAPTURE_SESSION_UNKNOWN','Transcript has no session identity');
       while(offset<st.size) {
         let bytes=Buffer.alloc(Math.min(st.size-offset,48*1024*1024));readSync(fd,bytes,0,bytes.length,offset);
         let end=bytes.lastIndexOf(10);
@@ -124,6 +128,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
         for(const line of bytes.toString('utf8').split('\n').slice(0,-1)){
           if(line.trim()){
             let record;try{record=JSON.parse(line);}catch{throw new CliError('CAPTURE_INVALID_RECORD','Invalid transcript record; cursor retained');}
+            metadata(record);
             const parsed=parseRecord(harness,record,position);
             if(parsed)events.push(attachmentTransform(parsed,attachments,meta.cwd??dirname(path)));
           }

@@ -53,6 +53,13 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     const settings=JSON.parse(readFileSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
     expect(settings.permissions).toEqual({allow:['Read']});expect(settings.hooks.Stop).toHaveLength(2);
     expect((Bun.TOML.parse(readFileSync(join(process.env.CODEX_HOME,'config.toml'),'utf8')) as any).features).toEqual({hooks:true,other:true});
+    const beforeClaude=readFileSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8');
+    const codexHooks=join(process.env.CODEX_HOME,'hooks.json'),goodHooks=readFileSync(codexHooks,'utf8');
+    writeFileSync(codexHooks,JSON.stringify({hooks:{Stop:'invalid'}}));
+    await expect(installCapture(api,options)).rejects.toThrow();
+    expect(readFileSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8')).toBe(beforeClaude);
+    expect(readCaptureConfig()!.installationId).toBe(first.installationId);
+    writeFileSync(codexHooks,goodHooks);
     // The installed collector can authenticate after the installer environment is gone.
     delete process.env.OPENCRAWL_SESSIONS_TOKEN;
     const config=readCaptureConfig()!;
