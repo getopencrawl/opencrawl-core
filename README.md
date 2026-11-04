@@ -20,9 +20,12 @@ npm start
 ```
 
 The standalone smoke runner binds only to loopback. `hello()` is the first
-product operation and `renderHello()` is the first UI fragment. Hosted identity,
-authorization, HTTP/session handling, and deployment live in the private shell.
-The shell imports this repository; this repository never imports the shell.
+product operation and `renderHello()` is the first UI fragment. This is not yet
+a complete self-hosted product. Hosted WorkOS authentication, tenant membership,
+multitenancy and managed deployment live in the private shell. Resource
+authorization and a usable single-tenant runtime belong here. The shell imports
+this repository; this repository never imports the shell. Read
+[`ARCHITECTURE.md`](ARCHITECTURE.md) and `AGENTS.md` before adding features.
 
 Future product behavior, portable interfaces, reference adapters, and product UI
 belong here. Add each interface only when an implemented feature needs it. Do not
