@@ -66,9 +66,11 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     const claude=join(config.roots['claude-code'],'projects','test','session-claude.jsonl');
     mkdirSync(join(config.roots['claude-code'],'projects','test'),{recursive:true});
     const attachment=Buffer.from('attachment fixture'),sha=hash(attachment);
+    const unrelated=join(dir,'unseen-private-fixture.txt');
+    writeFileSync(unrelated,'UNSEEN_PRIVATE_BYTES');
     const records=[
       {type:'user',sessionId:'session-claude',entrypoint:'cli',uuid:'u1',timestamp:'2026-11-04T00:00:00Z',message:{role:'user',content:[{type:'text',text:'inspect this'},{type:'image',source:{type:'base64',media_type:'image/png',data:attachment.toString('base64')}}]}},
-      {type:'assistant',sessionId:'session-claude',uuid:'a1',parentUuid:'u1',message:{role:'assistant',content:[{type:'tool_use',id:'call',name:'Read',input:{file_path:'test.ts'}}]}},
+      {type:'assistant',sessionId:'session-claude',uuid:'a1',parentUuid:'u1',message:{role:'assistant',content:[{type:'tool_use',id:'call',name:'Read',input:{file_path:'test.ts',untrusted:{type:'file',path:unrelated}}}]}},
       {type:'user',sessionId:'session-claude',uuid:'u2',parentUuid:'a1',message:{role:'user',content:[{type:'tool_result',tool_use_id:'call',content:'export const answer=42;'}]}},
     ];
     writeFileSync(claude,records.map(r=>JSON.stringify(r)+'\n').join(''));
@@ -78,7 +80,7 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     expect(captureStatus().queued).toBe(1);
     const batch=JSON.parse(readFileSync(join(captureDir(),'queue',readdirSync(join(captureDir(),'queue'))[0]),'utf8'));
     expect(batch.owner).toEqual(principal);expect(batch.origin).toBe('cli');expect(batch.events).toHaveLength(3);
-    expect(batch.attachments[0].sha256).toBe(sha);
+    expect(batch.attachments[0].sha256).toBe(sha);expect(batch.attachments).toHaveLength(1);expect(JSON.stringify(batch)).not.toContain('UNSEEN_PRIVATE_BYTES');
     expect(await flushCaptures()).toEqual({uploaded:1});
     const receipt={harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,batchId:hash(JSON.stringify(batch))};
     const fetched=await ingest.getBatch(principal,receipt);

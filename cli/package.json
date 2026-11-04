@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "OpenCrawl CLI: sign in now, query the index as features become available",
   "type": "module",
   "license": "UNLICENSED",
