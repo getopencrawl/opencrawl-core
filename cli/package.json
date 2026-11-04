@@ -1,13 +1,16 @@
 {
   "name": "@getopencrawl/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenCrawl CLI: sign in now, query the index as features become available",
   "type": "module",
   "license": "UNLICENSED",
   "bin": {
     "opencrawl": "bin/opencrawl.cjs"
   },
-  "files": ["bin/opencrawl.cjs", "README.md"],
+  "files": [
+    "bin/opencrawl.cjs",
+    "README.md"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/1patch/opencrawl-core.git",

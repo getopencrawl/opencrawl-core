@@ -6,7 +6,7 @@ command and signs you in. **Index queries are not available yet.**
 Once published:
 
 ```sh
-npm install -g @getopencrawl/cli
+npm install -g @getopencrawl/cli@v2
 opencrawl login
 opencrawl status --json
 ```
@@ -53,7 +53,7 @@ are not supported in v0. Platform packages are optional dependencies at the exac
 launcher version; there are no install scripts.
 
 After a command, the launcher starts a detached updater at most once per day.
-It checks the stable npm release, installs into a private user-owned cache with
+It checks the npm `v2` release channel, installs into a private user-owned cache with
 npm integrity verification and install scripts disabled, then atomically selects
 the complete release. The next invocation uses it. No sudo or global-directory
 writes are needed. Offline/update failures preserve the working copy and retry
@@ -61,7 +61,7 @@ after 15 minutes. Concurrent updater processes share a lock; updates never
 downgrade. An unused installation updates when it is next invoked, not on a timer.
 
 `OPENCRAWL_NO_UPDATE=1` disables automatic updates for reproducible agent runs.
-`opencrawl update [--json]` explicitly updates. Cached releases live under
+`opencrawl update [--json]` explicitly updates from that same channel. Cached releases live under
 `$XDG_CACHE_HOME/opencrawl` (default `~/.cache/opencrawl`); previous releases remain
 available for recovery. Install a newer npm version directly to override an older
 cached version. Set the opt-out and remove `current.json` to return to the npm
@@ -80,7 +80,8 @@ bun scripts/build.ts --current   # local smoke
 bun scripts/build.ts             # all five platform packages
 ```
 
-The dedicated CLI workflow publishes the five platform packages first, smoke
+The `v2` dist-tag keeps this new client separate from the existing v1 `latest`
+release. Publishing must never move that v1 tag. The dedicated CLI workflow publishes the five platform packages first, smoke
 tests the launcher, then publishes `@getopencrawl/cli` last. A failed platform
 publication cannot advertise an incomplete stable launcher. Retry skips already
 published immutable versions. Increment `cli/package.json` for every release.

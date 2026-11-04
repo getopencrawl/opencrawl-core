@@ -4,7 +4,7 @@ import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest} fro
 import {readSession, saveSession, accessToken, logout} from './session.ts';
 
 declare const OPENCRAWL_VERSION: string;
-const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.1.0-dev';
+const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.2.0-dev';
 const help = `opencrawl — OpenCrawl v2 CLI
 
 Usage: opencrawl <command> [--json] [--api <https-origin>]
@@ -13,7 +13,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   logout      Remove this deployment's credentials from this machine
   whoami      Verify your saved session with the service
   status      Show installation, sign-in and index availability
-  update      Install the latest stable CLI for your next invocation
+  update      Install the latest v2 CLI for your next invocation
 
 Options:
   --no-browser   Print the sign-in URL without opening a browser (SSH/agents)
