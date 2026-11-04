@@ -40,14 +40,26 @@ node ~/.opencrawl/agent-sessions/collector.mjs status
 No bucket yet? `local.sh up --bundled-s3` runs a local S3 (SeaweedFS) for
 development and offline use.
 
-The install script downloads the collector to `~/.opencrawl/agent-sessions/`,
-starts it as a background service (launchd on macOS, a systemd user unit on
-Linux), and backfills every existing session. New sessions upload within 30
-seconds of being written.
+The install script downloads the collector to `~/.opencrawl/agent-sessions/`
+and starts it as a background service (launchd on macOS, a systemd user unit on
+Linux).
+
+Syncing works like an Airbyte connection. The first sync is a full sync of every
+existing session. After that, an incremental sync runs every hour and uploads only
+what changed since the last one. Change the schedule with `install --every 15m`.
+Run `collector.mjs sync` to sync immediately. The schedule continues across
+restarts: a restarted collector syncs only once an interval has passed since the
+last sync. A failed sync is retried after five minutes.
 
 ```
-Agent        Sessions      Size   Waiting
-claude-code        24    227 MB       0 B
+Receiver  http://127.0.0.1:7171 (up)
+Machine   shalins-macbook-pro
+Service   running (launchd)
+Schedule  every 1h
+Last sync incremental, 4.2 MB uploaded, 12 min ago; next in 48 min
+
+Agent        Sessions      Size  Next sync
+claude-code        24    227 MB     1.1 MB
 codex              13    2.2 GB       0 B
 ```
 
@@ -183,8 +195,8 @@ receiver you run and the bucket you configure. To skip a project, pass `--exclud
 | --- | --- |
 | Stack status / logs | `local.sh status`, `local.sh logs` |
 | Browse captured files | Your bucket, under `<path>/agent-sessions/`; with `--bundled-s3`, http://127.0.0.1:12535 → Files (user `admin`, password `OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY`) |
-| Upload once, now | `collector.mjs push` |
-| Reconcile everything with the receiver | `collector.mjs push --resync` |
+| Sync now | `collector.mjs sync` |
+| Reconcile everything with the receiver | `collector.mjs sync --resync` |
 | Collector log | `~/.opencrawl/agent-sessions/collector.log` (macOS), `journalctl --user -u opencrawl-agent-sessions` (Linux) |
 | Stop collecting on a machine | `collector.mjs uninstall` |
 | Stop the receiver | `local.sh down` |
