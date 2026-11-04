@@ -9,7 +9,7 @@ const {createRequire} = require('node:module');
 const {spawn, spawnSync} = require('node:child_process');
 const {randomUUID} = require('node:crypto');
 const ROOT = path.resolve(__dirname, '..');
-const PACKAGE = '@opencrawl/cli';
+const PACKAGE = '@getopencrawl/cli';
 const REGISTRY = 'https://registry.npmjs.org';
 const DAY = 24 * 60 * 60 * 1000;
 const cacheRoot = () => path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'opencrawl');
@@ -37,18 +37,18 @@ function binary(root) {
   const localRequire = createRequire(path.join(root, 'package.json'));
   let manifest;
   try { manifest = localRequire.resolve(`${PACKAGE}-${key}/package.json`); }
-  catch { throw new Error('Missing platform package. Reinstall with npm install -g @opencrawl/cli --include=optional.'); }
+  catch { throw new Error('Missing platform package. Reinstall with npm install -g @getopencrawl/cli --include=optional.'); }
   const pkg = read(manifest);
   if (pkg?.name !== `${PACKAGE}-${key}` || pkg.version !== read(path.join(root, 'package.json'))?.version) throw new Error('The platform package version does not match the CLI.');
   const file = path.join(path.dirname(manifest), 'bin', process.platform === 'win32' ? 'opencrawl.exe' : 'opencrawl');
-  if (!fs.existsSync(file)) throw new Error('The OpenCrawl platform binary is missing. Reinstall @opencrawl/cli.');
+  if (!fs.existsSync(file)) throw new Error('The OpenCrawl platform binary is missing. Reinstall @getopencrawl/cli.');
   return file;
 }
 function activeRoot(root = ROOT) {
   const pkg = read(path.join(root, 'package.json'));
   const current = read(path.join(cacheRoot(), 'current.json'));
   if (stable(current?.version) && stable(pkg?.version) && compare(current.version, pkg.version) > 0) {
-    const cached = path.join(cacheRoot(), 'releases', current.version, 'node_modules', '@opencrawl', 'cli');
+    const cached = path.join(cacheRoot(), 'releases', current.version, 'node_modules', '@getopencrawl', 'cli');
     if (read(path.join(cached, 'package.json'))?.version === current.version) {
       try { binary(cached); return cached; } catch {} // a damaged cache must not break the installed copy
     }
@@ -88,7 +88,7 @@ async function update({force = false, root = ROOT, fetcher = fetch, install = in
     const state = read(stateFile);
     const current = read(path.join(activeRoot(root), 'package.json')).version;
     if (!force && state?.checkedAt > Date.now() - DAY) return {updated: false, version: current};
-    const response = await fetcher(`${REGISTRY}/@opencrawl%2fcli/latest`, {redirect: 'error', signal: AbortSignal.timeout(10_000)});
+    const response = await fetcher(`${REGISTRY}/@getopencrawl%2fcli/latest`, {redirect: 'error', signal: AbortSignal.timeout(10_000)});
     if (!response.ok) throw new Error('The npm registry could not check for updates.');
     const latest = await response.json();
     if (latest.name !== PACKAGE || !stable(latest.version)) throw new Error('The registry returned invalid release metadata.');
@@ -106,15 +106,15 @@ async function installRelease(version, {registry = REGISTRY} = {}) {
   fs.mkdirSync(releases, {recursive: true, mode: 0o700});
   const destination = path.join(releases, version);
   // Reuse a fully staged version if pointer publication was interrupted.
-  if (fs.existsSync(destination)) { binary(path.join(destination, 'node_modules/@opencrawl/cli')); return; }
+  if (fs.existsSync(destination)) { binary(path.join(destination, 'node_modules/@getopencrawl/cli')); return; }
   const stage = fs.mkdtempSync(path.join(releases, '.stage-'));
   try {
     fs.writeFileSync(path.join(stage, 'package.json'), '{"private":true}\n');
-    fs.writeFileSync(path.join(stage, '.npmrc'), `@opencrawl:registry=${registry}\n`);
+    fs.writeFileSync(path.join(stage, '.npmrc'), `@getopencrawl:registry=${registry}\n`);
     const args = [npmCli(), 'install', '--prefix', stage, '--ignore-scripts', '--include=optional', '--no-audit', '--no-fund', '--no-package-lock', `--registry=${registry}`, `${PACKAGE}@${version}`];
     const result = spawnSync(process.execPath, args, {cwd: stage, stdio: 'pipe', timeout: 180_000, windowsHide: true});
     if (result.status !== 0) throw new Error('Could not install the update. The existing CLI is unchanged.');
-    const installed = path.join(stage, 'node_modules/@opencrawl/cli');
+    const installed = path.join(stage, 'node_modules/@getopencrawl/cli');
     const pkg = read(path.join(installed, 'package.json'));
     if (pkg?.name !== PACKAGE || pkg.version !== version) throw new Error('The installed release does not match the requested version.');
     binary(installed);
@@ -151,13 +151,13 @@ async function main(args = process.argv.slice(2)) {
   const root = activeRoot();
   const result = spawnSync(binary(root), args, {stdio: 'inherit', windowsHide: true});
   scheduleUpdate();
-  if (result.error) throw new Error('Could not start the OpenCrawl binary. Reinstall @opencrawl/cli.');
+  if (result.error) throw new Error('Could not start the OpenCrawl binary. Reinstall @getopencrawl/cli.');
   if (result.signal === 'SIGINT') return 130;
   return result.status ?? 1;
 }
 module.exports = {target, stable, compare, activeRoot, update, installRelease, binary, main};
 if (require.main === module) main().then(code => { process.exitCode = code; }).catch(() => {
-  const message = 'Could not run or update OpenCrawl. Retry, or reinstall with npm install -g @opencrawl/cli --include=optional.';
+  const message = 'Could not run or update OpenCrawl. Retry, or reinstall with npm install -g @getopencrawl/cli --include=optional.';
   if (process.argv.includes('--json')) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code: 'LAUNCHER_ERROR', message}}) + '\n');
   else process.stderr.write(`opencrawl: ${message}\n`);
   process.exitCode = 1;

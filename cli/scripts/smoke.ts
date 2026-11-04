@@ -34,10 +34,10 @@ try {
     const install = join(scratch, 'install');
     mkdirSync(install);
     writeFileSync(join(install, 'package.json'), '{"private":true}');
-    const result = Bun.spawn(['npm', 'install', '--prefix', install, '--ignore-scripts', '--no-audit', '--no-fund', `--registry=${server.url.origin}`, `@opencrawl/cli@${pkg.version}`], {cwd: install, env: {...process.env, npm_config_registry: server.url.origin}, stdout: 'pipe', stderr: 'pipe'});
+    const result = Bun.spawn(['npm', 'install', '--prefix', install, '--ignore-scripts', '--no-audit', '--no-fund', `--registry=${server.url.origin}`, `@getopencrawl/cli@${pkg.version}`], {cwd: install, env: {...process.env, npm_config_registry: server.url.origin}, stdout: 'pipe', stderr: 'pipe'});
     const stderr = await new Response(result.stderr).text();
     if (await result.exited) throw new Error(`Packaged install failed: ${stderr}`);
-    const command = ['node', join(install, 'node_modules/@opencrawl/cli/bin/opencrawl.cjs')];
+    const command = ['node', join(install, 'node_modules/@getopencrawl/cli/bin/opencrawl.cjs')];
     if (run([...command, '--version']).trim() !== pkg.version) throw new Error('Installed version mismatch');
     const status = JSON.parse(run([...command, 'status', '--json']));
     if (status.data.authenticated !== false || status.data.index.available !== false) throw new Error('Incorrect initial status');

@@ -59,11 +59,11 @@ try {
     mkdirSync(install);
     writeFileSync(join(install, 'package.json'), '{"private":true}');
     await asyncRun(['npm', 'install', '--prefix', install, '--ignore-scripts', '--no-audit', '--no-fund', `--registry=${server.url.origin}`, `${original.name}@${original.version}`], install);
-    const installedRoot = join(install, 'node_modules/@opencrawl/cli');
+    const installedRoot = join(install, 'node_modules/@getopencrawl/cli');
     const launcher = join(installedRoot, 'bin/opencrawl.cjs');
     if (sync(['node', launcher, '--version']) !== original.version) throw new Error('Initial installation mismatch');
     const worker = join(scratch, 'update.cjs');
-    writeFileSync(worker, `const cli=require(${JSON.stringify(launcher)}); cli.update({force:true, root:${JSON.stringify(installedRoot)}, fetcher:async()=>new Response(JSON.stringify({name:'@opencrawl/cli',version:${JSON.stringify(version)}})), install:v=>cli.installRelease(v,{registry:${JSON.stringify(server.url.origin)}})}).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e);process.exitCode=1});`);
+    writeFileSync(worker, `const cli=require(${JSON.stringify(launcher)}); cli.update({force:true, root:${JSON.stringify(installedRoot)}, fetcher:async()=>new Response(JSON.stringify({name:'@getopencrawl/cli',version:${JSON.stringify(version)}})), install:v=>cli.installRelease(v,{registry:${JSON.stringify(server.url.origin)}})}).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e);process.exitCode=1});`);
     const receipt = JSON.parse(await asyncRun(['node', worker]));
     if (!receipt.updated || receipt.version !== version) throw new Error('Upgrade was not promoted');
     if (sync(['node', launcher, '--version']) !== version) throw new Error('Original launcher did not adopt the updated launcher and binary');

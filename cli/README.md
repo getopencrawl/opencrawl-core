@@ -6,7 +6,7 @@ command and signs you in. **Index queries are not available yet.**
 Once published:
 
 ```sh
-npm install -g @opencrawl/cli
+npm install -g @getopencrawl/cli
 opencrawl login
 opencrawl status --json
 ```
@@ -79,12 +79,12 @@ bun scripts/build.ts             # all five platform packages
 ```
 
 The dedicated CLI workflow publishes the five platform packages first, smoke
-tests the launcher, then publishes `@opencrawl/cli` last. A failed platform
+tests the launcher, then publishes `@getopencrawl/cli` last. A failed platform
 publication cannot advertise an incomplete stable launcher. Retry skips already
 published immutable versions. Increment `cli/package.json` for every release.
 The main core package retains its separate private GitHub Packages release.
 
-Create the free npm `opencrawl` organization and grant the publisher access to
+Create the free npm `getopencrawl` organization and grant the publisher access to
 its packages before the first release. Bootstrap publication uses an npm token
 or interactive npm authentication; configure npm trusted publishing for each
 package afterwards. A public npm package does not require a public GitHub repo,

@@ -18,9 +18,9 @@ test('updates switch only after installation, serialize, throttle, and preserve 
   process.env.XDG_CACHE_HOME = directory;
   const root = join(directory, 'installed');
   mkdirSync(root);
-  writeFileSync(join(root, 'package.json'), JSON.stringify({name: '@opencrawl/cli', version: '0.1.0'}));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({name: '@getopencrawl/cli', version: '0.1.0'}));
   let requests = 0;
-  const fetcher = async () => { requests++; return new Response(JSON.stringify({name: '@opencrawl/cli', version: '0.2.0'})); };
+  const fetcher = async () => { requests++; return new Response(JSON.stringify({name: '@getopencrawl/cli', version: '0.2.0'})); };
   const pointer = join(directory, 'opencrawl/current.json');
   try {
     await expect(launcher.update({root, fetcher, force: true, install: async () => { throw new Error('offline'); }})).rejects.toThrow('offline');
