@@ -1,0 +1,63 @@
+# Production Airbyte for OpenCrawl: Helm chart V2 with external Postgres and S3.
+# Verified with `helm template` against airbyte-v2/airbyte 2.4.0. Replace every example.com
+# value, create the secret in secret.example.yaml, then:
+#
+#   helm repo add airbyte-v2 https://airbytehq.github.io/charts
+#   helm upgrade --install airbyte airbyte-v2/airbyte --version 2.4.0 \
+#     -n airbyte --create-namespace -f values.yaml
+global:
+  edition: community
+  # Must match the ingress host; Airbyte builds OAuth and UI links from it.
+  airbyteUrl: https://airbyte.example.com
+
+  database:
+    type: external
+    secretName: airbyte-config-secrets
+    host: airbyte-db.example.com
+    port: 5432
+    name: airbyte
+    userSecretKey: database-user
+    passwordSecretKey: database-password
+
+  storage:
+    type: s3
+    secretName: airbyte-config-secrets
+    bucket:
+      log: example-airbyte-state
+      state: example-airbyte-state
+      workloadOutput: example-airbyte-state
+      activityPayload: example-airbyte-state
+      auditLogging: example-airbyte-state
+    s3:
+      region: us-east-1
+      # Use instanceProfile (IRSA / node role) instead of keys where possible.
+      authenticationType: credentials
+      accessKeyIdSecretKey: s3-access-key-id
+      secretAccessKeySecretKey: s3-secret-access-key
+
+  auth:
+    enabled: true
+    instanceAdmin:
+      secretName: airbyte-config-secrets
+      passwordSecretKey: instance-admin-password
+      # Fixed API credentials for cli.mjs (AIRBYTE_CLIENT_ID / AIRBYTE_CLIENT_SECRET).
+      clientIdSecretKey: instance-admin-client-id
+      clientSecretSecretKey: instance-admin-client-secret
+
+# The bundled database is for evaluation only.
+postgresql:
+  enabled: false
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: airbyte.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+          backend: server
+  tls:
+    - secretName: airbyte-tls
+      hosts: [airbyte.example.com]
