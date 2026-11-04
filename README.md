@@ -23,8 +23,8 @@ add speculative storage, queue, crawling, billing, or plugin abstractions.
 `web/tokens.css` and `web/assets` preserve the existing OpenCrawl Soft paper
 design system, initially copied from `1patch/OpenCrawl` at
 `b9f49281f98bdb75a8e8647d4ca887d8a6ac4542`. Tokens now belong to this core for v2;
-the v2 shell serves these exact files. Fonts retain their OFL notice. The inherited
-`DESIGN.md` describes the visual system; v1 layouts are not a v2 feature roadmap.
+the v2 shell serves these exact files. Fonts retain their OFL notice.
+`DESIGN.md` describes the shared visual system.
 
 Before public release: select an OSI-approved license, review asset rights and
 dependencies, add contribution/security/support policies, and establish tagged
