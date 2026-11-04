@@ -5,7 +5,7 @@ import {readSession, saveSession, accessToken, logout} from './session.ts';
 
 declare const OPENCRAWL_VERSION: string;
 const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.2.0-dev';
-const help = `opencrawl — OpenCrawl v2 CLI
+const help = `opencrawl — OpenCrawl CLI
 
 Usage: opencrawl <command> [--json] [--api <https-origin>]
 
@@ -13,7 +13,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   logout      Remove this deployment's credentials from this machine
   whoami      Verify your saved session with the service
   status      Show installation, sign-in and index availability
-  update      Install the latest v2 CLI for your next invocation
+  update      Install the latest CLI for your next invocation
 
 Options:
   --no-browser   Print the sign-in URL without opening a browser (SSH/agents)
@@ -61,7 +61,7 @@ export async function main(args = process.argv.slice(2)) {
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
     if (!['login', 'logout', 'whoami', 'status', 'update'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
-    const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL ?? 'https://v2.getopencrawl.com');
+    const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL ?? 'https://app.getopencrawl.com');
     if (command === 'logout') { await logout(api); emit({api, authenticated: false, localCredentialsRemoved: true}, 'Removed saved credentials from this machine.'); return 0; }
     if (command === 'login') {
       const auth = await discover(api);
