@@ -1,8 +1,9 @@
 # OpenCrawl core
 
 Private construction repository for the future open source OpenCrawl product.
-It is not published or licensed for redistribution yet. Public licensing is a
-separate release decision; `private: true` prevents accidental npm publication.
+It is not publicly published or licensed for redistribution. Public licensing is
+a separate release decision. Tagged packages are private on GitHub Packages;
+`publishConfig` requires the GitHub registry and restricted access.
 
 Node 24. No dependencies, credentials, or account required:
 
