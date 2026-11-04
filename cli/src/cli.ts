@@ -1,3 +1,4 @@
+import {collectCommand} from './capture/command.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs} from 'node:util';
 import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest} from './oauth.ts';
@@ -13,6 +14,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   logout      Remove this deployment's credentials from this machine
   whoami      Verify your saved session with the service
   status      Show installation, sign-in and index availability
+  collect     Install and manage Claude/Codex session capture
   update      Install the latest CLI for your next invocation
 
 Options:
@@ -52,16 +54,21 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {harness: {type:'string'}, 'no-background': {type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
-    if (parsed.positionals.length > 1) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    if (parsed.positionals.length > (command === 'collect' ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
-    if (!['login', 'logout', 'whoami', 'status', 'update'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL ?? 'https://app.getopencrawl.com');
+    if(command === 'collect') {
+      const data=await collectCommand(parsed.positionals[1]??'status',api,parsed.values);
+      if(data!==null)emit(data,JSON.stringify(data,null,2));
+      return 0;
+    }
     if (command === 'logout') { await logout(api); emit({api, authenticated: false, localCredentialsRemoved: true}, 'Removed saved credentials from this machine.'); return 0; }
     if (command === 'login') {
       const auth = await discover(api);
