@@ -6,7 +6,7 @@ command and signs you in. **Index queries are not available yet.**
 Once published:
 
 ```sh
-npm install -g @getopencrawl/cli@v2
+npm install -g @getopencrawl/cli@next
 opencrawl login
 opencrawl status --json
 ```
@@ -53,7 +53,7 @@ are not supported in v0. Platform packages are optional dependencies at the exac
 launcher version; there are no install scripts.
 
 After a command, the launcher starts a detached updater at most once per day.
-It checks the npm `v2` release channel, installs into a private user-owned cache with
+It checks the npm `next` release channel, installs into a private user-owned cache with
 npm integrity verification and install scripts disabled, then atomically selects
 the complete release. The next invocation uses it. No sudo or global-directory
 writes are needed. Offline/update failures preserve the working copy and retry
@@ -80,7 +80,7 @@ bun scripts/build.ts --current   # local smoke
 bun scripts/build.ts             # all five platform packages
 ```
 
-The `v2` dist-tag keeps this new client separate from the existing v1 `latest`
+The `next` dist-tag keeps this new client separate from the existing v1 `latest`
 release. Publishing must never move that v1 tag. The dedicated CLI workflow builds and signs on macOS, tests those same
 binaries on macOS/Linux/Windows, then publishes the five platform packages first, then publishes `@getopencrawl/cli` last. A failed platform
 publication cannot advertise an incomplete stable launcher. Retry skips already

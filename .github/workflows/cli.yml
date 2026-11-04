@@ -34,6 +34,7 @@ jobs:
       - run: bun install --cwd cli --frozen-lockfile --ignore-scripts
       - run: bun run --cwd cli typecheck
       - run: bun cli/scripts/build.ts
+      - run: bun cli/scripts/publish.ts --dry-run
       - run: tar -czf cli-dist.tgz -C cli dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
