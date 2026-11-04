@@ -159,7 +159,7 @@ async function main(args = process.argv.slice(2)) {
   if (result.signal === 'SIGINT') return 130;
   return result.status ?? 1;
 }
-module.exports = {target, stable, compare, activeRoot, update, installRelease, binary, npmCli, main};
+module.exports = {channel: CHANNEL, target, stable, compare, activeRoot, update, installRelease, binary, npmCli, main};
 if (require.main === module) main().then(code => { process.exitCode = code; }).catch(() => {
   const message = 'Could not run or update OpenCrawl. Retry, or reinstall with npm install -g @getopencrawl/cli@next --include=optional.';
   if (process.argv.includes('--json')) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code: 'LAUNCHER_ERROR', message}}) + '\n');
