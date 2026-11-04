@@ -1,20 +1,83 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { hello, renderHello } from '../src/index.mjs';
+
+const sourceRoot = new URL('../src/', import.meta.url);
+
+// A conservative regression lint for ordinary imports, not a JavaScript parser
+// or security sandbox. Review network/configuration coupling independently.
+function checkImports(source, file, root = sourceRoot) {
+  assert.doesNotMatch(source, /\b(?:import|require(?:\.resolve)?)\s*\(\s*(?!\s*["'])\S/, 'Computed imports need boundary review');
+  for (const match of source.matchAll(/\b(?:from\s*|import\s*(?:\(\s*)?|require(?:\.resolve)?\s*\(\s*)["']([^"']+)["']/g)) {
+    const specifier = match[1];
+    assert.ok(!specifier.includes('\\'), `Escaped dependency needs review: ${specifier}`);
+    if (specifier.startsWith('node:')) continue;
+    assert.ok(specifier.startsWith('./') || specifier.startsWith('../'), `Forbidden core dependency: ${specifier}`);
+    assert.ok(new URL(specifier, file).href.startsWith(root.href), `Dependency escapes product runtime: ${specifier}`);
+  }
+}
+
+async function checkTree(directory, root = directory) {
+  for (const entry of await readdir(directory, {withFileTypes: true})) {
+    const file = new URL(entry.name + (entry.isDirectory() ? '/' : ''), directory);
+    assert.ok(!entry.isSymbolicLink(), `Source symlink needs boundary review: ${file}`);
+    if (entry.isDirectory()) await checkTree(file, root);
+    else if (/\.(?:[cm]?[jt]s|[jt]sx)$/.test(entry.name)) checkImports(await readFile(file, 'utf8'), file, root);
+  }
+}
 
 test('core runs without any hosted service or credentials', () => {
   assert.deepEqual(hello(), {message: 'hello world'});
   assert.equal(renderHello(), '<main><h1>hello world</h1></main>');
 });
 
-test('core cannot import runtime packages or the private shell', async () => {
+test('core runtime imports stay inside src or Node builtins, including nested modules', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url)));
-  assert.deepEqual(pkg.dependencies || {}, {});
-  for (const file of await readdir(new URL('../src/', import.meta.url))) {
-    const source = await readFile(new URL(`../src/${file}`, import.meta.url), 'utf8');
-    for (const match of source.matchAll(/(?:from\s*|import\s*\()['"]([^'"]+)/g)) {
-      assert.ok(match[1].startsWith('node:') || /^\.\/[^/]+$/.test(match[1]), `Forbidden core dependency: ${match[1]}`);
-    }
+  // This is the current dependency-free policy, not a permanent ban on portable
+  // libraries. Review runtime/optional/peer dependencies before changing it.
+  for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+    assert.deepEqual(pkg[field] || {}, {}, `${field} require boundary review`);
+  }
+  await checkTree(sourceRoot);
+});
+
+test('boundary lint rejects common reverse dependencies and permits internal nesting', () => {
+  const nested = new URL('feature/run.mjs', sourceRoot);
+  for (const source of [
+    `import '@workos-inc/node';`,
+    `import sdk from '@workos-inc/node';`,
+    `export {sdk} from '@workos-inc/node';`,
+    `await import( '@workos-inc/node');`,
+    `require('@workos-inc/node');`,
+    `require.resolve('@workos-inc/node');`,
+    `import '../../server.mjs';`,
+    `import '../../integrations/adapter.mjs';`,
+    `import('https://hosted.example/control');`,
+    `import(provider);`,
+    'import(`@workos-inc/node`);',
+  ]) assert.throws(() => checkImports(source, nested), undefined, source);
+  checkImports(`import {hello} from '../index.mjs'; export {x} from './data.mjs'; import 'node:fs';`, nested);
+});
+
+
+test('boundary lint visits nested source files and ignores non-source assets', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'opencrawl-boundary-'));
+  const root = pathToFileURL(directory + '/');
+  try {
+    await mkdir(new URL('feature/', root));
+    await writeFile(new URL('feature/data.json', root), '{}');
+    const file = new URL('feature/run.mjs', root);
+    await writeFile(file, "import '@workos-inc/node';");
+    await assert.rejects(checkTree(root), /Forbidden core dependency/);
+    await writeFile(file, "import '../index.mjs';");
+    await checkTree(root);
+    await writeFile(file, "import '../../shell.mjs';");
+    await assert.rejects(checkTree(root), /escapes product runtime/);
+  } finally {
+    await rm(directory, {recursive: true, force: true});
   }
 });
