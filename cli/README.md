@@ -1,6 +1,6 @@
 # opencrawl
 
-The OpenCrawl v2 CLI. This initial release installs an automatically updating
+The OpenCrawl CLI. This initial release installs an automatically updating
 command and signs you in. **Index queries are not available yet.**
 
 Once published:

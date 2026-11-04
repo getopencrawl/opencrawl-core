@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the v2 version in cli/package.json to npm
+        description: Publish the version in cli/package.json to npm
         type: boolean
         default: false
 permissions:
