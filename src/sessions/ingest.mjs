@@ -12,12 +12,6 @@ export function sessionScope(principal) {
   if (!principal || !id(principal.tenantId) || !id(principal.userId)) fail(401, 'Authentication required');
   return `tenants/${digest(principal.tenantId)}/users/${digest(principal.userId)}`;
 }
-export function batchIndexQueueKey(prefix,key) {
-  const relative=key.startsWith(prefix+'/')?key.slice(prefix.length+1):'';
-  const scope=/^(tenants\/[a-f0-9]{64}\/users\/[a-f0-9]{64})\//.exec(relative)?.[1];
-  if(!scope)throw new Error('Invalid source key for indexing queue');
-  return `${prefix}/index-pending/${scope}/${digest(key)}.json`;
-}
 export function createSessionIngest({store, prefix = 'capture-v1', onStored}) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = principal => `${prefix}/${sessionScope(principal)}`;
@@ -52,9 +46,6 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored}) {
           name: principal.name ?? null, email: principal.email ?? null}, receivedAt: new Date().toISOString()};
         await store.put(key, gzipSync(JSON.stringify(record)), 'application/gzip');
       }
-      // Acknowledge only after the durable indexing work item exists. A retry repairs
-      // the gap if a process dies after storing the immutable batch.
-      await store.put(batchIndexQueueKey(prefix,key),Buffer.from(JSON.stringify({sourceKey:key})),'application/json');
       if (onStored) await onStored(principal, batch);
       return {batchId, eventCount: batch.events.length, stored: true};
     },

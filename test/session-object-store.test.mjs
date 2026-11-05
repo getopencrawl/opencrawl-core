@@ -22,6 +22,8 @@ test('self-hosted S3 receiver round-trips all four surfaces, attachments and res
     OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:process.env.OPENCRAWL_TEST_S3_SECRET_ACCESS_KEY||'capture-test-secret',
     OPENCRAWL_LANDING_S3_PATH:'sessions/test/v1/'+randomUUID(),
     OPENCRAWL_SESSIONS_TOKEN:'capture-test-token-01234567890123456789',
+    // Capture must start and accept data while processing dependencies are unavailable.
+    OPENCRAWL_OPENSEARCH_URL:'http://127.0.0.1:1',TEMPORAL_ADDRESS:'127.0.0.1:1',
     OPENCRAWL_TENANT_ID:'self-hosted',OPENCRAWL_USER_ID:'owner',PORT:'0',
   };
   const {store,prefix}=standaloneStorage(env);
@@ -67,7 +69,8 @@ test('self-hosted S3 receiver round-trips all four surfaces, attachments and res
     assert.equal(batch.origin,origin);assert.equal(batch.attachments[0].sha256,sha);
   }
   const keys=(await store.list(prefix+'/')).keys;
-  assert.equal(keys.filter(key=>!key.includes('/onboarding/')).length,9);
+  assert.equal(keys.filter(key=>!key.includes('/onboarding/')).length,5);
+  assert.ok(keys.every(key=>!key.includes('/index-pending/')));
   const status=await (await fetch(api+'/api/onboarding',{headers})).json();
   assert.equal(status.data.session.harness,'codex');
   assert.ok(status.data.session.observedAt);

@@ -1,6 +1,6 @@
 {
   "name": "@1patch/opencrawl-core",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -20,7 +20,9 @@
     "./connectors/workflow": "./src/connectors/workflow.mjs",
     "./connectors/temporal": "./src/connectors/temporal/worker.mjs",
     "./connectors/temporal-client": "./src/connectors/temporal/client.mjs",
-    "./debug": "./src/debug.mjs"
+    "./debug": "./src/debug.mjs",
+    "./sessions/temporal": "./src/sessions/temporal/worker.mjs",
+    "./sessions/temporal-client": "./src/sessions/temporal/client.mjs"
   },
   "files": [
     "src",
@@ -54,6 +56,7 @@
     "@temporalio/activity": "1.25.0",
     "@temporalio/client": "1.25.0",
     "@temporalio/common": "1.25.0",
+    "@temporalio/testing": "1.25.0",
     "@temporalio/worker": "1.25.0",
     "@temporalio/workflow": "1.25.0"
   },

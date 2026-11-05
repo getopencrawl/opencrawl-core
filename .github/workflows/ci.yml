@@ -12,6 +12,8 @@ jobs:
           node-version: 24.13.1
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
+      - name: Verify real Temporal scheduling, retries and replay
+        run: OPENCRAWL_TEST_TEMPORAL=1 node --test test/session-temporal.test.mjs
       - name: Verify capture against S3-compatible storage
         env:
           OPENCRAWL_TEST_S3_ENDPOINT: http://127.0.0.1:18333
