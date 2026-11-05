@@ -6,5 +6,19 @@
 .debug-query input::placeholder{color:var(--muted);opacity:1}
 #debug-status{margin-block:var(--space-4)}
 #debug-status.debug-error{color:var(--danger)}
-#debug-results{margin:0;max-height:65dvh;overflow:auto;padding:var(--space-4);border:1px solid var(--line);border-radius:var(--radius-control);background:var(--surface-subtle);font-family:var(--font-mono);font-size:var(--text-sm);line-height:1.6;tab-size:2;scrollbar-color:var(--control-line) var(--surface-subtle)}
+.debug-json{margin:0;max-height:65dvh;overflow:auto;padding:var(--space-4);border:1px solid var(--line);border-radius:var(--radius-control);background:var(--surface-subtle);font-family:var(--font-mono);font-size:var(--text-sm);line-height:1.6;tab-size:2;scrollbar-color:var(--control-line) var(--surface-subtle)}
 @media(max-width:600px),(pointer:coarse){.debug-query input{min-height:44px;font-size:1rem}}
+
+.debug-raw{margin-bottom:var(--space-6)}
+.debug-disclosure summary{width:fit-content;min-height:var(--control-height);padding-block:var(--space-2);font-size:var(--text-sm);color:var(--accent);cursor:pointer}
+.debug-disclosure summary:hover{color:var(--accent-hover)}
+.debug-disclosure[open]>summary{margin-bottom:var(--space-2)}
+.debug-group+.debug-group{margin-top:var(--space-10)}
+.debug-group h2{font-size:var(--text-heading);font-weight:600;line-height:1.5;margin:0 0 var(--space-2)}
+.debug-hit{padding-block:var(--space-5);border-top:1px solid var(--line)}
+.debug-hit h3{font-size:var(--text-ui);font-weight:600;line-height:1.5;margin:0}
+.debug-meta{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-4);color:var(--muted);font-size:var(--text-xs);margin:var(--space-1) 0 var(--space-3);overflow-wrap:anywhere}
+.debug-text{max-width:75ch;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--text-body);line-height:var(--leading-prose);margin:var(--space-3) 0}
+.debug-text mark{background:var(--selection);color:var(--text)}
+.debug-full-text{max-height:32rem;overflow:auto;padding:var(--space-3);background:var(--surface-subtle);scrollbar-color:var(--control-line) var(--surface-subtle)}
+@media(max-width:600px),(pointer:coarse){.debug-disclosure summary{min-height:44px}}

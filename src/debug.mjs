@@ -1,6 +1,6 @@
 /** Minimal diagnostics UI; the runtime supplies an authenticated /api/debug/search. */
 export function renderDebug() {
-  return `<main class="debug"><h1>Search debug</h1><p class="debug-description">Search your sessions and connected sources. OpenSearch JSON, with authorized hits only.</p>
+  return `<main class="debug"><h1>Search debug</h1><p class="debug-description">Search your sessions and connected sources. Read matching items or inspect the JSON.</p>
 <form id="debug-search"><label for="query">Search query</label><div class="debug-query"><input id="query" name="query" type="search" required maxlength="4000" autocomplete="off" placeholder="Type a search query" autofocus><button class="primary" type="submit">Search</button></div></form>
-<p id="debug-status" role="status">Enter a query to see results.</p><pre id="debug-results" tabindex="0" aria-label="Search results JSON" hidden></pre></main>`;
+<p id="debug-status" role="status">Enter a query to see results.</p><div id="debug-results" hidden><details id="debug-raw" class="debug-disclosure debug-raw"><summary>Raw response JSON</summary><pre id="debug-raw-body" class="debug-json" tabindex="0" aria-label="Search results JSON"></pre></details><div id="debug-items"></div></div></main>`;
 }
