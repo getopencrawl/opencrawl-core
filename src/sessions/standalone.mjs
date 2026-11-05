@@ -4,9 +4,11 @@ import {timingSafeEqual} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {createSessionIngest,createCaptureHandler} from './ingest.mjs';
 import {createObjectStore,awsCredentials} from './s3-store.mjs';
+import {createSessionSearch,searchSettings} from './search.mjs';
+import {createSessionIndexer,startIndexLoop} from './indexer.mjs';
 
 /** Single-tenant adapter: the operator sets identity; requests cannot select an owner. */
-export function standaloneCapture({token,principal,store,prefix}) {
+export function standaloneCapture({token,principal,store,prefix,search}) {
   if(typeof token!=='string'||token.length<32)throw new Error('Use a capture token with at least 32 characters');
   const expected=Buffer.from('Bearer '+token);
   const onboarding = createOnboardingStatus({store,prefix});
@@ -15,7 +17,7 @@ export function standaloneCapture({token,principal,store,prefix}) {
     if(actual.length!==expected.length||!timingSafeEqual(actual,expected))return null;
     return principal;
   };
-  const capture = createCaptureHandler({ingest:createSessionIngest({store,prefix,onStored:onboarding.session}),authenticate});
+  const capture = createCaptureHandler({ingest:createSessionIngest({store,prefix,onStored:onboarding.session}),search,authenticate});
   return async (req,res) => {
     try {
     if (req.headers.origin) {res.writeHead(403);res.end();return;}
@@ -54,14 +56,20 @@ export async function startStandaloneCapture(env=process.env) {
   const principal={tenantId:env.OPENCRAWL_TENANT_ID||'self-hosted',userId:env.OPENCRAWL_USER_ID||'owner',
     name:env.OPENCRAWL_USER_NAME||null,email:env.OPENCRAWL_USER_EMAIL||null};
   const {store,prefix}=standaloneStorage(env);
-  const handler=standaloneCapture({token:env.OPENCRAWL_SESSIONS_TOKEN,principal,store,prefix});
+  const settings=searchSettings(env),search=settings?createSessionSearch(settings):null;
+  const handler=standaloneCapture({token:env.OPENCRAWL_SESSIONS_TOKEN,principal,store,prefix,search});
   await store.checkAccess();
+  if(search)await search.ensureIndex();
   const server=createServer(handler);
   server.requestTimeout=60000;
   await new Promise((resolve,reject)=>{
     server.once('error',reject);
     server.listen(Number(env.PORT||8093),env.HOST||'127.0.0.1',()=>{server.removeListener('error',reject);resolve();});
   });
+  if(search && env.OPENCRAWL_INDEXER_ENABLED!=='0') {
+    const stop=startIndexLoop(createSessionIndexer({store,prefix,search,principal}));
+    server.once('close',stop);
+  }
   return server;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href) {
