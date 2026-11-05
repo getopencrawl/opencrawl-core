@@ -86,7 +86,9 @@ S3-compatible adapter and schema. Self-hosted deployments must configure an
 object-store bucket (AWS S3 or a compatible service); filesystem storage is only
 an internal test helper. Downstream ingestion must share the S3 object contract
 across deployments. The CLI's local spool is a retry buffer, not a separate
-server-side source. The OpenSearch ingester is not yet implemented.
+server-side source. The shared OpenSearch worker enforces explicit scope; the
+standalone runtime fixes one tenant/user while the hosted adapter supplies its
+authorized scope resolver. See `docs/session-indexing.md`.
 
 The older optional `integrations/agent-sessions` receiver uses a separate legacy
 protocol. Its optional-token/direct-network behavior does not describe the new

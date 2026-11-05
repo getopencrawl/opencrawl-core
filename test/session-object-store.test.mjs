@@ -66,6 +66,6 @@ test('self-hosted S3 receiver round-trips all four surfaces, attachments and res
     const batch=(await response.json()).data;
     assert.equal(batch.origin,origin);assert.equal(batch.attachments[0].sha256,sha);
   }
-  assert.equal((await store.list(prefix+'/')).keys.length,5);
+  assert.equal((await store.list(prefix+'/')).keys.length,9);
   await assert.rejects(startStandaloneCapture({...env,OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'wrong'}),/403|Signature|AccessDenied/);
 });
