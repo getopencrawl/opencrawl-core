@@ -1,6 +1,6 @@
 {
   "name": "@1patch/opencrawl-core",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -19,7 +19,8 @@
     "./connectors/scope": "./src/connectors/scope.mjs",
     "./connectors/workflow": "./src/connectors/workflow.mjs",
     "./connectors/temporal": "./src/connectors/temporal/worker.mjs",
-    "./connectors/temporal-client": "./src/connectors/temporal/client.mjs"
+    "./connectors/temporal-client": "./src/connectors/temporal/client.mjs",
+    "./debug": "./src/debug.mjs"
   },
   "files": [
     "src",

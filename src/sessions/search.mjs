@@ -51,7 +51,7 @@ export function createSessionSearch({endpoint,index,username,password,credential
       }
       await flush();
     },
-    async search(principal,{query='',limit=20}={}) {
+    async search(principal,{query='',limit=20,raw=false}={}) {
       sessionScope(principal);
       if(typeof query!=='string'||query.length>4000||!Number.isInteger(limit)||limit<1||limit>100)fail(400,'Invalid search query or limit');
       const result=await request('/_search',{method:'POST',body:JSON.stringify({size:limit,track_total_hits:true,
@@ -59,6 +59,7 @@ export function createSessionSearch({endpoint,index,username,password,credential
         sort:query?['_score',{receivedAt:'desc'}]:[{receivedAt:'desc'},{sequence:'asc'}]})});
       const hits=result?.hits?.hits;
       if(!Array.isArray(hits)||hits.some(hit=>hit._source?.tenantId!==principal.tenantId||hit._source?.userId!==principal.userId))throw new Error('Search returned an invalid ownership scope');
+      if(raw)return result;
       return {total:result.hits.total?.value??0,hits:hits.map(hit=>({id:hit._id,score:hit._score,...hit._source}))};
     },
     refresh:()=>request('/_refresh',{method:'POST'}),
