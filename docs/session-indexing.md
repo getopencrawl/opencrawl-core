@@ -36,3 +36,19 @@ The proprietary shell resolves verified user identity and current WorkOS organiz
 Staging and production use separate `opencrawl-v2-<environment>-sessions-v1` indexes and S3 prefixes on the shared OpenCrawl infrastructure. Hosted queries use IAM SigV4 and the runtime's index-scoped permissions. Existing cluster administration and workload permissions remain operator-managed. The core worker has no hosted account/membership dependency. Revoked membership blocks subsequent API access immediately; previously accepted objects and indexes retain their original scope and remain subject to the deployment's retention policy.
 
 The shared cluster can host other workloads without copying this pipeline. Tenant/user ownership filters and IDs remain mandatory even when a deployment uses a physically separate index. Automated checks exercise colliding identities, partial bulk failure, replay/restart, incremental arrival, and real S3/OpenSearch storage. This is lexical session search; no CLI/MCP search tool or search UI is added by this release.
+
+## Raw diagnostics
+
+An authenticated runtime can call `search.search(principal, {query, limit: 20,
+raw: true})` on its configured session adapter to receive the OpenSearch response
+with `_index`, `_id`, `_score`, `_source`, totals, timing and shard metadata.
+Ownership checks still run before returning data. Connector search accepts the
+same option with authorized bindings and returns `{responses, examined,
+truncated}`. Each response contains only channel-visible hits within the result
+limit; pre-visibility totals and maximum scores are omitted. Raw mode does not
+accept an index, DSL or alternative principal from the query input.
+
+`renderDebug` from `@1patch/opencrawl-core/debug` and `web/debug.js` / `debug.css`
+provide a query box and text-only JSON viewer. The embedding runtime must protect
+both the page and `POST /api/debug/search`, resolve its own trusted principal,
+and provide the shared tokens and layout. This UI performs no identity selection.
