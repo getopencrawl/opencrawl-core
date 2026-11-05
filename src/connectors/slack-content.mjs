@@ -56,9 +56,15 @@ export function slackMessageText(data) {
         textObject(value.placeholder); add(value.alt_text);
     }
   }
+  function group(visit) {
+    const start = chunks.length;
+    visit();
+    const rendered = chunks.splice(start).join('\n');
+    if (rendered) chunks.push(rendered);
+  }
   add(data.text);
-  list(data.blocks, value => node(value));
-  list(data.attachments, attachment => {
+  list(data.blocks, value => group(() => node(value)));
+  list(data.attachments, attachment => group(() => {
     if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) invalidRecord('Invalid Slack attachment');
     for (const field of ['pretext', 'author_name', 'title', 'text', 'fallback', 'footer']) add(attachment[field]);
     list(attachment.fields, field => {
@@ -66,15 +72,14 @@ export function slackMessageText(data) {
       add(field.title); add(field.value);
     });
     list(attachment.blocks, value => node(value));
-  });
+  }));
   list(data.files, file => {
     if (!file || typeof file !== 'object' || Array.isArray(file)) invalidRecord('Invalid Slack file');
     add(file.title || file.name);
   });
-  // Exact duplicates and presentation fragments already contained in fallback text do
-  // not improve retrieval. Never remove a fragment merely because it is shorter.
-  const result = [];
-  for (const chunk of chunks) if (!result.some(previous => previous.includes(chunk))) result.push(chunk);
+  // Deduplicate complete presentation units only. Dropping individual rich-text
+  // fragments (or substrings of the fallback) can remove words and change phrases.
+  const result = [...new Set(chunks)];
   const body = result.join('\n');
   if (Buffer.byteLength(body) > MAX_BYTES) invalidRecord('Slack visible content exceeds supported size');
   return body;
