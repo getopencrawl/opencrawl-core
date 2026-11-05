@@ -43,7 +43,8 @@ test('real MCP clients record independent authenticated identities in legacy and
   const server=createServer((req,res)=>handler(req,res));
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   const origin='http://127.0.0.1:'+server.address().port;
-  handler=createOpenCrawlMcp({origin,authenticate:async req=>req.headers.authorization==='Bearer test'?principal:null,onAuthenticated:status.mcp});
+  const calls=[];
+  handler=createOpenCrawlMcp({origin,authenticate:async req=>req.headers.authorization==='Bearer test'?principal:null,onAuthenticated:(who,info,request)=>{calls.push(request);return status.mcp(who,info);}});
   t.after(async()=>{await handler.close();await new Promise(r=>server.close(r));});
   assert.equal((await fetch(origin+'/mcp')).status,401);
   assert.equal((await status.read(principal)).mcp,null);
@@ -56,6 +57,8 @@ test('real MCP clients record independent authenticated identities in legacy and
     assert.equal((await status.read(principal)).mcp.client,expected || null);
   }
   assert.equal((await status.read({...principal,userId:'user-b'})).mcp,null);
+  assert.ok(calls.some(c=>c.method==='tools/call'&&c.tool==='test_connection'));
+  assert.ok(calls.some(c=>c.method==='tools/list'&&c.tool===null));
 });
 
 test('single-tenant receiver exposes authenticated onboarding without hosted services', async t => {

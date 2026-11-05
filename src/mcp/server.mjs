@@ -42,7 +42,7 @@ export function createOpenCrawlMcp({authenticate, origin, revision = 'developmen
     // Successful authenticated protocol exchanges prove sign-in, not ingestion.
     if (onAuthenticated && response.ok && ['initialize', 'server/discover', 'tools/list', 'tools/call'].includes(body?.method)) {
       const info = body.method === 'initialize' ? body.params?.clientInfo : body.params?._meta?.['io.modelcontextprotocol/clientInfo'];
-      await onAuthenticated(context.getStore(), info);
+      await onAuthenticated(context.getStore(), info, {method: body.method, tool: body.method === 'tools/call' && typeof body.params?.name === 'string' ? body.params.name.slice(0, 100) : null});
     }
     return response;
   }}, {maxRequestBodySize: 65536});
