@@ -21,7 +21,7 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
     if (['user','assistant'].includes(record.type)) {kind='message';data=record.message;}
     else if (record.type === 'attachment') {
       const attachment=record.attachment;
-      if(['prompt_snapshot','mcp_instructions_delta','credential_org','environment','date','model','agent_listing_delta','deferred_tools_delta','skill_listing','auto_mode','session_context','task_reminder'].includes(attachment?.type))return null;
+      if(['prompt_snapshot','mcp_instructions_delta','credential_org','environment','date','model','agent_listing_delta','deferred_tools_delta','skill_listing','auto_mode','session_context','task_reminder','silent_turn_reminder'].includes(attachment?.type))return null;
       kind=attachment?.type==='remote_session_change'?'session_metadata':'attachment';data=attachment;
     }
     else if (record.type === 'system' && /compact/.test(record.subtype ?? '')) {kind='compaction';data=record;}
