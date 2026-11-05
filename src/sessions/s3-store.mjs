@@ -35,8 +35,20 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
     return res;
   }
 
+  async function listPage(prefix, {delimiter, continuationToken, maxKeys=1000} = {}) {
+    if(!Number.isInteger(maxKeys)||maxKeys<1||maxKeys>1000)throw new Error('Invalid S3 page size');
+    const res=await request('GET',undefined,{query:{'list-type':'2',prefix,delimiter,'continuation-token':continuationToken,'max-keys':String(maxKeys)}});
+    const xml=await res.text();
+    const keys=[...xml.matchAll(/<Contents>[\s\S]*?<Key>([^<]*)<\/Key>/g)].map(m=>unescapeXml(m[1]));
+    const prefixes=[...xml.matchAll(/<CommonPrefixes>\s*<Prefix>([^<]*)<\/Prefix>/g)].map(m=>unescapeXml(m[1]));
+    const nextToken=/<IsTruncated>true<\/IsTruncated>/.test(xml)?unescapeXml(xml.match(/<NextContinuationToken>([^<]*)</)?.[1]??''):null;
+    if(nextToken==='')throw new Error('S3 listing omitted its continuation token');
+    return {keys,prefixes,nextToken};
+  }
+
   return {
     bucket,
+    listPage,
     location: endpoint ? `${endpoint} bucket ${bucket}` : `s3://${bucket} (${region})`,
 
     /** Confirms the bucket exists and these credentials can reach it. Never creates a bucket. */
