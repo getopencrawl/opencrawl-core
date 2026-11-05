@@ -18,10 +18,28 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   const saved=read(join(captureDir(),'receiver-token.json'));
   const staticToken=tokenOverride || process.env.OPENCRAWL_SESSIONS_TOKEN || (saved?.api===api?saved.token:null);
   let token=staticToken || await accessToken(api);
-  const send=()=>fetch(api+path,{...init,headers:{...init.headers,authorization:'Bearer '+token},signal:AbortSignal.timeout(20000),redirect:'error'});
+  const method=init.method??'GET';
+  // Only retry operations whose payloads are read-only or content-addressed.
+  // A lost response after storage must resend the same batch/blob, not lose it.
+  const retryable=method==='GET'||method==='POST'&&path==='/api/sessions/batches'||method==='PUT'&&/^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(path);
+  const send=async()=>{
+    for(let attempt=0;;attempt++){
+      let response:Response;
+      try {response=await fetch(api+path,{...init,headers:{...init.headers,authorization:'Bearer '+token},signal:AbortSignal.timeout(20000),redirect:'error'});}
+      catch(error){if(!retryable||attempt===4)throw error;await new Promise(r=>setTimeout(r,250*2**attempt));continue;}
+      if(!retryable||attempt===4||![429,502,503,504].includes(response.status))return response;
+      const retryAfter=response.headers.get('retry-after');
+      const seconds=retryAfter===null?NaN:Number(retryAfter);
+      const delay=Number.isFinite(seconds)?seconds*1000:retryAfter?Date.parse(retryAfter)-Date.now():0;
+      await response.body?.cancel();
+      await new Promise(r=>setTimeout(r,Math.min(30000,Math.max(250*2**attempt,Number.isFinite(delay)?delay:0))));
+    }
+  };
   let res=await send();
   if(res.status===401 && !staticToken){token=await accessToken(api,token);res=await send();}
-  const body=await res.json().catch(()=>{throw new CliError('CAPTURE_NETWORK_BLOCKED',`Capture endpoint ${new URL(api).hostname} returned HTTP ${res.status} without JSON. Check this host in your cloud environment network allowlist.`);});
+  const body=await res.json().catch(()=>{throw res.status>=500||res.status===429
+    ?new CliError('CAPTURE_RETRY_EXHAUSTED',`Capture endpoint ${new URL(api).hostname} is temporarily unavailable (HTTP ${res.status}). Queued data is retained; retry the approved import.`)
+    :new CliError('CAPTURE_NETWORK_BLOCKED',`Capture endpoint ${new URL(api).hostname} returned HTTP ${res.status} without JSON. Check this host in your cloud environment network allowlist.`);});
   if(!res.ok)throw new CliError('CAPTURE_UPLOAD_FAILED',`Capture request failed (${res.status}): ${body.error?.code ?? 'unknown'}`);
   return body.data;
 }
@@ -88,7 +106,7 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   atomicJson(join(captureDir(),'queue',hash(JSON.stringify(batch))+'.json'),batch);
 }
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
-export async function captureTranscript(config:CaptureConfig,harness:Harness,file:string,hook:any={}) {
+export async function captureTranscript(config:CaptureConfig,harness:Harness,file:string,hook:any={},reconcileHistory=false) {
   ensureDirectories();
   const path=transcriptAllowed(file,config,harness);
   const stateFile=join(captureDir(),'state',hash(harness+path)+'.json');
@@ -97,7 +115,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     const compressed=path.endsWith('.jsonl.zst');
     let readPath=path;
     if(compressed) {
-      if(old.archiveSize===source.size && old.archiveMtime===source.mtimeMs && old.ino===source.ino)return old.meta;
+      if(old.archiveSize===source.size && old.archiveMtime===source.mtimeMs && old.ino===source.ino && (!reconcileHistory || old.parserVersion===2))return old.meta;
       readPath=stateFile+'.expanded.tmp';
       // The transcript lock makes an abandoned expansion safe to replace after a crash.
       try{unlinkSync(readPath);}catch(e:any){if(e.code!=='ENOENT')throw e;}
@@ -112,6 +130,11 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     const st=statSync(readPath);
     let offset=old.offset;
     if(st.size<offset || (old.ino && old.ino!==source.ino) || compressed)offset=0;
+    // Parser upgrades must not silently start a historical import in hooks/sync.
+    // An explicitly approved backfill may reread older cursors to recover newly
+    // supported native records; unchanged event IDs remain idempotent downstream.
+    if(reconcileHistory && old.parserVersion!==2)offset=0;
+    const parserVersion=offset===0?2:old.parserVersion??1;
     const fd=openSync(readPath,'r');
     let meta:any=old.meta??{harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path};
     let codexIdentityRead=false;
@@ -176,7 +199,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
                   if(block?.type==='tool_result')blocks(block.content);
                 }
               }
-              if(parsed.kind==='message')blocks(parsed.data?.content);
+              if(parsed.kind==='message' || parsed.kind==='agent_message')blocks(parsed.data?.content);
               if(parsed.kind==='attachment' && parsed.data)localFiles.add(parsed.data);
               events.push(attachmentTransform(parsed,attachments,meta.cwd??dirname(path),localFiles));
             }
@@ -185,7 +208,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
           if(events.length>=200){enqueue(config,meta,events.splice(0),attachments.splice(0));}
         }
         enqueue(config,meta,events,attachments);
-        offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
+        offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
       }
     } finally{closeSync(fd);if(compressed)try{unlinkSync(readPath);}catch{}}
     return meta;

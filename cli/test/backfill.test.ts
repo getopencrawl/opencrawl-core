@@ -1,5 +1,5 @@
 import {test,expect} from 'bun:test';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,utimesSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,utimesSync,symlinkSync,realpathSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
@@ -10,6 +10,7 @@ import {installCapture} from '../src/capture/install.ts';
 import {captureDir,captureStatus,readCaptureConfig,syncCaptures,captureTranscript,type CaptureConfig} from '../src/capture/runtime.ts';
 import {backfillPreview,backfill,chooseBackfill,setupBackfill} from '../src/capture/backfill.ts';
 import {collectCommand} from '../src/capture/command.ts';
+import {hash} from '../src/capture/parse.ts';
 
 // Native record shapes observed in Claude CLI/Desktop and Codex CLI/Desktop;
 // content is synthetic so this end-to-end test never imports personal history.
@@ -82,7 +83,9 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   expect(JSON.stringify(batches)).not.toContain('EXCLUDED');
   expect(batches.filter(b=>b.harness==='claude-code').every(b=>b.attachments[0].status==='captured')).toBe(true);
   for(const receipt of receipts){expect(await ingest.getBatch(principal,receipt)).not.toBeNull();expect(await ingest.getBatch({...principal,tenantId:'other'},receipt)).toBeNull();}
+  const beforeReplay=requests;
   expect((await backfill(api,'all',true)).uploaded).toBe(0);
+  expect(requests-beforeReplay).toBe(1); // One owner check, no per-file network work.
   // Invalid/mismatched commands fail without uploading or changing settings.
   await expect(collectCommand('install',api,{backfill:'invalid'})).rejects.toMatchObject({code:'INVALID_USAGE'});
   await expect(collectCommand('backfill',api,{harness:'invalid',yes:true})).rejects.toMatchObject({code:'INVALID_USAGE'});
@@ -105,7 +108,7 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k];Object.assign(process.env,saved);
   rmSync(dir,{recursive:true,force:true});
  }
-});
+},20000);
 
 test('interactive setup choice defaults to skip and never interprets a generic yes as all sources',async()=>{
  for(const answer of ['','skip','s','no'])expect(await chooseBackfill(async()=>answer)).toBe('skip');
@@ -138,4 +141,26 @@ test('Codex fork history preserves the leading session identity and origin acros
   const archive=join(config.roots.codex,'sessions','fork-archive.jsonl.zst');writeFileSync(archive,Bun.zstdCompressSync(resumed.map(r=>JSON.stringify(r)+'\n').join('')));
   expect((await captureTranscript(config,'codex',archive)).sessionId).toBe('fork');
  } finally {if(saved===undefined)delete process.env.OPENCRAWL_CONFIG_HOME;else process.env.OPENCRAWL_CONFIG_HOME=saved;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('only approved history reconciliation upgrades old parser cursors, including compressed archives',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'opencrawl-parser-upgrade-')),saved=process.env.OPENCRAWL_CONFIG_HOME;
+ process.env.OPENCRAWL_CONFIG_HOME=join(dir,'config');
+ try {
+  const config:CaptureConfig={schemaVersion:1,api:'http://127.0.0.1:1',installationId:'test',owner:{tenantId:'test',userId:'test'},installedAt:new Date().toISOString(),roots:{codex:join(dir,'codex'),'claude-code':join(dir,'claude')},command:[]};
+  const records=[{type:'session_meta',payload:{id:'session',source:'cli'}},{type:'response_item',payload:{type:'agent_message',author:'/root/child',recipient:'/root',content:[{type:'input_text',text:'historical agent result'}]}}];
+  const raw=records.map(r=>JSON.stringify(r)+'\n').join('');
+  for(const suffix of ['.jsonl','.jsonl.zst']) {
+   const path=join(config.roots.codex,'sessions','history'+suffix);mkdirSync(join(path,'..'),{recursive:true});writeFileSync(path,suffix.endsWith('.zst')?Bun.zstdCompressSync(raw):raw);
+   await captureTranscript(config,'codex',path);
+   const stateFile=join(captureDir(),'state',hash('codex'+realpathSync(path))+'.json'),state=JSON.parse(readFileSync(stateFile,'utf8'));delete state.parserVersion;writeFileSync(stateFile,JSON.stringify(state));
+   for(const f of readdirSync(join(captureDir(),'queue')))rmSync(join(captureDir(),'queue',f));
+   await captureTranscript(config,'codex',path);expect(readdirSync(join(captureDir(),'queue'))).toHaveLength(0);
+   await captureTranscript(config,'codex',path,{},true);
+   const names=readdirSync(join(captureDir(),'queue'));expect(names).toHaveLength(1);
+   const batch=JSON.parse(readFileSync(join(captureDir(),'queue',names[0]),'utf8'));expect(batch.events.map((e:any)=>e.kind)).toEqual(['session_metadata','agent_message']);
+   expect(JSON.parse(readFileSync(stateFile,'utf8')).parserVersion).toBe(2);
+   rmSync(join(captureDir(),'queue',names[0]));await captureTranscript(config,'codex',path,{},true);expect(readdirSync(join(captureDir(),'queue'))).toHaveLength(0);
+  }
+ }finally{if(saved===undefined)delete process.env.OPENCRAWL_CONFIG_HOME;else process.env.OPENCRAWL_CONFIG_HOME=saved;rmSync(dir,{recursive:true,force:true});}
 });
