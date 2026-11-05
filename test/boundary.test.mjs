@@ -16,6 +16,8 @@ function checkImports(source, file, root = sourceRoot) {
     const specifier = match[1];
     assert.ok(!specifier.includes('\\'), `Escaped dependency needs review: ${specifier}`);
     if (specifier.startsWith('node:') || ['@modelcontextprotocol/server', '@modelcontextprotocol/node', 'zod'].includes(specifier)) continue;
+    // Temporal is an optional customer-operated adapter, not a domain dependency.
+    if (file.href.includes('/connectors/temporal/') && ['@temporalio/worker', '@temporalio/activity', '@temporalio/workflow', '@temporalio/common', '@temporalio/client'].includes(specifier)) continue;
     assert.ok(specifier.startsWith('./') || specifier.startsWith('../'), `Forbidden core dependency: ${specifier}`);
     assert.ok(new URL(specifier, file).href.startsWith(root.href), `Dependency escapes product runtime: ${specifier}`);
   }
@@ -39,8 +41,12 @@ test('core runtime imports stay inside src, Node builtins, or reviewed portable 
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url)));
   // Reviewed portable MCP SDK (Apache-2.0) and schema validation (MIT).
   assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@modelcontextprotocol/node', '@modelcontextprotocol/server', 'zod']);
-  for (const field of ['optionalDependencies', 'peerDependencies']) {
-    assert.deepEqual(pkg[field] || {}, {}, `${field} require boundary review`);
+  assert.deepEqual(pkg.optionalDependencies || {}, {});
+  const temporal = ['@temporalio/activity', '@temporalio/client', '@temporalio/common', '@temporalio/worker', '@temporalio/workflow'];
+  assert.deepEqual(Object.keys(pkg.peerDependencies).sort(), temporal);
+  for (const name of temporal) {
+    assert.equal(pkg.peerDependencies[name], '1.25.0');
+    assert.deepEqual(pkg.peerDependenciesMeta[name], {optional: true});
   }
   await checkTree(sourceRoot);
 });
