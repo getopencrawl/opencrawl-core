@@ -1,5 +1,6 @@
 import {signRequest} from '../sessions/s3-store.mjs';
 import {authorize, digest, documentId, validateBinding} from './scope.mjs';
+import {relevanceQuery} from '../search/relevance.mjs';
 
 export const connectorMapping = {dynamic: 'strict', properties: {
   ...Object.fromEntries(['tenantId', 'connectionId', 'workspaceId', 'provider', 'kind', 'sourceId', 'channelId', 'threadTs', 'timestamp', 'authorId', 'contentHash'].map(key => [key, {type: 'keyword'}])),
@@ -86,7 +87,7 @@ export function createConnectorSearch({endpoint, index, tenantId, credentials, u
       // Bound work even when channel visibility filters most candidates.
       while (hits.length < limit && examined < 1000 && more) {
         const result = await request('/_search', {body: JSON.stringify({size: 100, track_total_hits: false,
-          query: {bool: {filter: [{term: {tenantId}}, {terms: {connectionId: [...byConnection.keys()]}}, {term: {kind: 'message'}}, {term: {deleted: false}}], must: [{match: {text: {query, operator: 'and'}}}]}},
+          query: {bool: {filter: [{term: {tenantId}}, {terms: {connectionId: [...byConnection.keys()]}}, {term: {kind: 'message'}}, {term: {deleted: false}}], must: [relevanceQuery(query, {stemmed: false})]}},
           sort: [{_score: 'desc'}, {connectionId: 'asc'}, {sourceId: 'asc'}], ...(after ? {search_after: after} : {})})});
         const candidates = result?.hits?.hits;
         if (!Array.isArray(candidates)) throw new Error('Invalid connector search response');

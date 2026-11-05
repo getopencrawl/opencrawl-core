@@ -52,7 +52,7 @@ test('bulk item errors are failures even with HTTP 200; search always binds both
  await search.search(owner,{query:'tenant-b OR *'});
  assert.deepEqual(requests[0].query.bool.filter,[{term:{tenantId:'tenant-a'}},{term:{userId:'same-user'}}]);
  await assert.rejects(search.search(null,{query:'anything'}),/Authentication/);
- await assert.rejects(search.search(owner,{limit:101}),/Invalid search/);
+ await assert.rejects(search.search(owner,{limit:501}),/Invalid search/);
  const leaking=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>Response.json({hits:{total:{value:1},hits:[{_source:{tenantId:'tenant-b',userId:'same-user'}}]}})});
  await assert.rejects(leaking.search(owner),/ownership scope/);
 });
