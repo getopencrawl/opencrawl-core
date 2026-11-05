@@ -1,10 +1,8 @@
 # OpenCrawl design system
 
-Night: the getopencrawl.com look. A pure black canvas behind a faint coral,
-cobalt and lavender grid, near-black panels with hairline borders, Geist type,
+Night: the getopencrawl.com look. A plain black canvas, near-black panels with hairline borders, Geist type,
 and buttons in the OC mark's style. `web/tokens.css` owns colors, fonts,
-spacing, radii, sizes and elevation; `web/frame.css` owns the page frame (grid
-backdrop, glass header, brand lockup, content column); `web/controls.css` owns
+spacing, radii, sizes and elevation; `web/frame.css` owns the page frame (glass header, brand lockup, content column); `web/controls.css` owns
 buttons and focus. The hosted shell consumes all three.
 
 Primary actions use the lavender face (`--primary`) with hairline coral and

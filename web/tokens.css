@@ -95,11 +95,4 @@
   --shadow-paper: inset 0 1px 0 rgb(255 255 255 / .04);
   --shadow-floating: 0 8px 28px rgb(0 0 0 / .6);
   --shadow-dialog: 0 35px 120px rgb(0 0 0 / .6);
-  /* Backdrop grid: coral, cobalt and lavender lines strongest at the page edges. */
-  --grid-size: 80px;
-  --grid-coral: #ff626838;
-  --grid-cobalt: #164bff47;
-  --grid-face: #7d82ff24;
-  /* Full strength at the very edges, falling off fast to nothing before the content column. */
-  --grid-vignette: linear-gradient(90deg, #000 2%, rgb(0 0 0 / .45) 7%, rgb(0 0 0 / .12) 13%, transparent 20%, transparent 80%, rgb(0 0 0 / .12) 87%, rgb(0 0 0 / .45) 93%, #000 98%);
 }
