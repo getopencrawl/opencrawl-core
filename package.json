@@ -1,6 +1,6 @@
 {
   "name": "@1patch/opencrawl-core",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -22,7 +22,9 @@
     "./connectors/temporal-client": "./src/connectors/temporal/client.mjs",
     "./debug": "./src/debug.mjs",
     "./sessions/temporal": "./src/sessions/temporal/worker.mjs",
-    "./sessions/temporal-client": "./src/sessions/temporal/client.mjs"
+    "./sessions/temporal-client": "./src/sessions/temporal/client.mjs",
+    "./sessions/credentials": "./src/sessions/credentials.mjs",
+    "./sessions/cloud-setup": "./src/sessions/cloud-setup.mjs"
   },
   "files": [
     "src",

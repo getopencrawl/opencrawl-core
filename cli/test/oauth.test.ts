@@ -55,3 +55,9 @@ test('refresh persists the rotated-token contract and redacts invalid grants', a
   expect(result.refreshToken).toBe('new-refresh');
   await expect(refresh(auth, 'old', (async () => response({error: 'private-error'}, 401)) as any)).rejects.toMatchObject({code: 'AUTH_REQUIRED', exitCode: 2});
 });
+
+test('proxy rejection identifies the blocked host without echoing the response',async()=>{
+  const {jsonRequest}=await import('../src/oauth.ts');
+  try {await jsonRequest('https://capture.example.com/health',{},(async()=>new Response('proxy secret body',{status:403})) as unknown as typeof fetch);throw new Error('expected error');}
+  catch(error:any){expect(error.code).toBe('NETWORK_BLOCKED');expect(error.message).toContain('capture.example.com');expect(error.message).not.toContain('secret body');}
+});

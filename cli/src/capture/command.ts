@@ -6,9 +6,9 @@ export async function collectCommand(action:string,api:string,values:any) {
   if(values.backfill!==undefined && action!=='install' || values['dry-run'] && action!=='backfill' || values.yes && action!=='backfill')throw new CliError('INVALID_USAGE','Use --backfill with collect install; --dry-run and --yes with collect backfill.',64);
   switch(action) {
     case 'install': {
-      const mode=values.backfill??'ask';
+      const mode=values.backfill??(process.env.CLAUDE_CODE_REMOTE==='true'?'skip':'ask');
       if(!['ask','skip','all','claude-code','codex'].includes(mode))throw new CliError('INVALID_USAGE','Use --backfill ask, skip, all, claude-code, or codex.',64);
-      const installed=await installCapture(api,{background:!values['no-background']});
+      const installed=await installCapture(api,{background:!values['no-background']&&process.env.CLAUDE_CODE_REMOTE!=='true',...(values.harness?{harnesses:[values.harness]}:{})});
       return {...installed,backfill:await setupBackfill(api,mode,values.json)};
     }
     case 'backfill': {
