@@ -29,6 +29,10 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
   } else {
     if (record.type === 'response_item') {
       if (r.type === 'message' && ['user','assistant'].includes(r.role)) {kind='message';data=r;}
+      else if (r.type === 'agent_message') {
+        kind='agent_message';
+        data={type:r.type,author:r.author,recipient:r.recipient,content:Array.isArray(r.content)?r.content.filter((block:any)=>block?.type!=='encrypted_content'):r.content};
+      }
       else if (/call|tool/.test(r.type ?? '')) {kind=/output|result/.test(r.type) ? 'tool_result':'tool_call';data=r;}
       else if (r.type === 'reasoning' && r.summary?.length) {kind='reasoning_summary';data={type:r.type,summary:r.summary};}
     } else if (record.type === 'turn_context') {kind='turn_metadata';data={turn_id:r.turn_id,model:r.model,model_provider:r.model_provider,effort:r.effort,cwd:r.cwd};}

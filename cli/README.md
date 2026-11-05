@@ -151,6 +151,9 @@ Transient connection failures and HTTP 429/502/503/504 responses are retried up
 to four times for reads and content-addressed uploads, without changing the
 payload. Permanent rejections fail immediately. Replaying completed files
 requires one initial owner check rather than a network request per file.
+Approved backfills also reconcile older parser cursors to recover supported
+inter-agent messages. Routine hooks and sync do not trigger that historical
+reprocessing. Stable event identities prevent duplicate search documents.
 Failures return nonzero rather than reporting a complete import. Status still
 shows queued uploads and errors; `collect flush` retries uploads already queued.
 
