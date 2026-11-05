@@ -1,8 +1,3 @@
----
-name: opencrawl
-description: Understand OpenCrawl, its product direction and available services, and verify an authenticated connection before using its MCP tools.
----
-
 # OpenCrawl
 
 OpenCrawl is building a portable knowledge and context platform: capture source
@@ -12,7 +7,7 @@ managed operation and account access.
 
 Available today: account authentication, CLI enrollment, and agent-session
 capture through the separate CLI and session API. This MCP connection currently
-provides this overview and the read-only `test_connection` tool. It does not
+provides the read-only `opencrawl` overview tool and `test_connection` tool. It does not
 expose captured sessions or provide crawling, indexing, search, or retrieval.
 Describe those as product direction, not currently callable services.
 

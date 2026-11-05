@@ -1,21 +1,25 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
-import {fileURLToPath} from 'node:url';
+import {readFile} from 'node:fs/promises';
 import {McpServer, createMcpHandler} from '@modelcontextprotocol/server';
-import {loadSkills} from '@modelcontextprotocol/server/ext/skills/node';
 import {toNodeHandler} from '@modelcontextprotocol/node';
 import {z} from 'zod';
 
-const skills = await loadSkills(fileURLToPath(new URL('./skills', import.meta.url)), {strict: true});
+const overview = await readFile(new URL('./overview.md', import.meta.url), 'utf8');
 
 // Authentication belongs to the runtime adapter. No account or tenant data is
 // exposed by this initial surface; every MCP request still requires a principal.
 export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated}) {
   if (typeof authenticate !== 'function' || new URL(origin).origin !== origin) throw new Error('MCP requires authentication and a canonical origin');
   const handler = createMcpHandler(() => {
-    const server = new McpServer({name: 'opencrawl', version: '0.1.2'}, {
-      instructions: 'Read the opencrawl skill at skill://opencrawl/SKILL.md for product overview and available services. Use test_connection to verify this authenticated server connection.',
+    const server = new McpServer({name: 'opencrawl', version: '0.1.7'}, {
+      instructions: 'Call opencrawl for the product overview and available services. Use test_connection to verify this authenticated server connection.',
     });
-    skills.attach(server);
+    server.registerTool('opencrawl', {
+      title: 'OpenCrawl overview',
+      description: 'Learn what OpenCrawl does, its available services, and how to use this MCP connection. Call this for an introduction or before choosing OpenCrawl tools.',
+      inputSchema: z.strictObject({}),
+      annotations: {readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false},
+    }, async () => ({content: [{type: 'text', text: overview}]}));
     server.registerTool('test_connection', {
       title: 'Test OpenCrawl connection',
       description: 'Verify that an authenticated request reached this OpenCrawl server. Does not read user data or verify ingestion, indexing, or other services.',

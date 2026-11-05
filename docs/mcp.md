@@ -1,9 +1,14 @@
 # MCP connection
 
 The core exports `createOpenCrawlMcp` from `@1patch/opencrawl-core/mcp`.
-It serves one `opencrawl` skill (`skill://opencrawl/SKILL.md`) and exactly one
-read-only tool, `test_connection`, using the official MCP SDK. The Skills
-extension supplies discovery, manifests, resource reads, and content digests.
+It serves exactly two read-only tools using the official MCP SDK:
+
+- `opencrawl`: returns the product overview and available services as Markdown.
+- `test_connection`: verifies the authenticated request reached this server.
+
+Both take an empty argument object. No Skills extension, resources, or prompts
+are advertised; clients discover both tools with `tools/list` and invoke them
+with `tools/call`.
 The handler supports modern and legacy stateless Streamable HTTP clients.
 
 The runtime supplies `authenticate(req, res)`, an exact allowed browser `origin`,
@@ -28,8 +33,7 @@ requires a 32-character minimum secret, and validates Host and Origin. It needs
 no hosted account or cloud service. Use your own TLS/auth adapter for network
 deployment. Keep credentials outside source and out of chat/logs.
 
-Tests use the official SDK client in both protocol eras, verify skill digests,
-call the tool, and reject anonymous access, forged origins, oversized bodies,
-invalid arguments, and resource traversal. The official SDK dependencies are
+Tests use the official SDK client in both protocol eras, verify both tools and the absence of skill/resource capabilities, and reject anonymous access, forged origins, oversized bodies,
+invalid arguments, and reads of the removed skill resource. The official SDK dependencies are
 Apache-2.0; Zod is MIT. These portable dependencies are explicitly allowed by
 the source-boundary check; hosted identity packages remain forbidden.
