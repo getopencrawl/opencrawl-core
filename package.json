@@ -1,6 +1,6 @@
 {
   "name": "@1patch/opencrawl-core",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -13,7 +13,13 @@
     "./sessions/search": "./src/sessions/search.mjs",
     "./sessions/indexer": "./src/sessions/indexer.mjs",
     "./onboarding": "./src/onboarding.mjs",
-    "./onboarding/status": "./src/onboarding-status.mjs"
+    "./onboarding/status": "./src/onboarding-status.mjs",
+    "./connectors/pipeline": "./src/connectors/pipeline.mjs",
+    "./connectors/search": "./src/connectors/search.mjs",
+    "./connectors/scope": "./src/connectors/scope.mjs",
+    "./connectors/workflow": "./src/connectors/workflow.mjs",
+    "./connectors/temporal": "./src/connectors/temporal/worker.mjs",
+    "./connectors/temporal-client": "./src/connectors/temporal/client.mjs"
   },
   "files": [
     "src",
@@ -43,6 +49,35 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.4.0"
+    "@modelcontextprotocol/client": "2.4.0",
+    "@temporalio/activity": "1.25.0",
+    "@temporalio/client": "1.25.0",
+    "@temporalio/common": "1.25.0",
+    "@temporalio/worker": "1.25.0",
+    "@temporalio/workflow": "1.25.0"
+  },
+  "peerDependencies": {
+    "@temporalio/activity": "1.25.0",
+    "@temporalio/client": "1.25.0",
+    "@temporalio/common": "1.25.0",
+    "@temporalio/worker": "1.25.0",
+    "@temporalio/workflow": "1.25.0"
+  },
+  "peerDependenciesMeta": {
+    "@temporalio/client": {
+      "optional": true
+    },
+    "@temporalio/activity": {
+      "optional": true
+    },
+    "@temporalio/common": {
+      "optional": true
+    },
+    "@temporalio/worker": {
+      "optional": true
+    },
+    "@temporalio/workflow": {
+      "optional": true
+    }
   }
 }

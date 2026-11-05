@@ -61,12 +61,42 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
       request('PUT', key, {body, headers: {'content-type': contentType}}).then(() => undefined),
 
     /** Returns the object as a Buffer, or null if it does not exist. */
-    async get(key) {
+    async get(key, {maxBytes} = {}) {
+      if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw new Error('Invalid object read limit');
       const res = await request('GET', key);
-      return res.status === 404 ? null : Buffer.from(await res.arrayBuffer());
+      if (res.status === 404) return null;
+      if (maxBytes === undefined) return Buffer.from(await res.arrayBuffer());
+      if (Number(res.headers.get('content-length')) > maxBytes) {
+        await res.body?.cancel();
+        throw Object.assign(new Error('Object exceeds read limit'), {permanent: true});
+      }
+      const parts = []; let size = 0;
+      for await (const part of res.body) {
+        size += part.length;
+        if (size > maxBytes) throw Object.assign(new Error('Object exceeds read limit'), {permanent: true});
+        parts.push(part);
+      }
+      return Buffer.concat(parts);
     },
 
     delete: key => request('DELETE', key).then(() => undefined),
+
+    /** Bounded streaming reads for connector files; closes the response on error/cancellation. */
+    async *read(key, {maxBytes = 256 * 1024 * 1024} = {}) {
+      if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error('Invalid object read limit');
+      const res = await request('GET', key);
+      if (res.status === 404) throw new Error('Source object is not available');
+      if (Number(res.headers.get('content-length')) > maxBytes) {
+        await res.body?.cancel();
+        throw Object.assign(new Error('Object exceeds read limit'), {permanent: true});
+      }
+      let size = 0;
+      for await (const chunk of res.body) {
+        size += chunk.length;
+        if (size > maxBytes) throw Object.assign(new Error('Object exceeds read limit'), {permanent: true});
+        yield chunk;
+      }
+    },
 
     /** Lists keys under prefix. With delimiter '/', returns direct children only, plus subdirectory prefixes. */
     async list(prefix, {delimiter} = {}) {
