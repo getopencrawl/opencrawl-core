@@ -15,7 +15,7 @@ stock Slack `channel_messages`, `threads`, `channels`, `users`, and
 `channel_members`. `messages` is also accepted as a channel-message stream alias.
 This is lexical search; embeddings and thread summaries are not required.
 
-The `slack-v2` normalizer includes fallback `text`, visible Block Kit and rich-text
+The `slack-v3` normalizer includes fallback `text`, visible Block Kit and rich-text
 content, attachment text/fields/blocks, and file labels. It deduplicates mirrored
 fragments without treating a nonempty fallback or an ellipsis as proof of a
 complete body. Binary attachments and content behind links are not fetched.
@@ -24,7 +24,7 @@ metadata and interactive control values are never recursively indexed. The
 256 KiB limit applies to the assembled readable message, with oversized records
 failing visibly instead of being truncated.
 
-Upgrading from `slack-v1` requires a new index generation (`v2` in standalone
+Upgrading from `slack-v1` or the briefly published `slack-v2` requires a new index generation (`v3` in standalone
 defaults). Backfill and verify that generation before switching queries. Carry
 forward durable suppression records first; raw replay alone cannot reconstruct
 operator tombstones. Retain the previous generation for rollback, and include
@@ -77,7 +77,7 @@ configuration file (credentials stay in environment variables):
     "rawPrefix": "raw/v1/source=slack/workspace=T123/connection=slack-1/"
   },
   "s3": {"endpoint": "http://127.0.0.1:8333", "bucket": "my-bucket"},
-  "search": {"endpoint": "http://127.0.0.1:9200", "index": "my-team-slack-v2"}
+  "search": {"endpoint": "http://127.0.0.1:9200", "index": "my-team-slack-v3"}
 }
 ```
 
