@@ -2,11 +2,10 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer, request} from 'node:http';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
-import {SkillsClient} from '@modelcontextprotocol/client/ext/skills';
 import {createOpenCrawlMcp} from '../src/mcp/server.mjs';
 import {standaloneMcp} from '../src/mcp/standalone.mjs';
 
-test('MCP serves a verified skill and exactly one tool through real SDK clients', async t => {
+test('MCP serves exactly two tools without skills or resources through real SDK clients', async t => {
   let handler;
   const server = createServer((req, res) => handler(req, res));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -17,21 +16,21 @@ test('MCP serves a verified skill and exactly one tool through real SDK clients'
     const client = new Client({name: 'core-test', version: '1'}, {versionNegotiation: {mode}});
     await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), {requestInit: {headers: {authorization: 'Bearer local-secret'}}}));
     try {
-      assert.deepEqual((await client.listTools()).tools.map(t => t.name), ['test_connection']);
+      assert.deepEqual((await client.listTools()).tools.map(t => t.name), ['opencrawl', 'test_connection']);
       const result = await client.callTool({name: 'test_connection', arguments: {}});
       assert.equal(result.structuredContent.connected, true);
       assert.equal(result.structuredContent.revision, 'test-revision');
       assert.ok(Date.now() - Date.parse(result.structuredContent.serverTime) < 5000);
-      const skills = new SkillsClient(client);
-      const entries = (await skills.list()).skills;
-      assert.equal(entries.length, 1);
-      assert.equal(entries[0].uri, 'skill://opencrawl/SKILL.md');
-      const file = await skills.read(entries[0]);
-      assert.equal(file.verified, true);
-      assert.equal(file.frontmatter.name, 'opencrawl');
-      assert.match(file.text, /does not\nexpose captured sessions/);
+      const overview = await client.callTool({name: 'opencrawl', arguments: {}});
+      assert.equal(overview.isError, undefined);
+      assert.match(overview.content[0].text, /# OpenCrawl/);
+      assert.match(overview.content[0].text, /expose captured sessions/);
+      assert.equal((await client.callTool({name: 'opencrawl', arguments: {query: 'private data'}})).isError, true);
+      const capabilities = client.getServerCapabilities();
+      assert.equal(capabilities.resources, undefined);
+      assert.equal(capabilities.extensions?.['io.modelcontextprotocol/skills'], undefined);
+      await assert.rejects(client.readResource({uri: 'skill://opencrawl/SKILL.md'}));
       assert.equal((await client.callTool({name: 'test_connection', arguments: {url: 'https://untrusted.test'}})).isError, true);
-      await assert.rejects(client.readResource({uri: 'skill://opencrawl/../../package.json'}));
     } finally {await client.close();}
   }
   assert.equal((await fetch(origin + '/mcp')).status, 401);
