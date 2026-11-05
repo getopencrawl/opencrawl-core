@@ -10,7 +10,7 @@ if (!configPath || !bundlePath) throw new Error('Usage: node src/connectors/temp
 const config = JSON.parse(await readFile(configPath, 'utf8'));
 const binding = validateBinding(config.binding);
 const store = createObjectStore({...config.s3, credentials: awsCredentials()});
-const search = createConnectorSearch({...config.search, tenantId: binding.tenantId, index: config.search.index || connectorIndex('selfhost', binding.tenantId, 'v2')});
+const search = createConnectorSearch({...config.search, tenantId: binding.tenantId, index: config.search.index || connectorIndex('selfhost', binding.tenantId, 'v3')});
 await store.checkAccess(); await search.ensureIndex();
 await buildConnectorWorkflows(bundlePath);
 const resolve = async reference => {
