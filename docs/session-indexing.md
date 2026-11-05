@@ -1,41 +1,47 @@
-# Session indexing
+# Session indexing with Temporal
 
-The same core worker reads captured objects from S3-compatible storage in both deployments. It indexes message/tool text and attachment references in OpenSearch. Binary attachment bytes remain in S3; OCR, document parsing, embeddings and semantic ranking are separate features.
+The ingest API authenticates the user, validates ownership and the envelope, and stores immutable transcript batches and attachments in S3-compatible storage. Its acknowledgement requires durable S3 storage. It does not create indexing work items, call Temporal, initialize search, or run background processing. A Temporal or OpenSearch outage does not prevent capture.
+
+A separate Node.js worker runs `indexSessionsV1` on Temporal. A five-minute durable schedule discovers captured objects in bounded S3 pages and executes indexing activities. Temporal owns activity retry/backoff, timeouts and the discovery cursor. After five pages a workflow continues as new to bound history. Each activity retries five times; an exhausted object does not block the rest of the sweep, but causes a visible failed workflow. The next scheduled sweep can retry repaired objects. Schedule overlap is SKIP.
+
+The workflow carries only an operator-configured source reference, S3 object keys, cursors and counts. Transcript text and attachment bytes remain in S3. Activities normalize text and attachment references, validate every OpenSearch bulk item, and only then write an idempotent success receipt. Stable document IDs make retry after a partial write safe. Activity failures are sanitized before entering Temporal history.
 
 ## Single-tenant self-hosting
 
-Configure the S3-backed receiver as described in `session-capture.md`, then supply:
+Run the receiver with the S3 settings and bearer token in `session-capture.md`. Run Temporal with persistent storage separately. The worker uses the same S3 settings plus:
 
 ```sh
+export OPENCRAWL_TENANT_ID=my-team
+export OPENCRAWL_USER_ID=owner
 export OPENCRAWL_OPENSEARCH_URL=https://your-search.example
 export OPENCRAWL_OPENSEARCH_INDEX=opencrawl-sessions-v1
 export OPENCRAWL_OPENSEARCH_USERNAME=your-service-user
 export OPENCRAWL_OPENSEARCH_PASSWORD=your-service-password
-# For a private CA: set NODE_EXTRA_CA_CERTS to its PEM file before starting Node.
-npm run sessions
+export TEMPORAL_ADDRESS=your-temporal:7233
+export TEMPORAL_NAMESPACE=your-existing-namespace
+export TEMPORAL_SESSION_TASK_QUEUE=session-indexing-v1
+# Build once with the released worker code, then run independently of the API.
+node src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs --build
+node src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs
 ```
 
-The receiver starts the worker and authenticated search API. The shipped standalone runtime has exactly one operator-configured tenant/user principal. Its worker lists only that owner's S3 namespace, and its search API always filters by that principal. It needs no proprietary shell, WorkOS or OpenCrawl account. Use `OPENCRAWL_INDEXER_ENABLED=0` to run only the HTTP API against an existing index. A local OpenSearch on loopback can be used for development; remotely exposed search must use TLS and authentication.
+`npm ci` in the core repository installs the pinned Temporal SDK. Package consumers install the optional `@temporalio/{activity,client,common,worker,workflow}` peers at 1.25.0 explicitly. Use an operator-controlled source ID (`OPENCRAWL_SESSION_SOURCE_ID`, default `self-hosted-sessions-v1`) and dedicated task queue for each fixed source binding. The worker lists and processes only the configured tenant/user namespace. It requires no hosted shell, WorkOS or OpenCrawl account. Stop its worker and pause its exact schedule before changing that fixed authorization policy. Remote services require their normal network/authentication protections; the provided plain connection configuration assumes a private trusted Temporal network.
 
-Query `GET /api/sessions/search?q=words&limit=20` with the same receiver bearer token. Results contain text chunks, native event/session attribution, tool-call linkage and source-object/attachment references. There is no raw OpenSearch DSL passthrough. Search always requires an explicit trusted tenant AND user. Organization-wide sharing is not enabled by this first implementation.
+The API still serves `GET /api/sessions/search?q=words&limit=20` with the receiver bearer token. It always binds tenant and user; arbitrary search DSL and caller-selected index/scope are not accepted. The worker creates the search index when it first processes data. Binary attachments stay in S3; OCR and embeddings are separate features.
 
-## Durable processing
+## Hosted deployment
 
-Capture writes an immutable compressed batch, then a deterministic `index-pending/tenants/<tenant-hash>/users/<user-hash>/<source-key-hash>.json` work item before acknowledging upload. A retry repairs a crash between those writes. The worker polls pending work every 15 seconds and continues immediately while more pages exist. Each pass also reconciles one bounded page of source objects, backfilling earlier captures and repairing missing work items without making fresh work wait for a history scan.
+The proprietary shell binds each worker to one hosted environment, S3 namespace and session index. It resolves owners from server-authenticated stored records; core checks those owners against the tenant/user hashes and session identity in each immutable source key. Every API search independently authenticates the current user and organization membership. Revocation blocks new API access; previously accepted objects remain under their original ownership and retention policy.
 
-The worker checks the authenticated owner against the tenant/user hashes, harness, installation and session encoded in the S3 key. Document IDs include owner, harness, installation, session, native event ID and chunk number. Text is split into 16,000-character chunks; bulk requests are capped at 4 MiB. Each individual bulk result must succeed before the worker writes its durable receipt and removes pending work. Replays overwrite identical document IDs instead of duplicating records.
+Sessions use the same dedicated Temporal service, staging/production namespaces and Node.js worker host as connector indexing. Session task queues and schedules are distinct from Slack's. OpenSearch remains shared OpenCrawl infrastructure with dedicated session indexes. Workflow payloads cannot select a bucket, endpoint, tenant or search target.
 
-Checkpoints and retry state live under `<capture-prefix>/_index/<search-target-hash>/<job-scope-hash>/`. Failures retain pending work, use exponential backoff capped at one hour, and do not block other batches. Failed-state objects include the source key and attempt counts but no transcript contents or provider error bodies. Worker logs report only aggregate counts and availability. Monitor `session_index_unavailable`, failed counts and age of pending work.
+## Migration, recovery and operation
 
-The S3 credential requires source/attachment reads, checkpoint and pending-work writes, paginated listing, and deletion of pending work only. It does not require deleting source batches or attachments. Keep S3 backups as the canonical recovery source. To rebuild, stop the old worker and choose a new versioned OpenSearch index; its separate checkpoint namespace causes reconciliation to reindex all sources. Retain the old index until verification completes, then switch queries. Rolling back the receiver/worker leaves all canonical captures intact.
+Existing S3 objects, attachment references and document IDs are unchanged. Successful receipts under `<prefix>/_index/<target-hash>/<scope-hash>/batches/` are reused, avoiding unnecessary reindexing. Legacy `index-pending` objects and S3 retry/cursor state are ignored and never written by the new receiver/worker. They may be retired later under the deployment's retention policy; this migration does not delete them.
 
-## Hosted isolation
+Deploy the worker before the new receiver. A brief overlap with the old poller is safe because writes and receipts are idempotent. To roll back, pause the exact session schedule, stop its session worker and restore the previous receiver/worker release; canonical S3 objects remain intact. Do not delete the shared search cluster or connector schedules. Future low-latency notifications can trigger the same processing path while retaining periodic reconciliation.
 
-The proprietary shell resolves verified user identity and current WorkOS organization membership on every search request. It supplies a trusted principal to the same core search operation. The hosted worker resolves scope from server-authenticated stored records, and core independently verifies it against the immutable object's owner namespace. A user cannot choose another tenant, user, index, prefix or query filter.
-
-Staging and production use separate `opencrawl-v2-<environment>-sessions-v1` indexes and S3 prefixes on the shared OpenCrawl infrastructure. Hosted queries use IAM SigV4 and the runtime's index-scoped permissions. Existing cluster administration and workload permissions remain operator-managed. The core worker has no hosted account/membership dependency. Revoked membership blocks subsequent API access immediately; previously accepted objects and indexes retain their original scope and remain subject to the deployment's retention policy.
-
-The shared cluster can host other workloads without copying this pipeline. Tenant/user ownership filters and IDs remain mandatory even when a deployment uses a physically separate index. Automated checks exercise colliding identities, partial bulk failure, replay/restart, incremental arrival, and real S3/OpenSearch storage. This is lexical session search; no CLI/MCP search tool or search UI is added by this release.
+Discovery currently sweeps the fixed source prefix, including successful receipts checks, using bounded pages. This deliberately favors simple reliable catch-up over low-latency ingestion. Monitor schedule failures, activity retries and sweep lag. S3 credentials need source reads/listing and success-receipt reads/writes; source deletion is unnecessary. Back up canonical S3 and Temporal persistence. Rebuild against a new versioned index with its own receipt namespace; never restore receipts without the matching index.
 
 ## Raw diagnostics
 

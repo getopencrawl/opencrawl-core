@@ -2,13 +2,19 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {createSessionIngest,digest,sessionScope} from '../src/sessions/ingest.mjs';
-import {createSessionIndexer,batchDocuments} from '../src/sessions/indexer.mjs';
+import {createSessionPipeline,batchDocuments} from '../src/sessions/indexer.mjs';
 import {createSessionSearch} from '../src/sessions/search.mjs';
+import {runConnectorSegment} from '../src/connectors/workflow.mjs';
 import {standaloneStorage} from '../src/sessions/standalone.mjs';
 
 function memoryStore(){
  const data=new Map();return {data,put:async(k,v)=>{data.set(k,Buffer.from(v));},get:async k=>data.get(k)||null,delete:async k=>{data.delete(k);},
  listPage:async(prefix,{continuationToken,maxKeys})=>{const keys=[...data.keys()].filter(k=>k.startsWith(prefix)&&(!continuationToken||k>continuationToken)).sort();return {keys:keys.slice(0,maxKeys),nextToken:keys.length>maxKeys?keys[maxKeys-1]:null};}};
+}
+async function sweep(pipeline) {
+ return runConnectorSegment({}, {listPage:input=>pipeline.listPage(input),processObject:async input=>{
+  const result=await pipeline.processObject(input);return {records:result.skipped?0:1};
+ }});
 }
 const owner={tenantId:'tenant-a',userId:'same-user'};
 function batch(principal,text='unique transcript words') {return {schemaVersion:1,owner:principal,harness:'codex',origin:'desktop',installationId:'same-device',sessionId:'same-session',events:[{id:'same-event',kind:'message',data:{role:'user',content:[{type:'input_text',text}]}}],attachments:[]};}
@@ -19,18 +25,18 @@ test('fixed-scope indexing, checkpoints, crash replay and poison records cannot 
  for(const principal of [owner,otherTenant,otherUser])await ingest.putBatch(principal,batch(principal));
  const docs=new Map();let fail=true;const search={identity:'test-index',ensureIndex:async()=>{},putDocuments:async items=>{for(const d of items)docs.set(d.id,d.document);if(fail)throw new Error('Interrupted after write');}};
  let time=0;const options={store,prefix,search,principal:owner,now:()=>time};
- let worker=createSessionIndexer(options);
- assert.equal((await worker.runOnce()).failed,1);assert.equal(docs.size,1);
- fail=false;time=10000;worker=createSessionIndexer(options);
- assert.equal((await worker.runOnce()).indexed,1);assert.equal(docs.size,1);
- assert.equal((await worker.runOnce()).indexed,0);
+ let worker=createSessionPipeline(options);
+ assert.equal((await sweep(worker)).failed,1);assert.equal(docs.size,1);
+ fail=false;time=10000;worker=createSessionPipeline(options);
+ assert.equal((await sweep(worker)).indexed,1);assert.equal(docs.size,1);
+ assert.equal((await sweep(worker)).indexed,0);
  assert.ok([...docs.values()].every(d=>d.tenantId===owner.tenantId&&d.userId===owner.userId));
- const hosted=createSessionIndexer({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
- assert.equal((await hosted.runOnce()).indexed,3);assert.equal(docs.size,3);
+ const hosted=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
+ assert.equal((await sweep(hosted)).indexed,3);assert.equal(docs.size,3);
  const key=[...store.data.keys()].find(k=>k.startsWith(prefix+'/'+sessionScope(owner))&&k.endsWith('.json.gz'));
  const forged={...batch(otherTenant),receivedAt:new Date().toISOString()};
  assert.throws(()=>batchDocuments({prefix,key,batch:forged,principal:otherTenant}),/authorized scope/);
- assert.throws(()=>createSessionIndexer({store,prefix,search}),/fixed single-tenant principal/);
+ assert.throws(()=>createSessionPipeline({store,prefix,search}),/fixed single-tenant principal/);
 });
 
 test('bulk item errors are failures even with HTTP 200; search always binds both ownership fields',async()=>{
@@ -69,40 +75,52 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval an
   b.events.push({id:'tool-event',kind:'tool_result',data:{call_id:'tool-1',output:'Build completed successfully'}});
   await ingest.putBatch(principal,b);
  }}
- const single=createSessionIndexer({store,prefix,search,principal:owner});
- assert.equal((await single.runOnce()).indexed,4);await search.refresh();
+ const single=createSessionPipeline({store,prefix,search,principal:owner});
+ assert.equal((await sweep(single)).indexed,4);await search.refresh();
  assert.equal((await search.search(owner,{query:'violet'})).total,4);
  assert.equal((await search.search(owners[1],{query:'violet'})).total,0);
- const hosted=createSessionIndexer({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
- assert.equal((await hosted.runOnce()).indexed,12);await search.refresh();
+ const hosted=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
+ assert.equal((await sweep(hosted)).indexed,12);await search.refresh();
  for(const principal of owners){
   const result=await search.search(principal,{query:'violet'});assert.equal(result.total,4);
   assert.ok(result.hits.every(hit=>hit.attachments.every(a=>a.objectKey.startsWith(prefix+'/'+sessionScope(principal)+'/attachments/'))));
   assert.ok(result.hits.every(hit=>hit.tenantId===principal.tenantId&&hit.userId===principal.userId));
   assert.equal((await search.search(principal,{query:'Build completed'})).total,4);
  }
- const restarted=createSessionIndexer({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
- assert.equal((await restarted.runOnce()).indexed,0);
+ const restarted=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
+ assert.equal((await sweep(restarted)).indexed,0);
  assert.equal((await search.search(owner)).total,8);
  const later=batch(owner,'new incremental indigo message');later.events[0].id='later-event';
- await ingest.putBatch(owner,later);assert.equal((await restarted.runOnce()).indexed,1);await search.refresh();
+ await ingest.putBatch(owner,later);assert.equal((await sweep(restarted)).indexed,1);await search.refresh();
  assert.equal((await search.search(owner,{query:'indigo'})).total,1);
  // Exercise S3 continuation tokens while successful work items are deleted.
  for(let i=0;i<55;i++){const value=batch(owner,'paginated receipt item');value.sessionId='page-'+i;await ingest.putBatch(owner,value);}
- const firstPage=await restarted.runOnce();assert.equal(firstPage.more,true);
- const secondPage=await restarted.runOnce();assert.equal(firstPage.indexed+secondPage.indexed,55);
+ assert.equal((await sweep(restarted)).indexed,55);
  await search.refresh();assert.equal((await search.search(owner,{query:'paginated'})).total,55);
  assert.equal((await search.search(owners[1],{query:'paginated'})).total,0);
 });
 
-test('capture retries repair a failed indexing work-item write before acknowledging the batch',async()=>{
- const store=memoryStore(),prefix='sessions/repair/v1';let fail=true;
- const put=store.put;store.put=async(k,v)=>{if(fail&&k.includes('/index-pending/'))throw new Error('Queue unavailable');await put(k,v);};
+test('capture only lands immutable data and succeeds without any processing service',async()=>{
+ const store=memoryStore(),prefix='sessions/simple/v1';
+ const put=store.put;store.put=async(k,v)=>{if(!k.endsWith('.json.gz'))throw new Error('Processing storage unavailable');await put(k,v);};
  const ingest=createSessionIngest({store,prefix}),value=batch(owner);
- await assert.rejects(ingest.putBatch(owner,value),/Queue unavailable/);
- assert.equal([...store.data.keys()].filter(k=>k.endsWith('.json.gz')).length,1);
- fail=false;assert.equal((await ingest.putBatch(owner,value)).stored,true);
- assert.equal([...store.data.keys()].filter(k=>k.includes('/index-pending/')).length,1);
+ assert.equal((await ingest.putBatch(owner,value)).stored,true);
+ assert.equal((await ingest.putBatch(owner,value)).stored,true);
+ assert.equal(store.data.size,1);
+});
+
+test('worker rejects forged source keys and checkpoints only after all indexing writes succeed',async()=>{
+ const store=memoryStore(),prefix='sessions/boundary/v1',ingest=createSessionIngest({store,prefix});
+ await ingest.putBatch(owner,batch(owner));
+ const key=[...store.data.keys()][0];let fail=true;
+ const search={identity:'target',ensureIndex:async()=>{},putDocuments:async()=>{if(fail)throw new Error('Partial bulk failure');}};
+ const pipeline=createSessionPipeline({store,prefix,search,principal:owner});
+ await assert.rejects(pipeline.processObject({key:key.replace('tenants/','tenants/foreign/')}),/authorized source/);
+ await assert.rejects(pipeline.processObject({key}),/Partial bulk/);
+ assert.equal(store.data.size,1);
+ fail=false;assert.equal((await pipeline.processObject({key})).records,1);
+ assert.equal((await pipeline.processObject({key})).skipped,true);
+ assert.equal([...store.data.keys()].filter(k=>k.includes('/_index/')).length,1);
 });
 
 test('OpenSearch SigV4 signs temporary credentials for the es service and index-scoped endpoint',async()=>{
