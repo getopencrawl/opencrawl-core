@@ -21,8 +21,10 @@ export function sessionMapping(vectors) {
     :{type:'knn_vector',dimension:vectors.dimensions,method:{name:'hnsw',engine:'lucene',space_type:'cosinesimil'}};
   return {...sessionIndexMapping,properties:{...sessionIndexMapping.properties,embedding}};
 }
-/** `embed(texts) -> Promise<number[][]>` (unit-length vectors) enables hybrid lexical+vector search. */
-export function createSessionSearch({endpoint,index,username,password,credentials,replicas=0,region='us-east-1',embed,vectors,fetch:send=globalThis.fetch}) {
+/** `embed(texts) -> Promise<number[][]>` (unit-length vectors) enables hybrid lexical+vector search.
+ * `rerank(query, texts) -> Promise<number[]>` (relevance scores) reorders the top `rerankDepth`
+ * candidates, e.g. with a cross-encoder; the rest keep their fused order behind them. */
+export function createSessionSearch({endpoint,index,username,password,credentials,replicas=0,region='us-east-1',embed,vectors,rerank,rerankDepth=100,fetch:send=globalThis.fetch}) {
   if(Boolean(embed)!==Boolean(vectors)||(vectors&&(!Number.isInteger(vectors.dimensions)||vectors.dimensions<1||vectors.dimensions>4096)))throw new Error('Configure embed together with vectors.dimensions');
   const base=new URL(endpoint);
   if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash)throw new Error('Invalid OpenSearch endpoint');
@@ -78,7 +80,7 @@ export function createSessionSearch({endpoint,index,username,password,credential
       sessionScope(principal);
       if(typeof query!=='string'||query.length>4000||!Number.isInteger(limit)||limit<1||limit>MAX_SEARCH_LIMIT)fail(400,'Invalid search query or limit');
       const filter=[{term:{tenantId:principal.tenantId}},{term:{userId:principal.userId}}];
-      const source=text?{excludes:['embedding']}:{excludes:['embedding','text']};
+      const source=text||rerank?{excludes:['embedding']}:{excludes:['embedding','text']};
       const lexical=request('/_search',{method:'POST',body:JSON.stringify({size:limit,track_total_hits:true,_source:source,
         query:{bool:{filter,must:query.trim()?[relevanceQuery(query)]:[{match_all:{}}]}},
         sort:query.trim()?['_score',{receivedAt:'desc'}]:[{receivedAt:'desc'},{sequence:'asc'}]})});
@@ -93,7 +95,13 @@ export function createSessionSearch({endpoint,index,username,password,credential
       }
       if(raw)return result;
       const shape=hit=>({id:hit._id,score:hit._score,...hit._source});
-      const hits=dense?fuseRankings([{hits:result.hits.hits.map(shape)},{hits:dense.hits.hits.map(shape)}]).slice(0,limit):result.hits.hits.map(shape);
+      let hits=dense?fuseRankings([{hits:result.hits.hits.map(shape)},{hits:dense.hits.hits.map(shape)}]).slice(0,limit):result.hits.hits.map(shape);
+      if(rerank&&query.trim()&&hits.length>1){
+        const head=hits.slice(0,rerankDepth),scores=await rerank(query,head.map(hit=>hit.text??''));
+        if(scores.length!==head.length)throw new Error('Rerank score count mismatch');
+        hits=[...head.map((hit,i)=>({...hit,score:scores[i]})).sort((a,b)=>b.score-a.score),...hits.slice(rerankDepth)];
+      }
+      if(!text)hits=hits.map(({text:_,...hit})=>hit);
       return {total:result.hits.total?.value??0,hits};
     },
     refresh:()=>request('/_refresh',{method:'POST'}),
