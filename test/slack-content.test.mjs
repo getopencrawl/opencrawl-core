@@ -36,3 +36,8 @@ test('combined content is bounded and invalid structures do not silently acknowl
  let nested={type:'text',text:'deep'};for(let i=0;i<30;i++)nested={type:'rich_text',elements:[nested]};
  assert.throws(()=>slackMessageText({blocks:[nested]}),/complex/);
 });
+
+test('rich-text phrases retain repeated words and words contained inside fallback tokens',()=>{
+ const body=slackMessageText({text:'notification preview',blocks:[{type:'rich_text',elements:[{type:'rich_text_section',elements:[{type:'text',text:'do '},{type:'text',text:'not'},{type:'text',text:' do this'}]}]}]});
+ assert.equal(body,'notification preview\ndo \nnot\n do this');
+});
