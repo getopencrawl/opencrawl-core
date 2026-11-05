@@ -1,7 +1,7 @@
 import {createGunzip} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {Readable} from 'node:stream';
-import {PIPELINE_VERSION, authorize, objectStream, receiptKey, validateBinding} from './scope.mjs';
+import {PIPELINE_VERSION, authorize, objectStream, receiptKey, selectedObject, validateBinding} from './scope.mjs';
 import {normalizeSlack} from './slack.mjs';
 
 const MAX_COMPRESSED = 256 * 1024 * 1024;
@@ -17,9 +17,8 @@ export function createConnectorPipeline({binding, store, search, checkActive = a
     async listPage({cursor} = {}) {
       await active();
       const page = await store.listPage(binding.rawPrefix, {continuationToken: cursor, maxKeys: 100});
-      const keys = page.keys.filter(key => key.endsWith('.jsonl.gz'));
-      for (const key of keys) objectStream(binding, key);
-      return {keys, cursor: page.nextToken || null};
+      const keys = page.keys.filter(key => selectedObject(binding, key));
+      return {keys, cursor: page.nextToken || null, ignored: page.keys.length - keys.length};
     },
     async processObject({key}) {
       await active();
