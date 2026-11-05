@@ -34,8 +34,8 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
   const principal={tenantId:'tenant-test',userId:'user-test',name:'Capture Test',email:'test@example.com'};
   const token='test-capture-token-01234567890123456789';
   const store=createLocalSessionStore(join(dir,'objects'));
-  const ingest=createSessionIngest({store});
-  const server=createServer(standaloneCapture({token,principal,store}));
+  const ingest=createSessionIngest({store,onStored:undefined});
+  const server=createServer(standaloneCapture({token,principal,store,prefix:undefined,search:undefined}));
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
   const api='http://127.0.0.1:'+(server.address() as any).port;
   try{

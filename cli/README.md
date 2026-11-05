@@ -96,8 +96,7 @@ but its tarballs and binaries are public. Review the package allowlist with
 UNLICENSED pending the repository's separate public-license decision.
 
 Prior art: OnePatch's npm/native launcher, device login, automatic refresh and
-background upgrades; Glen's small npm entry point for agents. No query command,
-agent hooks, MCP integration or background daemon is included in this release.
+background upgrades; Glen's small npm entry point for agents.
 
 
 ### Session capture
@@ -107,6 +106,49 @@ After signing in, run `opencrawl collect install` to install Claude Code and Cod
 `opencrawl collect status --json` reports the enrolled identity, queued uploads, last receipt and errors. `collect sync` reconciles active transcripts; `collect flush` retries queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
 
 Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service derives ownership from login. Self-hosted users can supply `OPENCRAWL_SESSIONS_TOKEN` and `--api` for the portable receiver. See [capture architecture and limits](../docs/session-capture.md).
+
+### Optional history import
+
+`collect install` asks terminal users whether to import past Claude Code sessions,
+Codex sessions, both, or skip (the default). Desktop coding sessions use the same
+native transcript stores. A JSON/noninteractive install returns
+`backfill.status=decision_required` with a preview and instructions for the agent
+to ask the user. It never assumes consent. `npm install` itself reads no history.
+
+Agents must show the destination and counts, explain that messages, tool
+arguments/results and available attachments will leave the machine, and wait for
+the user's choice. The setup request alone is not consent to import history.
+
+```sh
+opencrawl collect install --backfill skip  # future collection only
+opencrawl collect backfill --dry-run --json  # local metadata only; no upload
+# Only after the user chooses a source:
+opencrawl collect backfill --harness claude-code --yes
+opencrawl collect backfill --harness codex --yes
+opencrawl collect backfill --harness all --yes
+```
+
+During setup, `collect install --backfill claude-code|codex|all` records the
+user's explicit choice in the invocation and imports immediately; `--backfill
+skip` skips without prompting. `--json` alone never grants approval. Use the
+same `--api` as collection enrollment for preview/import.
+
+Preview reports transcript-file counts and on-disk bytes, not unique sessions
+or upload size. It scans `CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`)
+and `CODEX_HOME/{sessions,archived_sessions}` (default `~/.codex/`), including
+Codex `.jsonl.zst` compressed transcripts. Archives expand one at a time into a
+private temporary file, capped at 256 MiB; corrupt or oversized archives report
+an incomplete import and stay on disk. Temporary expanded files are removed. It follows no
+transcript symlinks and does not read conversation content. Import includes
+subagent transcripts in those directories and only records the harness saved
+locally. Cloud-only Claude chats, Cowork VM records, deleted sessions and missing
+attachments cannot be recovered by this importer.
+
+A one-time import reuses capture cursors, owner checks, attachment storage and
+durable receipts. It does not turn on recurring historical scans. Rerun the
+same approved command after an interruption; completed records are skipped.
+Failures return nonzero rather than reporting a complete import. Status still
+shows queued uploads and errors; `collect flush` retries uploads already queued.
 
 ### Claude Code cloud
 
