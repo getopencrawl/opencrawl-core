@@ -121,3 +121,39 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     await new Promise<void>(r=>server.close(()=>r()));rmSync(dir,{recursive:true,force:true});
   }
 });
+
+test('cloud capture identifies remote sessions and drops internal system snapshots, while retaining attachments',()=>{
+  const url='https://claude.ai/code/session_0123456789';
+  const record={type:'attachment',attachment:{type:'remote_session_change',url}};
+  expect(detectOrigin('claude-code',record)).toEqual({origin:'cloud',evidence:url});
+  expect(parseRecord('claude-code',record,0)?.kind).toBe('session_metadata');
+  for(const type of ['prompt_snapshot','environment','mcp_instructions_delta'])expect(parseRecord('claude-code',{type:'attachment',attachment:{type,systemPrompt:'omit me'}},0)).toBeNull();
+  expect(parseRecord('claude-code',{type:'attachment',attachment:{type:'file',path:'/tmp/image.png'}},0)?.kind).toBe('attachment');
+  expect(detectOrigin('claude-code',{...record,attachment:{...record.attachment,url:'https://evil.example/session_a'}}).origin).toBe('unknown');
+});
+
+test('cloud installation skips systemd and Codex, and hooks retain cloud identity across transcript increments',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'opencrawl-cloud-')),saved={...process.env};
+ const principal={tenantId:'fixed',userId:'owner'},token='cloud-fixture-token-01234567890123456789';
+ const server=createServer(standaloneCapture({token,principal,store:createLocalSessionStore(join(dir,'objects'))}));
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ try {
+  process.env.OPENCRAWL_CONFIG_HOME=join(dir,'state');process.env.CLAUDE_CONFIG_DIR=join(dir,'claude');process.env.CODEX_HOME=join(dir,'codex');
+  process.env.OPENCRAWL_SESSIONS_TOKEN=token;process.env.CLAUDE_CODE_REMOTE='true';
+  const result=await installCapture('http://127.0.0.1:'+(server.address() as any).port,{home:dir,command:[process.execPath,'-e','']});
+  expect(result.background).toBe('disabled');expect(result.harnesses).toEqual(['claude-code']);
+  expect(readdirSync(dir)).not.toContain('codex');
+  const config=readCaptureConfig()!,path=join(config.roots['claude-code'],'projects','cloud','native-id.jsonl');
+  mkdirSync(join(config.roots['claude-code'],'projects','cloud'),{recursive:true});
+  writeFileSync(path,[{type:'attachment',attachment:{type:'remote_session_change',url:'https://claude.ai/code/session_cloud'}},{type:'user',sessionId:'native-id',message:{role:'user',content:'cloud hello'}}].map(x=>JSON.stringify(x)+'\n').join(''));
+  await captureTranscript(config,'claude-code',path);
+  const batch=JSON.parse(readFileSync(join(captureDir(),'queue',readdirSync(join(captureDir(),'queue'))[0]),'utf8'));
+  expect(batch.origin).toBe('cloud');expect(batch.remoteSessionId).toBe('session_cloud');expect(batch.sessionId).toBe('native-id');
+  await flushCaptures();delete process.env.CLAUDE_CODE_REMOTE;
+  appendFileSync(path,JSON.stringify({type:'assistant',sessionId:'native-id',message:{role:'assistant',content:'cloud reply'}})+'\n');
+  const meta=await captureTranscript(config,'claude-code',path);expect(meta.origin).toBe('cloud');expect(meta.remoteSessionId).toBe('session_cloud');
+ } finally {
+  for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);
+  await new Promise<void>(r=>server.close(()=>r()));rmSync(dir,{recursive:true,force:true});
+ }
+});

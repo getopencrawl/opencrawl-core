@@ -1,0 +1,46 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {createCaptureCredentials} from '../src/sessions/credentials.mjs';
+import {standaloneCapture} from '../src/sessions/standalone.mjs';
+import {cloudSetupScript,captureSetupPrompt,renderCloudCaptureSetup} from '../src/sessions/cloud-setup.mjs';
+const memory=()=>{const data=new Map();return {data,put:async(k,v)=>data.set(k,v),get:async k=>data.get(k)??null};};
+const owner={tenantId:'fixed',userId:'owner'};
+test('capture delegation is hashed, scoped, expiring and revocable',async()=>{
+ const store=memory();let now=0;const credentials=createCaptureCredentials({store,now:()=>now});
+ const issued=await credentials.issue(owner);
+ assert.ok(![...store.data.values()].some(value=>value.toString().includes(issued.token)));
+ const delegated=await credentials.authenticate(issued.token);assert.equal(delegated.captureAccess,'write');
+ await assert.rejects(credentials.issue(delegated),{status:403});
+ await assert.rejects(credentials.revoke({...owner,tenantId:'other'},issued.id),{status:403});
+ await assert.rejects(credentials.revoke({...owner,userId:'other'},issued.id),{status:403});
+ assert.equal(await credentials.authenticate(issued.token+'x'),null);
+ now=Date.parse(issued.expiresAt);assert.equal(await credentials.authenticate(issued.token),null);
+ now=0;await credentials.revoke(owner,issued.id);assert.equal(await credentials.authenticate(issued.token),null);
+});
+test('self-hosted delegation uploads under its fixed owner but cannot read, search, delegate or revoke',async t=>{
+ const store=memory(),token='self-hosted-admin-token-01234567890123456789';
+ let principal=owner;
+ const server=createServer((req,res)=>standaloneCapture({token,principal,store})(req,res));
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(r=>server.close(r)));
+ const base='http://127.0.0.1:'+server.address().port;
+ const request=(path,auth=token,method='GET',body)=>fetch(base+'/api/sessions/'+path,{method,headers:{authorization:'Bearer '+auth,'content-type':'application/json'},body:body?JSON.stringify(body):undefined});
+ const issued=(await (await request('credentials',token,'POST')).json()).data;
+ const identity=await (await request('identity',issued.token)).json();assert.equal(identity.data.principal.userId,'owner');
+ const batch={schemaVersion:1,owner,installationId:'cloud',sessionId:'session',harness:'claude-code',origin:'cloud',events:[{id:'event',kind:'message',data:{role:'user',content:'cloud fixture'}}],attachments:[]};
+ assert.equal((await request('batches',issued.token,'POST',batch)).status,200);
+ assert.equal((await request('batches',issued.token,'POST',{...batch,owner:{...owner,tenantId:'forged'}})).status,403);
+ for(const [path,method] of [['search','GET'],['batches','GET'],['credentials','POST'],['credentials/'+issued.id,'DELETE']])assert.equal((await request(path,issued.token,method)).status,403);
+ principal={...owner,userId:'new-owner'};assert.equal((await request('identity',issued.token)).status,401);principal=owner;
+ assert.equal((await request('credentials/'+issued.id,token,'DELETE')).status,200);
+ assert.equal((await request('identity',issued.token)).status,401);
+});
+test('first setup prompt covers human cloud steps and fresh-session verification',()=>{
+ const api='https://capture.example.com',prompt=captureSetupPrompt(api),script=cloudSetupScript(api);
+ for(const text of ['personal','human steps','fresh session','stored receipt','Limited/Trusted','Environment variables'])assert.ok(prompt.includes(text));
+ assert.ok(script.includes('--harness claude-code --no-background'));
+ assert.ok(!script.includes('login'));assert.ok(!script.includes('systemctl'));
+ assert.throws(()=>cloudSetupScript('https://capture.example.com/path'));
+ const page=renderCloudCaptureSetup({api,credential:{token:'<secret>',id:'abc',expiresAt:'2027-11-05'}});
+ assert.ok(page.includes('&lt;secret&gt;'));assert.ok(!page.includes('<secret>'));
+});

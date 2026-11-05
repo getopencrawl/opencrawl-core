@@ -1,3 +1,4 @@
+import {createCaptureCredentials,isCaptureCredential} from './credentials.mjs';
 import {createOnboardingStatus} from '../onboarding-status.mjs';
 import {createServer} from 'node:http';
 import {timingSafeEqual} from 'node:crypto';
@@ -7,16 +8,23 @@ import {createObjectStore,awsCredentials} from './s3-store.mjs';
 import {createSessionSearch,searchSettings} from './search.mjs';
 
 /** Single-tenant adapter: the operator sets identity; requests cannot select an owner. */
-export function standaloneCapture({token,principal,store,prefix,search}) {
+export function standaloneCapture({token,principal,store,prefix='capture-v1',search=undefined}) {
   if(typeof token!=='string'||token.length<32)throw new Error('Use a capture token with at least 32 characters');
   const expected=Buffer.from('Bearer '+token);
+  const credentials=createCaptureCredentials({store,prefix});
   const onboarding = createOnboardingStatus({store,prefix});
   const authenticate = async req=>{
+    const bearer=(req.headers.authorization??'').replace(/^Bearer /,'');
+    if(isCaptureCredential(bearer)) {
+      const delegated=await credentials.authenticate(bearer);
+      // An operator changing the fixed identity invalidates old delegations.
+      return delegated?.tenantId===principal.tenantId && delegated?.userId===principal.userId ? {...principal,captureAccess:'write'} : null;
+    }
     const actual=Buffer.from(req.headers.authorization??'');
     if(actual.length!==expected.length||!timingSafeEqual(actual,expected))return null;
     return principal;
   };
-  const capture = createCaptureHandler({ingest:createSessionIngest({store,prefix,onStored:onboarding.session}),search,authenticate});
+  const capture = createCaptureHandler({ingest:createSessionIngest({store,prefix,onStored:onboarding.session}),search,authenticate,credentials});
   return async (req,res) => {
     try {
     if (req.headers.origin) {res.writeHead(403);res.end();return;}

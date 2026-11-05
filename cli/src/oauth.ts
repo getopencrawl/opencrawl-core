@@ -32,7 +32,7 @@ export async function jsonRequest(url: string, init: RequestInit = {}, fetcher =
   } catch { throw new CliError('NETWORK_ERROR', 'Could not reach the service. Check your connection and retry.'); }
   let body: any;
   try { body = await response.json(); }
-  catch { throw new CliError('INVALID_RESPONSE', 'The service returned an invalid response.'); }
+  catch { if([403,407].includes(response.status))throw new CliError('NETWORK_BLOCKED', `The network proxy or service denied ${new URL(url).hostname} (HTTP ${response.status}). Add this host to your cloud environment network allowlist and retry.`); throw new CliError('INVALID_RESPONSE', 'The service returned an invalid response.'); }
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new CliError('INVALID_RESPONSE', 'The service returned an invalid response.');
   return {response, body};
 }
