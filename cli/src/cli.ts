@@ -24,6 +24,15 @@ Options:
   --version      Print the CLI version
   --help         Show this help
 
+History import (optional, asks during collect install):
+  collect install --backfill skip       Set up future collection without history
+  collect backfill --dry-run --json     Preview local transcript counts; no upload
+  collect backfill --harness all --yes  Import after the user approves
+  --harness claude-code|codex|all        Limit the history import to chosen sources
+  collect install --backfill claude-code|codex|all  Explicit setup import choice
+Agents: ask the user to choose Claude, Codex, both, or skip before importing.
+History includes messages, tool arguments/results and available attachments.
+
 Index queries are not available in this initial release.
 Updates run automatically in the background after use, at most once per day.
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
@@ -54,7 +63,7 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {harness: {type:'string'}, 'no-background': {type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
