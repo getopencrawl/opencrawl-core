@@ -24,7 +24,7 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
 
   async function request(method, key, {query = {}, body, headers = {}} = {}) {
     const url = new URL(`${root}/${key === undefined ? '' : key.split('/').map(encode).join('/')}`);
-    for (const [name, value] of Object.entries(query)) if (value !== undefined) url.searchParams.set(name, value);
+    for (const [name, value] of Object.entries(query)) if (value !== undefined && value !== null) url.searchParams.set(name, value);
     const {accessKeyId, secretAccessKey, sessionToken} = await resolve();
     const signed = signRequest({
       method, url, body, region, accessKeyId, secretAccessKey,
