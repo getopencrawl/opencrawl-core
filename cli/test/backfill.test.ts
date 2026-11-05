@@ -37,7 +37,7 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),OPENCRAWL_SESSIONS_TOKEN:token,CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex')});
   const paths:string[]=[];
   for(const harness of ['claude-code','codex'])for(const origin of ['cli','desktop']) {
-   const path=join(harness==='codex'?process.env.CODEX_HOME!:process.env.CLAUDE_CONFIG_DIR!,harness==='codex'?(origin==='desktop'?'archived_sessions':'sessions'):'projects/project',origin+'.jsonl');
+   const path=join(harness==='codex'?process.env.CODEX_HOME!:process.env.CLAUDE_CONFIG_DIR!,harness==='codex'?(origin==='desktop'?'archived_sessions':'sessions'):'projects/project',origin+(harness==='codex'&&origin==='desktop'?'.jsonl.zst':'.jsonl'));
    mkdirSync(join(path,'..'),{recursive:true});paths.push(path);
    const id=harness+'-'+origin;
    const records=harness==='codex'?[
@@ -49,7 +49,8 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
     {type:'user',sessionId:id,entrypoint:origin==='desktop'?'claude-desktop':'cli',uuid:id,message:{role:'user',content:[{type:'text',text:'historical '+id},{type:'image',source:{type:'base64',media_type:'image/png',data:Buffer.from('fixture image').toString('base64')}}]}},
     {type:'assistant',sessionId:id,message:{role:'assistant',content:[{type:'tool_use',id,name:'Read',input:{file_path:'example'}}]}},
    ];
-   writeFileSync(path,records.map(r=>JSON.stringify(r)+'\n').join(''));utimesSync(path,1,1);
+   const text=records.map(r=>JSON.stringify(r)+'\n').join('');
+   writeFileSync(path,path.endsWith('.zst')?Bun.zstdCompressSync(text):text);utimesSync(path,1,1);
   }
   await installCapture(api,{background:false,home:dir,command:[process.execPath,'-e','']});
   async function cli(args:string[]) {
@@ -91,6 +92,9 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   const bad=join(process.env.CODEX_HOME!,'sessions','bad.jsonl');writeFileSync(bad,'invalid\n');
   await expect(backfill(api,'codex',true)).rejects.toMatchObject({code:'BACKFILL_INCOMPLETE'});
   rmSync(bad);expect((await backfill(api,'codex',true)).uploaded).toBe(0);
+  const corrupt=bad+'.zst';writeFileSync(corrupt,'not zstd');
+  await expect(backfill(api,'codex',true)).rejects.toMatchObject({code:'BACKFILL_INCOMPLETE'});rmSync(corrupt);
+  expect(readdirSync(join(captureDir(),'state')).some(name=>name.endsWith('.tmp'))).toBe(false);
   if(process.platform!=='win32') {
    const external=join(dir,'outside.jsonl');writeFileSync(external,'{}\n');
    symlinkSync(external,join(process.env.CODEX_HOME!,'sessions','link.jsonl'));

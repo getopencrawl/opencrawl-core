@@ -135,7 +135,10 @@ same `--api` as collection enrollment for preview/import.
 
 Preview reports transcript-file counts and on-disk bytes, not unique sessions
 or upload size. It scans `CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`)
-and `CODEX_HOME/{sessions,archived_sessions}` (default `~/.codex/`). It follows no
+and `CODEX_HOME/{sessions,archived_sessions}` (default `~/.codex/`), including
+Codex `.jsonl.zst` compressed transcripts. Archives expand one at a time into a
+private temporary file, capped at 256 MiB; corrupt or oversized archives report
+an incomplete import and stay on disk. Temporary expanded files are removed. It follows no
 transcript symlinks and does not read conversation content. Import includes
 subagent transcripts in those directories and only records the harness saved
 locally. Cloud-only Claude chats, Cowork VM records, deleted sessions and missing
