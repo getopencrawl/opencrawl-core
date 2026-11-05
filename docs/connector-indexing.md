@@ -1,5 +1,8 @@
 # Connector indexing
 
+For a new source, follow [Building a connector-to-search pipeline](connector-development.md).
+The current implementation below is Slack-specific, not automatic support for every Airbyte source.
+
 The Slack reader selects `channels`, `users`, `channel_members`,
 `channel_messages`, and `threads` (plus the compatible `messages` alias).
 Additional streams are counted as ignored when listing S3 pages; they do not
