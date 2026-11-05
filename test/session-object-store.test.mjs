@@ -69,7 +69,8 @@ test('self-hosted S3 receiver round-trips all four surfaces, attachments and res
     assert.equal(batch.origin,origin);assert.equal(batch.attachments[0].sha256,sha);
   }
   const keys=(await store.list(prefix+'/')).keys;
-  assert.equal(keys.filter(key=>!key.includes('/onboarding/')).length,9);
+  assert.equal(keys.filter(key=>!key.includes('/onboarding/')).length,5);
+  assert.ok(keys.every(key=>!key.includes('/index-pending/')));
   const status=await (await fetch(api+'/api/onboarding',{headers})).json();
   assert.equal(status.data.session.harness,'codex');
   assert.ok(status.data.session.observedAt);
