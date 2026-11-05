@@ -78,3 +78,9 @@ principal as capture/MCP and supply displayName from verified account data.
 Render renderOnboarding({mcpUrl,setupPrompt,integrationsUrl}) and serve the core
 onboarding JS/CSS and controls alongside tokens/assets. The hosted shell supplies
 its own login and integrations routes; this UI does not require WorkOS.
+
+## Connector indexing
+
+See the [Slack indexing operation guide](docs/connector-indexing.md) and the
+[connector development pattern](docs/connector-development.md) before adding a new
+source-to-search adapter. Extraction support alone does not imply indexing support.
