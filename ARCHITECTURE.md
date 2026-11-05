@@ -26,6 +26,10 @@ in domain logic. No duplicated hosted version of a core operation.
 | Audit events and portable diagnostics | Compliance exports, managed monitoring and support access |
 | Optional customer-operated integrations and storage adapters | Hosted vendor accounts, shared credentials and commercial service operation |
 
+The hosted integrations page (Composio, managed Airbyte), hosted indexing glue,
+WorkOS auth and our infra stay in the shell on purpose. Self-hosters use plain
+Airbyte from `integrations/airbyte` and wire up sources themselves.
+
 Classify by responsibility. A local HTTP server, self-host authentication adapter,
 Compose/Helm example, or optional S3-compatible client can live here. Keep these
 adapters out of domain logic. Selecting an AWS storage option must not require
