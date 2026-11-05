@@ -1,0 +1,38 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {slackMessageText} from '../src/connectors/slack-content.mjs';
+import {normalizeSlack} from '../src/connectors/slack.mjs';
+const binding={tenantId:'team',connectionId:'slack',workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:'raw/v1/source=slack/workspace=T123/connection=slack/'};
+
+test('a nonempty notification fallback does not hide the complete message blocks',()=>{
+  const fallback='Preview '+'.'.repeat(600)+'…';
+  const item=normalizeSlack(binding,'threads',{_airbyte_extracted_at:1000,_airbyte_data:{channel_id:'C123',ts:'1234567890.000001',thread_ts:'1234567889.000001',text:fallback,
+    blocks:[{type:'header',text:{type:'plain_text',text:'Incident update'}},{type:'section',text:{type:'mrkdwn',text:'Full investigation includes the missing searchable suffix.'}}]}},'raw');
+  assert.ok(item.document.text.includes(fallback));assert.ok(item.document.text.includes('missing searchable suffix'));
+  assert.equal(item.document.threadTs,'1234567889.000001');
+});
+test('block-only rich text, lists, tables and link labels retain readable content',()=>{
+ const body=slackMessageText({blocks:[{type:'rich_text',elements:[{type:'rich_text_list',elements:[{type:'rich_text_section',elements:[{type:'text',text:'Nested item'},{type:'link',text:'Design document',url:'https://example.com/design'}]}]}]},
+ {type:'table',rows:[[{type:'rich_text',elements:[{type:'rich_text_section',elements:[{type:'text',text:'Table conclusion'}]}]}]]}]});
+ for(const word of ['Nested item','Design document','https://example.com/design','Table conclusion'])assert.ok(body.includes(word));
+});
+test('visible attachment fields and file labels are indexed without hidden metadata',()=>{
+ const body=slackMessageText({text:'Message',metadata:{secret:'DO_NOT_INDEX'},blocks:[{type:'actions',elements:[{type:'button',text:{type:'plain_text',text:'View report'},value:'HIDDEN_ACTION_VALUE',action_id:'HIDDEN_ACTION_ID'}]}],
+ attachments:[{title:'Incident report',text:'Complete report body',fields:[{title:'Resolution',value:'Recovered normally'}],blocks:[{type:'section',text:{type:'plain_text',text:'Attachment block body'}}],private_metadata:'HIDDEN_METADATA'}],
+ files:[{title:'diagram.png',url_private:'HIDDEN_PRIVATE_URL'}]});
+ for(const word of ['View report','Complete report body','Recovered normally','Attachment block body','diagram.png'])assert.ok(body.includes(word));
+ assert.ok(!body.includes('HIDDEN_'));assert.ok(!body.includes('DO_NOT_INDEX'));
+});
+test('plain-text mirrors do not duplicate fallback text and real shorter edits stay shorter',()=>{
+ assert.equal(slackMessageText({text:'Hello world',blocks:[{type:'rich_text',elements:[{type:'rich_text_section',elements:[{type:'text',text:'Hello world'}]}]}]}),'Hello world');
+ assert.equal(slackMessageText({text:'Short edited body'}),'Short edited body');
+ const full='x'.repeat(200000);
+ assert.equal(slackMessageText({text:full,blocks:[{type:'section',text:{type:'plain_text',text:full}}]}),full);
+});
+test('combined content is bounded and invalid structures do not silently acknowledge loss',()=>{
+ assert.throws(()=>slackMessageText({text:'x'.repeat(200000),blocks:[{type:'section',text:{type:'plain_text',text:'y'.repeat(100000)}}]}),/exceeds/);
+ assert.throws(()=>slackMessageText({blocks:{text:'not a list'}}),/list/);
+ assert.throws(()=>slackMessageText({attachments:[{text:123}]}),/text/);
+ let nested={type:'text',text:'deep'};for(let i=0;i<30;i++)nested={type:'rich_text',elements:[nested]};
+ assert.throws(()=>slackMessageText({blocks:[nested]}),/complex/);
+});

@@ -35,7 +35,7 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
     }
     const principal = {tenantId};
     await ingest('channels', {id: 'C123', name: 'general', is_private: false}, 1000, 'channel');
-    const message = {channel_id: 'C123', ts: '1234567890.000001', text: `pineapple current ${tenant}`};
+    const message = {channel_id: 'C123', ts: '1234567890.000001', text: `pineapple current ${tenant}`, blocks: [{type: 'section', text: {type: 'mrkdwn', text: 'Full block body with searchable kumquat conclusion'}}], attachments: [{text: 'Attachment has dragonfruit details'}]};
     await ingest('channel_messages', message, 2000, 'current');
     await ingest('threads', {...message, text: 'obsolete grapefruit'}, 1000, 'older');
     await ingest('threads', {...message, ts: '1234567891.000001', thread_ts: message.ts, text: 'pineapple thread reply'}, 2000, 'reply');
@@ -43,6 +43,8 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
     await search.refresh();
     assert.equal((await search.search(principal, [binding], {query: 'pineapple'})).hits.length, 2);
     assert.equal((await search.search(principal, [binding], {query: 'grapefruit'})).hits.length, 0);
+    assert.equal((await search.search(principal, [binding], {query: 'kumquat'})).hits.length, 1);
+    assert.equal((await search.search(principal, [binding], {query: 'dragonfruit'})).hits.length, 1);
     await search.suppress(principal, binding, {kind: 'message', sourceId: 'C123:' + message.ts});
     await ingest('channel_messages', message, 3000, 'after-suppression');
     await search.refresh();

@@ -1,3 +1,4 @@
+import {slackMessageText} from './slack-content.mjs';
 import {digest, documentId, invalidRecord, validateBinding} from './scope.mjs';
 
 function required(value, pattern, field) {
@@ -25,7 +26,7 @@ export function normalizeSlack(binding, stream, envelope, sourceKey) {
     kind = 'message'; channelId = slackId(data.channel_id); timestampValue = timestamp(data.ts);
     sourceId = channelId + ':' + timestampValue;
     threadTs = data.thread_ts ? timestamp(data.thread_ts) : timestampValue;
-    authorId = text(data.user || data.bot_id); body = text(data.text);
+    authorId = text(data.user || data.bot_id); body = slackMessageText(data);
     // These history snapshots are not a deletion feed. Never infer tombstones.
   } else if (stream === 'channels') {
     kind = 'channel'; sourceId = slackId(data.id); channelId = sourceId;
