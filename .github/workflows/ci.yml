@@ -15,12 +15,17 @@ jobs:
       - name: Verify capture against S3-compatible storage
         env:
           OPENCRAWL_TEST_S3_ENDPOINT: http://127.0.0.1:18333
+          OPENCRAWL_TEST_OPENSEARCH_URL: http://127.0.0.1:19200
         run: |
           docker run -d --name capture-s3-test --tmpfs /data:size=256m -p 127.0.0.1:18333:8333 \
             -e AWS_ACCESS_KEY_ID=capture-test -e AWS_SECRET_ACCESS_KEY=capture-test-secret \
             chrislusf/seaweedfs:4.52 mini -dir=/data -bucket=capture-test -admin.password=capture-test-secret \
             -webdav=false -s3.port.iceberg=0 -s3.port.lance=0
-          node --test test/session-object-store.test.mjs
+          docker run -d --name capture-search-test --memory 2g --tmpfs /usr/share/opensearch/data:uid=1000,gid=1000,size=256m -p 127.0.0.1:19200:9200 \
+            -e discovery.type=single-node -e DISABLE_SECURITY_PLUGIN=true -e DISABLE_INSTALL_DEMO_CONFIG=true \
+            -e node.store.allow_mmap=false -e 'OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m' \
+            opensearchproject/opensearch:3.9.0@sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e
+          node --test test/session-object-store.test.mjs test/session-indexer.test.mjs
       - name: Remove disposable object store
         if: always()
-        run: docker rm -f capture-s3-test || true
+        run: docker rm -f capture-s3-test capture-search-test || true

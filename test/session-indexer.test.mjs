@@ -1,0 +1,111 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {createSessionIngest,digest,sessionScope} from '../src/sessions/ingest.mjs';
+import {createSessionIndexer,batchDocuments} from '../src/sessions/indexer.mjs';
+import {createSessionSearch} from '../src/sessions/search.mjs';
+import {standaloneStorage} from '../src/sessions/standalone.mjs';
+
+function memoryStore(){
+ const data=new Map();return {data,put:async(k,v)=>{data.set(k,Buffer.from(v));},get:async k=>data.get(k)||null,delete:async k=>{data.delete(k);},
+ listPage:async(prefix,{continuationToken,maxKeys})=>{const keys=[...data.keys()].filter(k=>k.startsWith(prefix)&&(!continuationToken||k>continuationToken)).sort();return {keys:keys.slice(0,maxKeys),nextToken:keys.length>maxKeys?keys[maxKeys-1]:null};}};
+}
+const owner={tenantId:'tenant-a',userId:'same-user'};
+function batch(principal,text='unique transcript words') {return {schemaVersion:1,owner:principal,harness:'codex',origin:'desktop',installationId:'same-device',sessionId:'same-session',events:[{id:'same-event',kind:'message',data:{role:'user',content:[{type:'input_text',text}]}}],attachments:[]};}
+
+test('fixed-scope indexing, checkpoints, crash replay and poison records cannot cross tenant/user scope',async()=>{
+ const store=memoryStore(),prefix='sessions/test/v1',ingest=createSessionIngest({store,prefix});
+ const otherTenant={...owner,tenantId:'tenant-b'},otherUser={...owner,userId:'other-user'};
+ for(const principal of [owner,otherTenant,otherUser])await ingest.putBatch(principal,batch(principal));
+ const docs=new Map();let fail=true;const search={identity:'test-index',ensureIndex:async()=>{},putDocuments:async items=>{for(const d of items)docs.set(d.id,d.document);if(fail)throw new Error('Interrupted after write');}};
+ let time=0;const options={store,prefix,search,principal:owner,now:()=>time};
+ let worker=createSessionIndexer(options);
+ assert.equal((await worker.runOnce()).failed,1);assert.equal(docs.size,1);
+ fail=false;time=10000;worker=createSessionIndexer(options);
+ assert.equal((await worker.runOnce()).indexed,1);assert.equal(docs.size,1);
+ assert.equal((await worker.runOnce()).indexed,0);
+ assert.ok([...docs.values()].every(d=>d.tenantId===owner.tenantId&&d.userId===owner.userId));
+ const hosted=createSessionIndexer({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
+ assert.equal((await hosted.runOnce()).indexed,3);assert.equal(docs.size,3);
+ const key=[...store.data.keys()].find(k=>k.startsWith(prefix+'/'+sessionScope(owner))&&k.endsWith('.json.gz'));
+ const forged={...batch(otherTenant),receivedAt:new Date().toISOString()};
+ assert.throws(()=>batchDocuments({prefix,key,batch:forged,principal:otherTenant}),/authorized scope/);
+ assert.throws(()=>createSessionIndexer({store,prefix,search}),/fixed single-tenant principal/);
+});
+
+test('bulk item errors are failures even with HTTP 200; search always binds both ownership fields',async()=>{
+ const requests=[];
+ const search=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async(url,options)=>{
+  requests.push(JSON.parse(options.body));
+  if(url.pathname.endsWith('_bulk'))return Response.json({errors:true,items:[{index:{status:429}}]});
+  return Response.json({hits:{total:{value:0},hits:[]}});
+ }});
+ // Replace the fake parser for NDJSON, then retain the observed search body.
+ const failing=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>Response.json({errors:true,items:[{index:{status:429}}]})});
+ await assert.rejects(failing.putDocuments([{id:'id',document:{text:'retry me'}}]),/failed or missing items/);
+ await search.search(owner,{query:'tenant-b OR *'});
+ assert.deepEqual(requests[0].query.bool.filter,[{term:{tenantId:'tenant-a'}},{term:{userId:'same-user'}}]);
+ await assert.rejects(search.search(null,{query:'anything'}),/Authentication/);
+ await assert.rejects(search.search(owner,{limit:101}),/Invalid search/);
+ const leaking=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>Response.json({hits:{total:{value:1},hits:[{_source:{tenantId:'tenant-b',userId:'same-user'}}]}})});
+ await assert.rejects(leaking.search(owner),/ownership scope/);
+});
+
+test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval and tenant/user isolation',{
+ skip:!process.env.OPENCRAWL_TEST_S3_ENDPOINT||!process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
+},async t=>{
+ const index='capture-test-'+randomUUID(),prefix='sessions/index-test/'+randomUUID();
+ const {store}=standaloneStorage({OPENCRAWL_LANDING_S3_ENDPOINT:process.env.OPENCRAWL_TEST_S3_ENDPOINT,OPENCRAWL_LANDING_S3_BUCKET:'capture-test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'capture-test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'capture-test-secret'});
+ const search=createSessionSearch({endpoint:process.env.OPENCRAWL_TEST_OPENSEARCH_URL,index});
+ for(let attempt=0;;attempt++){try{await store.checkAccess();await search.ensureIndex();break;}catch(e){if(attempt>=60)throw e;await new Promise(r=>setTimeout(r,1000));}}
+ t.after(async()=>{for(const key of (await store.list(prefix+'/')).keys)await store.delete(key);await fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL+'/'+index,{method:'DELETE'});});
+ const ingest=createSessionIngest({store,prefix});
+ const owners=[owner,{...owner,tenantId:'tenant-b'},{...owner,userId:'other-user'}];
+ for(const principal of owners){
+  const bytes=Buffer.from('attachment fixture'),sha=digest(bytes);await ingest.putAttachment(principal,sha,bytes);
+  for(const harness of ['claude-code','codex'])for(const origin of ['cli','desktop']){
+  const b=batch(principal,'searchable violet attachment workflow');b.harness=harness;b.origin=origin;b.sessionId+='-'+origin;
+  b.events[0].data.content.push({type:'opencrawl_attachment',sha256:sha,size:bytes.length});b.attachments=[{status:'captured',sha256:sha,size:bytes.length}];
+  b.events.push({id:'tool-event',kind:'tool_result',data:{call_id:'tool-1',output:'Build completed successfully'}});
+  await ingest.putBatch(principal,b);
+ }}
+ const single=createSessionIndexer({store,prefix,search,principal:owner});
+ assert.equal((await single.runOnce()).indexed,4);await search.refresh();
+ assert.equal((await search.search(owner,{query:'violet'})).total,4);
+ assert.equal((await search.search(owners[1],{query:'violet'})).total,0);
+ const hosted=createSessionIndexer({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
+ assert.equal((await hosted.runOnce()).indexed,12);await search.refresh();
+ for(const principal of owners){
+  const result=await search.search(principal,{query:'violet'});assert.equal(result.total,4);
+  assert.ok(result.hits.every(hit=>hit.attachments.every(a=>a.objectKey.startsWith(prefix+'/'+sessionScope(principal)+'/attachments/'))));
+  assert.ok(result.hits.every(hit=>hit.tenantId===principal.tenantId&&hit.userId===principal.userId));
+  assert.equal((await search.search(principal,{query:'Build completed'})).total,4);
+ }
+ const restarted=createSessionIndexer({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
+ assert.equal((await restarted.runOnce()).indexed,0);
+ assert.equal((await search.search(owner)).total,8);
+ const later=batch(owner,'new incremental indigo message');later.events[0].id='later-event';
+ await ingest.putBatch(owner,later);assert.equal((await restarted.runOnce()).indexed,1);await search.refresh();
+ assert.equal((await search.search(owner,{query:'indigo'})).total,1);
+});
+
+test('capture retries repair a failed indexing work-item write before acknowledging the batch',async()=>{
+ const store=memoryStore(),prefix='sessions/repair/v1';let fail=true;
+ const put=store.put;store.put=async(k,v)=>{if(fail&&k.includes('/index-pending/'))throw new Error('Queue unavailable');await put(k,v);};
+ const ingest=createSessionIngest({store,prefix}),value=batch(owner);
+ await assert.rejects(ingest.putBatch(owner,value),/Queue unavailable/);
+ assert.equal([...store.data.keys()].filter(k=>k.endsWith('.json.gz')).length,1);
+ fail=false;assert.equal((await ingest.putBatch(owner,value)).stored,true);
+ assert.equal([...store.data.keys()].filter(k=>k.includes('/index-pending/')).length,1);
+});
+
+test('OpenSearch SigV4 signs temporary credentials for the es service and index-scoped endpoint',async()=>{
+ let captured;
+ const search=createSessionSearch({endpoint:'https://search.example.com',index:'session-test',region:'us-west-2',
+  credentials:async()=>({accessKeyId:'test-key',secretAccessKey:'test-secret',sessionToken:'temporary-token'}),
+  fetch:async(url,options)=>{captured={url,options};return Response.json({hits:{total:{value:0},hits:[]}});}});
+ await search.search(owner,{query:'hello'});
+ assert.equal(captured.url.pathname,'/session-test/_search');
+ assert.equal(captured.options.headers['x-amz-security-token'],'temporary-token');
+ assert.match(captured.options.headers.authorization,/us-west-2\/es\/aws4_request/);
+});
