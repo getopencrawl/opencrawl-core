@@ -2,7 +2,7 @@ import {readdirSync, statSync, realpathSync} from 'node:fs';
 import {join, sep} from 'node:path';
 import {createInterface} from 'node:readline/promises';
 import {CliError} from '../oauth.ts';
-import {captureTranscript, flushCaptures, readCaptureConfig, request, recordError, type CaptureConfig} from './runtime.ts';
+import {captureTranscript, captureDir, flushCaptures, readCaptureConfig, request, recordError, type CaptureConfig} from './runtime.ts';
 import type {Harness} from './parse.ts';
 
 export const backfillNotice = 'Import local Claude Code and Codex history, including their desktop coding sessions. Messages, tool arguments/results and available attachments will be uploaded to your signed-in OpenCrawl account. Cloud-only chats are not included.';
@@ -64,7 +64,9 @@ export async function backfill(api:string, selected:Selection, approved:boolean)
     try{await captureTranscript(config,file.harness,file.path);processed++;}
     catch(e:any){failures.push({code:e instanceof CliError?e.code:'CAPTURE_FAILED'});recordError(e);}
     // Bound the retry spool to one transcript at a time; stop if the receiver is offline.
-    uploaded+=(await flushCaptures()).uploaded;
+    // Completed historical files have no work to send. Keep replay local after
+    // the initial owner check; real queued uploads still revalidate ownership.
+    if(readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json')))uploaded+=(await flushCaptures()).uploaded;
   }
   if(failures.length) {
     const error=new CliError('BACKFILL_INCOMPLETE',`Imported ${processed} of ${files.length} transcript files; ${failures.length} failed (${failures[0].code}). Fix the reported error and rerun the approved import; saved cursors prevent reimporting completed records.`);

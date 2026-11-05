@@ -18,10 +18,28 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   const saved=read(join(captureDir(),'receiver-token.json'));
   const staticToken=tokenOverride || process.env.OPENCRAWL_SESSIONS_TOKEN || (saved?.api===api?saved.token:null);
   let token=staticToken || await accessToken(api);
-  const send=()=>fetch(api+path,{...init,headers:{...init.headers,authorization:'Bearer '+token},signal:AbortSignal.timeout(20000),redirect:'error'});
+  const method=init.method??'GET';
+  // Only retry operations whose payloads are read-only or content-addressed.
+  // A lost response after storage must resend the same batch/blob, not lose it.
+  const retryable=method==='GET'||method==='POST'&&path==='/api/sessions/batches'||method==='PUT'&&/^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(path);
+  const send=async()=>{
+    for(let attempt=0;;attempt++){
+      let response:Response;
+      try {response=await fetch(api+path,{...init,headers:{...init.headers,authorization:'Bearer '+token},signal:AbortSignal.timeout(20000),redirect:'error'});}
+      catch(error){if(!retryable||attempt===4)throw error;await new Promise(r=>setTimeout(r,250*2**attempt));continue;}
+      if(!retryable||attempt===4||![429,502,503,504].includes(response.status))return response;
+      const retryAfter=response.headers.get('retry-after');
+      const seconds=retryAfter===null?NaN:Number(retryAfter);
+      const delay=Number.isFinite(seconds)?seconds*1000:retryAfter?Date.parse(retryAfter)-Date.now():0;
+      await response.body?.cancel();
+      await new Promise(r=>setTimeout(r,Math.min(30000,Math.max(250*2**attempt,Number.isFinite(delay)?delay:0))));
+    }
+  };
   let res=await send();
   if(res.status===401 && !staticToken){token=await accessToken(api,token);res=await send();}
-  const body=await res.json().catch(()=>{throw new CliError('CAPTURE_NETWORK_BLOCKED',`Capture endpoint ${new URL(api).hostname} returned HTTP ${res.status} without JSON. Check this host in your cloud environment network allowlist.`);});
+  const body=await res.json().catch(()=>{throw res.status>=500||res.status===429
+    ?new CliError('CAPTURE_RETRY_EXHAUSTED',`Capture endpoint ${new URL(api).hostname} is temporarily unavailable (HTTP ${res.status}). Queued data is retained; retry the approved import.`)
+    :new CliError('CAPTURE_NETWORK_BLOCKED',`Capture endpoint ${new URL(api).hostname} returned HTTP ${res.status} without JSON. Check this host in your cloud environment network allowlist.`);});
   if(!res.ok)throw new CliError('CAPTURE_UPLOAD_FAILED',`Capture request failed (${res.status}): ${body.error?.code ?? 'unknown'}`);
   return body.data;
 }

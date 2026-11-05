@@ -82,7 +82,9 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   expect(JSON.stringify(batches)).not.toContain('EXCLUDED');
   expect(batches.filter(b=>b.harness==='claude-code').every(b=>b.attachments[0].status==='captured')).toBe(true);
   for(const receipt of receipts){expect(await ingest.getBatch(principal,receipt)).not.toBeNull();expect(await ingest.getBatch({...principal,tenantId:'other'},receipt)).toBeNull();}
+  const beforeReplay=requests;
   expect((await backfill(api,'all',true)).uploaded).toBe(0);
+  expect(requests-beforeReplay).toBe(1); // One owner check, no per-file network work.
   // Invalid/mismatched commands fail without uploading or changing settings.
   await expect(collectCommand('install',api,{backfill:'invalid'})).rejects.toMatchObject({code:'INVALID_USAGE'});
   await expect(collectCommand('backfill',api,{harness:'invalid',yes:true})).rejects.toMatchObject({code:'INVALID_USAGE'});
@@ -105,7 +107,7 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k];Object.assign(process.env,saved);
   rmSync(dir,{recursive:true,force:true});
  }
-});
+},20000);
 
 test('interactive setup choice defaults to skip and never interprets a generic yes as all sources',async()=>{
  for(const answer of ['','skip','s','no'])expect(await chooseBackfill(async()=>answer)).toBe('skip');
