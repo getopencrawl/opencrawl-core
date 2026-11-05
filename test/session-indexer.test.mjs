@@ -87,6 +87,12 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval an
  const later=batch(owner,'new incremental indigo message');later.events[0].id='later-event';
  await ingest.putBatch(owner,later);assert.equal((await restarted.runOnce()).indexed,1);await search.refresh();
  assert.equal((await search.search(owner,{query:'indigo'})).total,1);
+ // Exercise S3 continuation tokens while successful work items are deleted.
+ for(let i=0;i<55;i++){const value=batch(owner,'paginated receipt item');value.sessionId='page-'+i;await ingest.putBatch(owner,value);}
+ const firstPage=await restarted.runOnce();assert.equal(firstPage.more,true);
+ const secondPage=await restarted.runOnce();assert.equal(firstPage.indexed+secondPage.indexed,55);
+ await search.refresh();assert.equal((await search.search(owner,{query:'paginated'})).total,55);
+ assert.equal((await search.search(owners[1],{query:'paginated'})).total,0);
 });
 
 test('capture retries repair a failed indexing work-item write before acknowledging the batch',async()=>{
