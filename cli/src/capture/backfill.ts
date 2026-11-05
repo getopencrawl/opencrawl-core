@@ -34,7 +34,7 @@ export function inventory(config:CaptureConfig, selected:Selection) {
         // Never follow symlinks out of the native transcript store.
         if(entry.isSymbolicLink())continue;
         if(entry.isDirectory())visit(path);
-        else if(entry.isFile() && path.endsWith('.jsonl')) {
+        else if(entry.isFile() && (path.endsWith('.jsonl') || harness==='codex' && path.endsWith('.jsonl.zst'))) {
           const real=realpathSync(path);
           if(!real.startsWith(root+sep))throw new CliError('CAPTURE_PATH_REJECTED','Session path changed during discovery. Retry the preview.');
           const bytes=statSync(real).size;

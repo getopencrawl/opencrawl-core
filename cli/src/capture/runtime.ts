@@ -1,4 +1,7 @@
-import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, realpathSync, openSync, readSync, closeSync, unlinkSync} from 'node:fs';
+import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream, createWriteStream} from 'node:fs';
+import {createZstdDecompress} from 'node:zlib';
+import {Transform} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
 import {join, dirname, resolve, sep, basename} from 'node:path';
 import {homedir, hostname} from 'node:os';
 import {randomUUID} from 'node:crypto';
@@ -41,7 +44,7 @@ function transcriptAllowed(file:string, config:CaptureConfig, harness:Harness) {
   const path=realpathSync(file);
   const root=realpathSync(config.roots[harness]);
   const allowed=harness==='claude-code' ? [join(root,'projects')] : [join(root,'sessions'),join(root,'archived_sessions')];
-  if(!allowed.some(dir=>under(path,dir)) || !path.endsWith('.jsonl'))throw new CliError('CAPTURE_PATH_REJECTED','Transcript outside configured harness session directories');
+  if(!allowed.some(dir=>under(path,dir)) || !(path.endsWith('.jsonl') || harness==='codex' && path.endsWith('.jsonl.zst')))throw new CliError('CAPTURE_PATH_REJECTED','Transcript outside configured harness session directories');
   return path;
 }
 export function* walk(dir:string):Generator<string> {
@@ -90,10 +93,26 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
   const path=transcriptAllowed(file,config,harness);
   const stateFile=join(captureDir(),'state',hash(harness+path)+'.json');
   return withSessionLock('capture:'+stateFile,async()=>{
-    const st=statSync(path),old=read(stateFile,{offset:0});
+    const source=statSync(path),old=read(stateFile,{offset:0});
+    const compressed=path.endsWith('.jsonl.zst');
+    let readPath=path;
+    if(compressed) {
+      if(old.archiveSize===source.size && old.archiveMtime===source.mtimeMs && old.ino===source.ino)return old.meta;
+      readPath=stateFile+'.expanded.tmp';
+      // The transcript lock makes an abandoned expansion safe to replace after a crash.
+      try{unlinkSync(readPath);}catch(e:any){if(e.code!=='ENOENT')throw e;}
+      let expanded=0;
+      try {
+        await pipeline(createReadStream(path),createZstdDecompress(),new Transform({transform(chunk,encoding,callback){
+          expanded+=chunk.length;
+          callback(expanded>256*1024*1024?new CliError('CAPTURE_ARCHIVE_TOO_LARGE','Compressed transcript exceeds the 256 MiB expanded limit; retained locally.'):null,chunk);
+        }}),createWriteStream(readPath,{mode:0o600,flags:'wx'}));
+      } catch(e) {try{unlinkSync(readPath);}catch{}throw e;}
+    }
+    const st=statSync(readPath);
     let offset=old.offset;
-    if(st.size<offset || (old.ino && old.ino!==st.ino))offset=0;
-    const fd=openSync(path,'r');
+    if(st.size<offset || (old.ino && old.ino!==source.ino) || compressed)offset=0;
+    const fd=openSync(readPath,'r');
     let meta:any=old.meta??{harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path};
     function metadata(r:any) {
         const p=r.payload??r;
@@ -154,9 +173,9 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
           if(events.length>=200){enqueue(config,meta,events.splice(0),attachments.splice(0));}
         }
         enqueue(config,meta,events,attachments);
-        offset+=bytes.length;atomicJson(stateFile,{offset,ino:st.ino,meta});
+        offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
       }
-    } finally{closeSync(fd);}
+    } finally{closeSync(fd);if(compressed)try{unlinkSync(readPath);}catch{}}
     return meta;
   });
 }
