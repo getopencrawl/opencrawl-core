@@ -56,8 +56,8 @@
   --control-line: light-dark(#96909f, #7f778c);
   --accent: light-dark(#4f49cf, #b1adff);
   --accent-hover: light-dark(#4138b6, #cecaff);
-  --primary: light-dark(#7d82ff, #969aff);
-  --primary-hover: light-dark(#6e74f2, #a8abff);
+  --primary: #7d82ff;
+  --primary-hover: #959aff;
   --on-primary: #0c0d2a;
   --brand-face: #7d82ff;
   --brand-coral: #ff6268;

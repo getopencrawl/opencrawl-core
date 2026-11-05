@@ -1,3 +1,4 @@
+import {AsyncLocalStorage} from 'node:async_hooks';
 import {fileURLToPath} from 'node:url';
 import {McpServer, createMcpHandler} from '@modelcontextprotocol/server';
 import {loadSkills} from '@modelcontextprotocol/server/ext/skills/node';
@@ -8,7 +9,7 @@ const skills = await loadSkills(fileURLToPath(new URL('./skills', import.meta.ur
 
 // Authentication belongs to the runtime adapter. No account or tenant data is
 // exposed by this initial surface; every MCP request still requires a principal.
-export function createOpenCrawlMcp({authenticate, origin, revision = 'development'}) {
+export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated}) {
   if (typeof authenticate !== 'function' || new URL(origin).origin !== origin) throw new Error('MCP requires authentication and a canonical origin');
   const handler = createMcpHandler(() => {
     const server = new McpServer({name: 'opencrawl', version: '0.1.2'}, {
@@ -27,7 +28,20 @@ export function createOpenCrawlMcp({authenticate, origin, revision = 'developmen
     });
     return server;
   }, {maxRequestBodySize: 65536, maxSubscriptions: 0});
-  const serve = toNodeHandler(handler, {maxRequestBodySize: 65536});
+  const context = new AsyncLocalStorage();
+  const serve = toNodeHandler({fetch: async request => {
+    let body;
+    if (onAuthenticated && request.method === 'POST') {
+      try { body = await request.clone().json(); } catch {}
+    }
+    const response = await handler.fetch(request);
+    // Successful authenticated protocol exchanges prove sign-in, not ingestion.
+    if (onAuthenticated && response.ok && ['initialize', 'server/discover', 'tools/list', 'tools/call'].includes(body?.method)) {
+      const info = body.method === 'initialize' ? body.params?.clientInfo : body.params?._meta?.['io.modelcontextprotocol/clientInfo'];
+      await onAuthenticated(context.getStore(), info);
+    }
+    return response;
+  }}, {maxRequestBodySize: 65536});
   const handle = async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (req.headers.origin !== undefined && req.headers.origin !== origin) {
@@ -49,7 +63,7 @@ export function createOpenCrawlMcp({authenticate, origin, revision = 'developmen
       return;
     }
     if (typeof principal.userId !== 'string' || !principal.userId) throw new Error('Missing authenticated principal');
-    return serve(req, res);
+    return context.run(principal, () => serve(req, res));
   };
   handle.close = handler.close;
   return handle;
