@@ -1,4 +1,4 @@
-/* OpenCrawl Soft paper. The shared visual vocabulary for every product surface. */
+/* OpenCrawl Night. The shared visual vocabulary for every product surface, matching getopencrawl.com. */
 @font-face {
   font-family: Geist;
   src: url('/assets/geist-sans.woff2') format('woff2');
@@ -14,7 +14,7 @@
   font-display: swap;
 }
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
   --font-sans: Geist, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
   --text-xs: .75rem;
@@ -23,12 +23,14 @@
   --text-body: .9375rem;
   --text-title: 1rem;
   --text-heading: 1.125rem;
-  --text-welcome: 1.625rem;
-  --text-welcome-mobile: 1.5rem;
-  --text-brand: 1.3125rem;
-  --text-brand-compact: 1.1875rem;
+  --text-welcome: 2.5rem;
+  --text-welcome-mobile: 1.875rem;
+  --text-brand: 1.5rem;
+  --text-brand-compact: 1.3125rem;
   --leading-ui: 1.5;
   --leading-prose: 1.7;
+  --tracking-display: -.04em;
+  --tracking-heading: -.025em;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -38,42 +40,66 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
+  --space-16: 64px;
   --radius-badge: 4px;
   --radius-control: 6px;
   --radius-message: 10px;
   --radius-panel: 12px;
   --control-height: 40px;
-  --header-height: 56px;
-  --pane-inset: 24px;
+  --header-height: 72px;
+  --pane-inset: 32px;
+  --page-width: 1200px;
   --chat-width: 800px;
-  --motion-fast: 150ms ease-out;
-  --bg: light-dark(#f2f0f3, #17151b);
-  --surface: light-dark(#ffffff, #211e27);
-  --surface-subtle: light-dark(#f7f6f9, #2b2733);
-  --text: light-dark(#232129, #eeecf3);
-  --muted: light-dark(#645f6b, #bdb7c8);
-  --line: light-dark(#e1dde6, #49434f);
-  --control-line: light-dark(#96909f, #7f778c);
-  --accent: light-dark(#4f49cf, #b1adff);
-  --accent-hover: light-dark(#4138b6, #cecaff);
-  --primary: #7d82ff;
-  --primary-hover: #959aff;
-  --on-primary: #0c0d2a;
+  --motion-fast: 160ms ease-out;
+  /* Surfaces: pure black canvas, near-black panels, hairline borders. */
+  --bg: #000;
+  --surface: #0a090c;
+  --surface-subtle: #131118;
+  --surface-raised: #17151d;
+  --text: #f7f5f6;
+  --strong: #fff;
+  --muted: #b9b4c0;
+  --quiet: #8a8492;
+  --line: #24212b;
+  --line-strong: #353140;
+  --control-line: #3d3949;
+  /* The OC mark: a lavender face over coral and cobalt layers. */
   --brand-face: #7d82ff;
+  --brand-face-hover: #959aff;
   --brand-coral: #ff6268;
   --brand-cobalt: #164bff;
-  --wash: light-dark(#eae9ff, #35314c);
-  --selection: light-dark(#dcd9ff, #4c456e);
-  --success: light-dark(#32734b, #a0d7b0);
-  --success-wash: light-dark(#edf7ef, #25372b);
-  --pending: light-dark(#825a1f, #e6c088);
-  --pending-wash: light-dark(#fcf4e7, #3b3022);
-  --danger: light-dark(#ae3344, #ffabb8);
-  --danger-wash: light-dark(#fff0f2, #432a32);
-  --backdrop: light-dark(rgb(25 18 35 / .32), rgb(0 0 0 / .56));
-  --shadow-paper: 0 2px 6px light-dark(rgb(48 33 59 / .05), rgb(0 0 0 / .16));
-  --shadow-floating: 0 4px 16px light-dark(rgb(48 33 59 / .12), rgb(0 0 0 / .28));
-  --shadow-dialog: 0 16px 48px light-dark(rgb(25 18 35 / .2), rgb(0 0 0 / .4));
+  --brand-ink: #0c0d2a;
+  --accent: #a3a6ff;
+  --accent-hover: #c5c7ff;
+  --primary: var(--brand-face);
+  --primary-hover: var(--brand-face-hover);
+  --on-primary: var(--brand-ink);
+  --secondary: color-mix(in srgb, var(--brand-face) 22%, #050510);
+  --secondary-hover: color-mix(in srgb, var(--brand-face) 32%, #050510);
+  --secondary-line: color-mix(in srgb, var(--brand-face) 50%, #000);
+  --on-secondary: #e4e5ff;
+  --logo-layers: -1px 0 0 var(--brand-coral), 1px 0 0 var(--brand-cobalt);
+  --logo-layers-wide: -2px 0 0 var(--brand-coral), 2px 0 0 var(--brand-cobalt);
+  --logo-layers-soft: -1px 0 0 color-mix(in srgb, var(--brand-coral) 60%, transparent), 1px 0 0 color-mix(in srgb, var(--brand-cobalt) 60%, transparent);
+  --wash: color-mix(in srgb, var(--brand-face) 12%, transparent);
+  --selection: color-mix(in srgb, var(--brand-face) 40%, transparent);
+  --success: #8fe0a8;
+  --success-wash: #10261a;
+  --pending: #f0c47e;
+  --pending-wash: #2c2212;
+  --danger: #ff8a95;
+  --danger-strong: #ff6268;
+  --danger-wash: #2d1217;
+  --backdrop: rgb(0 0 0 / .72);
+  --header-glass: rgb(0 0 0 / .72);
+  --shadow-paper: inset 0 1px 0 rgb(255 255 255 / .04);
+  --shadow-floating: 0 8px 28px rgb(0 0 0 / .6);
+  --shadow-dialog: 0 35px 120px rgb(0 0 0 / .6);
+  /* Backdrop grid: coral, cobalt and lavender lines strongest at the page edges. */
+  --grid-size: 80px;
+  --grid-coral: #ff626838;
+  --grid-cobalt: #164bff47;
+  --grid-face: #7d82ff24;
+  /* Full strength at the very edges, falling off fast to nothing before the content column. */
+  --grid-vignette: linear-gradient(90deg, #000 2%, rgb(0 0 0 / .45) 7%, rgb(0 0 0 / .12) 13%, transparent 20%, transparent 80%, rgb(0 0 0 / .12) 87%, rgb(0 0 0 / .45) 93%, #000 98%);
 }
-:root[data-appearance="light"] { color-scheme: light; }
-:root[data-appearance="dark"] { color-scheme: dark; }

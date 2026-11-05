@@ -37,10 +37,9 @@ through self-hosted Airbyte, and their agent session transcripts through a
 collector, both landing in their own S3 bucket. See `integrations/README.md`. It is
 not part of the package.
 
-`web/tokens.css` and `web/assets` preserve the existing OpenCrawl Soft paper
-design system, initially copied from `1patch/OpenCrawl` at
-`b9f49281f98bdb75a8e8647d4ca887d8a6ac4542`. Tokens now belong to this core for v2;
-the v2 shell serves these exact files. Fonts retain their OFL notice.
+`web/tokens.css`, `web/frame.css`, `web/controls.css` and `web/assets` hold the
+OpenCrawl Night design system, matching getopencrawl.com (see `DESIGN.md`).
+Tokens belong to this core for v2; the v2 shell serves these exact files. Fonts retain their OFL notice.
 `DESIGN.md` describes the shared visual system.
 
 Before public release: select an OSI-approved license, review asset rights and
