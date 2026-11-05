@@ -80,18 +80,19 @@ not require private GitHub Packages access. Select a public license explicitly,
 review asset/dependency rights, and document security/contribution policies before
 calling this open source. The current repository remains private and UNLICENSED.
 
-As audited on November 4, 2026 at `c40f477`, the package still exports only
-`hello()`/`renderHello()` and the loopback smoke runner. CLI enrollment and optional
-Airbyte/session landing tools exist separately; the product indexer is not built.
-Those tools do not constitute a complete authenticated self-host product, and
-the greeting cannot prove resource authorization or multitenant isolation.
+Session capture now has an authenticated single-tenant receiver. Both it and the
+hosted shell land immutable gzip batches and attachment blobs through the same
+S3-compatible adapter and schema. Self-hosted deployments must configure an
+object-store bucket (AWS S3 or a compatible service); filesystem storage is only
+an internal test helper. Downstream ingestion must share the S3 object contract
+across deployments. The CLI's local spool is a retry buffer, not a separate
+server-side source. The OpenSearch ingester is not yet implemented.
 
-The session receiver also needs hardening before direct network exposure: its
-current direct-run default is `0.0.0.0` with an optional token. Host/Origin checks
-do not authenticate non-browser clients. Compose's loopback port publication
-limits that path, but is not a substitute for requiring authenticated access on
-non-loopback listeners. Verify startup defaults and negative credential tests
-before claiming a network-safe reference deployment.
+The older optional `integrations/agent-sessions` receiver uses a separate legacy
+protocol. Its optional-token/direct-network behavior does not describe the new
+`npm run sessions` receiver, which requires a token, checks bucket access before
+listening, and defaults to loopback. Do not expose the legacy receiver directly
+without addressing its authentication defaults.
 
 Publish tested immutable core runtime versions. The hosted consumer advances its
 package version, integrity lock and Git source pin together; it verifies embedded
