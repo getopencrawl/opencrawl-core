@@ -1,45 +1,24 @@
+@import url("./frame.css");
 @import url("./controls.css");
-/* Layout only; all visual values come from the core's shared design system. */
-*{box-sizing:border-box}
-html{font-family:var(--font-sans);color:var(--text);background:var(--bg);font-synthesis:none}
-body{margin:0;padding:var(--space-3);min-height:100dvh;font-size:var(--text-body);line-height:var(--leading-ui)}
-.paper{min-height:calc(100dvh - var(--space-6));background:var(--surface);border-radius:var(--radius-panel);box-shadow:var(--shadow-paper)}
-header{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);min-height:var(--header-height);padding:var(--space-2) var(--pane-inset);border-bottom:1px solid var(--line)}
-.brand{display:inline-flex;align-items:center;gap:var(--space-2);font-size:var(--text-brand);font-weight:650;letter-spacing:-.035em;text-decoration:none;color:var(--text)}
-main{max-width:var(--chat-width);margin-inline:auto;padding:var(--space-12) var(--pane-inset)}
-h1{margin:0;font-size:var(--text-welcome);font-weight:550;line-height:1.3;letter-spacing:-.025em}
-@media(max-width:600px){body{padding:0}.paper{min-height:100dvh;border-radius:0;box-shadow:none}header,main{padding-inline:var(--space-4)}button{min-height:44px}h1{font-size:var(--text-welcome-mobile)}}
+/* Onboarding layout. All visual values come from tokens.css. */
 
-.setup{display:flex;align-items:center;justify-content:space-between;gap:var(--space-6)}
-.setup h1{font-size:var(--text-heading);font-weight:600;letter-spacing:-.015em;line-height:1.5}
-.setup p{margin:var(--space-1) 0 0;color:var(--muted);font-size:var(--text-ui);line-height:1.5}
-.setup button{flex-shrink:0}
+/* Hero: display heading, muted lede, then the setup actions. */
+.setup:not(.sources){display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-6)}
+.setup:not(.sources) p{margin:var(--space-4) 0 0;max-width:52ch;color:var(--muted);font-size:var(--text-title);line-height:1.65}
 #copy-status{margin:var(--space-2) 0 0;color:var(--muted);font-size:var(--text-sm)}
 #copy-status:empty{display:none}
-#setup-prompt{width:100%;margin-top:var(--space-3);min-height:160px;padding:var(--space-3);background:var(--surface);color:var(--text);border:1px solid var(--control-line);border-radius:var(--radius-control);font:inherit;font-size:var(--text-ui)}
-@media(max-width:600px){.setup{align-items:flex-start;flex-direction:column;gap:var(--space-4)}}
+#setup-prompt{width:100%;margin-top:var(--space-3);min-height:180px;padding:var(--space-4);background:var(--surface);color:var(--text);border:1px solid var(--line-strong);border-radius:var(--radius-control);font:var(--text-ui)/1.7 var(--font-mono);resize:vertical}
 
-.setup-values{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-5)}
-button.copy-value{display:inline-flex;align-items:center;justify-content:space-between;gap:var(--space-5);min-width:0;max-width:100%}
-.copy-value code{font-family:var(--font-mono);font-size:var(--text-sm);overflow-wrap:anywhere;text-align:left}
-.copy-icon{display:flex;color:var(--muted);flex-shrink:0}
-.copy-value[data-copied]{border-color:var(--accent)}
-@media(max-width:600px){.setup-values{flex-direction:column;align-items:stretch}}
-
-.sources{margin-top:var(--space-10);padding-top:var(--space-6);border-top:1px solid var(--line)}
-.sources h2{margin:0;font-size:var(--text-heading);font-weight:600;letter-spacing:-.015em;line-height:1.5}
-.back-link{display:inline-block;margin-bottom:var(--space-6);color:var(--muted);font-size:var(--text-ui);text-underline-offset:3px}
-.source-placeholder p{color:var(--muted);font-size:var(--text-ui)}
-@media(max-width:600px){.button-link{min-height:44px}.sources{flex-direction:row;align-items:center}}
-
-.prompt-actions{display:inline-flex;flex-shrink:0}
-.prompt-actions #copy-setup{border-top-right-radius:0;border-bottom-right-radius:0}
-.prompt-actions .prompt-toggle{display:flex;align-items:center;justify-content:center;width:var(--control-height);padding:0;border-top-left-radius:0;border-bottom-left-radius:0;border-left:1px solid var(--on-primary)}
+/* Split primary button: one logo-layered face with a chevron to preview the prompt. */
+.prompt-actions{display:inline-flex;flex-shrink:0;border-radius:var(--radius-control);box-shadow:var(--logo-layers);transition:box-shadow var(--motion-fast)}
+.prompt-actions:hover{box-shadow:var(--logo-layers-wide)}
+.prompt-actions button.primary,.prompt-actions button.primary:hover:not(:disabled){box-shadow:none}
+.prompt-actions #copy-setup{min-height:48px;padding-inline:var(--space-6);font-size:var(--text-ui);border-top-right-radius:0;border-bottom-right-radius:0}
+.prompt-actions .prompt-toggle{display:flex;align-items:center;justify-content:center;width:44px;min-height:48px;padding:0;border-top-left-radius:0;border-bottom-left-radius:0;border-left:1px solid color-mix(in srgb,var(--on-primary) 30%,transparent)}
+.prompt-toggle svg{transition:transform var(--motion-fast)}
 .prompt-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}
-#prompt-preview{margin-top:var(--space-4);padding:var(--space-3) var(--space-4);background:var(--surface-subtle);border-radius:var(--radius-control)}
-#prompt-text{margin:0;font-size:var(--text-ui);line-height:1.7;overflow-wrap:anywhere}
-@media(max-width:600px),(pointer:coarse){.prompt-actions .prompt-toggle{width:44px;min-width:44px}}
-
+#prompt-preview{margin-top:var(--space-5);padding:var(--space-4) var(--space-5);background:var(--surface);border:1px solid var(--line);border-left:2px solid var(--brand-face);border-radius:var(--radius-control)}
+#prompt-text{margin:0;color:var(--muted);font:var(--text-sm)/1.75 var(--font-mono);overflow-wrap:anywhere;white-space:pre-wrap}
 
 #copy-setup{display:inline-grid}
 #copy-setup>span{grid-area:1/1}
@@ -48,24 +27,49 @@ button.copy-value{display:inline-flex;align-items:center;justify-content:space-b
 #copy-setup[data-copied] .copy-done{visibility:visible}
 .sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip-path:inset(50%);white-space:nowrap!important;border:0!important}
 
+/* Copyable values: terminal-style chips with a prompt glyph. */
+.setup-values{display:flex;flex-wrap:wrap;gap:var(--space-3);margin-top:var(--space-6)}
+button.copy-value{justify-content:space-between;gap:var(--space-5);min-width:0;max-width:100%;min-height:44px;padding-inline:var(--space-4);background:var(--surface);border-color:var(--line-strong)}
+button.copy-value:hover:not(:disabled){background:var(--surface-subtle);border-color:var(--secondary-line)}
+.copy-value code{font-size:var(--text-sm);color:var(--text);overflow-wrap:anywhere;white-space:normal;text-align:left}
+.copy-value code::before{content:'$ ';color:var(--accent)}
+.copy-value:not([data-copy^="npm"]) code::before{content:none}
+.copy-icon{display:flex;color:var(--quiet);flex-shrink:0;transition:color var(--motion-fast)}
+.copy-value:hover .copy-icon{color:var(--text)}
+.copy-value[data-copied]{border-color:var(--brand-face)}
 .copy-feedback{display:inline-grid;align-items:center;justify-items:end;flex-shrink:0}
 .copy-feedback>span{grid-area:1/1}
-.copy-feedback .copy-done{visibility:hidden;font-family:var(--font-sans);font-size:var(--text-sm);color:var(--muted)}
+.copy-feedback .copy-done{visibility:hidden;font-family:var(--font-sans);font-size:var(--text-sm);color:var(--accent)}
 .copy-value[data-copied] .copy-icon{visibility:hidden}
 .copy-value[data-copied] .copy-done{visibility:visible}
 
-.wiring{margin-top:var(--space-8)}
-.wiring-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4)}
-.wiring h2{margin:0;font-size:var(--text-title);font-weight:500}
-#wiring-status{display:grid;gap:var(--space-3);margin-top:var(--space-2)}
-.wiring-step{display:flex;align-items:center;gap:var(--space-2);font-size:var(--text-ui);min-height:var(--space-6)}
-.step-icon{flex-shrink:0;color:var(--muted)}
+/* Panels: near-black surfaces with hairline borders, as on the landing page. */
+.wiring,.sources{margin-top:var(--space-10);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-panel);box-shadow:var(--shadow-paper)}
+.wiring-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);padding:var(--space-5) var(--space-6);border-bottom:1px solid var(--line)}
+.wiring h2,.sources h2{margin:0;font-size:var(--text-title);font-weight:500;letter-spacing:-.01em;line-height:1.5}
+#wiring-status{display:grid;margin:0;padding:var(--space-2) var(--space-6)}
+.wiring-step{display:flex;align-items:center;gap:var(--space-3);min-height:52px;font-size:var(--text-ui);color:var(--text)}
+.wiring-step+.wiring-step{border-top:1px solid var(--line)}
+.wiring-step strong{font-weight:500;color:var(--strong)}
+.step-icon{flex-shrink:0;color:var(--quiet)}
 .step-icon path{visibility:hidden}
 .wiring-step[data-state="complete"] .step-icon{color:var(--success)}
 .wiring-step[data-state="complete"] .step-icon path{visibility:visible}
-.wiring-step[data-state="pending"]{color:var(--muted)}
-
-.wiring-step[data-state="waiting"] .step-icon{animation:wiring-spin 1s linear infinite}
+.wiring-step[data-state="pending"]{color:var(--quiet)}
+.wiring-step[data-state="waiting"] .step-icon{color:var(--accent);animation:wiring-spin 1s linear infinite}
 .wiring-step[data-state="waiting"] .step-icon circle{stroke-dasharray:42 15}
 @keyframes wiring-spin{to{transform:rotate(360deg)}}
-#wiring-error{color:var(--muted);font-size:var(--text-sm)}
+#wiring-error{margin:var(--space-3) 0 0;color:var(--muted);font-size:var(--text-sm)}
+
+.sources{display:flex;align-items:center;justify-content:space-between;gap:var(--space-6);padding:var(--space-5) var(--space-6)}
+.sources .button-link{color:var(--on-secondary);background:var(--secondary);border-color:var(--secondary-line);box-shadow:var(--logo-layers-soft)}
+.sources .button-link:hover{background:var(--secondary-hover);border-color:var(--brand-face)}
+.back-link{display:inline-block;margin-bottom:var(--space-6);color:var(--muted);font-size:var(--text-ui)}
+.source-placeholder p{color:var(--muted);font-size:var(--text-ui)}
+
+@media(max-width:600px){
+ .prompt-actions{align-self:stretch}.prompt-actions #copy-setup{flex:1}
+ .setup-values{flex-direction:column;align-items:stretch}
+ .wiring-heading,#wiring-status{padding-inline:var(--space-4)}
+ .sources{padding:var(--space-4)}
+}

@@ -1,23 +1,29 @@
-/* Shared OpenCrawl controls, extracted from web/style.css. Palette lives in tokens.css. */
+/* Shared OpenCrawl controls in the OC mark's style. Palette lives in tokens.css. */
 button,input,textarea,select,.button-link{font:inherit;color:inherit}
-:is(button,.button-link){display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:var(--control-height);padding:var(--space-2) var(--space-3);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface);color:var(--text);font-size:var(--text-ui);line-height:1.4;white-space:nowrap;cursor:pointer;text-decoration:none;transition:background-color var(--motion-fast),border-color var(--motion-fast),color var(--motion-fast)}
-:is(button,.button-link):hover:not(:disabled){background:var(--surface-subtle)}
-:is(button,.button-link):active:not(:disabled){background:var(--wash)}
-button:disabled{color:var(--muted);background:var(--surface-subtle);border-color:var(--line);cursor:not-allowed;opacity:1}
-.primary{color:var(--on-primary);background:var(--primary);border-color:transparent;font-weight:400}
-.primary:hover:not(:disabled){background:var(--primary-hover)}
-.primary:active:not(:disabled){background:var(--primary-hover)}
-.primary:disabled{color:var(--muted);background:var(--surface-subtle);border-color:var(--line);font-weight:500}
+:is(button,.button-link){display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:var(--control-height);padding:var(--space-2) var(--space-4);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface);color:var(--text);font-size:var(--text-ui);line-height:1.4;white-space:nowrap;cursor:pointer;text-decoration:none;transition:background-color var(--motion-fast),border-color var(--motion-fast),color var(--motion-fast),box-shadow var(--motion-fast)}
+:is(button,.button-link):hover:not(:disabled){background:var(--surface-subtle);border-color:var(--line-strong)}
+:is(button,.button-link):active:not(:disabled){background:var(--surface-raised)}
+button:disabled{color:var(--quiet);background:var(--surface);border-color:var(--line);cursor:not-allowed;opacity:1}
+/* Primary: lavender face over hairline coral and cobalt layers, which widen on hover. */
+:is(button,.button-link).primary{color:var(--on-primary);background:var(--primary);border-color:var(--primary);box-shadow:var(--logo-layers);font-weight:500}
+:is(button,.button-link).primary:hover:not(:disabled){color:var(--on-primary);background:var(--primary-hover);border-color:var(--primary-hover);box-shadow:var(--logo-layers-wide)}
+:is(button,.button-link).primary:active:not(:disabled){box-shadow:none}
+.primary:disabled{color:var(--quiet);background:var(--surface-subtle);border-color:var(--line);box-shadow:none}
+/* Secondary: a muted indigo version of the primary, as on the landing page's Book call. */
+:is(button,.button-link).secondary{color:var(--on-secondary);background:var(--secondary);border-color:var(--secondary-line);box-shadow:var(--logo-layers-soft)}
+:is(button,.button-link).secondary:hover:not(:disabled){background:var(--secondary-hover);border-color:var(--brand-face)}
 .icon-button,.text-button{background:transparent;border-color:transparent;min-height:32px;padding:var(--space-1);color:var(--muted)}
 .icon-button{min-width:32px}
 .text-button{font-size:var(--text-sm);white-space:normal}
+:is(.icon-button,.text-button):hover:not(:disabled){color:var(--text);background:var(--surface-subtle);border-color:transparent}
 input[aria-invalid=true],textarea[aria-invalid=true],select[aria-invalid=true]{border-color:var(--danger)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 @media(max-width:600px),(pointer:coarse){
  :is(button,.button-link),input,select{min-height:44px}
  .icon-button{min-width:44px}
 }
+@media(forced-colors:active){:is(button,.button-link){border:1px solid ButtonText}}
 @media(prefers-reduced-motion:reduce){
  *,*::before,*::after{transition:none!important;animation:none!important}
 }
-::selection{background:var(--selection);color:var(--text)}
+::selection{background:var(--selection);color:var(--strong)}
