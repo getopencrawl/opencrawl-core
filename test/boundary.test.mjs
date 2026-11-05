@@ -15,7 +15,7 @@ function checkImports(source, file, root = sourceRoot) {
   for (const match of source.matchAll(/\b(?:from\s*|import\s*(?:\(\s*)?|require(?:\.resolve)?\s*\(\s*)["']([^"']+)["']/g)) {
     const specifier = match[1];
     assert.ok(!specifier.includes('\\'), `Escaped dependency needs review: ${specifier}`);
-    if (specifier.startsWith('node:') || ['@modelcontextprotocol/server', '@modelcontextprotocol/server/ext/skills/node', '@modelcontextprotocol/node', 'zod'].includes(specifier)) continue;
+    if (specifier.startsWith('node:') || ['@modelcontextprotocol/server', '@modelcontextprotocol/node', 'zod'].includes(specifier)) continue;
     assert.ok(specifier.startsWith('./') || specifier.startsWith('../'), `Forbidden core dependency: ${specifier}`);
     assert.ok(new URL(specifier, file).href.startsWith(root.href), `Dependency escapes product runtime: ${specifier}`);
   }
