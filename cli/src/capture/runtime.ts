@@ -9,7 +9,7 @@ import {parseRecord, detectOrigin, hash, type Harness} from './parse.ts';
 
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
-export type CaptureConfig = {disabled?:boolean,schemaVersion:1,api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,command:string[]};
+export type CaptureConfig = {disabled?:boolean,schemaVersion:1,harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 export async function request(api:string,path:string,init:RequestInit={},tokenOverride?:string) {
   const saved=read(join(captureDir(),'receiver-token.json'));
@@ -18,7 +18,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   const send=()=>fetch(api+path,{...init,headers:{...init.headers,authorization:'Bearer '+token},signal:AbortSignal.timeout(20000),redirect:'error'});
   let res=await send();
   if(res.status===401 && !staticToken){token=await accessToken(api,token);res=await send();}
-  const body=await res.json();
+  const body=await res.json().catch(()=>{throw new CliError('CAPTURE_NETWORK_BLOCKED',`Capture endpoint ${new URL(api).hostname} returned HTTP ${res.status} without JSON. Check this host in your cloud environment network allowlist.`);});
   if(!res.ok)throw new CliError('CAPTURE_UPLOAD_FAILED',`Capture request failed (${res.status}): ${body.error?.code ?? 'unknown'}`);
   return body.data;
 }
@@ -104,7 +104,11 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
           if(r.agentId)meta.parentSessionId=r.sessionId;
         }
         const origin=detectOrigin(harness,r);
-        if(origin.origin!=='unknown'){meta.origin=origin.origin;meta.originEvidence=origin.evidence;}
+        if(harness==='claude-code' && (process.env.CLAUDE_CODE_REMOTE==='true'||origin.origin==='cloud')) {
+          meta.origin='cloud';meta.originEvidence=origin.origin==='cloud'?origin.evidence:(meta.originEvidence??'CLAUDE_CODE_REMOTE=true');
+          if(origin.origin==='cloud')meta.remoteSessionId=origin.evidence!.split('/').pop();
+        }
+        if(origin.origin!=='unknown' && meta.origin!=='cloud'){meta.origin=origin.origin;meta.originEvidence=origin.evidence;}
         if(p.cwd || r.cwd)meta.cwd=p.cwd??r.cwd;
       if(p.cli_version || r.version)meta.harnessVersion=p.cli_version??r.version;
     }
@@ -162,7 +166,7 @@ export async function captureHook(harness:Harness,event:any) {
   const sessionId=event.session_id;
   if(typeof sessionId!=='string' || !/^[\w.:-]{1,200}$/.test(sessionId))throw new CliError('CAPTURE_SESSION_UNKNOWN','Hook missing session ID');
   const file=event.transcript_path || findTranscript(config,harness,sessionId);
-  const meta=file && existsSync(file) ? await captureTranscript(config,harness,file,event) : {harness,sessionId,origin:'unknown',originEvidence:null,parentSessionId:null};
+  const meta=file && existsSync(file) ? await captureTranscript(config,harness,file,event) : {harness,sessionId,origin:harness==='claude-code'&&process.env.CLAUDE_CODE_REMOTE==='true'?'cloud':'unknown',originEvidence:null,parentSessionId:null};
   // Hooks can carry input/results before the harness flushes its transcript. Keep both; dedupe downstream.
   const attachments:any[]=[];
   const data=attachmentTransform(event,attachments,event.cwd??homedir());
@@ -173,7 +177,7 @@ export async function syncCaptures() {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
   if(config.disabled)return {uploaded:0};
   const errors:any[]=[];
-  for(const harness of ['claude-code','codex'] as Harness[]) {
+  for(const harness of config.harnesses??['claude-code','codex'] as Harness[]) {
     const dirs=harness==='codex'?['sessions','archived_sessions']:['projects'];
     for(const dir of dirs)for(const path of walk(join(config.roots[harness],dir))) {
       // Installation enrolls new/active sessions; it never silently imports all historical conversations.

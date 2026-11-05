@@ -12,7 +12,7 @@ export function sessionScope(principal) {
   if (!principal || !id(principal.tenantId) || !id(principal.userId)) fail(401, 'Authentication required');
   return `tenants/${digest(principal.tenantId)}/users/${digest(principal.userId)}`;
 }
-export function createSessionIngest({store, prefix = 'capture-v1', onStored}) {
+export function createSessionIngest({store, prefix = 'capture-v1', onStored=undefined}) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = principal => `${prefix}/${sessionScope(principal)}`;
   return {
@@ -26,7 +26,7 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored}) {
       const keyPrefix = scope(principal);
       if (batch?.schemaVersion !== 1 || !id(batch.installationId) || !id(batch.sessionId) ||
           !['claude-code', 'codex'].includes(batch.harness) || !Array.isArray(batch.events) || !batch.events.length ||
-          !['cli', 'desktop', 'subagent', 'unknown'].includes(batch.origin)) fail(400, 'Invalid capture batch');
+          !['cli', 'desktop', 'cloud', 'subagent', 'unknown'].includes(batch.origin)) fail(400, 'Invalid capture batch');
       if (batch.owner?.userId !== principal.userId || batch.owner?.tenantId !== principal.tenantId) fail(403, 'Capture owner does not match signed-in account');
       if (batch.events.length > 1000 || !batch.events.every(e => id(e.id) && typeof e.kind === 'string')) fail(400, 'Invalid events');
       if (!Array.isArray(batch.attachments) || batch.attachments.length > 1000) fail(400, 'Invalid attachments');
@@ -58,7 +58,7 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored}) {
 }
 
 /** Shared HTTP protocol for hosted OAuth and single-tenant deployments. */
-export function createCaptureHandler({ingest, authenticate, search}) {
+export function createCaptureHandler({ingest, authenticate, search=undefined, credentials=undefined}) {
   if (typeof authenticate !== 'function') throw new Error('Authentication adapter required');
   return async (req, res) => {
     const send = (status, data) => {res.writeHead(status, {'content-type':'application/json', 'cache-control':'no-store'});res.end(JSON.stringify({schemaVersion:1, ...data}));};
@@ -67,6 +67,13 @@ export function createCaptureHandler({ingest, authenticate, search}) {
       const principal = await authenticate(req);
       sessionScope(principal);
       const url = new URL(req.url, 'http://capture');
+      if(principal.captureAccess==='write' && !(
+        req.method==='GET' && url.pathname==='/api/sessions/identity' ||
+        req.method==='POST' && url.pathname==='/api/sessions/batches' ||
+        req.method==='PUT' && /^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(url.pathname))) return send(403,{error:{code:'CAPTURE_WRITE_ONLY'}});
+      if(credentials && req.method==='POST' && url.pathname==='/api/sessions/credentials') return send(200,{data:await credentials.issue(principal)});
+      const credential=/^\/api\/sessions\/credentials\/([a-f0-9]{64})$/.exec(url.pathname);
+      if(credentials && req.method==='DELETE' && credential) return send(200,{data:await credentials.revoke(principal,credential[1])});
       if (req.method === 'GET' && url.pathname === '/api/sessions/identity') return send(200, {data:{principal}});
       if(req.method==='GET' && url.pathname==='/api/sessions/search') {
         if(!search)return send(503,{error:{code:'SEARCH_NOT_CONFIGURED'}});
