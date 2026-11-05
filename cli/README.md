@@ -147,6 +147,10 @@ attachments cannot be recovered by this importer.
 A one-time import reuses capture cursors, owner checks, attachment storage and
 durable receipts. It does not turn on recurring historical scans. Rerun the
 same approved command after an interruption; completed records are skipped.
+Transient connection failures and HTTP 429/502/503/504 responses are retried up
+to four times for reads and content-addressed uploads, without changing the
+payload. Permanent rejections fail immediately. Replaying completed files
+requires one initial owner check rather than a network request per file.
 Failures return nonzero rather than reporting a complete import. Status still
 shows queued uploads and errors; `collect flush` retries uploads already queued.
 
