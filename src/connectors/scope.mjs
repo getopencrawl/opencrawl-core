@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 
-export const PIPELINE_VERSION = 'slack-v1';
+export const PIPELINE_VERSION = 'slack-v2';
 const SLACK_STREAMS = new Set(['channel_messages', 'messages', 'threads', 'channels', 'users', 'channel_members']);
 export const digest = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 const fail = message => { throw Object.assign(new Error(message), {permanent: true}); };
