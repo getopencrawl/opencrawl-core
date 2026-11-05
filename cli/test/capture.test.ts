@@ -15,6 +15,10 @@ test('Claude and Codex preserve message, tool, branch, origin and attachment rec
   expect(parseRecord('codex',{type:'response_item',payload:{type:'message',role:'developer',content:'repeat'}},0)).toBeNull();
   expect(parseRecord('codex',{type:'response_item',payload:{type:'function_call',call_id:'call',arguments:'{"x":1}'}},10)?.data.arguments).toBe('{"x":1}');
   expect(parseRecord('codex',{type:'response_item',payload:{type:'function_call_output',call_id:'call',output:'tool result'}},11)?.kind).toBe('tool_result');
+  const agent=parseRecord('codex',{type:'response_item',payload:{type:'agent_message',id:'native-message',author:'/root/reviewer',recipient:'/root',content:[{type:'input_text',text:'The review found a missing record.'},{type:'encrypted_content',encrypted_content:'OPAQUE_INTERNAL'}],internal_chat_message_metadata_passthrough:{instructions:'INTERNAL'}}},12);
+  expect(agent?.kind).toBe('agent_message');expect(agent?.nativeId).toBe('native-message');
+  expect(agent?.data).toEqual({type:'agent_message',author:'/root/reviewer',recipient:'/root',content:[{type:'input_text',text:'The review found a missing record.'}]});
+  expect(JSON.stringify(agent)).not.toContain('OPAQUE_INTERNAL');expect(JSON.stringify(agent)).not.toContain('instructions');
   expect(parseRecord('claude-code',{type:'user',uuid:'next',parentUuid:'prev',message:{content:[{type:'tool_result',tool_use_id:'call',content:'code'}]}},1)?.parentId).toBe('prev');
   for(const [h,r,expected] of [
     ['codex',{payload:{source:'cli',originator:'codex_cli_rs'}},'cli'],

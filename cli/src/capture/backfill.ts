@@ -61,7 +61,7 @@ export async function backfill(api:string, selected:Selection, approved:boolean)
   let processed=0,uploaded=0;
   const failures:{code:string}[]=[];
   for(const file of files) {
-    try{await captureTranscript(config,file.harness,file.path);processed++;}
+    try{await captureTranscript(config,file.harness,file.path,{},true);processed++;}
     catch(e:any){failures.push({code:e instanceof CliError?e.code:'CAPTURE_FAILED'});recordError(e);}
     // Bound the retry spool to one transcript at a time; stop if the receiver is offline.
     // Completed historical files have no work to send. Keep replay local after

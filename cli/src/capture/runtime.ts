@@ -106,7 +106,7 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   atomicJson(join(captureDir(),'queue',hash(JSON.stringify(batch))+'.json'),batch);
 }
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
-export async function captureTranscript(config:CaptureConfig,harness:Harness,file:string,hook:any={}) {
+export async function captureTranscript(config:CaptureConfig,harness:Harness,file:string,hook:any={},reconcileHistory=false) {
   ensureDirectories();
   const path=transcriptAllowed(file,config,harness);
   const stateFile=join(captureDir(),'state',hash(harness+path)+'.json');
@@ -115,7 +115,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     const compressed=path.endsWith('.jsonl.zst');
     let readPath=path;
     if(compressed) {
-      if(old.archiveSize===source.size && old.archiveMtime===source.mtimeMs && old.ino===source.ino)return old.meta;
+      if(old.archiveSize===source.size && old.archiveMtime===source.mtimeMs && old.ino===source.ino && (!reconcileHistory || old.parserVersion===2))return old.meta;
       readPath=stateFile+'.expanded.tmp';
       // The transcript lock makes an abandoned expansion safe to replace after a crash.
       try{unlinkSync(readPath);}catch(e:any){if(e.code!=='ENOENT')throw e;}
@@ -130,6 +130,11 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     const st=statSync(readPath);
     let offset=old.offset;
     if(st.size<offset || (old.ino && old.ino!==source.ino) || compressed)offset=0;
+    // Parser upgrades must not silently start a historical import in hooks/sync.
+    // An explicitly approved backfill may reread older cursors to recover newly
+    // supported native records; unchanged event IDs remain idempotent downstream.
+    if(reconcileHistory && old.parserVersion!==2)offset=0;
+    const parserVersion=offset===0?2:old.parserVersion??1;
     const fd=openSync(readPath,'r');
     let meta:any=old.meta??{harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path};
     let codexIdentityRead=false;
@@ -194,7 +199,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
                   if(block?.type==='tool_result')blocks(block.content);
                 }
               }
-              if(parsed.kind==='message')blocks(parsed.data?.content);
+              if(parsed.kind==='message' || parsed.kind==='agent_message')blocks(parsed.data?.content);
               if(parsed.kind==='attachment' && parsed.data)localFiles.add(parsed.data);
               events.push(attachmentTransform(parsed,attachments,meta.cwd??dirname(path),localFiles));
             }
@@ -203,7 +208,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
           if(events.length>=200){enqueue(config,meta,events.splice(0),attachments.splice(0));}
         }
         enqueue(config,meta,events,attachments);
-        offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
+        offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
       }
     } finally{closeSync(fd);if(compressed)try{unlinkSync(readPath);}catch{}}
     return meta;
