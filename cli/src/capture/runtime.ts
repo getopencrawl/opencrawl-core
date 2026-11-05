@@ -114,10 +114,22 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     if(st.size<offset || (old.ino && old.ino!==source.ino) || compressed)offset=0;
     const fd=openSync(readPath,'r');
     let meta:any=old.meta??{harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path};
+    let codexIdentityRead=false;
     function metadata(r:any) {
         const p=r.payload??r;
         if(harness==='codex' && r.type==='session_meta') {
+          // Forks include copied parent headers after their own leading header.
+          // Those records are history, not a change to this transcript's owner.
+          if(codexIdentityRead)return;
+          codexIdentityRead=true;
           meta.sessionId=p.id;meta.parentSessionId=p.forked_from_id??p.source?.subagent?.thread_spawn?.parent_thread_id??null;
+          const origin=detectOrigin(harness,r);
+          meta.origin=origin.origin;meta.originEvidence=origin.evidence;
+          meta.cwd=p.cwd;meta.harnessVersion=p.cli_version;
+          return;
+        } else if(harness==='codex') {
+          if(r.type==='turn_context' && p.cwd)meta.cwd=p.cwd;
+          return;
         } else if(harness==='claude-code' && r.sessionId) {
           meta.sessionId=r.agentId ? r.sessionId+':'+r.agentId : r.sessionId;
           if(r.agentId)meta.parentSessionId=r.sessionId;
