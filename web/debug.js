@@ -94,6 +94,9 @@ function renderGroups(container, groups, query) {
       article.append(body);
       if (preview.leading || preview.trailing) {
         const full = element('div', 'debug-text debug-full-text');
+        full.tabIndex = 0;
+        full.setAttribute('role', 'region');
+        full.setAttribute('aria-label', 'Full indexed text');
         const details = disclosure('Full indexed text', full);
         details.addEventListener('toggle', () => {if (details.open && !full.childNodes.length) highlightedText(full, text, query);});
         article.append(details);
