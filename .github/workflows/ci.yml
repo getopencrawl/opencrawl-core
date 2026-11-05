@@ -12,3 +12,15 @@ jobs:
           node-version: 24.13.1
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
+      - name: Verify capture against S3-compatible storage
+        env:
+          OPENCRAWL_TEST_S3_ENDPOINT: http://127.0.0.1:18333
+        run: |
+          docker run -d --name capture-s3-test --tmpfs /data:size=256m -p 127.0.0.1:18333:8333 \
+            -e AWS_ACCESS_KEY_ID=capture-test -e AWS_SECRET_ACCESS_KEY=capture-test-secret \
+            chrislusf/seaweedfs:4.52 mini -dir=/data -bucket=capture-test -admin.password=capture-test-secret \
+            -webdav=false -s3.port.iceberg=0 -s3.port.lance=0
+          node --test test/session-object-store.test.mjs
+      - name: Remove disposable object store
+        if: always()
+        run: docker rm -f capture-s3-test || true
