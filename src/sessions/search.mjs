@@ -62,6 +62,32 @@ export function createSessionSearch({endpoint,index,username,password,credential
       if(raw)return result;
       return {total:result.hits.total?.value??0,hits:hits.map(hit=>({id:hit._id,score:hit._score,...hit._source}))};
     },
+    /** Activity counts for reporting. Never returns transcript text. With team:true the caller
+     * must already have authorized the principal for its whole tenant. */
+    async usage(principal,{team=false,days=30,now=Date.now()}={}) {
+      sessionScope(principal);
+      if(!Number.isInteger(days)||days<1||days>365)fail(400,'Invalid usage window');
+      const day=t=>new Date(t).toISOString().slice(0,10),since=day(now-(days-1)*86400000),today=day(now);
+      const filter=[{term:{tenantId:principal.tenantId}},...(team?[]:[{term:{userId:principal.userId}}]),{term:{chunk:0}}];
+      const messages={filter:{term:{kind:'message'}}},toolCalls={value_count:{field:'toolNames'}},sessions={cardinality:{field:'sessionId'}};
+      const result=await request('/_search',{method:'POST',body:JSON.stringify({size:0,track_total_hits:true,query:{bool:{filter}},aggs:{
+        sessions,messages,toolCalls,machines:{cardinality:{field:'installationId'}},
+        tools:{terms:{field:'toolNames',size:8}},opencrawl:{filter:{wildcard:{toolNames:'*opencrawl*'}}},
+        harnesses:{terms:{field:'harness',size:5}},origins:{terms:{field:'origin',size:6}},
+        first:{min:{field:'timestamp'}},last:{max:{field:'timestamp'}},
+        daily:{filter:{range:{timestamp:{gte:since,lte:today,format:'yyyy-MM-dd'}}},aggs:{days:{date_histogram:{field:'timestamp',calendar_interval:'day',format:'yyyy-MM-dd',min_doc_count:0,extended_bounds:{min:since,max:today}},aggs:{sessions}}}},
+        people:{terms:{field:'userId',size:500},aggs:{sessions,messages,toolCalls,last:{max:{field:'timestamp'}},week:{filter:{range:{timestamp:{gte:'now-7d'}}}}}},
+      }})});
+      const a=result?.aggregations;
+      if(!a)throw new Error('Invalid usage response');
+      const people=a.people.buckets.map(b=>({userId:b.key,events:b.doc_count,sessions:b.sessions.value,messages:b.messages.doc_count,toolCalls:b.toolCalls.value,lastAt:b.last.value_as_string??null,weekEvents:b.week.doc_count}));
+      if(!team&&people.some(p=>p.userId!==principal.userId))throw new Error('Usage returned an invalid ownership scope');
+      const terms=agg=>agg.buckets.map(b=>({name:b.key,count:b.doc_count}));
+      return {events:result.hits.total?.value??0,sessions:a.sessions.value,messages:a.messages.doc_count,toolCalls:a.toolCalls.value,
+        machines:a.machines.value,opencrawlCalls:a.opencrawl.doc_count,tools:terms(a.tools),harnesses:terms(a.harnesses),origins:terms(a.origins),
+        firstAt:a.first.value_as_string??null,lastAt:a.last.value_as_string??null,
+        daily:a.daily.days.buckets.map(b=>({date:b.key_as_string,events:b.doc_count,sessions:b.sessions.value})),people};
+    },
     refresh:()=>request('/_refresh',{method:'POST'}),
   };
 }
