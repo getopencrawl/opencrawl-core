@@ -66,6 +66,17 @@ test('bounded segments retain cursors and continue other objects after one fails
   }});
   assert.deepEqual(result, {cursor: '5', indexed: 5, failed: 5}); assert.equal(processed, 5);
 });
+test('extra source streams do not starve supported data; selection never bypasses scope or path checks', async () => {
+  let keys = [key('emoji'), key(), key('replies')];
+  const pipeline = createConnectorPipeline({binding, search: {}, store: {listPage: async () => ({keys, nextToken: 'next-page'})}});
+  assert.deepEqual(await pipeline.listPage(), {keys: [key()], cursor: 'next-page', ignored: 2});
+  keys = [key('emoji')];
+  assert.deepEqual(await pipeline.listPage(), {keys: [], cursor: 'next-page', ignored: 1});
+  keys = [key('emoji').replace('connection=conn/', 'connection=other/')];
+  await assert.rejects(pipeline.listPage(), /scope/);
+  keys = [key().replace('/date=2026-11-04/', '/bad-date/')];
+  await assert.rejects(pipeline.listPage(), /path/);
+});
 test('search adapter refuses cross-tenant writes before issuing requests and checks every bulk item', async () => {
   let calls = 0;
   const search = createConnectorSearch({endpoint: 'http://localhost:9200', index: 'test', tenantId: binding.tenantId, fetch: async () => {calls++; return Response.json({items: [{update: {status: 429}}]});}});

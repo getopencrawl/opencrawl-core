@@ -1,5 +1,12 @@
 # Connector indexing
 
+The Slack reader selects `channels`, `users`, `channel_members`,
+`channel_messages`, and `threads` (plus the compatible `messages` alias).
+Additional streams are counted as ignored when listing S3 pages; they do not
+block selected streams or receive success receipts. A custom `replies` stream
+is not automatically treated as stock `threads`. Unsupported paths inside a
+selected stream and any out-of-scope key still fail closed.
+
 The reusable path reads Airbyte JSONL.gz from an S3-compatible bucket and indexes
 stock Slack `channel_messages`, `threads`, `channels`, `users`, and
 `channel_members`. `messages` is also accepted as a channel-message stream alias.
