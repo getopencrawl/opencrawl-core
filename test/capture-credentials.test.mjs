@@ -39,6 +39,7 @@ test('first setup prompt covers human cloud steps and fresh-session verification
  const api='https://capture.example.com',prompt=captureSetupPrompt(api),script=cloudSetupScript(api);
  for(const text of ['personal','human steps','fresh session','stored receipt','Limited/Trusted','Environment variables'])assert.ok(prompt.includes(text));
  assert.ok(script.includes('--harness claude-code --no-background'));
+ for(const text of ['collect backfill --dry-run','Claude Code, Codex, both, or skip','Wait for my explicit choice','do not backfill','Do not treat this setup prompt as approval','--harness <choice> --yes'])assert.ok(prompt.includes(text));
  assert.ok(!script.includes('login'));assert.ok(!script.includes('systemctl'));
  assert.throws(()=>cloudSetupScript('https://capture.example.com/path'));
  const page=renderCloudCaptureSetup({api,credential:{token:'<secret>',id:'abc',expiresAt:'2027-11-05'}});
