@@ -77,12 +77,12 @@ export function createConnectorSearch({endpoint, index, tenantId, credentials, u
       const tombstone = {tenantId, connectionId: binding.connectionId, workspaceId: binding.workspaceId, provider: binding.provider, kind, sourceId, deleted: true};
       await request(`/_update/${id}`, {body: JSON.stringify({script: {source: "ctx._source.deleted = true; ctx._source.text = ''; ctx._source.title = '';"}, upsert: tombstone})});
     },
-    async search(principal, bindings, {query, limit = 20} = {}) {
+    async search(principal, bindings, {query, limit = 20, raw = false} = {}) {
       if (!Array.isArray(bindings) || !bindings.length || bindings.length > 100) throw new Error('Authorized connections required');
       for (const binding of bindings) scoped(principal, binding);
       if (typeof query !== 'string' || !query.trim() || query.length > 4000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid connector query');
       const byConnection = new Map(bindings.map(b => [b.connectionId, b]));
-      const hits = []; let after, examined = 0, more = true;
+      const hits = [], responses = []; let after, examined = 0, more = true;
       // Bound work even when channel visibility filters most candidates.
       while (hits.length < limit && examined < 1000 && more) {
         const result = await request('/_search', {body: JSON.stringify({size: 100, track_total_hits: false,
@@ -104,14 +104,20 @@ export function createConnectorSearch({endpoint, index, tenantId, credentials, u
           if (!binding || d.tenantId !== tenantId || d.workspaceId !== binding.workspaceId || d.kind !== 'channel' || !ids.includes(item._id) || item._id !== documentId(binding, 'channel', d.sourceId)) throw new Error('Channel metadata scope mismatch');
           if (d.publicChannel === true && !d.deleted) allowed.add(item._id);
         }
+        const visible = [];
         for (const hit of candidates) {
           if (hits.length >= limit) break;
-          if (allowed.has(documentId(byConnection.get(hit._source.connectionId), 'channel', hit._source.channelId))) hits.push({id: hit._id, score: hit._score, ...hit._source});
+          if (allowed.has(documentId(byConnection.get(hit._source.connectionId), 'channel', hit._source.channelId))) {
+            visible.push(hit); hits.push({id: hit._id, score: hit._score, ...hit._source});
+          }
         }
+        // Preserve raw hit fields only after the same visibility checks as normal search.
+        // Totals and max_score describe unfiltered candidates, so omit them.
+        if (raw) responses.push({took: result.took, timed_out: result.timed_out, _shards: result._shards, hits: {hits: visible}});
         examined += candidates.length; more = candidates.length === 100; after = candidates.at(-1)?.sort;
         if (more && !after) throw new Error('Missing connector search cursor');
       }
-      return {hits, examined, truncated: more};
+      return raw ? {responses, examined, truncated: more} : {hits, examined, truncated: more};
     },
     refresh: () => request('/_refresh'),
   };
