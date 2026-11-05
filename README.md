@@ -54,3 +54,28 @@ release is separate from this private core package.
 The independently released [ChatGPT and Claude plugins](plugins/README.md) are
 MIT licensed under `plugins/LICENSE`; this exception does not relicense or
 make the rest of core public. See [plugin release boundaries](docs/PLUGIN-RELEASE.md).
+
+## Onboarding receipts
+
+The portable onboarding page polls an authenticated GET /api/onboarding.
+createOnboardingStatus from @1patch/opencrawl-core/onboarding/status stores
+three independent milestones under the configured session prefix and trusted
+tenant/user scope: CLI authentication observed, authenticated MCP exchange
+observed, and session batch durably accepted. Each includes observedAt;
+this is historical setup evidence, not a promise that a device remains online or
+credentials have not since been revoked. No session text, tokens, emails or
+client-supplied owner names enter these receipts.
+
+The single-tenant capture receiver supplies this endpoint under the same operator
+token and configured principal as capture. GET /api/sessions/identity records
+CLI authentication; accepted uploads record session receipt. An independently
+constructed MCP runtime can use the same store/prefix and pass status.mcp as
+createOpenCrawlMcp({onAuthenticated}) with the same trusted tenant/user principal.
+MCP client names are self-reported display metadata, never authorization inputs.
+Unknown clients render without a brand. The UI has no simulated success.
+
+For custom browser runtimes, authenticate the status endpoint using the same
+principal as capture/MCP and supply displayName from verified account data.
+Render renderOnboarding({mcpUrl,setupPrompt,integrationsUrl}) and serve the core
+onboarding JS/CSS and controls alongside tokens/assets. The hosted shell supplies
+its own login and integrations routes; this UI does not require WorkOS.

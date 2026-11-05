@@ -12,7 +12,7 @@ export function sessionScope(principal) {
   if (!principal || !id(principal.tenantId) || !id(principal.userId)) fail(401, 'Authentication required');
   return `tenants/${digest(principal.tenantId)}/users/${digest(principal.userId)}`;
 }
-export function createSessionIngest({store, prefix = 'capture-v1'}) {
+export function createSessionIngest({store, prefix = 'capture-v1', onStored}) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = principal => `${prefix}/${sessionScope(principal)}`;
   return {
@@ -46,6 +46,7 @@ export function createSessionIngest({store, prefix = 'capture-v1'}) {
           name: principal.name ?? null, email: principal.email ?? null}, receivedAt: new Date().toISOString()};
         await store.put(key, gzipSync(JSON.stringify(record)), 'application/gzip');
       }
+      if (onStored) await onStored(principal, batch);
       return {batchId, eventCount: batch.events.length, stored: true};
     },
     async getBatch(principal, {harness, installationId, sessionId, batchId}) {

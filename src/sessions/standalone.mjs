@@ -1,3 +1,4 @@
+import {createOnboardingStatus} from '../onboarding-status.mjs';
 import {createServer} from 'node:http';
 import {timingSafeEqual} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
@@ -8,11 +9,31 @@ import {createObjectStore,awsCredentials} from './s3-store.mjs';
 export function standaloneCapture({token,principal,store,prefix}) {
   if(typeof token!=='string'||token.length<32)throw new Error('Use a capture token with at least 32 characters');
   const expected=Buffer.from('Bearer '+token);
-  return createCaptureHandler({ingest:createSessionIngest({store,prefix}),authenticate:async req=>{
+  const onboarding = createOnboardingStatus({store,prefix});
+  const authenticate = async req=>{
     const actual=Buffer.from(req.headers.authorization??'');
     if(actual.length!==expected.length||!timingSafeEqual(actual,expected))return null;
     return principal;
-  }});
+  };
+  const capture = createCaptureHandler({ingest:createSessionIngest({store,prefix,onStored:onboarding.session}),authenticate});
+  return async (req,res) => {
+    try {
+    if (req.headers.origin) {res.writeHead(403);res.end();return;}
+    if (req.method === 'GET' && ['/api/onboarding','/api/sessions/identity'].includes(req.url)) {
+      const user = await authenticate(req);
+      if (!user) {res.writeHead(401);res.end();return;}
+      if (req.url === '/api/onboarding') {
+        res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
+        res.end(JSON.stringify({data:await onboarding.read(user)}));return;
+      }
+      if (!req.headers.origin) await onboarding.cli(user);
+    }
+    return await capture(req,res);
+    } catch {
+      if (!res.headersSent) res.writeHead(503, {'content-type':'application/json'});
+      res.end(JSON.stringify({error:{code:'STATUS_UNAVAILABLE'}}));
+    }
+  };
 }
 /** Same object format and S3 adapter as hosted ingestion; no filesystem fallback. */
 export function standaloneStorage(env=process.env) {

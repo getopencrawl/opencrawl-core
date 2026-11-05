@@ -1,6 +1,6 @@
 {
   "name": "@1patch/opencrawl-core",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -9,7 +9,9 @@
     "./revision.json": "./revision.json",
     "./sessions": "./src/sessions/ingest.mjs",
     "./sessions/s3-store": "./src/sessions/s3-store.mjs",
-    "./mcp": "./src/mcp/server.mjs"
+    "./mcp": "./src/mcp/server.mjs",
+    "./onboarding": "./src/onboarding.mjs",
+    "./onboarding/status": "./src/onboarding-status.mjs"
   },
   "files": [
     "src",
