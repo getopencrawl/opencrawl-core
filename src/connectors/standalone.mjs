@@ -10,7 +10,7 @@ if (!['index', 'search'].includes(action) || !configPath) throw new Error('Usage
 const config = JSON.parse(await readFile(configPath, 'utf8'));
 const binding = validateBinding(config.binding);
 const store = createObjectStore({...config.s3, credentials: awsCredentials()});
-const search = createConnectorSearch({...config.search, tenantId: binding.tenantId, index: config.search.index || connectorIndex('selfhost', binding.tenantId)});
+const search = createConnectorSearch({...config.search, tenantId: binding.tenantId, index: config.search.index || connectorIndex('selfhost', binding.tenantId, 'v2')});
 await store.checkAccess(); await search.ensureIndex();
 if (action === 'search') console.log(JSON.stringify(await search.search({tenantId: binding.tenantId}, [binding], {query}), null, 2));
 else {
