@@ -119,6 +119,16 @@ export function createConnectorSearch({endpoint, index, tenantId, credentials, u
       }
       return raw ? {responses, examined, truncated: more} : {hits, examined, truncated: more};
     },
+    /** Live (not suppressed) documents per kind across authorized connections, for reporting. */
+    async count(principal, bindings) {
+      if (!Array.isArray(bindings) || !bindings.length || bindings.length > 100) throw new Error('Authorized connections required');
+      for (const binding of bindings) scoped(principal, binding);
+      const result = await request('/_search', {body: JSON.stringify({size: 0, track_total_hits: true,
+        query: {bool: {filter: [{term: {tenantId}}, {terms: {connectionId: bindings.map(b => b.connectionId)}}, {term: {deleted: false}}]}},
+        aggs: {kinds: {terms: {field: 'kind', size: 10}}}})});
+      if (!Array.isArray(result?.aggregations?.kinds?.buckets)) throw new Error('Invalid connector count response');
+      return {total: result.hits.total?.value ?? 0, kinds: Object.fromEntries(result.aggregations.kinds.buckets.map(b => [b.key, b.doc_count]))};
+    },
     refresh: () => request('/_refresh'),
   };
 }
