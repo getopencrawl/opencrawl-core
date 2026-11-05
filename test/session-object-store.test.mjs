@@ -66,6 +66,12 @@ test('self-hosted S3 receiver round-trips all four surfaces, attachments and res
     const batch=(await response.json()).data;
     assert.equal(batch.origin,origin);assert.equal(batch.attachments[0].sha256,sha);
   }
-  assert.equal((await store.list(prefix+'/')).keys.length,9);
+  const keys=(await store.list(prefix+'/')).keys;
+  assert.equal(keys.filter(key=>!key.includes('/onboarding/')).length,9);
+  const status=await (await fetch(api+'/api/onboarding',{headers})).json();
+  assert.equal(status.data.session.harness,'codex');
+  assert.ok(status.data.session.observedAt);
+  assert.equal(status.data.cli,null);
+  assert.equal(status.data.mcp,null);
   await assert.rejects(startStandaloneCapture({...env,OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'wrong'}),/403|Signature|AccessDenied/);
 });
