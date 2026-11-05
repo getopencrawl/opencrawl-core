@@ -1,5 +1,5 @@
 import {gunzipSync} from 'node:zlib';
-import {digest,sessionScope,MAX_BATCH_BYTES,batchIndexQueueKey} from './ingest.mjs';
+import {digest,sessionScope,MAX_BATCH_BYTES} from './ingest.mjs';
 
 const HEX='[a-f0-9]{64}';
 export function sourceBatchIdentity(prefix,key) {
@@ -45,78 +45,42 @@ export function batchDocuments({prefix,key,batch,principal}) {
   return documents;
 }
 
-/** Scope is supplied by a trusted runtime adapter, never by an ordinary API caller. */
-export function createSessionIndexer({store,prefix,search,principal,resolvePrincipal,jobId='sessions-v1',now=()=>Date.now()}) {
+/** Activities call these bounded operations; Temporal owns cursors and retries.
+ * The runtime supplies fixed self-host identity or resolves server-authenticated
+ * stored owners. Workflow arguments never select a bucket, index, or principal.
+ */
+export function createSessionPipeline({store,prefix,search,principal,resolvePrincipal,jobId='sessions-v1',checkActive=async()=>{}}) {
   if(Boolean(principal)===Boolean(resolvePrincipal))throw new Error('Supply one fixed single-tenant principal or a trusted scope resolver');
   if(principal)sessionScope(principal);
-  if(typeof store.listPage!=='function'||typeof store.delete!=='function')throw new Error('Paged S3 listing and deletion are required');
+  if(!prefix||prefix.split('/').some(p=>!p||p==='.'||p==='..'))throw new Error('Invalid session prefix');
   const sourcePrefix=prefix+'/'+(principal?sessionScope(principal)+'/':'tenants/');
-  const listingPrefix=prefix+'/index-pending/'+(principal?sessionScope(principal)+'/':'');
+  // Reuse successful receipts from the previous worker. Its pending/retry/cursor
+  // objects are ignored; no ingest-side work item is needed for discovery.
   const statePrefix=prefix+'/_index/'+digest(search.identity)+'/'+digest(jobId+':'+(principal?sessionScope(principal):'runtime-resolved'));
-  const read=async key=>{const bytes=await store.get(key);return bytes?JSON.parse(bytes):null;};
-  const save=(key,value)=>store.put(key,Buffer.from(JSON.stringify(value)),'application/json');
-  let busy=false;
+  function authorizedKey(key) {
+    if(typeof key!=='string'||!key.startsWith(sourcePrefix)||!sourceBatchIdentity(prefix,key))throw Object.assign(new Error('Session object outside authorized source'),{permanent:true});
+  }
   return {
-    async runOnce({pages=1}={}) {
-      if(busy)return {busy:true};busy=true;
-      const result={indexed:0,documents:0,skipped:0,failed:0,pages:0};
-      try {
-        await search.ensureIndex();
-        // Bounded reconciliation backfills older releases and repairs a missing work
-        // item. Fresh uploads use the pending queue and never wait for a full scan.
-        const prior=await read(statePrefix+'/reconcile.json');
-        const sources=await store.listPage(sourcePrefix,{continuationToken:prior?.nextToken,maxKeys:50});
-        for(const key of sources.keys)if(sourceBatchIdentity(prefix,key)){
-          const state=await read(statePrefix+'/batches/'+digest(key)+'.json');
-          if(state?.status!=='indexed')await save(batchIndexQueueKey(prefix,key),{sourceKey:key});
-        }
-        await save(statePrefix+'/reconcile.json',{nextToken:sources.nextToken||null});
-        let cursor=await read(statePrefix+'/cursor.json');
-        for(let page=0;page<pages;page++){
-          const listing=await store.listPage(listingPrefix,{continuationToken:cursor?.nextToken,maxKeys:50});
-          for(const queueKey of listing.keys){
-            const item=await read(queueKey);if(!item)continue;
-            const key=item.sourceKey;
-            if(typeof key!=='string'||!sourceBatchIdentity(prefix,key)||batchIndexQueueKey(prefix,key)!==queueKey){result.failed++;continue;}
-
-            const stateKey=statePrefix+'/batches/'+digest(key)+'.json';
-            const state=await read(stateKey);
-            if(state?.status==='indexed'){await store.delete(queueKey);result.skipped++;continue;}
-            if(state?.nextAttempt>now()){result.skipped++;continue;}
-            try {
-              const bytes=await store.get(key);if(!bytes)throw new Error('Source batch disappeared');
-              const batch=JSON.parse(gunzipSync(bytes,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}));
-              const scope=principal||await resolvePrincipal({key,batch});sessionScope(scope);
-              const docs=batchDocuments({prefix,key,batch,principal:scope});
-              await search.putDocuments(docs);
-              await save(stateKey,{status:'indexed',sourceKey:key,documents:docs.length,indexedAt:new Date(now()).toISOString()});
-              await store.delete(queueKey);
-              result.indexed++;result.documents+=docs.length;
-            } catch(error) {
-              const attempts=(state?.attempts||0)+1;
-              // Do not persist provider response bodies or transcript contents in diagnostics.
-              await save(stateKey,{status:'failed',sourceKey:key,attempts,lastAttempt:new Date(now()).toISOString(),nextAttempt:now()+Math.min(3600000,1000*2**Math.min(attempts,12)),error:'INDEXING_FAILED'});
-              result.failed++;
-            }
-          }
-          cursor={nextToken:listing.nextToken||null,updatedAt:new Date(now()).toISOString()};
-          await save(statePrefix+'/cursor.json',cursor);result.pages++;
-          result.more=Boolean(cursor.nextToken);
-          if(!cursor.nextToken)break;
-        }
-        return result;
-      } finally {busy=false;}
+    async listPage({cursor=null}={}) {
+      if(cursor!==null&&(typeof cursor!=='string'||cursor.length>8192))throw Object.assign(new Error('Invalid session cursor'),{permanent:true});
+      await checkActive();
+      const page=await store.listPage(sourcePrefix,{continuationToken:cursor,maxKeys:50});
+      return {keys:page.keys.filter(key=>sourceBatchIdentity(prefix,key)),cursor:page.nextToken||null};
+    },
+    async processObject({key}) {
+      authorizedKey(key);await checkActive();
+      const stateKey=statePrefix+'/batches/'+digest(key)+'.json';
+      const receipt=await store.get(stateKey);
+      if(receipt&&JSON.parse(receipt).status==='indexed')return {records:0,skipped:true};
+      const bytes=await store.get(key);
+      if(!bytes)throw new Error('Session source object unavailable');
+      const batch=JSON.parse(gunzipSync(bytes,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}));
+      const scope=principal||await resolvePrincipal({key,batch});sessionScope(scope);
+      const docs=batchDocuments({prefix,key,batch,principal:scope});
+      await checkActive();await search.ensureIndex();await search.putDocuments(docs);
+      await checkActive();
+      await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:docs.length,indexedAt:new Date().toISOString()})),'application/json');
+      return {records:docs.length,skipped:false};
     },
   };
-}
-export function startIndexLoop(indexer,{intervalMs=15000,log=console.log}={}) {
-  let stopped=false,timer;
-  async function tick(){
-    let more=false;
-    try{const result=await indexer.runOnce();more=result.more;log(JSON.stringify({event:'session_index_pass',...result}));}
-    catch{log(JSON.stringify({event:'session_index_unavailable'}));}
-    if(!stopped)timer=setTimeout(tick,more?0:intervalMs);
-  }
-  void tick();
-  return ()=>{stopped=true;clearTimeout(timer);};
 }

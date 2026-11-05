@@ -5,7 +5,6 @@ import {pathToFileURL} from 'node:url';
 import {createSessionIngest,createCaptureHandler} from './ingest.mjs';
 import {createObjectStore,awsCredentials} from './s3-store.mjs';
 import {createSessionSearch,searchSettings} from './search.mjs';
-import {createSessionIndexer,startIndexLoop} from './indexer.mjs';
 
 /** Single-tenant adapter: the operator sets identity; requests cannot select an owner. */
 export function standaloneCapture({token,principal,store,prefix,search}) {
@@ -59,17 +58,12 @@ export async function startStandaloneCapture(env=process.env) {
   const settings=searchSettings(env),search=settings?createSessionSearch(settings):null;
   const handler=standaloneCapture({token:env.OPENCRAWL_SESSIONS_TOKEN,principal,store,prefix,search});
   await store.checkAccess();
-  if(search)await search.ensureIndex();
   const server=createServer(handler);
   server.requestTimeout=60000;
   await new Promise((resolve,reject)=>{
     server.once('error',reject);
     server.listen(Number(env.PORT||8093),env.HOST||'127.0.0.1',()=>{server.removeListener('error',reject);resolve();});
   });
-  if(search && env.OPENCRAWL_INDEXER_ENABLED!=='0') {
-    const stop=startIndexLoop(createSessionIndexer({store,prefix,search,principal}));
-    server.once('close',stop);
-  }
   return server;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href) {
