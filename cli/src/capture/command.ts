@@ -3,7 +3,7 @@ import {installCapture,uninstallCapture} from './install.ts';
 import {captureHook,captureStatus,syncCaptures,flushCaptures,recordError} from './runtime.ts';
 export async function collectCommand(action:string,api:string,values:any) {
   switch(action) {
-    case 'install': return installCapture(api,{background:!values['no-background']});
+    case 'install': return installCapture(api,{background:!values['no-background']&&process.env.CLAUDE_CODE_REMOTE!=='true',...(values.harness?{harnesses:[values.harness]}:{})});
     case 'uninstall': return uninstallCapture();
     case 'status': return captureStatus();
     case 'sync': try{return await syncCaptures();}catch(e){recordError(e);throw e;}

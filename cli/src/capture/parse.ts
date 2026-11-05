@@ -1,9 +1,10 @@
 import {createHash} from 'node:crypto';
 export type Harness = 'claude-code'|'codex';
-export type Origin = 'cli'|'desktop'|'subagent'|'unknown';
+export type Origin = 'cli'|'desktop'|'cloud'|'subagent'|'unknown';
 export const hash = (data: string|Buffer) => createHash('sha256').update(data).digest('hex');
 export function detectOrigin(harness: Harness, record: any): {origin:Origin, evidence:string|null} {
   const r = harness === 'codex' ? record.payload ?? record : record;
+  if(harness==='claude-code' && r.type==='attachment' && r.attachment?.type==='remote_session_change' && /^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(r.attachment.url??'')) return {origin:'cloud',evidence:r.attachment.url};
   const value = [r.originator, r.entrypoint, typeof r.source === 'string' ? r.source : '', r.client].filter(Boolean).join(' ');
   if (typeof r.source === 'object' && r.source?.subagent || r.isSidechain || r.agentId) return {origin:'subagent',evidence:JSON.stringify(r.source ?? {agentId:r.agentId})};
   if (harness==='codex' && /^(cli|exec|tui)$/.test(r.source ?? ''))return {origin:'cli',evidence:value};
@@ -18,7 +19,11 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
   let kind: string|undefined, data: any;
   if (harness === 'claude-code') {
     if (['user','assistant'].includes(record.type)) {kind='message';data=record.message;}
-    else if (record.type === 'attachment') {kind='attachment';data=record.attachment;}
+    else if (record.type === 'attachment') {
+      const attachment=record.attachment;
+      if(['prompt_snapshot','mcp_instructions_delta','credential_org','environment','date','model','agent_listing_delta','deferred_tools_delta','skill_listing','auto_mode','session_context','task_reminder'].includes(attachment?.type))return null;
+      kind=attachment?.type==='remote_session_change'?'session_metadata':'attachment';data=attachment;
+    }
     else if (record.type === 'system' && /compact/.test(record.subtype ?? '')) {kind='compaction';data=record;}
     else if (record.type === 'summary') {kind='compaction';data=record;}
   } else {

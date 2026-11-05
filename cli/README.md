@@ -107,3 +107,40 @@ After signing in, run `opencrawl collect install` to install Claude Code and Cod
 `opencrawl collect status --json` reports the enrolled identity, queued uploads, last receipt and errors. `collect sync` reconciles active transcripts; `collect flush` retries queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
 
 Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service derives ownership from login. Self-hosted users can supply `OPENCRAWL_SESSIONS_TOKEN` and `--api` for the portable receiver. See [capture architecture and limits](../docs/session-capture.md).
+
+### Claude Code cloud
+
+Cloud sessions run on a fresh Linux VM. Local hooks do not transfer. The first
+setup prompt should direct hosted users to their deployment's `/capture/cloud`
+page, which issues a one-year, revocable, upload-only credential and supplies the
+exact setup script. Use a **personal** Claude environment: sessions using that
+credential are attributed to its owner, regardless of who starts them.
+
+Keep Limited/Trusted networking and allow the deployment's API hostname plus
+npm registries. Add `OPENCRAWL_SESSIONS_TOKEN` in Environment variables and append
+the provided script to Setup script. Save and start a fresh session using that
+environment. No local Claude installation is required. Human-only settings and
+a separate setup session are supported. Environment variables are visible to
+commands in that environment; don't paste the credential into the chat or repo.
+
+The installer detects `CLAUDE_CODE_REMOTE=true`, installs Claude hooks only and
+skips systemd. `--harness claude-code --no-background` also selects this explicitly.
+The setup installs the CLI at
+`$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl`. After a user
+message, tool call and image, `collect status` must report a stored receipt and
+no error. Don't use manual sync as evidence that automatic hooks work. Search
+follows asynchronous indexing, not the upload acknowledgement.
+
+Cloud batches retain the native session UUID and the web session ID from the
+native `remote_session_change` attachment, and mark origin `cloud`. Internal
+prompt snapshots, environment snapshots and repeated tool/MCP listings are
+omitted. Image attachment bytes are stored separately using their digest.
+
+Self-hosted operators use the same protocol: with the configured receiver token,
+POST `/api/sessions/credentials` to obtain an upload-only delegation, store the
+returned token directly in a private file (not a transcript), then configure the
+personal environment above using their HTTPS receiver hostname. DELETE
+`/api/sessions/credentials/<id>` with the receiver token revokes it. The child
+credential cannot search/read, issue credentials or revoke credentials. The
+receiver always binds the operator's fixed tenant/user, including for delegated
+tokens. Changing that fixed identity invalidates old delegations.

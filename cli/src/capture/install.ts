@@ -3,6 +3,7 @@ import {join, dirname} from 'node:path';
 import {homedir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
+import {type Harness} from './parse.ts';
 import {atomicJson, configDir} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {captureDir, readCaptureConfig, commandForSelf, request, type CaptureConfig} from './runtime.ts';
@@ -46,19 +47,21 @@ function enableCodex(root:string) {
   // Atomic replacement without changing unrelated TOML settings.
   renameSync(temp,file);
 }
-export async function installCapture(api:string,{background=true,home=homedir(),command=commandForSelf()}={}) {
+export async function installCapture(api:string,{background=process.env.CLAUDE_CODE_REMOTE!=='true',home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
+  if(!harnesses.length||harnesses.some(h=>!['claude-code','codex'].includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code or codex',64);
   const {principal}=await request(api,'/api/sessions/identity');
   if(!principal?.tenantId || !principal?.userId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   const previous=readCaptureConfig();
   if(previous && (previous.api!==api || previous.owner.userId!==principal.userId || previous.owner.tenantId!==principal.tenantId))throw new CliError('CAPTURE_OWNER_CHANGED','Use a separate OPENCRAWL_CONFIG_HOME for another account or deployment');
   for(const dir of ['', 'backups','queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});
   const config:CaptureConfig={schemaVersion:1,api,installationId:previous?.installationId??randomUUID(),owner:principal,
-    installedAt:previous?.installedAt??new Date().toISOString(),roots:{
+    harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
       'claude-code':process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),codex:process.env.CODEX_HOME||join(home,'.codex')},command};
-  for(const root of Object.values(config.roots))mkdirSync(root,{recursive:true,mode:0o700});
+  for(const harness of harnesses)mkdirSync(config.roots[harness],{recursive:true,mode:0o700});
   // Validate both existing configs before changing either one.
-  readJson(join(config.roots['claude-code'],'settings.json'));readJson(join(config.roots.codex,'hooks.json'));
-  const toml=join(config.roots.codex,'config.toml');if(existsSync(toml))Bun.TOML.parse(readFileSync(toml,'utf8'));
+  if(harnesses.includes('claude-code'))readJson(join(config.roots['claude-code'],'settings.json'));
+  if(harnesses.includes('codex'))readJson(join(config.roots.codex,'hooks.json'));
+  const toml=join(config.roots.codex,'config.toml');if(harnesses.includes('codex')&&existsSync(toml))Bun.TOML.parse(readFileSync(toml,'utf8'));
   const affected=[join(captureDir(),'config.json'),join(captureDir(),'receiver-token.json'),join(captureDir(),'runner.cjs'),
     join(config.roots['claude-code'],'settings.json'),join(config.roots.codex,'hooks.json'),toml];
   const originals=new Map(affected.map(path=>[path,existsSync(path)?readFileSync(path):null]));
@@ -72,11 +75,11 @@ export async function installCapture(api:string,{background=true,home=homedir(),
   const node=process.env.OPENCRAWL_NODE || (process.execPath.endsWith('bun') ? process.execPath : Bun.which('node'));
   if(!node)throw new CliError('NODE_REQUIRED','Install Node to run capture hooks');
   const base=[quote(node),quote(runner),'collect','hook'].join(' ');
-  modifyHooks(join(config.roots['claude-code'],'settings.json'),
+  if(harnesses.includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),
     ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','Stop','SubagentStop','SessionEnd'],base+' --harness claude-code');
-  modifyHooks(join(config.roots.codex,'hooks.json'),
+  if(harnesses.includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),
     ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SubagentStop','SessionEnd'],base+' --harness codex');
-  enableCodex(config.roots.codex);
+  if(harnesses.includes('codex'))enableCodex(config.roots.codex);
   } catch(error) {
     for(const [path,bytes] of originals) {
       if(bytes===null){try{unlinkSync(path);}catch{}}
@@ -85,8 +88,8 @@ export async function installCapture(api:string,{background=true,home=homedir(),
     throw error;
   }
   const backgroundStatus=background?installService(config,home):'disabled';
-  return {installationId:config.installationId,owner:principal,background:backgroundStatus,
-    nextStep:'Review OpenCrawl hooks in Codex /hooks or desktop Settings > Hooks. Restart existing Claude sessions if hooks have not reloaded.'};
+  return {installationId:config.installationId,owner:principal,background:backgroundStatus,harnesses:config.harnesses,
+    nextStep:process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':'Review OpenCrawl hooks in Codex /hooks or desktop Settings > Hooks. Restart existing Claude sessions if hooks have not reloaded.'};
 }
 function installService(config:CaptureConfig,home:string) {
   const args=[...config.command,'collect','sync'];
@@ -118,8 +121,8 @@ export function uninstallCapture(home=homedir()) {
     spawnSync('systemctl',['--user','disable','--now',service+'.timer'],{stdio:'ignore'});
     for(const ext of ['service','timer'])try{unlinkSync(join(home,'.config/systemd/user',service+'.'+ext));}catch{}
   }
-  modifyHooks(join(config.roots['claude-code'],'settings.json'),[],null);
-  modifyHooks(join(config.roots.codex,'hooks.json'),[],null);
+  if((config.harnesses??['claude-code','codex']).includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),[],null);
+  if((config.harnesses??['claude-code','codex']).includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),[],null);
   // Preserve queue and owner so offline data cannot be reassigned on another login.
   atomicJson(join(captureDir(),'config.json'),{...config,disabled:true});
   return {installed:false,queuedDataPreserved:true};
