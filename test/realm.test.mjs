@@ -36,3 +36,26 @@ test('OpenSearch signatures match AWS botocore for reserved and already escaped 
   assert.ok(signed.authorization.endsWith('Signature='+signature));
  }
 });
+
+test('normalizer mapping upgrade is additive, tenant-bound and rejects incompatible schemas',async()=>{
+ for(const mode of ['valid','foreign','incompatible']) {
+  const mapping=structuredClone(realmMapping);delete mapping.properties.connector.properties.normalizerVersion;
+  mapping._meta={schema:1,tenantId:mode==='foreign'?'org-b':'org-a'};
+  if(mode==='incompatible')mapping.properties.text.type='keyword';
+  let writes=0;
+  const realm=createRealm({endpoint:'http://search.test',tenantId:'org-a',index:'test',fetch:async(url,options)=>{
+   if(url.pathname.endsWith('_mapping')) {
+    if(options.method==='PUT') {
+     writes++;
+     assert.deepEqual(JSON.parse(options.body),{properties:{connector:{properties:{normalizerVersion:{type:'integer'}}}}});
+     mapping.properties.connector.properties.normalizerVersion={type:'integer'};
+     return Response.json({acknowledged:true});
+    }
+    return Response.json({test:{mappings:mapping}});
+   }
+   return Response.json({error:{type:'resource_already_exists_exception'}},{status:400});
+  }});
+  if(mode==='valid'){await realm.ensureIndex();await realm.ensureIndex();assert.equal(writes,1);}
+  else {await assert.rejects(realm.ensureIndex(),/mismatch/);assert.equal(writes,0);}
+ }
+});

@@ -6,6 +6,7 @@ import {gzipSync} from 'node:zlib';
 import {createObjectStore} from '../src/sessions/s3-store.mjs';
 import {createConnectorSearch} from '../src/connectors/search.mjs';
 import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
+import {normalizeSlack} from '../src/connectors/slack.mjs';
 
 test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and two tenants', {
   skip: !process.env.OPENCRAWL_TEST_S3_ENDPOINT || !process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
@@ -57,6 +58,26 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
     await search.refresh();
     assert.equal((await search.search(principal,[binding],{query:'canonicalguava'})).hits.length,0);
     assert.equal((await search.search(principal,[binding],{query:'shorterquince'})).hits.length,1);
+    // Re-normalizing the SAME observation must replace an old body regardless
+    // of hash order; old observations must not undo a newer shorter edit.
+    const formatted={...message,ts:'1234567892.000001',text:'preview',attachments:[],blocks:[{type:'rich_text',elements:[{type:'rich_text_section',elements:[{type:'text',text:'inter'},{type:'text',text:'operability',style:{bold:true}}]}]}]};
+    const fixed=normalizeSlack(binding,'canonical_messages',{_airbyte_extracted_at:2000,_airbyte_data:formatted},'raw');
+    const legacy=structuredClone(fixed);delete legacy.document.normalizerVersion;legacy.document.text='inter\noperability';legacy.document.contentHash='f'.repeat(64);
+    await search.putDocuments(principal,binding,[legacy]);
+    await search.putDocuments(principal,binding,[fixed]);
+    await search.putDocuments(principal,binding,[legacy]);
+    await search.refresh();
+    assert.equal((await search.search(principal,[binding],{query:'interoperability'})).hits.length,1);
+    const edited=normalizeSlack(binding,'canonical_messages',{_airbyte_extracted_at:3000,_airbyte_data:{...formatted,text:'shortreplacement',blocks:[]}},'new');
+    await search.putDocuments(principal,binding,[edited]);
+    await search.putDocuments(principal,binding,[fixed]);
+    await search.refresh();
+    assert.equal((await search.search(principal,[binding],{query:'interoperability'})).hits.length,0);
+    assert.equal((await search.search(principal,[binding],{query:'shortreplacement'})).hits.length,1);
+    await search.suppress(principal,binding,{kind:'message',sourceId:'C123:'+formatted.ts});
+    await search.putDocuments(principal,binding,[{...fixed,document:{...fixed.document,extractedAt:4000,normalizerVersion:6}}]);
+    await search.refresh();
+    assert.equal((await search.search(principal,[binding],{query:'interoperability'})).hits.length,0);
     await search.suppress(principal, binding, {kind: 'message', sourceId: 'C123:' + message.ts});
     await ingest('channel_messages', message, 3000, 'after-suppression');
     await ingest('canonical_messages',message,5000,'canonical-after-suppression');

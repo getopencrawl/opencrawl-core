@@ -1,12 +1,25 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {createRealm,realmIndex} from '../src/search/realm.mjs';
+import {createRealm,realmIndex,realmMapping,createIndexTransport} from '../src/search/realm.mjs';
 import {createSessionSearch} from '../src/sessions/search.mjs';
 import {createConnectorSearch} from '../src/connectors/search.mjs';
 import {documentId} from '../src/connectors/scope.mjs';
 import {createBoardSearch} from '../src/board/search.mjs';
 const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
+test('real realm mapping upgrade preserves existing documents while adding normalization revision',{skip:!endpoint},async t=>{
+ const tenantId='upgrade-'+randomUUID(),index=realmIndex('test',tenantId),request=createIndexTransport({endpoint,index});
+ t.after(()=>fetch(endpoint+'/'+index,{method:'DELETE'}));
+ const old=structuredClone(realmMapping);delete old.properties.connector.properties.normalizerVersion;
+ old._meta={schema:1,tenantId};
+ await request('',{settings:{number_of_shards:1,number_of_replicas:0},mappings:old},'PUT');
+ const doc={schema:1,tenantId,corpus:'session',id:'retained',text:'unchanged source body',session:{userId:'author'}};
+ await request('/_doc/session:retained',doc,'PUT');
+ const realm=createRealm({endpoint,index,tenantId});await realm.ensureIndex();
+ const mapping=(await request('/_mapping',undefined,'GET'))[index].mappings;
+ assert.deepEqual(mapping.properties.connector.properties.normalizerVersion,{type:'integer'});
+ assert.deepEqual((await request('/_doc/session:retained',undefined,'GET'))._source,doc);
+});
 test('one physical organization realm holds all corpora with collision-safe identity, scoped retrieval and shared schema',{skip:!endpoint},async t=>{
   const environment='test-'+randomUUID().slice(0,8),owners=['a','b'].map(s=>({tenantId:'org-'+s,userId:'author'}));
   const sessions=createSessionSearch({endpoint,environment}),board=createBoardSearch({endpoint,environment});

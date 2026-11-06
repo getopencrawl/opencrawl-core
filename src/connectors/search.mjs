@@ -10,6 +10,10 @@ const UPSERT = `if (ctx._source.connector == null) { ctx._source = params.doc; }
 else if (ctx._source.connector.deleted == true) { ctx.op = 'none'; }
 else if (ctx._source.connector.containsKey('sourceAuthority') && (!params.doc.connector.containsKey('sourceAuthority') || params.doc.connector.sourceAuthority < ctx._source.connector.sourceAuthority)) { ctx.op = 'none'; }
 else if (params.doc.connector.containsKey('sourceAuthority') && (!ctx._source.connector.containsKey('sourceAuthority') || params.doc.connector.sourceAuthority > ctx._source.connector.sourceAuthority)) { ctx._source = params.doc; }
+else if (params.doc.connector.extractedAt == ctx._source.connector.extractedAt && params.doc.connector.containsKey('normalizerVersion') &&
+ (!ctx._source.connector.containsKey('normalizerVersion') || params.doc.connector.normalizerVersion > ctx._source.connector.normalizerVersion)) { ctx._source = params.doc; }
+else if (params.doc.connector.extractedAt == ctx._source.connector.extractedAt && ctx._source.connector.containsKey('normalizerVersion') &&
+ (!params.doc.connector.containsKey('normalizerVersion') || params.doc.connector.normalizerVersion < ctx._source.connector.normalizerVersion)) { ctx.op = 'none'; }
 else if (ctx._source.connector.extractedAt == null ||
  (params.doc.connector.containsKey('versionAt') && (!ctx._source.connector.containsKey('versionAt') || params.doc.connector.versionAt > ctx._source.connector.versionAt)) ||
  ((!params.doc.connector.containsKey('versionAt') || params.doc.connector.versionAt == ctx._source.connector.versionAt) &&
