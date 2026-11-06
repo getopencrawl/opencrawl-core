@@ -1,4 +1,5 @@
 .debug{max-width:1200px}
+.debug [hidden]{display:none}
 .debug-tabs{display:flex;gap:var(--space-6);margin-bottom:var(--space-8);border-bottom:1px solid var(--line)}
 .debug-tabs a{padding-block:var(--space-3);color:var(--muted);text-decoration:none;font-size:var(--text-ui)}
 .debug-tabs a[aria-current]{color:var(--text);border-bottom:2px solid var(--accent)}

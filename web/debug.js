@@ -163,7 +163,7 @@ if (typeof document !== 'undefined' && document.querySelector('#debug-board')) {
   const older = document.querySelector('#board-more');
   let next = null, busy = false;
   async function load(append = false) {
-    if (busy) return;
+    if (busy || (append && next === null)) return;
     busy = true;
     refresh.disabled = topic.disabled = older.disabled = true;
     status.textContent = 'Loading messages…';
