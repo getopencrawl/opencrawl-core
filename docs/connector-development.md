@@ -177,6 +177,10 @@ needs an independent source inventory under the connection's actual identity:
 - Enumerate every authorized container, including archived containers. Exhaust
   cursors for history, replies and attachments; an empty or short page is not an
   end marker. Keep a durable per-page checkpoint and honor `Retry-After`.
+- Cross-check alternate discovery surfaces such as pinned items, container tabs,
+  attached canvases and linked lists against the primary inventory. Record absent
+  scopes and API permission failures explicitly; they do not prove an empty
+  resource set. Do not follow arbitrary external links or broaden authorization.
 - Reconcile native IDs, full readable fields and attachment bodies against raw
   records, normalization receipts and indexed bodies. Preserve both the source
   field path and content hash. Menus, labels, descriptions, accessibility text,
@@ -195,3 +199,19 @@ Report a cutoff and per-stage numerator/denominator. If the provider does not
 support consistent snapshots, record the observation window and reconcile
 edits/deletions during that window. Preserve prior evidence as a dated baseline;
 never relabel a sample audit or a 90-day backfill as complete source coverage.
+
+Compare alternate API representations in both directions before assigning source
+authority. A synthesized fallback may join adjacent fields into artificial words;
+an older search snapshot may contain text removed by a later edit. Preserve exact
+provider pages and the deployed transformation, reconstruct the synthesized value,
+and compare the original readable fields and edit/observation times. Do not union
+old and new bodies or choose the longest body to make a coverage check pass.
+
+Keep source enumeration, committed raw records, acknowledged index records and
+authenticated retrieval as separate gates. During an active crawl, a new page
+without a receipt is pending indexing; a receipted record with different content
+is an integrity failure. Freeze a completed run for receipt reconciliation so a
+subsequent scheduled run does not create a false missing-receipt denominator.
+Record semantic parser checks separately from exact transport hashes: a second
+PDF extractor can expose broken words or reading order, but its own layout
+artifacts also need classification against the source page.
