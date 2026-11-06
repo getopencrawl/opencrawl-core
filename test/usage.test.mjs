@@ -1,3 +1,4 @@
+import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createSessionSearch} from '../src/sessions/search.mjs';
@@ -16,17 +17,17 @@ test('session usage counts only the principal, or the whole tenant when asked, a
   let people = [bucket('user_a')];
   const search = createSessionSearch({endpoint: 'http://localhost:9200', index: 'sessions', fetch: async (_, options) => {
     bodies.push(JSON.parse(options.body));
-    return Response.json({hits: {total: {value: 8}}, aggregations: aggregations(people)});
+    return realmResponse('session',{hits: {total: {value: 8}}, aggregations: aggregations(people)});
   }});
   const mine = await search.usage(owner, {now: Date.parse('2026-11-05T12:00:00Z')});
-  assert.deepEqual(bodies[0].query.bool.filter, [{term: {tenantId: 'org_a'}}, {term: {userId: 'user_a'}}, {term: {chunk: 0}}]);
+  assert.deepEqual(bodies[0].query.bool.must[0].bool.filter, [{term: {tenantId: 'org_a'}}, {term: {'session.userId': 'user_a'}}, {term: {'session.chunk': 0}}]);
   assert.equal(bodies[0].size, 0);
   assert.equal(mine.sessions, 3); assert.equal(mine.people[0].toolCalls, 5); assert.equal(mine.daily[0].date, '2026-11-05');
   assert.doesNotMatch(JSON.stringify(mine), /text/);
   people = [bucket('user_a'), bucket('user_b')];
   await assert.rejects(search.usage(owner), /ownership/);
   const team = await search.usage(owner, {team: true});
-  assert.deepEqual(bodies.at(-1).query.bool.filter, [{term: {tenantId: 'org_a'}}, {term: {chunk: 0}}]);
+  assert.deepEqual(bodies.at(-1).query.bool.must[0].bool.filter, [{term: {tenantId: 'org_a'}}, {term: {'session.chunk': 0}}]);
   assert.equal(team.people.length, 2);
   await assert.rejects(search.usage(null), /Authentication/);
   await assert.rejects(search.usage(owner, {days: 0}), /window/);
@@ -37,10 +38,10 @@ test('connector counts stay inside authorized connections', async () => {
   let body;
   const search = createConnectorSearch({endpoint: 'http://localhost:9200', index: 'connectors', tenantId: 'org_a', fetch: async (_, options) => {
     body = JSON.parse(options.body);
-    return Response.json({hits: {total: {value: 12}}, aggregations: {kinds: {buckets: [{key: 'message', doc_count: 10}, {key: 'channel', doc_count: 2}]}}});
+    return realmResponse('session',{hits: {total: {value: 12}}, aggregations: {kinds: {buckets: [{key: 'message', doc_count: 10}, {key: 'channel', doc_count: 2}]}}});
   }});
   assert.deepEqual(await search.count({tenantId: 'org_a'}, [binding]), {total: 12, kinds: {message: 10, channel: 2}});
-  assert.deepEqual(body.query.bool.filter, [{term: {tenantId: 'org_a'}}, {terms: {connectionId: ['conn']}}, {term: {deleted: false}}]);
+  assert.deepEqual(body.query.bool.must[0].bool.filter, [{term: {tenantId: 'org_a'}}, {terms: {'connector.connectionId': ['conn']}}, {term: {'connector.deleted': false}}]);
   await assert.rejects(search.count({tenantId: 'org_b'}, [binding]), /scope/);
   await assert.rejects(search.count({tenantId: 'org_a'}, []), /Authorized/);
 });

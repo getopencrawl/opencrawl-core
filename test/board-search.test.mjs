@@ -1,3 +1,5 @@
+import {realmResponse} from './realm-fixture.mjs';
+import {realmMapping} from '../src/search/realm.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -12,10 +14,10 @@ function mock({partial = false, forged = false, bulkFailure = false, gap = false
   const send = async (url, options) => {
     const body = options.body && JSON.parse(options.body.startsWith('{"index":') ? '{}' : options.body);
     requests.push({url: String(url), ...options, parsed: body});
-    if (String(url).endsWith('/_mapping')) return Response.json({'board-test': {mappings: boardIndexMapping}});
+    if (String(url).endsWith('/_mapping')) return Response.json({'board-test': {mappings: {...realmMapping,_meta:{tenantId:'team-a',schema:1}}}});
     if (String(url).includes('/_bulk')) {written = true; return Response.json({errors: bulkFailure, items: messages.slice(gap ? 0 : 6).map(() => ({index: {status: bulkFailure ? 500 : 201}}))});}
-    if (body?.size === 0) return Response.json({timed_out: false, _shards: {failed: 0}, hits: {total: {value: written ? 8 : gap ? 5 : 6, relation: 'eq'}}, aggregations: {last: {value: written ? 8 : 6}}});
-    if (body?.size === 10000) return Response.json({timed_out: partial, _shards: {failed: 0}, hits: {total: {value: 8, relation: 'eq'}, hits: [...messages].reverse().map(m => ({_id: boardId + ':' + m.id, _source: {id: m.id, tenantId: forged ? 'team-b' : principal.tenantId, boardId}}))}, aggregations: {topic: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'auth', doc_count: 6}, {key: 'other', doc_count: 2}]}, agent: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'agent-a', doc_count: 8}]}}});
+    if (body?.size === 0) return realmResponse('board',{timed_out: false, _shards: {failed: 0}, hits: {total: {value: written ? 8 : gap ? 5 : 6, relation: 'eq'}}, aggregations: {last: {value: written ? 8 : 6}}});
+    if (body?.size === 10000) return realmResponse('board',{timed_out: partial, _shards: {failed: 0}, hits: {total: {value: 8, relation: 'eq'}, hits: [...messages].reverse().map(m => ({_id: boardId + ':' + m.id, _source: {id: m.id, tenantId: forged ? 'team-b' : principal.tenantId, boardId}}))}, aggregations: {topic: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'auth', doc_count: 6}, {key: 'other', doc_count: 2}]}, agent: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'agent-a', doc_count: 8}]}}});
     return Response.json({acknowledged: true});
   };
   return {requests, advance: () => {time += 300001;}, search: createBoardSearch({endpoint: 'http://search.test', index: 'board-test', fetch: send, now: () => time})};
@@ -61,7 +63,7 @@ test('filters are exact and message bodies are never sliced to fit the response 
   assert.ok(output.messages.length < 8); assert.ok(output.next); assert.ok(Buffer.byteLength(JSON.stringify(output)) <= 8192);
   assert.ok(output.messages.every(m => m.text === big[0].text));
   const body = f.requests.find(r => r.parsed?.size === 10000).parsed;
-  assert.deepEqual(body.sort, [{timestamp:'desc'},{id:'desc'}]);
-  assert.ok(body.query.bool.filter.some(f => f.terms?.author?.[0] === 'alice'));
-  assert.ok(body.query.bool.filter.some(f => f.range?.timestamp?.gte === '2023-11-01T00:00:00Z'));
+  assert.deepEqual(body.sort, [{'board.timestamp':'desc'},{'board.id':'desc'}]);
+  assert.ok(body.query.bool.must[0].bool.filter.some(f => f.terms?.['board.author']?.[0] === 'alice'));
+  assert.ok(body.query.bool.must[0].bool.filter.some(f => f.range?.['board.timestamp']?.gte === '2023-11-01T00:00:00Z'));
 });

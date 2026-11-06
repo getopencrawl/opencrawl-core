@@ -1,3 +1,4 @@
+import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gzipSync} from 'node:zlib';
@@ -114,8 +115,8 @@ test('search enforces current parent revision and rejects forged provider/parent
   const entries = [...h.docs.entries()], [childId, child] = entries.find(([, d]) => d.kind === 'transcript'), [parentId, parent] = entries.find(([, d]) => d.kind === 'meeting');
   let stale = false, forged = false;
   const search = createConnectorSearch({endpoint: 'http://localhost:9200', index: 'fixture', tenantId: h.binding.tenantId, fetch: async (url, options) => {
-    if (url.pathname.endsWith('/_search')) return Response.json({hits: {hits: [{_id: childId, _source: {...child, provider: forged ? 'notion' : child.provider}, _score: 1}]}});
-    return Response.json({docs: [{_id: parentId, found: true, _source: {...parent, resourceVersion: stale ? 'old' : parent.resourceVersion}}]});
+    if (url.pathname.endsWith('/_search')) return realmResponse('connector',{hits: {hits: [{_id: childId, _source: {...child, provider: forged ? 'notion' : child.provider}, _score: 1}]}});
+    return realmResponse('connector',{docs: [{_id: parentId, found: true, _source: {...parent, resourceVersion: stale ? 'old' : parent.resourceVersion}}]});
   }});
   const principal = {tenantId: h.binding.tenantId};
   assert.equal((await search.search(principal, [h.binding], {query: 'pineapple'})).hits.length, 1);

@@ -105,3 +105,11 @@ without addressing its authentication defaults.
 Publish tested immutable core runtime versions. The hosted consumer advances its
 package version, integrity lock and Git source pin together; it verifies embedded
 source revision. Documentation/test-only changes need no runtime publication.
+
+## Organization search organization
+
+A tenant's connector documents, session histories and board messages share one
+organization realm per environment. Core owns its common envelope, typed metadata,
+index naming, transport, scope checks and migration primitives. Source adapters
+retain resource visibility checks. The shell supplies verified identity, managed
+routing and safe migration/cutover; it must not introduce per-feature index layouts.

@@ -1,9 +1,10 @@
+import {realmIndex} from '../src/search/realm.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
 import {createObjectStore} from '../src/sessions/s3-store.mjs';
-import {createConnectorSearch, connectorIndex} from '../src/connectors/search.mjs';
+import {createConnectorSearch} from '../src/connectors/search.mjs';
 import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
 
 test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and two tenants', {
@@ -20,7 +21,7 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
   for (const tenant of ['a', 'b']) {
     const tenantId = `fixture-${run}-${tenant}`, connectionId = `fixture-${run}-${tenant}`;
     const binding = {tenantId, connectionId, workspaceId: 'T123', provider: 'slack', access: 'team-public', rawPrefix: `raw/v1/source=slack/workspace=T123/connection=${connectionId}/`};
-    const index = connectorIndex('test', tenantId); indexes.push(index);
+    const index = realmIndex('test', tenantId); indexes.push(index);
     const search = createConnectorSearch({endpoint: process.env.OPENCRAWL_TEST_OPENSEARCH_URL, index, tenantId});
     for (let attempt = 0; ; attempt++) {
       try { await store.checkAccess(); await search.ensureIndex(); break; }
@@ -72,7 +73,7 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
 test('real S3/OpenSearch: workspace providers, linked passages, shorter edits, replay and isolation', {
   skip: !process.env.OPENCRAWL_TEST_S3_ENDPOINT || !process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
 }, async t => {
-  const run = randomUUID(), tenantId = `workspace-${run}`, objects = [], index = connectorIndex('test', tenantId);
+  const run = randomUUID(), tenantId = `workspace-${run}`, objects = [], index = realmIndex('test', tenantId);
   const store = createObjectStore({endpoint: process.env.OPENCRAWL_TEST_S3_ENDPOINT, bucket: 'capture-test', credentials: {accessKeyId: 'capture-test', secretAccessKey: 'capture-test-secret'}});
   const search = createConnectorSearch({endpoint: process.env.OPENCRAWL_TEST_OPENSEARCH_URL, index, tenantId});
   t.after(async () => {for (const key of objects) await store.delete(key); await fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL + '/' + index, {method: 'DELETE'});});
@@ -123,7 +124,7 @@ test('real S3/OpenSearch: complete file suffixes, shorter replacement, late repl
  skip:!process.env.OPENCRAWL_TEST_S3_ENDPOINT||!process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
 },async t=>{
  const {createHash}=await import('node:crypto');
- const run=randomUUID(),tenantId='file-'+run,objects=[],index=connectorIndex('test',tenantId);
+ const run=randomUUID(),tenantId='file-'+run,objects=[],index=realmIndex('test',tenantId);
  const binding={tenantId,connectionId:run,workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:`raw/v1/source=slack/workspace=T123/connection=${run}/`};
  const store=createObjectStore({endpoint:process.env.OPENCRAWL_TEST_S3_ENDPOINT,bucket:'capture-test',credentials:{accessKeyId:'capture-test',secretAccessKey:'capture-test-secret'}});
  const tracked={...store,put:async(k,v,type)=>{objects.push(k);await store.put(k,v,type);}};

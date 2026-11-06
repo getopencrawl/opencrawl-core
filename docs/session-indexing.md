@@ -14,7 +14,7 @@ Run the receiver with the S3 settings and bearer token in `session-capture.md`. 
 export OPENCRAWL_TENANT_ID=my-team
 export OPENCRAWL_USER_ID=owner
 export OPENCRAWL_OPENSEARCH_URL=https://your-search.example
-export OPENCRAWL_OPENSEARCH_INDEX=opencrawl-sessions-v1
+# Optional: OPENCRAWL_OPENSEARCH_INDEX names the organization realm shared by all sources.
 export OPENCRAWL_OPENSEARCH_USERNAME=your-service-user
 export OPENCRAWL_OPENSEARCH_PASSWORD=your-service-password
 export TEMPORAL_ADDRESS=your-temporal:7233

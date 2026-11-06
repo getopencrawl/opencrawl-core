@@ -1,10 +1,12 @@
+import {realmIndex} from '../src/search/realm.mjs';
+import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gzipSync} from 'node:zlib';
 import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
 import {normalizeSlack} from '../src/connectors/slack.mjs';
 import {documentId, receiptKey, validateBinding} from '../src/connectors/scope.mjs';
-import {connectorIndex, createConnectorSearch} from '../src/connectors/search.mjs';
+import {createConnectorSearch} from '../src/connectors/search.mjs';
 import {runConnectorSegment} from '../src/connectors/workflow.mjs';
 import {createObjectStore} from '../src/sessions/s3-store.mjs';
 
@@ -35,7 +37,7 @@ test('stock messages and thread parents share stable identity; raw delivery IDs 
 test('tenant and connection identity cannot collide; malformed scope fails closed', () => {
   const other = {...binding, tenantId: 'tenant-b'};
   assert.notEqual(documentId(binding, 'message', 'C1:1'), documentId(other, 'message', 'C1:1'));
-  assert.notEqual(connectorIndex('staging', binding.tenantId), connectorIndex('staging', other.tenantId));
+  assert.notEqual(realmIndex('staging', binding.tenantId), realmIndex('staging', other.tenantId));
   assert.notEqual(receiptKey(binding, 'index-a', key()), receiptKey(other, 'index-a', key()));
   assert.throws(() => validateBinding({...binding, rawPrefix: 'raw/'}));
   assert.throws(() => validateBinding({...binding, tenantId: ''}));
@@ -79,7 +81,7 @@ test('extra source streams do not starve supported data; selection never bypasse
 });
 test('search adapter refuses cross-tenant writes before issuing requests and checks every bulk item', async () => {
   let calls = 0;
-  const search = createConnectorSearch({endpoint: 'http://localhost:9200', index: 'test', tenantId: binding.tenantId, fetch: async () => {calls++; return Response.json({items: [{update: {status: 429}}]});}});
+  const search = createConnectorSearch({endpoint: 'http://localhost:9200', index: 'test', tenantId: binding.tenantId, fetch: async () => {calls++; return realmResponse('connector',{items: [{update: {status: 429}}]});}});
   const item = normalizeSlack(binding, 'channel_messages', envelope(), key());
   await assert.rejects(search.putDocuments({tenantId: 'tenant-b'}, binding, [item]), /scope/);
   await assert.rejects(search.putDocuments({tenantId: 'tenant-a'}, binding, [{...item, document: {...item.document, tenantId: 'tenant-b'}}]), /scope/);
@@ -93,10 +95,10 @@ test('query filters tenant/connections, checks returned ownership and hides unkn
     const body = JSON.parse(options.body);
     if (url.pathname.endsWith('/_search')) {
       assert.deepEqual(body.query.bool.filter[0], {term: {tenantId: binding.tenantId}});
-      return Response.json({hits: {hits: [{_id: item.id, _score: 1, _source: {...item.document, tenantId: forged ? 'other' : binding.tenantId}}]}});
+      return realmResponse('connector',{hits: {hits: [{_id: item.id, _score: 1, _source: {...item.document, tenantId: forged ? 'other' : binding.tenantId}}]}});
     }
     const d = normalizeSlack(binding, 'channels', envelope({id: 'C123', is_private: !publicChannel}), key('channels'));
-    return Response.json({docs: [{_id: d.id, found: true, _source: d.document}]});
+    return realmResponse('connector',{docs: [{_id: d.id, found: true, _source: d.document}]});
   }});
   assert.equal((await search.search({tenantId: binding.tenantId}, [binding], {query: 'pineapple'})).hits.length, 0);
   publicChannel = true;
