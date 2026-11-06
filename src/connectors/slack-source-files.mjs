@@ -85,6 +85,7 @@ export function createSlackFileCapture({binding,store,request,download,checkActi
     for(const comment of data.comments||[]){if(typeof comment.id!=='string'||typeof comment.comment!=='string')invalidRecord('Invalid file comment');target.comments[comment.id]=comment.comment;}
     target.cursor=nextCursor(data,target.cursor);
     if(!target.cursor) {
+     if(Number.isInteger(file.comments_count)&&file.comments_count>Object.keys(target.comments).length)invalidRecord('File comment count exceeds captured comments');
      if(Number.isInteger(data.paging?.pages)&&data.paging.pages>1&&!data.response_metadata)invalidRecord('File comments require cursor pagination');
      let content={};const mediaType=(file.mimetype||'application/octet-stream').split(';')[0].toLowerCase();
      if(!mediaType.startsWith('image/')){

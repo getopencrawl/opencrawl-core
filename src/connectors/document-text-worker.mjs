@@ -70,7 +70,8 @@ async function extract() {
     walk(document);add('html.text',fragments.join(''));
     return {format:'html',parts,status:parts.some(p=>p.text.trim())?'extracted':'no-text-layer'};
   }
-  if(mediaType.startsWith('text/')||['application/json','application/xml','application/yaml'].includes(mediaType)) {
+  const unlabeledText=mediaType==='application/octet-stream'&&!/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/u.test(text);
+  if(unlabeledText||mediaType.startsWith('text/')||['application/json','application/xml','application/yaml'].includes(mediaType)) {
     add('text',text);return {format:'text',parts,status:text.trim()?'extracted':'no-text-layer'};
   }
   throw new Error('Unsupported document media type');
