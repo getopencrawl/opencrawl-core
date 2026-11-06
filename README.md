@@ -84,3 +84,9 @@ its own login and integrations routes; this UI does not require WorkOS.
 See the [Slack indexing operation guide](docs/connector-indexing.md) and the
 [connector development pattern](docs/connector-development.md) before adding a new
 source-to-search adapter. Extraction support alone does not imply indexing support.
+
+## Workspace search
+
+MCP `search` and `opencrawl search` query captured sessions and indexed workspace
+connectors through one authenticated operation. See [workspace search](docs/workspace-search.md)
+for self-host setup, matching modes, coverage, and bounded pagination.

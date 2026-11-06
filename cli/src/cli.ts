@@ -1,3 +1,4 @@
+import {searchWorkspace, searchInput, formatSearch} from './search.ts';
 import {collectCommand} from './capture/command.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs} from 'node:util';
@@ -14,6 +15,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   logout      Remove this deployment's credentials from this machine
   whoami      Verify your saved session with the service
   status      Show installation, sign-in and index availability
+  search      Search session history and indexed workspace connectors
   collect     Install and manage Claude/Codex session capture
   update      Install the latest CLI for your next invocation
 
@@ -33,7 +35,13 @@ History import (optional, asks during collect install):
 Agents: ask the user to choose Claude, Codex, both, or skip before importing.
 History includes messages, tool arguments/results and available attachments.
 
-Index queries are not available in this initial release.
+Search: opencrawl search "words" --json
+  --source all|sessions|connectors   Default: all
+  --match any|all|phrase                    Default: any; all requires every term
+  --limit 1..40                     Default: 10
+  --session-id ID                   Narrow a sessions-only query
+  --cursor TOKEN                    Next live page; repeat the same arguments
+Use OPENCRAWL_TOKEN for a self-hosted bearer token; otherwise uses saved login.
 Updates run automatically in the background after use, at most once per day.
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
 `;
@@ -67,16 +75,22 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
-    if (parsed.positionals.length > (command === 'collect' ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    if (parsed.positionals.length > (['collect','search'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
-    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL ?? 'https://app.getopencrawl.com');
+    if (command === 'search') {
+      const input = searchInput(parsed.positionals[1], parsed.values);
+      const data = await searchWorkspace(api, input);
+      emit(data, formatSearch(data));
+      return data.partial || data.coverage.every((c: any) => c.state !== 'ready') ? 1 : 0;
+    }
     if(command === 'collect') {
       const data=await collectCommand(parsed.positionals[1]??'status',api,parsed.values);
       if(data!==null)emit(data,JSON.stringify(data,null,2));
@@ -92,15 +106,15 @@ export async function main(args = process.argv.slice(2)) {
       const tokens = await pollDevice(auth, device);
       const user = await identity(api, fetch, tokens.accessToken);
       await saveSession(api, {auth, ...tokens});
-      emit({api, authenticated: true, user}, `Signed in${user.email ? ` as ${user.email}` : ''}. Index queries are coming later.`);
+      emit({api, authenticated: true, user}, `Signed in${user.email ? ` as ${user.email}` : ''}. Use opencrawl search to query indexed workspace knowledge.`);
       return 0;
     }
     if (command === 'status' && !readSession(api)) {
-      emit({api, version, authenticated: false, index: {available: false}}, `opencrawl ${version}\nNot signed in. Run opencrawl login.\nIndex queries are not available yet.`);
+      emit({api, version, authenticated: false, index: {available: null}}, `opencrawl ${version}\nNot signed in. Run opencrawl login.\nUse opencrawl search to check indexed workspace knowledge.`);
       return 0;
     }
     const user = await identity(api);
-    emit({api, version, authenticated: true, user, ...(command === 'status' ? {index: {available: false}} : {})}, command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''}.\nIndex queries are not available yet.` : user.email ?? user.id);
+    emit({api, version, authenticated: true, user, ...(command === 'status' ? {index: {available: null}} : {})}, command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
     return 0;
   } catch (error) {
     const known = error instanceof CliError;

@@ -205,3 +205,13 @@ personal environment above using their HTTPS receiver hostname. DELETE
 credential cannot search/read, issue credentials or revoke credentials. The
 receiver always binds the operator's fixed tenant/user, including for delegated
 tokens. Changing that fixed identity invalidates old delegations.
+
+## Search workspace knowledge
+
+`opencrawl search "words" --json` queries sessions and all authorized indexed
+connectors. Use `--source sessions|connectors`, `--match any|all|phrase`,
+`--session-id ID` with sessions, and `--limit 1..40`. Follow `data.next` with
+`--cursor TOKEN` and otherwise identical arguments. Pages are live and bounded;
+inspect `coverage`, `partial`, `truncated` and `windowExhausted` before claiming
+completeness. Results contain full indexed passages and source provenance.
+For self-hosting, set `OPENCRAWL_TOKEN` and `--api`; otherwise saved OAuth is used.

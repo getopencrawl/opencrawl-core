@@ -90,17 +90,18 @@ export function createConnectorSearch({endpoint, index, tenantId, credentials, u
       const tombstone = {tenantId, connectionId: binding.connectionId, workspaceId: binding.workspaceId, provider: binding.provider, kind, sourceId, deleted: true};
       await request(`/_update/${id}`, {body: JSON.stringify({script: {source: "ctx._source.deleted = true; ctx._source.text = ''; ctx._source.title = '';"}, upsert: tombstone})});
     },
-    async search(principal, bindings, {query, limit = 20, raw = false} = {}) {
+    async search(principal, bindings, {query, limit = 20, raw = false, match = 'all'} = {}) {
       if (!Array.isArray(bindings) || !bindings.length || bindings.length > 100) throw new Error('Authorized connections required');
       for (const binding of bindings) scoped(principal, binding);
-      if (typeof query !== 'string' || !query.trim() || query.length > 4000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid connector query');
+      if (!['all','any','phrase'].includes(match) || typeof query !== 'string' || !query.trim() || query.length > 4000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid connector query');
       const byConnection = new Map(bindings.map(b => [b.connectionId, b]));
-      const hits = [], responses = []; let after, examined = 0, more = true;
+      const hits = [], responses = []; let after, examined = 0, more = true, capped = false;
       // Bound work even when channel visibility filters most candidates.
       while (hits.length < limit && examined < 1000 && more) {
         const result = await request('/_search', {body: JSON.stringify({size: 100, track_total_hits: false,
-          query: {bool: {filter: [{term: {tenantId}}, {terms: {connectionId: [...byConnection.keys()]}}, {terms: {kind: SEARCHABLE_KINDS}}, {term: {deleted: false}}], must: [{multi_match: {query, fields: ['title^2', 'text', 'heading'], operator: 'and'}}]}},
+          query: {bool: {filter: [{term: {tenantId}}, {terms: {connectionId: [...byConnection.keys()]}}, {terms: {kind: SEARCHABLE_KINDS}}, {term: {deleted: false}}], must: [{multi_match: {query, fields: ['title^2', 'text', 'heading'], ...(match === 'phrase' ? {type:'phrase'} : {operator: match === 'all' ? 'and' : 'or'})}}]}},
           sort: [{_score: 'desc'}, {connectionId: 'asc'}, {sourceId: 'asc'}], ...(after ? {search_after: after} : {})})});
+        if (result?.timed_out || result?._shards?.failed > 0) throw new Error('Connector search was incomplete');
         const candidates = result?.hits?.hits;
         if (!Array.isArray(candidates)) throw new Error('Invalid connector search response');
         for (const hit of candidates) {
@@ -130,7 +131,7 @@ export function createConnectorSearch({endpoint, index, tenantId, credentials, u
         }
         const visible = [];
         for (const hit of candidates) {
-          if (hits.length >= limit) break;
+          if (hits.length >= limit) {capped = true; break;}
           const d = hit._source, binding = byConnection.get(d.connectionId);
           const parentVisible = !d.parentId || (typeof d.resourceVersion==='string' && current.get(documentId(binding, d.parentKind, d.parentId)) === d.resourceVersion);
           const visibleResource = parentVisible && (d.kind!=='file' || d.available===true) &&
@@ -145,7 +146,7 @@ export function createConnectorSearch({endpoint, index, tenantId, credentials, u
         examined += candidates.length; more = candidates.length === 100; after = candidates.at(-1)?.sort;
         if (more && !after) throw new Error('Missing connector search cursor');
       }
-      return raw ? {responses, examined, truncated: more} : {hits, examined, truncated: more};
+      return raw ? {responses, examined, truncated: more || capped} : {hits, examined, truncated: more || capped};
     },
     /** Live source entities per kind, excluding passage revisions across authorized connections, for reporting. */
     async count(principal, bindings) {

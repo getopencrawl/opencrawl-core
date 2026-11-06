@@ -51,12 +51,14 @@ export function createSessionSearch({endpoint,index,username,password,credential
       }
       await flush();
     },
-    async search(principal,{query='',limit=20,raw=false}={}) {
+    async search(principal,{query='',limit=20,raw=false,match='all',sessionId}={}) {
       sessionScope(principal);
+      if(!['all','any','phrase'].includes(match)||(sessionId!==undefined&&(typeof sessionId!=='string'||!sessionId||sessionId.length>200)))fail(400,'Invalid search filters');
       if(typeof query!=='string'||query.length>4000||!Number.isInteger(limit)||limit<1||limit>100)fail(400,'Invalid search query or limit');
       const result=await request('/_search',{method:'POST',body:JSON.stringify({size:limit,track_total_hits:true,
-        query:{bool:{filter:[{term:{tenantId:principal.tenantId}}],must:query?[{match:{text:{query,operator:'and'}}}]:[{match_all:{}}]}},
-        sort:query?['_score',{receivedAt:'desc'}]:[{receivedAt:'desc'},{sequence:'asc'}]})});
+        query:{bool:{filter:[{term:{tenantId:principal.tenantId}},...(sessionId?[{term:{sessionId}}]:[])],must:query?[match==='phrase'?{match_phrase:{text:query}}:{match:{text:{query,operator:match==='all'?'and':'or'}}}]:[{match_all:{}}]}},
+        sort:query?['_score',{receivedAt:'desc'},{sessionId:'asc'},{eventId:'asc'},{chunk:'asc'},{userId:'asc'},{installationId:'asc'}]:[{receivedAt:'desc'},{sequence:'asc'}]})});
+      if(result?.timed_out||result?._shards?.failed>0)throw new Error('Session search was incomplete');
       const hits=result?.hits?.hits;
       if(!Array.isArray(hits)||hits.some(hit=>hit._source?.tenantId!==principal.tenantId||typeof hit._source?.userId!=='string'||!hit._source.userId))throw new Error('Search returned an invalid ownership scope');
       if(raw)return result;
