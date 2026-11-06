@@ -41,3 +41,22 @@ test('rich-text phrases retain repeated words and words contained inside fallbac
  const body=slackMessageText({text:'notification preview',blocks:[{type:'rich_text',elements:[{type:'rich_text_section',elements:[{type:'text',text:'do '},{type:'text',text:'not'},{type:'text',text:' do this'}]}]}]});
  assert.equal(body,'notification preview\ndo \nnot\n do this');
 });
+
+test('visible menu labels, descriptions and confirmations survive without action payloads',()=>{
+ const option={text:{type:'plain_text',text:'Escalate incident'},description:{type:'plain_text',text:'Page the on-call team'},value:'HIDDEN_ACTION_PAYLOAD'};
+ const body=slackMessageText({blocks:[{type:'section',text:{type:'mrkdwn',text:'Incident actions'},accessory:{type:'overflow',options:[option],confirm:{title:{type:'plain_text',text:'Confirm escalation'},text:{type:'mrkdwn',text:'This pages the current responder.'},confirm:{type:'plain_text',text:'Escalate now'},deny:{type:'plain_text',text:'Keep investigating'}}}},
+ {type:'actions',elements:[{type:'static_select',placeholder:{type:'plain_text',text:'Choose a severity'},option_groups:[{label:{type:'plain_text',text:'Customer impact'},options:[{text:{type:'plain_text',text:'Major outage'},value:'HIDDEN_SEVERITY'}]}]},
+ {type:'external_select',initial_option:{text:{type:'plain_text',text:'Already selected item'},value:'HIDDEN_EXTERNAL'}}]}]});
+ for(const text of ['Escalate incident','Page the on-call team','Confirm escalation','This pages the current responder.','Escalate now','Keep investigating','Choose a severity','Customer impact','Major outage','Already selected item'])assert.ok(body.includes(text),text);
+ assert.ok(!body.includes('HIDDEN_'));
+});
+test('attachment attribution and both file labels remain searchable',()=>{
+ const body=slackMessageText({attachments:[{service_name:'Incident service',text:'Alert body'}],files:[{title:'Release report',name:'release-2026.txt',url_private:'HIDDEN_DOWNLOAD'}]});
+ for(const text of ['Incident service','Release report','release-2026.txt'])assert.ok(body.includes(text));
+ assert.ok(!body.includes('HIDDEN_'));
+});
+
+test('presentation-node fallback text remains available even with populated blocks',()=>{
+ const body=slackMessageText({blocks:[{type:'rich_text',fallback:'Accessible representation',elements:[{type:'rich_text_section',elements:[{type:'text',text:'Rendered content'}]}]}]});
+ assert.ok(body.includes('Accessible representation'));assert.ok(body.includes('Rendered content'));
+});
