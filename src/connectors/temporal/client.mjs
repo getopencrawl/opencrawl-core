@@ -1,9 +1,13 @@
 import {Client, Connection, ScheduleAlreadyRunning, ScheduleOverlapPolicy} from '@temporalio/client';
 import {digest} from '../scope.mjs';
 
-export async function connectorClient({address, namespace}) {
+/** connectionOptions are operator-supplied SDK options (TLS/credentials). The
+ * returned connection remains available for credential rotation and close(). */
+export async function connectorClient({address, namespace, connectionOptions = {}}) {
   if (!address || !namespace) throw new Error('Explicit Temporal connection required');
-  const connection = await Connection.connect({address});
+  if (!connectionOptions || typeof connectionOptions !== 'object' || Array.isArray(connectionOptions) ||
+      connectionOptions.address !== undefined && connectionOptions.address !== address) throw new Error('Invalid Temporal connection options');
+  const connection = await Connection.connect({...connectionOptions, address});
   return {connection, client: new Client({connection, namespace})};
 }
 export async function ensureConnectorSchedule(client, {reference, taskQueue, generation = 'v1'}) {
