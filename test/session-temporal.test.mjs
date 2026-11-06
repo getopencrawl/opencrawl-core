@@ -8,6 +8,7 @@ import {Worker,Runtime,DefaultLogger} from '@temporalio/worker';
 import {buildSessionWorkflows,createSessionWorker} from '../src/sessions/temporal/worker.mjs';
 import {ensureSessionSchedule} from '../src/sessions/temporal/client.mjs';
 import {createSessionIngest} from '../src/sessions/ingest.mjs';
+import {memorySessionStore} from './session-store-fixture.mjs';
 
 test('real Temporal: retry, restart with queued work, durable schedule and history replay keep content outside history',{
  skip:process.env.OPENCRAWL_TEST_TEMPORAL!=='1',timeout:180000,
@@ -17,9 +18,8 @@ test('real Temporal: retry, restart with queued work, durable schedule and histo
  t.after(()=>rm(directory,{recursive:true,force:true}));
  const env=await TestWorkflowEnvironment.createLocal();t.after(()=>env.teardown());
  const bundlePath=join(directory,'workflows.cjs');await buildSessionWorkflows(bundlePath);
- const data=new Map(),documents=new Map();let attempts=0;
- const store={bucket:'fixture',put:async(k,v)=>data.set(k,Buffer.from(v)),get:async k=>data.get(k)||null,
-  listPage:async(prefix,{continuationToken,maxKeys})=>{const keys=[...data.keys()].filter(k=>k.startsWith(prefix)&&(!continuationToken||k>continuationToken)).sort();return {keys:keys.slice(0,maxKeys),nextToken:keys.length>maxKeys?keys[maxKeys-1]:null};}};
+ const documents=new Map();let attempts=0;
+ const store={...memorySessionStore(),bucket:'fixture'};
  const principal={tenantId:'single-tenant',userId:'owner'},prefix='sessions/selfhost/v1';
  const search={identity:'test-index',ensureIndex:async()=>{},putDocuments:async docs=>{
   for(const d of docs)documents.set(d.id,d.document);

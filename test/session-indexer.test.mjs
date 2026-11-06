@@ -3,16 +3,13 @@ import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {gzipSync} from 'node:zlib';
 import {createSessionIngest,digest,sessionScope} from '../src/sessions/ingest.mjs';
 import {createSessionPipeline,batchDocuments} from '../src/sessions/indexer.mjs';
 import {createSessionSearch} from '../src/sessions/search.mjs';
 import {runConnectorSegment} from '../src/connectors/workflow.mjs';
 import {standaloneStorage} from '../src/sessions/standalone.mjs';
-
-function memoryStore(){
- const data=new Map();return {data,put:async(k,v)=>{data.set(k,Buffer.from(v));},get:async k=>data.get(k)||null,delete:async k=>{data.delete(k);},
- listPage:async(prefix,{continuationToken,maxKeys})=>{const keys=[...data.keys()].filter(k=>k.startsWith(prefix)&&(!continuationToken||k>continuationToken)).sort();return {keys:keys.slice(0,maxKeys),nextToken:keys.length>maxKeys?keys[maxKeys-1]:null};}};
-}
+import {memorySessionStore as memoryStore} from './session-store-fixture.mjs';
 async function sweep(pipeline) {
  return runConnectorSegment({}, {listPage:input=>pipeline.listPage(input),processObject:async input=>{
   const result=await pipeline.processObject(input);return {records:result.skipped?0:1};
@@ -103,6 +100,23 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, t
  assert.equal((await sweep(restarted)).indexed,55);
  for(const principal of owners)await search.refresh(principal);assert.equal((await search.search(owner,{query:'paginated'})).total,55);
  assert.equal((await search.search(owners[1],{query:'paginated'})).total,0);
+ // Real S3 conditional claims and OpenSearch chunk writes enforce immutable IDs.
+ const original=batch(owner,'violet '.repeat(2600)+'immutable_tail_sentinel');original.sessionId='immutable-identity';
+ const accepted=await ingest.putBatch(owner,original);
+ const originalKey=`${prefix}/${sessionScope(owner)}/codex/${digest(original.installationId)}/${digest(original.sessionId)}/${accepted.batchId}.json.gz`;
+ await restarted.processObject({key:originalKey});await search.refresh(owner);
+ assert.equal((await search.search(owner,{query:'immutable_tail_sentinel'})).total,1);
+ const changed=structuredClone(original);changed.events[0].data.content[0].text='shorter conflicting revision';
+ await assert.rejects(ingest.putBatch(owner,changed),{status:409});
+ const corruptKey=originalKey.replace(accepted.batchId,digest(JSON.stringify(changed)));
+ await store.put(corruptKey,gzipSync(JSON.stringify({...changed,receivedAt:new Date().toISOString()})));
+ await assert.rejects(restarted.processObject({key:corruptKey}),{status:409});await search.refresh(owner);
+ assert.equal((await search.search(owner,{query:'immutable_tail_sentinel'})).total,1);
+ const concurrent={...original,sessionId:'concurrent-identity'};
+ const alternative={...changed,sessionId:'concurrent-identity'};
+ const claims=await Promise.allSettled([ingest.putBatch(owner,concurrent),ingest.putBatch(owner,alternative)]);
+ assert.equal(claims.filter(result=>result.status==='fulfilled').length,1);
+ assert.equal(claims.find(result=>result.status==='rejected').reason.status,409);
 });
 
 test('capture only lands immutable data and succeeds without any processing service',async()=>{
@@ -111,7 +125,7 @@ test('capture only lands immutable data and succeeds without any processing serv
  const ingest=createSessionIngest({store,prefix}),value=batch(owner);
  assert.equal((await ingest.putBatch(owner,value)).stored,true);
  assert.equal((await ingest.putBatch(owner,value)).stored,true);
- assert.equal(store.data.size,1);
+ assert.equal(store.data.size,2); // Immutable batch and its atomic event ledger.
 });
 
 test('real OpenSearch usage separates windowed activity from lifetime inventory and excludes future events', {
@@ -141,12 +155,12 @@ test('real OpenSearch usage separates windowed activity from lifetime inventory 
 test('worker rejects forged source keys and checkpoints only after all indexing writes succeed',async()=>{
  const store=memoryStore(),prefix='sessions/boundary/v1',ingest=createSessionIngest({store,prefix});
  await ingest.putBatch(owner,batch(owner));
- const key=[...store.data.keys()][0];let fail=true;
+ const key=[...store.data.keys()].find(key=>key.endsWith('.json.gz'));let fail=true;
  const search={identity:'target',ensureIndex:async()=>{},putDocuments:async()=>{if(fail)throw new Error('Partial bulk failure');}};
  const pipeline=createSessionPipeline({store,prefix,search,principal:owner});
  await assert.rejects(pipeline.processObject({key:key.replace('tenants/','tenants/foreign/')}),/authorized source/);
  await assert.rejects(pipeline.processObject({key}),/Partial bulk/);
- assert.equal(store.data.size,1);
+ assert.equal(store.data.size,2);
  fail=false;assert.equal((await pipeline.processObject({key})).records,1);
  assert.equal((await pipeline.processObject({key})).skipped,true);
  assert.equal([...store.data.keys()].filter(k=>k.includes('/_index/')).length,1);
