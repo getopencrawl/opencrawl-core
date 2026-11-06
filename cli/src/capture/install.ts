@@ -53,7 +53,6 @@ export async function installCapture(api:string,{background=process.env.CLAUDE_C
   const {principal}=await request(api,'/api/sessions/identity');
   if(!principal?.tenantId || !principal?.userId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   const previous=readCaptureConfig();
-  if(previous && (previous.api!==api || previous.owner.userId!==principal.userId || previous.owner.tenantId!==principal.tenantId))throw new CliError('CAPTURE_OWNER_CHANGED','Use a separate OPENCRAWL_CONFIG_HOME for another account or deployment');
   for(const dir of ['', 'backups','queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});
   const config:CaptureConfig={schemaVersion:1,api,installationId:previous?.installationId??randomUUID(),owner:principal,
     harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
@@ -125,7 +124,7 @@ export function uninstallCapture(home=homedir()) {
   }
   if((config.harnesses??['claude-code','codex']).includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),[],null);
   if((config.harnesses??['claude-code','codex']).includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),[],null);
-  // Preserve queue and owner so offline data cannot be reassigned on another login.
+  // Stopping collection preserves queued data for an authenticated retry.
   atomicJson(join(captureDir(),'config.json'),{...config,disabled:true});
   return {installed:false,queuedDataPreserved:true};
 }

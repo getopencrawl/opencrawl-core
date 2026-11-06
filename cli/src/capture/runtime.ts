@@ -15,6 +15,14 @@ export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
 export type CaptureConfig = {disabled?:boolean,schemaVersion:1,harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
+// `owner` in the saved schema is cached attribution, not an enrollment constraint.
+export async function refreshCaptureIdentity(config:CaptureConfig) {
+  const {principal}=await request(config.api,'/api/sessions/identity');
+  if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
+  config.owner=principal;
+  atomicJson(join(captureDir(),'config.json'),config);
+  return principal;
+}
 export async function request(api:string,path:string,init:RequestInit={},tokenOverride?:string) {
   const saved=read(join(captureDir(),'receiver-token.json'));
   const staticToken=tokenOverride || process.env.OPENCRAWL_SESSIONS_TOKEN || (saved?.api===api?saved.token:null);
@@ -260,12 +268,13 @@ export async function flushCaptures() {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
   ensureDirectories();
   return withSessionLock('capture:flush',async()=>{
-    const {principal}=await request(config.api,'/api/sessions/identity');
-    if(principal.userId!==config.owner.userId || principal.tenantId!==config.owner.tenantId)throw new CliError('CAPTURE_OWNER_CHANGED','Sign in as the capture owner to upload queued sessions');
+    const principal=await refreshCaptureIdentity(config);
     let uploaded=0;
     for(const name of readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'))) {
       const path=join(captureDir(),'queue',name),batch=read(path);
-      if(batch.owner.userId!==principal.userId || batch.owner.tenantId!==principal.tenantId)throw new CliError('CAPTURE_OWNER_CHANGED','Queued sessions belong to another account');
+      // Current authentication selects the team. Keep the recorded human; the
+      // server validates authorship and membership on every upload.
+      batch.owner={...batch.owner,tenantId:principal.tenantId};
       for(const a of batch.attachments)if(a.status==='captured'){
         await request(config.api,'/api/sessions/attachments/'+a.sha256,{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readFileSync(join(captureDir(),'blobs',a.sha256))});
       }
