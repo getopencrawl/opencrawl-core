@@ -56,3 +56,53 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
   }
   await assert.rejects(handles[0].search.search(handles[1].principal, [handles[0].binding], {query: 'pineapple'}), /scope/);
 });
+
+test('real S3/OpenSearch: workspace providers, linked passages, shorter edits, replay and isolation', {
+  skip: !process.env.OPENCRAWL_TEST_S3_ENDPOINT || !process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
+}, async t => {
+  const run = randomUUID(), tenantId = `workspace-${run}`, objects = [], index = connectorIndex('test', tenantId);
+  const store = createObjectStore({endpoint: process.env.OPENCRAWL_TEST_S3_ENDPOINT, bucket: 'capture-test', credentials: {accessKeyId: 'capture-test', secretAccessKey: 'capture-test-secret'}});
+  const search = createConnectorSearch({endpoint: process.env.OPENCRAWL_TEST_OPENSEARCH_URL, index, tenantId});
+  t.after(async () => {for (const key of objects) await store.delete(key); await fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL + '/' + index, {method: 'DELETE'});});
+  const tracked = {...store, put: async (key, bytes, type) => {objects.push(key); await store.put(key, bytes, type);}};
+  await search.ensureIndex();
+  const principal = {tenantId}, date = '2026-11-05T12:00:00Z';
+  for (const provider of ['notion', 'granola', 'circleback', 'github']) {
+    const connectionId = `${provider}-${run}`;
+    const binding = {tenantId, connectionId, workspaceId: 'workspace', provider, access: 'workspace-global', rawPrefix: `raw/v1/source=${provider}/workspace=workspace/connection=${connectionId}/`};
+    const pipeline = createConnectorPipeline({binding, store: tracked, search});
+    async function raw(stream, data, name = '1', at = 2000) {
+      const key = `${binding.rawPrefix}stream=${stream}/date=2026-11-05/sync=1/${name}.jsonl.gz`;
+      await tracked.put(key, gzipSync((Array.isArray(data) ? data : [data]).map(d => JSON.stringify({_airbyte_extracted_at: at, _airbyte_data: d})).join('\n')));
+    }
+    async function runPipeline() {let records = 0; const page = await pipeline.listPage(); for (const key of page.keys) records += (await pipeline.processObject({key})).records; await search.refresh(); return records;}
+    if (provider === 'notion') {
+      await raw('pages', {id: 'p', last_edited_time: date, properties: {Title: {type: 'title', title: [{plain_text: 'Plan'}]}}});
+      await runPipeline(); // Partial source arrival must be superseded at equal timestamps.
+      await raw('page_markdown', {id: 'p', page_last_edited_time: date, markdown: '# Topic\n' + 'Pineapple obsolete detail for a long page.\n'.repeat(160)});
+    } else if (provider === 'github') {
+      await raw('commits', {repository: 'team/repo', sha: 'abc', message: 'Pineapple commit', committer_date: date, files: [{patch: 'excludedcode'}]});
+      await raw('pull_requests', {repository: 'team/repo', number: 1, title: 'Review', body: 'Pineapple PR', updated_at: date, reviews: [{id: 1, body: 'Pineapple review'}]});
+    } else {
+      const granola = provider === 'granola';
+      await raw(granola ? 'notes' : 'meetings', granola ? {id: 'm', title: 'Plan', summary_text: 'Pineapple summary', updated_at: date} : {id: 'm', name: 'Plan', notes: 'Pineapple summary', updatedAt: date});
+      await raw('transcripts', Array.from({length: 60}, (_, i) => granola ? {note_id: 'm', note_updated_at: date, speaker: {name: 'Ada'}, start_time: String(i), text: 'Pineapple transcript with useful detailed context.'} : {meeting_id: 'm', meeting_updated_at: date, speaker: 'Ada', timestamp: i, text: 'Pineapple transcript with useful detailed context.'}));
+    }
+    assert.ok(await runPipeline() > 0);
+    const result = await search.search(principal, [binding], {query: 'pineapple'});
+    assert.ok(result.hits.length > 0, provider); assert.ok(result.hits.every(d => d.provider === provider && d.connectionId === connectionId));
+    if (provider !== 'github') assert.ok(result.hits.some(d => d.parentId), provider);
+    assert.equal(await runPipeline(), 0);
+    await assert.rejects(search.search({tenantId: 'other'}, [binding], {query: 'pineapple'}), /scope/);
+    if (provider === 'notion') {
+      await raw('page_markdown', {id: 'p', page_last_edited_time: '2026-11-06T12:00:00Z', markdown: 'Pineapple replacement'}, 'shorter', 3000);
+      await runPipeline();
+      assert.equal((await search.search(principal, [binding], {query: 'obsolete'})).hits.length, 0);
+      assert.equal((await search.search(principal, [binding], {query: 'replacement'})).hits.length, 1);
+      // A later extraction of an older source revision cannot undo that edit.
+      await raw('page_markdown', {id: 'p', page_last_edited_time: date, markdown: 'Obsolete stale'}, 'stale', 4000);
+      await runPipeline();
+      assert.equal((await search.search(principal, [binding], {query: 'obsolete'})).hits.length, 0);
+    }
+  }
+});

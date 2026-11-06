@@ -13,12 +13,11 @@ identity, source-version ordering, and access rules in a core adapter. The hoste
 shell resolves managed credentials and current tenant membership; it does not
 contain an alternative normalizer or search permission model.
 
-The current connector runtime implements Slack only. `validateBinding`, stream
-selection, `normalizeSlack`, document kinds, and search-time channel visibility
-are explicitly Slack-specific. Adding a provider name to the extraction catalog
-is not enough. Extend these seams with the next working adapter and its
-single-tenant path; do not make Slack's `team-public` policy the default for other
-providers or build a registry of empty adapter interfaces.
+The runtime supports Slack and explicitly authorized global Granola, Circleback,
+Notion and GitHub resources. See [workspace connector contracts](workspace-connectors.md)
+for species, chunking, update ordering, resource scope and bounded assembly.
+Adding a provider to extraction alone does not enable search. Keep each adapter's
+access semantics explicit; Slack's `team-public` is not a general workspace grant.
 
 Use the same persistent Temporal service for connector orchestration, separate
 from an extractor's internal workflow service. Start with shared worker code and
