@@ -49,7 +49,7 @@ function source(s, now) {
   const [state, tone] = STATE[s.state] || [s.state, ''];
   const [one, many] = s.units || ['record', 'records'];
   const rows = (s.rows || []).filter(r => r.count);
-  return `<article class="source"><header><img src="${escape(s.icon)}" alt="" width="28" height="28"><div><h3>${escape(s.name)}</h3>${s.account ? `<p>${escape(s.account)}</p>` : ''}</div><span class="pill ${tone}">${state}</span></header>
+  return `<article class="source"><header><img src="${escape(s.icon)}" alt="" width="28" height="28"><div><h3>${escape(s.name)}</h3>${s.account ? `<p>${escape(s.account)}</p>` : ''}</div><span class="pill ${tone}">${escape(state)}</span></header>
 <p class="source-count"><strong>${full(s.records)}</strong> ${escape(s.records === 1 ? one : many)}</p>
 ${rows.length ? `<ul class="source-rows">${rows.map(r => `<li><span>${escape(r.label)}</span><span>${full(r.count)}</span></li>`).join('')}</ul>` : ''}
 <p class="source-meta"><span class="${s.searchable ? 'searchable' : 'stored'}">${s.searchable ? 'Searchable by agents' : 'Stored, indexing next'}</span><span>Synced ${escape(ago(s.lastSyncedAt, now))}</span>${s.connectedBy ? `<span>Connected by ${escape(s.connectedBy)}</span>` : ''}</p></article>`;

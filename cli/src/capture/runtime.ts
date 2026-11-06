@@ -16,16 +16,25 @@ const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSyn
 export type CaptureConfig = {disabled?:boolean,schemaVersion:1,harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 // `owner` in the saved schema is cached attribution, not an enrollment constraint.
-export async function refreshCaptureIdentity(config:CaptureConfig) {
-  const {principal}=await request(config.api,'/api/sessions/identity');
+export async function refreshCaptureIdentity(config:CaptureConfig,token?:string) {
+  const {principal}=await request(config.api,'/api/sessions/identity',{},token);
   if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
-  config.owner=principal;
-  atomicJson(join(captureDir(),'config.json'),config);
+  // Authentication can outlive uninstall or reconfiguration. Update only the
+  // receipt of identity, never restore the stale enrollment snapshot.
+  await withSessionLock('capture:configuration',async()=>{
+    const current=readCaptureConfig();
+    if(!current || current.api!==config.api || current.installationId!==config.installationId)throw new CliError('CAPTURE_CONFIG_CHANGED','Capture configuration changed during authentication. Retry with the current configuration.');
+    config.owner=principal;
+    atomicJson(join(captureDir(),'config.json'),{...current,owner:principal});
+  });
   return principal;
 }
-export async function request(api:string,path:string,init:RequestInit={},tokenOverride?:string) {
+function staticCaptureToken(api:string) {
   const saved=read(join(captureDir(),'receiver-token.json'));
-  const staticToken=tokenOverride || process.env.OPENCRAWL_SESSIONS_TOKEN || (saved?.api===api?saved.token:null);
+  return process.env.OPENCRAWL_SESSIONS_TOKEN || (saved?.api===api?saved.token:null);
+}
+export async function request(api:string,path:string,init:RequestInit={},tokenOverride?:string) {
+  const staticToken=tokenOverride || staticCaptureToken(api);
   let token=staticToken || await accessToken(api);
   const method=init.method??'GET';
   // Only retry operations whose payloads are read-only or content-addressed.
@@ -268,17 +277,23 @@ export async function flushCaptures() {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
   ensureDirectories();
   return withSessionLock('capture:flush',async()=>{
-    const principal=await refreshCaptureIdentity(config);
+    // A concurrent login must not switch the identity between the initial check
+    // and blob writes. If this credential expires, retain the queue for a retry.
+    const token=staticCaptureToken(config.api)||await accessToken(config.api);
+    const principal=await refreshCaptureIdentity(config,token);
     let uploaded=0;
     for(const name of readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'))) {
       const path=join(captureDir(),'queue',name),batch=read(path);
+      // Reject a different human before uploading attachment bytes: a later
+      // batch rejection cannot undo a blob already stored under their identity.
+      if(batch.owner?.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Queued capture belongs to another user. Sign back in as its author to upload it; queued data is retained.');
       // Current authentication selects the team. Keep the recorded human; the
       // server validates authorship and membership on every upload.
       batch.owner={...batch.owner,tenantId:principal.tenantId};
       for(const a of batch.attachments)if(a.status==='captured'){
-        await request(config.api,'/api/sessions/attachments/'+a.sha256,{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readFileSync(join(captureDir(),'blobs',a.sha256))});
+        await request(config.api,'/api/sessions/attachments/'+a.sha256,{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readFileSync(join(captureDir(),'blobs',a.sha256))},token);
       }
-      const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(batch)});
+      const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(batch)},token);
       if(receipt.batchId!==hash(JSON.stringify(batch)) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
       atomicJson(join(captureDir(),'last-upload.json'),{at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId});
       unlinkSync(path);uploaded++;

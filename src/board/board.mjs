@@ -65,9 +65,12 @@ export function createBoard({store, prefix, now = Date.now, search}) {
       if (args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
       const agentId = hash(JSON.stringify([principal.userId, args.agent]));
       const requestBytes = Buffer.byteLength(JSON.stringify(input));
+      let start = args.after;
       for (let attempt = 0; attempt < 8; attempt++) {
         const {state, version} = await read(key), time = now();
-        const start = args.after ?? state.messages.length;
+        // Starting "now" is anchored to the first read. A CAS retry must still
+        // deliver messages that arrived while this call was trying to commit.
+        start ??= state.messages.length;
         if (start > state.messages.length) throw fail('Cursor exceeds board history');
         // Presence is a recent observation, never proof that an agent is still alive.
         for (const [id, a] of Object.entries(state.agents)) if (a.seen <= time - ttl) delete state.agents[id];

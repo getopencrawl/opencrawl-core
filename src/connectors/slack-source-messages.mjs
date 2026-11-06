@@ -1,6 +1,7 @@
 import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {validateBinding,digest,invalidRecord} from './scope.mjs';
+export {seedSlackSourceCatalog} from './slack-source-catalog.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const id=value=>typeof value==='string'&&/^[A-Z][A-Z0-9]{1,100}$/.test(value);
 const timestamp=value=>typeof value==='string'&&/^\d{1,16}\.\d{1,6}$/.test(value);
@@ -16,6 +17,18 @@ export function createSlackMessageCapture({binding,store,request,checkActive=asy
   const raw=await store.get(stateKey,{maxBytes:16*1024*1024});
   const state=raw?JSON.parse(raw):{version:1,scope:digest(binding),runId,cutoff,channels:{},threads:{},cursor:'',listed:false,nextDue:{},pages:0,emitted:0,errors:[]};
   if(state.version!==1||state.scope!==digest(binding)||state.runId!==runId||state.cutoff!==cutoff)invalidRecord('Message capture checkpoint scope mismatch');
+  const catalogKey=binding.rawPrefix+'capture/messages-v1/catalog.json';
+  const catalogBytes=await store.get(catalogKey,{maxBytes:16*1024*1024});
+  const catalog=catalogBytes?JSON.parse(catalogBytes):{scope:digest(binding),channels:[]};
+  if(catalog.scope!==digest(binding)||!Array.isArray(catalog.channels)||catalog.channels.some(channel=>!id(channel)))invalidRecord('Message channel catalog scope mismatch');
+  // Catalog publication precedes the final checkpoint. Reconcile it even on
+  // same-run retries, whose saved checkpoint may predate a public raw record.
+  state.priorChannels=[...new Set([...(state.priorChannels||[]),...catalog.channels])];
+  const saveCatalog=async()=>{
+   const bytes=Buffer.from(JSON.stringify({scope:digest(binding),channels:[...new Set([...state.priorChannels,...Object.keys(state.channels)])]}));
+   if(bytes.length>16*1024*1024)invalidRecord('Message channel catalog exceeds limit');
+   await put(catalogKey,bytes,'application/json');
+  };
   const save=async()=>{const body=Buffer.from(JSON.stringify(state));if(body.length>16*1024*1024)invalidRecord('Message capture checkpoint exceeds limit');await put(stateKey,body,'application/json');};
   const emit=async(stream,data,at)=>{
    if(!data.length)return;
@@ -34,6 +47,9 @@ export function createSlackMessageCapture({binding,store,request,checkActive=asy
   const task=pending.find(p=>(state.nextDue[p.method]||0)<=now());
   if(!task)return {done:false,waitMs:Math.max(1,Math.min(...pending.map(p=>state.nextDue[p.method]))-now())};
   ({method,query,target}=task);
+  // Persist the request reservation even when transport or response processing
+  // fails; retries retain the same cursor but must respect the method window.
+  state.nextDue[method]=now()+(method==='conversations.list'?3500:65000);await save();await active();
   const response=await request(method,query),data=response?.data,at=now();state.nextDue[method]=at+(method==='conversations.list'?3500:65000);
   if(response?.status===429||data?.error==='ratelimited') {
    const seconds=Number(Object.entries(response.headers||{}).find(([k])=>k.toLowerCase()==='retry-after')?.[1]||60);
@@ -50,7 +66,11 @@ export function createSlackMessageCapture({binding,store,request,checkActive=asy
   if(method==='conversations.list') {
    if(!Array.isArray(data.channels))invalidRecord('Missing public channels');
    for(const c of data.channels){if(!id(c.id)||c.is_private!==false||c.is_im||c.is_mpim)invalidRecord('Invalid public channel');state.channels[c.id]||={id:c.id,cursor:'',done:false};}
+   // Remember every published public channel before the raw write. Only a
+   // completed enumeration can revoke channels missing from its current scope.
+   await saveCatalog();
    await emit('channels',data.channels,at);state.cursor=cursor;state.listed=!cursor;
+   if(state.listed)await emit('channels',state.priorChannels.filter(channel=>!state.channels[channel]).map(id=>({id,is_private:true})),at);
   } else {
    if(!state.channels[query.channel]||!Array.isArray(data.messages))invalidRecord('History response outside enumerated public scope');
    for(const m of data.messages) {

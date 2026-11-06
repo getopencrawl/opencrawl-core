@@ -38,11 +38,13 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
   async function listPage(prefix, {delimiter, continuationToken, maxKeys=1000} = {}) {
     if(!Number.isInteger(maxKeys)||maxKeys<1||maxKeys>1000)throw new Error('Invalid S3 page size');
     const res=await request('GET',undefined,{query:{'list-type':'2',prefix,delimiter,'continuation-token':continuationToken,'max-keys':String(maxKeys)}});
+    if(res.status===404)throw await storeError(res, `LIST ${bucket}`);
     const xml=await res.text();
     const keys=[...xml.matchAll(/<Contents>[\s\S]*?<Key>([^<]*)<\/Key>/g)].map(m=>unescapeXml(m[1]));
     const prefixes=[...xml.matchAll(/<CommonPrefixes>\s*<Prefix>([^<]*)<\/Prefix>/g)].map(m=>unescapeXml(m[1]));
     const nextToken=/<IsTruncated>true<\/IsTruncated>/.test(xml)?unescapeXml(xml.match(/<NextContinuationToken>([^<]*)</)?.[1]??''):null;
     if(nextToken==='')throw new Error('S3 listing omitted its continuation token');
+    if(nextToken&&nextToken===continuationToken)throw new Error('S3 listing repeated its continuation token');
     return {keys,prefixes,nextToken};
   }
 
@@ -124,13 +126,14 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
     async list(prefix, {delimiter} = {}) {
       const keys = [];
       const prefixes = [];
+      const seen = new Set();
       let token;
       do {
-        const res = await request('GET', undefined, {query: {'list-type': '2', prefix, delimiter, 'continuation-token': token}});
-        const xml = await res.text();
-        for (const [, key] of xml.matchAll(/<Contents>[\s\S]*?<Key>([^<]*)<\/Key>/g)) keys.push(unescapeXml(key));
-        for (const [, p] of xml.matchAll(/<CommonPrefixes>\s*<Prefix>([^<]*)<\/Prefix>/g)) prefixes.push(unescapeXml(p));
-        token = /<IsTruncated>true<\/IsTruncated>/.test(xml) ? unescapeXml(xml.match(/<NextContinuationToken>([^<]*)</)?.[1] ?? '') : undefined;
+        const page = await listPage(prefix, {delimiter, continuationToken: token});
+        keys.push(...page.keys); prefixes.push(...page.prefixes);
+        token = page.nextToken;
+        if (token && seen.has(token)) throw new Error('S3 listing repeated its continuation token');
+        if (token) seen.add(token);
       } while (token);
       return {keys, prefixes};
     },

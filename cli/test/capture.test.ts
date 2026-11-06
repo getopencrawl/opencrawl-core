@@ -116,7 +116,7 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     const cb=JSON.parse(readFileSync(join(captureDir(),'queue',readdirSync(join(captureDir(),'queue'))[0]),'utf8'));
     expect(cb.origin).toBe('desktop');expect(cb.events).toHaveLength(5);expect(JSON.stringify(cb)).not.toContain('DO NOT COLLECT');
     await flushCaptures();
-    const uninstall=uninstallCapture(dir);expect(uninstall.installed).toBe(false);
+    const uninstall=await uninstallCapture(dir);expect(uninstall.installed).toBe(false);
     expect(captureStatus().installed).toBe(false);
     await captureHook('claude-code',{session_id:'disabled',prompt:'should not collect'});expect(captureStatus().queued).toBe(0);
     expect(JSON.parse(readFileSync(join(config.roots['claude-code'],'settings.json'),'utf8')).hooks.Stop).toEqual([{hooks:[other]}]);
