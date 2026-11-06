@@ -108,6 +108,20 @@ After signing in, run `opencrawl collect install` to install Claude Code and Cod
 
 Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service determines the current team from login and validates human attribution. Existing collectors and queued personal-scope uploads automatically use that team after updating, without reinstalling or resetting. Self-hosted users can supply `OPENCRAWL_SESSIONS_TOKEN` and `--api` for the portable receiver. See [capture architecture and limits](../docs/session-capture.md).
 
+Newly spooled events receive a versioned ID after attachment extraction and all
+event normalization. The ID covers the source record/notice identity and every
+field of the final JSON event. For the same source identity, equivalent final-event
+JSON property ordering gives the same ID; changed file bytes, attachment
+availability, or event metadata give a new ID.
+Queued batches retain their existing bytes and IDs across upgrades and retries.
+This upgrade preserves transcript cursors and does not trigger history backfill.
+Explicitly rereading history captured before this identity format, replacing or
+truncating a transcript, or recovering an older enqueue-before-checkpoint crash
+can produce a one-time duplicate of an unchanged legacy event under a new ID.
+Previous normalized payloads are not retained locally after acknowledgement, so
+the collector cannot safely infer that an old raw-record ID represents the same
+attachment content. It does not rewrite or choose between historical revisions.
+
 The harness runs each hook asynchronously and owns its process. The hook saves
 its notice locally, then competes for one nonblocking uploader lock. The winner
 parses permitted transcripts, spools immutable batches and uploads; other hooks

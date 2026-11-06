@@ -7,7 +7,7 @@ import {homedir, hostname} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {configDir, atomicFile, atomicJson, accessToken, withSessionLock, syncDirectory} from '../session.ts';
 import {CliError} from '../oauth.ts';
-import {parseRecord, detectOrigin, hash, type Harness} from './parse.ts';
+import {parseRecord, detectOrigin, finalizeEventIdentity, hash, type Harness} from './parse.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 
 export const captureDir = () => join(configDir(),'capture');
@@ -120,7 +120,7 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   if(!events.length)return;
   if(config.authPending)throw new CliError('CAPTURE_AUTH_PENDING','Capture identity has not been authenticated yet');
   if(!meta.sessionId)throw new CliError('CAPTURE_SESSION_UNKNOWN','Transcript has no session identity');
-  const batch={schemaVersion:1,owner:config.owner,installationId:config.installationId,host:hostname(),...meta,events,attachments};
+  const batch={schemaVersion:1,owner:config.owner,installationId:config.installationId,host:hostname(),...meta,events:events.map(finalizeEventIdentity),attachments};
   const size=Buffer.byteLength(JSON.stringify(batch));
   if(size>16*1024*1024)throw new CliError('CAPTURE_BATCH_TOO_LARGE','A capture record exceeds the upload limit; retained locally for retry');
   atomicJson(join(captureDir(),'queue',hash(JSON.stringify(batch))+'.json'),batch);
