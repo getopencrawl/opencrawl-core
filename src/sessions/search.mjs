@@ -37,31 +37,34 @@ export function createSessionSearch(options) {
       if(raw)return result;
       return {total:result.hits.total?.value??0,hits:hits.map(hit=>({id:hit._id,score:hit._score,...hit._source}))};
     },
-    /** Activity counts for reporting. Never returns transcript text. With team:true the caller
+    /** Activity within the requested UTC calendar-day window, plus lifetimeEvents for
+     * index inventory. Never returns transcript text. With team:true the caller
      * must already have authorized the principal for its whole tenant. */
     async usage(principal,{team=false,days=30,now=Date.now()}={}) {
       sessionScope(principal);
-      if(!Number.isInteger(days)||days<1||days>365)fail(400,'Invalid usage window');
+      if(!Number.isInteger(days)||days<1||days>365||!Number.isFinite(now)||!Number.isFinite(new Date(now).getTime()))fail(400,'Invalid usage window');
       const day=t=>new Date(t).toISOString().slice(0,10),since=day(now-(days-1)*86400000),today=day(now);
+      const until=new Date(now).toISOString();
       const filter=[{term:{tenantId:principal.tenantId}},...(team?[]:[{term:{[f('userId')]:principal.userId}}]),{term:{[f('chunk')]:0}}];
       const messages={filter:{term:{[f('kind')]:'message'}}},toolCalls={value_count:{field:f('toolNames')}},sessions={cardinality:{field:f('sessionId')}};
       const result=await resolve(principal).collection('session').search(principal,{size:0,track_total_hits:true,query:{bool:{filter}},aggs:{
+        activity:{filter:{range:{[f('timestamp')]:{gte:since+'T00:00:00.000Z',lte:until}}},aggs:{
         sessions,messages,toolCalls,machines:{cardinality:{field:f('installationId')}},
         tools:{terms:{field:f('toolNames'),size:8}},opencrawl:{filter:{wildcard:{[f('toolNames')]:'*opencrawl*'}}},
         harnesses:{terms:{field:f('harness'),size:5}},origins:{terms:{field:f('origin'),size:6}},
         first:{min:{field:f('timestamp')}},last:{max:{field:f('timestamp')}},
-        daily:{filter:{range:{[f('timestamp')]:{gte:since,lte:today,format:'yyyy-MM-dd'}}},aggs:{days:{date_histogram:{field:f('timestamp'),calendar_interval:'day',format:'yyyy-MM-dd',min_doc_count:0,extended_bounds:{min:since,max:today}},aggs:{sessions}}}},
-        people:{terms:{field:f('userId'),size:500},aggs:{sessions,messages,toolCalls,last:{max:{field:f('timestamp')}},week:{filter:{range:{[f('timestamp')]:{gte:'now-7d'}}}}}},
-      }});
-      const a=result?.aggregations;
-      if(!a)throw new Error('Invalid usage response');
+        daily:{date_histogram:{field:f('timestamp'),calendar_interval:'day',format:'yyyy-MM-dd',min_doc_count:0,extended_bounds:{min:since,max:today}},aggs:{sessions}},
+        people:{terms:{field:f('userId'),size:500},aggs:{sessions,messages,toolCalls,last:{max:{field:f('timestamp')}},week:{filter:{range:{[f('timestamp')]:{gte:new Date(now-7*86400000).toISOString(),lte:until}}}}}},
+      }}}});
+      const a=result?.aggregations?.activity;
+      if(!a||!Number.isSafeInteger(a.doc_count)||result.hits.total?.relation!=='eq'||!Number.isSafeInteger(result.hits.total.value))throw new Error('Invalid usage response');
       const people=a.people.buckets.map(b=>({userId:b.key,events:b.doc_count,sessions:b.sessions.value,messages:b.messages.doc_count,toolCalls:b.toolCalls.value,lastAt:b.last.value_as_string??null,weekEvents:b.week.doc_count}));
       if(!team&&people.some(p=>p.userId!==principal.userId))throw new Error('Usage returned an invalid ownership scope');
       const terms=agg=>agg.buckets.map(b=>({name:b.key,count:b.doc_count}));
-      return {events:result.hits.total?.value??0,sessions:a.sessions.value,messages:a.messages.doc_count,toolCalls:a.toolCalls.value,
+      return {events:a.doc_count,lifetimeEvents:result.hits.total.value,sessions:a.sessions.value,messages:a.messages.doc_count,toolCalls:a.toolCalls.value,
         machines:a.machines.value,opencrawlCalls:a.opencrawl.doc_count,tools:terms(a.tools),harnesses:terms(a.harnesses),origins:terms(a.origins),
         firstAt:a.first.value_as_string??null,lastAt:a.last.value_as_string??null,
-        daily:a.daily.days.buckets.map(b=>({date:b.key_as_string,events:b.doc_count,sessions:b.sessions.value})),people};
+        daily:a.daily.buckets.map(b=>({date:b.key_as_string,events:b.doc_count,sessions:b.sessions.value})),people};
     },
     refresh:principal=>resolve(principal).refresh(principal),
   };

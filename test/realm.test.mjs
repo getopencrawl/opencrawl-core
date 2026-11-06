@@ -59,3 +59,17 @@ test('normalizer mapping upgrade is additive, tenant-bound and rejects incompati
   else {await assert.rejects(realm.ensureIndex(),/mismatch/);assert.equal(writes,0);}
  }
 });
+
+test('realm mapping verification rejects changed indexing and keyword limits', async () => {
+  for (const field of ['attachments', 'host']) {
+    const mapping = structuredClone(realmMapping);
+    mapping._meta = {schema: 1, tenantId: principal.tenantId};
+    if (field === 'attachments') mapping.properties.session.properties.attachments.enabled = true;
+    else mapping.properties.session.properties.host.ignore_above = 16;
+    const realm = createRealm({endpoint: 'http://search.test', tenantId: principal.tenantId, index: 'test', fetch: async url => {
+      if (url.pathname.endsWith('/_mapping')) return Response.json({test: {mappings: mapping}});
+      return Response.json({error: {type: 'resource_already_exists_exception'}}, {status: 400});
+    }});
+    await assert.rejects(realm.ensureIndex(), /mapping or tenant mismatch/);
+  }
+});

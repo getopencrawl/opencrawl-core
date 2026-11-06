@@ -29,7 +29,7 @@ export function realmDocument(corpus,id,document) {
 function compatible(actual,expected) {
   if(expected.type && (actual?.type||(actual?.properties?'object':undefined))!==expected.type) return false;
   if(expected.dynamic && actual?.dynamic!==expected.dynamic) return false;
-  for(const option of ['index','doc_values','ignore_malformed','analyzer']) if(expected[option]!==undefined && actual?.[option]!==expected[option]) return false;
+  for(const option of ['index','doc_values','ignore_malformed','analyzer','enabled','ignore_above']) if(expected[option]!==undefined && actual?.[option]!==expected[option]) return false;
   for(const key of ['properties','fields']) for(const [name,value] of Object.entries(expected[key]||{})) if(!compatible(actual?.[key]?.[name],value))return false;
   return true;
 }

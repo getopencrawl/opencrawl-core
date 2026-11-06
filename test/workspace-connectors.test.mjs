@@ -7,6 +7,7 @@ import {createConnectorSearch} from '../src/connectors/search.mjs';
 import {validateBinding, documentId, selectedObject} from '../src/connectors/scope.mjs';
 import {passages} from '../src/connectors/documents.mjs';
 import {normalizeGitHub} from '../src/connectors/github.mjs';
+import {workspaceAccumulator} from '../src/connectors/workspace.mjs';
 
 export const bindingFor = provider => ({tenantId: 'fixture-team', connectionId: 'fixture-conn', workspaceId: 'workspace', provider,
   access: 'workspace-global', rawPrefix: `raw/v1/source=${provider}/workspace=workspace/connection=fixture-conn/`});
@@ -123,4 +124,20 @@ test('search enforces current parent revision and rejects forged provider/parent
   stale = true; assert.equal((await search.search(principal, [h.binding], {query: 'pineapple', raw: true})).responses[0].hits.hits.length, 0);
   forged = true; await assert.rejects(search.search(principal, [h.binding], {query: 'pineapple'}), /scope/);
   await assert.rejects(search.search({tenantId: 'other'}, [h.binding], {query: 'pineapple'}), /scope/);
+});
+
+test('snapshot memory accounting releases obsolete transcript revisions', () => {
+  const accumulator = workspaceAccumulator(bindingFor('granola'));
+  const priorText = 'x'.repeat(8 * 1024 * 1024);
+  // More than 128 MiB passes through the reader, but only one 8 MiB revision is
+  // retained. This used to count discarded revisions and fail a small snapshot.
+  for (let revision = 0; revision < 17; revision++) {
+    accumulator.add('transcripts', env({note_id: 'm1', note_updated_at: new Date(1000 + revision).toISOString(),
+      start_time: '0', text: priorText}), 'snapshot-' + revision);
+  }
+  accumulator.add('transcripts', env({note_id: 'm1', note_updated_at: date, start_time: '0', text: 'Current short transcript'}), 'current');
+  accumulator.add('notes', env({id: 'm1', updated_at: date, title: 'Current meeting'}), 'current');
+  const docs = [...accumulator.documents()].map(item => item.document);
+  assert.equal(docs.filter(doc => doc.kind === 'transcript').length, 1);
+  assert.match(docs.find(doc => doc.kind === 'transcript').text, /Current short transcript/);
 });

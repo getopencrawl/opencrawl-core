@@ -4,7 +4,7 @@ import {homedir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {type Harness} from './parse.ts';
-import {atomicJson, configDir} from '../session.ts';
+import {atomicJson, configDir, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {captureDir, readCaptureConfig, commandForSelf, request, type CaptureConfig} from './runtime.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
@@ -52,6 +52,7 @@ export async function installCapture(api:string,{background=process.env.CLAUDE_C
   if(!harnesses.length||harnesses.some(h=>!['claude-code','codex'].includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code or codex',64);
   const {principal}=await request(api,'/api/sessions/identity');
   if(!principal?.tenantId || !principal?.userId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
+  return withSessionLock('capture:configuration',async()=>{
   const previous=readCaptureConfig();
   for(const dir of ['', 'backups','queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});
   const config:CaptureConfig={schemaVersion:1,api,installationId:previous?.installationId??randomUUID(),owner:principal,
@@ -91,6 +92,7 @@ export async function installCapture(api:string,{background=process.env.CLAUDE_C
   const backgroundStatus=background?installService(config,home):'disabled';
   return {installationId:config.installationId,owner:principal,background:backgroundStatus,harnesses:config.harnesses,
     nextStep:process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':'Review OpenCrawl hooks in Codex /hooks or desktop Settings > Hooks. Restart existing Claude sessions if hooks have not reloaded.'};
+  });
 }
 function installService(config:CaptureConfig,home:string) {
   const args=[...config.command,'collect','sync'];
@@ -113,7 +115,8 @@ function installService(config:CaptureConfig,home:string) {
   }
   return 'hooks-only';
 }
-export function uninstallCapture(home=homedir()) {
+export async function uninstallCapture(home=homedir()) {
+  return withSessionLock('capture:configuration',async()=>{
   const config=readCaptureConfig();if(!config)return {installed:false};
   if(process.platform==='darwin'){
     spawnSync('launchctl',['bootout','gui/'+process.getuid!()+'/'+service],{stdio:'ignore'});
@@ -127,4 +130,5 @@ export function uninstallCapture(home=homedir()) {
   // Stopping collection preserves queued data for an authenticated retry.
   atomicJson(join(captureDir(),'config.json'),{...config,disabled:true});
   return {installed:false,queuedDataPreserved:true};
+  });
 }
