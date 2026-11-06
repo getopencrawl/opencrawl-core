@@ -14,7 +14,7 @@ export function slackSourceActivities({resolve}) {
    heartbeat();const resolved=await resolve(input);
    const capture=createSlackFileCapture({...resolved,checkActive:async()=>{
     const current=await resolve(input);
-    if(JSON.stringify(current.binding)!==JSON.stringify(resolved.binding)||current.store.bucket!==resolved.store.bucket)throw Object.assign(new Error('Slack source authorization changed'),{permanent:true});
+    if(JSON.stringify(current.binding)!==JSON.stringify(resolved.binding)||current.store.bucket!==resolved.store.bucket||current.sourceIdentity!==resolved.sourceIdentity)throw Object.assign(new Error('Slack source authorization changed'),{permanent:true});
     Context.current().cancellationSignal.throwIfAborted();
    }});
    return await capture.step(input);
