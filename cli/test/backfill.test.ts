@@ -19,12 +19,11 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-backfill-')),saved={...process.env};
  const principal={tenantId:'test',userId:'test-user'},token='backfill-test-token-01234567890123456789';
  const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest({store,onStored:undefined});
- const receipts:any[]=[],batches:any[]=[];let requests=0,offline=false,wrongOwner=false,failUpload=false;
+ const receipts:any[]=[],batches:any[]=[];let requests=0,offline=false,failUpload=false;
  const handler=standaloneCapture({token,principal,store,prefix:undefined,search:undefined});
  const server=createServer(async(req,res)=>{
   requests++;
   if(offline || failUpload && req.url==='/api/sessions/batches'){res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:'OFFLINE'}}));return;}
-  if(wrongOwner && req.url==='/api/sessions/identity'){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({data:{principal:{...principal,userId:'other'}}}));return;}
   if(req.url==='/api/sessions/batches') {
    const chunks=[];for await(const chunk of req)chunks.push(chunk);
    const batch=JSON.parse(Buffer.concat(chunks).toString());batches.push(batch);
@@ -73,9 +72,11 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   await expect(backfill(api,'all',false)).rejects.toMatchObject({code:'BACKFILL_CONSENT_REQUIRED'});
   expect(requests).toBe(start);
   await syncCaptures();expect(batches).toHaveLength(0); // Historical mtimes are unchanged by install/skip.
-  wrongOwner=true;await expect(backfill(api,'all',true)).rejects.toMatchObject({code:'CAPTURE_OWNER_CHANGED'});wrongOwner=false;
   expect(readdirSync(join(captureDir(),'state'))).toHaveLength(0);
+  principal.tenantId='current-team'; // The saved installation still has the previous team.
   expect((await backfill(api,'claude-code',true)).processed).toBe(2);
+  expect(readCaptureConfig()!.owner.tenantId).toBe('current-team');
+  expect(batches.every(b=>b.owner.tenantId==='current-team')).toBe(true);
   expect(batches.map(b=>b.harness)).toEqual(['claude-code','claude-code']);
   offline=true;await expect(backfill(api,'codex',true)).rejects.toThrow();offline=false;
   failUpload=true;await expect(backfill(api,'codex',true)).rejects.toThrow();expect(captureStatus().queued).toBe(1);failUpload=false;
@@ -86,7 +87,7 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   for(const receipt of receipts){expect(await ingest.getBatch(principal,receipt)).not.toBeNull();expect(await ingest.getBatch({...principal,tenantId:'other'},receipt)).toBeNull();}
   const beforeReplay=requests;
   expect((await backfill(api,'all',true)).uploaded).toBe(0);
-  expect(requests-beforeReplay).toBe(1); // One owner check, no per-file network work.
+  expect(requests-beforeReplay).toBe(1); // One authentication, no per-file network work.
   // Invalid/mismatched commands fail without uploading or changing settings.
   await expect(collectCommand('install',api,{backfill:'invalid'})).rejects.toMatchObject({code:'INVALID_USAGE'});
   await expect(collectCommand('backfill',api,{harness:'invalid',yes:true})).rejects.toMatchObject({code:'INVALID_USAGE'});
