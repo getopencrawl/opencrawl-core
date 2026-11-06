@@ -40,7 +40,7 @@ export function createConnectorPipeline({binding, store, search, checkActive = a
           if (binding.provider !== 'slack' && !normalized.document.parentId && batch.some(d => d.document.parentId)) await flush();
           batch.push(normalized); batchBytes += bytes;
         }
-      }, {heartbeat});
+      }, {heartbeat, maxExpanded: (binding.provider === 'github' ? 2 : 1) * 1024 * 1024 * 1024});
       await flush();
       await active();
       // Only acknowledge after every bulk item succeeded. Partial writes replay safely.

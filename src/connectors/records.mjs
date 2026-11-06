@@ -4,7 +4,7 @@ import {Readable} from 'node:stream';
 import {invalidRecord} from './scope.mjs';
 
 /** Bounded streaming decoder shared by all provider adapters. */
-export async function readRecords(store, key, consume, {heartbeat = () => {}} = {}) {
+export async function readRecords(store, key, consume, {heartbeat = () => {}, maxExpanded = 1024 * 1024 * 1024} = {}) {
   const hash = createHash('sha256');
   async function* source() {
     const input = store.read ? store.read(key, {maxBytes: 256 * 1024 * 1024}) : [await store.get(key, {maxBytes: 256 * 1024 * 1024})];
@@ -33,7 +33,7 @@ export async function readRecords(store, key, consume, {heartbeat = () => {}} = 
   try {
     for await (const bytes of Readable.from(source()).compose(createGunzip())) {
       expanded += bytes.length;
-      if (expanded > 1024 * 1024 * 1024) invalidRecord('Expanded source exceeds limit');
+      if (expanded > maxExpanded) invalidRecord('Expanded source exceeds limit');
       pending += decoder.decode(bytes, {stream: true});
       let end;
       while ((end = pending.indexOf('\n')) >= 0) {await line(pending.slice(0, end)); pending = pending.slice(end + 1);}

@@ -56,7 +56,7 @@ The first implementation bounds snapshots at 10,000 objects and 128 MiB retained
 records. A changed inventory rereads selected raw objects. Larger connections
 must be partitioned before enabling this path; the worker fails rather than
 silently truncating. GitHub does not use that in-memory snapshot path. All reads
-are streaming, capped at 256 MiB compressed, 1 GiB expanded per object and 16 MiB
+are streaming, capped at 256 MiB compressed, 1 GiB expanded per object (2 GiB for GitHub) and 16 MiB
 per line. This admits the GitHub source's bounded diffs while discarding them
 before indexing. Temporal heartbeats cover I/O; activities retain the existing
 10-minute timeout and bounded concurrency.
