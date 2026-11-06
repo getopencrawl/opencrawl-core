@@ -1,9 +1,60 @@
 import {test, expect} from 'bun:test';
-import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync} from 'node:fs';
-import {join} from 'node:path';
+import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, renameSync} from 'node:fs';
+import {join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createRequire} from 'node:module';
-const launcher = createRequire(import.meta.url)('../bin/opencrawl.cjs');
+import {spawn, spawnSync, type ChildProcess} from 'node:child_process';
+const require = createRequire(import.meta.url);
+const launcher = require('../bin/opencrawl.cjs');
+const {makePackage} = require('./fixtures/launcher-update.cjs');
+const node = Bun.which('node')!;
+const fixture = resolve(import.meta.dir, 'fixtures/launcher-update.cjs');
+
+async function isolated(run: (directory: string, root: string) => Promise<void>) {
+  const directory = mkdtempSync(join(tmpdir(), 'opencrawl-update-'));
+  const previous = process.env.XDG_CACHE_HOME;
+  process.env.XDG_CACHE_HOME = join(directory, 'cache');
+  const root = join(directory, 'installed');
+  mkdirSync(root);
+  writeFileSync(join(root, 'package.json'), JSON.stringify({name: '@getopencrawl/cli', version: '0.1.0'}));
+  try { await run(directory, root); }
+  finally {
+    if (previous === undefined) delete process.env.XDG_CACHE_HOME; else process.env.XDG_CACHE_HOME = previous;
+    rmSync(directory, {recursive: true, force: true});
+  }
+}
+const cache = (directory: string) => join(directory, 'cache/opencrawl');
+const release = (directory: string, version: string, options?: object) => makePackage(join(cache(directory), 'releases', version), version, options);
+const selected = (root: string) => JSON.parse(readFileSync(join(launcher.activeRoot(root), 'package.json'), 'utf8')).version;
+
+async function children(directory: string, run: (start: (name: string, version: string, mode?: string) => void, wait: (name: string) => Promise<any>, allow: (name: string) => void) => Promise<void>) {
+  const dead = spawn(node, ['-e', ''], {stdio: 'ignore'});
+  await new Promise(resolve => dead.once('exit', resolve));
+  expect(() => process.kill(dead.pid!, 0)).toThrow();
+  writeFileSync(join(directory, 'stale-pid'), String(dead.pid));
+  mkdirSync(cache(directory), {recursive: true});
+  writeFileSync(join(cache(directory), 'update.lock'), String(dead.pid));
+  writeFileSync(join(directory, 'npm-cli.js'), '// fixture only');
+  const running: {child: ChildProcess; exited: Promise<unknown>}[] = [];
+  const start = (name: string, version: string, mode = 'update') => {
+    const child = spawn(node, [fixture, directory, name, version, mode], {env: {...process.env, npm_execpath: join(directory, 'npm-cli.js')}, stdio: 'ignore'});
+    running.push({child, exited: new Promise(resolve => child.once('exit', resolve))});
+  };
+  const wait = async (name: string) => {
+    const deadline = Date.now() + 15000;
+    while (!existsSync(join(directory, name))) {
+      if (Date.now() > deadline) throw new Error('Fixture timed out: ' + name);
+      await Bun.sleep(10);
+    }
+    return JSON.parse(readFileSync(join(directory, name), 'utf8'));
+  };
+  const allow = (name: string) => writeFileSync(join(directory, name), 'true');
+  try { await run(start, wait, allow); }
+  finally {
+    for (const {child} of running) if (child.exitCode === null && child.signalCode === null) child.kill();
+    await Promise.all(running.map(({exited}) => exited));
+  }
+}
 
 test('stable versions cannot become paths or downgrade; unsupported targets fail', () => {
   expect(launcher.compare('0.10.0', '0.9.9')).toBe(1);
@@ -12,33 +63,115 @@ test('stable versions cannot become paths or downgrade; unsupported targets fail
   expect(() => launcher.target('win32', 'arm64')).toThrow();
 });
 
-test('updates switch only after installation, serialize, throttle, and preserve working copy on failure', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'opencrawl-update-'));
-  const previous = process.env.XDG_CACHE_HOME;
-  process.env.XDG_CACHE_HOME = directory;
-  const root = join(directory, 'installed');
-  mkdirSync(root);
-  writeFileSync(join(root, 'package.json'), JSON.stringify({name: '@getopencrawl/cli', version: '0.1.0'}));
+test('updates publish complete releases, throttle, and preserve the working copy on failure', async () => isolated(async (directory, root) => {
   let requests = 0;
   const fetcher = async (url: string) => { expect(url.endsWith('/next')).toBe(true); requests++; return new Response(JSON.stringify({name: '@getopencrawl/cli', version: '0.2.0'})); };
-  const pointer = join(directory, 'opencrawl/current.json');
-  try {
-    await expect(launcher.update({root, fetcher, force: true, install: async () => { throw new Error('offline'); }})).rejects.toThrow('offline');
-    expect(existsSync(pointer)).toBe(false);
-    let release: () => void = () => {};
-    const blocked = new Promise<void>(resolve => { release = resolve; });
-    const first = launcher.update({root, fetcher, force: true, install: async () => { expect(existsSync(pointer)).toBe(false); await blocked; }});
-    await new Promise(resolve => setTimeout(resolve, 10));
-    expect((await launcher.update({root, fetcher, force: true})).busy).toBe(true);
-    release();
-    expect((await first).version).toBe('0.2.0');
-    expect(JSON.parse(readFileSync(pointer, 'utf8')).version).toBe('0.2.0');
-    const before = requests;
-    await launcher.update({root, fetcher});
-    expect(requests).toBe(before);
-    expect(launcher.activeRoot(root)).toBe(root); // damaged/missing cached release falls back
-  } finally {
-    if (previous === undefined) delete process.env.XDG_CACHE_HOME; else process.env.XDG_CACHE_HOME = previous;
-    rmSync(directory, {recursive: true, force: true});
+  const pointer = join(cache(directory), 'current.json');
+  await expect(launcher.update({root, fetcher, force: true, install: async () => { throw new Error('offline'); }})).rejects.toThrow('offline');
+  expect(existsSync(pointer)).toBe(false);
+  await expect(launcher.update({root, fetcher, force: true, install: async () => {}})).rejects.toThrow('incomplete');
+  expect(existsSync(pointer)).toBe(false);
+  let finish: () => void = () => {};
+  const blocked = new Promise<void>(resolve => { finish = resolve; });
+  const first = launcher.update({root, fetcher, force: true, install: async () => { await blocked; release(directory, '0.2.0'); }});
+  await Bun.sleep(10);
+  expect(selected(root)).toBe('0.1.0');
+  expect(existsSync(pointer)).toBe(false);
+  finish();
+  expect(await first).toEqual({updated: true, version: '0.2.0'});
+  expect(JSON.parse(readFileSync(pointer, 'utf8')).version).toBe('0.2.0');
+  const before = requests;
+  expect(await launcher.update({root, fetcher})).toEqual({updated: false, version: '0.2.0'});
+  expect(requests).toBe(before);
+}));
+
+test('selection uses the highest complete matching release despite stale pointers and partial stages', async () => isolated(async (directory, root) => {
+  release(directory, '0.2.0'); release(directory, '0.10.0');
+  release(directory, '0.11.0', {platformVersion: '0.1.0'});
+  const missingLauncher = release(directory, '0.12.0');
+  rmSync(join(missingLauncher, 'bin/opencrawl.cjs'));
+  makePackage(join(cache(directory), 'releases/.stage-incomplete'), '9.0.0');
+  writeFileSync(join(cache(directory), 'current.json'), JSON.stringify({version: '0.2.0'}));
+  expect(selected(root)).toBe('0.10.0');
+  writeFileSync(join(cache(directory), 'current.json'), 'invalid JSON');
+  expect(selected(root)).toBe('0.10.0');
+  rmSync(join(cache(directory), 'releases/0.10.0'), {recursive: true});
+  expect(selected(root)).toBe('0.2.0');
+  rmSync(join(cache(directory), 'releases/0.2.0'), {recursive: true});
+  expect(launcher.activeRoot(root)).toBe(root);
+}));
+
+test('concurrent stale recovery cannot downgrade a newer completed release', async () => isolated(async (directory, root) => {
+  for (const version of ['0.4.0', '0.5.0', '0.6.0']) release(directory, version);
+  // Hide the complete fixtures until each real cached-install path is reached.
+  const releases = join(cache(directory), 'releases');
+  for (const version of ['0.4.0', '0.5.0', '0.6.0']) {
+    const from = join(releases, version), to = join(directory, version);
+    renameSync(from, to);
   }
-});
+  await children(directory, async (start, wait, allow) => {
+    start('A', '0.5.0'); start('B', '0.4.0');
+    // Old launchers stop after observing the stale PID; new launchers proceed
+    // directly to independent registry checks. Reproduce the old TOCTOU order.
+    const deadline = Date.now() + 15000;
+    while (!existsSync(join(directory, 'A.fetch-entered')) && !existsSync(join(directory, 'A.stale-observed'))) {
+      if (Date.now() > deadline) throw new Error('Updater did not start');
+      await Bun.sleep(10);
+    }
+    if (existsSync(join(directory, 'A.stale-observed'))) {
+      await wait('B.stale-observed'); allow('A.allow-recovery'); await wait('A.fetch-entered'); allow('B.allow-recovery');
+    }
+    await Promise.all([wait('A.fetch-entered'), wait('B.fetch-entered')]);
+    renameSync(join(directory, '0.5.0'), join(releases, '0.5.0'));
+    allow('A.allow-fetch'); expect((await wait('A.result')).ok).toBe(true);
+    expect(selected(root)).toBe('0.5.0');
+    start('C', '0.6.0'); await wait('C.fetch-entered');
+    renameSync(join(directory, '0.6.0'), join(releases, '0.6.0'));
+    allow('C.allow-fetch'); expect((await wait('C.result')).ok).toBe(true);
+    renameSync(join(directory, '0.4.0'), join(releases, '0.4.0'));
+    allow('B.allow-fetch'); const delayed = await wait('B.result');
+    expect(delayed).toEqual({ok: true, result: {updated: true, version: '0.6.0'}});
+    expect(selected(root)).toBe('0.6.0');
+    // Even a concurrent old updater overwriting its hint cannot lower selection.
+    writeFileSync(join(cache(directory), 'current.json'), JSON.stringify({version: '0.4.0'}));
+    expect(selected(root)).toBe('0.6.0');
+  });
+}), 30000);
+
+test('same-version installers keep one complete publication and remove only their own stages', async () => isolated(async (directory, root) => {
+  await children(directory, async (start, wait, allow) => {
+    start('A', '0.2.0', 'install'); start('B', '0.2.0', 'install');
+    await Promise.all([wait('A.stage-ready'), wait('B.stage-ready')]);
+    expect(selected(root)).toBe('0.1.0');
+    allow('A.allow-install'); expect((await wait('A.result')).ok).toBe(true);
+    expect(selected(root)).toBe('0.2.0');
+    const winner = join(cache(directory), 'releases/0.2.0/winner');
+    writeFileSync(winner, 'first complete publication');
+    allow('B.allow-install'); expect((await wait('B.result')).ok).toBe(true);
+    expect(readdirSync(join(cache(directory), 'releases'))).toEqual(['0.2.0']);
+    expect(readFileSync(winner, 'utf8')).toBe('first complete publication');
+  });
+}), 30000);
+
+test('failed partial npm staging preserves the selected release and removes its stage', async () => isolated(async (directory, root) => {
+  release(directory, '0.2.0');
+  await children(directory, async (start, wait, allow) => {
+    start('A', '0.3.0', 'failure'); await wait('A.stage-ready');
+    expect(selected(root)).toBe('0.2.0');
+    allow('A.allow-install'); expect((await wait('A.result')).ok).toBe(false);
+    expect(selected(root)).toBe('0.2.0');
+    expect(readdirSync(join(cache(directory), 'releases'))).toEqual(['0.2.0']);
+  });
+}), 30000);
+
+test('the unmodified 0.4.12 installed launcher delegates through the compatibility hint', async () => isolated(async (directory, root) => {
+  mkdirSync(join(root, 'bin'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({name: '@getopencrawl/cli', version: '0.4.12'}));
+  writeFileSync(join(root, 'bin/opencrawl.cjs'), readFileSync(resolve(import.meta.dir, 'fixtures/launcher-0.4.12.cjs')));
+  release(directory, '0.4.13', {launcher: readFileSync(resolve(import.meta.dir, '../bin/opencrawl.cjs'), 'utf8')});
+  release(directory, '0.4.14', {launcher: 'module.exports.main = async () => {process.stdout.write("0.4.14\\n"); return 0;};'});
+  writeFileSync(join(cache(directory), 'current.json'), JSON.stringify({version: '0.4.13'}));
+  const result = spawnSync(node, [join(root, 'bin/opencrawl.cjs'), '--version'], {env: {...process.env, OPENCRAWL_NO_UPDATE: '1'}, encoding: 'utf8'});
+  expect(result.status).toBe(0);
+  expect(result.stdout.trim()).toBe('0.4.14');
+}));

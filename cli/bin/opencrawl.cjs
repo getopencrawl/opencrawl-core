@@ -46,14 +46,28 @@ function binary(root) {
   if (!fs.existsSync(file)) throw new Error('The OpenCrawl platform binary is missing. Reinstall @getopencrawl/cli.');
   return file;
 }
+function releaseRoot(version) {
+  return path.join(cacheRoot(), 'releases', version, 'node_modules', '@getopencrawl', 'cli');
+}
+function validRelease(root, version) {
+  try {
+    const pkg = read(path.join(root, 'package.json'));
+    return pkg?.name === PACKAGE && pkg.version === version &&
+      fs.statSync(path.join(root, 'bin/opencrawl.cjs')).isFile() && fs.statSync(binary(root)).isFile();
+  } catch { return false; }
+}
 function activeRoot(root = ROOT) {
-  const pkg = read(path.join(root, 'package.json'));
-  const current = read(path.join(cacheRoot(), 'current.json'));
-  if (stable(current?.version) && stable(pkg?.version) && compare(current.version, pkg.version) > 0) {
-    const cached = path.join(cacheRoot(), 'releases', current.version, 'node_modules', '@getopencrawl', 'cli');
-    if (read(path.join(cached, 'package.json'))?.version === current.version) {
-      try { binary(cached); return cached; } catch {} // a damaged cache must not break the installed copy
-    }
+  const installed = read(path.join(root, 'package.json'))?.version;
+  if (!stable(installed)) return root;
+  let versions;
+  try { versions = fs.readdirSync(path.join(cacheRoot(), 'releases')).filter(stable).sort((a, b) => compare(b, a)); }
+  catch { return root; }
+  // Complete release directories are immutable publications. The mutable legacy
+  // pointer can be stale or overwritten by an older updater; it grants no priority.
+  for (const version of versions) {
+    if (compare(version, installed) <= 0) break;
+    const cached = releaseRoot(version);
+    if (validRelease(cached, version)) return cached;
   }
   return root;
 }
@@ -66,49 +80,37 @@ function npmCli(nodeExecutable = process.execPath) {
   }
   throw new Error('npm is required for updates. Install Node.js with npm and retry.');
 }
-function acquireUpdateLock() {
-  const lock = path.join(cacheRoot(), 'update.lock');
-  fs.mkdirSync(cacheRoot(), {recursive: true, mode: 0o700});
-  try { const fd = fs.openSync(lock, 'wx', 0o600); fs.writeFileSync(fd, String(process.pid)); fs.closeSync(fd); }
-  catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-    const pid = Number(fs.readFileSync(lock, 'utf8'));
-    if (pid > 0) {
-      try { process.kill(pid, 0); return null; }
-      catch (check) { if (check.code !== 'ESRCH') return null; }
-    } else if (Date.now() - fs.statSync(lock).mtimeMs < 5 * 60_000) return null;
-    try { fs.unlinkSync(lock); } catch {}
-    return acquireUpdateLock();
-  }
-  return () => fs.unlinkSync(lock);
-}
 async function update({force = false, root = ROOT, fetcher = fetch, install = installRelease} = {}) {
-  const unlock = acquireUpdateLock();
-  if (!unlock) return {updated: false, busy: true};
-  try {
-    const stateFile = path.join(cacheRoot(), 'update.json');
-    const state = read(stateFile);
-    const current = read(path.join(activeRoot(root), 'package.json')).version;
-    if (!force && state?.checkedAt > Date.now() - DAY) return {updated: false, version: current};
-    const response = await fetcher(`${REGISTRY}/@getopencrawl%2fcli/${CHANNEL}`, {redirect: 'error', signal: AbortSignal.timeout(10_000)});
-    if (!response.ok) throw new Error('The npm registry could not check for updates.');
-    const latest = await response.json();
-    if (latest.name !== PACKAGE || !stable(latest.version)) throw new Error('The registry returned invalid release metadata.');
-    if (compare(latest.version, current) <= 0) { write(stateFile, {checkedAt: Date.now()}); return {updated: false, version: current}; }
-    await install(latest.version);
-    write(path.join(cacheRoot(), 'current.json'), {version: latest.version});
-    write(stateFile, {checkedAt: Date.now()});
-    return {updated: true, version: latest.version};
-  } finally { unlock(); }
+  const stateFile = path.join(cacheRoot(), 'update.json');
+  const state = read(stateFile);
+  const current = read(path.join(activeRoot(root), 'package.json')).version;
+  if (!force && state?.checkedAt > Date.now() - DAY) return {updated: false, version: current};
+  const response = await fetcher(`${REGISTRY}/@getopencrawl%2fcli/${CHANNEL}`, {redirect: 'error', signal: AbortSignal.timeout(10_000)});
+  if (!response.ok) throw new Error('The npm registry could not check for updates.');
+  const latest = await response.json();
+  if (latest.name !== PACKAGE || !stable(latest.version)) throw new Error('The registry returned invalid release metadata.');
+  if (compare(latest.version, current) <= 0) { write(stateFile, {checkedAt: Date.now()}); return {updated: false, version: current}; }
+  await install(latest.version);
+  if (!validRelease(releaseRoot(latest.version), latest.version)) throw new Error('The installed update is incomplete.');
+  const selected = read(path.join(activeRoot(root), 'package.json')).version;
+  // Keep old npm-installed bootstraps able to delegate to the cached launcher.
+  // New launchers select the maximum complete release, even if this hint races.
+  write(path.join(cacheRoot(), 'current.json'), {version: selected});
+  write(stateFile, {checkedAt: Date.now()});
+  return {updated: compare(selected, current) > 0, version: selected};
 }
 async function installRelease(version, {registry = REGISTRY} = {}) {
+  if (!stable(version)) throw new Error('Invalid release version.');
   const origin = new URL(registry);
   if (registry !== REGISTRY && !(origin.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(origin.hostname))) throw new Error('Invalid release registry.');
   const releases = path.join(cacheRoot(), 'releases');
   fs.mkdirSync(releases, {recursive: true, mode: 0o700});
   const destination = path.join(releases, version);
   // Reuse a fully staged version if pointer publication was interrupted.
-  if (fs.existsSync(destination)) { binary(path.join(destination, 'node_modules/@getopencrawl/cli')); return; }
+  if (fs.existsSync(destination)) {
+    if (!validRelease(releaseRoot(version), version)) throw new Error('The cached update is incomplete.');
+    return;
+  }
   const stage = fs.mkdtempSync(path.join(releases, '.stage-'));
   try {
     fs.writeFileSync(path.join(stage, 'package.json'), '{"private":true}\n');
@@ -119,8 +121,13 @@ async function installRelease(version, {registry = REGISTRY} = {}) {
     const installed = path.join(stage, 'node_modules/@getopencrawl/cli');
     const pkg = read(path.join(installed, 'package.json'));
     if (pkg?.name !== PACKAGE || pkg.version !== version) throw new Error('The installed release does not match the requested version.');
-    binary(installed);
-    fs.renameSync(stage, destination);
+    if (!validRelease(installed, version)) throw new Error('The installed update is incomplete.');
+    try { fs.renameSync(stage, destination); }
+    catch (error) {
+      // Another installer may have published this exact immutable release while
+      // npm was running. Validate its complete result and discard only our stage.
+      if (!validRelease(releaseRoot(version), version)) throw error;
+    }
   } finally { fs.rmSync(stage, {recursive: true, force: true}); }
 }
 async function automaticUpdate() {
@@ -145,7 +152,7 @@ async function main(args = process.argv.slice(2)) {
   catch {} // The native parser produces the public, versioned usage error.
   if (parsed?.positionals.length === 1 && parsed.positionals[0] === 'update' && !parsed.values.help && !parsed.values.version) {
     const data = await update({force: true});
-    process.stdout.write(args.includes('--json') ? JSON.stringify({schemaVersion: 1, data}) + '\n' : data.busy ? 'An update is already running.\n' : data.updated ? `Installed opencrawl ${data.version}. Your next invocation will use it.\n` : `opencrawl ${data.version} is current.\n`);
+    process.stdout.write(args.includes('--json') ? JSON.stringify({schemaVersion: 1, data}) + '\n' : data.updated ? `Installed opencrawl ${data.version}. Your next invocation will use it.\n` : `opencrawl ${data.version} is current.\n`);
     return 0;
   }
   if (!(args[0] === 'collect' && ['hook','worker'].includes(args[1]))) await automaticUpdate();
