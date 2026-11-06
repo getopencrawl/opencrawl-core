@@ -90,17 +90,25 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
         },
         async mget(principal,ids){scope(principal);const result=await request('/_mget',{ids:ids.map(encodedId)});if(!Array.isArray(result.docs)||result.docs.length!==ids.length)throw fail('Incomplete realm lookup');const docs=result.docs.map(decode);if(docs.some(d=>!ids.includes(d._id))||new Set(docs.map(d=>d._id)).size!==ids.length)throw fail('Realm lookup identity mismatch');return {...result,docs};},
         async bulk(principal,items,{refresh=false}={}){
-          scope(principal);if(!items.length)return {items:[]};
-          const body=items.map(({id,document,script})=>{
-            const doc=encode(id,document);
-            return JSON.stringify({[script?'update':'index']:{_id:encodedId(id),...(script?{retry_on_conflict:5}:{})}})+'\n'+JSON.stringify(script?{scripted_upsert:true,script:{lang:'painless',source:script,params:{doc}},upsert:{}}:doc)+'\n';
-          }).join('');
-          if(Buffer.byteLength(body)>4*1024*1024)throw fail('Realm bulk exceeds limit',400);
+          let body;
+          try {
+            scope(principal);if(!items.length)return {items:[]};
+            body=items.map(({id,document,script})=>{
+              const doc=encode(id,document);
+              return JSON.stringify({[script?'update':'index']:{_id:encodedId(id),...(script?{retry_on_conflict:5}:{})}})+'\n'+JSON.stringify(script?{scripted_upsert:true,script:{lang:'painless',source:script,params:{doc}},upsert:{}}:doc)+'\n';
+            }).join('');
+            if(Buffer.byteLength(body)>4*1024*1024)throw fail('Realm bulk exceeds limit',400);
+          } catch(error) {throw Object.assign(error,{writeOutcome:'not-applied'});}
           const result=await request('/_bulk'+(refresh?'?refresh=wait_for':''),body,'POST','application/x-ndjson');
           if(result.errors||!Array.isArray(result.items)||result.items.length!==items.length||result.items.some(item=>{const op=item.index||item.update;return !op||op.status<200||op.status>=300;}))throw fail('Realm bulk contained failed or missing items');
           return result;
         },
-        async update(principal,id,{script,upsert}){scope(principal);return request('/_update/'+encodedId(id),{script,upsert:encode(id,upsert)});},
+        async update(principal,id,{script,upsert}){
+          let body;
+          try {scope(principal);body={script,upsert:encode(id,upsert)};}
+          catch(error){throw Object.assign(error,{writeOutcome:'not-applied'});}
+          return request('/_update/'+encodedId(id),body);
+        },
       };
     },
     async refresh(principal){scope(principal);return request('/_refresh');},
@@ -126,14 +134,18 @@ export function createIndexTransport({endpoint,index,username,password,credentia
   if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!(allowIndexPattern?/^[a-z][a-z0-9_*-]{0,150}$/:/^[a-z][a-z0-9_-]{0,150}$/).test(index))throw fail('Invalid index transport',400);
   return async function request(path,body,method='POST',contentType='application/json') {
     if(allowIndexPattern && !(method==='POST'&&path==='/_search'))throw fail('Index patterns are read-only migration inventory',403);
-    const url=new URL(base.href.replace(/\/$/,'')+'/'+index.replaceAll('*','%2A')+path);
-    body=body===undefined?undefined:typeof body==='string'?body:JSON.stringify(body);
-    let headers={'content-type':contentType};
-    if(username)headers.authorization='Basic '+Buffer.from(username+':'+password).toString('base64');
-    if(credentials){const c=await credentials();if(c.sessionToken)headers['x-amz-security-token']=c.sessionToken;headers=signRequest({method,url,body,headers,region,service:'es',...c});}
+    let url,headers;
+    try {
+      url=new URL(base.href.replace(/\/$/,'')+'/'+index.replaceAll('*','%2A')+path);
+      body=body===undefined?undefined:typeof body==='string'?body:JSON.stringify(body);
+      headers={'content-type':contentType};
+      if(username)headers.authorization='Basic '+Buffer.from(username+':'+password).toString('base64');
+      if(credentials){const c=await credentials();if(c.sessionToken)headers['x-amz-security-token']=c.sessionToken;headers=signRequest({method,url,body,headers,region,service:'es',...c});}
+    } catch(error){throw Object.assign(error,{writeOutcome:'not-applied'});}
     const response=await send(url,{method,body,headers,signal:AbortSignal.timeout(30000),redirect:'error'});
     let data;try{data=await response.json();}catch{throw fail('Invalid realm response');}
-    if(!response.ok)throw Object.assign(fail('Realm request failed ('+response.status+')',response.status),{httpStatus:response.status,type:data?.error?.type});
+    if(!response.ok)throw Object.assign(fail('Realm request failed ('+response.status+')',response.status),{httpStatus:response.status,type:data?.error?.type,
+      ...([401,403].includes(response.status)&&['security_exception','authentication_exception','authorization_exception'].includes(data?.error?.type)?{writeOutcome:'not-applied'}:{})});
     return data;
   };
 }

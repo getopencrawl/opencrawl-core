@@ -1,3 +1,4 @@
+import {guardConnectorWrites} from './write-barrier.mjs';
 import {realmIndex} from '../search/realm.mjs';
 import {readFile} from 'node:fs/promises';
 import {createObjectStore, awsCredentials} from '../sessions/s3-store.mjs';
@@ -15,7 +16,7 @@ const search = createConnectorSearch({...config.search, tenantId: binding.tenant
 await store.checkAccess(); await search.ensureIndex();
 if (action === 'search') console.log(JSON.stringify(await search.search({tenantId: binding.tenantId}, [binding], {query}), null, 2));
 else {
-  const pipeline = createConnectorPipeline({binding, store, search});
+  const pipeline = createConnectorPipeline({binding, ...guardConnectorWrites({binding, store, search})});
   let cursor = null, objects = 0, records = 0;
   do {
     const page = await pipeline.listPage({cursor});

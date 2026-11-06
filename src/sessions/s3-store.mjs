@@ -23,17 +23,30 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
     : bucket.includes('.') ? `https://s3.${region}.amazonaws.com/${bucket}` : `https://${bucket}.s3.${region}.amazonaws.com`;
 
   async function request(method, key, {query = {}, body, headers = {}} = {}) {
-    const url = new URL(`${root}/${key === undefined ? '' : key.split('/').map(encode).join('/')}`);
-    for (const [name, value] of Object.entries(query)) if (value !== undefined && value !== null) url.searchParams.set(name, value);
-    const {accessKeyId, secretAccessKey, sessionToken} = await resolve();
-    const signed = signRequest({
-      method, url, body, region, accessKeyId, secretAccessKey,
-      headers: sessionToken ? {...headers, 'x-amz-security-token': sessionToken} : headers,
-    });
+    let url, signed;
+    try {
+      url = new URL(`${root}/${key === undefined ? '' : key.split('/').map(encode).join('/')}`);
+      for (const [name, value] of Object.entries(query)) if (value !== undefined && value !== null) url.searchParams.set(name, value);
+      const {accessKeyId, secretAccessKey, sessionToken} = await resolve();
+      signed = signRequest({
+        method, url, body, region, accessKeyId, secretAccessKey,
+        headers: sessionToken ? {...headers, 'x-amz-security-token': sessionToken} : headers,
+      });
+    } catch (error) {throw Object.assign(error, method === 'PUT' ? {writeOutcome: 'not-applied'} : {});}
     // A signed request is bound to this origin. In particular, fetch retains the
     // security-token header on cross-origin redirects even when it strips Authorization.
     const res = await fetchImpl(url, {method, headers: signed, body, redirect: 'error'});
-    if (!res.ok && !(res.status === 404 && method !== 'PUT')) throw await storeError(res, `${method} ${key ?? bucket}`);
+    if (!res.ok && !(res.status === 404 && method !== 'PUT')) {
+      const error = await storeError(res, `${method} ${key ?? bucket}`);
+      // One atomic PutObject was positively refused. Do not generalize to
+      // transport failures, server errors, or arbitrary S3-compatible responses.
+      if (method === 'PUT' && ([401, 403].includes(res.status) && ['AccessDenied', 'InvalidAccessKeyId', 'SignatureDoesNotMatch', 'ExpiredToken', 'InvalidToken', 'TokenRefreshRequired', 'RequestTimeTooSkewed'].includes(error.code) ||
+          res.status === 412 && error.code === 'PreconditionFailed' ||
+          res.status === 400 && ['BadDigest', 'InvalidDigest', 'InvalidArgument', 'InvalidRequest', 'EntityTooLarge', 'AuthorizationHeaderMalformed'].includes(error.code) ||
+          res.status === 404 && error.code === 'NoSuchBucket' ||
+          res.status === 409 && error.code === 'ConditionalRequestConflict')) error.writeOutcome = 'not-applied';
+      throw error;
+    }
     return res;
   }
 
@@ -257,5 +270,6 @@ async function storeError(res, operation) {
   const message = body.match(/<Message>([^<]*)</)?.[1];
   const error = new Error(`S3 ${operation} failed with ${res.status}${code ? `: ${code}${message ? ` (${message})` : ''}` : ''}`);
   error.status = res.status;
+  error.code = body.match(/<Code>([^<]*)</)?.[1];
   return error;
 }

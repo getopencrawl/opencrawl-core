@@ -17,6 +17,7 @@
     "./connectors/pipeline": "./src/connectors/pipeline.mjs",
     "./connectors/search": "./src/connectors/search.mjs",
     "./connectors/scope": "./src/connectors/scope.mjs",
+    "./connectors/write-barrier": "./src/connectors/write-barrier.mjs",
     "./connectors/workflow": "./src/connectors/workflow.mjs",
     "./connectors/temporal": "./src/connectors/temporal/worker.mjs",
     "./connectors/temporal-client": "./src/connectors/temporal/client.mjs",
