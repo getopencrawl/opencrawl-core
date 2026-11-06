@@ -17,7 +17,7 @@ function mock({partial = false, forged = false, bulkFailure = false, gap = false
     if (String(url).endsWith('/_mapping')) return Response.json({'board-test': {mappings: {...realmMapping,_meta:{tenantId:'team-a',schema:1}}}});
     if (String(url).includes('/_bulk')) {written = true; return Response.json({errors: bulkFailure, items: messages.slice(gap ? 0 : 6).map(() => ({index: {status: bulkFailure ? 500 : 201}}))});}
     if (body?.size === 0) return realmResponse('board',{timed_out: false, _shards: {failed: 0}, hits: {total: {value: written ? 8 : gap ? 5 : 6, relation: 'eq'}}, aggregations: {last: {value: written ? 8 : 6}}});
-    if (body?.size === 10000) return realmResponse('board',{timed_out: partial, _shards: {failed: 0}, hits: {total: {value: 8, relation: 'eq'}, hits: [...messages].reverse().map(m => ({_id: boardId + ':' + m.id, _source: {id: m.id, tenantId: forged ? 'team-b' : principal.tenantId, boardId}}))}, aggregations: {topic: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'auth', doc_count: 6}, {key: 'other', doc_count: 2}]}, agent: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'agent-a', doc_count: 8}]}}});
+    if (body?.size === 1000) return realmResponse('board',{timed_out: partial, _shards: {failed: 0}, hits: {total: {value: 8, relation: 'eq'}, hits: messages.map(m => ({_score:1, _id: boardId + ':' + m.id, _source: {id: m.id, tenantId: forged ? 'team-b' : principal.tenantId, boardId}}))}, aggregations: {topic: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'auth', doc_count: 6}, {key: 'other', doc_count: 2}]}, agent: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'agent-a', doc_count: 8}]}}});
     return Response.json({acknowledged: true});
   };
   return {requests, advance: () => {time += 300001;}, search: createBoardSearch({endpoint: 'http://search.test', index: 'board-test', fetch: send, now: () => time})};
@@ -33,9 +33,9 @@ test('catches up projection and returns full ranked messages, exact facets and s
   assert.equal(first.facets.agent.values[0].name, 'codex');
   const bulk = f.requests.find(r => r.url.includes('_bulk'));
   assert.match(bulk.body, /"id":7/); assert.doesNotMatch(bulk.body, /"id":6/);
-  const ranking = f.requests.find(r => r.parsed?.size === 10000).parsed;
+  const ranking = f.requests.find(r => r.parsed?.size === 1000).parsed;
   assert.ok(ranking.query.bool.filter.some(f => f.term?.tenantId === principal.tenantId));
-  assert.equal(ranking.sort[0]._score, 'desc');
+  assert.equal(ranking.track_scores, true); assert.deepEqual(ranking.sort, [{'board.id':'asc'}]);
   let cursor = first.next, all = first.messages.map(m => m.id), count = f.requests.length;
   const grown = [...messages, {...messages[0], id: 9, text: 'New concurrent post'}];
   while (cursor) {
@@ -62,8 +62,8 @@ test('filters are exact and message bodies are never sliced to fit the response 
   const output = await f.search.search(principal, big, key, {...query, limit:10, topics:['auth'], agents:['agent-a'], authors:['alice'], since:'2023-11-01T00:00:00Z', until:'2024-01-01T00:00:00Z', sort:'newest'});
   assert.ok(output.messages.length < 8); assert.ok(output.next); assert.ok(Buffer.byteLength(JSON.stringify(output)) <= 8192);
   assert.ok(output.messages.every(m => m.text === big[0].text));
-  const body = f.requests.find(r => r.parsed?.size === 10000).parsed;
-  assert.deepEqual(body.sort, [{'board.timestamp':'desc'},{'board.id':'desc'}]);
+  const body = f.requests.find(r => r.parsed?.size === 1000).parsed;
+  assert.deepEqual(body.sort, [{'board.id':'asc'}]);
   assert.ok(body.query.bool.must[0].bool.filter.some(f => f.terms?.['board.author']?.[0] === 'alice'));
   assert.ok(body.query.bool.must[0].bool.filter.some(f => f.range?.['board.timestamp']?.gte === '2023-11-01T00:00:00Z'));
 });

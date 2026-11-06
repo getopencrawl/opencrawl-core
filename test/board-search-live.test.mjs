@@ -62,3 +62,24 @@ test('real OpenSearch and MCP: relevance, phrase boost, facets, scope, full text
   assert.equal((await fetch(endpoint+'/'+index,{method:'DELETE'})).ok,true);
   assert.equal((await call('board_search',{workspace:'team-a',query:'refresh'})).total,3);
 });
+
+
+test('more than 10000 messages remain searchable with exact facets and exhaustive stable pages', {skip:!endpoint}, async t => {
+  const environment='test-'+randomUUID().slice(0,8),principal={tenantId:'large-board',userId:'author'},index=realmIndex(environment,principal.tenantId);
+  t.after(async()=>{const r=await fetch(endpoint+'/'+index,{method:'DELETE'});assert.ok(r.ok||r.status===404);});
+  const search=createBoardSearch({endpoint,environment});
+  const messages=Array.from({length:10005},(_,i)=>({id:i+1,timestamp:1700000000000+i,topic:'work',agent:'writer',author:'author',name:'System test',text:i>=10000?'marker priority':'marker',requestId:String(i)}));
+  const key='test/large-board.json',args={workspace:principal.tenantId,query:'marker',limit:10,facets:['topic']};
+  let page=await search.search(principal,messages,key,args);
+  assert.equal(page.total,10005);assert.deepEqual(page.facets.topic.values,[{value:'work',count:10005}]);
+  const seen=new Set(),grown=[...messages,{...messages[0],id:10006,text:'marker concurrent'}];
+  for(;;){
+    assert.ok(Buffer.byteLength(JSON.stringify(page))<=8192);
+    for(const m of page.messages){assert.ok(!seen.has(m.id));seen.add(m.id);assert.equal(m.text,messages[m.id-1].text);}
+    if(!page.next)break;
+    page=await search.search(principal,grown,key,{...args,cursor:page.next});assert.equal(page.total,10005);
+  }
+  assert.equal(seen.size,10005);assert.ok(seen.has(1)&&seen.has(10005));assert.ok(!seen.has(10006));
+  const tail=await search.search(principal,messages,key,{...args,query:'priority'});
+  assert.equal(tail.total,5);assert.deepEqual(tail.messages.map(m=>m.id),[10005,10004,10003,10002,10001]);
+});
