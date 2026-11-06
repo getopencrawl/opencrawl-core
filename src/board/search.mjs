@@ -80,6 +80,10 @@ export function createBoardSearch({endpoint, index = 'opencrawl-board-v1', usern
       const result = await request('/_bulk?refresh=wait_for', body, 'POST', 'application/x-ndjson');
       if (result.errors || result.items?.length !== batch.length || result.items.some(i => !i.index || i.index.status < 200 || i.index.status >= 300)) throw error('Board indexing incomplete; retry search to repair it');
     }
+    if (start < count) {
+      const verified = complete(await request('/_search', {size: 0, track_total_hits: true, query: {bool: {filter}}}));
+      if (verified.hits.total.value !== count) throw error('Board indexing coverage is incomplete; retry search');
+    }
     for (const [name, values] of [['topic', args.topics], ['agent', args.agents], ['author', args.authors]]) if (values.length) filter.push({terms: {[name]: values}});
     if (args.since || args.until) filter.push({range: {timestamp: {...(args.since ? {gte: args.since} : {}), ...(args.until ? {lte: args.until} : {})}}});
     const query = {bool: {filter, ...(args.query ? {

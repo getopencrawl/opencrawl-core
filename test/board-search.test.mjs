@@ -8,13 +8,13 @@ const boardId = createHash('sha256').update(key).digest('hex');
 const messages = Array.from({length: 8}, (_, i) => ({id: i + 1, timestamp: 1700000000000 + i, topic: i < 6 ? 'auth' : 'other', agent: 'agent-a', author: 'alice', name: 'codex', text: 'Refresh ' + i, requestId: String(i)}));
 const query = {workspace: 'team-a', query: 'refresh', limit: 2};
 function mock({partial = false, forged = false, bulkFailure = false, gap = false} = {}) {
-  const requests = []; let time = 1;
+  const requests = []; let time = 1, written = false;
   const send = async (url, options) => {
     const body = options.body && JSON.parse(options.body.startsWith('{"index":') ? '{}' : options.body);
     requests.push({url: String(url), ...options, parsed: body});
     if (String(url).endsWith('/_mapping')) return Response.json({'board-test': {mappings: boardIndexMapping}});
-    if (String(url).includes('/_bulk')) return Response.json({errors: bulkFailure, items: messages.slice(gap ? 0 : 6).map(() => ({index: {status: bulkFailure ? 500 : 201}}))});
-    if (body?.size === 0) return Response.json({timed_out: false, _shards: {failed: 0}, hits: {total: {value: gap ? 5 : 6, relation: 'eq'}}, aggregations: {last: {value: 6}}});
+    if (String(url).includes('/_bulk')) {written = true; return Response.json({errors: bulkFailure, items: messages.slice(gap ? 0 : 6).map(() => ({index: {status: bulkFailure ? 500 : 201}}))});}
+    if (body?.size === 0) return Response.json({timed_out: false, _shards: {failed: 0}, hits: {total: {value: written ? 8 : gap ? 5 : 6, relation: 'eq'}}, aggregations: {last: {value: written ? 8 : 6}}});
     if (body?.size === 10000) return Response.json({timed_out: partial, _shards: {failed: 0}, hits: {total: {value: 8, relation: 'eq'}, hits: [...messages].reverse().map(m => ({_id: boardId + ':' + m.id, _source: {id: m.id, tenantId: forged ? 'team-b' : principal.tenantId, boardId}}))}, aggregations: {topic: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'auth', doc_count: 6}, {key: 'other', doc_count: 2}]}, agent: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'agent-a', doc_count: 8}]}}});
     return Response.json({acknowledged: true});
   };
