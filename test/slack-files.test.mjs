@@ -31,7 +31,7 @@ test('file content references reject foreign scope, corruption, lossy records, a
  }
  await assert.rejects(normalizeSlackFile(binding,{...f.envelope,_airbyte_meta:{changes:[{}]}},key,{store:f.store}));
  await assert.rejects(normalizeSlackFile(binding,f.envelope,key,{store:{get:async()=>Buffer.alloc(f.envelope._airbyte_data.content_bytes)}}),/checksum/);
- const unsupported=fixture('binary');unsupported.envelope._airbyte_data.media_type='application/octet-stream';
+ const unsupported=fixture('binary\x00control');unsupported.envelope._airbyte_data.media_type='application/octet-stream';
  await assert.rejects(normalizeSlackFile(binding,unsupported.envelope,key,{store:unsupported.store}),/extraction failed/);
 });
 test('failed chunk writes never publish a manifest or receipt; retry publishes all chunks first',async()=>{

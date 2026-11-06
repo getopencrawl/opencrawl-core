@@ -35,7 +35,7 @@ test('every PDF page text layer is extracted, including the final page',async()=
 test('empty PDF text layers are explicit and unsupported/corrupt inputs never report success',async()=>{
  const result=await extractDocumentText(pdf(['']),{mediaType:'application/pdf'});assert.equal(result.status,'no-text-layer');assert.equal(result.pages,1);
  await assert.rejects(extractDocumentText(Buffer.from('not a PDF'),{mediaType:'application/pdf'}),/extraction failed/);
- await assert.rejects(extractDocumentText(Buffer.from('binary'),{mediaType:'application/octet-stream'}),/extraction failed/);
+ await assert.rejects(extractDocumentText(Buffer.from([0,255,1]),{mediaType:'application/octet-stream'}),/extraction failed/);
  const controller=new AbortController();controller.abort();await assert.rejects(extractDocumentText(Buffer.from('text'),{mediaType:'text/plain',signal:controller.signal}));
 });
 
@@ -46,4 +46,11 @@ test('PDF font fragments join inside words while separate positioned labels reta
  assert.equal(pdfText([item('15m',0,18),item('1h',24,12),item('6h',42,12)]),'15m 1h 6h');
  assert.equal(pdfText([item('15m',80,18),item('1h',50,12),item('6h',10,12)]),'15m 1h 6h');
  assert.equal(pdfText([{...item('first line',0,40),hasEOL:true},item('second line',0,45)]),'first line\nsecond line');
+});
+
+test('generic binary MIME retains complete valid UTF-8 text but rejects binary control data',async()=>{
+ const text='Unlabeled text 🌍\n'.repeat(2000)+'final suffix';
+ const result=await extractDocumentText(Buffer.from(text),{mediaType:'application/octet-stream'});
+ assert.equal(result.parts[0].text,text);
+ await assert.rejects(extractDocumentText(Buffer.from('visible\x00binary'),{mediaType:'application/octet-stream'}),/extraction failed/);
 });
