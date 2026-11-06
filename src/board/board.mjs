@@ -23,7 +23,7 @@ const ttl = 15 * 60 * 1000;
 export function createBoard({store, prefix, now = Date.now, search}) {
   if (!store?.readVersion || !store?.compareAndSet || !prefix || /(^|\/)\.\.(\/|$)/.test(prefix)) throw new Error('Board requires a conditional store and prefix');
   function scope(principal) {
-    if (!principal || typeof principal.tenantId !== 'string' || !principal.tenantId || typeof principal.userId !== 'string' || !principal.userId) throw fail('Board scope required', 403);
+    if (!principal || principal.captureAccess !== undefined || typeof principal.tenantId !== 'string' || !principal.tenantId || typeof principal.userId !== 'string' || !principal.userId) throw fail('Board scope required', 403);
     return `${prefix}/tenants/${hash(principal.tenantId)}.json`;
   }
   async function read(key) {
