@@ -7,6 +7,7 @@ import {type Harness} from './parse.ts';
 import {atomicJson, configDir} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {captureDir, readCaptureConfig, commandForSelf, request, type CaptureConfig} from './runtime.ts';
+import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 const marker='OpenCrawl session capture';
 const service='com.getopencrawl.capture';
 const quote=(s:string)=>process.platform==='win32'?'"'+s.replace(/"/g,'""')+'"':"'"+s.replace(/'/g,"'\\''")+"'";
@@ -56,7 +57,8 @@ export async function installCapture(api:string,{background=process.env.CLAUDE_C
   for(const dir of ['', 'backups','queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});
   const config:CaptureConfig={schemaVersion:1,api,installationId:previous?.installationId??randomUUID(),owner:principal,
     harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
-      'claude-code':process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),codex:process.env.CODEX_HOME||join(home,'.codex')},command};
+      'claude-code':process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),codex:process.env.CODEX_HOME||join(home,'.codex')},
+    claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
   for(const harness of harnesses)mkdirSync(config.roots[harness],{recursive:true,mode:0o700});
   // Validate both existing configs before changing either one.
   if(harnesses.includes('claude-code'))readJson(join(config.roots['claude-code'],'settings.json'));

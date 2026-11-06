@@ -115,6 +115,18 @@ native transcript stores. A JSON/noninteractive install returns
 `backfill.status=decision_required` with a preview and instructions for the agent
 to ask the user. It never assumes consent. `npm install` itself reads no history.
 
+Claude history includes native `.claude/projects` transcripts mirrored by Claude
+Desktop under its `local-agent-mode-sessions` application-data directory, including
+subagents. The preview counts these alongside the usual `~/.claude/projects`
+history. `CLAUDE_DESKTOP_CONFIG_DIR` can select another Claude application-data
+directory during installation. Existing default installations discover the standard
+desktop location automatically; custom transcript-root installations retain their
+configured scope until setup records a desktop location. Only an approved backfill
+reads these mirrors; hooks and background sync do not silently import them.
+Messages in the same runtime’s audit log are also imported when their native UUID
+is absent from its project transcripts. Cloud-only chats and records available
+only inside a VM are excluded.
+
 Agents must show the destination and counts, explain that messages, tool
 arguments/results and available attachments will leave the machine, and wait for
 the user's choice. The setup request alone is not consent to import history.

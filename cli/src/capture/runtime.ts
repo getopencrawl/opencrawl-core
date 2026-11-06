@@ -9,10 +9,11 @@ import {spawn} from 'node:child_process';
 import {configDir, atomicJson, accessToken, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {parseRecord, detectOrigin, hash, type Harness} from './parse.ts';
+import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
-export type CaptureConfig = {disabled?:boolean,schemaVersion:1,harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,command:string[]};
+export type CaptureConfig = {disabled?:boolean,schemaVersion:1,harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 export async function request(api:string,path:string,init:RequestInit={},tokenOverride?:string) {
   const saved=read(join(captureDir(),'receiver-token.json'));
@@ -58,9 +59,11 @@ export function recordError(error:any) {
 }
 function ensureDirectories() {for(const dir of ['queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});}
 const under = (file:string,dir:string) => file.startsWith(dir+sep);
-function transcriptAllowed(file:string, config:CaptureConfig, harness:Harness) {
+function transcriptAllowed(file:string, config:CaptureConfig, harness:Harness, approvedHistory=false) {
   const path=realpathSync(file);
-  const root=realpathSync(config.roots[harness]);
+  // Host-mirrored desktop history is accessible only through explicit backfill consent.
+  if(approvedHistory&&harness==='claude-code'&&isClaudeDesktopTranscript(path,config))return path;
+  let root:string;try{root=realpathSync(config.roots[harness]);}catch{throw new CliError('CAPTURE_PATH_REJECTED','Transcript outside configured harness session directories');}
   const allowed=harness==='claude-code' ? [join(root,'projects')] : [join(root,'sessions'),join(root,'archived_sessions')];
   if(!allowed.some(dir=>under(path,dir)) || !(path.endsWith('.jsonl') || harness==='codex' && path.endsWith('.jsonl.zst')))throw new CliError('CAPTURE_PATH_REJECTED','Transcript outside configured harness session directories');
   return path;
@@ -108,7 +111,8 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
 export async function captureTranscript(config:CaptureConfig,harness:Harness,file:string,hook:any={},reconcileHistory=false) {
   ensureDirectories();
-  const path=transcriptAllowed(file,config,harness);
+  const path=transcriptAllowed(file,config,harness,reconcileHistory);
+  const desktopAudit=harness==='claude-code'&&basename(path)==='audit.jsonl'&&isClaudeDesktopTranscript(path,config);
   const stateFile=join(captureDir(),'state',hash(harness+path)+'.json');
   return withSessionLock('capture:'+stateFile,async()=>{
     const source=statSync(path),old=read(stateFile,{offset:0});
@@ -135,11 +139,16 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     // supported native records; unchanged event IDs remain idempotent downstream.
     if(reconcileHistory && old.parserVersion!==2)offset=0;
     const parserVersion=offset===0?2:old.parserVersion??1;
+    const nativeIds=desktopAudit&&offset<st.size?desktopNativeMessageIds(path):new Set<string>();
     const fd=openSync(readPath,'r');
     let meta:any=old.meta??{harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path};
     let codexIdentityRead=false;
     function metadata(r:any) {
         const p=r.payload??r;
+        if(desktopAudit){
+          if(typeof r.session_id==='string'&&r.session_id){meta.sessionId=r.session_id;meta.origin='desktop';meta.originEvidence='Claude Desktop local-agent-mode-sessions audit';}
+          return;
+        }
         if(harness==='codex' && r.type==='session_meta') {
           // Forks include copied parent headers after their own leading header.
           // Those records are history, not a change to this transcript's owner.
@@ -171,7 +180,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
       const head=Buffer.alloc(Math.min(st.size,65536));readSync(fd,head,0,head.length,0);
       for(const line of head.toString('utf8').split('\n')) {
         let r;try{r=JSON.parse(line);}catch{continue;}
-        metadata(r);
+        if(!desktopAudit)metadata(r);
       }
       while(offset<st.size) {
         let bytes=Buffer.alloc(Math.min(st.size-offset,48*1024*1024));readSync(fd,bytes,0,bytes.length,offset);
@@ -186,8 +195,12 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
         for(const line of bytes.toString('utf8').split('\n').slice(0,-1)){
           if(line.trim()){
             let record;try{record=JSON.parse(line);}catch{throw new CliError('CAPTURE_INVALID_RECORD','Invalid transcript record; cursor retained');}
-            metadata(record);
-            const parsed=parseRecord(harness,record,position);
+            const auditMessage=!desktopAudit||['user','assistant'].includes(record.type)&&!nativeIds.has(record.uuid);
+            if(desktopAudit&&auditMessage&&(!record.session_id||typeof record.session_id!=='string'))throw new CliError('CAPTURE_SESSION_UNKNOWN','Desktop audit message has no session identity');
+            if(desktopAudit&&auditMessage&&meta.sessionId!==record.session_id)enqueue(config,meta,events.splice(0),attachments.splice(0));
+            if(!desktopAudit||auditMessage)metadata(record);
+            const parsed=auditMessage?parseRecord(harness,record,position):null;
+            if(parsed&&desktopAudit){parsed.timestamp=record._audit_timestamp??record.timestamp??null;parsed.parentId=record.parent_tool_use_id??null;}
             if(parsed) {
               // Only native attachment blocks may cause file reads. A tool argument/result can
               // contain arbitrary JSON that resembles an attachment but was never opened.

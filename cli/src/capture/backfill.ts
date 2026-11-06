@@ -4,8 +4,9 @@ import {createInterface} from 'node:readline/promises';
 import {CliError} from '../oauth.ts';
 import {captureTranscript, captureDir, flushCaptures, readCaptureConfig, request, recordError, type CaptureConfig} from './runtime.ts';
 import type {Harness} from './parse.ts';
+import {claudeDesktopHistories} from './desktop-history.ts';
 
-export const backfillNotice = 'Import local Claude Code and Codex history, including their desktop coding sessions. Messages, tool arguments/results and available attachments will be uploaded to your signed-in OpenCrawl account. Cloud-only chats are not included.';
+export const backfillNotice = 'Import local Claude Code and Codex history, including desktop coding sessions and host-mirrored Claude Desktop transcripts. Messages, tool arguments/results and available attachments will be uploaded to your signed-in OpenCrawl account. Cloud-only chats and VM-only records are not included.';
 type Selection = 'all'|Harness;
 export function selection(value = 'all'): Selection {
   if (!['all','claude-code','codex'].includes(value)) throw new CliError('INVALID_USAGE','Choose all, claude-code, or codex.',64);
@@ -24,25 +25,35 @@ export function inventory(config:CaptureConfig, selected:Selection) {
   for(const harness of ['claude-code','codex'] as Harness[]) {
     if(selected!=='all' && selected!==harness)continue;
     const source={harness,files:0,bytes:0};sources.push(source);
-    let root:string;
-    try{root=realpathSync(config.roots[harness]);}catch(e:any){if(e.code==='ENOENT')continue;throw new CliError('BACKFILL_SCAN_FAILED','Cannot inspect a local session directory. Check its permissions.');}
-    function visit(dir:string) {
+    let root:string|undefined;
+    try{root=realpathSync(config.roots[harness]);}catch(e:any){if(e.code!=='ENOENT')throw new CliError('BACKFILL_SCAN_FAILED','Cannot inspect a local session directory. Check its permissions.');}
+    const seen=new Set<string>();
+    function visit(dir:string,allowedRoot:string) {
       let entries;
       try{entries=readdirSync(dir,{withFileTypes:true});}catch(e:any){if(e.code==='ENOENT')return;throw new CliError('BACKFILL_SCAN_FAILED','Cannot inspect a local session directory. Check its permissions.');}
       for(const entry of entries) {
         const path=join(dir,entry.name);
         // Never follow symlinks out of the native transcript store.
         if(entry.isSymbolicLink())continue;
-        if(entry.isDirectory())visit(path);
+        if(entry.isDirectory())visit(path,allowedRoot);
         else if(entry.isFile() && (path.endsWith('.jsonl') || harness==='codex' && path.endsWith('.jsonl.zst'))) {
           const real=realpathSync(path);
-          if(!real.startsWith(root+sep))throw new CliError('CAPTURE_PATH_REJECTED','Session path changed during discovery. Retry the preview.');
+          if(!real.startsWith(allowedRoot+sep))throw new CliError('CAPTURE_PATH_REJECTED','Session path changed during discovery. Retry the preview.');
+          if(seen.has(real))continue;seen.add(real);
           const bytes=statSync(real).size;
           files.push({harness,path:real,bytes});source.files++;source.bytes+=bytes;
         }
       }
     }
-    for(const dir of harness==='codex'?['sessions','archived_sessions']:['projects'])visit(join(root,dir));
+    if(root)for(const dir of harness==='codex'?['sessions','archived_sessions']:['projects'])visit(join(root,dir),root);
+    if(harness==='claude-code') {
+      const desktop=claudeDesktopHistories(config);
+      for(const projects of desktop.projects)visit(projects,realpathSync(projects));
+      for(const path of desktop.audits) {
+        const real=realpathSync(path);if(seen.has(real))continue;seen.add(real);
+        const bytes=statSync(real).size;files.push({harness,path:real,bytes});source.files++;source.bytes+=bytes;
+      }
+    }
   }
   return {files,sources};
 }
