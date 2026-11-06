@@ -59,7 +59,7 @@ main.usage{max-width:calc(var(--page-width) + 2 * var(--pane-inset));padding-top
 .source-rows li{display:flex;justify-content:space-between;color:var(--muted)}
 .source-rows li span:last-child{color:var(--text);font-family:var(--font-mono);font-size:var(--text-xs)}
 .source-meta{display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-3);margin:0;padding-top:var(--space-3);border-top:1px solid var(--line);color:var(--quiet);font-size:var(--text-xs)}
-.source-meta .searchable{color:var(--accent)}
+.source-meta .indexed{color:var(--accent)}
 .table{overflow-x:auto}
 .usage table{width:100%;border-collapse:collapse;font-size:var(--text-sm)}
 .usage th,.usage td{padding:var(--space-3) var(--space-3);border-bottom:1px solid var(--line);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
