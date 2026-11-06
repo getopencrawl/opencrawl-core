@@ -245,3 +245,15 @@ The message normalizer explicitly includes these public-message labels; it does
 not copy profile contact fields, reaction-user IDs or arbitrary metadata into the
 body. Verify this allowlist independently from block-text extraction, and replay
 existing raw records under a new interpretation version when it changes.
+
+### Repairs after a census cutoff
+
+Treat later source observations as a separate bounded reference set, with their
+own timestamps, raw API evidence and acceptance report. An upstream preview can
+contain all rich blocks yet omit native accessibility fallback text. Compare both
+surfaces; never infer completeness from block equality alone or manufacture text
+in the normalizer to match an expected word. Prefer a reusable source operation
+that refreshes explicit native IDs into the existing raw-object contract; retain
+source authority and edit ordering, including shorter replacements. This does
+not substitute for a full inventory, deletion feed or continuous freshness SLA.
+See [Slack reference capture](slack-message-capture.md#refresh-known-messages).
