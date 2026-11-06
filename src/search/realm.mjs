@@ -47,7 +47,16 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
     ready ||= (async()=>{
       try{await request('',{settings:{number_of_shards:1,number_of_replicas:replicas},mappings:{...realmMapping,_meta:{schema:1,tenantId}}},'PUT');}
       catch(e){if(e.status!==400||e.type!=='resource_already_exists_exception')throw e;}
-      const mapping=(await request('/_mapping',undefined,'GET'))?.[index]?.mappings;
+      let mapping=(await request('/_mapping',undefined,'GET'))?.[index]?.mappings;
+      // The only in-place schema upgrade is an additive normalization revision.
+      // Validate ownership and every existing field before making any change.
+      const previous=structuredClone(realmMapping);
+      delete previous.properties.connector.properties.normalizerVersion;
+      if(mapping?._meta?.tenantId===tenantId && mapping?._meta?.schema===1 &&
+        !mapping.properties?.connector?.properties?.normalizerVersion && compatible(mapping,previous)) {
+        await request('/_mapping',{properties:{connector:{properties:{normalizerVersion:{type:'integer'}}}}},'PUT');
+        mapping=(await request('/_mapping',undefined,'GET'))?.[index]?.mappings;
+      }
       if(mapping?._meta?.tenantId!==tenantId||mapping?._meta?.schema!==1||!compatible(mapping,realmMapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');
     })().catch(e=>{ready=undefined;throw e;});
     return ready;

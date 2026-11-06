@@ -45,6 +45,7 @@ export function normalizeSlack(binding, stream, envelope, sourceKey) {
   };
   // Direct history/replies observations are authoritative over search previews.
   if(stream==='canonical_messages')document.sourceAuthority=1;
+  if(kind==='message')document.normalizerVersion=5;
   // Stream aliases/thread-parent duplicates share identity; deterministic tie handling
   // makes equal-time deliveries independent of arrival order.
   document.contentHash = digest({...document, sourceKey: undefined});

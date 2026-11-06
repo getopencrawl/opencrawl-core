@@ -36,6 +36,12 @@ must keep `OPENCRAWL_TENANT_ID=local` until an explicit owner migration is perfo
 separate per-feature index. Existing flat indexes are not compatible with the new
 mapping and must be migrated rather than relabeled in place.
 
+Core 0.2.2 performs one additive realm mapping upgrade: the integer
+`connector.normalizerVersion`. It validates the tenant/schema and all previous
+field mappings before adding that field, then reads the mapping back. Foreign
+owners or incompatible mappings fail without modification. This supports Slack
+v5 receipt replay within the same realm; it does not rebuild or reset any corpus.
+
 `legacyRealmSource` and `migrateRealmCorpus` provide the portable migration. Drain
 legacy writers and set `index.blocks.write=true` on the source first. Read serving
 and durable capture can continue. The migration records the index UUID and primary

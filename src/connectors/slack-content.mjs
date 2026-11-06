@@ -46,8 +46,23 @@ export function slackMessageText(data) {
       case 'text': case 'plain_text': case 'mrkdwn': case 'markdown': add(value.text); break;
       case 'section': textObject(value.text); list(value.fields, textObject); if (value.accessory) node(value.accessory, depth + 1); break;
       case 'header': textObject(value.text); break;
-      case 'context': case 'actions': case 'rich_text': case 'rich_text_section':
-      case 'rich_text_list': case 'rich_text_quote': case 'rich_text_preformatted': children(value.elements); break;
+      case 'context': case 'actions': case 'rich_text': case 'rich_text_list': children(value.elements); break;
+      case 'rich_text_section': case 'rich_text_quote': case 'rich_text_preformatted': {
+        // Formatting changes split inline elements, not words or lines. Keep
+        // link destinations and accessibility alternatives outside the line.
+        const inline = [], alternatives = [];
+        list(value.elements, element => {
+          const start = chunks.length;
+          node(element, depth + 1);
+          const rendered = chunks.splice(start);
+          inline.push(rendered.shift() || '');
+          alternatives.push(...rendered);
+        });
+        const line = inline.join('');
+        if (line) chunks.push(line);
+        chunks.push(...alternatives);
+        break;
+      }
       case 'table': list(value.rows, children); break;
       case 'link': add(value.text); add(value.url); break;
       case 'image': textObject(value.title); add(value.alt_text); break;

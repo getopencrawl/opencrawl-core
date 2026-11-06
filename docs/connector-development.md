@@ -220,6 +220,10 @@ subsequent scheduled run does not create a false missing-receipt denominator.
 Record semantic parser checks separately from exact transport hashes: a second
 PDF extractor can expose broken words or reading order, but its own layout
 artifacts also need classification against the source page.
+For rich text, compare contiguous inline words and phrases as well as individual
+fragments. Formatting can split one word across multiple text elements; inserting
+newlines preserves every fragment but makes that word unsearchable. Keep actual
+paragraph/list boundaries and link destinations separate from the inline label.
 
 Test searchable tail content separately from stored-document equality. Tokenize
 the complete source text before selecting query terms by their offsets: slicing

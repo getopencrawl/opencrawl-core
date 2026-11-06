@@ -39,7 +39,15 @@ test('combined content is bounded and invalid structures do not silently acknowl
 
 test('rich-text phrases retain repeated words and words contained inside fallback tokens',()=>{
  const body=slackMessageText({text:'notification preview',blocks:[{type:'rich_text',elements:[{type:'rich_text_section',elements:[{type:'text',text:'do '},{type:'text',text:'not'},{type:'text',text:' do this'}]}]}]});
- assert.equal(body,'notification preview\ndo \nnot\n do this');
+ assert.equal(body,'notification preview\ndo not do this');
+});
+
+test('inline formatting preserves whole words, link phrases and explicit line boundaries',()=>{
+ const elements=[{type:'text',text:'inter'},{type:'text',text:'oper',style:{bold:true}},{type:'text',text:'ability and '},{type:'link',text:'linked',url:'https://example.com'},{type:'text',text:' words\nnext line'}];
+ for(const type of ['rich_text_section','rich_text_quote','rich_text_preformatted']) {
+  const body=slackMessageText({blocks:[{type:'rich_text',elements:[{type,elements},{type:'rich_text_section',elements:[{type:'text',text:'Separate paragraph'}]}]}]});
+  assert.equal(body,'interoperability and linked words\nnext line\nhttps://example.com\nSeparate paragraph');
+ }
 });
 
 test('visible menu labels, descriptions and confirmations survive without action payloads',()=>{
