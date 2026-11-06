@@ -11,8 +11,10 @@ const overview = await readFile(new URL('./overview.md', import.meta.url), 'utf8
 
 // Authentication belongs to the runtime adapter. No account or tenant data is
 // exposed by this initial surface; every MCP request still requires a principal.
-export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated, board, search}) {
+export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated,
+  observationTimeoutMs = 1000, onObservationError = event => console.error(JSON.stringify(event)), board, search}) {
   if (typeof authenticate !== 'function' || new URL(origin).origin !== origin) throw new Error('MCP requires authentication and a canonical origin');
+  if (!Number.isInteger(observationTimeoutMs) || observationTimeoutMs < 1 || observationTimeoutMs > 10000) throw new Error('Invalid MCP observation timeout');
   const handler = createMcpHandler(() => {
     const server = new McpServer({name: 'opencrawl', version: '0.1.7'}, {
       instructions: 'Call opencrawl for the product overview and available services. Use test_connection to verify this authenticated server connection.',
@@ -88,7 +90,20 @@ export function createOpenCrawlMcp({authenticate, origin, revision = 'developmen
     // Successful authenticated protocol exchanges prove sign-in, not ingestion.
     if (onAuthenticated && response.ok && ['initialize', 'server/discover', 'tools/list', 'tools/call'].includes(body?.method)) {
       const info = body.method === 'initialize' ? body.params?.clientInfo : body.params?._meta?.['io.modelcontextprotocol/clientInfo'];
-      await onAuthenticated(context.getStore(), info, {method: body.method, tool: body.method === 'tools/call' && typeof body.params?.name === 'string' ? body.params.name.slice(0, 100) : null});
+      const exchange = {method: body.method, tool: body.method === 'tools/call' && typeof body.params?.name === 'string' ? body.params.name.slice(0, 100) : null};
+      let deadline, timedOut = false;
+      try {
+        // This is a post-exchange receipt, not authorization. A failed or stuck
+        // observer must not conceal a tool result that may already be committed.
+        await Promise.race([
+          Promise.resolve().then(() => onAuthenticated(context.getStore(), info, exchange)),
+          new Promise((_, reject) => { deadline = setTimeout(() => { timedOut = true; reject(new Error('MCP observation timeout')); }, observationTimeoutMs); }),
+        ]);
+      } catch {
+        // No identity, request content or underlying storage errors enter logs.
+        // Even a broken asynchronous error sink cannot fail or delay the result.
+        try { Promise.resolve(onObservationError({event:'mcp.observation_failed', ...exchange, reason:timedOut ? 'timeout' : 'error'})).catch(() => {}); } catch {}
+      } finally { clearTimeout(deadline); }
     }
     return response;
   }}, {maxRequestBodySize: 65536});
