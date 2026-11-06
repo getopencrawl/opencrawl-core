@@ -1,7 +1,7 @@
 import {test, expect} from 'bun:test';
-import {mkdtempSync, rmSync, statSync, readFileSync} from 'node:fs';
+import {mkdtempSync, rmSync, statSync, readFileSync, existsSync, writeFileSync, mkdirSync, unlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join,resolve} from 'node:path';
 import {saveSession, sessionFile, accessToken, readSession, logout} from '../src/session.ts';
 
 test('separate deployments, restrictive permissions, concurrent refresh and logout', async () => {
@@ -25,4 +25,41 @@ test('separate deployments, restrictive permissions, concurrent refresh and logo
     if (previous === undefined) delete process.env.OPENCRAWL_CONFIG_HOME; else process.env.OPENCRAWL_CONFIG_HOME = previous;
     rmSync(directory, {recursive: true, force: true});
   }
+});
+
+
+test('simultaneous processes recover a killed owner without admitting two critical sections',async()=>{
+ const directory=mkdtempSync(join(tmpdir(),'opencrawl-lock-crash-'));
+ const module=resolve(import.meta.dir,'../src/session.ts'),exclusive=join(directory,'exclusive'),ready=join(directory,'ready');
+ const env={...process.env,OPENCRAWL_CONFIG_HOME:directory};
+ const children:ReturnType<typeof Bun.spawn>[]=[];
+ const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
+ const waitFor=async(fn:()=>boolean)=>{const deadline=Date.now()+5000;while(!fn()){if(Date.now()>deadline)throw Error('lock probe timed out');await sleep(10);}};
+ const spawn=(code:string)=>{const c=Bun.spawn([process.execPath,'-e',code],{env,stdout:'ignore',stderr:'pipe'});children.push(c);return c;};
+ try{
+  const owner=spawn(`import {withSessionLock} from ${JSON.stringify(module)};import{writeFileSync}from'node:fs';await withSessionLock('crash',async()=>{writeFileSync(${JSON.stringify(ready)},'ready');await new Promise(()=>{});});`);
+  await waitFor(()=>existsSync(ready));owner.kill('SIGKILL');await owner.exited;
+  const contenders=Array.from({length:16},()=>spawn(`import {withSessionLock} from ${JSON.stringify(module)};import{openSync,closeSync,unlinkSync}from'node:fs';for(let n=0;n<3;n++)await withSessionLock('crash',async()=>{const fd=openSync(${JSON.stringify(exclusive)},'wx');await new Promise(r=>setTimeout(r,4));closeSync(fd);unlinkSync(${JSON.stringify(exclusive)});});`));
+  expect(await Promise.all(contenders.map(c=>c.exited))).toEqual(Array(16).fill(0));
+  expect(existsSync(exclusive)).toBe(false);
+ }finally{for(const child of children){child.kill();await child.exited;}rmSync(directory,{recursive:true,force:true});}
+},15000);
+
+test('process exit releases ownership and a live legacy owner is never evicted',async()=>{
+ const directory=mkdtempSync(join(tmpdir(),'opencrawl-lock-exit-')),previous=process.env.OPENCRAWL_CONFIG_HOME;
+ process.env.OPENCRAWL_CONFIG_HOME=directory;
+ const module=resolve(import.meta.dir,'../src/session.ts');
+ try{
+  const child=Bun.spawn([process.execPath,'-e',`import{withSessionLock}from ${JSON.stringify(module)};await withSessionLock('exit',async()=>process.exit(0));`],{env:process.env,stdout:'ignore',stderr:'pipe'});
+  expect(await child.exited).toBe(0);
+  expect(existsSync(sessionFile('exit')+'.lock')).toBe(false);
+  const {withSessionLock}=await import('../src/session.ts');
+  await withSessionLock('exit',async()=>{});
+  const legacy=sessionFile('legacy')+'.lock';mkdirSync(join(legacy,'..'),{recursive:true});writeFileSync(legacy,String(process.pid));
+  await expect(withSessionLock('legacy',async()=>{},0)).rejects.toMatchObject({code:'SESSION_BUSY'});
+  expect(readFileSync(legacy,'utf8')).toBe(String(process.pid));unlinkSync(legacy);
+  const replacement=sessionFile('replacement')+'.lock';
+  await withSessionLock('replacement',async()=>{unlinkSync(replacement);writeFileSync(replacement,'replacement');});
+  expect(readFileSync(replacement,'utf8')).toBe('replacement');
+ }finally{if(previous===undefined)delete process.env.OPENCRAWL_CONFIG_HOME;else process.env.OPENCRAWL_CONFIG_HOME=previous;rmSync(directory,{recursive:true,force:true});}
 });

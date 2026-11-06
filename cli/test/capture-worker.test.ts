@@ -14,13 +14,14 @@ async function until(fn:()=>boolean,ms=5000){const end=Date.now()+ms;while(!fn()
 async function fixture(run:(f:any)=>Promise<void>){
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-worker-')),saved={...process.env};
  const owner={tenantId:'fixture',userId:'fixture'},batches:any[]=[],payloads:string[]=[];
- let requests=0,delay=0,loseAck=false;
+ let requests=0,delay=0,loseAck=false,holdAck=false;
  const server=createServer(async(req,res)=>{
   requests++;if(delay)await sleep(delay);
   if(req.url==='/api/sessions/identity'){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({data:{principal:owner}}));return;}
   const parts=[];for await(const c of req)parts.push(c);const raw=Buffer.concat(parts).toString();
   if(req.url==='/api/sessions/batches'){
    payloads.push(raw);batches.push(JSON.parse(raw));
+   if(holdAck)return;
    if(loseAck){loseAck=false;res.writeHead(502,{'content-type':'application/json'});res.end('{}');return;}
    res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({data:{stored:true,batchId:hash(raw)}}));return;
   }
@@ -34,7 +35,7 @@ async function fixture(run:(f:any)=>Promise<void>){
   const path=join(dir,'claude','projects','fixture','session.jsonl');mkdirSync(join(path,'..'),{recursive:true});
   const record=(id:string)=>JSON.stringify({type:'user',uuid:id,sessionId:'session',message:{role:'user',content:'synthetic '+id}})+'\n';
   writeFileSync(path,record('one'));
-  await run({dir,api,path,record,batches,payloads,get requests(){return requests;},set delay(v:number){delay=v;},set loseAck(v:boolean){loseAck=v;}});
+  await run({dir,api,path,record,batches,payloads,get requests(){return requests;},set delay(v:number){delay=v;},set loseAck(v:boolean){loseAck=v;},set holdAck(v:boolean){holdAck=v;}});
  }finally{
   try{await uninstallCapture(dir);}catch{}
   server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));
@@ -183,3 +184,54 @@ test('async hook retains its harness-owned PID on Unix; legacy upgrade preserves
  await installCapture(f.api,{home:f.dir,command:[process.execPath,cli],harnesses:['claude-code']});
  expect(JSON.parse(readFileSync(codexFile,'utf8')).hooks.Stop[0].hooks[0].async).toBe(true);
 }));
+
+
+test('owned worker deadline interrupts an infinite notice-lock wait and preserves the notice',async()=>fixture(async f=>{
+ await captureHook('claude-code',{session_id:'session',transcript_path:f.path,prompt:'retained deadline'});
+ const before=readdirSync(join(captureDir(),'notices')).map(n=>readFileSync(join(captureDir(),'notices',n),'utf8'));
+ let release!:()=>void;
+ const held=withSessionLock('capture:notices',()=>new Promise<void>(r=>{release=r;}));
+ const runtime=resolve(import.meta.dir,'../src/capture/runtime.ts');
+ const child=Bun.spawn([process.execPath,'-e',`import {ownedCaptureWorker} from ${JSON.stringify(runtime)}; await ownedCaptureWorker({maxMs:350,parentPollMs:25});`],{env:process.env,stdout:'ignore',stderr:'pipe'});
+ try{
+  expect(await child.exited).toBe(0);
+  expect(readdirSync(join(captureDir(),'notices')).map(n=>readFileSync(join(captureDir(),'notices',n),'utf8'))).toEqual(before);
+ }finally{child.kill();await child.exited;release();await held;}
+ await captureWorker({idleMs:20,pollMs:5});
+ expect(captureStatus().queued).toBe(0);expect(captureStatus().pendingHooks).toBe(0);
+}),5000);
+
+test('owned worker deadline interrupts a lost acknowledgement and retries the exact durable bytes',async()=>fixture(async f=>{
+ await captureHook('claude-code',{session_id:'session',transcript_path:f.path,prompt:'retained lost acknowledgement'});
+ await drainCaptureNotices();
+ const before=new Map(readdirSync(join(captureDir(),'queue')).map(n=>[n,readFileSync(join(captureDir(),'queue',n),'utf8')]));
+ f.holdAck=true;
+ const runtime=resolve(import.meta.dir,'../src/capture/runtime.ts');
+ const child=Bun.spawn([process.execPath,'-e',`import {ownedCaptureWorker} from ${JSON.stringify(runtime)}; await ownedCaptureWorker({maxMs:600,parentPollMs:25});`],{env:process.env,stdout:'ignore',stderr:'pipe'});
+ try{
+  await until(()=>f.payloads.length>0);
+  expect(await child.exited).toBe(0);
+  for(const [name,bytes] of before)expect(readFileSync(join(captureDir(),'queue',name),'utf8')).toBe(bytes);
+  f.holdAck=false;
+  await captureWorker({idleMs:20,pollMs:5});
+  expect(f.payloads.filter((v:string)=>v===f.payloads[0])).toHaveLength(2);
+  expect(captureStatus().queued).toBe(0);
+ }finally{child.kill();await child.exited;}
+}),5000);
+
+
+test('large synchronous transcript backlogs yield to the owned process deadline and resume intact',async()=>fixture(async f=>{
+ const records=Array.from({length:16000},(_,n)=>JSON.stringify({type:'user',uuid:'cpu-'+n,sessionId:'session',message:{role:'user',content:'synthetic '+n+' '+'.'.repeat(1000)}})+'\n').join('');
+ writeFileSync(f.path,records);
+ await captureHook('claude-code',{session_id:'session',transcript_path:f.path,prompt:'cpu deadline'});
+ const runtime=resolve(import.meta.dir,'../src/capture/runtime.ts');
+ const child=Bun.spawn([process.execPath,'-e',`import {ownedCaptureWorker} from ${JSON.stringify(runtime)}; await ownedCaptureWorker({maxMs:100,parentPollMs:25});`],{env:process.env,stdout:'ignore',stderr:'pipe'});
+ try{
+  expect(await child.exited).toBe(0);
+  expect(captureStatus().pendingHooks).toBe(1);
+  expect(captureStatus().queued).toBeGreaterThan(0);
+  await captureWorker({idleMs:20,pollMs:5});
+  const ids=new Set(f.batches.flatMap((b:any)=>b.events).filter((e:any)=>e.nativeId?.startsWith('cpu-')).map((e:any)=>e.nativeId));
+  expect(ids.size).toBe(16000);expect(captureStatus().queued).toBe(0);expect(captureStatus().pendingHooks).toBe(0);
+ }finally{child.kill();await child.exited;}
+}),20000);

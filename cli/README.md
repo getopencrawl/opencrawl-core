@@ -128,6 +128,17 @@ parses permitted transcripts, spools immutable batches and uploads; other hooks
 exit after saving their notices. On Unix the shell and Node dispatcher replace
 themselves with the native CLI using exec, keeping the harness-owned PID. Capture
 never detaches a child, starts a service or launches a replacement worker.
+Each uploader has a 90-second deadline, including during outages or lock waits,
+and checks once per second that its original parent is still alive. Parent loss
+also ends the uploader. Unacknowledged batches stay queued for the next hook;
+explicit foreground flush/backfill is not subject to this background deadline.
+Uploader/session ownership uses SQLite transaction locks built into the CLI runtime;
+no database service is installed. The OS releases ownership on process death.
+Numeric PID files remain for diagnostics and conservative compatibility: a live
+or uncertain legacy owner is not evicted, including a potentially reused PID.
+Full mutual exclusion with older clients that ignore the SQLite lock is not promised.
+If the harness itself dies, the host must reap its adopted children, as for any
+process; capture does not install an init service to replace that host duty.
 Foreground flush/backfill waits for upload ownership and confirmed receipts.
 
 No systemd, launchd, cron, or installed daemon is required. Reinstall removes
