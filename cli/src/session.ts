@@ -1,3 +1,4 @@
+import {Database} from 'bun:sqlite';
 import {mkdirSync, chmodSync, readFileSync, writeFileSync, renameSync, unlinkSync, openSync, closeSync, statSync, fsyncSync} from 'node:fs';
 import {join, dirname} from 'node:path';
 import {homedir} from 'node:os';
@@ -43,31 +44,63 @@ export function readSession(api: string): Session | null {
   }
 }
 
-// Serializes rotation and logout across agent processes. A dead owner can be
-// reclaimed; a live owner is never evicted just because a request is slow.
+// SQLite's kernel-backed transaction lock is released even on SIGKILL. Keeping
+// one database per key avoids serializing unrelated credentials/transcripts.
+// Never unlink these database files: replacing a locked inode breaks exclusion.
+const heldLocks=new Set<()=>void>();
+process.once('exit',()=>{for(const release of heldLocks)try{release();}catch{}});
+const lockIdentity=(file:string)=>{const st=statSync(file,{bigint:true});return [st.dev,st.ino,st.birthtimeNs,st.ctimeNs].join(':');};
 export async function withSessionLock<T>(api: string, operation: () => Promise<T>, waitMs = 20_000): Promise<T> {
-  const file = sessionFile(api) + '.lock';
+  const file = sessionFile(api) + '.lock',database=file+'.sqlite';
   mkdirSync(configDir(), {recursive: true, mode: 0o700});
-  const deadline = Date.now() + waitMs;
-  while (true) {
+  const db=new Database(database,{create:true});
+  const deadline=Date.now()+waitMs;
+  let transaction=false,identity:string|undefined,released=false;
+  const release=()=>{
+    if(released)return;released=true;heldLocks.delete(release);
     try {
-      const fd = openSync(file, 'wx', 0o600);
-      try { writeFileSync(fd, String(process.pid)); } finally { closeSync(fd); }
-      break;
-    } catch (error: any) {
-      if (error.code !== 'EEXIST') throw error;
-      try {
-        const pid = Number(readFileSync(file, 'utf8'));
-        if (pid > 0) {
-          try { process.kill(pid, 0); }
-          catch (check: any) { if (check.code === 'ESRCH') { unlinkSync(file); continue; } }
-        } else if (Date.now() - statSync(file).mtimeMs > 60_000) { unlinkSync(file); continue; }
-      } catch (check: any) { if (check.code === 'ENOENT') continue; }
-      if (Date.now() >= deadline) throw new CliError('SESSION_BUSY', 'Another opencrawl process is updating this session. Retry shortly.');
-      await new Promise(resolve => setTimeout(resolve, 50));
+      // PID files remain diagnostic and compatible with older clients. Never
+      // delete a replacement file; SQLite owns exclusion for current clients.
+      if(identity && lockIdentity(file)===identity && readFileSync(file,'utf8')===String(process.pid))unlinkSync(file);
+    }catch(error:any){if(error.code!=='ENOENT')throw error;}
+    finally{try{if(transaction)db.exec('ROLLBACK');}finally{db.close();}}
+  };
+  try {
+    chmodSync(database,0o600);
+    db.exec('PRAGMA busy_timeout=0');
+    while(!transaction) {
+      try{db.exec('BEGIN IMMEDIATE');transaction=true;}
+      catch(error:any){
+        if(!String(error.code??'').startsWith('SQLITE_BUSY')&&!String(error.code??'').startsWith('SQLITE_LOCKED'))throw error;
+        if(Date.now()>=deadline)throw new CliError('SESSION_BUSY','Another opencrawl process is updating this session. Retry shortly.');
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
     }
-  }
-  try { return await operation(); } finally { unlinkSync(file); }
+    // Bridge an older still-running CLI conservatively. Stale PID-file cleanup
+    // is now serialized by the transaction, so concurrent recoveries cannot
+    // unlink a newly acquired current-client lock or admit two uploaders.
+    while(true) {
+      try {
+        const fd=openSync(file,'wx',0o600);
+        try{writeFileSync(fd,String(process.pid));identity=lockIdentity(file);}finally{closeSync(fd);}
+        break;
+      }catch(error:any){
+        if(error.code!=='EEXIST')throw error;
+        try {
+          const pid=Number(readFileSync(file,'utf8'));
+          if(pid>0) {
+            try{process.kill(pid,0);}
+            catch(check:any){if(check.code==='ESRCH'){unlinkSync(file);continue;}}
+          }else if(Date.now()-statSync(file).mtimeMs>60_000){unlinkSync(file);continue;}
+        }catch(check:any){if(check.code==='ENOENT')continue;throw check;}
+        // A reused live PID is never evicted based on elapsed time.
+        if(Date.now()>=deadline)throw new CliError('SESSION_BUSY','Another opencrawl process is updating this session. Retry shortly.');
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+    }
+    heldLocks.add(release);
+    return await operation();
+  } finally{release();}
 }
 
 export async function saveSession(api: string, session: Session) {

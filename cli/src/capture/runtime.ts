@@ -5,6 +5,7 @@ import {pipeline} from 'node:stream/promises';
 import {join, dirname, resolve, sep, basename} from 'node:path';
 import {homedir, hostname} from 'node:os';
 import {randomUUID} from 'node:crypto';
+import {setImmediate as yieldToOwner} from 'node:timers/promises';
 import {configDir, atomicFile, atomicJson, accessToken, withSessionLock, syncDirectory} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, type Harness} from './parse.ts';
@@ -200,6 +201,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
         if(!desktopAudit)metadata(r);
       }
       while(offset<st.size) {
+        await yieldToOwner();
         let bytes=Buffer.alloc(Math.min(st.size-offset,48*1024*1024));readSync(fd,bytes,0,bytes.length,offset);
         let end=bytes.lastIndexOf(10);
         if(end<0) {
@@ -208,7 +210,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
         }
         bytes=bytes.subarray(0,end+1);
         const events:any[]=[],attachments:any[]=[];
-        let position=offset;
+        let position=offset,linesSinceYield=0;
         for(const line of bytes.toString('utf8').split('\n').slice(0,-1)){
           if(line.trim()){
             let record;try{record=JSON.parse(line);}catch{throw new CliError('CAPTURE_INVALID_RECORD','Invalid transcript record; cursor retained');}
@@ -235,6 +237,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
             }
           }
           position+=Buffer.byteLength(line)+1;
+          if(++linesSinceYield===200){linesSinceYield=0;await yieldToOwner();}
           if(events.length>=200){enqueue(config,meta,events.splice(0),attachments.splice(0));}
         }
         enqueue(config,meta,events,attachments);
@@ -261,6 +264,7 @@ export async function drainCaptureNotices(config=readCaptureConfig()!) {
   return withSessionLock('capture:notices',async()=>{
   let processed=0,firstError:any;
   for(const name of readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json'))) {
+    await yieldToOwner();
     const path=join(captureDir(),'notices',name),notice=read(path);
     if(!notice)continue;
     try {
@@ -291,6 +295,7 @@ export async function drainCaptureNotices(config=readCaptureConfig()!) {
 async function reconcileSources(config:CaptureConfig,seen:Map<string,string>) {
   let changed=false;
   for(const name of readdirSync(join(captureDir(),'sources')).filter(n=>n.endsWith('.json'))) {
+    await yieldToOwner();
     const sourceFile=join(captureDir(),'sources',name),source=read(sourceFile);
     const path=source.path || findTranscript(config,source.harness,source.sessionId);
     if(!path || !existsSync(path))continue;
@@ -306,6 +311,28 @@ async function reconcileSources(config:CaptureConfig,seen:Map<string,string>) {
 const queuedNames=()=>readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'));
 const noticeNames=()=>readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json'));
 const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
+/** Bound the CLI process, including blocked locks, HTTP retries and large queues.
+ * Durable notices/batches are the recovery boundary: an interrupted request keeps
+ * its original queued bytes until a later invocation verifies the receipt.
+ * This watchdog runs in the owned process; it never launches a supervisor.
+ */
+export async function ownedCaptureWorker({maxMs=90_000,parentPollMs=1000}={}) {
+  const owner=process.ppid;
+  const ownerGone=()=>{
+    // A harness may itself be PID 1 inside a container.
+    if(owner<=0 || process.ppid!==owner)return true;
+    try{process.kill(owner,0);return false;}
+    catch(error:any){return error?.code==='ESRCH';}
+  };
+  if(ownerGone())return;
+  // An outer-loop deadline cannot interrupt an infinite lock wait or an upload.
+  // Exit cleanup releases locks; the kernel also releases them after a crash.
+  const deadline=setTimeout(()=>process.exit(0),maxMs);
+  const parentCheck=setInterval(()=>{if(ownerGone())process.exit(0);},parentPollMs);
+  try{await captureWorker();}
+  finally{clearTimeout(deadline);clearInterval(parentCheck);}
+}
+
 /** One lazy worker per installation; contention is an ordinary successful wake. */
 export async function captureWorker({idleMs=30_000,pollMs=1000}={}) {
   const config=readCaptureConfig();if(!config||config.disabled)return;
