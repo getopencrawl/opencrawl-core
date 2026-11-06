@@ -103,7 +103,7 @@ export function workspaceAccumulator(binding) {
           if (!identity.startsWith(stream + ':')) continue;
           const sourceId = id(d.id), group = transcripts.get(sourceId);
           const lines = [...(group?.lines.values() || [])].sort((a, b) => a.sort - b.sort || a.speaker.localeCompare(b.speaker) || a.text.localeCompare(b.text));
-          const actions = (d.actionItems || []).map(x => [text(x.title || x.text || x.description), text(x.assignee?.name || x.assigneeName), text(x.dueDate)].filter(Boolean).join(' — '));
+          const actions = (d.actionItems || []).map(x => [text(x.title || x.text), text(x.description), text(x.status), text(x.assignee?.name || x.assigneeName), text(x.dueDate)].filter(Boolean).join(' — '));
           const body = [text(d.summary_markdown || d.summary_text || d.notes), ...actions].filter(Boolean).join('\n');
           yield* resource(binding, {kind: 'meeting', sourceId, title: text(d.title || d.name), body, units: lines, forceChunks: true,
             extractedAt: lines.reduce((max, l) => Math.max(max, l.at), at), sourceKey: key,

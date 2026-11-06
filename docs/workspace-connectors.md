@@ -17,7 +17,7 @@ subteam resources require a future permission model and are not supported here.
 - Granola: `notes` title, summary markdown/text, date, attendees and source URL;
   `transcripts` speaker, text and start/end time. Private notes, attachments and
   recordings are excluded.
-- Circleback: `meetings` name, notes, action-item title/text/description,
+- Circleback: `meetings` name, notes, action-item title, description and status,
   assignee name and due date, date, attendees and URL; `transcripts` speaker,
   timestamp and text. Private notes and recordings are excluded. The hosted
   source must use Circleback's built-in Workspace folder.
@@ -87,3 +87,9 @@ stale updates, cross-tenant rejection and retained-passage filtering. Hosted
 acceptance must additionally verify current connection authorization, schedules,
 actual raw schemas and authenticated product queries. Fixture success alone is
 not proof of upstream extraction completeness or global source permissions.
+
+Circleback 0.1.26 preserves action descriptions and status alongside titles. Its
+receipt interpretation is `workspace-v2`. Operators who indexed Circleback with
+0.1.24 should use a fresh index generation before switching readers; resetting
+receipts alone cannot override equal-version destination comparisons. Hosted
+production had no Circleback connection at this initial rollout.

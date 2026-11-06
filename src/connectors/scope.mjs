@@ -7,7 +7,7 @@ export const PROVIDER_STREAMS = {
   notion: ['pages', 'page_markdown', 'data_sources', 'comments'],
   github: ['commits', 'pull_requests', 'issues', 'issue_comments', 'review_comments', 'commit_comments', 'releases'],
 };
-export const pipelineVersion = binding => binding.provider === 'slack' ? PIPELINE_VERSION : 'workspace-v1';
+export const pipelineVersion = binding => binding.provider === 'slack' ? PIPELINE_VERSION : binding.provider === 'circleback' ? 'workspace-v2' : 'workspace-v1';
 export const digest = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 const fail = message => { throw Object.assign(new Error(message), {permanent: true}); };
 export function validateBinding(binding) {
