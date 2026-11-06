@@ -1,6 +1,6 @@
 import {createGunzip} from 'node:zlib';
 import {createHash} from 'node:crypto';
-import {Readable} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
 import {invalidRecord} from './scope.mjs';
 
 /** Bounded streaming decoder shared by all provider adapters. */
@@ -41,19 +41,23 @@ export async function readRecords(store, key, consume, {heartbeat = () => {}, ma
     if (records % 100 === 0) heartbeat({records});
   }
   try {
-    for await (const bytes of Readable.from(source()).compose(createGunzip())) {
-      expanded += bytes.length;
-      if (expanded > maxExpanded) invalidRecord('Expanded source exceeds limit');
-      // Scan each decompressed byte once. Large ignored diffs can make a JSONL
-      // record several MiB; rescanning/concatenating its prefix on every 16 KiB
-      // gunzip chunk makes decoding quadratic in record size.
-      let start = 0, end;
-      while ((end = bytes.indexOf(10, start)) >= 0) {
-        append(bytes.subarray(start, end)); await flushLine(); start = end + 1;
+    // Own the entire stream lifetime: a validation/consumer failure must close
+    // the source and gunzip before this operation rejects, including async cleanup.
+    await pipeline(source(), createGunzip(), async output => {
+      for await (const bytes of output) {
+        expanded += bytes.length;
+        if (expanded > maxExpanded) invalidRecord('Expanded source exceeds limit');
+        // Scan each decompressed byte once. Large ignored diffs can make a JSONL
+        // record several MiB; rescanning/concatenating its prefix on every 16 KiB
+        // gunzip chunk makes decoding quadratic in record size.
+        let start = 0, end;
+        while ((end = bytes.indexOf(10, start)) >= 0) {
+          append(bytes.subarray(start, end)); await flushLine(); start = end + 1;
+        }
+        append(bytes.subarray(start));
       }
-      append(bytes.subarray(start));
-    }
-    if (lineBytes) await flushLine();
+      if (lineBytes) await flushLine();
+    });
   } catch (error) {
     if (['Z_DATA_ERROR', 'Z_BUF_ERROR', 'ERR_ENCODING_INVALID_ENCODED_DATA'].includes(error.code)) invalidRecord('Invalid gzip or UTF-8 source');
     throw error;
