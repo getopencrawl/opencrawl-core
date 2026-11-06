@@ -55,18 +55,23 @@ launcher version; there are no install scripts.
 Before ordinary commands, the launcher checks for updates at most once per day.
 It awaits the update in the invoking process; hooks never check for updates.
 It checks the npm `next` release channel, installs into a private user-owned cache with
-npm integrity verification and install scripts disabled, then atomically selects
-the complete release. The command uses the selected binary. No sudo or global-directory
-writes are needed. Offline/update failures preserve the working copy and retry
-after 15 minutes. Concurrent invocations share an update lock; updates never
-downgrade. An unused installation updates when it is next invoked, not on a timer.
+npm integrity verification and install scripts disabled, then atomically publishes
+the complete release. Each invocation selects the highest complete cached version
+newer than the npm-installed copy. Concurrent installers keep separate temporary
+stages and reuse a complete same-version winner; a delayed older update cannot
+lower the selected version. No sudo or global-directory writes are needed.
+Offline/update failures preserve the working copy and retry after 15 minutes.
+An unused installation updates when it is next invoked, not on a timer.
 
 `OPENCRAWL_NO_UPDATE=1` disables automatic updates for reproducible agent runs.
 `opencrawl update [--json]` explicitly updates from that same channel. Cached releases live under
 `$XDG_CACHE_HOME/opencrawl` (default `~/.cache/opencrawl`); previous releases remain
 available for recovery. Install a newer npm version directly to override an older
-cached version. Set the opt-out and remove `current.json` to return to the npm
-installed version. Standalone binary installation/self-update is not offered in
+cached version. `current.json` remains a compatibility hint for older installed
+launchers; removing it does not disable cached releases in current launchers.
+To return to the npm-installed version, stop running CLI processes, set the
+opt-out, and move the cache's `releases` directory outside the cache. Keep it for
+recovery. Standalone binary installation/self-update is not offered in
 this release; distribute the npm command.
 
 ## Development and release
