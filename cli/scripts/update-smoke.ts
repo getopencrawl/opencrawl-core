@@ -5,6 +5,10 @@ import {join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
+import {createServer} from 'node:http';
+import {standaloneCapture} from '../../src/sessions/standalone.mjs';
+import {createSessionIngest} from '../../src/sessions/ingest.mjs';
+import {createLocalSessionStore} from '../../src/sessions/local-store.mjs';
 const nodeExecutable = Bun.which('node');
 if (!nodeExecutable) throw new Error('Node is required for the npm upgrade smoke test.');
 const npmCommand = [nodeExecutable, createRequire(import.meta.url)('../bin/opencrawl.cjs').npmCli(nodeExecutable)];
@@ -15,6 +19,7 @@ const version = next.join('.');
 const platform = `${process.platform}-${process.arch}`;
 const scratch = mkdtempSync(join(tmpdir(), 'opencrawl-upgrade-'));
 const env = {...process.env, OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config'), XDG_CACHE_HOME: join(scratch, 'cache')};
+let captureServer: ReturnType<typeof createServer> | undefined;
 const packages = new Map<string, Map<string, {pkg: any; bytes: Buffer}>>();
 function sync(command: string[], cwd?: string) {
   if (command[0] === 'npm') command = [...npmCommand, ...command.slice(1)];
@@ -67,11 +72,35 @@ try {
     const installedRoot = join(install, 'node_modules/@getopencrawl/cli');
     const launcher = join(installedRoot, 'bin/opencrawl.cjs');
     if (sync(['node', launcher, '--version']) !== original.version) throw new Error('Initial installation mismatch');
+    // Preserve an existing personal-scope installation and offline queue through
+    // the real npm update. The updated binary must recover without collect install.
+    const principal={tenantId:'org_team',userId:'human',name:'Human'};
+    const store=createLocalSessionStore(join(scratch,'objects'));
+    const token='upgrade-fixture-token-at-least-32-characters';
+    captureServer=createServer(standaloneCapture({token,principal,store}));
+    await new Promise<void>(r=>captureServer!.listen(0,'127.0.0.1',r));
+    const api='http://127.0.0.1:'+(captureServer.address() as any).port;
+    Object.assign(env,{OPENCRAWL_SESSIONS_TOKEN:token});
+    const capture=join(env.OPENCRAWL_CONFIG_HOME,'opencrawl','capture');
+    mkdirSync(join(capture,'queue'),{recursive:true});mkdirSync(join(capture,'state'));
+    const config={schemaVersion:1,api,installationId:'existing-install',owner:{...principal,tenantId:'personal:human'},
+      installedAt:'2026-01-01T00:00:00Z',roots:{'claude-code':join(scratch,'claude'),codex:join(scratch,'codex')},command:[nodeExecutable,launcher]};
+    const batch={schemaVersion:1,owner:config.owner,installationId:config.installationId,sessionId:'queued-session',harness:'codex',origin:'cli',events:[{id:'event',kind:'message',data:{role:'user',content:'synthetic upgrade fixture'}}],attachments:[]};
+    writeFileSync(join(capture,'config.json'),JSON.stringify(config));
+    writeFileSync(join(capture,'queue','before-update.json'),JSON.stringify(batch));
+    writeFileSync(join(capture,'state','cursor.json'),'{"offset":42}');
     const worker = join(scratch, 'update.cjs');
     writeFileSync(worker, `const cli=require(${JSON.stringify(launcher)}); cli.update({force:true, root:${JSON.stringify(installedRoot)}, fetcher:async()=>new Response(JSON.stringify({name:'@getopencrawl/cli',version:${JSON.stringify(version)}})), install:v=>cli.installRelease(v,{registry:${JSON.stringify(server.url.origin)}})}).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e);process.exitCode=1});`);
     const receipt = JSON.parse(await asyncRun(['node', worker]));
     if (!receipt.updated || receipt.version !== version) throw new Error('Upgrade was not promoted');
     if (sync(['node', launcher, '--version']) !== version) throw new Error('Original launcher did not adopt the updated launcher and binary');
-    console.log(`Real npm upgrade ${original.version} → ${version}, atomic promotion and original-command reuse verified.`);
+    const flushed=JSON.parse(await asyncRun(['node',launcher,'collect','flush','--json']));
+    if(flushed.data?.uploaded!==1)throw new Error('Updated collector did not recover its queued upload');
+    const status=JSON.parse(await asyncRun(['node',launcher,'collect','status','--json'])).data;
+    if(status.queued!==0||status.owner.tenantId!==principal.tenantId||status.installationId!==config.installationId)throw new Error('Updated capture status is inconsistent');
+    if(readFileSync(join(capture,'state','cursor.json'),'utf8')!=='{"offset":42}')throw new Error('Upgrade changed capture cursor');
+    const stored=await createSessionIngest({store}).getBatch(principal,{...batch,batchId:status.lastUpload.batchId});
+    if(stored?.owner.userId!==principal.userId||stored?.owner.tenantId!==principal.tenantId||stored?.events[0].data.content!=='synthetic upgrade fixture')throw new Error('Upgrade lost attribution or queued content');
+    console.log(`Real npm upgrade ${original.version} → ${version}, original-command reuse and queued capture recovery without reinstall verified.`);
   } finally { server.stop(true); }
-} finally { rmSync(scratch, {recursive: true, force: true}); }
+} finally { if(captureServer)await new Promise<void>(r=>captureServer!.close(()=>r()));rmSync(scratch, {recursive: true, force: true}); }

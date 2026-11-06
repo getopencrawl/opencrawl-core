@@ -2,11 +2,11 @@ import {readdirSync, statSync, realpathSync} from 'node:fs';
 import {join, sep} from 'node:path';
 import {createInterface} from 'node:readline/promises';
 import {CliError} from '../oauth.ts';
-import {captureTranscript, captureDir, flushCaptures, readCaptureConfig, request, recordError, type CaptureConfig} from './runtime.ts';
+import {captureTranscript, captureDir, flushCaptures, readCaptureConfig, refreshCaptureIdentity, recordError, type CaptureConfig} from './runtime.ts';
 import type {Harness} from './parse.ts';
 import {claudeDesktopHistories} from './desktop-history.ts';
 
-export const backfillNotice = 'Import local Claude Code and Codex history, including desktop coding sessions and host-mirrored Claude Desktop transcripts. Messages, tool arguments/results and available attachments will be uploaded to your signed-in OpenCrawl account. Cloud-only chats and VM-only records are not included.';
+export const backfillNotice = 'Import local Claude Code and Codex history, including desktop coding sessions and host-mirrored Claude Desktop transcripts. Messages, tool arguments/results and available attachments will be shared with your signed-in OpenCrawl team and attributed to you. Cloud-only chats and VM-only records are not included.';
 type Selection = 'all'|Harness;
 export function selection(value = 'all'): Selection {
   if (!['all','claude-code','codex'].includes(value)) throw new CliError('INVALID_USAGE','Choose all, claude-code, or codex.',64);
@@ -15,7 +15,7 @@ export function selection(value = 'all'): Selection {
 function configFor(api:string) {
   const config=readCaptureConfig();
   if(!config || config.disabled)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install first.');
-  if(config.api!==api)throw new CliError('CAPTURE_OWNER_CHANGED','The requested deployment differs from the installed collector. Use its --api or a separate OPENCRAWL_CONFIG_HOME.');
+  if(config.api!==api)throw new CliError('CAPTURE_API_MISMATCH','Use the installed collector’s --api URL, or run collect install with the new URL first.');
   return config;
 }
 /** File metadata only: preview never reads transcript contents, spools data, or contacts the server. */
@@ -66,8 +66,7 @@ export async function backfill(api:string, selected:Selection, approved:boolean)
   // Consent is required even in JSON mode, when stdin is piped, or on a retry.
   if(!approved)throw new CliError('BACKFILL_CONSENT_REQUIRED','Preview with collect backfill --dry-run. Ask the user to choose Claude, Codex, both, or skip; pass --yes only after approval.',64);
   const config=configFor(api);
-  const {principal}=await request(config.api,'/api/sessions/identity');
-  if(principal?.userId!==config.owner.userId || principal?.tenantId!==config.owner.tenantId)throw new CliError('CAPTURE_OWNER_CHANGED','Sign in as the capture owner before importing history.');
+  await refreshCaptureIdentity(config);
   const {files,sources}=inventory(config,selected);
   let processed=0,uploaded=0;
   const failures:{code:string}[]=[];
@@ -76,7 +75,7 @@ export async function backfill(api:string, selected:Selection, approved:boolean)
     catch(e:any){failures.push({code:e instanceof CliError?e.code:'CAPTURE_FAILED'});recordError(e);}
     // Bound the retry spool to one transcript at a time; stop if the receiver is offline.
     // Completed historical files have no work to send. Keep replay local after
-    // the initial owner check; real queued uploads still revalidate ownership.
+    // the initial authentication; queued uploads still authenticate with the server.
     if(readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json')))uploaded+=(await flushCaptures()).uploaded;
   }
   if(failures.length) {
