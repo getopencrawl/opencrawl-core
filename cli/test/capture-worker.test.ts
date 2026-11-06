@@ -3,7 +3,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,appe
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
-import {installCapture,uninstallCapture} from '../src/capture/install.ts';
+import {installCapture,uninstallCapture,upgradeCaptureHooks} from '../src/capture/install.ts';
 import {captureHook,captureWorker,captureDir,captureStatus,readCaptureConfig,flushCaptures,drainCaptureNotices} from '../src/capture/runtime.ts';
 import {withSessionLock,sessionFile} from '../src/session.ts';
 import {backfill} from '../src/capture/backfill.ts';
@@ -89,7 +89,7 @@ test('backfill waits beyond the old 20-second upload-lock deadline and reports c
  expect((await importing).status).toBe('complete');expect(captureStatus().queued).toBe(0);expect(f.batches.length).toBeGreaterThan(0);
 }),30000);
 
-test('a killed detached worker leaves durable notices for a new invocation',async()=>fixture(async f=>{
+test('a killed owned worker leaves durable notices for a new invocation',async()=>fixture(async f=>{
  const cli=resolve(import.meta.dir,'../src/cli.ts');
  f.delay=500;
  await captureHook('claude-code',{session_id:'session',transcript_path:f.path,prompt:'synthetic'});
@@ -145,4 +145,32 @@ test('SubagentStop enrolls the child transcript separately and preserves both la
  await captureWorker({idleMs:20,pollMs:5});
  for(const id of ['child-one','child-two'])expect(f.batches.filter((b:any)=>b.sessionId==='session:child'&&b.events.some((e:any)=>e.nativeId===id))).toHaveLength(1);
  expect(f.batches.filter((b:any)=>b.sessionId==='session'&&b.events.some((e:any)=>e.nativeId==='parent-two'))).toHaveLength(1);
+}));
+
+// Exercise the actual generated command, including the shell and stable runner.
+test('async hook retains its harness-owned PID on Unix; legacy upgrade preserves identity and queue',async()=>fixture(async f=>{
+ const cli=resolve(import.meta.dir,'../src/cli.ts');
+ const output=join(f.dir,'pid.json');
+ const code=`require('node:fs').writeFileSync(${JSON.stringify(output)},JSON.stringify({pid:process.pid,ppid:process.ppid}));`;
+ await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e',code]});
+ const config=readCaptureConfig()!;
+ const hooksFile=join(config.roots['claude-code'],'settings.json');
+ const hook=JSON.parse(readFileSync(hooksFile,'utf8')).hooks.Stop[0].hooks[0];
+ expect(hook.async).toBe(true);
+ const shell=process.platform==='win32'?['cmd.exe','/d','/s','/c',hook.command]:['/bin/sh','-c',hook.command];
+ const child=Bun.spawn(shell,{env:process.env,stdout:'pipe',stderr:'pipe'});
+ expect(await child.exited).toBe(0);
+ const observed=JSON.parse(readFileSync(output,'utf8'));
+ if(process.platform!=='win32')expect(observed.pid).toBe(child.pid);
+ // A legacy synchronous hook must queue locally, not wait on network or spawn.
+ writeFileSync(join(captureDir(),'config.json'),JSON.stringify({...config,hookMode:undefined,command:[process.execPath,cli]}));
+ const before=f.requests;
+ const legacy=Bun.spawn([process.execPath,cli,'collect','hook','--harness','claude-code'],{env:process.env,stdin:new Blob([JSON.stringify({session_id:'session',transcript_path:f.path})]),stdout:'pipe',stderr:'pipe'});
+ expect(await legacy.exited).toBe(0);expect(f.requests).toBe(before);
+ expect(captureStatus().pendingHooks).toBe(1);
+ expect(readCaptureConfig()!.installationId).toBe(config.installationId);
+ expect(readCaptureConfig()!.owner).toEqual(config.owner);
+ expect(readCaptureConfig()!.hookMode).toBe('managed');
+ expect(JSON.parse(readFileSync(hooksFile,'utf8')).hooks.Stop[0].hooks[0].async).toBe(true);
+ const upgraded=readFileSync(hooksFile,'utf8');await upgradeCaptureHooks();expect(readFileSync(hooksFile,'utf8')).toBe(upgraded);
 }));

@@ -3,10 +3,10 @@ const quote=value=>"'"+value.replace(/'/g,"'\\''")+"'";
 export function cloudSetupScript(api) {
   const url=new URL(api);if(url.protocol!=='https:'||url.origin!==api)throw new Error('Cloud capture requires an HTTPS API origin');
   // Prepare hooks without runtime credentials. The first hook only saves a local
-  // notice; the detached CLI worker authenticates after secrets are injected.
+  // notice; the same async hook authenticates after secrets are injected.
   return `#!/bin/sh
 set -eu
-npm install --prefix "$HOME/.local/share/opencrawl-cloud" --no-audit --no-fund @getopencrawl/cli@0.4.9
+npm install --prefix "$HOME/.local/share/opencrawl-cloud" --no-audit --no-fund @getopencrawl/cli@0.4.10
 OPENCRAWL_NO_UPDATE=1 "$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl" collect install --api ${quote(api)} --harness claude-code --defer-auth --backfill skip --json
 `;
 }
@@ -17,7 +17,7 @@ ${revoked?'<p role="status">Capture credential revoked.</p>':''}
 ${credential?`<p>This upload-only credential expires ${escape(credential.expiresAt.slice(0,10))}. It cannot search or read sessions. Copy it into Claude’s environment variables; keep it out of chats and repositories.</p><label>Environment variable<textarea rows="3" readonly>${escape('OPENCRAWL_SESSIONS_TOKEN='+credential.token)}</textarea></label><p>Credential ID: <code>${escape(credential.id)}</code>. Save this ID to revoke access later.</p>`:'<form method="post" action="/capture/cloud"><button class="primary">Create upload-only credential</button></form>'}
 <ol><li>At claude.ai/code, open the environment selector and create or edit a personal environment.</li><li>Under Network access, keep Limited/Trusted access and add <code>${escape(new URL(api).hostname)}</code>. Keep npm/package registries allowed.</li><li>Under Environment variables, add the credential above. Values are readable by sessions in this environment.</li><li>Append this script to Setup script (preserve any existing setup), then save changes.</li><li>Start a new session with that environment selected. Ask it to run a shell command, read an attached image, and check <code>opencrawl collect status</code> using the installed path below. A stored receipt confirms upload; search appears after asynchronous indexing.</li></ol>
 <label>Setup script<textarea rows="10" readonly>${escape(cloudSetupScript(api))}</textarea></label>
-<p>CLI path: <code>$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl</code>. Your current setup session may need a restart; future sessions prepare capture in the setup script and authenticate in a detached worker when Claude starts. Capture includes messages, tool arguments/results and attachments. System prompt snapshots are omitted.</p>
+<p>CLI path: <code>$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl</code>. Your current setup session may need a restart; future sessions prepare capture in the setup script and authenticate in a supervised asynchronous hook when Claude starts. Capture includes messages, tool arguments/results and attachments. System prompt snapshots are omitted.</p>
 <form method="post" action="/capture/cloud/revoke"><label>Credential ID to revoke<input name="id" pattern="[a-f0-9]{64}" required value="${escape(credential?.id??'')}"></label><button>Revoke credential</button></form></main>`;
 }
 export function captureSetupPrompt(api) {

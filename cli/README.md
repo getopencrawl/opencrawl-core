@@ -47,17 +47,18 @@ or forbidden, 64 invalid arguments, 130 interrupted.
 ## Updates and distribution
 
 TypeScript compiled with Bun 1.3.14 produces a self-contained binary. Users need
-Node 22+ and npm for the bootstrap, never Bun. npm platform packages cover macOS
+Node 22.15+ and npm for the bootstrap, never Bun. npm platform packages cover macOS
 arm64/x64, Linux glibc arm64/x64 and Windows x64. Alpine/musl and Windows arm64
 are not supported in v0. Platform packages are optional dependencies at the exact
 launcher version; there are no install scripts.
 
-After a command, the launcher starts a detached updater at most once per day.
+Before ordinary commands, the launcher checks for updates at most once per day.
+It awaits the update in the invoking process; hooks never check for updates.
 It checks the npm `next` release channel, installs into a private user-owned cache with
 npm integrity verification and install scripts disabled, then atomically selects
-the complete release. The next invocation uses it. No sudo or global-directory
+the complete release. The command uses the selected binary. No sudo or global-directory
 writes are needed. Offline/update failures preserve the working copy and retry
-after 15 minutes. Concurrent updater processes share a lock; updates never
+after 15 minutes. Concurrent invocations share an update lock; updates never
 downgrade. An unused installation updates when it is next invoked, not on a timer.
 
 `OPENCRAWL_NO_UPDATE=1` disables automatic updates for reproducible agent runs.
@@ -107,28 +108,28 @@ After signing in, run `opencrawl collect install` to install Claude Code and Cod
 
 Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service determines the current team from login and validates human attribution. Existing collectors and queued personal-scope uploads automatically use that team after updating, without reinstalling or resetting. Self-hosted users can supply `OPENCRAWL_SESSIONS_TOKEN` and `--api` for the portable receiver. See [capture architecture and limits](../docs/session-capture.md).
 
-Hooks durably save their event locally and wake one detached worker. They do not
-read transcripts, wait for an upload lock, or make network requests. The worker
-parses permitted records, spools immutable batches, and keeps each batch until a
-verified durable receipt arrives. Concurrent workers exit without waiting;
-foreground flush/backfill waits for upload ownership rather than failing after
-20 seconds. Backfill completes only after its queued data has receipts.
+The harness runs each hook asynchronously and owns its process. The hook saves
+its notice locally, then competes for one nonblocking uploader lock. The winner
+parses permitted transcripts, spools immutable batches and uploads; other hooks
+exit after saving their notices. On Unix the shell and Node dispatcher replace
+themselves with the native CLI using exec, keeping the harness-owned PID. Capture
+never detaches a child, starts a service or launches a replacement worker.
+Foreground flush/backfill waits for upload ownership and confirmed receipts.
 
-No systemd, launchd, cron, or installed daemon is required on any supported OS.
-An updated worker retires legacy OpenCrawl timers when it first runs; reinstall
-also removes them. Existing cursors, queue, identity and hook dispatcher remain
-compatible. The worker polls known transcripts for 30 seconds after activity,
-including after Stop, and retries failed uploads with backoff while it can run.
-Later hooks and ordinary CLI invocations recover pending work and recheck known
-sources after process loss. An idle interval is not a final-session receipt:
-unsent data needs retained files and another execution opportunity. A destroyed
-sandbox cannot deliver bytes that never left it. `collect status` reports
-`pendingHooks` separately from queued upload batches. Uninstall preserves both.
+No systemd, launchd, cron, or installed daemon is required. Reinstall removes
+legacy OpenCrawl timers. Existing installations upgrade their owned hook settings
+on the next CLI invocation; restart existing sessions to load async settings.
+Legacy synchronous hooks remain local-only until those settings reload.
+The uploader polls known transcripts for 30 seconds after activity, including
+late writes after Stop, and retries failures with backoff while the harness lets
+it run. Later hooks or explicit sync/flush recover retained work after process
+loss. Harness teardown may cancel an async hook; no delivery is possible after
+a sandbox destroys unsent files. An idle interval is not a final-session receipt.
+`collect status` reports pending hooks separately from queued batches.
 
 Cloud image setup uses `collect install --harness claude-code --defer-auth
---backfill skip`: it requires no runtime credential or network identity lookup.
-The first detached worker binds the authenticated identity and installation ID
-before parsing or uploading. First-run hooks remain network-nonblocking.
+--backfill skip` without a runtime credential or identity lookup. The first async
+hook binds identity before parsing or uploading, without blocking the agent.
 
 ### Optional history import
 

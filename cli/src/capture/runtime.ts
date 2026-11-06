@@ -5,16 +5,14 @@ import {pipeline} from 'node:stream/promises';
 import {join, dirname, resolve, sep, basename} from 'node:path';
 import {homedir, hostname} from 'node:os';
 import {randomUUID} from 'node:crypto';
-import {spawn} from 'node:child_process';
 import {configDir, atomicFile, atomicJson, accessToken, withSessionLock, syncDirectory} from '../session.ts';
-import {removeLegacyService} from './legacy-service.ts';
 import {CliError} from '../oauth.ts';
 import {parseRecord, detectOrigin, hash, type Harness} from './parse.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
-export type CaptureConfig = {disabled?:boolean,authPending?:boolean,schemaVersion:1,harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
+export type CaptureConfig = {disabled?:boolean,authPending?:boolean,schemaVersion:1,hookMode?:'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 // `owner` in the saved schema is cached attribution, not an enrollment constraint.
 export async function refreshCaptureIdentity(config:CaptureConfig,token?:string) {
@@ -70,12 +68,6 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
 export function commandForSelf() {
   if(process.env.OPENCRAWL_LAUNCHER && process.env.OPENCRAWL_NODE) return [process.env.OPENCRAWL_NODE,process.env.OPENCRAWL_LAUNCHER];
   return process.argv[1]?.endsWith('.ts') ? [process.execPath,resolve(process.argv[1])] : [process.execPath];
-}
-export function kick(config:CaptureConfig) {
-  if(!config.command.length)return;
-  const child=spawn(config.command[0],[...config.command.slice(1),'collect','worker'],{
-    detached:true,stdio:'ignore',windowsHide:true,env:{...process.env,OPENCRAWL_CONFIG_HOME:dirname(configDir()),OPENCRAWL_NO_UPDATE:'1'}});
-  child.on('error',()=>{});child.unref();
 }
 export function recordError(error:any) {
   // Status only: never include transcript content, credentials, or a provider response.
@@ -260,7 +252,6 @@ export async function captureHook(harness:Harness,event:any) {
   if(typeof sessionId!=='string' || !/^[\w.:-]{1,200}$/.test(sessionId))throw new CliError('CAPTURE_SESSION_UNKNOWN','Hook missing session ID');
   const id=randomUUID();
   atomicJson(join(captureDir(),'notices',id+'.json'),{id,at:new Date().toISOString(),harness,event});
-  kick(config);
 }
 
 // The original event is kept only until its immutable batch is spooled. Its ID
@@ -320,9 +311,9 @@ export async function captureWorker({idleMs=30_000,pollMs=1000}={}) {
   const config=readCaptureConfig();if(!config||config.disabled)return;
   ensureDirectories();
   let observedNotices:string[]=[];
+  for(;;) {
   try {
     await withSessionLock('capture:worker',async()=>{
-      removeLegacyService();
       const seen=new Map<string,string>();let activeAt=Date.now(),failures=0;
       while(readCaptureConfig() && !readCaptureConfig()!.disabled) {
         let captureError:any;
@@ -349,11 +340,9 @@ export async function captureWorker({idleMs=30_000,pollMs=1000}={}) {
   } catch(error:any) {if(error?.code!=='SESSION_BUSY')throw error;return;}
   // Release-before-recheck closes the idle-exit lost-wakeup race. Hooks arriving
   // before release are seen here; hooks arriving later can acquire the lock.
-  if(!readCaptureConfig()?.disabled && (queuedNames().length || noticeNames().some(n=>!observedNotices.includes(n))))kick(config);
-}
-
-export function wakeCaptures() {
-  const config=readCaptureConfig();if(config&&!config.disabled)kick(config);
+  if(!readCaptureConfig() || readCaptureConfig()!.disabled || (!queuedNames().length && !noticeNames().some(n=>!observedNotices.includes(n))))return;
+  // Reacquire in this same owned process; never spawn a replacement.
+  }
 }
 /** Explicit flush waits for capture and upload ownership, then fences current sources. */
 export async function flushCaptureWork() {

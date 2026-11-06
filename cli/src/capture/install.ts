@@ -1,10 +1,11 @@
 import {readFileSync, existsSync, mkdirSync, writeFileSync, copyFileSync, unlinkSync, readdirSync, renameSync} from 'node:fs';
 import {join, dirname} from 'node:path';
 import {homedir} from 'node:os';
+import {spawnSync} from 'node:child_process';
 import {removeLegacyService} from './legacy-service.ts';
 import {randomUUID} from 'node:crypto';
 import {type Harness} from './parse.ts';
-import {atomicJson, configDir, withSessionLock} from '../session.ts';
+import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {captureDir, readCaptureConfig, commandForSelf, request, type CaptureConfig} from './runtime.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
@@ -25,7 +26,7 @@ function modifyHooks(file:string,events:string[],command:string|null) {
     });
     if(!hooks[event].length)delete hooks[event];
   }
-  if(command)for(const event of events)(hooks[event]??=[]).push({hooks:[{type:'command',command,timeout:30,statusMessage:marker}]});
+  if(command)for(const event of events)(hooks[event]??=[]).push({hooks:[{type:'command',command,async:true,timeout:120,statusMessage:marker}]});
   backup(file);atomicJson(file,{...config,hooks});
 }
 function enableCodex(root:string) {
@@ -46,6 +47,51 @@ function enableCodex(root:string) {
   // Atomic replacement without changing unrelated TOML settings.
   renameSync(temp,file);
 }
+function configureHooks(config:CaptureConfig,harnesses:Harness[]) {
+  const runner=join(captureDir(),'runner.cjs');
+  const node=process.env.OPENCRAWL_NODE || Bun.which('node');
+  if(!node)throw new CliError('NODE_REQUIRED','Install Node 22.15 or newer to run capture hooks');
+  const check=spawnSync(node,['-e',"process.exit(process.platform==='win32'||typeof process.execve==='function'?0:1)"],{stdio:'ignore',timeout:5000,windowsHide:true});
+  if(check.status!==0)throw new CliError('NODE_REQUIRED','Install Node 22.15 or newer to run capture hooks');
+  // Resolve the selected npm binary without running its launcher. On Unix exec
+  // preserves the PID owned by the harness, including cancellation and reaping.
+  atomicFile(runner,`const command=${JSON.stringify(config.command)};
+const env={...process.env,OPENCRAWL_CONFIG_HOME:${JSON.stringify(dirname(configDir()))},OPENCRAWL_NO_UPDATE:'1'};
+let file=command[0],args=command.slice(1);
+if(args[0]&&require('node:path').basename(args[0])==='opencrawl.cjs'){const cli=require(args[0]);file=cli.binary(cli.activeRoot());args=args.slice(1);}
+args.push(...process.argv.slice(2));
+if(process.platform!=='win32')process.execve(file,[file,...args],env);
+else {const r=require('node:child_process').spawnSync(file,args,{stdio:'inherit',windowsHide:true,env});process.exitCode=r.status??1;}
+`);
+  const base=(process.platform==='win32'?'':'exec ')+[quote(node),quote(runner),'collect','hook','--managed'].join(' ');
+  if(harnesses.includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),
+    ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','Stop','SubagentStop','SessionEnd'],base+' --harness claude-code');
+  if(harnesses.includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),
+    ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SubagentStop','SessionEnd'],base+' --harness codex');
+}
+/** Upgrade existing installations without authentication or changing their queue. */
+export async function upgradeCaptureHooks() {
+  const config=readCaptureConfig();if(!config||config.disabled||config.hookMode==='managed')return;
+  try {await withSessionLock('capture:configuration',async()=>{
+    const current=readCaptureConfig();if(!current||current.disabled||current.hookMode==='managed')return;
+    const harnesses=current.harnesses??['claude-code','codex'];
+    for(const harness of harnesses)mkdirSync(current.roots[harness],{recursive:true,mode:0o700});
+    mkdirSync(join(captureDir(),'backups'),{recursive:true,mode:0o700});
+    const files=[join(captureDir(),'config.json'),join(captureDir(),'runner.cjs'),
+      ...harnesses.map(h=>join(current.roots[h],h==='codex'?'hooks.json':'settings.json'))];
+    const originals=new Map(files.map(file=>[file,existsSync(file)?readFileSync(file):null]));
+    try {
+      configureHooks(current,harnesses);
+      atomicJson(join(captureDir(),'config.json'),{...current,hookMode:'managed'});
+    } catch(error) {
+      for(const [file,bytes] of originals) {
+        if(bytes===null){try{unlinkSync(file);}catch{}}
+        else atomicFile(file,bytes);
+      }
+      throw error;
+    }
+  },0);}catch(error:any){if(error?.code!=='SESSION_BUSY')throw error;}
+}
 export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
   if(!harnesses.length||harnesses.some(h=>!['claude-code','codex'].includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code or codex',64);
   // Image preparation cannot access runtime secrets. First worker authenticates
@@ -55,7 +101,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   return withSessionLock('capture:configuration',async()=>{
   const previous=readCaptureConfig();
   for(const dir of ['', 'backups','queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});
-  const config:CaptureConfig={schemaVersion:1,api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:principal,...(deferAuth?{authPending:true}:{}),
+  const config:CaptureConfig={schemaVersion:1,hookMode:'managed',api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:principal,...(deferAuth?{authPending:true}:{}),
     harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
       'claude-code':process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),codex:process.env.CODEX_HOME||join(home,'.codex')},
     claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
@@ -70,17 +116,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   try {
   atomicJson(join(captureDir(),'config.json'),config);
   if(process.env.OPENCRAWL_SESSIONS_TOKEN)atomicJson(join(captureDir(),'receiver-token.json'),{api,token:process.env.OPENCRAWL_SESSIONS_TOKEN});
-  const runner=join(captureDir(),'runner.cjs');
-  // Stable dispatcher follows the npm launcher's selected release; desktop needs no shell PATH setup.
-  writeFileSync(runner,`const {spawnSync}=require('node:child_process');const r=spawnSync(${JSON.stringify(command[0])},[${command.slice(1).map(x=>JSON.stringify(x)).join(',')}${command.length>1?',':''}...process.argv.slice(2)],{stdio:'inherit',windowsHide:true,env:{...process.env,OPENCRAWL_CONFIG_HOME:${JSON.stringify(dirname(configDir()))},OPENCRAWL_NO_UPDATE:'1'}});process.exitCode=r.status??1;\n`,{mode:0o600});
-  // Use the installed Node runtime for the dispatcher; compiled Bun also supports running it via BUN_BE_BUN.
-  const node=process.env.OPENCRAWL_NODE || (process.execPath.endsWith('bun') ? process.execPath : Bun.which('node'));
-  if(!node)throw new CliError('NODE_REQUIRED','Install Node to run capture hooks');
-  const base=[quote(node),quote(runner),'collect','hook'].join(' ');
-  if(harnesses.includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),
-    ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','Stop','SubagentStop','SessionEnd'],base+' --harness claude-code');
-  if(harnesses.includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),
-    ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SubagentStop','SessionEnd'],base+' --harness codex');
+  configureHooks(config,harnesses);
   if(harnesses.includes('codex'))enableCodex(config.roots.codex);
   } catch(error) {
     for(const [path,bytes] of originals) {
@@ -91,7 +127,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   }
   // Retire only legacy OpenCrawl services. Collection itself needs no init system.
   removeLegacyService(home);
-  const backgroundStatus='on-demand';
+  const backgroundStatus='harness-managed';
   return {installationId:config.installationId,owner:deferAuth?null:principal,background:backgroundStatus,harnesses:config.harnesses,
     nextStep:process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':'Review OpenCrawl hooks in Codex /hooks or desktop Settings > Hooks. Restart existing Claude sessions if hooks have not reloaded.'};
   });
