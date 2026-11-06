@@ -37,7 +37,7 @@ function compatible(actual,expected) {
  * `vectors: {dimensions}` adds a passage embedding field for hybrid search. Enabling it on an
  * existing deployment needs a new realm generation (see search/migration.mjs). */
 export function createRealm({endpoint,index,tenantId,environment='selfhost',generation='v1',username,password,credentials,region='us-east-1',replicas=0,vectors,fetch:send=globalThis.fetch}) {
-  const mapping=vectors?realmMappingWithVectors(vectors.dimensions):realmMapping;
+  const mapping=vectors?realmMappingWithVectors(vectors.dimensions,{exact:vectors.exact}):realmMapping;
   if(typeof tenantId!=='string'||!tenantId)throw fail('Realm tenant required',403);
   index ||= realmIndex(environment,tenantId,generation);
   const base=new URL(endpoint);
@@ -48,7 +48,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
   let ready;
   async function ensureIndex(){
     ready ||= (async()=>{
-      try{await request('',{settings:{number_of_shards:1,number_of_replicas:replicas,...(vectors?{'index.knn':true}:{})},mappings:{...mapping,_meta:{schema:1,tenantId}}},'PUT');}
+      try{await request('',{settings:{number_of_shards:1,number_of_replicas:replicas,...(vectors&&!vectors.exact?{'index.knn':true}:{})},mappings:{...mapping,_meta:{schema:1,tenantId}}},'PUT');}
       catch(e){if(e.status!==400||e.type!=='resource_already_exists_exception')throw e;}
       const actual=(await request('/_mapping',undefined,'GET'))?.[index]?.mappings;
       if(actual?._meta?.tenantId!==tenantId||actual?._meta?.schema!==1||!compatible(actual,mapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');

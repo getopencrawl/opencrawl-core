@@ -47,7 +47,9 @@ export function createSessionSearch({embed,embedQuery=embed,...options}) {
         query:{bool:{filter:[{term:{tenantId:principal.tenantId}}],must:query?[relevanceQuery(query)]:[{match_all:{}}]}},
         sort:query?['_score',{[f('receivedAt')]:'desc'}]:[{[f('receivedAt')]:'desc'},{[f('sequence')]:'asc'}]});
       const semantic=embed&&query.trim()&&!raw?embedQuery([query]).then(([vector])=>collection.search(principal,{size:limit,_source:{excludes},
-        query:{knn:{embedding:{vector:Array.from(vector),k:limit}}}})):null;
+        query:options.vectors.exact
+          ?{script_score:{query:{match_all:{}},script:{source:'knn_score',lang:'knn',params:{field:'embedding',query_value:Array.from(vector),space_type:'cosinesimil'}}}}
+          :{knn:{embedding:{vector:Array.from(vector),k:limit}}}})):null;
       const [result,dense]=await Promise.all([lexical,semantic]);
       for(const response of [result,dense]){
         const hits=response?.hits?.hits;

@@ -33,9 +33,11 @@ export const realmMapping = {dynamic:'strict', properties:{
 }};
 
 /** Realm mapping with a passage embedding for hybrid search (opt-in per realm generation).
- * Lucene HNSW with filtering; cosine similarity over unit-length vectors. */
-export function realmMappingWithVectors(dimensions) {
+ * Default: Lucene HNSW (approximate). `exact` stores vectors without a graph and scores every
+ * passage in scope, which is exact and cheaper to write for small or fast-changing realms. */
+export function realmMappingWithVectors(dimensions, {exact = false} = {}) {
   if (!Number.isInteger(dimensions) || dimensions < 1 || dimensions > 4096) throw new Error('Invalid embedding dimensions');
-  return {...realmMapping, properties: {...realmMapping.properties,
-    embedding: {type: 'knn_vector', dimension: dimensions, method: {name: 'hnsw', engine: 'lucene', space_type: 'cosinesimil'}}}};
+  const embedding = exact ? {type: 'knn_vector', dimension: dimensions}
+    : {type: 'knn_vector', dimension: dimensions, method: {name: 'hnsw', engine: 'lucene', space_type: 'cosinesimil'}};
+  return {...realmMapping, properties: {...realmMapping.properties, embedding}};
 }

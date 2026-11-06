@@ -105,3 +105,18 @@ test('real OpenSearch: vector realms store embeddings, reject a mapping without 
  await createSessionSearch({endpoint,environment:plainEnv}).ensureIndex(owner);
  await assert.rejects(createSessionSearch({endpoint,environment:plainEnv,embed,vectors:{dimensions:words.length}}).ensureIndex(owner),/migrate to a new generation/);
 });
+
+test('real OpenSearch: exact vector realms score every passage in scope',{skip:!process.env.OPENCRAWL_TEST_OPENSEARCH_URL},async t=>{
+ const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL,environment='x'+randomUUID().slice(0,8);
+ const embed=async texts=>texts.map(text=>/toolbar/i.test(text)?[1,0]:[0,1]);
+ t.after(()=>fetch(`${endpoint}/opencrawl-${environment}-realm-*`,{method:'DELETE'}));
+ const search=createSessionSearch({endpoint,environment,embed,vectors:{dimensions:2,exact:true}});
+ await search.ensureIndex(owner);
+ const doc=(id,text)=>({id,document:{tenantId:'tenant-a',userId:'same-user',sessionId:'s',eventId:id,kind:'message',harness:'codex',receivedAt:new Date().toISOString(),sequence:0,chunk:0,text}});
+ await search.putDocuments([doc('toolbar','Toolbar: Delete Customer | Back'),doc('forum','Forum subscribe')],owner);
+ await fetch(`${endpoint}/opencrawl-${environment}-realm-*/_refresh`,{method:'POST'});
+ const {hits}=await search.search(owner,{query:'what is in the toolbar'});
+ assert.equal(hits[0].eventId,'toolbar');
+ const mapping=Object.values(await (await fetch(`${endpoint}/opencrawl-${environment}-realm-*/_mapping`)).json())[0].mappings;
+ assert.equal(mapping.properties.embedding.method,undefined);
+});
