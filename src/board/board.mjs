@@ -14,6 +14,7 @@ export const syncSchema = z.strictObject({
   leave: z.boolean().default(false),
 });
 export const topicsSchema = z.strictObject({workspace: short(200).optional(), after: z.number().int().min(0).default(0)});
+export const boardReadSchema = z.strictObject({topic: topic.optional(), before: z.number().int().positive().optional()});
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => Object.assign(new Error(message), {status});
 const fresh = () => ({schema: 1, messages: [], agents: {}, usage: {calls: 0, inputBytes: 0, outputBytes: 0}});
@@ -33,6 +34,22 @@ export function createBoard({store, prefix, now = Date.now, search}) {
     return {...object, state};
   }
   return {
+    /** Browse the durable log without writing presence, usage or search indexes. */
+    async read(principal, input = {}) {
+      const key = scope(principal), args = boardReadSchema.parse(input);
+      const {state} = await read(key);
+      const messages = [];
+      let more = false;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const message = state.messages[i];
+        if ((args.before !== undefined && message.id >= args.before) || (args.topic && message.topic !== args.topic)) continue;
+        if (messages.length === 20) {more = true; break;}
+        const {requestId, ...visible} = message;
+        messages.push(visible);
+      }
+      return {topics: [...new Set(state.messages.map(message => message.topic))].sort(), messages,
+        next: more ? messages.at(-1).id : null};
+    },
     ...(search ? {async search(principal, input) {
       const key = scope(principal), args = boardSearchSchema.parse(input);
       if (args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);

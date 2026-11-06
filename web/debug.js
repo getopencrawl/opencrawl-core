@@ -109,7 +109,7 @@ function renderGroups(container, groups, query) {
   }
 }
 
-if (typeof document !== 'undefined') {
+if (typeof document !== 'undefined' && document.querySelector('#debug-search')) {
   const form = document.querySelector('#debug-search');
   const input = document.querySelector('#query');
   const button = form.querySelector('button');
@@ -152,4 +152,68 @@ if (typeof document !== 'undefined') {
       results.setAttribute('aria-busy', 'false');
     }
   });
+}
+
+if (typeof document !== 'undefined' && document.querySelector('#debug-board')) {
+  const form = document.querySelector('#debug-board');
+  const topic = document.querySelector('#board-topic');
+  const refresh = form.querySelector('button');
+  const status = document.querySelector('#board-status');
+  const list = document.querySelector('#board-messages');
+  const older = document.querySelector('#board-more');
+  let next = null, busy = false;
+  async function load(append = false) {
+    if (busy || (append && next === null)) return;
+    busy = true;
+    refresh.disabled = topic.disabled = older.disabled = true;
+    status.textContent = 'Loading messages…';
+    status.classList.remove('debug-error');
+    list.setAttribute('aria-busy', 'true');
+    if (!append) {list.replaceChildren(); next = null; older.hidden = true;}
+    const query = new URLSearchParams();
+    if (topic.value) query.set('topic', topic.value);
+    if (append && next !== null) query.set('before', String(next));
+    try {
+      const response = await fetch('/api/debug/board?' + query, {signal: AbortSignal.timeout(30000)});
+      if (response.status === 401) throw new Error('Your session expired. Sign in again, then retry.');
+      if (response.status === 403) throw new Error('Workspace admin access could not be verified. Sign in again, then retry.');
+      if (!response.ok) throw new Error('Could not load messages. Please refresh to try again.');
+      const data = await response.json();
+      const selected = topic.value;
+      topic.replaceChildren(new Option('All topics', ''), ...data.topics.map(name => new Option(name, name)));
+      topic.value = selected;
+      for (const message of data.messages) {
+        const article = element('article', 'debug-hit');
+        article.append(element('h3', '', message.topic));
+        const meta = element('p', 'debug-meta');
+        meta.append(element('span', '', message.name || message.agent));
+        const date = new Date(message.timestamp);
+        if (Number.isFinite(date.getTime())) {
+          const time = element('time', '', date.toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'}));
+          time.dateTime = date.toISOString(); meta.append(time);
+        }
+        meta.append(element('span', '', '#' + message.id));
+        article.append(meta, element('p', 'debug-text', message.text));
+        list.append(article);
+      }
+      next = data.next;
+      older.hidden = next === null;
+      const count = list.childElementCount;
+      status.textContent = count ? `${count} ${count === 1 ? 'message' : 'messages'} shown${next !== null ? '. Older messages available.' : '.'}` : 'No messages in this topic yet.';
+      if (!count && !topic.value) status.textContent = 'No workspace messages yet.';
+    } catch (error) {
+      // Do not leave previously loaded workspace data visible after a failed access check.
+      list.replaceChildren(); next = null; older.hidden = true;
+      status.textContent = error.name === 'TimeoutError' ? 'Loading timed out. Please refresh to try again.' : error.message;
+      status.classList.add('debug-error');
+    } finally {
+      busy = false;
+      refresh.disabled = topic.disabled = older.disabled = false;
+      list.setAttribute('aria-busy', 'false');
+    }
+  }
+  form.addEventListener('submit', event => {event.preventDefault(); load();});
+  topic.addEventListener('change', () => load());
+  older.addEventListener('click', () => load(true));
+  load();
 }

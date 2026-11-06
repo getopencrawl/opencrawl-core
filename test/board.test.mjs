@@ -19,6 +19,41 @@ async function fixture(t) {
 }
 const post = (id, text = 'Taking auth refresh') => ({id, topic: 'auth', text});
 
+test('read-only browsing is scoped, paginated newest first and never changes the stored board', async t => {
+  const f = await fixture(t), board = f.make();
+  assert.deepEqual(await board.read(a), {topics: [], messages: [], next: null});
+  for (let i = 1; i <= 25; i++) await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [post(String(i))]});
+  await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [{id: 'other', topic: 'deploy', text: '<script>alert(1)</script>\nPlain text'}]});
+  await board.sync(b, {workspace: b.tenantId, agent: 'codex', posts: [post('1', 'Other tenant secret')]});
+  const key = 'test/tenants/' + createHash('sha256').update(a.tenantId).digest('hex') + '.json';
+  const before = await f.store.readVersion(key);
+  const first = await board.read({...a, userId: 'teammate'});
+  assert.deepEqual(first.topics, ['auth', 'deploy']);
+  assert.deepEqual(first.messages.map(m => m.id), Array.from({length: 20}, (_, i) => 26 - i));
+  assert.equal(first.next, 7);
+  assert.ok(first.messages.every(m => !('requestId' in m) && m.author === 'alice'));
+  // A concurrent append cannot shift or duplicate older pages.
+  await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [post('new')]});
+  const stored = await f.store.readVersion(key);
+  const second = await board.read(a, {before: first.next});
+  assert.deepEqual(second.messages.map(m => m.id), [6, 5, 4, 3, 2, 1]);
+  assert.equal(second.next, null);
+  const filtered = await board.read(a, {topic: 'auth'});
+  assert.ok(filtered.messages.every(m => m.topic === 'auth'));
+  const tail = await board.read(a, {topic: 'auth', before: filtered.next});
+  assert.deepEqual([...filtered.messages, ...tail.messages].map(m => m.id), [27, ...Array.from({length: 25}, (_, i) => 25 - i)]);
+  assert.deepEqual((await board.read(a, {topic: 'missing'})).messages, []);
+  assert.equal((await board.read(b)).messages[0].text, 'Other tenant secret');
+  assert.deepEqual(await f.store.readVersion(key), stored);
+  assert.notDeepEqual(before, stored); // Only the explicit sync above changed storage.
+  for (const principal of [{}, {tenantId: 'a'}, {...a, captureAccess: 'read'}, {...a, captureAccess: null}]) {
+    await assert.rejects(board.read(principal), {status: 403});
+  }
+  for (const input of [{workspace: 'b'}, {tenantId: 'b'}, {posts: []}, {before: 0}, {before: 1.1}, {topic: ''}]) {
+    await assert.rejects(board.read(a, input));
+  }
+});
+
 test('durable scope, authenticated authors, retries and presence expiration', async t => {
   const f = await fixture(t), board = f.make();
   await assert.rejects(board.sync({}, {workspace: a.tenantId, agent: 'codex'}), /scope/);
