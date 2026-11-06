@@ -72,3 +72,34 @@ test('usage report renders each tab, escapes names and uses no inline styles', (
   const untrusted = renderUsage({...report, tab: 'ingestion', ingestion: {...report.ingestion, sources: [{...report.ingestion.sources[0], state: '<img src=x onerror=alert(1)>'}]}}, {now});
   assert.match(untrusted, /&lt;img src=x onerror=alert\(1\)&gt;/); assert.doesNotMatch(untrusted, /<img src=x/);
 });
+
+test('metadata inventory never claims retrieval access and source status requires a measured count', () => {
+  const report = {ingestion: {sources: [
+    {name: 'Metadata only', state: 'synced', indexed: 10, records: 1000, searchable: false},
+    {name: 'Empty', state: 'synced', indexed: 0, records: 1000, searchable: true},
+    {name: 'Unknown', state: 'synced', indexed: null, records: 1000, searchable: true},
+    {name: 'Missing', state: 'synced', records: 1000, searchable: true},
+  ], index: {sessionEvents: 0, connectorDocuments: 10, connectorKinds: {user: 4, membership: 6}}}};
+  const html = renderUsage(report);
+  const cards = [...html.matchAll(/<article class="source">([\s\S]*?)<\/article>/g)].map(match => match[1]);
+  assert.match(cards[0], /class="indexed">Indexed</);
+  assert.match(cards[1], /No indexed records/);
+  for (const card of cards.slice(2)) assert.match(card, /Index status unavailable/);
+  assert.match(html, /10 documents indexed/);
+  assert.match(html, /Indexed source records, including metadata/);
+  assert.doesNotMatch(html, /Searchable by agents|agents can search|agents can retrieve|indexing next/);
+  const inventory = html.slice(html.indexOf('What’s in the index'));
+  assert.match(inventory, /Metadata only.*bar-count">10</s);
+  assert.doesNotMatch(inventory, /Empty|Unknown|Missing|1,000/);
+});
+
+test('provider inventory overrides selected-connection breakdown and escapes provider names', () => {
+  const report = {ingestion: {sources: [{name: 'Selected connection', state: 'synced', records: 1000, indexed: 7}],
+    index: {sessionEvents: 3, connectorDocuments: 17, sources: [{name: '<Provider>', count: 17}]}}};
+  const inventory = renderUsage(report).split('What’s in the index')[1];
+  assert.match(inventory, /Agent sessions.*bar-count">3</s);
+  assert.match(inventory, /&lt;Provider&gt;.*bar-count">17</s);
+  assert.doesNotMatch(inventory, /<Provider>|Selected connection|bar-count">7<|1,000/);
+  report.ingestion.index.sources = [];
+  assert.doesNotMatch(renderUsage(report).split('What’s in the index')[1], /Selected connection|bar-count">7</);
+});

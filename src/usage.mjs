@@ -49,10 +49,12 @@ function source(s, now) {
   const [state, tone] = STATE[s.state] || [s.state, ''];
   const [one, many] = s.units || ['record', 'records'];
   const rows = (s.rows || []).filter(r => r.count);
+  const measured = Number.isFinite(s.indexed) && s.indexed >= 0;
+  const indexStatus = !measured ? 'Index status unavailable' : s.indexed > 0 ? 'Indexed' : 'No indexed records';
   return `<article class="source"><header><img src="${escape(s.icon)}" alt="" width="28" height="28"><div><h3>${escape(s.name)}</h3>${s.account ? `<p>${escape(s.account)}</p>` : ''}</div><span class="pill ${tone}">${escape(state)}</span></header>
 <p class="source-count"><strong>${full(s.records)}</strong> ${escape(s.records === 1 ? one : many)}</p>
 ${rows.length ? `<ul class="source-rows">${rows.map(r => `<li><span>${escape(r.label)}</span><span>${full(r.count)}</span></li>`).join('')}</ul>` : ''}
-<p class="source-meta"><span class="${s.searchable ? 'searchable' : 'stored'}">${s.searchable ? 'Searchable by agents' : 'Stored, indexing next'}</span><span>Synced ${escape(ago(s.lastSyncedAt, now))}</span>${s.connectedBy ? `<span>Connected by ${escape(s.connectedBy)}</span>` : ''}</p></article>`;
+<p class="source-meta"><span class="${measured && s.indexed > 0 ? 'indexed' : 'stored'}">${indexStatus}</span><span>Synced ${escape(ago(s.lastSyncedAt, now))}</span>${s.connectedBy ? `<span>Connected by ${escape(s.connectedBy)}</span>` : ''}</p></article>`;
 }
 
 function ingestion(r, now) {
@@ -61,25 +63,25 @@ function ingestion(r, now) {
   const sources = data.sources;
   const records = sources.reduce((sum, s) => sum + (s.records || 0), 0);
   const index = data.index || {};
-  const searchable = (index.sessionEvents || 0) + (index.connectorDocuments || 0);
+  const indexed = (index.sessionEvents || 0) + (index.connectorDocuments || 0);
   const freshest = sources.map(s => s.lastSyncedAt).filter(Boolean).sort().at(-1);
   const healthy = sources.filter(s => s.state === 'synced' || s.state === 'syncing').length;
   const parts = [
     {name: 'Agent sessions', count: index.sessionEvents || 0},
-    ...sources.filter(s => s.searchable).map(s => ({name: s.name, count: s.indexed ?? s.records ?? 0})),
-  ].filter(p => p.count);
+    ...(Array.isArray(index.sources) ? index.sources : sources.map(s => ({name: s.name, count: s.indexed}))),
+  ].filter(p => Number.isFinite(p.count) && p.count > 0);
   const summary = sources.length
-    ? `OpenCrawl has brought in <strong>${full(records)} records</strong> from ${plural(sources.length, 'source')}${searchable ? `, and your agents can search <strong>${full(searchable)} documents</strong>` : ''}${index.searchMs != null ? ` in about <strong>${full(index.searchMs)} ms</strong>` : ''}.`
+    ? `OpenCrawl has brought in <strong>${full(records)} records</strong> from ${plural(sources.length, 'source')}${indexed ? `, with <strong>${full(indexed)} documents indexed</strong>` : ''}.${index.searchMs != null ? ` Recent index queries took a median <strong>${full(index.searchMs)} ms</strong>.` : ''}`
     : 'No sources are connected yet. Connect your team’s tools and their content shows up here.';
   return `<p class="summary">${summary}</p>
 ${kpis([
     kpi('Records ingested', compact(records), sources.length ? `from ${plural(sources.length, 'source')}` : 'connect a source to start', full(records)),
-    kpi('Searchable documents', compact(searchable), 'sessions and indexed sources', full(searchable)),
+    kpi('Indexed documents', compact(indexed), 'session events and connector records', full(indexed)),
     kpi('Search speed', index.searchMs != null ? `${full(index.searchMs)}<small>ms</small>` : '—', index.searchMs != null ? 'median, measured just now' : 'measured once the index has data'),
     kpi('Freshness', freshest ? escape(ago(freshest, now)) : '—', `${healthy} of ${plural(sources.length, 'source')} healthy`),
   ])}
 ${panel('Sources', sources.length ? `<div class="sources">${sources.map(s => source(s, now)).join('')}</div>` : empty(`<a href="${escape(r.integrationsUrl || '/integrations')}">Connect a source</a> to start ingesting.`), {wide: true, note: `${healthy} of ${plural(sources.length, 'connection')} syncing normally.`})}
-${panel('What’s in the index', `${bars(parts)}${index.probes?.length ? `<p class="fineprint">Search speed is the time OpenCrawl’s index took to answer ${plural(index.probes.length, 'live query', 'live queries')} scoped to your workspace: ${index.probes.map(ms => full(ms) + ' ms').join(', ')}.</p>` : ''}`, {note: 'Documents agents can retrieve right now, by source.'})}`;
+${panel('What’s in the index', `${bars(parts)}${index.probes?.length ? `<p class="fineprint">Search speed is the time OpenCrawl’s index took to answer ${plural(index.probes.length, 'live query', 'live queries')} scoped to your workspace: ${index.probes.map(ms => full(ms) + ' ms').join(', ')}.</p>` : ''}`, {note: 'Indexed source records, including metadata.'})}`;
 }
 
 function agents(r, now) {
