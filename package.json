@@ -1,6 +1,6 @@
 {
   "name": "@1patch/opencrawl-core",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -27,7 +27,10 @@
     "./sessions/cloud-setup": "./src/sessions/cloud-setup.mjs",
     "./usage": "./src/usage.mjs",
     "./board": "./src/board/board.mjs",
-    "./board/search": "./src/board/search.mjs"
+    "./board/search": "./src/board/search.mjs",
+    "./connectors/slack-source": "./src/connectors/slack-source-files.mjs",
+    "./connectors/slack-source-http": "./src/connectors/slack-source-http.mjs",
+    "./connectors/slack-source-temporal": "./src/connectors/temporal/source-worker.mjs"
   },
   "files": [
     "src",
@@ -54,6 +57,8 @@
   "dependencies": {
     "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/server": "2.4.0",
+    "parse5": "8.1.0",
+    "pdfjs-dist": "6.5.438",
     "zod": "4.6.7"
   },
   "devDependencies": {

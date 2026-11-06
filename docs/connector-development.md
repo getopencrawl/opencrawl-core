@@ -66,6 +66,10 @@ verify that a phrase from the actual body, beyond any preview, is searchable.
 Use synthetic examples in committed fixtures; retain aggregate counts, hashes,
 and provenance for live checks rather than copying customer messages into Git.
 
+For full document bodies and API file comments, see the portable
+[Slack file capture contract](slack-file-capture.md). It is a separate source
+operation; message previews do not stand in for downloaded documents.
+
 Define a deliberate content policy. Do not recursively index every string in an
 arbitrary provider object: tokens, URLs with credentials, hidden metadata, and
 unrelated fields are not message body text. Include supported visible fields in

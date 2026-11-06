@@ -106,3 +106,29 @@ test('real S3/OpenSearch: workspace providers, linked passages, shorter edits, r
     }
   }
 });
+
+test('real S3/OpenSearch: complete file suffixes, shorter replacement, late replay and file suppression', {
+ skip:!process.env.OPENCRAWL_TEST_S3_ENDPOINT||!process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
+},async t=>{
+ const {createHash}=await import('node:crypto');
+ const run=randomUUID(),tenantId='file-'+run,objects=[],index=connectorIndex('test',tenantId);
+ const binding={tenantId,connectionId:run,workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:`raw/v1/source=slack/workspace=T123/connection=${run}/`};
+ const store=createObjectStore({endpoint:process.env.OPENCRAWL_TEST_S3_ENDPOINT,bucket:'capture-test',credentials:{accessKeyId:'capture-test',secretAccessKey:'capture-test-secret'}});
+ const tracked={...store,put:async(k,v,type)=>{objects.push(k);await store.put(k,v,type);}};
+ const search=createConnectorSearch({endpoint:process.env.OPENCRAWL_TEST_OPENSEARCH_URL,index,tenantId}),principal={tenantId};
+ t.after(async()=>{for(const key of objects)await store.delete(key);await fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL+'/'+index,{method:'DELETE'});});
+ await search.ensureIndex();const pipeline=createConnectorPipeline({binding,store:tracked,search});
+ async function ingest(stream,data,at,name){const key=binding.rawPrefix+`stream=${stream}/date=2026-11-05/sync=test/${name}.jsonl.gz`;await tracked.put(key,gzipSync(JSON.stringify({_airbyte_extracted_at:at,_airbyte_data:data})+'\n'));await pipeline.processObject({key});await search.refresh();}
+ async function file(text,at,name){const bytes=Buffer.from(text),sha=createHash('sha256').update(bytes).digest('hex'),content_key=binding.rawPrefix+'files/sha256/'+sha+'.bin';await tracked.put(content_key,bytes,'text/plain');await ingest('file_documents',{format_version:1,id:'F1',channel_id:'C1',available:true,media_type:'text/plain',content_key,content_sha256:sha,content_bytes:bytes.length},at,name);}
+ await ingest('channels',{id:'C1',is_private:false},1,'channel');
+ await file('body '.repeat(40000)+' farawaydragonfruit',1000,'long');
+ assert.equal((await search.search(principal,[binding],{query:'farawaydragonfruit'})).hits.length,1);
+ await file('short replacementquince',2000,'short');
+ assert.equal((await search.search(principal,[binding],{query:'farawaydragonfruit'})).hits.length,0);
+ assert.equal((await search.search(principal,[binding],{query:'replacementquince'})).hits.length,1);
+ await file('obsolete latepapaya',1000,'late');
+ assert.equal((await search.search(principal,[binding],{query:'latepapaya'})).hits.length,0);
+ await search.suppress(principal,binding,{kind:'file',sourceId:'C1:F1'});
+ await file('resurrectedpineapple',3000,'suppressed');
+ assert.equal((await search.search(principal,[binding],{query:'resurrectedpineapple'})).hits.length,0);
+});
