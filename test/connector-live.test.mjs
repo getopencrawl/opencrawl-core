@@ -36,13 +36,21 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
       return pipeline.processObject({key});
     }
     const principal = {tenantId};
-    await ingest('channels', {id: 'C123', name: 'general', is_private: false}, 1000, 'channel');
+    const channel = {id: 'C123', name: 'general', topic: {value: `coconuttopic ${tenant}`}, purpose: {value: `lycheepurpose ${tenant}`}, is_private: false};
+    await ingest('channels', channel, 1000, 'channel');
     const message = {channel_id: 'C123', ts: '1234567890.000001', text: `pineapple current ${tenant}`, blocks: [{type: 'section', text: {type: 'mrkdwn', text: 'Full block body with searchable kumquat conclusion'}}], attachments: [{text: 'Attachment has dragonfruit details'}]};
     await ingest('channel_messages', message, 2000, 'current');
     await ingest('threads', {...message, text: 'obsolete grapefruit'}, 1000, 'older');
     await ingest('threads', {...message, ts: '1234567891.000001', thread_ts: message.ts, text: 'pineapple thread reply', blocks: [], attachments: []}, 2000, 'reply');
     await ingest('channel_messages', message, 2000, 'duplicate');
     await search.refresh();
+    for (const query of ['general', 'coconuttopic', 'lycheepurpose']) {
+      const result = await search.search(principal, [binding], {query});
+      assert.equal(result.hits.length, 1);
+      assert.equal(result.hits[0].kind, 'channel');
+      assert.equal(result.hits[0].tenantId, tenantId);
+      assert.equal(result.hits[0].sourceId, 'C123');
+    }
     assert.equal((await search.search(principal, [binding], {query: 'pineapple'})).hits.length, 2);
     assert.equal((await search.search(principal, [binding], {query: 'grapefruit'})).hits.length, 0);
     assert.equal((await search.search(principal, [binding], {query: 'kumquat'})).hits.length, 1);
@@ -83,9 +91,19 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
     await ingest('canonical_messages',message,5000,'canonical-after-suppression');
     await search.refresh();
     assert.equal((await search.search(principal, [binding], {query: 'pineapple'})).hits.length, 1);
-    await ingest('channels', {id: 'C123', name: 'general', is_private: true}, 4000, 'private');
+    await ingest('channels', {...channel, is_private: true}, 4000, 'private');
     await search.refresh();
     assert.equal((await search.search(principal, [binding], {query: 'pineapple'})).hits.length, 0);
+    for (const query of ['general', 'coconuttopic', 'lycheepurpose']) {
+      assert.equal((await search.search(principal, [binding], {query})).hits.length, 0);
+    }
+    await ingest('channels', channel, 5000, 'public-again');
+    await search.refresh();
+    assert.equal((await search.search(principal, [binding], {query: 'coconuttopic'})).hits.length, 1);
+    await search.suppress(principal, binding, {kind: 'channel', sourceId: 'C123'});
+    await ingest('channels', channel, 6000, 'suppressed-channel-replay');
+    await search.refresh();
+    assert.equal((await search.search(principal, [binding], {query: 'coconuttopic'})).hits.length, 0);
     handles.push({search, binding, principal});
   }
   await assert.rejects(handles[0].search.search(handles[1].principal, [handles[0].binding], {query: 'pineapple'}), /scope/);

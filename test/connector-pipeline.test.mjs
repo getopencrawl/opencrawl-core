@@ -114,3 +114,26 @@ test('S3 bounded reads enforce declared and streamed sizes', async () => {
     assert.equal((await store.get('key', {maxBytes: 30})).toString(), '123456789');
   }
 });
+
+test('channel text search rechecks current visibility for normal and raw results', async () => {
+  const item = normalizeSlack(binding, 'channels', envelope({id: 'C123', name: 'general', topic: {value: 'coconut topic'}, is_private: false}), key('channels'));
+  let visibility = 'public';
+  const search = createConnectorSearch({endpoint: 'http://localhost:9200', index: 'test', tenantId: binding.tenantId, fetch: async url => {
+    if (url.pathname.endsWith('/_search')) {
+      // The search candidate may predate the current permission metadata.
+      return realmResponse('connector', {hits: {hits: [{_id: item.id, _score: 1, _source: item.document}]}});
+    }
+    if (visibility === 'missing') return realmResponse('connector', {docs: [{_id: item.id, found: false}]});
+    const current = {...item.document, publicChannel: visibility === 'public', deleted: visibility === 'deleted'};
+    if (visibility === 'unknown') delete current.publicChannel;
+    return realmResponse('connector', {docs: [{_id: item.id, found: true, _source: current}]});
+  }});
+  const principal = {tenantId: binding.tenantId};
+  assert.equal((await search.search(principal, [binding], {query: 'coconut'})).hits[0].id, item.id);
+  assert.equal((await search.search(principal, [binding], {query: 'coconut', raw: true})).responses[0].hits.hits.length, 1);
+  for (visibility of ['private', 'unknown', 'missing', 'deleted']) {
+    assert.equal((await search.search(principal, [binding], {query: 'coconut'})).hits.length, 0, visibility);
+    assert.equal((await search.search(principal, [binding], {query: 'coconut', raw: true})).responses[0].hits.hits.length, 0, visibility);
+  }
+  await assert.rejects(search.search({tenantId: 'other'}, [binding], {query: 'coconut'}), /scope/);
+});
