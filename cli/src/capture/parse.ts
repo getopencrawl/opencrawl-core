@@ -1,7 +1,28 @@
 import {createHash} from 'node:crypto';
+import {CliError} from '../oauth.ts';
 export type Harness = 'claude-code'|'codex';
 export type Origin = 'cli'|'desktop'|'cloud'|'subagent'|'unknown';
 export const hash = (data: string|Buffer) => createHash('sha256').update(data).digest('hex');
+/** Finalize only after attachment extraction and metadata normalization. The
+ * source ID distinguishes native positions/notices; every serialized field
+ * distinguishes revisions. Existing queued batches must never pass here again.
+ */
+export function finalizeEventIdentity(event:any) {
+  const wire=JSON.parse(JSON.stringify(event));
+  if(!wire||typeof wire.id!=='string'||!wire.id)throw new CliError('CAPTURE_EVENT_INVALID','Capture event has no source identity');
+  const digest=createHash('sha256').update('opencrawl-wire-event-v1\n');
+  function visit(value:any,depth=0) {
+    if(depth>128)throw new CliError('CAPTURE_EVENT_TOO_DEEP','Capture event exceeds the supported nesting depth');
+    if(value===null||typeof value!=='object'){digest.update(JSON.stringify(value));return;}
+    if(Array.isArray(value)){digest.update('[');for(let i=0;i<value.length;i++){if(i)digest.update(',');visit(value[i],depth+1);}digest.update(']');return;}
+    digest.update('{');let first=true;
+    for(const key of Object.keys(value).sort()){if(!first)digest.update(',');first=false;digest.update(JSON.stringify(key)+':');visit(value[key],depth+1);}
+    digest.update('}');
+  }
+  visit(wire);
+  wire.id='wire1:'+digest.digest('hex');
+  return wire;
+}
 export function detectOrigin(harness: Harness, record: any): {origin:Origin, evidence:string|null} {
   const r = harness === 'codex' ? record.payload ?? record : record;
   if(harness==='claude-code' && r.type==='attachment' && r.attachment?.type==='remote_session_change' && /^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(r.attachment.url??'')) return {origin:'cloud',evidence:r.attachment.url};
