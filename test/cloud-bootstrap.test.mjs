@@ -27,8 +27,8 @@ if(process.env.FAIL_INSTALL)process.exit(43);
   assert.equal(r.status,0,r.stderr);
   const install=JSON.parse(readFileSync(join(home,'npm-args')));
   assert.equal(install[0],'install');
-  assert.deepEqual(install.filter(arg=>arg.startsWith('@getopencrawl/cli@')),['@getopencrawl/cli@0.4.11'],
-   'fresh cloud images must install the CLI with immutable event wire IDs');
+  assert.deepEqual(install.filter(arg=>arg.startsWith('@getopencrawl/cli@')),['@getopencrawl/cli@0.4.12'],
+   'fresh cloud images must install the CLI with bounded uploader ownership and immutable event wire IDs');
   const args=JSON.parse(readFileSync(join(home,'calls')));
   assert.deepEqual(args.slice(0,2),['collect','install']);
   assert.equal(args[args.indexOf('--api')+1],'https://capture.example.com');
