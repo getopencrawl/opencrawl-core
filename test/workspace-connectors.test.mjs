@@ -47,7 +47,7 @@ test('passages preserve every token, ordered overlap, speaker and time across ov
 for (const provider of ['granola', 'circleback']) test(`${provider}: group transcript across files, deduplicate retries, link ordered passages and retain summary`, async () => {
   const h = harness(provider), granola = provider === 'granola';
   h.raw(granola ? 'notes' : 'meetings', [granola ? {id: 'm1', title: 'Planning', updated_at: date, summary_markdown: 'Meeting summary'} :
-    {id: 'm1', name: 'Planning', updatedAt: date, notes: 'Meeting summary', actionItems: [{title: 'Ship the worker'}]}]);
+    {id: 'm1', name: 'Planning', updatedAt: date, notes: 'Meeting summary', actionItems: [{title: 'Ship the worker', description: 'Validate the production connection', status: 'PENDING'}]}]);
   const rows = Array.from({length: 80}, (_, i) => granola ?
     {note_id: 'm1', note_updated_at: date, speaker: {name: 'Ada'}, start_time: String(i), end_time: String(i + 1), text: `Sentence ${i} includes pineapple evidence and a useful explanation.`} :
     {meeting_id: 'm1', meeting_updated_at: date, speaker: 'Ada', timestamp: i, text: `Sentence ${i} includes pineapple evidence and a useful explanation.`});
@@ -55,7 +55,7 @@ for (const provider of ['granola', 'circleback']) test(`${provider}: group trans
   await h.run();
   const meeting = [...h.docs.values()].find(d => d.kind === 'meeting'), chunks = [...h.docs.values()].filter(d => d.kind === 'transcript');
   assert.match(meeting.text, /Meeting summary/); assert.ok(chunks.length > 1); assert.equal(meeting.chunkCount, chunks.length);
-  if (!granola) assert.match(meeting.text, /Ship the worker/);
+  if (!granola) {assert.match(meeting.text, /Ship the worker/); assert.match(meeting.text, /Validate the production connection/); assert.match(meeting.text, /PENDING/);}
   for (let i = 0; i < chunks.length; i++) {assert.equal(chunks[i].sequence, i); assert.equal(chunks[i].parentId, 'm1'); assert.equal(chunks[i].resourceVersion, meeting.resourceVersion);}
   const original = [...h.docs.keys()].sort();
   assert.equal((await h.run())[0].records, 0);
