@@ -119,3 +119,30 @@ test('credential-free cloud preparation returns before network; first hook stays
  expect(f.batches.every((b:any)=>b.owner.userId==='fixture'&&b.installationId!=='pending')).toBe(true);
  expect(f.batches.length).toBeGreaterThan(0);expect(captureStatus().pendingHooks).toBe(0);
 }));
+
+test('competing worker processes exit successfully while one drains the durable queue',async()=>fixture(async f=>{
+ f.delay=150;
+ await captureHook('claude-code',{session_id:'session',transcript_path:f.path,prompt:'synthetic'});
+ const runtime=resolve(import.meta.dir,'../src/capture/runtime.ts');
+ const code=`import {captureWorker} from ${JSON.stringify(runtime)}; await captureWorker({idleMs:40,pollMs:5});`;
+ const workers=Array.from({length:12},()=>Bun.spawn([process.execPath,'-e',code],{env:process.env,stdout:'ignore',stderr:'pipe'}));
+ try{
+  expect(await Promise.all(workers.map(p=>p.exited))).toEqual(Array(12).fill(0));
+  const events=f.batches.flatMap((b:any)=>b.events);
+  expect(events.filter((e:any)=>e.nativeId==='one')).toHaveLength(1);
+  expect(events.filter((e:any)=>e.kind==='hook')).toHaveLength(1);
+  expect(captureStatus().pendingHooks).toBe(0);expect(captureStatus().queued).toBe(0);
+ }finally{for(const p of workers)p.kill();await Promise.all(workers.map(p=>p.exited));}
+}),15000);
+
+test('SubagentStop enrolls the child transcript separately and preserves both late tails',async()=>fixture(async f=>{
+ const child=join(f.path.slice(0,-6),'subagents','agent-child.jsonl');mkdirSync(join(child,'..'),{recursive:true});
+ const record=(id:string)=>JSON.stringify({type:'assistant',uuid:id,sessionId:'session',agentId:'child',message:{role:'assistant',content:'synthetic child'}})+'\n';
+ writeFileSync(child,record('child-one'));
+ await captureHook('claude-code',{session_id:'session',transcript_path:f.path,agent_transcript_path:child,hook_event_name:'SubagentStop'});
+ await captureWorker({idleMs:20,pollMs:5});
+ appendFileSync(f.path,f.record('parent-two'));appendFileSync(child,record('child-two'));
+ await captureWorker({idleMs:20,pollMs:5});
+ for(const id of ['child-one','child-two'])expect(f.batches.filter((b:any)=>b.sessionId==='session:child'&&b.events.some((e:any)=>e.nativeId===id))).toHaveLength(1);
+ expect(f.batches.filter((b:any)=>b.sessionId==='session'&&b.events.some((e:any)=>e.nativeId==='parent-two'))).toHaveLength(1);
+}));

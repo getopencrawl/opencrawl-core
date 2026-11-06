@@ -272,9 +272,14 @@ export async function drainCaptureNotices(config=readCaptureConfig()!) {
     // Persist the source BEFORE retiring the notice; a tail written after Stop
     // remains discoverable on this worker's polls and the next CLI invocation.
     const source={harness,sessionId:event.session_id,path:file??null,origin:process.env.CLAUDE_CODE_REMOTE==='true'?'cloud':'unknown'};
-    atomicJson(join(captureDir(),'sources',hash(harness+':'+event.session_id)+'.json'),source);
+    atomicJson(join(captureDir(),'sources',hash(harness+':'+event.session_id+':'+(file??''))+'.json'),source);
     const meta=file && existsSync(file) ? await captureTranscript(config,harness,file,event) :
       {harness,sessionId:event.session_id,origin:source.origin,originEvidence:null,parentSessionId:null};
+    if(harness==='claude-code'&&typeof event.agent_transcript_path==='string'&&event.agent_transcript_path!==file){
+      const child=event.agent_transcript_path;
+      atomicJson(join(captureDir(),'sources',hash(harness+':'+event.session_id+':'+child)+'.json'),{...source,path:child});
+      if(existsSync(child))await captureTranscript(config,harness,child,event);
+    }
     const attachments:any[]=[];
     const data=attachmentTransform(event,attachments,event.cwd??homedir());
     enqueue(config,meta,[{id,kind:'hook',timestamp:at,data}],attachments);
@@ -403,7 +408,7 @@ export async function flushCaptures({wait=true}={}) {
 }
 export function captureStatus() {
   const config=readCaptureConfig();
-  return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.owner,installationId:config?.installationId,
+  return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.authPending?null:config?.owner,authenticationPending:Boolean(config?.authPending),installationId:config?.installationId,
     queued:existsSync(join(captureDir(),'queue'))?readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json')).length:0,
     pendingHooks:existsSync(join(captureDir(),'notices'))?noticeNames().length:0,
     lastUpload:read(join(captureDir(),'last-upload.json')),lastError:read(join(captureDir(),'last-error.json'))};
