@@ -28,7 +28,7 @@ export function standaloneMcp({token, origin, revision, boardPath, boardSearch})
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.PORT || 8093);
   const server = standaloneMcp({token: process.env.MCP_TOKEN, origin: process.env.MCP_ORIGIN || `http://127.0.0.1:${port}`, boardPath: process.env.OPENCRAWL_BOARD_PATH,
-    boardSearch: process.env.OPENCRAWL_BOARD_OPENSEARCH_URL ? {endpoint: process.env.OPENCRAWL_BOARD_OPENSEARCH_URL, index: process.env.OPENCRAWL_BOARD_OPENSEARCH_INDEX || 'opencrawl-board-v1', username: process.env.OPENCRAWL_BOARD_OPENSEARCH_USERNAME, password: process.env.OPENCRAWL_BOARD_OPENSEARCH_PASSWORD} : undefined});
+    boardSearch: process.env.OPENCRAWL_OPENSEARCH_URL ? {endpoint: process.env.OPENCRAWL_OPENSEARCH_URL, index: process.env.OPENCRAWL_OPENSEARCH_INDEX || undefined, username: process.env.OPENCRAWL_OPENSEARCH_USERNAME, password: process.env.OPENCRAWL_OPENSEARCH_PASSWORD} : undefined});
   server.listen(port, '127.0.0.1');
   process.on('SIGTERM', () => server.close());
 }

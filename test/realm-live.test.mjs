@@ -1,0 +1,34 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {createRealm,realmIndex} from '../src/search/realm.mjs';
+import {createSessionSearch} from '../src/sessions/search.mjs';
+import {createConnectorSearch} from '../src/connectors/search.mjs';
+import {documentId} from '../src/connectors/scope.mjs';
+import {createBoardSearch} from '../src/board/search.mjs';
+const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
+test('one physical organization realm holds all corpora with collision-safe identity, scoped retrieval and shared schema',{skip:!endpoint},async t=>{
+  const environment='test-'+randomUUID().slice(0,8),owners=['a','b'].map(s=>({tenantId:'org-'+s,userId:'author'}));
+  const sessions=createSessionSearch({endpoint,environment}),board=createBoardSearch({endpoint,environment});
+  t.after(async()=>{for(const p of owners)await fetch(endpoint+'/'+realmIndex(environment,p.tenantId),{method:'DELETE'});});
+  for(const p of owners){
+    const index=realmIndex(environment,p.tenantId),realm=createRealm({endpoint,index,tenantId:p.tenantId});
+    for(let i=0;;i++){try{await realm.ensureIndex();break;}catch(e){if(i>=60)throw e;await new Promise(r=>setTimeout(r,1000));}}
+    const connectionId='same-connection',binding={tenantId:p.tenantId,connectionId,provider:'github',workspaceId:'same-workspace',access:'workspace-global',rawPrefix:'raw/v1/source=github/workspace=same-workspace/connection=same-connection/'};
+    const connectors=createConnectorSearch({endpoint,index,tenantId:p.tenantId});await connectors.ensureIndex();
+    const connector={tenantId:p.tenantId,connectionId,provider:'github',workspaceId:binding.workspaceId,kind:'issue',sourceId:'same-id',text:'pineapple connector '+p.tenantId,deleted:false,extractedAt:1700000000000,contentHash:'a'.repeat(64)};
+    const sharedId=documentId(binding,'issue','same-id');
+    await connectors.putDocuments(p,binding,[{id:sharedId,document:connector}]);
+    await sessions.putDocuments([{id:sharedId,document:{...p,harness:'codex',sessionId:'same-session',kind:'message',text:'pineapple session '+p.tenantId,receivedAt:'2026-11-01T00:00:00Z',sequence:1}}],p);
+    const message={id:1,timestamp:1700000000000,topic:'coordination',agent:'agent',author:'author',name:'agent',text:'pineapple board '+p.tenantId};
+    const result=await board.search(p,[message],'same-board-key',{workspace:p.tenantId,query:'pineapple'});assert.equal(result.total,1);
+    await realm.refresh(p);
+    assert.equal((await sessions.search(p,{query:'pineapple'})).total,1);
+    assert.equal((await connectors.search(p,[binding],{query:'pineapple'})).hits.length,1);
+    const response=await fetch(endpoint+'/'+index+'/_search',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:{match:{text:'pineapple'}},aggs:{corpora:{terms:{field:'corpus'}}}})});
+    const all=await response.json();assert.equal(all.hits.total.value,3);assert.deepEqual(new Set(all.hits.hits.map(h=>h._source.corpus)),new Set(['board','session','connector']));
+    assert.ok(all.hits.hits.every(h=>h._source.tenantId===p.tenantId&&h._source.schema===1));assert.equal(new Set(all.hits.hits.map(h=>h._id)).size,3);
+    await assert.rejects(createRealm({endpoint,index,tenantId:'foreign'}).ensureIndex(),/tenant mismatch/);
+    await assert.rejects(connectors.search(owners.find(o=>o!==p),[binding],{query:'pineapple'}),/scope/);
+  }
+});

@@ -1,3 +1,4 @@
+import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -52,9 +53,9 @@ test('file chunks require a current available unsuppressed manifest AND a public
  let manifest={...n.manifest.document},publicChannel=true,found=true;
  const hit=n.chunks[0];
  const search=createConnectorSearch({endpoint:'http://localhost:9200',index:'test',tenantId:binding.tenantId,fetch:async(url,options)=>{
-  if(url.pathname.endsWith('/_search'))return Response.json({hits:{hits:[{_id:hit.id,_source:hit.document,_score:1}]}});
+  if(url.pathname.endsWith('/_search'))return realmResponse('connector',{hits:{hits:[{_id:hit.id,_source:hit.document,_score:1}]}});
   const ids=JSON.parse(options.body).ids;
-  return Response.json({docs:ids.includes(channel.id)?[{_id:channel.id,found:true,_source:{...channel.document,publicChannel}}]:[{_id:n.manifest.id,found,_source:manifest}]});
+  return realmResponse('connector',{docs:ids.includes('connector:'+channel.id)?[{_id:channel.id,found:true,_source:{...channel.document,publicChannel}}]:[{_id:n.manifest.id,found,_source:manifest}]});
  }});
  const run=()=>search.search({tenantId:binding.tenantId},[binding],{query:'full body'});
  assert.equal((await run()).hits.length,1);

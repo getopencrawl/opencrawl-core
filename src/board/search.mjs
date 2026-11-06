@@ -1,6 +1,6 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {z} from 'zod';
-import {signRequest} from '../sessions/s3-store.mjs';
+import {createRealmResolver,realmField} from '../search/realm.mjs';
 
 const text = max => z.string().trim().min(1).max(max);
 export const boardSearchSchema = z.strictObject({
@@ -17,44 +17,12 @@ export const boardSearchSchema = z.strictObject({
 });
 const digest = value => createHash('sha256').update(value).digest('hex');
 const error = (message, status = 503) => Object.assign(new Error(message), {status});
-export const boardIndexMapping = {dynamic: 'strict', properties: {
-  boardId: {type: 'keyword'}, tenantId: {type: 'keyword'}, id: {type: 'integer'},
-  timestamp: {type: 'date'}, day: {type: 'keyword'},
-  topic: {type: 'keyword', fields: {text: {type: 'text'}}},
-  agent: {type: 'keyword'}, author: {type: 'keyword'}, name: {type: 'keyword'}, text: {type: 'text'},
-}};
-
+import {boardIndexMapping} from '../search/mapping.mjs';
+export {boardIndexMapping};
 /** Derived index only. The caller supplies the authorized immutable source snapshot. */
-export function createBoardSearch({endpoint, index = 'opencrawl-board-v1', username, password,
-  credentials, region = 'us-east-1', replicas = 0, fetch: send = globalThis.fetch, now = Date.now}) {
-  const base = new URL(endpoint);
-  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash || !/^[a-z][a-z0-9_-]{0,100}$/.test(index)) throw new Error('Invalid board search endpoint or index');
-  if (Boolean(username) !== Boolean(password) || !Number.isInteger(replicas) || replicas < 0 || replicas > 2) throw new Error('Invalid board search configuration');
-  let ready;
-  const snapshots = new Map(); let cachedBytes = 0;
-  async function request(path, body, method = 'POST', contentType = 'application/json') {
-    const url = new URL(base.href.replace(/\/$/, '') + '/' + index + path);
-    body = body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body);
-    let headers = {'content-type': contentType};
-    if (username) headers.authorization = 'Basic ' + Buffer.from(username + ':' + password).toString('base64');
-    if (credentials) {
-      const c = await credentials(); if (c.sessionToken) headers['x-amz-security-token'] = c.sessionToken;
-      headers = signRequest({method, url, body, headers, region, service: 'es', ...c});
-    }
-    const response = await send(url, {method, headers, body, signal: AbortSignal.timeout(15000), redirect: 'error'});
-    let data; try {data = await response.json();} catch {throw error('Invalid board search response');}
-    if (!response.ok) throw Object.assign(error('Board search unavailable (' + response.status + ')'), {httpStatus: response.status, type: data?.error?.type});
-    return data;
-  }
-  async function ensureIndex() {
-    try {await request('', {settings: {number_of_shards: 1, number_of_replicas: replicas}, mappings: boardIndexMapping}, 'PUT');}
-    catch (e) {if (e.httpStatus !== 400 || e.type !== 'resource_already_exists_exception') throw e;}
-    const mapping = (await request('/_mapping', undefined, 'GET'))?.[index]?.mappings;
-    for (const [field, definition] of Object.entries(boardIndexMapping.properties)) {
-      if (mapping?.dynamic !== 'strict' || mapping?.properties?.[field]?.type !== definition.type) throw error('Board search mapping mismatch; use a new index version');
-    }
-    if (mapping.properties.topic.fields?.text?.type !== 'text') throw error('Missing board topic text mapping');
-  }
+export function createBoardSearch(options) {
+  const {now=Date.now}=options, resolve=createRealmResolver(options), f=field=>realmField('board',field);
+  const snapshots=new Map();let cachedBytes=0;
   function complete(result) {
     if (result.timed_out || result._shards?.failed !== 0 || result.hits?.total?.relation !== 'eq' || !Number.isSafeInteger(result.hits?.total?.value)) throw error('Board search did not complete; retry rather than using partial results');
     return result;
@@ -63,37 +31,36 @@ export function createBoardSearch({endpoint, index = 'opencrawl-board-v1', usern
     for (const [id, snapshot] of snapshots) if (snapshot.expires <= now()) {snapshots.delete(id); cachedBytes -= snapshot.bytes;}
   }
   async function rank(principal, messages, boardId, args) {
-    ready ||= ensureIndex().catch(e => {ready = undefined; throw e;}); await ready;
+    const realm=resolve(principal),collection=realm.collection('board');
+    await realm.ensureIndex();
+    const request=(path,body)=>{if(path!=='/_search')throw error('Unsupported board realm operation');return collection.search(principal,body);};
     const count = messages.length;
-    const filter = [{term: {tenantId: principal.tenantId}}, {term: {boardId}}, {range: {id: {lte: count}}}];
+    const filter = [{term: {tenantId: principal.tenantId}}, {term: {[f('boardId')]:boardId}}, {range: {[f('id')]: {lte: count}}}];
     // Counts plus maximum identify a contiguous indexed prefix. Gaps trigger a replay.
     const coverage = complete(await request('/_search', {size: 0, track_total_hits: true,
-      query: {bool: {filter}}, aggs: {last: {max: {field: 'id'}}}}));
+      query: {bool: {filter}}, aggs: {last: {max: {field: f('id')}}}}));
     const indexed = coverage.hits.total.value, last = coverage.aggregations?.last?.value ?? 0;
     if (indexed > count) throw error('Unexpected board index coverage');
     const start = indexed === last ? indexed : 0;
     for (let offset = start; offset < count; offset += 250) {
       const batch = messages.slice(offset, offset + 250);
-      const body = batch.map(m => JSON.stringify({index: {_id: boardId + ':' + m.id}}) + '\n' +
-        JSON.stringify({boardId, tenantId: principal.tenantId, id: m.id, timestamp: m.timestamp,
-          day: new Date(m.timestamp).toISOString().slice(0, 10), topic: m.topic, agent: m.agent, author: m.author, name: m.name, text: m.text}) + '\n').join('');
-      const result = await request('/_bulk?refresh=wait_for', body, 'POST', 'application/x-ndjson');
-      if (result.errors || result.items?.length !== batch.length || result.items.some(i => !i.index || i.index.status < 200 || i.index.status >= 300)) throw error('Board indexing incomplete; retry search to repair it');
+      await collection.bulk(principal,batch.map(m=>({id:boardId+':'+m.id,document:{boardId,tenantId:principal.tenantId,
+        id:m.id,timestamp:m.timestamp,day:new Date(m.timestamp).toISOString().slice(0,10),topic:m.topic,agent:m.agent,author:m.author,name:m.name,text:m.text}})),{refresh:true});
     }
     if (start < count) {
       const verified = complete(await request('/_search', {size: 0, track_total_hits: true, query: {bool: {filter}}}));
       if (verified.hits.total.value !== count) throw error('Board indexing coverage is incomplete; retry search');
     }
-    for (const [name, values] of [['topic', args.topics], ['agent', args.agents], ['author', args.authors]]) if (values.length) filter.push({terms: {[name]: values}});
-    if (args.since || args.until) filter.push({range: {timestamp: {...(args.since ? {gte: args.since} : {}), ...(args.until ? {lte: args.until} : {})}}});
+    for (const [name, values] of [['topic', args.topics], ['agent', args.agents], ['author', args.authors]]) if (values.length) filter.push({terms: {[f(name)]: values}});
+    if (args.since || args.until) filter.push({range: {[f('timestamp')]: {...(args.since ? {gte: args.since} : {}), ...(args.until ? {lte: args.until} : {})}}});
     const query = {bool: {filter, ...(args.query ? {
-      must: [{multi_match: {query: args.query, fields: ['text', 'topic.text^2'], type: 'cross_fields', operator: 'and'}}],
+      must: [{multi_match: {query: args.query, fields: ['text', f('topic.text')+'^2'], type: 'cross_fields', operator: 'and'}}],
       should: [{match_phrase: {text: {query: args.query, boost: 2}}}],
     } : {})}};
     const result = complete(await request('/_search', {size: 10000, track_total_hits: true, timeout: '10s',
       _source: ['boardId', 'tenantId', 'id'], query,
-      sort: args.sort === 'relevance' && args.query ? [{_score: 'desc'}, {timestamp: 'desc'}, {id: 'desc'}] : [{timestamp: 'desc'}, {id: 'desc'}],
-      aggs: Object.fromEntries([...new Set(args.facets)].map(field => [field, {terms: {field, size: args.facetSize, shard_size: 10000, show_term_doc_count_error: true}}])),
+      sort: args.sort === 'relevance' && args.query ? [{_score: 'desc'}, {[f('timestamp')]: 'desc'}, {[f('id')]: 'desc'}] : [{[f('timestamp')]: 'desc'}, {[f('id')]: 'desc'}],
+      aggs: Object.fromEntries([...new Set(args.facets)].map(field => [field, {terms: {field:f(field), size: args.facetSize, shard_size: 10000, show_term_doc_count_error: true}}])),
     }));
     const hits = result.hits.hits;
     if (!Array.isArray(hits) || hits.length !== result.hits.total.value || hits.length > count) throw error('Board result set is incomplete');
@@ -131,7 +98,7 @@ export function createBoardSearch({endpoint, index = 'opencrawl-board-v1', usern
       } else {
         let ranked;
         try {ranked = await rank(principal, messages, digest(key), args);}
-        catch (e) {if (e.httpStatus !== 404) throw e; ready = undefined; ranked = await rank(principal, messages, digest(key), args);}
+        catch (e) {if (e.httpStatus !== 404) throw e; ranked = await rank(principal, messages, digest(key), args);}
         snapshot = {...ranked, owner, expires: now() + 300000}; token = randomUUID();
         snapshot.bytes = Buffer.byteLength(JSON.stringify(snapshot));
         while (snapshots.size >= 32 || cachedBytes + snapshot.bytes > 4 * 1024 * 1024) {

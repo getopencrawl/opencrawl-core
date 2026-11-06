@@ -1,3 +1,4 @@
+import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gzipSync} from 'node:zlib';
@@ -79,7 +80,7 @@ test('extra source streams do not starve supported data; selection never bypasse
 });
 test('search adapter refuses cross-tenant writes before issuing requests and checks every bulk item', async () => {
   let calls = 0;
-  const search = createConnectorSearch({endpoint: 'http://localhost:9200', index: 'test', tenantId: binding.tenantId, fetch: async () => {calls++; return Response.json({items: [{update: {status: 429}}]});}});
+  const search = createConnectorSearch({endpoint: 'http://localhost:9200', index: 'test', tenantId: binding.tenantId, fetch: async () => {calls++; return realmResponse('connector',{items: [{update: {status: 429}}]});}});
   const item = normalizeSlack(binding, 'channel_messages', envelope(), key());
   await assert.rejects(search.putDocuments({tenantId: 'tenant-b'}, binding, [item]), /scope/);
   await assert.rejects(search.putDocuments({tenantId: 'tenant-a'}, binding, [{...item, document: {...item.document, tenantId: 'tenant-b'}}]), /scope/);
@@ -93,10 +94,10 @@ test('query filters tenant/connections, checks returned ownership and hides unkn
     const body = JSON.parse(options.body);
     if (url.pathname.endsWith('/_search')) {
       assert.deepEqual(body.query.bool.filter[0], {term: {tenantId: binding.tenantId}});
-      return Response.json({hits: {hits: [{_id: item.id, _score: 1, _source: {...item.document, tenantId: forged ? 'other' : binding.tenantId}}]}});
+      return realmResponse('connector',{hits: {hits: [{_id: item.id, _score: 1, _source: {...item.document, tenantId: forged ? 'other' : binding.tenantId}}]}});
     }
     const d = normalizeSlack(binding, 'channels', envelope({id: 'C123', is_private: !publicChannel}), key('channels'));
-    return Response.json({docs: [{_id: d.id, found: true, _source: d.document}]});
+    return realmResponse('connector',{docs: [{_id: d.id, found: true, _source: d.document}]});
   }});
   assert.equal((await search.search({tenantId: binding.tenantId}, [binding], {query: 'pineapple'})).hits.length, 0);
   publicChannel = true;

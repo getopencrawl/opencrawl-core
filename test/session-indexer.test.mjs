@@ -1,3 +1,5 @@
+import {realmIndex} from '../src/search/realm.mjs';
+import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -43,30 +45,31 @@ test('bulk item errors are failures even with HTTP 200; search binds the team an
  const requests=[];
  const search=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async(url,options)=>{
   requests.push(JSON.parse(options.body));
-  if(url.pathname.endsWith('_bulk'))return Response.json({errors:true,items:[{index:{status:429}}]});
-  return Response.json({hits:{total:{value:0},hits:[]}});
+  if(url.pathname.endsWith('_bulk'))return realmResponse('session',{errors:true,items:[{index:{status:429}}]});
+  return realmResponse('session',{hits:{total:{value:0},hits:[]}});
  }});
  // Replace the fake parser for NDJSON, then retain the observed search body.
- const failing=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>Response.json({errors:true,items:[{index:{status:429}}]})});
- await assert.rejects(failing.putDocuments([{id:'id',document:{text:'retry me'}}]),/failed or missing items/);
+ const failing=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{errors:true,items:[{index:{status:429}}]})});
+ await assert.rejects(failing.putDocuments([{id:'id',document:{tenantId:owner.tenantId,harness:'codex',text:'retry me'}}],owner),/failed or missing items/);
  await search.search(owner,{query:'tenant-b OR *'});
- assert.deepEqual(requests[0].query.bool.filter,[{term:{tenantId:'tenant-a'}}]);
+ assert.deepEqual(requests[0].query.bool.filter,[{term:{tenantId:'tenant-a'}},{term:{corpus:'session'}}]);
  await assert.rejects(search.search(null,{query:'anything'}),/Authentication/);
  await assert.rejects(search.search(owner,{limit:101}),/Invalid search/);
- const leaking=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>Response.json({hits:{total:{value:1},hits:[{_source:{tenantId:'tenant-b',userId:'same-user'}}]}})});
+ const leaking=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{hits:{total:{value:1},hits:[{_id:'foreign',_source:{tenantId:'tenant-b',userId:'same-user'}}]}})});
  await assert.rejects(leaking.search(owner),/ownership scope/);
 });
 
 test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, team visibility and tenant isolation',{
  skip:!process.env.OPENCRAWL_TEST_S3_ENDPOINT||!process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
 },async t=>{
- const index='capture-test-'+randomUUID(),prefix='sessions/index-test/'+randomUUID();
+ const environment='test-'+randomUUID().slice(0,8),index=realmIndex(environment,owner.tenantId),prefix='sessions/index-test/'+randomUUID();
  const {store}=standaloneStorage({OPENCRAWL_LANDING_S3_ENDPOINT:process.env.OPENCRAWL_TEST_S3_ENDPOINT,OPENCRAWL_LANDING_S3_BUCKET:'capture-test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'capture-test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'capture-test-secret'});
- const search=createSessionSearch({endpoint:process.env.OPENCRAWL_TEST_OPENSEARCH_URL,index});
- for(let attempt=0;;attempt++){try{await store.checkAccess();await search.ensureIndex();break;}catch(e){if(attempt>=60)throw e;await new Promise(r=>setTimeout(r,1000));}}
- t.after(async()=>{for(const key of (await store.list(prefix+'/')).keys)await store.delete(key);await fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL+'/'+index,{method:'DELETE'});});
+ const search=createSessionSearch({endpoint:process.env.OPENCRAWL_TEST_OPENSEARCH_URL,environment});
+ for(let attempt=0;;attempt++){try{await store.checkAccess();await search.ensureIndex(owner);break;}catch(e){if(attempt>=60)throw e;await new Promise(r=>setTimeout(r,1000));}}
+ t.after(async()=>{for(const key of (await store.list(prefix+'/')).keys)await store.delete(key);for(const tenantId of [owner.tenantId,'tenant-b'])await fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL+'/'+realmIndex(environment,tenantId),{method:'DELETE'});});
  const ingest=createSessionIngest({store,prefix});
  const owners=[owner,{...owner,tenantId:'tenant-b'},{...owner,userId:'other-user'}];
+ for(const principal of owners)await search.ensureIndex(principal);
  for(const principal of owners){
   const bytes=Buffer.from('attachment fixture'),sha=digest(bytes);await ingest.putAttachment(principal,sha,bytes);
   for(const harness of ['claude-code','codex'])for(const origin of ['cli','desktop']){
@@ -76,11 +79,11 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, t
   await ingest.putBatch(principal,b);
  }}
  const single=createSessionPipeline({store,prefix,search,principal:owner});
- assert.equal((await sweep(single)).indexed,4);await search.refresh();
+ assert.equal((await sweep(single)).indexed,4);for(const principal of owners)await search.refresh(principal);
  assert.equal((await search.search(owner,{query:'violet'})).total,4);
  assert.equal((await search.search(owners[1],{query:'violet'})).total,0);
  const hosted=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
- assert.equal((await sweep(hosted)).indexed,12);await search.refresh();
+ assert.equal((await sweep(hosted)).indexed,12);for(const principal of owners)await search.refresh(principal);
  for(const principal of owners){
   const expected=principal.tenantId===owner.tenantId?8:4;
   const result=await search.search(principal,{query:'violet'});assert.equal(result.total,expected);
@@ -93,12 +96,12 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, t
  assert.equal((await sweep(restarted)).indexed,0);
  assert.equal((await search.search(owner)).total,16);
  const later=batch(owner,'new incremental indigo message');later.events[0].id='later-event';
- await ingest.putBatch(owner,later);assert.equal((await sweep(restarted)).indexed,1);await search.refresh();
+ await ingest.putBatch(owner,later);assert.equal((await sweep(restarted)).indexed,1);for(const principal of owners)await search.refresh(principal);
  assert.equal((await search.search(owner,{query:'indigo'})).total,1);
  // Exercise S3 continuation tokens while successful work items are deleted.
  for(let i=0;i<55;i++){const value=batch(owner,'paginated receipt item');value.sessionId='page-'+i;await ingest.putBatch(owner,value);}
  assert.equal((await sweep(restarted)).indexed,55);
- await search.refresh();assert.equal((await search.search(owner,{query:'paginated'})).total,55);
+ for(const principal of owners)await search.refresh(principal);assert.equal((await search.search(owner,{query:'paginated'})).total,55);
  assert.equal((await search.search(owners[1],{query:'paginated'})).total,0);
 });
 
@@ -129,7 +132,7 @@ test('OpenSearch SigV4 signs temporary credentials for the es service and index-
  let captured;
  const search=createSessionSearch({endpoint:'https://search.example.com',index:'session-test',region:'us-west-2',
   credentials:async()=>({accessKeyId:'test-key',secretAccessKey:'test-secret',sessionToken:'temporary-token'}),
-  fetch:async(url,options)=>{captured={url,options};return Response.json({hits:{total:{value:0},hits:[]}});}});
+  fetch:async(url,options)=>{captured={url,options};return realmResponse('session',{hits:{total:{value:0},hits:[]}});}});
  await search.search(owner,{query:'hello'});
  assert.equal(captured.url.pathname,'/session-test/_search');
  assert.equal(captured.options.headers['x-amz-security-token'],'temporary-token');
@@ -140,7 +143,7 @@ test('OpenSearch SigV4 signs temporary credentials for the es service and index-
 test('search returns another teammate with attribution and rejects foreign tenant results',async()=>{
  const teammate={tenantId:owner.tenantId,userId:'teammate',text:'shared knowledge'};
  let source=teammate;
- const search=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>Response.json({hits:{total:{value:1},hits:[{_id:'event',_source:source}]}})});
+ const search=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{hits:{total:{value:1},hits:[{_id:'event',_source:source}]}})});
  assert.equal((await search.search(owner)).hits[0].userId,'teammate');
  source={...teammate,tenantId:'another-team'};
  await assert.rejects(search.search(owner),/ownership scope/);
