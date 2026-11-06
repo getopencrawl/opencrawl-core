@@ -11,6 +11,7 @@ import {captureDir,captureStatus,readCaptureConfig,syncCaptures,captureTranscrip
 import {backfillPreview,backfill,chooseBackfill,setupBackfill} from '../src/capture/backfill.ts';
 import {collectCommand} from '../src/capture/command.ts';
 import {hash} from '../src/capture/parse.ts';
+import {claudeDesktopSessionsRoot,defaultClaudeDesktopSessionsRoot} from '../src/capture/desktop-history.ts';
 
 // Native record shapes observed in Claude CLI/Desktop and Codex CLI/Desktop;
 // content is synthetic so this end-to-end test never imports personal history.
@@ -163,4 +164,85 @@ test('only approved history reconciliation upgrades old parser cursors, includin
    rmSync(join(captureDir(),'queue',names[0]));await captureTranscript(config,'codex',path,{},true);expect(readdirSync(join(captureDir(),'queue'))).toHaveLength(0);
   }
  }finally{if(saved===undefined)delete process.env.OPENCRAWL_CONFIG_HOME;else process.env.OPENCRAWL_CONFIG_HOME=saved;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('Claude Desktop mirrors preserve unmatched audit messages, session boundaries, consent and scope',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'opencrawl-desktop-')),saved={...process.env};
+ const principal={tenantId:'test',userId:'desktop-user'},token='desktop-backfill-token-01234567890123456789';
+ const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest({store,onStored:undefined});
+ const batches:any[]=[],receipts:any[]=[];let requests=0;
+ const handler=standaloneCapture({token,principal,store,prefix:undefined,search:undefined});
+ const server=createServer(async(req,res)=>{
+  requests++;
+  if(req.url==='/api/sessions/batches'){
+   const chunks=[];for await(const c of req)chunks.push(c);
+   const batch=JSON.parse(Buffer.concat(chunks).toString());batches.push(batch);
+   const receipt=await ingest.putBatch(principal,batch);receipts.push({...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId});
+   res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({data:receipt}));return;
+  }
+  handler(req,res);
+ });
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ const api='http://127.0.0.1:'+(server.address() as any).port;
+ try {
+  Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),OPENCRAWL_SESSIONS_TOKEN:token,CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex'),CLAUDE_DESKTOP_CONFIG_DIR:join(dir,'desktop')});
+  await installCapture(api,{background:false,home:dir,command:[]});
+  const config=readCaptureConfig()!;
+  rmSync(config.roots['claude-code'],{recursive:true,force:true});
+  const runtime=join(config.claudeDesktopSessionsRoot!,'account','session','agent','runtime');
+  const project=join(runtime,'.claude','projects','native'),parent=join(project,'parent.jsonl'),child=join(project,'parent','subagents','child.jsonl'),audit=join(runtime,'audit.jsonl');
+  mkdirSync(join(child,'..'),{recursive:true});
+  const native={type:'user',sessionId:'native-session',entrypoint:'local-agent',uuid:'native-uuid',message:{role:'user',content:'native message'}};
+  const subagent={...native,uuid:'child-uuid',agentId:'child',message:{role:'user',content:'child message'}};
+  writeFileSync(parent,JSON.stringify(native)+'\n');writeFileSync(child,JSON.stringify(subagent)+'\n');
+  const rows=[
+   {type:'user',uuid:'early',session_id:'desktop-runtime',_audit_timestamp:'2026-01-01T00:00:00Z',_audit_hmac:'DO_NOT_UPLOAD',message:{role:'user',content:'first unmatched message'}},
+   {type:'user',uuid:'native-uuid',session_id:'native-session',message:native.message},
+   {type:'user',uuid:'child-uuid',session_id:'native-session',message:subagent.message},
+   {type:'system',subtype:'compact',session_id:'native-session',secret:'DO_NOT_UPLOAD'},
+   {type:'assistant',uuid:'late',session_id:'native-session',parent_tool_use_id:'parent-tool',_audit_timestamp:'2026-01-01T01:00:00Z',_audit_hmac:'DO_NOT_UPLOAD',message:{role:'assistant',content:'second unmatched message'}},
+   {type:'user',uuid:'again',session_id:'desktop-runtime',message:{role:'user',content:'return to runtime session'}},
+  ];
+  writeFileSync(audit,rows.map(r=>JSON.stringify(r)+'\n').join(''));
+  const unrelated=join(config.claudeDesktopSessionsRoot!,'account','unrelated.jsonl');writeFileSync(unrelated,'invalid\n');
+  if(process.platform!=='win32')symlinkSync(unrelated,join(project,'escape.jsonl'));
+  const before=requests;
+  expect(backfillPreview(api,'claude-code').sources[0].files).toBe(3);
+  expect(backfillPreview(api,'codex').sources[0].files).toBe(0);
+  await expect(backfill(api,'all',false)).rejects.toMatchObject({code:'BACKFILL_CONSENT_REQUIRED'});
+  expect(requests).toBe(before);expect(captureStatus().queued).toBe(0);
+  await expect(captureTranscript(config,'claude-code',parent)).rejects.toMatchObject({code:'CAPTURE_PATH_REJECTED'});
+  await expect(captureTranscript(config,'claude-code',audit)).rejects.toMatchObject({code:'CAPTURE_PATH_REJECTED'});
+  await expect(captureTranscript(config,'claude-code',unrelated,{},true)).rejects.toMatchObject({code:'CAPTURE_PATH_REJECTED'});
+  expect((await backfill(api,'codex',true)).uploaded).toBe(0);expect(batches).toHaveLength(0);
+  expect((await backfill(api,'claude-code',true)).processed).toBe(3);
+  const events=batches.flatMap(b=>b.events.map((e:any)=>({session:b.sessionId,origin:b.origin,event:e})));
+  expect(events).toHaveLength(5);
+  expect(events.filter(e=>e.event.nativeId==='native-uuid')).toHaveLength(1);
+  expect(events.filter(e=>e.event.nativeId==='child-uuid')).toHaveLength(1);
+  expect(events.find(e=>e.event.nativeId==='child-uuid')?.session).toBe('native-session:child');
+  expect(events.find(e=>e.event.nativeId==='early')).toMatchObject({session:'desktop-runtime',origin:'desktop',event:{timestamp:'2026-01-01T00:00:00Z'}});
+  expect(events.find(e=>e.event.nativeId==='late')).toMatchObject({session:'native-session',event:{timestamp:'2026-01-01T01:00:00Z',parentId:'parent-tool'}});
+  expect(events.find(e=>e.event.nativeId==='again')?.session).toBe('desktop-runtime');
+  expect(JSON.stringify(batches)).not.toContain('DO_NOT_UPLOAD');
+  for(const receipt of receipts){expect(await ingest.getBatch(principal,receipt)).not.toBeNull();expect(await ingest.getBatch({...principal,userId:'other'},receipt)).toBeNull();}
+  expect((await backfill(api,'all',true)).uploaded).toBe(0);expect(captureStatus().queued).toBe(0);
+  const only=join(config.claudeDesktopSessionsRoot!,'account','audit-only','agent','runtime','audit.jsonl');mkdirSync(join(only,'..'),{recursive:true});writeFileSync(only,'invalid\n');
+  expect(backfillPreview(api,'all').sources[0].files).toBe(4);
+  await expect(backfill(api,'claude-code',true)).rejects.toMatchObject({code:'BACKFILL_INCOMPLETE'});
+  writeFileSync(only,JSON.stringify({...rows[0],session_id:'audit-only',uuid:'audit-only'})+'\n');
+  expect((await backfill(api,'claude-code',true)).uploaded).toBe(1);expect(batches.at(-1).sessionId).toBe('audit-only');
+ } finally {
+  await new Promise<void>(r=>server.close(()=>r()));
+  for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k];Object.assign(process.env,saved);
+  rmSync(dir,{recursive:true,force:true});
+ }
+},20000);
+
+
+test('desktop discovery upgrades default roots without expanding custom roots',()=>{
+ const home=join(tmpdir(),'opencrawl-desktop-defaults');
+ expect(claudeDesktopSessionsRoot({roots:{'claude-code':join(home,'.claude')}},home)).toBe(defaultClaudeDesktopSessionsRoot(home));
+ expect(claudeDesktopSessionsRoot({roots:{'claude-code':join(home,'custom')}},home)).toBeUndefined();
+ expect(claudeDesktopSessionsRoot({roots:{'claude-code':join(home,'custom')},claudeDesktopSessionsRoot:join(home,'explicit')},home)).toBe(join(home,'explicit'));
 });
