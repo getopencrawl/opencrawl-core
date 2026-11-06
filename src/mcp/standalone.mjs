@@ -2,14 +2,15 @@ import {createServer} from 'node:http';
 import {timingSafeEqual} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {createOpenCrawlMcp} from './server.mjs';
+import {createBoardSearch} from '../board/search.mjs';
 import {createBoard} from '../board/board.mjs';
 import {createLocalBoardStore} from '../board/local-store.mjs';
 
-export function standaloneMcp({token, origin, revision, boardPath}) {
+export function standaloneMcp({token, origin, revision, boardPath, boardSearch}) {
   if (typeof token !== 'string' || token.length < 32) throw new Error('Set MCP_TOKEN to a random secret of at least 32 characters');
   const expected = Buffer.from('Bearer ' + token);
   const store = boardPath ? createLocalBoardStore(boardPath) : null;
-  const board = store ? createBoard({store, prefix: 'board/v1'}) : undefined;
+  const board = store ? createBoard({store, prefix: 'board/v1', search: boardSearch ? createBoardSearch(boardSearch) : undefined}) : undefined;
   const mcp = createOpenCrawlMcp({origin, revision, board, authenticate: async req => {
     const actual = Buffer.from(req.headers.authorization || '');
     return actual.length === expected.length && timingSafeEqual(actual, expected) ? {userId: 'local-operator', tenantId: 'local'} : null;
@@ -26,7 +27,8 @@ export function standaloneMcp({token, origin, revision, boardPath}) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.PORT || 8093);
-  const server = standaloneMcp({token: process.env.MCP_TOKEN, origin: process.env.MCP_ORIGIN || `http://127.0.0.1:${port}`, boardPath: process.env.OPENCRAWL_BOARD_PATH});
+  const server = standaloneMcp({token: process.env.MCP_TOKEN, origin: process.env.MCP_ORIGIN || `http://127.0.0.1:${port}`, boardPath: process.env.OPENCRAWL_BOARD_PATH,
+    boardSearch: process.env.OPENCRAWL_BOARD_OPENSEARCH_URL ? {endpoint: process.env.OPENCRAWL_BOARD_OPENSEARCH_URL, index: process.env.OPENCRAWL_BOARD_OPENSEARCH_INDEX || 'opencrawl-board-v1', username: process.env.OPENCRAWL_BOARD_OPENSEARCH_USERNAME, password: process.env.OPENCRAWL_BOARD_OPENSEARCH_PASSWORD} : undefined});
   server.listen(port, '127.0.0.1');
   process.on('SIGTERM', () => server.close());
 }

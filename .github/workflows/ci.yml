@@ -27,7 +27,7 @@ jobs:
             -e discovery.type=single-node -e DISABLE_SECURITY_PLUGIN=true -e DISABLE_INSTALL_DEMO_CONFIG=true \
             -e node.store.allow_mmap=false -e 'OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m' \
             opensearchproject/opensearch:3.9.0@sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e
-          node --test test/session-object-store.test.mjs test/session-indexer.test.mjs test/connector-live.test.mjs
+          node --test test/session-object-store.test.mjs test/session-indexer.test.mjs test/connector-live.test.mjs test/board-search-live.test.mjs
       - name: Remove disposable object store
         if: always()
         run: docker rm -f capture-s3-test capture-search-test || true
