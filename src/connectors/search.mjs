@@ -1,4 +1,5 @@
 import {createRealm} from '../search/realm.mjs';
+import {relevanceQuery} from '../search/relevance.mjs';
 import {authorize, digest, documentId, validateBinding} from './scope.mjs';
 
 import {connectorMapping} from '../search/mapping.mjs';
@@ -63,7 +64,7 @@ export function createConnectorSearch(options) {
       // Bound work even when channel visibility filters most candidates.
       while (hits.length < limit && examined < 1000 && more) {
         const result = await request('/_search', {body: JSON.stringify({size: 100, track_total_hits: false,
-          query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: [...byConnection.keys()]}}, {terms: {[f('kind')]: SEARCHABLE_KINDS}}, {term: {[f('deleted')]: false}}], must: [{multi_match: {query, fields: ['title^2', 'text', f('heading')], operator: 'and'}}]}},
+          query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: [...byConnection.keys()]}}, {terms: {[f('kind')]: SEARCHABLE_KINDS}}, {term: {[f('deleted')]: false}}], must: [relevanceQuery(query, {fields: ['title^2', 'text', f('heading')]})]}},
           sort: [{_score: 'desc'}, {[f('connectionId')]: 'asc'}, {[f('sourceId')]: 'asc'}], ...(after ? {search_after: after} : {})})});
         const candidates = result?.hits?.hits;
         if (!Array.isArray(candidates)) throw new Error('Invalid connector search response');

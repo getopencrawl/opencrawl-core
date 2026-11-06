@@ -1,10 +1,12 @@
 import {createRealmResolver,realmField} from '../search/realm.mjs';
 import {sessionScope} from './ingest.mjs';
+import {relevanceQuery} from '../search/relevance.mjs';
 
 import {sessionIndexMapping} from '../search/mapping.mjs';
 export {sessionIndexMapping};
 const UPSERT="if (ctx._source.session == null || ctx._source.session.receivedAt == null || params.doc.session.receivedAt.compareTo(ctx._source.session.receivedAt) > 0) { ctx._source = params.doc; } else { ctx.op = 'none'; }";
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status});};
+export const MAX_SEARCH_LIMIT=500;
 export function createSessionSearch(options) {
   const resolve=createRealmResolver(options), f=field=>realmField('session',field);
   return {
@@ -23,11 +25,13 @@ export function createSessionSearch(options) {
       }
       await collection.bulk(principal,batch);
     },
-    async search(principal,{query='',limit=20,raw=false}={}) {
+    /** Ranked passages. Natural-language questions and keywords both work (search/relevance.mjs).
+     * `text: false` omits passage text for callers that render it from their own copy. */
+    async search(principal,{query='',limit=20,raw=false,text=true}={}) {
       sessionScope(principal);
-      if(typeof query!=='string'||query.length>4000||!Number.isInteger(limit)||limit<1||limit>100)fail(400,'Invalid search query or limit');
-      const result=await resolve(principal).collection('session').search(principal,{size:limit,track_total_hits:true,
-        query:{bool:{filter:[{term:{tenantId:principal.tenantId}}],must:query?[{match:{text:{query,operator:'and'}}}]:[{match_all:{}}]}},
+      if(typeof query!=='string'||query.length>4000||!Number.isInteger(limit)||limit<1||limit>MAX_SEARCH_LIMIT)fail(400,'Invalid search query or limit');
+      const result=await resolve(principal).collection('session').search(principal,{size:limit,track_total_hits:true,...(text?{}:{_source:{excludes:['text']}}),
+        query:{bool:{filter:[{term:{tenantId:principal.tenantId}}],must:query?[relevanceQuery(query)]:[{match_all:{}}]}},
         sort:query?['_score',{[f('receivedAt')]:'desc'}]:[{[f('receivedAt')]:'desc'},{[f('sequence')]:'asc'}]});
       const hits=result?.hits?.hits;
       if(!Array.isArray(hits)||hits.some(hit=>hit._source?.tenantId!==principal.tenantId||typeof hit._source?.userId!=='string'||!hit._source.userId))throw new Error('Search returned an invalid ownership scope');
