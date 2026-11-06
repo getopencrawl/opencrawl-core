@@ -306,6 +306,27 @@ async function reconcileSources(config:CaptureConfig,seen:Map<string,string>) {
 const queuedNames=()=>readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'));
 const noticeNames=()=>readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json'));
 const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
+/** Bound the CLI process, including blocked locks, HTTP retries and large queues.
+ * Durable notices/batches are the recovery boundary: an interrupted request keeps
+ * its original queued bytes until a later invocation verifies the receipt.
+ * This watchdog runs in the owned process; it never launches a supervisor.
+ */
+export async function ownedCaptureWorker({maxMs=90_000,parentPollMs=1000}={}) {
+  const owner=process.ppid;
+  const ownerGone=()=>{
+    if(owner<=1 || process.ppid!==owner)return true;
+    try{process.kill(owner,0);return false;}
+    catch(error:any){return error?.code==='ESRCH';}
+  };
+  if(ownerGone())return;
+  // An outer-loop deadline cannot interrupt an infinite lock wait or an upload.
+  // Process exit closes those resources; dead-PID locks are reclaimed on retry.
+  const deadline=setTimeout(()=>process.exit(0),maxMs);
+  const parentCheck=setInterval(()=>{if(ownerGone())process.exit(0);},parentPollMs);
+  try{await captureWorker();}
+  finally{clearTimeout(deadline);clearInterval(parentCheck);}
+}
+
 /** One lazy worker per installation; contention is an ordinary successful wake. */
 export async function captureWorker({idleMs=30_000,pollMs=1000}={}) {
   const config=readCaptureConfig();if(!config||config.disabled)return;
