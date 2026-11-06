@@ -28,6 +28,12 @@ resource authorization, and a shared process must never use mutable global scope
 Workflows carry references and cursors; activities perform storage/network I/O.
 Raw records, credentials, and message text stay out of workflow history.
 
+For Slack, [canonical history capture](slack-message-capture.md) supplies a
+cursor-exhaustive source alongside search-based feeds. Explicit source authority
+prevents later previews from replacing canonical text; observation ordering
+within that authority still permits shorter edits. Treat API representation
+differences as evidence to investigate, not proof of truncation or completeness.
+
 ## Write the source contract before implementing the adapter
 
 Record these decisions with the adapter's fixtures:
