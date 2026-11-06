@@ -40,7 +40,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
   const base=new URL(endpoint);
   if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!/^[a-z][a-z0-9_-]{0,150}$/.test(index))throw fail('Invalid realm endpoint or index',400);
   if(Boolean(username)!==Boolean(password)||!Number.isInteger(replicas)||replicas<0||replicas>2)throw fail('Invalid realm configuration',400);
-  const scope=principal=>{if(principal?.tenantId!==tenantId)throw fail('Realm scope denied',403);};
+  const scope=principal=>{if(principal?.tenantId!==tenantId || principal.captureAccess!==undefined)throw fail('Realm scope denied',403);};
   const request=createIndexTransport({endpoint,index,username,password,credentials,region,fetch:send});
   let ready;
   async function ensureIndex(){
@@ -112,7 +112,7 @@ export function createRealmResolver(options) {
   const realms=new Map();
   function resolve(principal){
     const tenantId=principal?.tenantId;
-    if(typeof tenantId!=='string'||!tenantId||(options.tenantId&&options.tenantId!==tenantId))throw fail('Realm scope denied',403);
+    if(typeof tenantId!=='string'||!tenantId||principal.captureAccess!==undefined||(options.tenantId&&options.tenantId!==tenantId))throw fail('Realm scope denied',403);
     let realm=realms.get(tenantId);
     if(!realm){realm=createRealm({...options,tenantId});if(realms.size>=128)realms.delete(realms.keys().next().value);realms.set(tenantId,realm);}
     return realm;

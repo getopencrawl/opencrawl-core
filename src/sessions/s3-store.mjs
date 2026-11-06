@@ -30,7 +30,9 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
       method, url, body, region, accessKeyId, secretAccessKey,
       headers: sessionToken ? {...headers, 'x-amz-security-token': sessionToken} : headers,
     });
-    const res = await fetchImpl(url, {method, headers: signed, body});
+    // A signed request is bound to this origin. In particular, fetch retains the
+    // security-token header on cross-origin redirects even when it strips Authorization.
+    const res = await fetchImpl(url, {method, headers: signed, body, redirect: 'error'});
     if (!res.ok && !(res.status === 404 && method !== 'PUT')) throw await storeError(res, `${method} ${key ?? bucket}`);
     return res;
   }
@@ -61,6 +63,17 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
 
     put: (key, body, contentType = 'application/octet-stream') =>
       request('PUT', key, {body, headers: {'content-type': contentType}}).then(() => undefined),
+
+    /** Check immutable objects without transferring their bodies. */
+    async has(key, {maxBytes} = {}) {
+      if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw new Error('Invalid object read limit');
+      const res = await request('HEAD', key);
+      if (res.status === 404) return false;
+      if (maxBytes !== undefined && Number(res.headers.get('content-length')) > maxBytes) {
+        throw Object.assign(new Error('Object exceeds read limit'), {permanent: true});
+      }
+      return true;
+    },
 
     // Conditional documents: a failed comparison must never overwrite a peer's write.
     async readVersion(key, {maxBytes = 16 * 1024 * 1024} = {}) {

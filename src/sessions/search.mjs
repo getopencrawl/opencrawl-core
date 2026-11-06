@@ -3,7 +3,7 @@ import {sessionScope} from './ingest.mjs';
 
 import {sessionIndexMapping} from '../search/mapping.mjs';
 export {sessionIndexMapping};
-const UPSERT="if (ctx._source.session == null || ctx._source.session.receivedAt == null || params.doc.session.receivedAt.compareTo(ctx._source.session.receivedAt) > 0) { ctx._source = params.doc; } else { ctx.op = 'none'; }";
+const UPSERT="if (ctx._source.session != null && (ctx._source.tenantId != params.doc.tenantId || ctx._source.session.userId != params.doc.session.userId)) { throw new IllegalArgumentException('Session document ownership mismatch'); } if (ctx._source.session == null || ctx._source.session.receivedAt == null || params.doc.session.receivedAt.compareTo(ctx._source.session.receivedAt) > 0) { ctx._source = params.doc; } else { ctx.op = 'none'; }";
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status});};
 export function createSessionSearch(options) {
   const resolve=createRealmResolver(options), f=field=>realmField('session',field);
@@ -15,6 +15,7 @@ export function createSessionSearch(options) {
       const collection=resolve(principal).collection('session');
       let batch=[],bytes=0;
       for(const item of documents){
+        if(item.document?.tenantId!==principal.tenantId||item.document?.userId!==principal.userId)fail(403,'Session document owner does not match its authorized scope');
         const size=Buffer.byteLength(JSON.stringify(item));
         if(size>3*1024*1024)throw new Error('Search document exceeds bulk limit');
         if(bytes+size>3*1024*1024){await collection.bulk(principal,batch);batch=[];bytes=0;}

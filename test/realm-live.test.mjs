@@ -77,3 +77,17 @@ test('session replay cannot overwrite a newer captured event in the realm',{skip
  await sessions.putDocuments([{id:'event',document:{...base,receivedAt:'2026-11-01T00:00:00Z',text:'old replay'}}],owner);
  await sessions.refresh(owner);const result=await sessions.search(owner);assert.equal(result.total,1);assert.equal(result.hits[0].text,'newer version');
 });
+
+
+test('session ID collisions cannot replace another uploader while team reads remain shared',{skip:!endpoint},async t=>{
+ const environment='test-'+randomUUID().slice(0,8),owner={tenantId:'org-collision',userId:'author'},other={...owner,userId:'other-author'};
+ const index=realmIndex(environment,owner.tenantId),sessions=createSessionSearch({endpoint,environment});
+ await sessions.ensureIndex(owner);
+ t.after(()=>fetch(endpoint+'/'+index,{method:'DELETE'}));
+ const document={...owner,harness:'codex',sessionId:'session',kind:'message',sequence:1,receivedAt:'2026-11-01T00:00:00Z',text:'original author evidence'};
+ await sessions.putDocuments([{id:'same-local-id',document}],owner);
+ await assert.rejects(sessions.putDocuments([{id:'same-local-id',document:{...document,...other,receivedAt:'2026-11-02T00:00:00Z',text:'replacement'}}],other),/failed or missing items/);
+ await sessions.refresh(owner);
+ const result=await sessions.search(other);
+ assert.equal(result.total,1);assert.equal(result.hits[0].userId,owner.userId);assert.equal(result.hits[0].text,document.text);
+});
