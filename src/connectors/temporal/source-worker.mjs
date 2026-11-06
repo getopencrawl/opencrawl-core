@@ -25,9 +25,11 @@ export function slackSourceActivities({resolve}) {
  }
  return {captureFilePage:input=>capture(input,createSlackFileCapture),captureMessagePage:input=>capture(input,createSlackMessageCapture),captureMessageReference:input=>capture(input,createSlackMessageReferenceCapture)};
 }
-export async function createSlackSourceWorker({address,namespace,taskQueue,bundlePath,resolve}) {
+/** Operator-supplied SDK connectionOptions support TLS/auth; callers own key rotation. */
+export async function createSlackSourceWorker({address,namespace,taskQueue,bundlePath,resolve,connectionOptions={}}) {
  if(!address||!namespace||!taskQueue||!bundlePath)throw new Error('Explicit source worker configuration required');
- const connection=await NativeConnection.connect({address});
+ if(!connectionOptions||typeof connectionOptions!=='object'||Array.isArray(connectionOptions)||connectionOptions.address!==undefined&&connectionOptions.address!==address)throw new Error('Invalid Temporal connection options');
+ const connection=await NativeConnection.connect({...connectionOptions,address});
  try{const worker=await Worker.create({connection,namespace,taskQueue,workflowBundle:{codePath:bundlePath},activities:slackSourceActivities({resolve}),maxConcurrentActivityTaskExecutions:2,maxConcurrentWorkflowTaskExecutions:4,shutdownGraceTime:'30 seconds'});return {connection,worker};}
  catch(error){await connection.close();throw error;}
 }

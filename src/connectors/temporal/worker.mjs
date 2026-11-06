@@ -41,9 +41,12 @@ export function connectorActivities({resolve}) {
   return {listPage: input => operation(input, 'listPage'), processObject: input => operation(input, 'processObject')};
 }
 
-export async function createConnectorWorker({address, namespace, taskQueue, bundlePath, resolve, maxConcurrentActivityTaskExecutions = 2}) {
+/** Operator-supplied SDK connectionOptions support TLS/auth; callers own key rotation. */
+export async function createConnectorWorker({address, namespace, taskQueue, bundlePath, resolve, maxConcurrentActivityTaskExecutions = 2, connectionOptions = {}}) {
   if (!address || !namespace || !taskQueue || !bundlePath) throw new Error('Explicit Temporal worker configuration required');
-  const connection = await NativeConnection.connect({address});
+  if (!connectionOptions || typeof connectionOptions !== 'object' || Array.isArray(connectionOptions) ||
+      connectionOptions.address !== undefined && connectionOptions.address !== address) throw new Error('Invalid Temporal connection options');
+  const connection = await NativeConnection.connect({...connectionOptions, address});
   try {
     const worker = await Worker.create({connection, namespace, taskQueue,
       workflowBundle: {codePath: bundlePath}, activities: connectorActivities({resolve}),
