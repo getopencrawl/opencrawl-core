@@ -50,7 +50,7 @@ test('bulk item errors are failures even with HTTP 200; search binds the team an
  }});
  // Replace the fake parser for NDJSON, then retain the observed search body.
  const failing=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{errors:true,items:[{index:{status:429}}]})});
- await assert.rejects(failing.putDocuments([{id:'id',document:{tenantId:owner.tenantId,harness:'codex',receivedAt:'2026-11-01T00:00:00Z',text:'retry me'}}],owner),/failed or missing items/);
+ await assert.rejects(failing.putDocuments([{id:'id',document:{...owner,harness:'codex',receivedAt:'2026-11-01T00:00:00Z',text:'retry me'}}],owner),/failed or missing items/);
  await search.search(owner,{query:'tenant-b OR *'});
  assert.deepEqual(requests[0].query.bool.filter,[{term:{tenantId:'tenant-a'}},{term:{corpus:'session'}}]);
  await assert.rejects(search.search(null,{query:'anything'}),/Authentication/);
@@ -136,6 +136,7 @@ test('OpenSearch SigV4 signs temporary credentials for the es service and index-
  await search.search(owner,{query:'hello'});
  assert.equal(captured.url.pathname,'/session-test/_search');
  assert.equal(captured.options.headers['x-amz-security-token'],'temporary-token');
+ assert.equal(captured.options.redirect,'error');
  assert.match(captured.options.headers.authorization,/us-west-2\/es\/aws4_request/);
 });
 

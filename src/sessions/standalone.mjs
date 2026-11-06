@@ -32,6 +32,7 @@ export function standaloneCapture({token,principal,store,prefix='capture-v1',sea
       const user = await authenticate(req);
       if (!user) {res.writeHead(401);res.end();return;}
       if (req.url === '/api/onboarding') {
+        if (user.captureAccess === 'write') {res.writeHead(403, {'cache-control':'no-store'});res.end();return;}
         res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
         res.end(JSON.stringify({data:await onboarding.read(user)}));return;
       }
