@@ -17,24 +17,30 @@ const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSyn
 export type CaptureConfig = {disabled?:boolean,authPending?:boolean,schemaVersion:1,harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 // `owner` in the saved schema is cached attribution, not an enrollment constraint.
-export async function refreshCaptureIdentity(config:CaptureConfig) {
-  const refresh=async()=>{
-    const {principal}=await request(config.api,'/api/sessions/identity');
-    if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
-    const previousId=config.installationId,current=readCaptureConfig();
+export async function refreshCaptureIdentity(config:CaptureConfig,token?:string) {
+  const {principal}=await request(config.api,'/api/sessions/identity',{},token);
+  if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
+  // Authentication may finish after uninstall or another worker initializes a
+  // prepared cloud image. Serialize the identity update with reconfiguration.
+  await withSessionLock('capture:configuration',async()=>{
+    const current=readCaptureConfig();
+    const pending=config.authPending && config.installationId==='pending';
+    if(!current || current.api!==config.api || (!pending && current.installationId!==config.installationId))throw new CliError('CAPTURE_CONFIG_CHANGED','Capture configuration changed during authentication. Retry with the current configuration.');
     config.owner=principal;
     if(config.authPending){
+      config.installationId=current.installationId==='pending'?randomUUID():current.installationId;
       config.authPending=false;
-      if(config.installationId==='pending')config.installationId=current?.api===config.api&&current.installationId!=='pending'?current.installationId:randomUUID();
     }
-    if(current?.api===config.api && (current.installationId===previousId||previousId==='pending'))atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
-    return principal;
-  };
-  return config.authPending?withSessionLock('capture:identity',refresh,Infinity):refresh();
+    atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
+  });
+  return principal;
+}
+function staticCaptureToken(api:string) {
+  const saved=read(join(captureDir(),'receiver-token.json'));
+  return process.env.OPENCRAWL_SESSIONS_TOKEN || (saved?.api===api?saved.token:null);
 }
 export async function request(api:string,path:string,init:RequestInit={},tokenOverride?:string) {
-  const saved=read(join(captureDir(),'receiver-token.json'));
-  const staticToken=tokenOverride || process.env.OPENCRAWL_SESSIONS_TOKEN || (saved?.api===api?saved.token:null);
+  const staticToken=tokenOverride || staticCaptureToken(api);
   let token=staticToken || await accessToken(api);
   const method=init.method??'GET';
   // Only retry operations whose payloads are read-only or content-addressed.
@@ -377,18 +383,24 @@ export async function flushCaptures({wait=true}={}) {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
   ensureDirectories();
   return withSessionLock('capture:flush',async()=>{
-    const principal=await refreshCaptureIdentity(config);
+    // A concurrent login must not switch the identity between the initial check
+    // and blob writes. If this credential expires, retain the queue for a retry.
+    const token=staticCaptureToken(config.api)||await accessToken(config.api);
+    const principal=await refreshCaptureIdentity(config,token);
     let uploaded=0;
     for(const name of readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'))) {
       if(!wait&&readCaptureConfig()?.disabled)break;
       const path=join(captureDir(),'queue',name),batch=read(path);
+      // Reject a different human before uploading attachment bytes: a later
+      // batch rejection cannot undo a blob already stored under their identity.
+      if(batch.owner?.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Queued capture belongs to another user. Sign back in as its author to upload it; queued data is retained.');
       // Current authentication selects the team. Keep the recorded human; the
       // server validates authorship and membership on every upload.
       batch.owner={...batch.owner,tenantId:principal.tenantId};
       for(const a of batch.attachments)if(a.status==='captured'){
-        await request(config.api,'/api/sessions/attachments/'+a.sha256,{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readFileSync(join(captureDir(),'blobs',a.sha256))});
+        await request(config.api,'/api/sessions/attachments/'+a.sha256,{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readFileSync(join(captureDir(),'blobs',a.sha256))},token);
       }
-      const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(batch)});
+      const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(batch)},token);
       if(receipt.batchId!==hash(JSON.stringify(batch)) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
       atomicJson(join(captureDir(),'last-upload.json'),{at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId});
       unlinkSync(path);uploaded++;

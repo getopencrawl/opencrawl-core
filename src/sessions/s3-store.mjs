@@ -30,7 +30,9 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
       method, url, body, region, accessKeyId, secretAccessKey,
       headers: sessionToken ? {...headers, 'x-amz-security-token': sessionToken} : headers,
     });
-    const res = await fetchImpl(url, {method, headers: signed, body});
+    // A signed request is bound to this origin. In particular, fetch retains the
+    // security-token header on cross-origin redirects even when it strips Authorization.
+    const res = await fetchImpl(url, {method, headers: signed, body, redirect: 'error'});
     if (!res.ok && !(res.status === 404 && method !== 'PUT')) throw await storeError(res, `${method} ${key ?? bucket}`);
     return res;
   }
@@ -38,11 +40,13 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
   async function listPage(prefix, {delimiter, continuationToken, maxKeys=1000} = {}) {
     if(!Number.isInteger(maxKeys)||maxKeys<1||maxKeys>1000)throw new Error('Invalid S3 page size');
     const res=await request('GET',undefined,{query:{'list-type':'2',prefix,delimiter,'continuation-token':continuationToken,'max-keys':String(maxKeys)}});
+    if(res.status===404)throw await storeError(res, `LIST ${bucket}`);
     const xml=await res.text();
     const keys=[...xml.matchAll(/<Contents>[\s\S]*?<Key>([^<]*)<\/Key>/g)].map(m=>unescapeXml(m[1]));
     const prefixes=[...xml.matchAll(/<CommonPrefixes>\s*<Prefix>([^<]*)<\/Prefix>/g)].map(m=>unescapeXml(m[1]));
     const nextToken=/<IsTruncated>true<\/IsTruncated>/.test(xml)?unescapeXml(xml.match(/<NextContinuationToken>([^<]*)</)?.[1]??''):null;
     if(nextToken==='')throw new Error('S3 listing omitted its continuation token');
+    if(nextToken&&nextToken===continuationToken)throw new Error('S3 listing repeated its continuation token');
     return {keys,prefixes,nextToken};
   }
 
@@ -59,6 +63,17 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
 
     put: (key, body, contentType = 'application/octet-stream') =>
       request('PUT', key, {body, headers: {'content-type': contentType}}).then(() => undefined),
+
+    /** Check immutable objects without transferring their bodies. */
+    async has(key, {maxBytes} = {}) {
+      if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw new Error('Invalid object read limit');
+      const res = await request('HEAD', key);
+      if (res.status === 404) return false;
+      if (maxBytes !== undefined && Number(res.headers.get('content-length')) > maxBytes) {
+        throw Object.assign(new Error('Object exceeds read limit'), {permanent: true});
+      }
+      return true;
+    },
 
     // Conditional documents: a failed comparison must never overwrite a peer's write.
     async readVersion(key, {maxBytes = 16 * 1024 * 1024} = {}) {
@@ -124,13 +139,14 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
     async list(prefix, {delimiter} = {}) {
       const keys = [];
       const prefixes = [];
+      const seen = new Set();
       let token;
       do {
-        const res = await request('GET', undefined, {query: {'list-type': '2', prefix, delimiter, 'continuation-token': token}});
-        const xml = await res.text();
-        for (const [, key] of xml.matchAll(/<Contents>[\s\S]*?<Key>([^<]*)<\/Key>/g)) keys.push(unescapeXml(key));
-        for (const [, p] of xml.matchAll(/<CommonPrefixes>\s*<Prefix>([^<]*)<\/Prefix>/g)) prefixes.push(unescapeXml(p));
-        token = /<IsTruncated>true<\/IsTruncated>/.test(xml) ? unescapeXml(xml.match(/<NextContinuationToken>([^<]*)</)?.[1] ?? '') : undefined;
+        const page = await listPage(prefix, {delimiter, continuationToken: token});
+        keys.push(...page.keys); prefixes.push(...page.prefixes);
+        token = page.nextToken;
+        if (token && seen.has(token)) throw new Error('S3 listing repeated its continuation token');
+        if (token) seen.add(token);
       } while (token);
       return {keys, prefixes};
     },

@@ -1,6 +1,7 @@
 import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {validateBinding,digest,invalidRecord} from './scope.mjs';
+export {seedSlackSourceCatalog} from './slack-source-catalog.mjs';
 const MAX=20*1024*1024;
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const validId=value=>typeof value==='string'&&/^[A-Z][A-Z0-9]{1,100}$/.test(value);
@@ -31,11 +32,18 @@ export function createSlackFileCapture({binding,store,request,download,checkActi
   const stateKey=binding.rawPrefix+'capture/files-v1/'+runId+'/state.json';
   const raw=await store.get(stateKey,{maxBytes:16*1024*1024});
   const catalogKey=binding.rawPrefix+'capture/files-v1/catalog.json';
-  const catalogBytes=raw?null:await store.get(catalogKey,{maxBytes:16*1024*1024});
+  const catalogBytes=await store.get(catalogKey,{maxBytes:16*1024*1024});
   const catalog=catalogBytes?JSON.parse(catalogBytes):{scope:digest(binding),channels:[],files:{}};
   if(catalog.scope!==digest(binding))invalidRecord('Capture catalog scope mismatch');
   const state=raw?JSON.parse(raw):{version:1,runId,cutoff,scope:digest(binding),channels:{},priorChannels:catalog.channels,files:Object.fromEntries(Object.entries(catalog.files).map(([id,channels])=>[id,{id,channels,comments:{},cursor:'',done:false}])),cursor:'',listed:false,nextDue:0,pages:0,emitted:0,errors:[]};
   if(state.version!==1||state.runId!==runId||state.cutoff!==cutoff||state.scope!==digest(binding))invalidRecord('Capture checkpoint scope mismatch');
+  // The catalog can be ahead of the checkpoint when publication succeeded but
+  // the final state write failed. Never erase those already-published shares.
+  state.priorChannels=[...new Set([...state.priorChannels,...catalog.channels])];
+  for(const [id,channels] of Object.entries(catalog.files)) {
+   const saved=state.files[id]||={id,channels:[],comments:{},cursor:'',done:false};
+   saved.channels=[...new Set([...saved.channels,...channels])];
+  }
   const saveCatalog=async()=>{const catalog={scope:digest(binding),channels:[...new Set([...state.priorChannels,...Object.keys(state.channels)])],files:Object.fromEntries(Object.values(state.files).map(f=>[f.id,f.channels]))};await put(catalogKey,Buffer.from(JSON.stringify(catalog)),'application/json');};
   const save=async()=>{await saveCatalog();const body=Buffer.from(JSON.stringify(state));if(body.length>16*1024*1024)invalidRecord('Capture checkpoint exceeds limit');await put(stateKey,body,'application/json');};
   const emit=async(stream,records,observedAt)=>{
@@ -50,6 +58,9 @@ export function createSlackFileCapture({binding,store,request,download,checkActi
   else if(target=Object.values(state.channels).find(c=>!c.done&&!c.error)){method='files.list';query={channel:target.id,count:100,page:target.page||1,ts_to:Math.floor(cutoff/1000),show_files_hidden_by_limit:true};}
   else if(target=Object.values(state.files).find(f=>!f.done&&!f.error)){method='files.info';query={file:target.id,limit:100,cursor:target.cursor||undefined};}
   else return {done:true,channels:Object.keys(state.channels).length,files:Object.keys(state.files).length,emitted:state.emitted,failed:state.errors.length};
+  // Reserve pacing durably before sending. A lost response or failed decode must
+  // not make a Temporal retry send the same request inside the provider window.
+  state.nextDue=now()+3500;await save();await active();
   const response=await request(method,query);const data=response?.data;const observedAt=now();
   state.nextDue=observedAt+3500;
   if(response?.status===429||data?.error==='ratelimited') {
@@ -69,6 +80,7 @@ export function createSlackFileCapture({binding,store,request,download,checkActi
   if(method==='conversations.list') {
    if(!Array.isArray(data.channels))invalidRecord('Missing public channels');
    for(const channel of data.channels){if(!validId(channel.id)||channel.is_private!==false||channel.is_im||channel.is_mpim)invalidRecord('Invalid public channel');state.channels[channel.id]||={id:channel.id,page:1,done:false};}
+   await saveCatalog();
    await emit('channels',data.channels,observedAt);state.cursor=nextCursor(data,state.cursor);state.listed=!state.cursor;
    if(state.listed){const missing=state.priorChannels.filter(id=>!state.channels[id]);await emit('channels',missing.map(id=>({id,is_private:true})),observedAt);}
   } else if(method==='files.list') {
@@ -96,6 +108,9 @@ export function createSlackFileCapture({binding,store,request,download,checkActi
       await put(contentKey,body.bytes,body.mediaType);
       content={content_key:contentKey,content_sha256:sha,content_bytes:body.bytes.length,media_type:body.mediaType};
      }
+     // files.info can reveal public shares absent from files.list. Retain every
+     // share before publishing it so a later run can revoke removed shares.
+     target.channels=[...new Set([...target.channels,...shared])];
      await saveCatalog();
      const record={format_version:1,id:file.id,available:true,title:file.title,name:file.name,user:file.user,media_type:mediaType,api_text:apiText(file,target.comments),...content};
      await emit('file_documents',shared.map(channel_id=>({...record,channel_id})),observedAt);

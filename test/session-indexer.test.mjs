@@ -50,7 +50,7 @@ test('bulk item errors are failures even with HTTP 200; search binds the team an
  }});
  // Replace the fake parser for NDJSON, then retain the observed search body.
  const failing=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{errors:true,items:[{index:{status:429}}]})});
- await assert.rejects(failing.putDocuments([{id:'id',document:{tenantId:owner.tenantId,harness:'codex',receivedAt:'2026-11-01T00:00:00Z',text:'retry me'}}],owner),/failed or missing items/);
+ await assert.rejects(failing.putDocuments([{id:'id',document:{...owner,harness:'codex',receivedAt:'2026-11-01T00:00:00Z',text:'retry me'}}],owner),/failed or missing items/);
  await search.search(owner,{query:'tenant-b OR *'});
  assert.deepEqual(requests[0].query.bool.filter,[{term:{tenantId:'tenant-a'}},{term:{corpus:'session'}}]);
  await assert.rejects(search.search(null,{query:'anything'}),/Authentication/);
@@ -114,6 +114,30 @@ test('capture only lands immutable data and succeeds without any processing serv
  assert.equal(store.data.size,1);
 });
 
+test('real OpenSearch usage separates windowed activity from lifetime inventory and excludes future events', {
+ skip: !process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
+}, async t => {
+ const environment='usage-'+randomUUID().slice(0,8), endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
+ const search=createSessionSearch({endpoint,environment});
+ const teammate={...owner,userId:'teammate'},foreign={...owner,tenantId:'foreign-usage'};
+ t.after(async()=>{for(const tenantId of [owner.tenantId,foreign.tenantId])await fetch(endpoint+'/'+realmIndex(environment,tenantId),{method:'DELETE'});});
+ await search.ensureIndex(owner);await search.ensureIndex(foreign);
+ for(const [principal,id,timestamp] of [
+  [owner,'older','2026-10-01T00:00:00.000Z'],[owner,'current','2026-11-05T10:00:00.000Z'],
+  [owner,'future','2026-11-06T00:00:00.000Z'],[teammate,'team','2026-11-04T10:00:00.000Z'],[foreign,'foreign','2026-11-05T10:00:00.000Z'],
+ ])await search.putDocuments([{id,document:{...principal,installationId:'device',sessionId:id,eventId:id,harness:'codex',origin:'cli',kind:'message',role:'user',sequence:0,chunk:0,text:'captured activity',toolNames:['Bash'],timestamp,receivedAt:'2026-11-05T12:00:00.000Z'}}],principal);
+ await search.refresh(owner);await search.refresh(foreign);
+ const options={days:3,now:Date.parse('2026-11-05T12:00:00.000Z')};
+ const personal=await search.usage(owner,options);
+ assert.equal(personal.events,1);assert.equal(personal.lifetimeEvents,3);assert.equal(personal.sessions,1);assert.equal(personal.toolCalls,1);
+ assert.deepEqual(personal.people.map(p=>p.userId),[owner.userId]);
+ const team=await search.usage(owner,{...options,team:true});
+ assert.equal(team.events,2);assert.equal(team.lifetimeEvents,4);assert.equal(team.sessions,2);
+ assert.deepEqual(team.daily.map(d=>[d.date,d.events]),[['2026-11-03',0],['2026-11-04',1],['2026-11-05',1]]);
+ assert.deepEqual(new Set(team.people.map(p=>p.userId)),new Set([owner.userId,teammate.userId]));
+ assert.equal((await search.usage(foreign,options)).lifetimeEvents,1);
+});
+
 test('worker rejects forged source keys and checkpoints only after all indexing writes succeed',async()=>{
  const store=memoryStore(),prefix='sessions/boundary/v1',ingest=createSessionIngest({store,prefix});
  await ingest.putBatch(owner,batch(owner));
@@ -136,6 +160,7 @@ test('OpenSearch SigV4 signs temporary credentials for the es service and index-
  await search.search(owner,{query:'hello'});
  assert.equal(captured.url.pathname,'/session-test/_search');
  assert.equal(captured.options.headers['x-amz-security-token'],'temporary-token');
+ assert.equal(captured.options.redirect,'error');
  assert.match(captured.options.headers.authorization,/us-west-2\/es\/aws4_request/);
 });
 

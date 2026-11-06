@@ -72,6 +72,21 @@ test('S3 CAS signs the expected condition, rejects collisions and bounds reads',
   await assert.rejects(store.readVersion('board', {maxBytes: 1}), /read limit/);
 });
 
+test('a default sync cursor keeps messages that arrive during a conditional-write retry', async t => {
+  const f = await fixture(t); let raced = false;
+  const board = createBoard({prefix: 'test', store: {...f.store, compareAndSet: async (...args) => {
+    if (!raced) {
+      raced = true;
+      await f.make().sync({...a, userId: 'concurrent'}, {workspace: a.tenantId, agent: 'writer', posts: [post('during-sync')]});
+    }
+    return f.store.compareAndSet(...args);
+  }}});
+  const result = await board.sync(a, {workspace: a.tenantId, agent: 'reader', topics: ['auth']});
+  assert.deepEqual(result.messages.map(m => m.id), [1]);
+  assert.equal(result.cursor, 1);
+  assert.equal(result.more, false);
+});
+
 test('real MCP clients exchange scoped messages and revoked credentials cannot read', async t => {
   const {createServer} = await import('node:http');
   const {Client, StreamableHTTPClientTransport} = await import('@modelcontextprotocol/client');

@@ -59,7 +59,12 @@ export function workspaceAccumulator(binding) {
         const version = time(d.note_updated_at ?? d.meeting_updated_at, at);
         const old = transcripts.get(parent);
         if (old && old.version > version) return;
-        if (!old || old.version < version) transcripts.set(parent, {version, lines: new Map()});
+        if (!old || old.version < version) {
+          // The bound measures retained data, not every obsolete revision read
+          // from the append-only source inventory.
+          for (const line of old?.lines.values() || []) retainedBytes -= Buffer.byteLength(JSON.stringify(line));
+          transcripts.set(parent, {version, lines: new Map()});
+        }
         const group = transcripts.get(parent), start = timestamp(d.start_time ?? d.timestamp);
         const speaker = typeof d.speaker === 'string' ? d.speaker : text(d.speaker?.name || d.speaker?.display_name || d.speaker?.email);
         const line = {text: text(d.text), speaker, startTime: start.label, endTime: d.end_time == null ? start.label : timestamp(d.end_time).label, sort: start.sort, at, key};

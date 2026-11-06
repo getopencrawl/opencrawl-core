@@ -36,7 +36,7 @@ async function fixture(run:(f:any)=>Promise<void>){
   writeFileSync(path,record('one'));
   await run({dir,api,path,record,batches,payloads,get requests(){return requests;},set delay(v:number){delay=v;},set loseAck(v:boolean){loseAck=v;}});
  }finally{
-  try{uninstallCapture(dir);}catch{}
+  try{await uninstallCapture(dir);}catch{}
   server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));
   for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);rmSync(dir,{recursive:true,force:true});
  }

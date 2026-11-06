@@ -23,11 +23,15 @@ node src/connectors/standalone.mjs search config.json 'phrase near document end'
 ```
 
 Reusing the run ID and cutoff resumes the checkpoint. New runs retain a connection
-catalog of previously observed file shares, so removed shares and newly inaccessible
+catalog of previously observed file shares, including shares discovered only by
+`files.info`, so removed shares and newly inaccessible
 files can be hidden. A complete public-channel enumeration hides prior channels
 that are no longer returned. This is an access observation, not permanent deletion.
 A denied file remains an explicit coverage failure even when its old content is
 hidden. Do not infer deletion from absence in incremental source data.
+When upgrading an existing index, use the shared
+[catalog seeding operation](slack-message-capture.md#upgrade-existing-access-catalogs)
+to preserve channel and file-share identities that older catalogs may have missed.
 
 For durable operation, build `buildSlackSourceWorkflows`, then run
 `createSlackSourceWorker` from the `connectors/slack-source-temporal` export.
@@ -35,7 +39,8 @@ Schedule `captureSlackFilesV1` with trusted opaque connection references only.
 The resolver supplies `{binding, store, request, download}` after current
 server-side authorization; every write rechecks it. One workflow at a time may
 advance each connection; use overlap SKIP. The workflow uses durable timers for
-rate limits, retries activities, and continues as new every 100 steps. Source
+rate limits, persists request reservations before sending, retries activities,
+and continues as new every 100 steps. Source
 bodies, API responses, credentials and checkpoint contents stay out of history.
 
 ## Storage and publication contract

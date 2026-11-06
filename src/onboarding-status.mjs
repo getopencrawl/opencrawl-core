@@ -21,6 +21,8 @@ export function createOnboardingStatus({store, prefix = 'capture-v1', now = () =
       return record(principal, 'session', {harness: batch.harness});
     },
     async read(principal) {
+      sessionScope(principal);
+      if (principal.captureAccess === 'write') throw Object.assign(new Error('Capture credentials cannot read onboarding status'), {status: 403});
       const values = await Promise.all(['cli','mcp','session'].map(async kind => {
         const bytes = await store.get(key(principal, kind));
         return bytes ? JSON.parse(bytes.toString()) : null;

@@ -7,21 +7,23 @@ import {renderUsage} from '../src/usage.mjs';
 
 const owner = {tenantId: 'org_a', userId: 'user_a'};
 const bucket = (key, extra = {}) => ({key, doc_count: 4, sessions: {value: 2}, messages: {doc_count: 3}, toolCalls: {value: 5}, last: {value_as_string: '2026-11-05T10:00:00.000Z'}, week: {doc_count: 4}, ...extra});
-const aggregations = people => ({sessions: {value: 3}, messages: {doc_count: 6}, toolCalls: {value: 9}, machines: {value: 2}, opencrawl: {doc_count: 1},
+const aggregations = people => ({activity: {doc_count: 8, sessions: {value: 3}, messages: {doc_count: 6}, toolCalls: {value: 9}, machines: {value: 2}, opencrawl: {doc_count: 1},
   tools: {buckets: [{key: 'Bash', doc_count: 7}]}, harnesses: {buckets: [{key: 'codex', doc_count: 8}]}, origins: {buckets: [{key: 'cli', doc_count: 8}]},
   first: {value_as_string: '2026-11-01T00:00:00.000Z'}, last: {value_as_string: '2026-11-05T10:00:00.000Z'},
-  daily: {days: {buckets: [{key_as_string: '2026-11-05', doc_count: 8, sessions: {value: 3}}]}}, people: {buckets: people}});
+  daily: {buckets: [{key_as_string: '2026-11-05', doc_count: 8, sessions: {value: 3}}]}, people: {buckets: people}}});
 
 test('session usage counts only the principal, or the whole tenant when asked, and never returns text', async () => {
   const bodies = [];
   let people = [bucket('user_a')];
   const search = createSessionSearch({endpoint: 'http://localhost:9200', index: 'sessions', fetch: async (_, options) => {
     bodies.push(JSON.parse(options.body));
-    return realmResponse('session',{hits: {total: {value: 8}}, aggregations: aggregations(people)});
+    return realmResponse('session',{hits: {total: {value: 80, relation: 'eq'}}, aggregations: aggregations(people)});
   }});
   const mine = await search.usage(owner, {now: Date.parse('2026-11-05T12:00:00Z')});
   assert.deepEqual(bodies[0].query.bool.must[0].bool.filter, [{term: {tenantId: 'org_a'}}, {term: {'session.userId': 'user_a'}}, {term: {'session.chunk': 0}}]);
   assert.equal(bodies[0].size, 0);
+  assert.deepEqual(bodies[0].aggs.activity.filter, {range: {'session.timestamp': {gte: '2026-10-07T00:00:00.000Z', lte: '2026-11-05T12:00:00.000Z'}}});
+  assert.equal(mine.events, 8); assert.equal(mine.lifetimeEvents, 80);
   assert.equal(mine.sessions, 3); assert.equal(mine.people[0].toolCalls, 5); assert.equal(mine.daily[0].date, '2026-11-05');
   assert.doesNotMatch(JSON.stringify(mine), /text/);
   people = [bucket('user_a'), bucket('user_b')];
@@ -31,6 +33,7 @@ test('session usage counts only the principal, or the whole tenant when asked, a
   assert.equal(team.people.length, 2);
   await assert.rejects(search.usage(null), /Authentication/);
   await assert.rejects(search.usage(owner, {days: 0}), /window/);
+  await assert.rejects(search.usage(owner, {now: NaN}), /window/);
 });
 
 test('connector counts stay inside authorized connections', async () => {
@@ -66,4 +69,6 @@ test('usage report renders each tab, escapes names and uses no inline styles', (
   for (const html of [ingestion, agentTab, teamTab]) assert.doesNotMatch(html, /style=/);
   assert.match(renderUsage({tab: 'nope', agents: null, ingestion: null, members: []}, {now}), /aria-current="page">Ingestion/);
   assert.match(renderUsage({tab: 'agents', agents: {...agents, events: 0}}, {now}), /No agent sessions captured yet/);
+  const untrusted = renderUsage({...report, tab: 'ingestion', ingestion: {...report.ingestion, sources: [{...report.ingestion.sources[0], state: '<img src=x onerror=alert(1)>'}]}}, {now});
+  assert.match(untrusted, /&lt;img src=x onerror=alert\(1\)&gt;/); assert.doesNotMatch(untrusted, /<img src=x/);
 });
