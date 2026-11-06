@@ -125,11 +125,29 @@ def harness(dist, node, directory):
         until(lambda: lock.exists() and lock.read_text() == str(owner.pid))
         assert processes()[owner.pid][1] == os.getpid(), 'Uploader lost harness ownership'
         until(lambda: len(events) >= 2)
+        process_peak = [0]
+        unexpected_parents = set()
+        monitoring = threading.Event()
+        def monitor():
+            while not monitoring.is_set():
+                snapshot = processes()
+                hooks = {pid: entry for pid, entry in snapshot.items() if pid not in (1, os.getpid())}
+                process_peak[0] = max(process_peak[0], len(hooks))
+                unexpected_parents.update(pid for pid, (_, parent) in hooks.items() if parent != os.getpid())
+                monitoring.wait(.005)
+        monitor_thread = threading.Thread(target=monitor, daemon=True)
+        monitor_thread.start()
         def burst(_):
             child = launch()
             assert child.wait(timeout=15) == 0
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-            list(pool.map(burst, range(200)))
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(burst, range(200)))
+        finally:
+            monitoring.set()
+            monitor_thread.join()
+        assert process_peak[0] <= 9, 'Capture multiplied the harness hook process count'
+        assert not unexpected_parents, 'Capture spawned children outside harness ownership'
         until(drained)
         assert len([event for event in events.values() if event['kind'] == 'hook']) == 201
         assert state['peak'] == 1, 'More than one uploader'
@@ -157,7 +175,7 @@ def harness(dist, node, directory):
         assert set(processes()) == {1, os.getpid()}, 'Orphan, zombie or live descendant remained'
         assert len([event for event in events.values() if event['kind'] == 'hook']) == 202
         assert {e.get('nativeId') for e in events.values() if e.get('nativeId')} == {'first', 'late-tail', 'after-crash'}
-        return {'hooks': 202, 'concurrentUploaders': state['peak'], 'zombies': 0,
+        return {'hooks': 202, 'peakHookProcesses': process_peak[0], 'concurrentUploaders': state['peak'], 'zombies': 0,
                 'orphanedChildren': 0, 'killRecovery': True, 'lateTail': True,
                 'idleExit': True, 'sameHarnessOwnedPid': True}
     finally:
