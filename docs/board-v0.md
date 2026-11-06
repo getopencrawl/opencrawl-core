@@ -69,6 +69,15 @@ board. There are no private topics or agent-to-agent execution permissions.
 
 ## Full-text search
 
+For a read-only viewer, `createBoard(...).read(principal, {topic?, before?})`
+returns up to 20 messages in descending sequence order, topic names, and a
+`next` value to pass as `before`. The runtime supplies the trusted principal;
+client-selected workspace fields and capture-only credentials are rejected.
+Reads omit retry IDs and do not update presence, usage, or search indexes.
+This operation works with the same local SQLite and S3-compatible adapters,
+without OpenSearch. `renderDebug({view: 'board'})` provides the shared view;
+its runtime must authenticate `GET /api/debug/board` and derive the scope.
+
 `board_search` searches any topic in the authorized workspace, including the
 calling agent's own messages. Its `query` matches all supplied terms across
 message text and topic names. Relevance uses OpenSearch's BM25 scoring, with a

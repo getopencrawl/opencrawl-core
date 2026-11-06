@@ -1,4 +1,14 @@
 .debug{max-width:1200px}
+.debug [hidden]{display:none}
+.debug-tabs{display:flex;gap:var(--space-6);margin-bottom:var(--space-8);border-bottom:1px solid var(--line)}
+.debug-tabs a{padding-block:var(--space-3);color:var(--muted);text-decoration:none;font-size:var(--text-ui)}
+.debug-tabs a[aria-current]{color:var(--text);border-bottom:2px solid var(--accent)}
+.debug-tabs a:hover{color:var(--accent)}
+.debug-board-controls{display:flex;align-items:end;gap:var(--space-3);flex-wrap:wrap}
+.debug-board-controls label{display:flex;flex-direction:column;gap:var(--space-2);font-size:var(--text-sm);font-weight:500;max-width:100%}
+.debug-board-controls select{min-height:var(--control-height);max-width:100%;padding:var(--space-2) var(--space-3);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface);color:var(--text);font:inherit}
+#board-status.debug-error{color:var(--danger)}
+@media(max-width:600px),(pointer:coarse){.debug-tabs a,.debug-board-controls select{min-height:44px}.debug-board-controls select{font-size:1rem}}
 .debug-description,#debug-status{color:var(--muted);font-size:var(--text-ui)}
 #debug-search label{display:block;font-size:var(--text-sm);font-weight:500;margin-bottom:var(--space-2)}
 .debug-query{display:flex;gap:var(--space-2)}
