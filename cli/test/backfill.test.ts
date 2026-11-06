@@ -19,7 +19,7 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-backfill-')),saved={...process.env};
  const principal={tenantId:'test',userId:'test-user'},token='backfill-test-token-01234567890123456789';
  const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest({store,onStored:undefined});
- const receipts:any[]=[],batches:any[]=[];let requests=0,offline=false,failUpload=false;
+ const receipts:any[]=[],batches:any[]=[];let requests=0,offline=false,failUpload=false,phase='setup';
  const handler=standaloneCapture({token,principal,store,prefix:undefined,search:undefined});
  const server=createServer(async(req,res)=>{
   requests++;
@@ -78,9 +78,9 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   expect(readCaptureConfig()!.owner.tenantId).toBe('current-team');
   expect(batches.every(b=>b.owner.tenantId==='current-team')).toBe(true);
   expect(batches.map(b=>b.harness)).toEqual(['claude-code','claude-code']);
-  offline=true;await expect(backfill(api,'codex',true)).rejects.toThrow();offline=false;
-  failUpload=true;await expect(backfill(api,'codex',true)).rejects.toThrow();expect(captureStatus().queued).toBe(1);failUpload=false;
-  expect((await backfill(api,'codex',true)).processed).toBe(2);
+  phase='offline-auth';offline=true;await expect(backfill(api,'codex',true)).rejects.toThrow();offline=false;
+  phase='offline-upload';failUpload=true;await expect(backfill(api,'codex',true)).rejects.toThrow();expect(captureStatus().queued).toBe(1);failUpload=false;
+  phase='resume';expect((await backfill(api,'codex',true)).processed).toBe(2);
   expect(new Set(batches.map(b=>b.harness+'/'+b.origin))).toEqual(new Set(['claude-code/cli','claude-code/desktop','codex/cli','codex/desktop']));
   expect(JSON.stringify(batches)).not.toContain('EXCLUDED');
   expect(batches.filter(b=>b.harness==='claude-code').every(b=>b.attachments[0].status==='captured')).toBe(true);
@@ -97,15 +97,17 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   const bad=join(process.env.CODEX_HOME!,'sessions','bad.jsonl');writeFileSync(bad,'invalid\n');
   await expect(backfill(api,'codex',true)).rejects.toMatchObject({code:'BACKFILL_INCOMPLETE'});
   rmSync(bad);expect((await backfill(api,'codex',true)).uploaded).toBe(0);
-  const corrupt=bad+'.zst';writeFileSync(corrupt,'not zstd');
+  phase='corrupt-archive';const corrupt=bad+'.zst';writeFileSync(corrupt,'not zstd');
   await expect(backfill(api,'codex',true)).rejects.toMatchObject({code:'BACKFILL_INCOMPLETE'});rmSync(corrupt);
   expect(readdirSync(join(captureDir(),'state')).some(name=>name.endsWith('.tmp'))).toBe(false);
-  if(process.platform!=='win32') {
+  phase='symlinks';if(process.platform!=='win32') {
    const external=join(dir,'outside.jsonl');writeFileSync(external,'{}\n');
    symlinkSync(external,join(process.env.CODEX_HOME!,'sessions','link.jsonl'));
    expect(backfillPreview(api,'codex').sources[0].files).toBe(2);
   }
  } finally {
+  if(process.env.GITHUB_ACTIONS)console.info('Backfill fixture final phase:',phase,'requests:',requests,'batches:',batches.length);
+  server.closeAllConnections();
   await new Promise<void>(r=>server.close(()=>r()));
   for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k];Object.assign(process.env,saved);
   rmSync(dir,{recursive:true,force:true});

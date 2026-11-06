@@ -78,6 +78,9 @@ export async function backfill(api:string, selected:Selection, approved:boolean)
     // the initial authentication; queued uploads still authenticate with the server.
     if(readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json')))uploaded+=(await flushCaptures()).uploaded;
   }
+  // A competing uploader may have finished while the import was reading. This
+  // foreground fence waits for its lock; success never means merely queued.
+  if(readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json')))uploaded+=(await flushCaptures()).uploaded;
   if(failures.length) {
     const error=new CliError('BACKFILL_INCOMPLETE',`Imported ${processed} of ${files.length} transcript files; ${failures.length} failed (${failures[0].code}). Fix the reported error and rerun the approved import; saved cursors prevent reimporting completed records.`);
     recordError(error);throw error;
