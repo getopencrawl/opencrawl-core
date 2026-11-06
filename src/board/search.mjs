@@ -57,19 +57,28 @@ export function createBoardSearch(options) {
       must: [{multi_match: {query: args.query, fields: ['text', f('topic.text')+'^2'], type: 'cross_fields', operator: 'and'}}],
       should: [{match_phrase: {text: {query: args.query, boost: 2}}}],
     } : {})}};
-    const result = complete(await request('/_search', {size: 10000, track_total_hits: true, timeout: '10s',
-      _source: ['boardId', 'tenantId', 'id'], query,
-      sort: args.sort === 'relevance' && args.query ? [{_score: 'desc'}, {[f('timestamp')]: 'desc'}, {[f('id')]: 'desc'}] : [{[f('timestamp')]: 'desc'}, {[f('id')]: 'desc'}],
-      aggs: Object.fromEntries([...new Set(args.facets)].map(field => [field, {terms: {field:f(field), size: args.facetSize, shard_size: 10000, show_term_doc_count_error: true}}])),
-    }));
-    const hits = result.hits.hits;
-    if (!Array.isArray(hits) || hits.length !== result.hits.total.value || hits.length > count) throw error('Board result set is incomplete');
-    const ids = hits.map(h => {
-      const s = h._source;
-      if (s?.tenantId !== principal.tenantId || s.boardId !== boardId || !Number.isInteger(s.id) || s.id < 1 || s.id > count || h._id !== boardId + ':' + s.id) throw error('Board search scope mismatch');
-      return s.id;
-    });
-    if (new Set(ids).size !== ids.length) throw error('Duplicate board search results');
+    // Scan by immutable message ID, independent of changing relevance scores.
+    // Freeze the collected ranking once; client pagination never re-queries it.
+    const ranked = []; let after, result, total;
+    do {
+      const page = complete(await request('/_search', {size: 1000, track_total_hits: true, timeout: '10s',
+        _source: ['boardId', 'tenantId', 'id'], query, track_scores: true,
+        sort: [{[f('id')]: 'asc'}], ...(after === undefined ? {} : {search_after: [after]}),
+        ...(result ? {} : {aggs: Object.fromEntries([...new Set(args.facets)].map(field => [field, {terms: {field:f(field), size: args.facetSize, shard_size: 10000, show_term_doc_count_error: true}}]))}),
+      }));
+      if (!result) {result = page; total = page.hits.total.value;}
+      const hits = page.hits.hits;
+      if (page.hits.total.value !== total || !Array.isArray(hits) || total > count || (!hits.length && ranked.length < total)) throw error('Board result set is incomplete');
+      for (const h of hits) {
+        const s = h._source;
+        if (s?.tenantId !== principal.tenantId || s.boardId !== boardId || !Number.isSafeInteger(s.id) || s.id < 1 || s.id > count || s.id <= (after ?? 0) || h._id !== boardId + ':' + s.id) throw error('Board search scope or sequence mismatch');
+        if (args.query && args.sort === 'relevance' && !Number.isFinite(h._score)) throw error('Missing board relevance score');
+        ranked.push({id:s.id, score:h._score}); after = s.id;
+      }
+      if (ranked.length > total) throw error('Board result set is incomplete');
+    } while (ranked.length < total);
+    ranked.sort((a,b) => (args.sort === 'relevance' && args.query ? b.score - a.score : 0) || messages[b.id-1].timestamp - messages[a.id-1].timestamp || b.id-a.id);
+    const ids = ranked.map(h => h.id);
     const facets = {};
     for (const field of new Set(args.facets)) {
       const agg = result.aggregations?.[field];
@@ -86,15 +95,15 @@ export function createBoardSearch(options) {
       if (typeof principal?.tenantId !== 'string' || !principal.tenantId || typeof principal.userId !== 'string' || !principal.userId || input.workspace !== principal.tenantId) throw error('Workspace scope mismatch', 403);
       const args = boardSearchSchema.parse(input);
       if (args.since && args.until && Date.parse(args.since) > Date.parse(args.until)) throw error('since must not be later than until', 400);
-      if (messages.length > 10000 || messages.some((m, i) => m.id !== i + 1)) throw error('Invalid board snapshot');
+      if (messages.some((m, i) => m.id !== i + 1)) throw error('Invalid board snapshot');
       const {cursor, ...parameters} = args;
       const owner = digest(JSON.stringify([principal.tenantId, principal.userId, key, parameters]));
       prune(); let snapshot, token, offset = 0;
       if (cursor) {
-        const match = /^([a-f0-9-]{36}):(\d{1,5})$/.exec(cursor);
+        const match = /^([a-f0-9-]{36}):(\d{1,16})$/.exec(cursor);
         if (!match) throw error('Invalid search cursor', 400);
         token = match[1]; offset = Number(match[2]); snapshot = snapshots.get(token);
-        if (!snapshot || snapshot.owner !== owner || offset >= snapshot.ids.length) throw error('Search cursor expired or does not match this workspace/query; restart search', 409);
+        if (!Number.isSafeInteger(offset) || !snapshot || snapshot.owner !== owner || offset >= snapshot.ids.length) throw error('Search cursor expired or does not match this workspace/query; restart search', 409);
       } else {
         let ranked;
         try {ranked = await rank(principal, messages, digest(key), args);}

@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -14,7 +15,7 @@ async function fixture(t) {
   t.after(async () => {store.close(); await rm(dir, {recursive: true, force: true});});
   let time = 10000000;
   const make = () => createBoard({store, prefix: 'test', now: () => time});
-  return {make, later: () => {time += 16 * 60 * 1000;}, restart: () => {store.close(); store = createLocalBoardStore(join(dir, 'board.sqlite')); return make();}};
+  return {store, make, later: () => {time += 16 * 60 * 1000;}, restart: () => {store.close(); store = createLocalBoardStore(join(dir, 'board.sqlite')); return make();}};
 }
 const post = (id, text = 'Taking auth refresh') => ({id, topic: 'auth', text});
 
@@ -101,4 +102,18 @@ test('real MCP clients exchange scoped messages and revoked credentials cannot r
   assert.deepEqual((await call(clients[1], 'board_topics', {})).topics, []);
   revoked = true;
   await assert.rejects(call(clients[0], 'board_topics', {}));
+});
+
+
+test('existing boards keep posting, retrying and reading after message 10000', async t => {
+  const f=await fixture(t), key='test/tenants/'+createHash('sha256').update(a.tenantId).digest('hex')+'.json';
+  const messages=Array.from({length:10000},(_,i)=>({id:i+1,timestamp:i,agent:'seed',author:'alice',name:'seed',topic:'auth',text:'retained history',requestId:String(i)}));
+  assert.ok(await f.store.compareAndSet(key,null,Buffer.from(JSON.stringify({schema:1,messages,agents:{},usage:{calls:0,inputBytes:0,outputBytes:0}}))));
+  const args={workspace:a.tenantId,agent:'writer',posts:[post('beyond','Message beyond the old cap')]};
+  assert.deepEqual((await f.make().sync(a,args)).accepted,[10001]);
+  assert.deepEqual((await f.restart().sync(a,args)).accepted,[10001]);
+  const read=await f.make().sync(a,{workspace:a.tenantId,agent:'reader',topics:['auth'],after:9999});
+  assert.deepEqual(read.messages.map(m=>m.id),[10000,10001]);
+  assert.equal(read.messages[1].text,'Message beyond the old cap');assert.equal(read.more,false);
+  assert.deepEqual((await f.make().sync(a,{...args,posts:[post('next')]})).accepted,[10002]);
 });

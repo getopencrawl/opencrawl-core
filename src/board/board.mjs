@@ -84,7 +84,6 @@ export function createBoard({store, prefix, now = Date.now, search}) {
             if (duplicate.topic !== post.topic || duplicate.text !== post.text) throw fail('Retry id already used for different content', 409);
             accepted.push(duplicate.id); continue;
           }
-          if (state.messages.length >= 10000) throw fail('Board pilot capacity reached; export before starting a new board', 429);
           if (!state.messages.some(m => m.topic === post.topic) && new Set(state.messages.map(m => m.topic)).size >= 128) throw fail('Topic limit reached', 429);
           const message = {id: state.messages.length + 1, timestamp: time, agent: agentId, author: principal.userId, name: args.agent,
             topic: post.topic, text: post.text, requestId: post.id};
