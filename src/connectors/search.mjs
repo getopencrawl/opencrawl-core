@@ -45,15 +45,19 @@ export function createConnectorSearch(options) {
     identity:realm.identity,
     ensureIndex:realm.ensureIndex,
     async putDocuments(principal, binding, documents) {
-      scoped(principal, binding);
-      if (!Array.isArray(documents) || documents.length > 100) throw new Error('Invalid connector bulk size');
-      for (const item of documents) checkDocument(binding, item);
+      try {
+        scoped(principal, binding);
+        if (!Array.isArray(documents) || documents.length > 100) throw new Error('Invalid connector bulk size');
+        for (const item of documents) checkDocument(binding, item);
+      } catch (error) {throw Object.assign(error, {writeOutcome: 'not-applied'});}
       if (!documents.length) return;
       await collection.bulk(principal,documents.map(item=>({...item,script:UPSERT})));
     },
     async suppress(principal, binding, {kind, sourceId}) {
-      scoped(principal, binding);
-      if (!['message', 'channel', 'user', 'membership', 'file'].includes(kind) || typeof sourceId !== 'string' || sourceId.length > 250 || !sourceId) throw new Error('Invalid suppression identity');
+      try {
+        scoped(principal, binding);
+        if (!['message', 'channel', 'user', 'membership', 'file'].includes(kind) || typeof sourceId !== 'string' || sourceId.length > 250 || !sourceId) throw new Error('Invalid suppression identity');
+      } catch (error) {throw Object.assign(error, {writeOutcome: 'not-applied'});}
       const id = documentId(binding, kind, sourceId);
       const tombstone = {tenantId, connectionId: binding.connectionId, workspaceId: binding.workspaceId, provider: binding.provider, kind, sourceId, deleted: true};
       await collection.update(principal,id,{script:{source:"ctx._source.connector.deleted = true; ctx._source.text = ''; ctx._source.title = '';"},upsert:tombstone});

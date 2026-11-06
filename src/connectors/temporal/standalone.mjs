@@ -1,3 +1,4 @@
+import {guardConnectorWrites} from '../write-barrier.mjs';
 import {realmIndex} from '../../search/realm.mjs';
 import {readFile} from 'node:fs/promises';
 import {createObjectStore, awsCredentials} from '../../sessions/s3-store.mjs';
@@ -16,7 +17,7 @@ await store.checkAccess(); await search.ensureIndex();
 await buildConnectorWorkflows(bundlePath);
 const resolve = async reference => {
   if (reference.tenantId !== binding.tenantId || reference.connectionId !== binding.connectionId) throw Object.assign(new Error('Standalone connector scope denied'), {permanent: true});
-  return {binding, store, search};
+  return {binding, ...guardConnectorWrites({binding, store, search})};
 };
 const {worker, connection} = await createConnectorWorker({...config.temporal, bundlePath, resolve});
 const scheduling = await connectorClient(config.temporal);
