@@ -1,3 +1,4 @@
+import {realmIndex} from '../src/search/realm.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -5,7 +6,7 @@ import {gzipSync} from 'node:zlib';
 import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
 import {normalizeSlack} from '../src/connectors/slack.mjs';
 import {documentId, receiptKey, validateBinding} from '../src/connectors/scope.mjs';
-import {connectorIndex, createConnectorSearch} from '../src/connectors/search.mjs';
+import {createConnectorSearch} from '../src/connectors/search.mjs';
 import {runConnectorSegment} from '../src/connectors/workflow.mjs';
 import {createObjectStore} from '../src/sessions/s3-store.mjs';
 
@@ -36,7 +37,7 @@ test('stock messages and thread parents share stable identity; raw delivery IDs 
 test('tenant and connection identity cannot collide; malformed scope fails closed', () => {
   const other = {...binding, tenantId: 'tenant-b'};
   assert.notEqual(documentId(binding, 'message', 'C1:1'), documentId(other, 'message', 'C1:1'));
-  assert.notEqual(connectorIndex('staging', binding.tenantId), connectorIndex('staging', other.tenantId));
+  assert.notEqual(realmIndex('staging', binding.tenantId), realmIndex('staging', other.tenantId));
   assert.notEqual(receiptKey(binding, 'index-a', key()), receiptKey(other, 'index-a', key()));
   assert.throws(() => validateBinding({...binding, rawPrefix: 'raw/'}));
   assert.throws(() => validateBinding({...binding, tenantId: ''}));

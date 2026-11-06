@@ -27,3 +27,12 @@ test('realm pin rejects foreign tenant mapping; reads, writes and identities fai
   await assert.rejects(realm.collection('board').search(principal,{}),/scope/);
   hit={...hit,_id:'session:wrong'};await assert.rejects(session.search(principal,{}),/scope/);
 });
+
+test('OpenSearch signatures match AWS botocore for reserved and already escaped path characters',async()=>{
+ const {signRequest}=await import('../src/sessions/s3-store.mjs');
+ // Golden signatures generated with AWS CLI 2.36.49's botocore SigV4Auth, fixed test credentials/time.
+ for(const [path,signature] of [['/_doc/connector:abc','386bca5e5360ef402d1d8bc4e7309861c29ef0ae6ff3c024361c8b435f229351'],['/index-%2A/_search','ed7a754a350a16007ee86eac0fe52125f39933abacc581044b4703773f9ffe65']]){
+  const signed=signRequest({method:'GET',url:new URL('https://search.example.com'+path),accessKeyId:'test-key',secretAccessKey:'test-secret',region:'us-west-2',service:'es',date:new Date('2026-11-06T00:00:00Z')});
+  assert.ok(signed.authorization.endsWith('Signature='+signature));
+ }
+});

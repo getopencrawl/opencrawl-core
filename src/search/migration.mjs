@@ -73,3 +73,10 @@ export async function migrateRealmCorpus({principal,corpus,source,realm,load,sav
     await save(state);await onPage({copied:state.copied,total:state.total});
   }
 }
+
+export function legacyConnectorIndex(environment, tenantId, generation = 'v1') {
+  if (!/^[a-z][a-z0-9-]{0,24}$/.test(environment) || !/^v[1-9][0-9]*$/.test(generation) || typeof tenantId !== 'string' || !tenantId) throw new Error('Invalid index scope');
+  return `opencrawl-${environment}-connectors-${createHash('sha256').update(tenantId).digest('hex').slice(0, 32)}-${generation}`;
+}
+
+

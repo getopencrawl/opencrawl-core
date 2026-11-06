@@ -73,9 +73,10 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
           const query={bool:{filter:[{term:{tenantId}},{term:{corpus}}],must:[body.query||{match_all:{}}]}};
           // Scope/identity fields are always fetched, including for ID-only board snapshots.
           const source=Array.isArray(body._source)?[...new Set(['schema','tenantId','corpus','id',...body._source.map(f=>realmField(corpus,f))])]:body._source;
+          const scopedBody={...body,query,...(source?{_source:source}:{})};
           let result;
-          try{result=checkSearch(await request('/_search',{...body,query,...(source?{_source:source}:{})}));}
-          catch(e){if(e.status!==404)throw e;ready=undefined;throw e;}
+          try{result=checkSearch(await request('/_search',scopedBody));}
+          catch(e){if(e.status!==404)throw e;ready=undefined;await ensureIndex();result=checkSearch(await request('/_search',scopedBody));}
           result.hits.hits=result.hits.hits.map(decode);return result;
         },
         async mget(principal,ids){scope(principal);const result=await request('/_mget',{ids:ids.map(encodedId)});if(!Array.isArray(result.docs)||result.docs.length!==ids.length)throw fail('Incomplete realm lookup');const docs=result.docs.map(decode);if(docs.some(d=>!ids.includes(d._id))||new Set(docs.map(d=>d._id)).size!==ids.length)throw fail('Realm lookup identity mismatch');return {...result,docs};},

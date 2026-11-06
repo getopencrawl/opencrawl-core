@@ -217,7 +217,9 @@ export function signRequest({method, url, headers = {}, body, region, accessKeyI
     .sort(([a, x], [b, y]) => (a === b ? (x < y ? -1 : 1) : a < b ? -1 : 1))
     .map(([name, value]) => `${name}=${value}`)
     .join('&');
-  const canonical = [method, url.pathname, query, ...names.map(name => `${name}:${all[name]}`), '', names.join(';'), all['x-amz-content-sha256']].join('\n');
+  // S3 signs its already encoded object path; other services URI-encode it again.
+  const canonicalPath = service === 's3' ? url.pathname : url.pathname.split('/').map(encode).join('/');
+  const canonical = [method, canonicalPath, query, ...names.map(name => `${name}:${all[name]}`), '', names.join(';'), all['x-amz-content-sha256']].join('\n');
   const scope = `${day}/${region}/${service}/aws4_request`;
   const toSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256(canonical)].join('\n');
   let key = `AWS4${secretAccessKey}`;

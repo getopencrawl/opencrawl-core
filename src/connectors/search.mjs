@@ -1,14 +1,8 @@
-import {createRealm, realmIndex} from '../search/realm.mjs';
+import {createRealm} from '../search/realm.mjs';
 import {authorize, digest, documentId, validateBinding} from './scope.mjs';
 
 import {connectorMapping} from '../search/mapping.mjs';
 export {connectorMapping};
-export function legacyConnectorIndex(environment, tenantId, generation = 'v1') {
-  if (!/^[a-z][a-z0-9-]{0,24}$/.test(environment) || !/^v[1-9][0-9]*$/.test(generation) || typeof tenantId !== 'string' || !tenantId) throw new Error('Invalid index scope');
-  return `opencrawl-${environment}-connectors-${digest(tenantId).slice(0, 32)}-${generation}`;
-}
-export const connectorIndex = realmIndex;
-
 // Atomic comparison at the destination protects against retries and concurrent,
 // out-of-order files. Suppressions persist across source replay.
 export const SEARCHABLE_KINDS = ['message', 'file', 'file_chunk', 'meeting', 'transcript', 'page', 'passage', 'database', 'comment', 'commit', 'pull_request', 'issue', 'review', 'issue_comment', 'review_comment', 'commit_comment', 'release'];
