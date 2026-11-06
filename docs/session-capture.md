@@ -96,7 +96,7 @@ Revocation is checked at upload/read time. Queued background uploads re-authenti
 A notice is atomic and durable before a hook returns. Attachment bytes and immutable
 batches are durable before the transcript cursor advances. A retry resends the same
 batch bytes; a lost acknowledgement does not reread a larger growing transcript into
-that batch. The worker uses nonblocking ownership; foreground flush/backfill waits
+that batch. The worker uses nonblocking SQLite transaction ownership (bundled in the CLI runtime, with no service); foreground flush/backfill waits
 for upload ownership without the old 20-second SESSION_BUSY deadline. It releases
 worker ownership before checking for notices arriving during shutdown.
 

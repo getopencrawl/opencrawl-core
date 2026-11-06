@@ -218,3 +218,20 @@ test('owned worker deadline interrupts a lost acknowledgement and retries the ex
   expect(captureStatus().queued).toBe(0);
  }finally{child.kill();await child.exited;}
 }),5000);
+
+
+test('large synchronous transcript backlogs yield to the owned process deadline and resume intact',async()=>fixture(async f=>{
+ const records=Array.from({length:16000},(_,n)=>JSON.stringify({type:'user',uuid:'cpu-'+n,sessionId:'session',message:{role:'user',content:'synthetic '+n+' '+'.'.repeat(1000)}})+'\n').join('');
+ writeFileSync(f.path,records);
+ await captureHook('claude-code',{session_id:'session',transcript_path:f.path,prompt:'cpu deadline'});
+ const runtime=resolve(import.meta.dir,'../src/capture/runtime.ts');
+ const child=Bun.spawn([process.execPath,'-e',`import {ownedCaptureWorker} from ${JSON.stringify(runtime)}; await ownedCaptureWorker({maxMs:100,parentPollMs:25});`],{env:process.env,stdout:'ignore',stderr:'pipe'});
+ try{
+  expect(await child.exited).toBe(0);
+  expect(captureStatus().pendingHooks).toBe(1);
+  expect(captureStatus().queued).toBeGreaterThan(0);
+  await captureWorker({idleMs:20,pollMs:5});
+  const ids=new Set(f.batches.flatMap((b:any)=>b.events).filter((e:any)=>e.nativeId?.startsWith('cpu-')).map((e:any)=>e.nativeId));
+  expect(ids.size).toBe(16000);expect(captureStatus().queued).toBe(0);expect(captureStatus().pendingHooks).toBe(0);
+ }finally{child.kill();await child.exited;}
+}),20000);
