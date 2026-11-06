@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import {createCaptureCredentials} from '../src/sessions/credentials.mjs';
 import {standaloneCapture} from '../src/sessions/standalone.mjs';
 import {cloudSetupScript,captureSetupPrompt,renderCloudCaptureSetup} from '../src/sessions/cloud-setup.mjs';
-const memory=()=>{const data=new Map();return {data,put:async(k,v)=>data.set(k,v),get:async k=>data.get(k)??null};};
+import {memorySessionStore as memory} from './session-store-fixture.mjs';
 const owner={tenantId:'fixed',userId:'owner'};
 test('capture delegation is hashed, scoped, expiring and revocable',async()=>{
  const store=memory();let now=0;const credentials=createCaptureCredentials({store,now:()=>now});

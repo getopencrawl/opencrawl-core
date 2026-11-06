@@ -1,19 +1,13 @@
-import {createHash} from 'node:crypto';
 import {gzipSync, gunzipSync} from 'node:zlib';
+import {digest,sessionScope,reserveSessionEvents} from './event-identity.mjs';
+export {digest,sessionScope,auditSessionEventIdentities,auditSessionEventSource} from './event-identity.mjs';
 
-export const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const id = value => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 const fail = (status, message) => {throw Object.assign(new Error(message), {status});};
 export const MAX_BATCH_BYTES = 16 * 1024 * 1024;
 export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const MAX_STORED_BATCH_BYTES = MAX_BATCH_BYTES + 1024 * 1024;
 
-/** Principal MUST come from the deployment's authentication adapter, never the upload. */
-export function sessionScope(principal) {
-  if (!principal || !id(principal.tenantId) || !id(principal.userId)) fail(401, 'Authentication required');
-  if (principal.captureAccess !== undefined && principal.captureAccess !== 'write') fail(403, 'Unknown capture access');
-  return `tenants/${digest(principal.tenantId)}/users/${digest(principal.userId)}`;
-}
 export function createSessionIngest({store, prefix = 'capture-v1', onStored=undefined}) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = principal => `${prefix}/${sessionScope(principal)}`;
@@ -30,14 +24,19 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
     },
     async putBatch(principal, batch) {
       const keyPrefix = scope(principal);
+      let serialized;
+      try {serialized = JSON.stringify(batch);} catch {fail(400, 'Invalid capture JSON');}
+      if (typeof serialized !== 'string') fail(400, 'Invalid capture JSON');
+      if (Buffer.byteLength(serialized) > MAX_BATCH_BYTES) fail(413, 'Batch exceeds limit');
+      // Validate and publish the same JSON snapshot, even for direct callers
+      // with toJSON methods or objects that change while storage I/O is pending.
+      batch = JSON.parse(serialized);
       if (batch?.schemaVersion !== 1 || !id(batch.installationId) || !id(batch.sessionId) ||
           !['claude-code', 'codex'].includes(batch.harness) || !Array.isArray(batch.events) || !batch.events.length ||
           !['cli', 'desktop', 'cloud', 'subagent', 'unknown'].includes(batch.origin)) fail(400, 'Invalid capture batch');
       if (batch.owner?.userId !== principal.userId || batch.owner?.tenantId !== principal.tenantId) fail(403, 'Capture owner does not match signed-in account');
       if (batch.events.length > 1000 || !batch.events.every(e => e && id(e.id) && typeof e.kind === 'string')) fail(400, 'Invalid events');
       if (!Array.isArray(batch.attachments) || batch.attachments.length > 1000) fail(400, 'Invalid attachments');
-      const serialized = JSON.stringify(batch);
-      if (Buffer.byteLength(serialized) > MAX_BATCH_BYTES) fail(413, 'Batch exceeds limit');
       const attachments = new Set();
       for (const attachment of batch.attachments) {
         if (!attachment || typeof attachment !== 'object') fail(400, 'Invalid attachment');
@@ -49,6 +48,7 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
       for (const hash of attachments) {
         if (!await exists(`${keyPrefix}/attachments/${hash}`, MAX_ATTACHMENT_BYTES)) fail(409, 'Attachment not uploaded');
       }
+      await reserveSessionEvents({store,prefix,principal,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
       const batchId = digest(serialized);
       const key = `${keyPrefix}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/${batchId}.json.gz`;
       // Immutable content-addressed batches: retries and simultaneous delivery do not duplicate or overwrite events.

@@ -4,6 +4,7 @@ import {createServer} from 'node:http';
 import {createSessionIngest, sessionScope, digest, MAX_ATTACHMENT_BYTES, MAX_BATCH_BYTES} from '../src/sessions/ingest.mjs';
 import {createObjectStore} from '../src/sessions/s3-store.mjs';
 import {createOnboardingStatus} from '../src/onboarding-status.mjs';
+import {memorySessionStore} from './session-store-fixture.mjs';
 
 const owner = {tenantId: 'team-a', userId: 'author'};
 const batch = attachments => ({schemaVersion: 1, owner, installationId: 'device', sessionId: 'session',
@@ -20,6 +21,7 @@ test('batch validation rejects malformed or oversized input before reading any s
 test('repeated attachment references use one bounded metadata check and never download bodies', async () => {
   const calls = [], bytes = Buffer.from('fixture'), hash = digest(bytes);
   const ingest = createSessionIngest({store: {
+    ...memorySessionStore(),
     get: async () => assert.fail('metadata-capable stores must not download attachments'),
     has: async (key, options) => {calls.push({key, options}); return key.endsWith('/attachments/' + hash);},
     put: async () => {},
@@ -34,6 +36,7 @@ test('repeated attachment references use one bounded metadata check and never do
 test('get-only stores check each attachment once with a bound', async () => {
   const calls = [], bytes = Buffer.from('fixture'), hash = digest(bytes);
   const ingest = createSessionIngest({store: {
+    ...memorySessionStore(),
     get: async (key, options) => {calls.push({key, options}); return key.endsWith('/attachments/' + hash) ? bytes : null;}, put: async () => {},
   }});
   await ingest.putBatch(owner, batch([{status: 'captured', sha256: hash}, {status: 'captured', sha256: hash}]));
