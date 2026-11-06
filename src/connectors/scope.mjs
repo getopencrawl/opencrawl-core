@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 
 export const PIPELINE_VERSION = 'slack-v4';
 export const PROVIDER_STREAMS = {
-  slack: ['file_documents', 'channel_messages', 'messages', 'threads', 'channels', 'users', 'channel_members'],
+  slack: ['canonical_messages', 'file_documents', 'channel_messages', 'messages', 'threads', 'channels', 'users', 'channel_members'],
   granola: ['notes', 'transcripts'], circleback: ['meetings', 'transcripts'],
   notion: ['pages', 'page_markdown', 'data_sources', 'comments'],
   github: ['commits', 'pull_requests', 'issues', 'issue_comments', 'review_comments', 'commit_comments', 'releases'],
