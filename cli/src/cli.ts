@@ -1,5 +1,5 @@
 import {searchWorkspace, searchInput, formatSearch, fetchWorkspace, fetchInput, formatFetch} from './search.ts';
-import {wakeCaptures} from './capture/runtime.ts';
+import {upgradeCaptureHooks} from './capture/install.ts';
 import {collectCommand} from './capture/command.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs} from 'node:util';
@@ -48,7 +48,7 @@ Search returns compact verbatim excerpts. Expand with opencrawl fetch <result-id
   --offset N --length 1..16000       Read a passage in parts (default length: 6000)
   --content-version VERSION         Detect changes between fetch pages
 Use OPENCRAWL_TOKEN for a self-hosted bearer token; otherwise uses saved login.
-Updates run automatically in the background after use, at most once per day.
+Updates run automatically before ordinary commands, at most once per day.
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
 `;
 
@@ -81,7 +81,7 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
@@ -135,9 +135,8 @@ export async function main(args = process.argv.slice(2)) {
     else process.stderr.write(`opencrawl: ${message}\n`);
     return known ? error.exitCode : 1;
   } finally {
-    // Commands are another recovery opportunity after process loss. Never turn
-    // a metadata-only history preview into background collection.
-    if(args[0]!=='collect' && args[0]!=='logout')try{wakeCaptures();}catch{}
+    // Upgrade only our hook settings locally; never launch an unowned process.
+    if(args[0]!=='collect' && args[0]!=='logout')try{await upgradeCaptureHooks();}catch{}
   }
 }
 

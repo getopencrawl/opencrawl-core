@@ -95,9 +95,8 @@ try {
     if (!receipt.updated || receipt.version !== version) throw new Error('Upgrade was not promoted');
     if (sync(['node', launcher, '--version']) !== version) throw new Error('Original launcher did not adopt the updated launcher and binary');
     const flushed=JSON.parse(await asyncRun(['node',launcher,'collect','flush','--json']));
-    // The version check also wakes recovery; either it or this flush may own
-    // the upload. Verify the durable receipt and exact stored content below.
-    if(![0,1].includes(flushed.data?.uploaded))throw new Error('Updated collector returned an invalid upload count');
+    // Metadata commands never start capture processes. Explicit flush owns recovery.
+    if(flushed.data?.uploaded!==1)throw new Error('Updated collector returned an invalid upload count');
     const status=JSON.parse(await asyncRun(['node',launcher,'collect','status','--json'])).data;
     if(status.queued!==0||status.owner.tenantId!==principal.tenantId||status.installationId!==config.installationId)throw new Error('Updated capture status is inconsistent');
     if(readFileSync(join(capture,'state','cursor.json'),'utf8')!=='{"offset":42}')throw new Error('Upgrade changed capture cursor');
@@ -106,20 +105,8 @@ try {
     console.log(`Real npm upgrade ${original.version} → ${version}, original-command reuse and queued capture recovery without reinstall verified.`);
   } finally { server.stop(true); }
  } finally {
-  // Version checks now wake a detached capture worker. Stop it before removing
-  // its executable: Windows keeps a running binary open even after upload ends.
-  const configRoot=join(env.OPENCRAWL_CONFIG_HOME,'opencrawl');
-  const configFile=join(configRoot,'capture','config.json');
-  if(existsSync(configFile)){
-    writeFileSync(configFile+'.stop',JSON.stringify({...JSON.parse(readFileSync(configFile,'utf8')),disabled:true}));
-    renameSync(configFile+'.stop',configFile);
-    const lock=join(configRoot,createHash('sha256').update('capture:worker').digest('hex')+'.json.lock');
-    const deadline=Date.now()+10_000;
-    while(existsSync(lock)&&Date.now()<deadline)await Bun.sleep(50);
-    if(existsSync(lock))throw new Error('Upgrade fixture worker did not stop');
-  }
   if(captureServer){captureServer.closeAllConnections();await new Promise<void>(r=>captureServer!.close(()=>r()));}
-  // Lock release slightly precedes process exit, including the npm launcher.
+  // All launched commands were awaited before deleting their binaries.
   const deadline=Date.now()+5000;
   for(;;){
     try{rmSync(scratch,{recursive:true,force:true});break;}
