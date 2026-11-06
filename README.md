@@ -88,5 +88,7 @@ source-to-search adapter. Extraction support alone does not imply indexing suppo
 ## Workspace search
 
 MCP `search` and `opencrawl search` query captured sessions and indexed workspace
-connectors through one authenticated operation. See [workspace search](docs/workspace-search.md)
+connectors with compact excerpts and conservative duplicate grouping. MCP `fetch`
+and `opencrawl fetch` expand an indexed passage with fresh access checks.
+See [workspace search](docs/workspace-search.md)
 for self-host setup, matching modes, coverage, and bounded pagination.

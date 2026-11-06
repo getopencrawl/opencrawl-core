@@ -9,7 +9,7 @@ import {sessionScope} from '../sessions/ingest.mjs';
 export async function configuredWorkspaceSearch(path) {
   const config = JSON.parse(await readFile(path, 'utf8'));
   const {principal} = config; sessionScope(principal);
-  const sessions = config.sessions ? createSessionSearch(config.sessions) : undefined;
+  const sessions = config.sessions ? createSessionSearch({...config.sessions, tenantId:principal.tenantId}) : undefined;
   let connectors;
   if (config.connectors) {
     const bindings = config.connectors.bindings.map(validateBinding);

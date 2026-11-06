@@ -4,12 +4,13 @@ import {randomUUID} from 'node:crypto';
 import {createServer} from 'node:http';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {createBoard} from '../src/board/board.mjs';
+import {realmIndex} from '../src/search/realm.mjs';
 import {createBoardSearch} from '../src/board/search.mjs';
 import {createOpenCrawlMcp} from '../src/mcp/server.mjs';
 
 const endpoint = process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
 test('real OpenSearch and MCP: relevance, phrase boost, facets, scope, full text and stable pagination', {skip: !endpoint}, async t => {
-  const index = 'board-acceptance-' + randomUUID();
+  const environment='test-'+randomUUID().slice(0,8),index=realmIndex(environment,'team-a');
   for (let attempt = 0; ; attempt++) {
     try {const response = await fetch(endpoint + '/_cluster/health?wait_for_status=yellow&timeout=1s'); if (!response.ok || !['green','yellow'].includes((await response.json()).status)) throw new Error('not ready'); break;}
     catch(e) {if (attempt >= 60) throw e; await new Promise(r => setTimeout(r,1000));}
@@ -19,7 +20,7 @@ test('real OpenSearch and MCP: relevance, phrase boost, facets, scope, full text
   const store = {async readVersion(k) {return objects.get(k)||{version:null,data:null};}, async compareAndSet(k,v,data) {
     if ((objects.get(k)?.version??null)!==v) return false; objects.set(k,{version:(v||0)+1,data});return true;
   }};
-  const search = createBoardSearch({endpoint,index});
+  const search = createBoardSearch({endpoint,environment});
   let tick = Date.parse('2026-11-01T00:00:00Z');
   const board = createBoard({store,prefix:'pilot',search,now:()=>tick++});
   let handler;

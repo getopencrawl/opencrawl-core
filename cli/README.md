@@ -103,9 +103,9 @@ background upgrades; Glen's small npm entry point for agents.
 
 After signing in, run `opencrawl collect install` to install Claude Code and Codex hooks and the background transcript collector. Review the commands in Codex `/hooks` or desktop Settings > Hooks. The same local configuration covers desktop and terminal sessions.
 
-`opencrawl collect status --json` reports the enrolled identity, queued uploads, last receipt and errors. `collect sync` reconciles active transcripts; `collect flush` retries queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
+`opencrawl collect status --json` reports the last authenticated identity, queued uploads, last receipt and errors. `collect sync` reconciles active transcripts; `collect flush` retries queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
 
-Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service derives ownership from login. Self-hosted users can supply `OPENCRAWL_SESSIONS_TOKEN` and `--api` for the portable receiver. See [capture architecture and limits](../docs/session-capture.md).
+Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service determines the current team from login and validates human attribution. Existing collectors and queued personal-scope uploads automatically use that team after updating, without reinstalling or resetting. Self-hosted users can supply `OPENCRAWL_SESSIONS_TOKEN` and `--api` for the portable receiver. See [capture architecture and limits](../docs/session-capture.md).
 
 ### Optional history import
 
@@ -156,13 +156,13 @@ subagent transcripts in those directories and only records the harness saved
 locally. Cloud-only Claude chats, Cowork VM records, deleted sessions and missing
 attachments cannot be recovered by this importer.
 
-A one-time import reuses capture cursors, owner checks, attachment storage and
+A one-time import reuses capture cursors, authentication, attachment storage and
 durable receipts. It does not turn on recurring historical scans. Rerun the
 same approved command after an interruption; completed records are skipped.
 Transient connection failures and HTTP 429/502/503/504 responses are retried up
 to four times for reads and content-addressed uploads, without changing the
 payload. Permanent rejections fail immediately. Replaying completed files
-requires one initial owner check rather than a network request per file.
+requires one initial authentication rather than a network request per file.
 Approved backfills also reconcile older parser cursors to recover supported
 inter-agent messages. Routine hooks and sync do not trigger that historical
 reprocessing. Stable event identities prevent duplicate search documents.
@@ -213,5 +213,15 @@ connectors. Use `--source sessions|connectors`, `--match any|all|phrase`,
 `--session-id ID` with sessions, and `--limit 1..40`. Follow `data.next` with
 `--cursor TOKEN` and otherwise identical arguments. Pages are live and bounded;
 inspect `coverage`, `partial`, `truncated` and `windowExhausted` before claiming
-completeness. Results contain full indexed passages and source provenance.
+completeness. Results contain compact verbatim excerpts and source provenance.
+Whitespace-equivalent passages within a session/resource are grouped; use
+`--no-dedupe` to inspect all occurrences. `duplicateCount` counts additional
+candidates in the current search window.
+
+Expand a result with `opencrawl fetch <result-id> --json`. Fetch returns up to
+6,000 characters of the original indexed passage. Continue with
+`--offset <nextOffset> --content-version <version>`; use `--length 1..16000` to
+control page size. A changed passage requires restarting from offset 0. Access
+and source visibility are checked again on every read. One indexed passage may
+be only part of a larger document or session.
 For self-hosting, set `OPENCRAWL_TOKEN` and `--api`; otherwise saved OAuth is used.

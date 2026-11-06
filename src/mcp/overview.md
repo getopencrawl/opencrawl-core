@@ -9,7 +9,11 @@ Available tools depend on this deployment. The baseline exposes the read-only
 `opencrawl` overview and `test_connection`. If `search` is listed, it can expose captured sessions
 and indexed workspace connector data under the current authenticated workspace.
 Use `search` to find evidence, inspect provenance and coverage, then refine your
-query or follow its cursor. It returns full indexed passages, not generated answers.
+query or follow its cursor. Results are compact verbatim excerpts; use `fetch`
+with a result ID for fuller indexed text, then `nextOffset` and `version` for
+longer passages. Equivalent passages within a session/resource are grouped;
+set `dedupe=false` to inspect every occurrence. These are source evidence, not
+generated answers.
 Unavailable or pending sources and bounded candidate windows are explicit;
 zero results do not establish that information does not exist.
 

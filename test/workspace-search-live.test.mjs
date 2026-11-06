@@ -12,19 +12,20 @@ import {createConnectorSearch} from '../src/connectors/search.mjs';
 import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
 import {createWorkspaceSearch} from '../src/search/workspace.mjs';
 import {createOpenCrawlMcp} from '../src/mcp/server.mjs';
+import {realmIndex} from '../src/search/realm.mjs';
 
 const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL,s3=process.env.OPENCRAWL_TEST_S3_ENDPOINT;
 test('live unified MCP searches native sessions and every connector; no private channels, foreign tenants or revoked connections', {skip:!endpoint||!s3}, async t=>{
   const run=randomUUID(),principal={tenantId:'workspace-'+run,userId:'alice'},peer={...principal,userId:'bob'},outsider={tenantId:'outside-'+run,userId:'alice'};
-  const sessionIndex='ws-sessions-'+run,connectorIndex='ws-connectors-'+run,objects=[];
+  const environment='ws-'+run.slice(0,8),connectorIndex=realmIndex(environment,principal.tenantId),objects=[];
   const underlying=createObjectStore({endpoint:s3,bucket:'capture-test',credentials:{accessKeyId:'capture-test',secretAccessKey:'capture-test-secret'}});
   const store={...underlying,put:async(k,b,m)=>{objects.push(k);return underlying.put(k,b,m);}};
-  const sessions=createSessionSearch({endpoint,index:sessionIndex}),search=createConnectorSearch({endpoint,index:connectorIndex,tenantId:principal.tenantId});
-  t.after(async()=>{for(const key of objects)await store.delete(key);for(const index of [sessionIndex,connectorIndex])await fetch(endpoint+'/'+index,{method:'DELETE'});});
+  const sessions=createSessionSearch({endpoint,environment}),search=createConnectorSearch({endpoint,index:connectorIndex,tenantId:principal.tenantId});
+  t.after(async()=>{for(const key of objects)await store.delete(key);for(const owner of [principal,outsider])await fetch(endpoint+'/'+realmIndex(environment,owner.tenantId),{method:'DELETE'});});
   const prefix='sessions/workspace-live/'+run,ingest=createSessionIngest({store,prefix});
   for(const owner of [peer,outsider])await ingest.putBatch(owner,{schemaVersion:1,owner,harness:'codex',origin:'unknown',installationId:'fixture',sessionId:'same',attachments:[],events:[{id:'event',kind:'message',data:{role:'user',content:'violet lighthouse session evidence'}}]});
   const pipeline=createSessionPipeline({store,prefix,search:sessions,resolvePrincipal:async({batch})=>batch.owner});
-  for(const key of (await pipeline.listPage()).keys)await pipeline.processObject({key});await sessions.refresh();
+  for(const key of (await pipeline.listPage()).keys)await pipeline.processObject({key});await sessions.refresh(principal);await sessions.refresh(outsider);
   await search.ensureIndex();
   const bindings=[];const date='2026-11-05T12:00:00Z';
   for(const provider of ['slack','notion','github','granola','circleback']) {
@@ -53,6 +54,10 @@ test('live unified MCP searches native sessions and every connector; no private 
   assert.equal(result.partial,false);assert.ok(result.results.some(r=>r.source==='sessions'&&r.provenance.userId==='bob'));
   assert.deepEqual(new Set(result.results.filter(r=>r.source==='connectors').map(r=>r.provenance.provider)),new Set(['slack','notion','github','granola','circleback']));
   assert.equal(result.results.filter(r=>r.source==='sessions').length,1);
+  for (const hit of result.results) {
+    const fetched=await client.callTool({name:'fetch',arguments:{id:hit.id}});
+    assert.ok(!fetched.isError,JSON.stringify(fetched));assert.match(fetched.structuredContent.text,/violet lighthouse/);
+  }
   assert.equal((await call({query:'lighthouse violet',match:'phrase'})).results.length,0);
   assert.ok((await call({query:'lighthouse violet',match:'all'})).results.length>=6);
   assert.ok((await call({query:'violet absentterm',match:'any'})).results.length>=6);
@@ -60,6 +65,8 @@ test('live unified MCP searches native sessions and every connector; no private 
   assert.equal((await call({query:'violet',source:'sessions',sessionId:'different'})).results.length,0);
   const input={query:'violet',limit:1};const first=await call(input);assert.ok(first.next);
   active=[];const afterRevocation=await call({...input,cursor:first.next});assert.ok(afterRevocation.results.every(r=>r.source!=='connectors'));
+  assert.equal((await client.callTool({name:'fetch',arguments:{id:result.results.find(r=>r.source==='connectors').id}})).isError,true);
   active=bindings;const slack=bindings.find(b=>b.provider==='slack');await search.suppress(principal,slack,{kind:'channel',sourceId:'C123'});await search.refresh();
   assert.ok((await call({query:'violet',limit:40})).results.every(r=>r.provenance.provider!=='slack'));
+  assert.equal((await client.callTool({name:'fetch',arguments:{id:result.results.find(r=>r.provenance.provider==='slack').id}})).isError,true);
 });

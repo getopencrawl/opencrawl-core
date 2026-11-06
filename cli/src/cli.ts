@@ -1,4 +1,4 @@
-import {searchWorkspace, searchInput, formatSearch} from './search.ts';
+import {searchWorkspace, searchInput, formatSearch, fetchWorkspace, fetchInput, formatFetch} from './search.ts';
 import {collectCommand} from './capture/command.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs} from 'node:util';
@@ -16,6 +16,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   whoami      Verify your saved session with the service
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
+  fetch       Read the indexed passage behind a search result
   collect     Install and manage Claude/Codex session capture
   update      Install the latest CLI for your next invocation
 
@@ -41,6 +42,10 @@ Search: opencrawl search "words" --json
   --limit 1..40                     Default: 10
   --session-id ID                   Narrow a sessions-only query
   --cursor TOKEN                    Next live page; repeat the same arguments
+  --no-dedupe                       Show all equivalent passage occurrences
+Search returns compact verbatim excerpts. Expand with opencrawl fetch <result-id>.
+  --offset N --length 1..16000       Read a passage in parts (default length: 6000)
+  --content-version VERSION         Detect changes between fetch pages
 Use OPENCRAWL_TOKEN for a self-hosted bearer token; otherwise uses saved login.
 Updates run automatically in the background after use, at most once per day.
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
@@ -75,16 +80,21 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
-    if (parsed.positionals.length > (['collect','search'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    if (parsed.positionals.length > (['collect','search','fetch'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
-    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL ?? 'https://app.getopencrawl.com');
+    if (command === 'fetch') {
+      const data = await fetchWorkspace(api, fetchInput(parsed.positionals[1], parsed.values));
+      emit(data, formatFetch(data));
+      return 0;
+    }
     if (command === 'search') {
       const input = searchInput(parsed.positionals[1], parsed.values);
       const data = await searchWorkspace(api, input);

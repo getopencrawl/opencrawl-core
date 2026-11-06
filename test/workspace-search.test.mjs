@@ -46,9 +46,16 @@ test('real MCP and HTTP expose the same operation and reject forged scope, origi
   const http=await (await fetch(origin+'/api/search',{method:'POST',headers,body:JSON.stringify({query:'evidence'})})).json();
   const client=new Client({name:'workspace-search-test',version:'1'});await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers}}));t.after(()=>client.close());
   assert.ok((await client.listTools()).tools.some(t=>t.name==='search'));
+  assert.ok((await client.listTools()).tools.some(t=>t.name==='fetch'));
   const mcp=await client.callTool({name:'search',arguments:{query:'evidence'}});assert.deepEqual(mcp.structuredContent,http.data);
   assert.equal((await client.callTool({name:'search',arguments:{query:'x',index:'*'}})).isError,true);
   assert.equal(http.data.results[0].provenance.userId,'bob');
+  const input={id:http.data.results[0].id,length:3};
+  const fetched=await (await fetch(origin+'/api/search/fetch',{method:'POST',headers,body:JSON.stringify(input)})).json();
+  assert.equal(fetched.data.text,'evi');assert.equal(fetched.data.nextOffset,3);
+  assert.deepEqual((await client.callTool({name:'fetch',arguments:input})).structuredContent,fetched.data);
+  assert.equal((await fetch(origin+'/api/search/fetch',{method:'POST',body:JSON.stringify(input)})).status,401);
+  assert.equal((await fetch(origin+'/api/search/fetch',{method:'POST',headers:{...headers,origin:'https://evil.test'},body:JSON.stringify(input)})).status,403);
 });
 
 test('partial OpenSearch shard responses cannot masquerade as complete searches', async () => {
