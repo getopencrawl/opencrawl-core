@@ -10,6 +10,7 @@ import {createSessionIngest} from '../src/sessions/ingest.mjs';
 import {createOpenCrawlMcp} from '../src/mcp/server.mjs';
 import {standaloneCapture} from '../src/sessions/standalone.mjs';
 import {createLocalSessionStore} from '../src/sessions/local-store.mjs';
+import {memorySessionStore} from './session-store-fixture.mjs';
 
 const principal = {tenantId:'tenant-a', userId:'user-a'};
 const batch = {schemaVersion:1,owner:principal,installationId:'install',sessionId:'session',harness:'codex',origin:'cli',events:[{id:'event',kind:'message'}],attachments:[]};
@@ -31,7 +32,7 @@ test('receipts persist, fail closed by scope, and only follow durable accepted s
     assert.deepEqual(await status.read(other),{cli:null,mcp:null,session:null});
   }
   let receipts=0;
-  const broken={get:async()=>null,put:async()=>{throw new Error('storage down');}};
+  const broken={...memorySessionStore(),put:async()=>{throw new Error('storage down');}};
   await assert.rejects(createSessionIngest({store:broken,onStored:()=>receipts++}).putBatch(principal,batch),/storage down/);
   assert.equal(receipts,0);
 });
@@ -62,7 +63,7 @@ test('real MCP clients record independent authenticated identities in legacy and
 });
 
 test('single-tenant receiver exposes authenticated onboarding without hosted services', async t => {
-  const objects=new Map(),store={put:async(k,v)=>objects.set(k,v),get:async k=>objects.get(k)};
+  const store=memorySessionStore();
   const token='x'.repeat(32);
   const server=createServer(standaloneCapture({token,principal,store}));
   await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));

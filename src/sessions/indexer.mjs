@@ -1,21 +1,20 @@
 import {gunzipSync} from 'node:zlib';
 import {digest,sessionScope,MAX_BATCH_BYTES} from './ingest.mjs';
+import {sourceBatchIdentity,reserveSessionEvents} from './event-identity.mjs';
+export {sourceBatchIdentity} from './event-identity.mjs';
 
-const HEX='[a-f0-9]{64}';
-export function sourceBatchIdentity(prefix,key) {
-  if(!key.startsWith(prefix+'/'))return null;
-  const match=new RegExp(`^tenants/(${HEX})/users/(${HEX})/(claude-code|codex)/(${HEX})/(${HEX})/(${HEX})\\.json\\.gz$`).exec(key.slice(prefix.length+1));
-  return match?{tenantHash:match[1],userHash:match[2],harness:match[3],installationHash:match[4],sessionHash:match[5],batchId:match[6]}:null;
-}
-function collect(value,text,attachments,names) {
+function collect(value,text,attachments,names,depth=0) {
+  if(depth>128)throw Object.assign(new Error('Event structure exceeds supported depth'),{status:400,permanent:true});
   if(typeof value==='string'){if(!value.startsWith('data:'))text.push(value);return;}
   if(!value||typeof value!=='object')return;
   if(value.type==='opencrawl_attachment'){attachments.push(value);return;}
   if(['tool_use','function_call','custom_tool_call'].includes(value.type)&&typeof value.name==='string')names.add(value.name);
-  if(Array.isArray(value)){for(const child of value)collect(child,text,attachments,names);return;}
-  for(const [key,child] of Object.entries(value)) {
+  if(Array.isArray(value)){for(const child of value)collect(child,text,attachments,names,depth+1);return;}
+  // JSON object property order is not event identity. Keep chunk boundaries
+  // stable when an equivalent event arrives with reordered object properties.
+  for(const key of Object.keys(value).sort()) {
     if(['id','type','role','call_id','tool_use_id','encrypted_content','image_url'].includes(key))continue;
-    collect(child,text,attachments,names);
+    collect(value[key],text,attachments,names,depth+1);
   }
 }
 export function batchDocuments({prefix,key,batch,principal}) {
@@ -26,7 +25,7 @@ export function batchDocuments({prefix,key,batch,principal}) {
     !Array.isArray(batch.events)||batch.events.length>1000)throw new Error('Stored batch does not match its authorized scope and source key');
   const documents=[];
   for(const event of batch.events){
-    if(typeof event.id!=='string'||!event.id||typeof event.kind!=='string')throw new Error('Malformed stored event');
+    if(!event||typeof event.id!=='string'||!event.id||typeof event.kind!=='string')throw Object.assign(new Error('Malformed stored event'),{permanent:true});
     const texts=[],attachments=[],names=new Set();collect(event.data,texts,attachments,names);
     const text=texts.join('\n');
     const chunks=text.match(/[\s\S]{1,16000}/gu)||[''];
@@ -77,6 +76,9 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
       const batch=JSON.parse(gunzipSync(bytes,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}));
       const scope=principal||await resolvePrincipal({key,batch});sessionScope(scope);
       const docs=batchDocuments({prefix,key,batch,principal:scope});
+      // Check the whole event before any chunk write. Receipt order, shorter
+      // payloads and concurrent activities must never assemble mixed revisions.
+      await checkActive();await reserveSessionEvents({store,prefix,principal:scope,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
       await checkActive();await search.ensureIndex(scope);await search.putDocuments(docs,scope);
       await checkActive();
       await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:docs.length,indexedAt:new Date().toISOString()})),'application/json');
