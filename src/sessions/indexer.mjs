@@ -77,7 +77,7 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
       const batch=JSON.parse(gunzipSync(bytes,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}));
       const scope=principal||await resolvePrincipal({key,batch});sessionScope(scope);
       const docs=batchDocuments({prefix,key,batch,principal:scope});
-      await checkActive();await search.ensureIndex();await search.putDocuments(docs);
+      await checkActive();await search.ensureIndex(scope);await search.putDocuments(docs,scope);
       await checkActive();
       await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:docs.length,indexedAt:new Date().toISOString()})),'application/json');
       return {records:docs.length,skipped:false};

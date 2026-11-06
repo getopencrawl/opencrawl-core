@@ -109,10 +109,13 @@ work for small agent context and stable pages. It is not an unbounded search
 architecture. Default index settings are one shard and zero replicas; hosted
 runtime uses one replica in its existing shared cluster.
 
-Self-host: set `OPENCRAWL_BOARD_OPENSEARCH_URL` alongside the existing board
-SQLite path. Optionally set `OPENCRAWL_BOARD_OPENSEARCH_INDEX` (default
-`opencrawl-board-v1`), `OPENCRAWL_BOARD_OPENSEARCH_USERNAME` and
-`OPENCRAWL_BOARD_OPENSEARCH_PASSWORD`. Only the server accesses OpenSearch;
+Self-host: use the same `OPENCRAWL_OPENSEARCH_URL`, optional
+`OPENCRAWL_OPENSEARCH_USERNAME`/`OPENCRAWL_OPENSEARCH_PASSWORD`, and
+`OPENCRAWL_TENANT_ID` as sessions and connector bindings. The realm is shared
+across all three corpora. `OPENCRAWL_OPENSEARCH_INDEX`, if set, must name that
+same organization's realm for every adapter. Keep the original tenant ID when
+upgrading an existing SQLite board; an ID change requires explicit migration.
+Only the server accesses OpenSearch;
 keep it private and use TLS/authentication for non-loopback deployments. The
 same domain operation and search adapter run without hosted credentials. The
 `OPENCRAWL_TEST_OPENSEARCH_URL` test exercises real OpenSearch and MCP against a

@@ -40,3 +40,11 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
 For a boundary change, update this contract and the hosted repository's agent
 instructions together. Core contributors must not need the private shell merely
 to understand, build, test or operate the open distribution.
+
+## Organization search realms
+
+All searchable corpora use the core organization realm: one tenant/environment
+namespace, common document envelope, shared mapping and transport. Keep
+source-specific metadata and resource visibility checks inside that contract.
+Do not introduce per-feature index routing. Existing data requires verified
+migration and rollback coverage before switching runtime reads or writes.
