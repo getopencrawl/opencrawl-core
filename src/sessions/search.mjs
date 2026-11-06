@@ -3,6 +3,7 @@ import {sessionScope} from './ingest.mjs';
 
 import {sessionIndexMapping} from '../search/mapping.mjs';
 export {sessionIndexMapping};
+const UPSERT="if (ctx._source.session == null || ctx._source.session.receivedAt == null || params.doc.session.receivedAt.compareTo(ctx._source.session.receivedAt) > 0) { ctx._source = params.doc; } else { ctx.op = 'none'; }";
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status});};
 export function createSessionSearch(options) {
   const resolve=createRealmResolver(options), f=field=>realmField('session',field);
@@ -17,7 +18,8 @@ export function createSessionSearch(options) {
         const size=Buffer.byteLength(JSON.stringify(item));
         if(size>3*1024*1024)throw new Error('Search document exceeds bulk limit');
         if(bytes+size>3*1024*1024){await collection.bulk(principal,batch);batch=[];bytes=0;}
-        batch.push(item);bytes+=size;
+        if(typeof item.document?.receivedAt!=='string'||!Number.isFinite(Date.parse(item.document.receivedAt)))throw new Error('Session capture timestamp required');
+        batch.push({...item,script:UPSERT});bytes+=size;
       }
       await collection.bulk(principal,batch);
     },

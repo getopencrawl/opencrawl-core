@@ -54,3 +54,13 @@ test('real migration freezes legacy writes, copies complete native data, verifie
  await request('/_settings',{index:{blocks:{write:false}}},'PUT');await request('/_doc/event?refresh=true',{...doc,text:'changed'},'PUT');await request('/_settings',{index:{blocks:{write:true}}},'PUT');
  await assert.rejects(migrateRealmCorpus(options),/version changed/);
 });
+
+test('session replay cannot overwrite a newer captured event in the realm',{skip:!endpoint},async t=>{
+ const environment='test-'+randomUUID().slice(0,8),owner={tenantId:'org-replay',userId:'author'},index=realmIndex(environment,owner.tenantId);
+ const sessions=createSessionSearch({endpoint,environment});await sessions.ensureIndex(owner);
+ t.after(()=>fetch(endpoint+'/'+index,{method:'DELETE'}));
+ const base={...owner,harness:'codex',sessionId:'session',kind:'message',sequence:1};
+ await sessions.putDocuments([{id:'event',document:{...base,receivedAt:'2026-11-02T00:00:00Z',text:'newer version'}}],owner);
+ await sessions.putDocuments([{id:'event',document:{...base,receivedAt:'2026-11-01T00:00:00Z',text:'old replay'}}],owner);
+ await sessions.refresh(owner);const result=await sessions.search(owner);assert.equal(result.total,1);assert.equal(result.hits[0].text,'newer version');
+});

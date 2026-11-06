@@ -112,11 +112,12 @@ export function createRealmResolver(options) {
   return resolve;
 }
 
-export function createIndexTransport({endpoint,index,username,password,credentials,region='us-east-1',fetch:send=globalThis.fetch}) {
+export function createIndexTransport({endpoint,index,username,password,credentials,region='us-east-1',fetch:send=globalThis.fetch,allowIndexPattern=false}) {
   const base=new URL(endpoint);
-  if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!/^[a-z][a-z0-9_-]{0,150}$/.test(index))throw fail('Invalid index transport',400);
+  if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!(allowIndexPattern?/^[a-z][a-z0-9_*-]{0,150}$/:/^[a-z][a-z0-9_-]{0,150}$/).test(index))throw fail('Invalid index transport',400);
   return async function request(path,body,method='POST',contentType='application/json') {
-    const url=new URL(base.href.replace(/\/$/,'')+'/'+index+path);
+    if(allowIndexPattern && !(method==='POST'&&path==='/_search'))throw fail('Index patterns are read-only migration inventory',403);
+    const url=new URL(base.href.replace(/\/$/,'')+'/'+index.replaceAll('*','%2A')+path);
     body=body===undefined?undefined:typeof body==='string'?body:JSON.stringify(body);
     let headers={'content-type':contentType};
     if(username)headers.authorization='Basic '+Buffer.from(username+':'+password).toString('base64');
