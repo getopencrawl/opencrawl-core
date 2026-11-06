@@ -27,6 +27,17 @@ export function slackMessageText(data) {
     if (!Array.isArray(value)) invalidRecord('Invalid Slack visible content list');
     for (const item of value) visit(item);
   }
+  function option(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) invalidRecord('Invalid Slack option');
+    if (++nodes > MAX_NODES) invalidRecord('Slack visible content is too complex');
+    textObject(value.text); textObject(value.description);
+    // value is an opaque action payload, not the label displayed to the reader.
+  }
+  function confirmation(value) {
+    if (value === undefined || value === null) return;
+    if (typeof value !== 'object' || Array.isArray(value)) invalidRecord('Invalid Slack confirmation');
+    for (const field of ['title', 'text', 'confirm', 'deny']) textObject(value[field]);
+  }
   function node(value, depth = 0) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) invalidRecord('Invalid Slack content node');
     if (++nodes > MAX_NODES || depth > 24) invalidRecord('Slack visible content is too complex');
@@ -42,7 +53,19 @@ export function slackMessageText(data) {
       case 'image': textObject(value.title); add(value.alt_text); break;
       case 'video': textObject(value.title); textObject(value.description); add(value.alt_text); break;
       case 'button': textObject(value.text); add(value.accessibility_label); break;
-      case 'date': add(value.fallback); break;
+      case 'overflow': case 'static_select': case 'multi_static_select':
+      case 'external_select': case 'multi_external_select': case 'radio_buttons': case 'checkboxes':
+        textObject(value.placeholder);
+        list(value.options, option);
+        list(value.option_groups, group => {
+          if (!group || typeof group !== 'object' || Array.isArray(group)) invalidRecord('Invalid Slack option group');
+          textObject(group.label); list(group.options, option);
+        });
+        if (value.initial_option) option(value.initial_option);
+        list(value.initial_options, option);
+        break;
+      case 'input': textObject(value.label); textObject(value.hint); if (value.element) node(value.element, depth + 1); break;
+      case 'date': break; // Fallback is collected for every presentation node below.
       case 'emoji': if (value.name) add(':' + value.name + ':'); break;
       case 'user': if (value.user_id) add('<@' + value.user_id + '>'); break;
       case 'channel': if (value.channel_id) add('<#' + value.channel_id + '>'); break;
@@ -55,6 +78,8 @@ export function slackMessageText(data) {
         textObject(value.text); textObject(value.title); textObject(value.description);
         textObject(value.placeholder); add(value.alt_text);
     }
+    add(value.fallback);
+    confirmation(value.confirm);
   }
   function group(visit) {
     const start = chunks.length;
@@ -66,7 +91,7 @@ export function slackMessageText(data) {
   list(data.blocks, value => group(() => node(value)));
   list(data.attachments, attachment => group(() => {
     if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) invalidRecord('Invalid Slack attachment');
-    for (const field of ['pretext', 'author_name', 'title', 'text', 'fallback', 'footer']) add(attachment[field]);
+    for (const field of ['pretext', 'author_name', 'service_name', 'title', 'text', 'fallback', 'footer']) add(attachment[field]);
     list(attachment.fields, field => {
       if (!field || typeof field !== 'object' || Array.isArray(field)) invalidRecord('Invalid Slack attachment field');
       add(field.title); add(field.value);
@@ -75,7 +100,7 @@ export function slackMessageText(data) {
   }));
   list(data.files, file => {
     if (!file || typeof file !== 'object' || Array.isArray(file)) invalidRecord('Invalid Slack file');
-    add(file.title || file.name);
+    add(file.title); add(file.name);
   });
   // Deduplicate complete presentation units only. Dropping individual rich-text
   // fragments (or substrings of the fallback) can remove words and change phrases.

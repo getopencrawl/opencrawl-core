@@ -156,3 +156,33 @@ raw source files alone contain operator suppression decisions.
 Run `npm test` and the service-backed connector tests in CI. Publish a tested,
 immutable core runtime version before a hosted consumer updates package, lockfile,
 and source pin together. Documentation-only changes need no runtime publication.
+
+### Proving complete text coverage
+
+S3-to-index equality proves transport and normalization of landed records. It
+cannot establish source completeness. A complete-coverage claim additionally
+needs an independent source inventory under the connection's actual identity:
+
+- Record the source workspace, active connection, granted scopes, cutoff time,
+  configured backfill range, retention restrictions and source API versions.
+- Enumerate every authorized container, including archived containers. Exhaust
+  cursors for history, replies and attachments; an empty or short page is not an
+  end marker. Keep a durable per-page checkpoint and honor `Retry-After`.
+- Reconcile native IDs, full readable fields and attachment bodies against raw
+  records, normalization receipts and indexed bodies. Preserve both the source
+  field path and content hash. Menus, labels, descriptions, accessibility text,
+  tables and attachment previews must be accounted for rather than silently
+  excluded because they are not the message's top-level `text`.
+- A file title is not a file-body import. Inventory files separately, record
+  download and extraction outcomes, and verify every supported text-bearing
+  part. Treat permissions, unsupported formats, pagination errors and rate
+  limits as explicit unresolved coverage gaps, not successful empty results.
+- Prove that authenticated retrieval can search the resulting text within its
+  current resource visibility. Recheck access when source content changes;
+  never widen a public-channel connector to private channels merely because
+  the OAuth token also has private-channel scopes.
+
+Report a cutoff and per-stage numerator/denominator. If the provider does not
+support consistent snapshots, record the observation window and reconcile
+edits/deletions during that window. Preserve prior evidence as a dated baseline;
+never relabel a sample audit or a 90-day backfill as complete source coverage.
