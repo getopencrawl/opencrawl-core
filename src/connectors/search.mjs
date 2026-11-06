@@ -2,8 +2,9 @@ import {signRequest} from '../sessions/s3-store.mjs';
 import {authorize, digest, documentId, validateBinding} from './scope.mjs';
 
 export const connectorMapping = {dynamic: 'strict', properties: {
-  ...Object.fromEntries(['tenantId', 'connectionId', 'workspaceId', 'provider', 'kind', 'sourceId', 'channelId', 'threadTs', 'timestamp', 'authorId', 'contentHash', 'parentId', 'parentKind', 'resourceVersion', 'relatedId', 'discussionId', 'repository', 'state', 'speakers', 'startTime', 'endTime'].map(key => [key, {type: 'keyword'}])),
+  ...Object.fromEntries(['tenantId', 'connectionId', 'workspaceId', 'provider', 'kind', 'sourceId', 'channelId', 'threadTs', 'timestamp', 'authorId', 'contentHash', 'parentId', 'parentKind', 'resourceVersion', 'relatedId', 'discussionId', 'repository', 'state', 'speakers', 'startTime', 'endTime', 'fileId', 'extractionStatus', 'partPath'].map(key => [key, {type: 'keyword'}])),
   title: {type: 'text'}, text: {type: 'text'}, extractedAt: {type: 'long'}, deleted: {type: 'boolean'}, publicChannel: {type: 'boolean'},
+  available: {type:'boolean'}, partStart:{type:'integer'}, partEnd:{type:'integer'}, partOverlap:{type:'integer'},
   componentCount: {type: 'integer'}, versionAt: {type: 'long'}, sequence: {type: 'integer'}, chunkCount: {type: 'integer'}, heading: {type: 'text'},
   summary: {type: 'text', index: false}, url: {type: 'keyword', index: false, doc_values: false},
   sourceKey: {type: 'keyword', index: false, doc_values: false},
@@ -15,7 +16,7 @@ export function connectorIndex(environment, tenantId, generation = 'v1') {
 
 // Atomic comparison at the destination protects against retries and concurrent,
 // out-of-order files. Suppressions persist across source replay.
-export const SEARCHABLE_KINDS = ['message', 'meeting', 'transcript', 'page', 'passage', 'database', 'comment', 'commit', 'pull_request', 'issue', 'review', 'issue_comment', 'review_comment', 'commit_comment', 'release'];
+export const SEARCHABLE_KINDS = ['message', 'file', 'file_chunk', 'meeting', 'transcript', 'page', 'passage', 'database', 'comment', 'commit', 'pull_request', 'issue', 'review', 'issue_comment', 'review_comment', 'commit_comment', 'release'];
 const UPSERT = `if (ctx._source.deleted == true) { ctx.op = 'none'; }
 else if (ctx._source.extractedAt == null ||
  (params.doc.containsKey('versionAt') && (!ctx._source.containsKey('versionAt') || params.doc.versionAt > ctx._source.versionAt)) ||
@@ -82,7 +83,7 @@ export function createConnectorSearch({endpoint, index, tenantId, credentials, u
     },
     async suppress(principal, binding, {kind, sourceId}) {
       scoped(principal, binding);
-      if (!['message', 'channel', 'user', 'membership'].includes(kind) || typeof sourceId !== 'string' || sourceId.length > 250 || !sourceId) throw new Error('Invalid suppression identity');
+      if (!['message', 'channel', 'user', 'membership', 'file'].includes(kind) || typeof sourceId !== 'string' || sourceId.length > 250 || !sourceId) throw new Error('Invalid suppression identity');
       const id = documentId(binding, kind, sourceId);
       const tombstone = {tenantId, connectionId: binding.connectionId, workspaceId: binding.workspaceId, provider: binding.provider, kind, sourceId, deleted: true};
       await request(`/_update/${id}`, {body: JSON.stringify({script: {source: "ctx._source.deleted = true; ctx._source.text = ''; ctx._source.title = '';"}, upsert: tombstone})});
@@ -123,14 +124,15 @@ export function createConnectorSearch({endpoint, index, tenantId, credentials, u
           if (!item.found) continue;
           const d = item._source, binding = byConnection.get(d?.connectionId);
           if (!binding || d.tenantId !== tenantId || d.workspaceId !== binding.workspaceId || d.provider !== binding.provider || !parentIds.includes(item._id) || item._id !== documentId(binding, d.kind, d.sourceId)) throw new Error('Parent metadata scope mismatch');
-          if (!d.deleted) current.set(item._id, d.resourceVersion);
+          if (!d.deleted && (d.kind!=='file' || d.available===true)) current.set(item._id, d.resourceVersion);
         }
         const visible = [];
         for (const hit of candidates) {
           if (hits.length >= limit) break;
           const d = hit._source, binding = byConnection.get(d.connectionId);
-          const visibleResource = d.provider === 'slack' ? allowed.has(documentId(binding, 'channel', d.channelId)) :
-            !d.parentId || current.get(documentId(binding, d.parentKind, d.parentId)) === d.resourceVersion;
+          const parentVisible = !d.parentId || (typeof d.resourceVersion==='string' && current.get(documentId(binding, d.parentKind, d.parentId)) === d.resourceVersion);
+          const visibleResource = parentVisible && (d.kind!=='file' || d.available===true) &&
+            (d.provider!=='slack' || allowed.has(documentId(binding, 'channel', d.channelId)));
           if (visibleResource) {
             visible.push(hit); hits.push({id: hit._id, score: hit._score, ...hit._source});
           }
@@ -148,7 +150,7 @@ export function createConnectorSearch({endpoint, index, tenantId, credentials, u
       if (!Array.isArray(bindings) || !bindings.length || bindings.length > 100) throw new Error('Authorized connections required');
       for (const binding of bindings) scoped(principal, binding);
       const result = await request('/_search', {body: JSON.stringify({size: 0, track_total_hits: true,
-        query: {bool: {filter: [{term: {tenantId}}, {terms: {connectionId: bindings.map(b => b.connectionId)}}, {term: {deleted: false}}], must_not: [{terms: {kind: ['passage', 'transcript']}}]}},
+        query: {bool: {filter: [{term: {tenantId}}, {terms: {connectionId: bindings.map(b => b.connectionId)}}, {term: {deleted: false}}], must_not: [{terms: {kind: ['passage', 'transcript', 'file_chunk']}}]}},
         aggs: {kinds: {terms: {field: 'kind', size: 30}}}})});
       if (!Array.isArray(result?.aggregations?.kinds?.buckets)) throw new Error('Invalid connector count response');
       return {total: result.hits.total?.value ?? 0, kinds: Object.fromEntries(result.aggregations.kinds.buckets.map(b => [b.key, b.doc_count]))};
