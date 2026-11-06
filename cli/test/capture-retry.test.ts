@@ -4,7 +4,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {request} from '../src/capture/runtime.ts';
-import {hash} from '../src/capture/parse.ts';
+import {finalizeEventIdentity,hash} from '../src/capture/parse.ts';
 import {createSessionIngest} from '../../src/sessions/ingest.mjs';
 import {createLocalSessionStore} from '../../src/sessions/local-store.mjs';
 
@@ -12,7 +12,7 @@ test('capture retries a lost response after durable storage with the identical p
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-capture-retry-')),saved=process.env.OPENCRAWL_CONFIG_HOME;
  process.env.OPENCRAWL_CONFIG_HOME=join(dir,'config');
  const owner={tenantId:'test',userId:'test'},ingest=createSessionIngest({store:createLocalSessionStore(join(dir,'objects'))});
- const batch={schemaVersion:1,owner,installationId:'test',sessionId:'session',harness:'codex',origin:'desktop',events:[{id:'event',kind:'message',data:{role:'user',content:'preserve me'}}],attachments:[]};
+ const batch={schemaVersion:1,owner,installationId:'test',sessionId:'session',harness:'codex',origin:'desktop',events:[finalizeEventIdentity({id:'event',kind:'message',data:{role:'user',content:'preserve me'}})],attachments:[]};
  const body=JSON.stringify(batch),payloads:string[]=[];let reject=false;
  const server=createServer(async(req,res)=>{
   const chunks=[];for await(const c of req)chunks.push(c);const raw=Buffer.concat(chunks).toString();payloads.push(raw);

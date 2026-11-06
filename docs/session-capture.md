@@ -17,8 +17,12 @@ harness, installation and session. Every field of the accepted event JSON is par
 of its identity. Object property order is ignored; array order is significant.
 Repeating the same event is safe, including inside differently grouped batches.
 Changing its data, timestamp, kind, sequence or any other event field returns
-HTTP 409. Use a new event ID for a new event. The CLI already derives IDs from
-transcript content and position. Batch metadata such as upload origin is outside
+HTTP 409. Use a new event ID for a new event. The CLI derives versioned IDs from
+the native record/notice identity and final normalized event JSON, after attachment
+extraction. Existing queued batches keep their old IDs and bytes; the identity
+upgrade does not reset cursors or import history. Explicit replay of records
+accepted under the earlier raw-record ID format can create one-time duplicates;
+see the CLI README for the compatibility boundary. Batch metadata such as upload origin is outside
 the event identity; it does not change event chunk contents.
 
 Before publishing a raw batch, capture atomically reserves all its event IDs in
