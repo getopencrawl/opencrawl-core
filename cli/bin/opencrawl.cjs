@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const {createRequire} = require('node:module');
-const {spawn, spawnSync} = require('node:child_process');
+const {spawnSync} = require('node:child_process');
 const {randomUUID} = require('node:crypto');
 const {parseArgs} = require('node:util');
 const ROOT = path.resolve(__dirname, '..');
@@ -123,14 +123,10 @@ async function installRelease(version, {registry = REGISTRY} = {}) {
     fs.renameSync(stage, destination);
   } finally { fs.rmSync(stage, {recursive: true, force: true}); }
 }
-function scheduleUpdate() {
+async function automaticUpdate() {
   if (process.env.OPENCRAWL_NO_UPDATE === '1') return;
-  try {
-    if (read(path.join(cacheRoot(), 'update.json'))?.checkedAt > Date.now() - DAY) return;
-    const child = spawn(process.execPath, [__filename, '--internal-update'], {detached: true, stdio: 'ignore', windowsHide: true});
-    child.on('error', () => {});
-    child.unref();
-  } catch {} // updating can never make an ordinary command fail
+  try { await update(); }
+  catch { try { write(path.join(cacheRoot(), 'update.json'), {checkedAt: Date.now() - DAY + 15 * 60_000}); } catch {} }
 }
 async function main(args = process.argv.slice(2)) {
   if (args[0] === '--internal-update') {
@@ -140,9 +136,9 @@ async function main(args = process.argv.slice(2)) {
   const selected = activeRoot();
   // Delegate the launcher too, so later releases can fix bootstrap behavior.
   if (selected !== ROOT) {
-    const delegated = spawnSync(process.execPath, [path.join(selected, 'bin/opencrawl.cjs'), ...args], {stdio: 'inherit', windowsHide: true, env: {...process.env, OPENCRAWL_LAUNCHER: process.env.OPENCRAWL_LAUNCHER || __filename, OPENCRAWL_NODE: process.execPath}});
-    if (delegated.error) throw new Error('Could not start the cached launcher.');
-    return delegated.signal === 'SIGINT' ? 130 : delegated.status ?? 1;
+    process.env.OPENCRAWL_LAUNCHER ||= __filename;
+    process.env.OPENCRAWL_NODE = process.execPath;
+    return require(path.join(selected, 'bin/opencrawl.cjs')).main(args);
   }
   let parsed;
   try { parsed = parseArgs({args, allowPositionals: true, options: {json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
@@ -152,9 +148,9 @@ async function main(args = process.argv.slice(2)) {
     process.stdout.write(args.includes('--json') ? JSON.stringify({schemaVersion: 1, data}) + '\n' : data.busy ? 'An update is already running.\n' : data.updated ? `Installed opencrawl ${data.version}. Your next invocation will use it.\n` : `opencrawl ${data.version} is current.\n`);
     return 0;
   }
+  if (!(args[0] === 'collect' && ['hook','worker'].includes(args[1]))) await automaticUpdate();
   const root = activeRoot();
   const result = spawnSync(binary(root), args, {stdio: 'inherit', windowsHide: true, env: {...process.env, OPENCRAWL_LAUNCHER: process.env.OPENCRAWL_LAUNCHER || __filename, OPENCRAWL_NODE: process.execPath}});
-  scheduleUpdate();
   if (result.error) throw new Error('Could not start the OpenCrawl binary. Reinstall @getopencrawl/cli.');
   if (result.signal === 'SIGINT') return 130;
   return result.status ?? 1;

@@ -2,7 +2,7 @@
 
 The CLI installs capture for local Claude Code and Codex sessions, including sessions run by their desktop apps. Run `opencrawl login`, then `opencrawl collect install`. Codex requires reviewing/trusting the installed commands in `/hooks` or desktop Settings > Hooks. Existing sessions may need a restart.
 
-Capture uses command hooks and incremental reads of native JSONL transcripts. Hooks durably hand off their event to one on-demand detached worker; they perform no transcript scan, parsing, network request, or upload-lock wait. The same mechanism runs on macOS, Linux and Windows without an init service. Legacy OpenCrawl LaunchAgents/user timers are removed during installation or the first updated worker run. The installer preserves existing hook groups, backs up changed files, and rolls back configuration writes if installation fails. It uses absolute executable paths so desktop launch environments do not need the interactive shell's PATH.
+Capture uses command hooks and incremental reads of native JSONL transcripts. The harness supervises asynchronous hooks. Each hook durably saves its event, then attempts a nonblocking uploader lock; the winner uploads in that same process, and competing hooks exit. Unix dispatch uses exec to preserve the harness-owned PID. Capture never starts detached children. The same mechanism runs on macOS, Linux and Windows without an init service. Legacy OpenCrawl LaunchAgents/user timers are removed during installation. The installer preserves existing hook groups, backs up changed files, and rolls back configuration writes if installation fails. It uses absolute executable paths so desktop launch environments do not need the interactive shell's PATH.
 
 ## Contents and identity
 
@@ -98,7 +98,7 @@ worker ownership before checking for notices arriving during shutdown.
 
 Known sources remain enrolled across worker exits. The worker polls for 30 seconds
 after activity, so a Stop hook is not treated as a transcript completion fence. New
-hooks and ordinary CLI invocations recheck those sources. Transient failures retry
+hooks and explicit sync/flush recheck those sources. Transient failures retry
 with backoff while the process lives; source files, notices and queued batches survive
 process loss. This is eventual delivery given retained data, future execution and
 an accepting network endpoint, not a guarantee after permanent sandbox destruction.
@@ -107,4 +107,4 @@ history consent and server authorization rules continue to apply.
 
 Cloud image setup prepares hooks with --defer-auth and --backfill skip without
 runtime secrets. Authentication and the per-runtime installation ID are established
-by the first detached worker before capture. No first hook waits on authentication.
+by the first harness-managed async hook before capture. The agent does not wait for authentication.
