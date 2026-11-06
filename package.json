@@ -1,6 +1,6 @@
 {
   "name": "@1patch/opencrawl-core",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -25,7 +25,8 @@
     "./sessions/temporal-client": "./src/sessions/temporal/client.mjs",
     "./sessions/credentials": "./src/sessions/credentials.mjs",
     "./sessions/cloud-setup": "./src/sessions/cloud-setup.mjs",
-    "./usage": "./src/usage.mjs"
+    "./usage": "./src/usage.mjs",
+    "./board": "./src/board/board.mjs"
   },
   "files": [
     "src",
