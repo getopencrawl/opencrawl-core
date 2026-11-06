@@ -56,8 +56,12 @@ and `content_bytes`. The key must equal the scoped SHA-256 blob path; the indexe
 checks both checksum and length. Image files retain API metadata/alternative text
 without fetching or OCRing image pixels. Unavailable records publish no chunks.
 
+The reference HTTP adapter verifies `auth.test` workspace identity before source
+reads. A file comment count greater than the captured comments fails explicitly.
+
 The parser supports UTF-8 text/Markdown/JSON/XML/YAML, Slack canvas HTML, and PDF
-text layers. HTML entities, visible inline text and image alternative text are
+text layers. Generic `application/octet-stream` bodies are accepted as text only
+when they decode as valid UTF-8 without binary control characters. HTML entities, visible inline text and image alternative text are
 retained. PDF extraction visits every page, annotations/form values, structure
 alternative text and selected document metadata. Font fragments are joined using
 geometry, and a separate dehyphenated text variant aids search across line wraps.

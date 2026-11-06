@@ -40,6 +40,7 @@ export async function normalizeSlackFile(binding,envelope,sourceKey,{store,extra
    if(!part||typeof part.path!=='string'||part.path.length>500||typeof part.text!=='string'||Buffer.byteLength(part.text)>256*1024)invalidRecord('Invalid file API text part');
   }
   result.parts=[...apiParts,...result.parts];
+  if(result.parts.length>20000)invalidRecord('File part count exceeds limit');
   if(result.parts.reduce((bytes,part)=>bytes+Buffer.byteLength(part.text),0)>16*1024*1024)invalidRecord('File text exceeds limit');
   fileVersion=digest([data.content_sha256||'',data.media_type,'document-text-v1',result.parts.map(p=>[p.path,digest(p.text)])]);
  }

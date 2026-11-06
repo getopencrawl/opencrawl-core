@@ -45,7 +45,17 @@ test('provider errors remain failures and an explicit lost public share emits un
  assert.equal(result.failed,1);const key=[...h.objects.keys()].find(k=>k.includes('stream=file_documents/'));assert.equal(JSON.parse(gunzipSync(h.objects.get(key)))._airbyte_data.available,false);
 });
 test('reference HTTP adapter never sends source tokens to arbitrary download destinations',async()=>{
- let calls=0;const api=createSlackHttpSource({token:'test',fetch:async()=>{calls++;throw Error('should not request');}});
+ let calls=0;const api=createSlackHttpSource({token:'test',workspaceId:'T123',fetch:async()=>{calls++;throw Error('should not request');}});
  for(const url of ['https://attacker.example/file','http://files.slack.com/file','https://user:pass@files.slack.com/file','https://files.slack.com:8443/file'])await assert.rejects(api.download({url_private:url}));
  assert.equal(calls,0);assert.throws(()=>slackDownloadUrl({is_external:true,url_private:'https://files.slack.com/file'}));
+});
+
+test('customer-operated HTTP adapter verifies the token workspace before reading source data',async()=>{
+ const calls=[];const api=createSlackHttpSource({token:'test',workspaceId:'T123',fetch:async url=>{calls.push(String(url));return Response.json({ok:true,team_id:'OTHER'});}});
+ await assert.rejects(api.request('files.list',{channel:'C1'}),/workspace mismatch/);assert.deepEqual(calls,['https://slack.com/api/auth.test']);
+});
+test('a source comment count without all returned comments is never accepted as complete',async()=>{
+ const h=setup(method=>method==='conversations.list'?ok({channels:[{id:'C1',is_private:false}]}):method==='files.list'?ok({files:[{id:'F1'}],paging:{page:1,pages:1}}):ok({file:{id:'F1',channels:['C1'],mimetype:'text/plain',comments_count:2},comments:[{id:'Fc1',comment:'only one'}]}));
+ await h.capture.step(input);h.advance();await h.capture.step(input);h.advance();await assert.rejects(h.capture.step(input),/comment count/);
+ assert.equal([...h.objects.keys()].some(k=>k.includes('stream=file_documents/')),false);
 });
