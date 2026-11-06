@@ -95,7 +95,9 @@ try {
     if (!receipt.updated || receipt.version !== version) throw new Error('Upgrade was not promoted');
     if (sync(['node', launcher, '--version']) !== version) throw new Error('Original launcher did not adopt the updated launcher and binary');
     const flushed=JSON.parse(await asyncRun(['node',launcher,'collect','flush','--json']));
-    if(flushed.data?.uploaded!==1)throw new Error('Updated collector did not recover its queued upload');
+    // The version check also wakes recovery; either it or this flush may own
+    // the upload. Verify the durable receipt and exact stored content below.
+    if(![0,1].includes(flushed.data?.uploaded))throw new Error('Updated collector returned an invalid upload count');
     const status=JSON.parse(await asyncRun(['node',launcher,'collect','status','--json'])).data;
     if(status.queued!==0||status.owner.tenantId!==principal.tenantId||status.installationId!==config.installationId)throw new Error('Updated capture status is inconsistent');
     if(readFileSync(join(capture,'state','cursor.json'),'utf8')!=='{"offset":42}')throw new Error('Upgrade changed capture cursor');
