@@ -14,21 +14,22 @@ export function realmField(corpus,field) {
   return ['tenantId','text','title','sourceKey'].includes(field)?field:corpus+'.'+field;
 }
 export function realmDocument(corpus,id,document) {
-  if(!corpora.has(corpus)||typeof id!=='string'||!id||typeof document?.tenantId!=='string'||!document.tenantId) throw fail('Document realm scope required',403);
+  if(!corpora.has(corpus)||typeof id!=='string'||!/^[A-Za-z0-9_:-]{1,256}$/.test(id)||typeof document?.tenantId!=='string'||!document.tenantId) throw fail('Document realm scope required',403);
   const {tenantId,text,title,sourceKey,...metadata}=document;
   const raw=document.timestamp;
   let timestamp= typeof raw==='number'?raw:typeof raw==='string'&&/^\d{10}(\.\d+)?$/.test(raw)?Number(raw)*1000:Date.parse(raw);
   if(!Number.isFinite(timestamp)) timestamp=Date.parse(document.receivedAt)||document.extractedAt;
+  const author=document.author??document.authorId??document.userId;
   const source=corpus==='connector'?document.provider:corpus==='session'?document.harness:'board';
   return {schema:1,tenantId,corpus,id,source,kind:document.kind||'message',
     ...(Number.isFinite(timestamp)?{timestamp:new Date(timestamp).toISOString()}:{}),
-    ...(document.author??document.authorId??document.userId?{author:document.author??document.authorId??document.userId}:{}),
+    ...(author?{author}:{}),
     ...(text!==undefined?{text}:{}),...(title!==undefined?{title}:{}),...(sourceKey!==undefined?{sourceKey}:{}),[corpus]:metadata};
 }
 function compatible(actual,expected) {
   if(expected.type && (actual?.type||(actual?.properties?'object':undefined))!==expected.type) return false;
   if(expected.dynamic && actual?.dynamic!==expected.dynamic) return false;
-  if(expected.index!==undefined && actual?.index!==expected.index) return false;
+  for(const option of ['index','doc_values','ignore_malformed','analyzer']) if(expected[option]!==undefined && actual?.[option]!==expected[option]) return false;
   for(const key of ['properties','fields']) for(const [name,value] of Object.entries(expected[key]||{})) if(!compatible(actual?.[key]?.[name],value))return false;
   return true;
 }
@@ -40,17 +41,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
   if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!/^[a-z][a-z0-9_-]{0,150}$/.test(index))throw fail('Invalid realm endpoint or index',400);
   if(Boolean(username)!==Boolean(password)||!Number.isInteger(replicas)||replicas<0||replicas>2)throw fail('Invalid realm configuration',400);
   const scope=principal=>{if(principal?.tenantId!==tenantId)throw fail('Realm scope denied',403);};
-  async function request(path,body,method='POST',contentType='application/json') {
-    const url=new URL(base.href.replace(/\/$/,'')+'/'+index+path);
-    body=body===undefined?undefined:typeof body==='string'?body:JSON.stringify(body);
-    let headers={'content-type':contentType};
-    if(username)headers.authorization='Basic '+Buffer.from(username+':'+password).toString('base64');
-    if(credentials){const c=await credentials();if(c.sessionToken)headers['x-amz-security-token']=c.sessionToken;headers=signRequest({method,url,body,headers,region,service:'es',...c});}
-    const response=await send(url,{method,body,headers,signal:AbortSignal.timeout(30000),redirect:'error'});
-    let data;try{data=await response.json();}catch{throw fail('Invalid realm response');}
-    if(!response.ok)throw Object.assign(fail('Realm request failed ('+response.status+')',response.status),{httpStatus:response.status,type:data?.error?.type});
-    return data;
-  }
+  const request=createIndexTransport({endpoint,index,username,password,credentials,region,fetch:send});
   let ready;
   async function ensureIndex(){
     ready ||= (async()=>{
@@ -87,7 +78,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
           catch(e){if(e.status!==404)throw e;ready=undefined;throw e;}
           result.hits.hits=result.hits.hits.map(decode);return result;
         },
-        async mget(principal,ids){scope(principal);const result=await request('/_mget',{ids:ids.map(encodedId)});if(!Array.isArray(result.docs)||result.docs.length!==ids.length)throw fail('Incomplete realm lookup');return {...result,docs:result.docs.map(decode)};},
+        async mget(principal,ids){scope(principal);const result=await request('/_mget',{ids:ids.map(encodedId)});if(!Array.isArray(result.docs)||result.docs.length!==ids.length)throw fail('Incomplete realm lookup');const docs=result.docs.map(decode);if(docs.some(d=>!ids.includes(d._id))||new Set(docs.map(d=>d._id)).size!==ids.length)throw fail('Realm lookup identity mismatch');return {...result,docs};},
         async bulk(principal,items,{refresh=false}={}){
           scope(principal);if(!items.length)return {items:[]};
           const body=items.map(({id,document,script})=>{
@@ -118,4 +109,20 @@ export function createRealmResolver(options) {
   }
   resolve.identity=JSON.stringify([options.endpoint,options.environment||'selfhost',options.generation||'v1',options.index||'organization-realms']);
   return resolve;
+}
+
+export function createIndexTransport({endpoint,index,username,password,credentials,region='us-east-1',fetch:send=globalThis.fetch}) {
+  const base=new URL(endpoint);
+  if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!/^[a-z][a-z0-9_-]{0,150}$/.test(index))throw fail('Invalid index transport',400);
+  return async function request(path,body,method='POST',contentType='application/json') {
+    const url=new URL(base.href.replace(/\/$/,'')+'/'+index+path);
+    body=body===undefined?undefined:typeof body==='string'?body:JSON.stringify(body);
+    let headers={'content-type':contentType};
+    if(username)headers.authorization='Basic '+Buffer.from(username+':'+password).toString('base64');
+    if(credentials){const c=await credentials();if(c.sessionToken)headers['x-amz-security-token']=c.sessionToken;headers=signRequest({method,url,body,headers,region,service:'es',...c});}
+    const response=await send(url,{method,body,headers,signal:AbortSignal.timeout(30000),redirect:'error'});
+    let data;try{data=await response.json();}catch{throw fail('Invalid realm response');}
+    if(!response.ok)throw Object.assign(fail('Realm request failed ('+response.status+')',response.status),{httpStatus:response.status,type:data?.error?.type});
+    return data;
+  };
 }

@@ -32,7 +32,8 @@
     "./connectors/slack-source-http": "./src/connectors/slack-source-http.mjs",
     "./connectors/slack-source-temporal": "./src/connectors/temporal/source-worker.mjs",
     "./connectors/slack-source-messages": "./src/connectors/slack-source-messages.mjs",
-    "./search/realm": "./src/search/realm.mjs"
+    "./search/realm": "./src/search/realm.mjs",
+    "./search/migration": "./src/search/migration.mjs"
   },
   "files": [
     "src",

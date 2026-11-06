@@ -32,3 +32,25 @@ test('one physical organization realm holds all corpora with collision-safe iden
     await assert.rejects(connectors.search(owners.find(o=>o!==p),[binding],{query:'pineapple'}),/scope/);
   }
 });
+
+test('real migration freezes legacy writes, copies complete native data, verifies it and detects changed restart sources',{skip:!endpoint},async t=>{
+ const {createIndexTransport}=await import('../src/search/realm.mjs');
+ const {legacyRealmSource,migrateRealmCorpus}=await import('../src/search/migration.mjs');
+ const {sessionIndexMapping}=await import('../src/search/mapping.mjs');
+ const environment='test-'+randomUUID().slice(0,8),principal={tenantId:'migrated-org',userId:'author'},legacy='legacy-'+randomUUID(),target=realmIndex(environment,principal.tenantId);
+ const request=createIndexTransport({endpoint,index:legacy});
+ const realm=createRealm({endpoint,environment,tenantId:principal.tenantId});
+ t.after(async()=>{for(const i of [legacy,target])await fetch(endpoint+'/'+i,{method:'DELETE'});});
+ await request('',{settings:{number_of_shards:1,number_of_replicas:0},mappings:sessionIndexMapping},'PUT');
+ const doc={tenantId:principal.tenantId,userId:principal.userId,harness:'codex',installationId:'machine',sessionId:'session',eventId:'event',chunk:0,kind:'message',text:'exact complete body',receivedAt:'2026-11-01T00:00:00.000Z'};
+ await request('/_doc/event?refresh=true',doc,'PUT');
+ const source=legacyRealmSource({endpoint,index:legacy,corpus:'session',tenantId:principal.tenantId});let checkpoint=null;
+ const options={principal,corpus:'session',source,realm,load:async()=>checkpoint,save:async value=>{checkpoint=value;}};
+ await assert.rejects(migrateRealmCorpus(options),/write-blocked/);
+ await request('/_settings',{index:{blocks:{write:true}}},'PUT');
+ assert.equal((await migrateRealmCorpus(options)).copied,1);assert.equal(checkpoint.complete,true);
+ await assert.rejects(request('/_doc/blocked',doc,'PUT'),/403/);
+ assert.deepEqual((await realm.collection('session').mget(principal,['event'])).docs[0]._source,doc);
+ await request('/_settings',{index:{blocks:{write:false}}},'PUT');await request('/_doc/event?refresh=true',{...doc,text:'changed'},'PUT');await request('/_settings',{index:{blocks:{write:true}}},'PUT');
+ await assert.rejects(migrateRealmCorpus(options),/version changed/);
+});
