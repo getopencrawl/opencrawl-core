@@ -4,7 +4,7 @@ The ingest API authenticates the user, validates ownership and the envelope, and
 
 A separate Node.js worker runs `indexSessionsV1` on Temporal. A five-minute durable schedule discovers captured objects in bounded S3 pages and executes indexing activities. Temporal owns activity retry/backoff, timeouts and the discovery cursor. After five pages a workflow continues as new to bound history. Each activity retries five times; an exhausted object does not block the rest of the sweep, but causes a visible failed workflow. The next scheduled sweep can retry repaired objects. Schedule overlap is SKIP.
 
-The workflow carries only an operator-configured source reference, S3 object keys, cursors and counts. Transcript text and attachment bytes remain in S3. Activities normalize text and attachment references, validate every OpenSearch bulk item, and only then write an idempotent success receipt. Stable document IDs make retry after a partial write safe. Activity failures are sanitized before entering Temporal history.
+The workflow carries only an operator-configured source reference, S3 object keys, cursors and counts. Transcript text and attachment bytes remain in S3. Activities validate each complete event against the same conditional identity ledger as capture **before** writing any search chunk, then normalize text and attachment references, validate every OpenSearch bulk item, and only then write an idempotent success receipt. A bypassed receiver or conflicting raw object therefore cannot replace only part of an event. Stable document IDs and deterministic JSON traversal make retry after a partial write safe. Activity failures are sanitized before entering Temporal history.
 
 ## Single-tenant self-hosting
 
@@ -39,9 +39,80 @@ Sessions use the same dedicated Temporal service, staging/production namespaces 
 
 Existing S3 objects, attachment references and document IDs are unchanged. Successful receipts under `<prefix>/_index/<target-hash>/<scope-hash>/batches/` are reused, avoiding unnecessary reindexing. Legacy `index-pending` objects and S3 retry/cursor state are ignored and never written by the new receiver/worker. They may be retired later under the deployment's retention policy; this migration does not delete them.
 
-Deploy the worker before the new receiver. A brief overlap with the old poller is safe because writes and receipts are idempotent. To roll back, pause the exact session schedule, stop its session worker and restore the previous receiver/worker release; canonical S3 objects remain intact. Do not delete the shared search cluster or connector schedules. Future low-latency notifications can trigger the same processing path while retaining periodic reconciliation.
+For releases that already enforce immutable event IDs, deploy the worker before
+the new receiver. The first enforcement release requires the quiescent upgrade
+below; an old receiver or worker must not write alongside a new ledger. Do not
+delete the shared search cluster or connector schedules. Future low-latency
+notifications can trigger the same processing path while retaining periodic
+reconciliation.
 
-Discovery currently sweeps the fixed source prefix, including successful receipts checks, using bounded pages. This deliberately favors simple reliable catch-up over low-latency ingestion. Monitor schedule failures, activity retries and sweep lag. S3 credentials need source reads/listing and success-receipt reads/writes; source deletion is unnecessary. Back up canonical S3 and Temporal persistence. Rebuild against a new versioned index with its own receipt namespace; never restore receipts without the matching index.
+Discovery currently sweeps the fixed source prefix, including successful receipts checks, using bounded pages. This deliberately favors simple reliable catch-up over low-latency ingestion. Monitor schedule failures, activity retries and sweep lag. S3 credentials need source reads/listing, conditional event-ledger reads/writes and success-receipt reads/writes; source deletion is unnecessary. Back up canonical S3 and Temporal persistence. Rebuild against a new versioned index with its own receipt namespace; never restore receipts without the matching index.
+
+## Immutable event-ID activation
+
+Older receivers accepted different event content under the same ID. Since chunk
+IDs are stable, shortening such an event could leave higher chunks from its older
+content searchable. The new receiver prevents reuse, and the worker rejects
+conflicting raw input before search writes. Historical successful receipts are
+still reused, so a complete raw-source audit is required before activating the
+first enforcing release. The audit does not silently select a winning revision
+or repair an already mixed index.
+
+1. Run the read-only audit using the candidate release and the existing receiver's
+   storage and fixed identity environment. This can run during normal operation
+   for diagnostics, but its results are not a cutover proof while writers run:
+   `node src/sessions/audit.mjs`.
+2. Pause the exact session-indexing schedule and drain/stop its workers, including
+   already running activities. Stop accepting capture requests and drain/stop
+   every old receiver. Also stop any direct source writer. Preserve client queues;
+   clients will retry. Leave connector workers and unrelated schedules alone.
+   Do this **before** starting any candidate worker, because workers also create
+   ledgers. A rolling overlap of old and new capture code is unsafe here.
+3. With the source quiescent, run `node src/sessions/audit.mjs --initialize`.
+   Require a successful exit, `conflicts: 0` and `initialized === sessions`.
+   The command inventories all accepted raw batches, including batches with
+   existing indexing receipts, and reserves their identities using compare-and-set.
+   It is idempotent, preserves prior reservations, and never deletes source or
+   search data. An empty source returns zero sessions and is a valid result.
+4. If any conflict, malformed object, scope mismatch, inventory failure or capacity
+   limit occurs, keep capture/indexing paused and resolve it before activation.
+   Conflict output contains only session/event identity hashes; investigate under
+   authorized access without copying transcript content to deployment logs.
+   A conflict requires an explicit repair plan covering raw history and already
+   indexed chunks; re-running the audit cannot bless a selected winner.
+5. Start the new receiver and workers, restore the previous schedule pause state,
+   and verify accepted/retried captures, rejected changed-ID uploads, and indexing
+   completion. Keep the zero-conflict audit report as release evidence.
+
+For hosted adapters, the same public
+`auditSessionEventSource({store, prefix, resolvePrincipal, initialize})` export
+from `@1patch/opencrawl-core/sessions` uses the trusted stored-owner resolver used
+by indexing. A fixed single-tenant adapter instead passes `principal`. Supply
+exactly one; request input cannot supply either. The report contains only counts
+and up to 100 hashed conflict identities. Its lower-level
+`auditSessionEventIdentities` audits one fully specified session. Write-only
+capture principals cannot invoke audits. An initialization run may initialize
+earlier clean sessions before encountering a later conflict; that is safe to
+retry, but the **whole-source** gate must pass before resuming writers.
+
+Bootstrap reads at most 10,000 raw batches and 1,000 inventory pages per session
+and uses the same 16 MiB ledger bound as capture. Whole-source audit supports at
+most 100,000 sessions and 10,000 inventory pages per configured scope. Pages
+contain at most 100 keys; ignored keys and empty continuation pages also consume
+the page budget. Exceeding a bound fails closed rather than auditing a partial
+history. On a new session, capture/indexing automatically initialize the absent
+ledger from all historical raw batches, but this is safe only after all old
+writers are drained. A compatible object store must provide strongly consistent
+listing, bounded `get`/`readVersion` and atomic `compareAndSet` (S3 ETag/If-Match
+and If-None-Match). Plain last-write-wins stores are rejected. The included S3
+adapter supplies this contract for self-hosted and hosted deployments.
+
+Rollback preserves raw batches, receipts and ledgers. Restoring an older enforcing
+release is safe with the usual worker drain. Do not resume a pre-enforcement
+receiver/worker against initialized ledgers: it could publish unreserved edits.
+If such a rollback is unavoidable, keep writes paused until a compatible fix is
+available; any period of old writes requires another quiescent full-source audit
+before reactivation. Never delete ledgers to bypass a conflict or capacity limit.
 
 ## Raw diagnostics
 
