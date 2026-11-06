@@ -39,7 +39,7 @@ test('fixed-scope indexing, checkpoints, crash replay and poison records cannot 
  assert.throws(()=>createSessionPipeline({store,prefix,search}),/fixed single-tenant principal/);
 });
 
-test('bulk item errors are failures even with HTTP 200; search always binds both ownership fields',async()=>{
+test('bulk item errors are failures even with HTTP 200; search binds the team and retains human attribution',async()=>{
  const requests=[];
  const search=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async(url,options)=>{
   requests.push(JSON.parse(options.body));
@@ -50,14 +50,14 @@ test('bulk item errors are failures even with HTTP 200; search always binds both
  const failing=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>Response.json({errors:true,items:[{index:{status:429}}]})});
  await assert.rejects(failing.putDocuments([{id:'id',document:{text:'retry me'}}]),/failed or missing items/);
  await search.search(owner,{query:'tenant-b OR *'});
- assert.deepEqual(requests[0].query.bool.filter,[{term:{tenantId:'tenant-a'}},{term:{userId:'same-user'}}]);
+ assert.deepEqual(requests[0].query.bool.filter,[{term:{tenantId:'tenant-a'}}]);
  await assert.rejects(search.search(null,{query:'anything'}),/Authentication/);
  await assert.rejects(search.search(owner,{limit:101}),/Invalid search/);
  const leaking=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>Response.json({hits:{total:{value:1},hits:[{_source:{tenantId:'tenant-b',userId:'same-user'}}]}})});
  await assert.rejects(leaking.search(owner),/ownership scope/);
 });
 
-test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval and tenant/user isolation',{
+test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, team visibility and tenant isolation',{
  skip:!process.env.OPENCRAWL_TEST_S3_ENDPOINT||!process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
 },async t=>{
  const index='capture-test-'+randomUUID(),prefix='sessions/index-test/'+randomUUID();
@@ -82,14 +82,16 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval an
  const hosted=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
  assert.equal((await sweep(hosted)).indexed,12);await search.refresh();
  for(const principal of owners){
-  const result=await search.search(principal,{query:'violet'});assert.equal(result.total,4);
-  assert.ok(result.hits.every(hit=>hit.attachments.every(a=>a.objectKey.startsWith(prefix+'/'+sessionScope(principal)+'/attachments/'))));
-  assert.ok(result.hits.every(hit=>hit.tenantId===principal.tenantId&&hit.userId===principal.userId));
-  assert.equal((await search.search(principal,{query:'Build completed'})).total,4);
+  const expected=principal.tenantId===owner.tenantId?8:4;
+  const result=await search.search(principal,{query:'violet'});assert.equal(result.total,expected);
+  assert.ok(result.hits.every(hit=>hit.attachments.every(a=>a.objectKey.startsWith(prefix+'/'+sessionScope(hit)+'/attachments/'))));
+  assert.ok(result.hits.every(hit=>hit.tenantId===principal.tenantId));
+  assert.deepEqual(new Set(result.hits.map(hit=>hit.userId)),new Set(owners.filter(p=>p.tenantId===principal.tenantId).map(p=>p.userId)));
+  assert.equal((await search.search(principal,{query:'Build completed'})).total,expected);
  }
  const restarted=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
  assert.equal((await sweep(restarted)).indexed,0);
- assert.equal((await search.search(owner)).total,8);
+ assert.equal((await search.search(owner)).total,16);
  const later=batch(owner,'new incremental indigo message');later.events[0].id='later-event';
  await ingest.putBatch(owner,later);assert.equal((await sweep(restarted)).indexed,1);await search.refresh();
  assert.equal((await search.search(owner,{query:'indigo'})).total,1);
@@ -132,4 +134,15 @@ test('OpenSearch SigV4 signs temporary credentials for the es service and index-
  assert.equal(captured.url.pathname,'/session-test/_search');
  assert.equal(captured.options.headers['x-amz-security-token'],'temporary-token');
  assert.match(captured.options.headers.authorization,/us-west-2\/es\/aws4_request/);
+});
+
+
+test('search returns another teammate with attribution and rejects foreign tenant results',async()=>{
+ const teammate={tenantId:owner.tenantId,userId:'teammate',text:'shared knowledge'};
+ let source=teammate;
+ const search=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>Response.json({hits:{total:{value:1},hits:[{_id:'event',_source:source}]}})});
+ assert.equal((await search.search(owner)).hits[0].userId,'teammate');
+ source={...teammate,tenantId:'another-team'};
+ await assert.rejects(search.search(owner),/ownership scope/);
+ await assert.rejects(search.search(owner,{raw:true}),/ownership scope/);
 });

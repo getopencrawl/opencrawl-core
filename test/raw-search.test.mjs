@@ -8,12 +8,14 @@ test('raw session responses retain OpenSearch fields after ownership checks', as
   const owner = {tenantId: 'tenant', userId: 'user'};
   const response = {took: 2, timed_out: false, _shards: {successful: 1}, hits: {total: {value: 1, relation: 'eq'}, hits: [{_id: 'id', _index: 'sessions', _score: 2, _source: {...owner, text: 'hello'}}]}};
   const search = createSessionSearch({endpoint: 'http://localhost:9200', index: 'sessions', fetch: async (_, options) => {
-    assert.deepEqual(JSON.parse(options.body).query.bool.filter, [{term: {tenantId: owner.tenantId}}, {term: {userId: owner.userId}}]);
+    assert.deepEqual(JSON.parse(options.body).query.bool.filter, [{term: {tenantId: owner.tenantId}}]);
     return Response.json(response);
   }});
   assert.deepEqual(await search.search(owner, {query: 'hello', raw: true}), response);
   await assert.rejects(search.search(null, {query: 'hello', raw: true}), /Authentication/);
   response.hits.hits[0]._source.userId = 'other';
+  assert.deepEqual(await search.search(owner, {query: 'hello', raw: true}), response);
+  response.hits.hits[0]._source.tenantId = 'other';
   await assert.rejects(search.search(owner, {query: 'hello', raw: true}), /ownership/);
 });
 
