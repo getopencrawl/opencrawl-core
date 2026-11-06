@@ -37,4 +37,14 @@ test('real Temporal: file capture resumes committed checkpoints and keeps docume
  assert.doesNotMatch(serialized,/PRIVATE_HISTORY_SENTINEL|PRIVATE_REPLY_SENTINEL/);
  for(const value of serialized.matchAll(/"data":"([A-Za-z0-9+/=]+)"/g))assert.doesNotMatch(Buffer.from(value[1],'base64').toString(),/PRIVATE_HISTORY_SENTINEL|PRIVATE_REPLY_SENTINEL/);
  await Worker.runReplayHistory({workflowBundle:{codePath:bundlePath}},messageHistory);
+ const referenceData=new Map();
+ const references=await createSlackSourceWorker({address:env.address,namespace:'default',taskQueue:'references-test',bundlePath,resolve:async()=>({binding,store:{bucket:'fixture',get:async k=>referenceData.get(k),put:async(k,v)=>referenceData.set(k,v)},now:()=>clock+=70000,request:async(method,q)=>({status:200,data:{ok:true,...(method==='conversations.info'?{channel:{id:q.channel,is_private:false}}:{messages:[{ts:q.oldest,text:'PRIVATE_REFERENCE_SENTINEL button'}]})}})})});
+ const referenceHandle=await env.client.workflow.start('captureSlackMessageReferencesV1',{taskQueue:'references-test',workflowId:'reference-fixture',args:[{connectionId:'conn',references:[{channelId:'C1',ts:'3.000001'}]}]});
+ const referenceResult=await references.worker.runUntil(()=>referenceHandle.result());await references.connection.close();
+ assert.equal(referenceResult.failed,0);assert.equal(referenceResult.emitted,1);
+ const referenceHistory=await referenceHandle.fetchHistory(),referenceSerialized=JSON.stringify(referenceHistory);
+ assert.doesNotMatch(referenceSerialized,/PRIVATE_REFERENCE_SENTINEL/);
+ for(const value of referenceSerialized.matchAll(/"data":"([A-Za-z0-9+/=]+)"/g))assert.doesNotMatch(Buffer.from(value[1],'base64').toString(),/PRIVATE_REFERENCE_SENTINEL/);
+ await Worker.runReplayHistory({workflowBundle:{codePath:bundlePath}},referenceHistory);
+
 });

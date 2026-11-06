@@ -4,6 +4,7 @@ import {ApplicationFailure} from '@temporalio/common';
 import {writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {createSlackMessageCapture} from '../slack-source-messages.mjs';
+import {createSlackMessageReferenceCapture} from '../slack-source-message-references.mjs';
 import {createSlackFileCapture} from '../slack-source-files.mjs';
 export async function buildSlackSourceWorkflows(path) {
  const {code}=await bundleWorkflowCode({workflowsPath:fileURLToPath(new URL('./source-workflows.cjs',import.meta.url))});await writeFile(path,code);
@@ -22,7 +23,7 @@ export function slackSourceActivities({resolve}) {
   } catch(error){if(error.permanent)throw ApplicationFailure.nonRetryable('Slack source rejected invalid scope or input','InvalidSlackSource');throw new Error('Slack source activity failed; inspect scoped capture checkpoint');}
   finally{clearInterval(timer);}
  }
- return {captureFilePage:input=>capture(input,createSlackFileCapture),captureMessagePage:input=>capture(input,createSlackMessageCapture)};
+ return {captureFilePage:input=>capture(input,createSlackFileCapture),captureMessagePage:input=>capture(input,createSlackMessageCapture),captureMessageReference:input=>capture(input,createSlackMessageReferenceCapture)};
 }
 export async function createSlackSourceWorker({address,namespace,taskQueue,bundlePath,resolve}) {
  if(!address||!namespace||!taskQueue||!bundlePath)throw new Error('Explicit source worker configuration required');
