@@ -60,6 +60,28 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
     put: (key, body, contentType = 'application/octet-stream') =>
       request('PUT', key, {body, headers: {'content-type': contentType}}).then(() => undefined),
 
+    // Conditional documents: a failed comparison must never overwrite a peer's write.
+    async readVersion(key, {maxBytes = 16 * 1024 * 1024} = {}) {
+      const res = await request('GET', key);
+      if (res.status === 404) return {version: null, data: null};
+      const version = res.headers.get('etag');
+      if (!version) {await res.body?.cancel(); throw new Error('Object store omitted ETag');}
+      const parts = []; let size = 0;
+      for await (const part of res.body) {
+        size += part.length;
+        if (size > maxBytes) {throw new Error('Object exceeds read limit');}
+        parts.push(part);
+      }
+      return {version, data: Buffer.concat(parts)};
+    },
+    async compareAndSet(key, version, data) {
+      try {
+        await request('PUT', key, {body: data, headers: {'content-type': 'application/json',
+          ...(version === null ? {'if-none-match': '*'} : {'if-match': version})}});
+        return true;
+      } catch (error) {if ([409, 412].includes(error.status)) return false; throw error;}
+    },
+
     /** Returns the object as a Buffer, or null if it does not exist. */
     async get(key, {maxBytes} = {}) {
       if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw new Error('Invalid object read limit');
