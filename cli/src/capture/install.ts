@@ -103,12 +103,14 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   for(const dir of ['', 'backups','queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});
   const config:CaptureConfig={schemaVersion:1,hookMode:'managed',api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:principal,...(deferAuth?{authPending:true}:{}),
     harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
-      'claude-code':process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),codex:process.env.CODEX_HOME||join(home,'.codex')},
+      'claude-code':!harnesses.includes('claude-code')&&previous?.roots['claude-code']||process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),
+      codex:!harnesses.includes('codex')&&previous?.roots.codex||process.env.CODEX_HOME||join(home,'.codex')},
     claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
-  for(const harness of harnesses)mkdirSync(config.roots[harness],{recursive:true,mode:0o700});
+  const enrolled=config.harnesses!;
+  for(const harness of enrolled)mkdirSync(config.roots[harness],{recursive:true,mode:0o700});
   // Validate both existing configs before changing either one.
-  if(harnesses.includes('claude-code'))readJson(join(config.roots['claude-code'],'settings.json'));
-  if(harnesses.includes('codex'))readJson(join(config.roots.codex,'hooks.json'));
+  if(enrolled.includes('claude-code'))readJson(join(config.roots['claude-code'],'settings.json'));
+  if(enrolled.includes('codex'))readJson(join(config.roots.codex,'hooks.json'));
   const toml=join(config.roots.codex,'config.toml');if(harnesses.includes('codex')&&existsSync(toml))Bun.TOML.parse(readFileSync(toml,'utf8'));
   const affected=[join(captureDir(),'config.json'),join(captureDir(),'receiver-token.json'),join(captureDir(),'runner.cjs'),
     join(config.roots['claude-code'],'settings.json'),join(config.roots.codex,'hooks.json'),toml];
@@ -116,7 +118,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   try {
   atomicJson(join(captureDir(),'config.json'),config);
   if(process.env.OPENCRAWL_SESSIONS_TOKEN)atomicJson(join(captureDir(),'receiver-token.json'),{api,token:process.env.OPENCRAWL_SESSIONS_TOKEN});
-  configureHooks(config,harnesses);
+  configureHooks(config,enrolled);
   if(harnesses.includes('codex'))enableCodex(config.roots.codex);
   } catch(error) {
     for(const [path,bytes] of originals) {

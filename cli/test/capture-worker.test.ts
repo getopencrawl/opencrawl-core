@@ -173,4 +173,10 @@ test('async hook retains its harness-owned PID on Unix; legacy upgrade preserves
  expect(readCaptureConfig()!.hookMode).toBe('managed');
  expect(JSON.parse(readFileSync(hooksFile,'utf8')).hooks.Stop[0].hooks[0].async).toBe(true);
  const upgraded=readFileSync(hooksFile,'utf8');await upgradeCaptureHooks();expect(readFileSync(hooksFile,'utf8')).toBe(upgraded);
+ // Installing one harness also upgrades the dispatcher for already enrolled ones.
+ const codexFile=join(config.roots.codex,'hooks.json');
+ const codex=JSON.parse(readFileSync(codexFile,'utf8'));codex.hooks.Stop[0].hooks[0].async=false;
+ writeFileSync(codexFile,JSON.stringify(codex));
+ await installCapture(f.api,{home:f.dir,command:[process.execPath,cli],harnesses:['claude-code']});
+ expect(JSON.parse(readFileSync(codexFile,'utf8')).hooks.Stop[0].hooks[0].async).toBe(true);
 }));
