@@ -1,7 +1,7 @@
 export const connectorMapping = {dynamic: 'strict', properties: {
   ...Object.fromEntries(['tenantId', 'connectionId', 'workspaceId', 'provider', 'kind', 'sourceId', 'channelId', 'threadTs', 'timestamp', 'authorId', 'contentHash', 'parentId', 'parentKind', 'resourceVersion', 'relatedId', 'discussionId', 'repository', 'state', 'speakers', 'startTime', 'endTime', 'fileId', 'extractionStatus', 'partPath'].map(key => [key, {type: 'keyword'}])),
   title: {type: 'text'}, text: {type: 'text'}, extractedAt: {type: 'long'}, deleted: {type: 'boolean'}, publicChannel: {type: 'boolean'},
-  sourceAuthority:{type:'integer'}, available: {type:'boolean'}, partStart:{type:'integer'}, partEnd:{type:'integer'}, partOverlap:{type:'integer'},
+  sourceAuthority:{type:'integer'}, normalizerVersion:{type:'integer'}, available: {type:'boolean'}, partStart:{type:'integer'}, partEnd:{type:'integer'}, partOverlap:{type:'integer'},
   componentCount: {type: 'integer'}, versionAt: {type: 'long'}, sequence: {type: 'integer'}, chunkCount: {type: 'integer'}, heading: {type: 'text'},
   summary: {type: 'text', index: false}, url: {type: 'keyword', index: false, doc_values: false},
   sourceKey: {type: 'keyword', index: false, doc_values: false},

@@ -15,7 +15,7 @@ stock Slack `channel_messages`, `threads`, `channels`, `users`, and
 `channel_members`. `messages` is also accepted as a channel-message stream alias.
 This is lexical search; embeddings and thread summaries are not required.
 
-The `slack-v4` normalizer includes fallback `text`, visible Block Kit and rich-text
+The `slack-v5` normalizer includes fallback `text`, visible Block Kit and rich-text
 content, menu option labels/descriptions/confirmation text, attachment
 text/fields/blocks/service attribution, and both file names and titles. It deduplicates mirrored
 fragments without treating a nonempty fallback or an ellipsis as proof of a
@@ -25,12 +25,23 @@ metadata and interactive control values are never recursively indexed. The
 256 KiB limit applies to the assembled readable message, with oversized records
 failing visibly instead of being truncated.
 
-Upgrading from any earlier normalizer requires a new index generation (`v4` in standalone
-defaults). Backfill and verify that generation before switching queries. Carry
-forward durable suppression records first; raw replay alone cannot reconstruct
-operator tombstones. Retain the previous generation for rollback, and include
-both generations in disconnect/erasure cleanup while both exist. An explicitly
-configured index is operator-controlled and must be changed for the rebuild.
+Inline rich-text formatting preserves whole words and phrases; separate sections
+retain line boundaries. Link destinations remain searchable outside the rendered
+line. This also applies to quotes and preformatted text.
+
+On an existing organization realm, v5 adds an integer `connector.normalizerVersion`
+after validating tenant ownership and the previous mapping. New receipt keys force
+raw replay. At the same observation time and source authority, v5 messages replace
+the previous interpretation regardless of hash order. Older source observations
+cannot undo newer edits, and suppression remains sticky. Drain old writers, deploy
+the new worker, replay and verify all objects before claiming completion. Preserve
+old receipts and source objects; do not clear or recreate the shared realm. A
+rollback to an older writer requires coordinated replay verification because that
+writer does not know normalization-version ordering.
+
+Pre-realm flat indexes still require the explicit realm migration described in
+[organization realms](organization-realms.md). Carry suppression records forward;
+raw replay alone cannot reconstruct operator tombstones.
 
 
 An operator-trusted binding fixes tenant, connection, Slack workspace, public-team
