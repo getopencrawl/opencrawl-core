@@ -157,9 +157,12 @@ test('async hook retains its harness-owned PID on Unix; legacy upgrade preserves
  const hooksFile=join(config.roots['claude-code'],'settings.json');
  const hook=JSON.parse(readFileSync(hooksFile,'utf8')).hooks.Stop[0].hooks[0];
  expect(hook.async).toBe(true);
- const shell=process.platform==='win32'?['cmd.exe','/d','/s','/c',hook.command]:['/bin/sh','-c',hook.command];
+ // Let Node quote cmd.exe's /s /c payload; CRT argv escaping is not cmd syntax.
+ const shell=process.platform==='win32'?[Bun.which('node')!,'-e',`const r=require('node:child_process').spawnSync(${JSON.stringify(hook.command)},{shell:true,stdio:'inherit'});process.exit(r.status??1);`]:['/bin/sh','-c',hook.command];
  const child=Bun.spawn(shell,{env:process.env,stdout:'pipe',stderr:'pipe'});
- expect(await child.exited).toBe(0);
+ const exit=await child.exited;
+ if(exit!==0)throw new Error(await new Response(child.stderr).text());
+ expect(exit).toBe(0);
  const observed=JSON.parse(readFileSync(output,'utf8'));
  if(process.platform!=='win32')expect(observed.pid).toBe(child.pid);
  // A legacy synchronous hook must queue locally, not wait on network or spawn.

@@ -51,8 +51,10 @@ function configureHooks(config:CaptureConfig,harnesses:Harness[]) {
   const runner=join(captureDir(),'runner.cjs');
   const node=process.env.OPENCRAWL_NODE || Bun.which('node');
   if(!node)throw new CliError('NODE_REQUIRED','Install Node 22.15 or newer to run capture hooks');
-  const check=spawnSync(node,['-e',"process.exit(process.platform==='win32'||typeof process.execve==='function'?0:1)"],{stdio:'ignore',timeout:5000,windowsHide:true});
-  if(check.status!==0)throw new CliError('NODE_REQUIRED','Install Node 22.15 or newer to run capture hooks');
+  if(process.platform!=='win32') {
+    const check=spawnSync(node,['-e',"process.exit(typeof process.execve==='function'?0:1)"],{stdio:'ignore',timeout:5000});
+    if(check.status!==0)throw new CliError('NODE_REQUIRED','Install Node 22.15 or newer to run capture hooks');
+  }
   // Resolve the selected npm binary without running its launcher. On Unix exec
   // preserves the PID owned by the harness, including cancellation and reaping.
   atomicFile(runner,`const command=${JSON.stringify(config.command)};
