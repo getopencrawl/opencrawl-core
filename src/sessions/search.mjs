@@ -8,8 +8,9 @@ const UPSERT="if (ctx._source.session == null || ctx._source.session.receivedAt 
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status});};
 export const MAX_SEARCH_LIMIT=500;
 /** `embed(texts) -> Promise<number[][]>` (unit vectors) with `vectors: {dimensions}` enables hybrid
- * search: passages are embedded on write, and each query fuses lexical and vector rankings. */
-export function createSessionSearch({embed,...options}) {
+ * search: passages are embedded on write, and each query fuses lexical and vector rankings.
+ * `embedQuery` (default `embed`) embeds queries, for models with query-specific encodings. */
+export function createSessionSearch({embed,embedQuery=embed,...options}) {
   if(Boolean(embed)!==Boolean(options.vectors))throw new Error('Configure embed together with vectors.dimensions');
   const resolve=createRealmResolver(options), f=field=>realmField('session',field);
   return {
@@ -45,7 +46,7 @@ export function createSessionSearch({embed,...options}) {
       const lexical=collection.search(principal,{size:limit,track_total_hits:true,_source:{excludes},
         query:{bool:{filter:[{term:{tenantId:principal.tenantId}}],must:query?[relevanceQuery(query)]:[{match_all:{}}]}},
         sort:query?['_score',{[f('receivedAt')]:'desc'}]:[{[f('receivedAt')]:'desc'},{[f('sequence')]:'asc'}]});
-      const semantic=embed&&query.trim()&&!raw?embed([query]).then(([vector])=>collection.search(principal,{size:limit,_source:{excludes},
+      const semantic=embed&&query.trim()&&!raw?embedQuery([query]).then(([vector])=>collection.search(principal,{size:limit,_source:{excludes},
         query:{knn:{embedding:{vector:Array.from(vector),k:limit}}}})):null;
       const [result,dense]=await Promise.all([lexical,semantic]);
       for(const response of [result,dense]){
