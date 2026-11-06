@@ -2,7 +2,7 @@
 
 The CLI installs capture for local Claude Code and Codex sessions, including sessions run by their desktop apps. Run `opencrawl login`, then `opencrawl collect install`. Codex requires reviewing/trusting the installed commands in `/hooks` or desktop Settings > Hooks. Existing sessions may need a restart.
 
-Capture uses command hooks and incremental reads of native JSONL transcripts. A macOS LaunchAgent or Linux user timer reconciles active/new transcripts every minute. Windows currently uses hooks; run `opencrawl collect sync` to reconcile manually. The installer preserves existing hook groups, backs up changed files, and rolls back configuration writes if installation fails. It uses absolute executable paths so desktop launch environments do not need the interactive shell's PATH.
+Capture uses command hooks and incremental reads of native JSONL transcripts. Hooks durably hand off their event to one on-demand detached worker; they perform no transcript scan, parsing, network request, or upload-lock wait. The same mechanism runs on macOS, Linux and Windows without an init service. Legacy OpenCrawl LaunchAgents/user timers are removed during installation or the first updated worker run. The installer preserves existing hook groups, backs up changed files, and rolls back configuration writes if installation fails. It uses absolute executable paths so desktop launch environments do not need the interactive shell's PATH.
 
 ## Contents and identity
 
@@ -16,7 +16,7 @@ Installation enrolls new sessions and existing sessions modified afterward. Exis
 
 ## Reliability and control
 
-`opencrawl collect status --json` shows the last authenticated identity, installation, pending batches, last receipt and last error. `collect sync` reconciles transcripts and uploads; `collect flush` only uploads the queue. `collect uninstall` stops collection and removes only OpenCrawl's hooks; it preserves queued data. Explicit flush remains available after uninstall.
+`opencrawl collect status --json` shows the last authenticated identity, installation, pending batches, last receipt and last error. `collect sync` reconciles transcripts and uploads; `collect flush` processes pending hook notices and known transcript tails, then waits for queued batches to receive durable acknowledgements. `collect uninstall` stops collection and removes only OpenCrawl's hooks; it preserves queued data. Explicit flush remains available after uninstall.
 
 The collector persists batches before advancing cursors, holds incomplete trailing JSONL lines, and deletes batches only after a matching durable receipt. Repeated transcript records have stable IDs; hook/transcript duplicates remain available for downstream deduplication. Uploads use the team returned by current server authentication, including existing queues from the former personal scope. The saved identity is refreshed automatically; no reinstall or reset is needed after a team change. Queued records keep their human author, which the server validates. Rejected uploads remain queued. The default local spool is `~/.config/opencrawl/capture/`: `queue/` contains pending JSON batches, `blobs/` contains attachment bytes keyed by SHA-256, and `state/` contains transcript cursors. `OPENCRAWL_CONFIG_HOME` takes precedence over `XDG_CONFIG_HOME`; either replaces `~/.config`. Local spool/configuration files are private to the OS user. Unreferenced attachment blobs are reclaimed after a 24-hour grace period.
 
@@ -59,3 +59,25 @@ Upgrading the former filesystem receiver: stop it, copy the contents under `capt
 Schema version 1 uses immutable batches and attachment objects; this first release requires no data migration. Keep existing objects when upgrading or rolling back the receiver. A binary without the capture API cannot serve these records, but does not erase them. Before downgrading the CLI to a version without capture, run collect uninstall to remove its hooks and scheduler. Hosted object lifecycle and backups remain the operator's responsibility.
 
 Revocation is checked at upload/read time. Queued background uploads re-authenticate and use the currently authorized team. Hosted organization membership is checked on every request; removing membership rejects subsequent requests. Existing valid OAuth access tokens retain their ordinary token lifetime, while a failed refresh stops later uploads. Local collection continues until uninstall; failed uploads remain queued.
+
+## Worker lifecycle and delivery boundaries
+
+A notice is atomic and durable before a hook returns. Attachment bytes and immutable
+batches are durable before the transcript cursor advances. A retry resends the same
+batch bytes; a lost acknowledgement does not reread a larger growing transcript into
+that batch. The worker uses nonblocking ownership; foreground flush/backfill waits
+for upload ownership without the old 20-second SESSION_BUSY deadline. It releases
+worker ownership before checking for notices arriving during shutdown.
+
+Known sources remain enrolled across worker exits. The worker polls for 30 seconds
+after activity, so a Stop hook is not treated as a transcript completion fence. New
+hooks and ordinary CLI invocations recheck those sources. Transient failures retry
+with backoff while the process lives; source files, notices and queued batches survive
+process loss. This is eventual delivery given retained data, future execution and
+an accepting network endpoint, not a guarantee after permanent sandbox destruction.
+Partial JSONL records remain in the source until complete. Existing content filtering,
+history consent and server authorization rules continue to apply.
+
+Cloud image setup prepares hooks with --defer-auth and --backfill skip without
+runtime secrets. Authentication and the per-runtime installation ID are established
+by the first detached worker before capture. No first hook waits on authentication.

@@ -145,7 +145,7 @@ test('cloud installation skips systemd and Codex, and hooks retain cloud identit
   process.env.OPENCRAWL_CONFIG_HOME=join(dir,'state');process.env.CLAUDE_CONFIG_DIR=join(dir,'claude');process.env.CODEX_HOME=join(dir,'codex');
   process.env.OPENCRAWL_SESSIONS_TOKEN=token;process.env.CLAUDE_CODE_REMOTE='true';
   const result=await installCapture('http://127.0.0.1:'+(server.address() as any).port,{home:dir,command:[process.execPath,'-e','']});
-  expect(result.background).toBe('disabled');expect(result.harnesses).toEqual(['claude-code']);
+  expect(result.background).toBe('on-demand');expect(result.harnesses).toEqual(['claude-code']);
   expect(readdirSync(dir)).not.toContain('codex');
   const config=readCaptureConfig()!,path=join(config.roots['claude-code'],'projects','cloud','native-id.jsonl');
   mkdirSync(join(config.roots['claude-code'],'projects','cloud'),{recursive:true});

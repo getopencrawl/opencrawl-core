@@ -101,11 +101,34 @@ background upgrades; Glen's small npm entry point for agents.
 
 ### Session capture
 
-After signing in, run `opencrawl collect install` to install Claude Code and Codex hooks and the background transcript collector. Review the commands in Codex `/hooks` or desktop Settings > Hooks. The same local configuration covers desktop and terminal sessions.
+After signing in, run `opencrawl collect install` to install Claude Code and Codex hooks and the on-demand transcript uploader. Review the commands in Codex `/hooks` or desktop Settings > Hooks. The same local configuration covers desktop and terminal sessions.
 
-`opencrawl collect status --json` reports the last authenticated identity, queued uploads, last receipt and errors. `collect sync` reconciles active transcripts; `collect flush` retries queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
+`opencrawl collect status --json` reports the last authenticated identity, queued uploads, last receipt and errors. `collect sync` reconciles active transcripts; `collect flush` processes pending hooks and known transcript tails, then waits for queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
 
 Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service determines the current team from login and validates human attribution. Existing collectors and queued personal-scope uploads automatically use that team after updating, without reinstalling or resetting. Self-hosted users can supply `OPENCRAWL_SESSIONS_TOKEN` and `--api` for the portable receiver. See [capture architecture and limits](../docs/session-capture.md).
+
+Hooks durably save their event locally and wake one detached worker. They do not
+read transcripts, wait for an upload lock, or make network requests. The worker
+parses permitted records, spools immutable batches, and keeps each batch until a
+verified durable receipt arrives. Concurrent workers exit without waiting;
+foreground flush/backfill waits for upload ownership rather than failing after
+20 seconds. Backfill completes only after its queued data has receipts.
+
+No systemd, launchd, cron, or installed daemon is required on any supported OS.
+An updated worker retires legacy OpenCrawl timers when it first runs; reinstall
+also removes them. Existing cursors, queue, identity and hook dispatcher remain
+compatible. The worker polls known transcripts for 30 seconds after activity,
+including after Stop, and retries failed uploads with backoff while it can run.
+Later hooks and ordinary CLI invocations recover pending work and recheck known
+sources after process loss. An idle interval is not a final-session receipt:
+unsent data needs retained files and another execution opportunity. A destroyed
+sandbox cannot deliver bytes that never left it. `collect status` reports
+`pendingHooks` separately from queued upload batches. Uninstall preserves both.
+
+Cloud image setup uses `collect install --harness claude-code --defer-auth
+--backfill skip`: it requires no runtime credential or network identity lookup.
+The first detached worker binds the authenticated identity and installation ID
+before parsing or uploading. First-run hooks remain network-nonblocking.
 
 ### Optional history import
 
@@ -185,7 +208,7 @@ a separate setup session are supported. Environment variables are visible to
 commands in that environment; don't paste the credential into the chat or repo.
 
 The installer detects `CLAUDE_CODE_REMOTE=true`, installs Claude hooks only and
-skips systemd. `--harness claude-code --no-background` also selects this explicitly.
+uses the same service-free uploader as local installations. `--harness claude-code` selects just Claude hooks; `--no-background` remains an accepted compatibility flag.
 The setup installs the CLI at
 `$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl`. After a user
 message, tool call and image, `collect status` must report a stored receipt and

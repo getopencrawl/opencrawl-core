@@ -1,7 +1,7 @@
 import {readFileSync, existsSync, mkdirSync, writeFileSync, copyFileSync, unlinkSync, readdirSync, renameSync} from 'node:fs';
 import {join, dirname} from 'node:path';
 import {homedir} from 'node:os';
-import {spawnSync} from 'node:child_process';
+import {removeLegacyService} from './legacy-service.ts';
 import {randomUUID} from 'node:crypto';
 import {type Harness} from './parse.ts';
 import {atomicJson, configDir} from '../session.ts';
@@ -9,9 +9,7 @@ import {CliError} from '../oauth.ts';
 import {captureDir, readCaptureConfig, commandForSelf, request, type CaptureConfig} from './runtime.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 const marker='OpenCrawl session capture';
-const service='com.getopencrawl.capture';
 const quote=(s:string)=>process.platform==='win32'?'"'+s.replace(/"/g,'""')+'"':"'"+s.replace(/'/g,"'\\''")+"'";
-const xml=(s:string)=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 function readJson(file:string){return existsSync(file)?JSON.parse(readFileSync(file,'utf8')):{};}
 function backup(file:string){if(existsSync(file)){const p=join(captureDir(),'backups',randomUUID()+'.json');copyFileSync(file,p);}}
 function modifyHooks(file:string,events:string[],command:string|null) {
@@ -48,13 +46,15 @@ function enableCodex(root:string) {
   // Atomic replacement without changing unrelated TOML settings.
   renameSync(temp,file);
 }
-export async function installCapture(api:string,{background=process.env.CLAUDE_CODE_REMOTE!=='true',home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
+export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
   if(!harnesses.length||harnesses.some(h=>!['claude-code','codex'].includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code or codex',64);
-  const {principal}=await request(api,'/api/sessions/identity');
+  // Image preparation cannot access runtime secrets. First worker authenticates
+  // before parsing/spooling; hooks only persist notices even on first launch.
+  const {principal}=deferAuth?{principal:{tenantId:'pending',userId:'pending'}}:await request(api,'/api/sessions/identity');
   if(!principal?.tenantId || !principal?.userId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   const previous=readCaptureConfig();
   for(const dir of ['', 'backups','queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});
-  const config:CaptureConfig={schemaVersion:1,api,installationId:previous?.installationId??randomUUID(),owner:principal,
+  const config:CaptureConfig={schemaVersion:1,api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:principal,...(deferAuth?{authPending:true}:{}),
     harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
       'claude-code':process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),codex:process.env.CODEX_HOME||join(home,'.codex')},
     claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
@@ -88,40 +88,17 @@ export async function installCapture(api:string,{background=process.env.CLAUDE_C
     }
     throw error;
   }
-  const backgroundStatus=background?installService(config,home):'disabled';
-  return {installationId:config.installationId,owner:principal,background:backgroundStatus,harnesses:config.harnesses,
+  // Retire only legacy OpenCrawl services. Collection itself needs no init system.
+  removeLegacyService(home);
+  const backgroundStatus='on-demand';
+  return {installationId:config.installationId,owner:deferAuth?null:principal,background:backgroundStatus,harnesses:config.harnesses,
     nextStep:process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':'Review OpenCrawl hooks in Codex /hooks or desktop Settings > Hooks. Restart existing Claude sessions if hooks have not reloaded.'};
-}
-function installService(config:CaptureConfig,home:string) {
-  const args=[...config.command,'collect','sync'];
-  const env={OPENCRAWL_CONFIG_HOME:dirname(configDir()),OPENCRAWL_NO_UPDATE:'1'};
-  if(process.platform==='darwin') {
-    const file=join(home,'Library/LaunchAgents',service+'.plist');mkdirSync(dirname(file),{recursive:true});
-    writeFileSync(file,`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>Label</key><string>${service}</string><key>ProgramArguments</key><array>${args.map(a=>'<string>'+xml(a)+'</string>').join('')}</array><key>EnvironmentVariables</key><dict>${Object.entries(env).map(([k,v])=>'<key>'+k+'</key><string>'+xml(v)+'</string>').join('')}</dict><key>StartInterval</key><integer>60</integer><key>RunAtLoad</key><true/></dict></plist>`,{mode:0o600});
-    const domain='gui/'+process.getuid!();
-    spawnSync('launchctl',['bootout',domain+'/'+service],{stdio:'ignore'});
-    const result=spawnSync('launchctl',['bootstrap',domain,file],{stdio:'pipe'});
-    return result.status===0?'launchd':'launchd-configured-not-running';
-  }
-  if(process.platform==='linux') {
-    const dir=join(home,'.config/systemd/user');mkdirSync(dir,{recursive:true});
-    const escaped=(s:string)=>'"'+s.replace(/[%\\"]/g,c=>c==='%'?'%%':'\\'+c)+'"';
-    writeFileSync(join(dir,service+'.service'),`[Service]\nType=oneshot\nEnvironment=${Object.entries(env).map(([k,v])=>escaped(k+'='+v)).join(' ')}\nExecStart=${args.map(escaped).join(' ')}\n`);
-    writeFileSync(join(dir,service+'.timer'),'[Timer]\nOnBootSec=30\nOnUnitActiveSec=60\n[Install]\nWantedBy=timers.target\n');
-    spawnSync('systemctl',['--user','daemon-reload'],{stdio:'ignore'});
-    return spawnSync('systemctl',['--user','enable','--now',service+'.timer'],{stdio:'ignore'}).status===0?'systemd':'systemd-configured-not-running';
-  }
-  return 'hooks-only';
 }
 export function uninstallCapture(home=homedir()) {
   const config=readCaptureConfig();if(!config)return {installed:false};
-  if(process.platform==='darwin'){
-    spawnSync('launchctl',['bootout','gui/'+process.getuid!()+'/'+service],{stdio:'ignore'});
-    try{unlinkSync(join(home,'Library/LaunchAgents',service+'.plist'));}catch{}
-  } else if(process.platform==='linux'){
-    spawnSync('systemctl',['--user','disable','--now',service+'.timer'],{stdio:'ignore'});
-    for(const ext of ['service','timer'])try{unlinkSync(join(home,'.config/systemd/user',service+'.'+ext));}catch{}
-  }
+  // Disable first so an existing worker cannot start another capture pass.
+  atomicJson(join(captureDir(),'config.json'),{...config,disabled:true});
+  removeLegacyService(home);
   if((config.harnesses??['claude-code','codex']).includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),[],null);
   if((config.harnesses??['claude-code','codex']).includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),[],null);
   // Stopping collection preserves queued data for an authenticated retry.
