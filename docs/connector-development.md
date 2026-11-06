@@ -177,6 +177,11 @@ needs an independent source inventory under the connection's actual identity:
 - Enumerate every authorized container, including archived containers. Exhaust
   cursors for history, replies and attachments; an empty or short page is not an
   end marker. Keep a durable per-page checkpoint and honor `Retry-After`.
+- Where the provider supplies child counts, reconcile completed cursor chains
+  against distinct captured child IDs. For Slack threads, exclude the parent
+  from the reply count and retain the parent's observation time. Replies newer
+  than the capture cutoff can explain a count difference; record that case
+  separately instead of silently accepting a mismatch or expanding the cutoff.
 - Cross-check alternate discovery surfaces such as pinned items, container tabs,
   attached canvases and linked lists against the primary inventory. Record absent
   scopes and API permission failures explicitly; they do not prove an empty
@@ -215,3 +220,11 @@ subsequent scheduled run does not create a false missing-receipt denominator.
 Record semantic parser checks separately from exact transport hashes: a second
 PDF extractor can expose broken words or reading order, but its own layout
 artifacts also need classification against the source page.
+
+Test searchable tail content separately from stored-document equality. Tokenize
+the complete source text before selecting query terms by their offsets: slicing
+at a preview boundary can cut a word and manufacture a false search failure.
+Keep non-lexical tails explicitly accounted for by exact content comparison.
+Distinguish a missing indexed term from a matching document ranked outside the
+result limit, and distinguish a scoped server-side probe from authenticated user
+retrieval. Neither an index-only query nor stored text proves the latter.
