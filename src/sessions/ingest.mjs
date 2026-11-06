@@ -49,10 +49,17 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
       if (onStored) await onStored(principal, batch);
       return {batchId, eventCount: batch.events.length, stored: true};
     },
-    async getBatch(principal, {harness, installationId, sessionId, batchId}) {
+    // The author selects a record within the authenticated tenant; it grants no authority.
+    async getBatch(principal, {harness, installationId, sessionId, batchId, userId=principal?.userId}) {
+      sessionScope(principal);
+      if (!id(userId)) fail(400, 'Invalid author');
       if (!['claude-code','codex'].includes(harness) || !id(installationId) || !id(sessionId) || !/^[a-f0-9]{64}$/.test(batchId)) fail(400, 'Invalid receipt');
-      const data = await store.get(`${scope(principal)}/${harness}/${digest(installationId)}/${digest(sessionId)}/${batchId}.json.gz`);
-      return data ? JSON.parse(gunzipSync(data)) : null;
+      const data = await store.get(`${scope({...principal,userId})}/${harness}/${digest(installationId)}/${digest(sessionId)}/${batchId}.json.gz`);
+      if (!data) return null;
+      const batch = JSON.parse(gunzipSync(data,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}));
+      if (batch.owner?.tenantId!==principal.tenantId || batch.owner?.userId!==userId ||
+          batch.harness!==harness || batch.installationId!==installationId || batch.sessionId!==sessionId) throw new Error('Stored batch does not match its authorized scope');
+      return batch;
     }
   };
 }

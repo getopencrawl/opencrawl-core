@@ -21,3 +21,16 @@ test('agent command errors keep stdout JSON, stable exit codes and credential-fr
     }
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
+
+
+test('identity distinguishes organization setup, email verification and denied access', async () => {
+  const {identity}=await import('../src/cli.ts');
+  for(const [code,message] of [
+    ['ORGANIZATION_REQUIRED','Create or join a team at https://capture.example.com/organizations'],
+    ['EMAIL_VERIFICATION_REQUIRED','Verify your email address'],
+    ['UNKNOWN','This account cannot access the deployment'],
+  ]) {
+    const fetcher=(async()=>Response.json({schemaVersion:1,error:{code}},{status:403})) as unknown as typeof fetch;
+    await expect(identity('https://capture.example.com',fetcher,'fixture-token')).rejects.toThrow(message);
+  }
+});
