@@ -250,7 +250,19 @@ def parent_loss(dist, directory):
         assert os.waitstatus_to_exitcode(status) == 0
         assert queued.read_bytes() == raw
         assert set(processes()) == {1}
-        return {'parentLossExit': True, 'parentLossExitSeconds': round(time.monotonic() - started, 2),
+        # PID 1 may itself be the real harness; do not reject that valid owner.
+        env = {**os.environ, 'OPENCRAWL_CONFIG_HOME': str(root / 'config'),
+               'OPENCRAWL_NO_UPDATE': '1', 'OPENCRAWL_SESSIONS_TOKEN': 'synthetic-process-ownership-fixture'}
+        pid1_child = subprocess.Popen([str(dist / 'linux-x64/bin/opencrawl'), 'collect', 'worker'],
+                                     env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            until(lambda: lock.exists() and lock.read_text() == str(pid1_child.pid), 5)
+            assert processes()[pid1_child.pid][1] == 1
+        finally:
+            pid1_child.terminate()
+            pid1_child.wait(timeout=5)
+        assert set(processes()) == {1}
+        return {'pid1HarnessAccepted': True, 'parentLossExit': True, 'parentLossExitSeconds': round(time.monotonic() - started, 2),
                 'parentLossQueueRetained': True, 'adoptedChildReapedByTestInit': True}
     finally:
         for pid in (owner, worker):

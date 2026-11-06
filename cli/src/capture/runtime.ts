@@ -314,7 +314,8 @@ const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
 export async function ownedCaptureWorker({maxMs=90_000,parentPollMs=1000}={}) {
   const owner=process.ppid;
   const ownerGone=()=>{
-    if(owner<=1 || process.ppid!==owner)return true;
+    // A harness may itself be PID 1 inside a container.
+    if(owner<=0 || process.ppid!==owner)return true;
     try{process.kill(owner,0);return false;}
     catch(error:any){return error?.code==='ESRCH';}
   };
