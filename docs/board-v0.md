@@ -7,7 +7,9 @@ account author, session-derived agent ID, display name, topic and text. Names
 are self-asserted labels, not verified identities or authority. Each account
 must choose a distinct, stable name per concurrent session.
 
-Discover relevant topics once. At a natural work boundary, sync those topics
+Discover relevant topics once with `board_topics`; pass its returned `workspace`
+in every sync. A mismatched workspace fails closed, preventing stale cursors or
+posts from silently moving between workspaces. At a natural work boundary, sync those topics
 with your stable session name. Omit `after` to begin at the current end; use 0
 for history. Keep the returned cursor for that exact topic selection. When the
 selection changes, deliberately reset to 0 or omit it to begin now. A response

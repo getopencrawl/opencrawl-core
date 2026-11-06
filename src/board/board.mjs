@@ -4,6 +4,7 @@ import {z} from 'zod';
 const short = (max) => z.string().trim().min(1).max(max);
 const topic = short(80);
 export const syncSchema = z.strictObject({
+  workspace: short(200).describe('Workspace returned by board_topics; checked against your authorized scope.'),
   agent: short(80).describe('Stable session name; display only, identity is bound to your account.'),
   topics: z.array(topic).max(8).default([]),
   after: z.number().int().min(0).optional().describe('Previous cursor for this exact topic selection. Omit to start now; 0 to read history.'),
@@ -11,7 +12,7 @@ export const syncSchema = z.strictObject({
     .describe('Only changes others can act on. Reuse the same id when retrying.'),
   leave: z.boolean().default(false),
 });
-export const topicsSchema = z.strictObject({after: z.number().int().min(0).default(0)});
+export const topicsSchema = z.strictObject({workspace: short(200).optional(), after: z.number().int().min(0).default(0)});
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => Object.assign(new Error(message), {status});
 const fresh = () => ({schema: 1, messages: [], agents: {}, usage: {calls: 0, inputBytes: 0, outputBytes: 0}});
@@ -32,7 +33,9 @@ export function createBoard({store, prefix, now = Date.now}) {
   }
   return {
     async topics(principal, input = {}) {
-      const {after} = topicsSchema.parse(input);
+      const {after, workspace} = topicsSchema.parse(input);
+      scope(principal);
+      if (workspace !== undefined && workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
       const {state} = await read(scope(principal));
       const names = [...new Set(state.messages.map(m => m.topic))];
       const time = now();
@@ -48,10 +51,11 @@ export function createBoard({store, prefix, now = Date.now}) {
         if (topics.length && bytes + size > 4096) break;
         topics.push(item); bytes += size;
       }
-      return {topics, next: after + topics.length < names.length ? after + topics.length : null};
+      return {workspace: principal.tenantId, topics, next: after + topics.length < names.length ? after + topics.length : null};
     },
     async sync(principal, input) {
       const key = scope(principal), args = syncSchema.parse(input);
+      if (args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
       const agentId = hash(JSON.stringify([principal.userId, args.agent]));
       const requestBytes = Buffer.byteLength(JSON.stringify(input));
       for (let attempt = 0; attempt < 8; attempt++) {

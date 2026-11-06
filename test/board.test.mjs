@@ -20,18 +20,19 @@ const post = (id, text = 'Taking auth refresh') => ({id, topic: 'auth', text});
 
 test('durable scope, authenticated authors, retries and presence expiration', async t => {
   const f = await fixture(t), board = f.make();
-  await assert.rejects(board.sync({}, {agent: 'codex'}), /scope/);
-  await assert.rejects(board.sync(a, {agent: 'codex', tenantId: 'b'}));
-  const first = await board.sync(a, {agent: 'codex', topics: ['auth'], posts: [post('1')]});
+  await assert.rejects(board.sync({}, {workspace: a.tenantId, agent: 'codex'}), /scope/);
+  await assert.rejects(board.sync(a, {workspace: a.tenantId, agent: 'codex', tenantId: 'b'}));
+  const first = await board.sync(a, {workspace: a.tenantId, agent: 'codex', topics: ['auth'], posts: [post('1')]});
   assert.deepEqual(first.accepted, [1]);
-  assert.deepEqual((await board.sync(a, {agent: 'codex', posts: [post('1')]})).accepted, [1]);
-  await assert.rejects(board.sync(a, {agent: 'codex', posts: [post('1', 'Changed')]}), /different content/);
+  assert.deepEqual((await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [post('1')]})).accepted, [1]);
+  await assert.rejects(board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [post('1', 'Changed')]}), /different content/);
   assert.deepEqual((await board.topics(b)).topics, []);
-  assert.deepEqual((await board.sync(b, {agent: 'codex', topics: ['auth'], after: 0})).messages, []);
-  const other = await board.sync({...a, userId: 'other'}, {agent: 'codex', topics: ['auth'], after: 0});
+  await assert.rejects(board.sync(a, {workspace: b.tenantId, agent: 'forged'}), /scope mismatch/);
+  assert.deepEqual((await board.sync(b, {workspace: b.tenantId, agent: 'codex', topics: ['auth'], after: 0})).messages, []);
+  const other = await board.sync({...a, userId: 'other'}, {workspace: a.tenantId, agent: 'codex', topics: ['auth'], after: 0});
   assert.notEqual(other.agent, first.agent);
   assert.equal(other.messages[0].text, 'Taking auth refresh');
-  assert.equal((await f.restart().sync(a, {agent: 'reader', topics: ['auth'], after: 0})).messages.length, 1);
+  assert.equal((await f.restart().sync(a, {workspace: a.tenantId, agent: 'reader', topics: ['auth'], after: 0})).messages.length, 1);
   assert.ok((await f.make().topics(a)).topics[0].active.length);
   f.later();
   assert.deepEqual((await f.make().topics(a)).topics[0].active, []);
@@ -39,19 +40,19 @@ test('durable scope, authenticated authors, retries and presence expiration', as
 
 test('concurrent clients do not lose writes; bounded deltas eventually deliver each message once', async t => {
   const f = await fixture(t), boards = Array.from({length: 6}, () => f.make());
-  await Promise.all(boards.map((board, i) => board.sync(a, {agent: 'writer-' + i, posts: [post(String(i), 'x'.repeat(512))]})));
+  await Promise.all(boards.map((board, i) => board.sync(a, {workspace: a.tenantId, agent: 'writer-' + i, posts: [post(String(i), 'x'.repeat(512))]})));
   const board = f.make(); let cursor = 0, found = [];
   for (let i = 0; i < 10; i++) {
-    const result = await board.sync(a, {agent: 'reader', topics: ['auth'], after: cursor});
+    const result = await board.sync(a, {workspace: a.tenantId, agent: 'reader', topics: ['auth'], after: cursor});
     assert.ok(result.messages.length <= 5);
     assert.ok(Buffer.byteLength(JSON.stringify(result.messages)) < 4200);
     found.push(...result.messages.map(m => m.id)); cursor = result.cursor;
     if (!result.more) break;
   }
   assert.deepEqual(found, [1,2,3,4,5,6]);
-  assert.deepEqual((await board.sync(a, {agent: 'reader', topics: ['auth'], after: cursor})).messages, []);
-  assert.deepEqual((await board.sync(a, {agent: 'fresh-reader', topics: ['auth']})).messages, []);
-  await assert.rejects(board.sync(a, {agent: 'reader', after: 100}), /Cursor/);
+  assert.deepEqual((await board.sync(a, {workspace: a.tenantId, agent: 'reader', topics: ['auth'], after: cursor})).messages, []);
+  assert.deepEqual((await board.sync(a, {workspace: a.tenantId, agent: 'fresh-reader', topics: ['auth']})).messages, []);
+  await assert.rejects(board.sync(a, {workspace: a.tenantId, agent: 'reader', after: 100}), /Cursor/);
 });
 
 test('S3 CAS signs the expected condition, rejects collisions and bounds reads', async () => {
@@ -95,8 +96,8 @@ test('real MCP clients exchange scoped messages and revoked credentials cannot r
     assert.ok(!result.isError, JSON.stringify(result));
     return JSON.parse(result.content[0].text);
   };
-  await call(clients[0], 'board_sync', {agent: 'codex', posts: [post('mcp')]});
-  assert.equal((await call(clients[0], 'board_sync', {agent: 'claude', topics: ['auth'], after: 0})).messages.length, 1);
+  await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'codex', posts: [post('mcp')]});
+  assert.equal((await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'claude', topics: ['auth'], after: 0})).messages.length, 1);
   assert.deepEqual((await call(clients[1], 'board_topics', {})).topics, []);
   revoked = true;
   await assert.rejects(call(clients[0], 'board_topics', {}));
