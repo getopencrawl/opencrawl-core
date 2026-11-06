@@ -6,20 +6,26 @@ const id = value => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test
 const fail = (status, message) => {throw Object.assign(new Error(message), {status});};
 export const MAX_BATCH_BYTES = 16 * 1024 * 1024;
 export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
+const MAX_STORED_BATCH_BYTES = MAX_BATCH_BYTES + 1024 * 1024;
 
 /** Principal MUST come from the deployment's authentication adapter, never the upload. */
 export function sessionScope(principal) {
   if (!principal || !id(principal.tenantId) || !id(principal.userId)) fail(401, 'Authentication required');
+  if (principal.captureAccess !== undefined && principal.captureAccess !== 'write') fail(403, 'Unknown capture access');
   return `tenants/${digest(principal.tenantId)}/users/${digest(principal.userId)}`;
 }
 export function createSessionIngest({store, prefix = 'capture-v1', onStored=undefined}) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = principal => `${prefix}/${sessionScope(principal)}`;
+  // Existence checks must not download attachment bodies on every batch retry.
+  const exists = (key, maxBytes) => store.has ? store.has(key, {maxBytes}) : store.get(key, {maxBytes}).then(Boolean);
   return {
     async putAttachment(principal, hash, bytes) {
-      if (!/^[a-f0-9]{64}$/.test(hash) || digest(bytes) !== hash) fail(400, 'Attachment digest mismatch');
+      const keyPrefix = scope(principal);
+      if (!(bytes instanceof Uint8Array)) fail(400, 'Invalid attachment bytes');
       if (bytes.length > MAX_ATTACHMENT_BYTES) fail(413, 'Attachment exceeds limit');
-      await store.put(`${scope(principal)}/attachments/${hash}`, bytes, 'application/octet-stream');
+      if (!/^[a-f0-9]{64}$/.test(hash) || digest(bytes) !== hash) fail(400, 'Attachment digest mismatch');
+      await store.put(`${keyPrefix}/attachments/${hash}`, bytes, 'application/octet-stream');
       return {sha256: hash, size: bytes.length};
     },
     async putBatch(principal, batch) {
@@ -28,20 +34,25 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
           !['claude-code', 'codex'].includes(batch.harness) || !Array.isArray(batch.events) || !batch.events.length ||
           !['cli', 'desktop', 'cloud', 'subagent', 'unknown'].includes(batch.origin)) fail(400, 'Invalid capture batch');
       if (batch.owner?.userId !== principal.userId || batch.owner?.tenantId !== principal.tenantId) fail(403, 'Capture owner does not match signed-in account');
-      if (batch.events.length > 1000 || !batch.events.every(e => id(e.id) && typeof e.kind === 'string')) fail(400, 'Invalid events');
+      if (batch.events.length > 1000 || !batch.events.every(e => e && id(e.id) && typeof e.kind === 'string')) fail(400, 'Invalid events');
       if (!Array.isArray(batch.attachments) || batch.attachments.length > 1000) fail(400, 'Invalid attachments');
-      for (const attachment of batch.attachments) {
-        if (attachment.status === 'captured') {
-          if (!/^[a-f0-9]{64}$/.test(attachment.sha256)) fail(400, 'Invalid attachment digest');
-          if (!await store.get(`${keyPrefix}/attachments/${attachment.sha256}`)) fail(409, 'Attachment not uploaded');
-        } else if (!['missing', 'too_large', 'remote_reference'].includes(attachment.status)) fail(400, 'Invalid attachment status');
-      }
       const serialized = JSON.stringify(batch);
       if (Buffer.byteLength(serialized) > MAX_BATCH_BYTES) fail(413, 'Batch exceeds limit');
+      const attachments = new Set();
+      for (const attachment of batch.attachments) {
+        if (!attachment || typeof attachment !== 'object') fail(400, 'Invalid attachment');
+        if (attachment.status === 'captured') {
+          if (!/^[a-f0-9]{64}$/.test(attachment.sha256)) fail(400, 'Invalid attachment digest');
+          attachments.add(attachment.sha256);
+        } else if (!['missing', 'too_large', 'remote_reference'].includes(attachment.status)) fail(400, 'Invalid attachment status');
+      }
+      for (const hash of attachments) {
+        if (!await exists(`${keyPrefix}/attachments/${hash}`, MAX_ATTACHMENT_BYTES)) fail(409, 'Attachment not uploaded');
+      }
       const batchId = digest(serialized);
       const key = `${keyPrefix}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/${batchId}.json.gz`;
       // Immutable content-addressed batches: retries and simultaneous delivery do not duplicate or overwrite events.
-      if (!await store.get(key)) {
+      if (!await exists(key, MAX_STORED_BATCH_BYTES)) {
         const record = {...batch, owner: {tenantId: principal.tenantId, userId: principal.userId,
           name: principal.name ?? null, email: principal.email ?? null}, receivedAt: new Date().toISOString()};
         await store.put(key, gzipSync(JSON.stringify(record)), 'application/gzip');
@@ -52,9 +63,10 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
     // The author selects a record within the authenticated tenant; it grants no authority.
     async getBatch(principal, {harness, installationId, sessionId, batchId, userId=principal?.userId}) {
       sessionScope(principal);
+      if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot read batches');
       if (!id(userId)) fail(400, 'Invalid author');
       if (!['claude-code','codex'].includes(harness) || !id(installationId) || !id(sessionId) || !/^[a-f0-9]{64}$/.test(batchId)) fail(400, 'Invalid receipt');
-      const data = await store.get(`${scope({...principal,userId})}/${harness}/${digest(installationId)}/${digest(sessionId)}/${batchId}.json.gz`);
+      const data = await store.get(`${scope({...principal,userId})}/${harness}/${digest(installationId)}/${digest(sessionId)}/${batchId}.json.gz`, {maxBytes: MAX_STORED_BATCH_BYTES});
       if (!data) return null;
       const batch = JSON.parse(gunzipSync(data,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}));
       if (batch.owner?.tenantId!==principal.tenantId || batch.owner?.userId!==userId ||

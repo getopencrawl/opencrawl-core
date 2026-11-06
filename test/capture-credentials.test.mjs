@@ -31,6 +31,8 @@ test('self-hosted delegation uploads under its fixed owner but cannot read, sear
  assert.equal((await request('batches',issued.token,'POST',batch)).status,200);
  assert.equal((await request('batches',issued.token,'POST',{...batch,owner:{...owner,tenantId:'forged'}})).status,403);
  for(const [path,method] of [['search','GET'],['batches','GET'],['credentials','POST'],['credentials/'+issued.id,'DELETE']])assert.equal((await request(path,issued.token,method)).status,403);
+ assert.equal((await fetch(base+'/api/onboarding',{headers:{authorization:'Bearer '+issued.token}})).status,403);
+ assert.equal((await fetch(base+'/api/onboarding',{headers:{authorization:'Bearer '+token}})).status,200);
  principal={...owner,userId:'new-owner'};assert.equal((await request('identity',issued.token)).status,401);principal=owner;
  assert.equal((await request('credentials/'+issued.id,token,'DELETE')).status,200);
  assert.equal((await request('identity',issued.token)).status,401);
