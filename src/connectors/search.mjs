@@ -69,7 +69,9 @@ export function createConnectorSearch(options) {
       while (hits.length < limit && examined < 1000 && more) {
         const result = await request('/_search', {body: JSON.stringify({size: 100, track_total_hits: false,
           query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: [...byConnection.keys()]}}, {terms: {[f('kind')]: SEARCHABLE_KINDS}}, {term: {[f('deleted')]: false}}, ...(id ? [{term:{id}}] : [])], must: query.trim() ? [{multi_match: {query, fields: ['title^2', 'text', f('heading')], ...(match === 'phrase' ? {type:'phrase'} : {operator: match === 'all' ? 'and' : 'or'})}}] : [{match_all:{}}]}},
-          sort: [{_score: 'desc'}, {[f('connectionId')]: 'asc'}, {[f('sourceId')]: 'asc'}], ...(after ? {search_after: after} : {})})});
+          // Native source IDs can collide across kinds (for example a GitHub
+          // issue and review). The envelope ID makes search_after a total order.
+          sort: [{_score: 'desc'}, {[f('connectionId')]: 'asc'}, {[f('sourceId')]: 'asc'}, {id: 'asc'}], ...(after ? {search_after: after} : {})})});
         const candidates = result?.hits?.hits;
         if (!Array.isArray(candidates)) throw new Error('Invalid connector search response');
         for (const hit of candidates) {
@@ -111,8 +113,10 @@ export function createConnectorSearch(options) {
         // Preserve raw hit fields only after the same visibility checks as normal search.
         // Totals and max_score describe unfiltered candidates, so omit them.
         if (raw) responses.push({took: result.took, timed_out: result.timed_out, _shards: result._shards, hits: {hits: visible}});
-        examined += candidates.length; more = candidates.length === 100; after = candidates.at(-1)?.sort;
-        if (more && !after) throw new Error('Missing connector search cursor');
+        examined += candidates.length; more = candidates.length === 100;
+        const next = candidates.at(-1)?.sort;
+        if (more && (!Array.isArray(next) || JSON.stringify(next) === JSON.stringify(after))) throw new Error('Missing or non-advancing connector search cursor');
+        after = next;
       }
       return raw ? {responses, examined, truncated: more || capped} : {hits, examined, truncated: more || capped};
     },

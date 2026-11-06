@@ -6,19 +6,22 @@ import {tmpdir} from 'node:os';
 import {createSessionIngest,createCaptureHandler} from '../../src/sessions/ingest.mjs';
 import {createLocalSessionStore} from '../../src/sessions/local-store.mjs';
 import {installCapture} from '../src/capture/install.ts';
-import {captureDir,readCaptureConfig,flushCaptures} from '../src/capture/runtime.ts';
+import {captureDir,readCaptureConfig,flushCaptures,refreshCaptureIdentity} from '../src/capture/runtime.ts';
 import {hash} from '../src/capture/parse.ts';
 
 test('existing capture config and queue follow the authenticated team without reinstall; server owns authorization',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-capture-auth-')),saved={...process.env};
  let principal={tenantId:'personal:alice',userId:'alice',name:'Alice',email:'alice@example.net'},authorized=true,loseResponse=true;
  const token='capture-auth-test-token',store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest({store});
- const payloads:string[]=[];
+ const payloads:string[]=[],attachmentAuthors:string[]=[];
+ let duringIdentity:(()=>void)|undefined;
  const handler=createCaptureHandler({ingest,authenticate:async (req:IncomingMessage)=>{
   if(!authorized||req.headers.authorization!=='Bearer '+token)throw Object.assign(Error('Sign in required'),{status:401});
   return principal;
  }});
  const server=createServer(async(req,res)=>{
+  if(req.url==='/api/sessions/identity')duringIdentity?.();
+  if(req.url?.startsWith('/api/sessions/attachments/'))attachmentAuthors.push(principal.userId);
   if(req.url==='/api/sessions/batches'&&req.method==='POST'&&authorized){
    const chunks=[];for await(const c of req)chunks.push(c);const body=Buffer.concat(chunks).toString();payloads.push(body);
    try{
@@ -41,7 +44,10 @@ test('existing capture config and queue follow the authenticated team without re
   const batch={schemaVersion:1,owner:installed.owner,installationId:installed.installationId,sessionId:'session',harness:'codex',origin:'cli',events:[{id:'event',kind:'message',data:{role:'user',content:'shared knowledge'}}],attachments:[{status:'captured',sha256:sha}]};
   const queue=join(captureDir(),'queue','old.json');writeFileSync(queue,JSON.stringify(batch));
   principal={...principal,tenantId:'org_team'};
+  // A login/credential change while identity is in flight cannot switch uploads.
+  duringIdentity=()=>{process.env.OPENCRAWL_SESSIONS_TOKEN='different-user-token';};
   expect(await flushCaptures()).toEqual({uploaded:1});
+  duringIdentity=undefined;process.env.OPENCRAWL_SESSIONS_TOKEN=token;
   expect(payloads).toHaveLength(2);expect(payloads[0]).toBe(payloads[1]);
   const sent=JSON.parse(payloads[0]);expect(sent.owner).toEqual(principal);
   const receipt={...sent,batchId:hash(payloads[0]),userId:principal.userId};
@@ -61,12 +67,25 @@ test('existing capture config and queue follow the authenticated team without re
   await expect(flushCaptures()).rejects.toMatchObject({code:'CAPTURE_UPLOAD_FAILED'});
   expect(JSON.parse(readFileSync(queue,'utf8'))).toEqual(batch);
   authorized=true;principal={...principal,userId:'bob',name:'Bob'};
-  await expect(flushCaptures()).rejects.toMatchObject({code:'CAPTURE_UPLOAD_FAILED'});
+  const batchesBefore=payloads.length,attachmentsBefore=attachmentAuthors.length;
+  await expect(flushCaptures()).rejects.toMatchObject({code:'CAPTURE_OWNER_MISMATCH'});
+  expect(payloads).toHaveLength(batchesBefore);expect(attachmentAuthors).toHaveLength(attachmentsBefore);
   expect(JSON.parse(payloads.at(-1)!).owner.userId).toBe('alice');
   expect(JSON.parse(readFileSync(queue,'utf8'))).toEqual(batch);
   // Reinstall uses current authentication too, retaining installation and cursors.
   expect((await installCapture(api,options)).installationId).toBe(installed.installationId);
   expect(readCaptureConfig()!.owner.userId).toBe('bob');
   expect(readFileSync(cursor,'utf8')).toBe('{"offset":42}');
+  // An in-flight identity response must not undo a concurrent uninstall/config edit.
+  const snapshot=readCaptureConfig()!;
+  const disabled={...snapshot,disabled:true,command:['new-command']};
+  duringIdentity=()=>writeFileSync(join(captureDir(),'config.json'),JSON.stringify(disabled));
+  await refreshCaptureIdentity(snapshot);
+  expect(readCaptureConfig()).toEqual({...disabled,owner:principal});
+  // A new deployment enrollment must never receive the old deployment's identity.
+  const replacement={...disabled,api:'https://other.example'};
+  duringIdentity=()=>writeFileSync(join(captureDir(),'config.json'),JSON.stringify(replacement));
+  await expect(refreshCaptureIdentity(snapshot)).rejects.toMatchObject({code:'CAPTURE_CONFIG_CHANGED'});
+  expect(readCaptureConfig()).toEqual(replacement);
  }finally{await new Promise<void>(r=>server.close(()=>r()));for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k];Object.assign(process.env,saved);rmSync(dir,{recursive:true,force:true});}
 });

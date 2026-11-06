@@ -26,7 +26,8 @@ or credentials belong in workflow arguments, results or history.
 
 `captureSlackMessagesV1` uses the shared source worker, activity retries,
 durable timers and continuation after 100 steps. Checkpoints preserve separate
-65-second history/reply pacing and longer `Retry-After` values. The runtime
+65-second history/reply pacing and longer `Retry-After` values. Reservations are
+saved before requests, so transport failures and activity retries retain pacing. The runtime
 rechecks connection identity and bucket scope before writes. API failures remain
 explicit failed-resource counts; a workflow with such failures does not succeed.
 Operators must coordinate independent audits with capture because the provider's
@@ -40,6 +41,14 @@ always wins. This policy can delay an edit seen only in search until the next
 canonical pass; operate and monitor capture accordingly. Never choose the longest
 body as an edit-ordering rule.
 
+Message capture also keeps `capture/messages-v1/catalog.json`, recording public
+channel identities before publishing them. After a complete channel enumeration,
+it emits non-public metadata for previously observed channels that are no longer
+returned; a partial enumeration never does so. This works without file capture.
+The catalog begins with channels observed by this version; it cannot infer
+identities missing before the catalog existed. Before upgrading an existing
+index, seed the historical identities using the portable upgrade operation below.
+
 This capture is a snapshot, not a deletion feed. Incremental absence does not
 delete a message. Current channel visibility and explicit resource suppression
 still gate search. File bodies require the separate file-capture operation.
@@ -47,6 +56,42 @@ API scopes, retention, inaccessible histories, pagination failures, and messages
 newer than the cutoff must appear in coverage reports. A successful workflow
 alone does not prove completeness: reconcile its API page identities and all
 readable source fields with raw objects, index records and authenticated retrieval.
+
+## Upgrade existing access catalogs
+
+Serialize catalog seeding with file and message captures for the connection.
+Use the operator-trusted binding and its scoped store. Enumerate all existing
+indexed channel and file identities for that binding, with exhaustive pagination
+and scope checks, or derive the same identities from retained `channels` and
+`file_documents` raw envelopes. Include previously unavailable identities: the
+catalog remembers observations; it does not grant access.
+
+```js
+import {seedSlackSourceCatalog} from '@1patch/opencrawl-core/connectors/slack-source-messages';
+
+await seedSlackSourceCatalog({
+  binding, store,
+  channelIds, // Native IDs from channel sourceId/channel_id metadata.
+  fileShares, // [{fileId, channelId}] from file manifests or raw file records.
+  checkActive, // Revalidate the operator-authorized binding before each write.
+});
+```
+
+The same helper is exported from `@1patch/opencrawl-core/connectors/slack-source`.
+It validates both stored catalogs against the binding, unions their existing
+channel/share identities with the supplied ones, and writes both catalogs. It
+accepts up to 100,000 input channel IDs and 100,000 input share pairs; each catalog
+is bounded at 16 MiB. It never deletes source/index data or marks a resource
+public. Retry the same operation after an interrupted write: already committed
+identities are preserved. Do not run it concurrently with capture, because the
+two catalog writes are not a cross-object transaction.
+
+Resume capture and indexing after seeding. Verify that a complete current channel
+enumeration has landed, indexed metadata agrees with current visibility, and
+removed channels cannot be retrieved. File capture separately reconciles known
+file shares against current `files.info` results. Existing catalogs alone may
+omit identities published by older versions, so they are not sufficient input
+for an upgrade audit without checking the index or retained raw records.
 
 ## Refresh known messages
 

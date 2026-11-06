@@ -51,3 +51,74 @@ test('inaccessible history is counted as incomplete rather than silently accepte
  await h.capture.step(input);await h.capture.step(input);const result=await h.capture.step(input);assert.equal(result.done,true);assert.equal(result.failed,1);
  assert.equal([...h.objects.keys()].some(k=>k.includes('stream=canonical_messages/')),false);
 });
+
+test('history request reservations survive transport and server failures without advancing the cursor',async()=>{
+ for(const failure of ['transport','server']) {
+  let attempts=0;
+  const h=setup(method=>{
+   if(method==='conversations.list')return ok({channels:[{id:'C1',is_private:false}]});
+   if(++attempts===1){if(failure==='transport')throw Error('lost response');return {status:503};}
+   return ok({messages:[]});
+  });
+  await h.capture.step(input);
+  await assert.rejects(h.capture.step(input),/lost response|Transient/);
+  assert.equal((await h.restart().step(input)).waitMs,65000);
+  assert.equal(attempts,1);
+  h.advance(64999);assert.equal((await h.restart().step(input)).waitMs,1);
+  h.advance(1);await h.restart().step(input);
+  assert.equal(attempts,2);assert.equal(h.calls.at(-1).query.cursor,undefined);
+  assert.equal((await h.restart().step(input)).done,true);
+ }
+});
+
+test('message-only captures revoke missing public channels only after a complete enumeration',async()=>{
+ let run=1;
+ const h=setup((method,q)=>{
+  if(method==='conversations.list')return run===1
+   ?ok({channels:[{id:'C1',is_private:false},{id:'C2',is_private:false}]})
+   :ok({channels:q.cursor?[{id:'C2',is_private:false}]:[],response_metadata:{next_cursor:q.cursor?'':'last'}});
+  return ok({messages:[]});
+ });
+ for(let i=0;i<10;i++){const result=await h.restart().step(input);if(result.done)break;h.advance();}
+ run=2;h.advance();
+ const next={...input,runId:'next'};
+ const records=()=>[...h.objects].filter(([key])=>key.includes('stream=channels/')&&key.includes('sync=next/'))
+  .flatMap(([,bytes])=>gunzipSync(bytes).toString().trim().split('\n').map(line=>JSON.parse(line)._airbyte_data));
+ await h.restart().step(next);
+ assert.deepEqual(records(),[],'a partial enumeration cannot revoke previously public channels');
+ h.advance();await h.restart().step(next);
+ assert.ok(records().some(channel=>channel.id==='C1'&&channel.is_private===true));
+ assert.ok(records().some(channel=>channel.id==='C2'&&channel.is_private===false));
+});
+
+test('a channel published before a failed checkpoint is still remembered for later revocation',async()=>{
+ let channels=[{id:'C1',is_private:false}];
+ const h=setup(()=>ok({channels}));
+ const put=h.store.put;let saved=0;
+ h.store.put=async(key,bytes)=>{
+  if(key.endsWith('/history/state.json')&&++saved===2)throw Error('checkpoint unavailable');
+  await put(key,bytes);
+ };
+ await assert.rejects(h.capture.step(input),/checkpoint unavailable/);
+ assert.ok([...h.objects.keys()].some(key=>key.includes('stream=channels/')));
+ channels=[];h.advance();await h.restart().step({...input,runId:'after-failure'});
+ const revoked=[...h.objects].filter(([key])=>key.includes('stream=channels/')&&key.includes('sync=after-failure/'))
+  .flatMap(([,bytes])=>gunzipSync(bytes).toString().trim().split('\n').map(line=>JSON.parse(line)._airbyte_data));
+ assert.deepEqual(revoked,[{id:'C1',is_private:true}]);
+});
+
+test('same-run retry preserves catalog-only channels after raw publication and a failed checkpoint',async()=>{
+ let channels=[{id:'C1',is_private:false}];
+ const h=setup(()=>ok({channels}));
+ const put=h.store.put;let saved=0;
+ h.store.put=async(key,bytes)=>{
+  if(key.endsWith('/history/state.json')&&++saved===2)throw Error('checkpoint unavailable');
+  await put(key,bytes);
+ };
+ await assert.rejects(h.capture.step(input),/checkpoint unavailable/);
+ channels=[];h.advance();await h.restart().step(input);
+ assert.deepEqual(JSON.parse(h.objects.get(binding.rawPrefix+'capture/messages-v1/catalog.json')).channels,['C1']);
+ const records=[...h.objects].filter(([key])=>key.includes('stream=channels/'))
+  .flatMap(([,bytes])=>gunzipSync(bytes).toString().trim().split('\n').map(line=>JSON.parse(line)._airbyte_data));
+ assert.deepEqual(records.map(channel=>[channel.id,channel.is_private]),[['C1',false],['C1',true]]);
+});
