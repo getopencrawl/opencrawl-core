@@ -1,3 +1,4 @@
+import {gunzipSync} from 'node:zlib';
 import {realmIndex} from '../src/search/realm.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
@@ -38,6 +39,14 @@ test('fixed-scope indexing, checkpoints, crash replay and poison records cannot 
  const key=[...store.data.keys()].find(k=>k.startsWith(prefix+'/'+sessionScope(owner))&&k.endsWith('.json.gz'));
  const forged={...batch(otherTenant),receivedAt:new Date().toISOString()};
  assert.throws(()=>batchDocuments({prefix,key,batch:forged,principal:otherTenant}),/authorized scope/);
+ // Long events become line-aware passages of at most 8000 characters, losing nothing.
+ const stored=JSON.parse(gunzipSync(store.data.get(key)));
+ const long=Array.from({length:900},(_,i)=>`row ${i}: `+'tool output '.repeat(i%12)).join('\n');
+ stored.events[0].data.content[0].text=long;
+ const parts=batchDocuments({prefix,key,batch:stored,principal:owner}).filter(d=>d.document.eventId==='same-event');
+ assert.ok(parts.length>1&&parts.every(d=>d.document.text.length<=8000));
+ assert.equal(parts.map(d=>d.document.text).join('\n'),long);
+ assert.deepEqual(parts.map(d=>d.document.chunk),parts.map((_,i)=>i));
  assert.throws(()=>createSessionPipeline({store,prefix,search}),/fixed single-tenant principal/);
 });
 

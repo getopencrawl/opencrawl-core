@@ -1,5 +1,6 @@
 import {gunzipSync} from 'node:zlib';
 import {digest,sessionScope,MAX_BATCH_BYTES} from './ingest.mjs';
+import {passages} from '../search/relevance.mjs';
 
 const HEX='[a-f0-9]{64}';
 export function sourceBatchIdentity(prefix,key) {
@@ -29,7 +30,9 @@ export function batchDocuments({prefix,key,batch,principal}) {
     if(typeof event.id!=='string'||!event.id||typeof event.kind!=='string')throw new Error('Malformed stored event');
     const texts=[],attachments=[],names=new Set();collect(event.data,texts,attachments,names);
     const text=texts.join('\n');
-    const chunks=text.match(/[\s\S]{1,16000}/gu)||[''];
+    // Focused passages split on line boundaries: a match points at a readable excerpt, and
+    // long events (tool output, pages) no longer dilute BM25 scores in one 16K block.
+    const chunks=passages(text,8000);
     for(let chunk=0;chunk<chunks.length;chunk++){
       const document={tenantId:principal.tenantId,userId:principal.userId,installationId:batch.installationId,sessionId:batch.sessionId,
         harness:batch.harness,origin:batch.origin,eventId:event.id,kind:event.kind,role:event.data?.role??null,
