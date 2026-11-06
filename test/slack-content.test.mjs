@@ -68,3 +68,17 @@ test('presentation-node fallback text remains available even with populated bloc
  const body=slackMessageText({blocks:[{type:'rich_text',fallback:'Accessible representation',elements:[{type:'rich_text_section',elements:[{type:'text',text:'Rendered content'}]}]}]});
  assert.ok(body.includes('Accessible representation'));assert.ok(body.includes('Rendered content'));
 });
+
+test('public message attribution and reaction labels survive without profile contacts or payloads',()=>{
+ const body=slackMessageText({text:'The complete message',username:'Custom sender',
+  bot_profile:{name:'Release assistant',token:'HIDDEN_BOT_TOKEN'},
+  user_profile:{display_name:'Ada Example',real_name:'Ada Fullname',name:'ada_example',first_name:'Ada',email:'HIDDEN_EMAIL',phone:'HIDDEN_PHONE'},
+  reactions:[{name:'release_ready',users:['HIDDEN_REACTOR']}],
+  root:{user_profile:{display_name:'Parent author'},reactions:[{name:'eyes'}],metadata:{secret:'HIDDEN_ROOT_METADATA'}},
+  metadata:{secret:'HIDDEN_MESSAGE_METADATA'}});
+ for(const text of ['The complete message','Custom sender','Release assistant','Ada Example','Ada Fullname','ada_example','Ada','Parent author',':release_ready:',':eyes:'])assert.ok(body.includes(text),text);
+ assert.ok(!body.includes('HIDDEN_'));
+ assert.equal(slackMessageText({text:'Ada',username:'Ada',user_profile:{display_name:'Ada'}}),'Ada');
+ assert.equal(slackMessageText({text:'Edited',username:'New sender'}),'Edited\nNew sender');
+ for(const data of [{user_profile:[]},{bot_profile:'bad'},{username:42},{reactions:[{name:42}]},{root:[]}])assert.throws(()=>slackMessageText(data),/Invalid Slack/);
+});

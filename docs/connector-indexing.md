@@ -18,9 +18,12 @@ Public channel names, topics and purposes are searchable as channel documents,
 under the same current-visibility checks as messages and files. Missing, private
 or suppressed channel metadata excludes both the channel and its content.
 
-The `slack-v5` normalizer includes fallback `text`, visible Block Kit and rich-text
+The `slack-v6` normalizer includes fallback `text`, visible Block Kit and rich-text
 content, menu option labels/descriptions/confirmation text, attachment
-text/fields/blocks/service attribution, and both file names and titles. It deduplicates mirrored
+text/fields/blocks/service attribution, and both file names and titles. It also
+includes message usernames, bot/profile name labels, parent-context attribution,
+and reaction emoji aliases. Profile contacts, reaction-user IDs and opaque
+metadata are excluded. It deduplicates mirrored
 fragments without treating a nonempty fallback or an ellipsis as proof of a
 complete body. Binary attachments and content behind links are not fetched.
 Unsupported future block structures need an explicit adapter update; arbitrary
@@ -32,15 +35,16 @@ Inline rich-text formatting preserves whole words and phrases; separate sections
 retain line boundaries. Link destinations remain searchable outside the rendered
 line. This also applies to quotes and preformatted text.
 
-On an existing organization realm, v5 adds an integer `connector.normalizerVersion`
-after validating tenant ownership and the previous mapping. New receipt keys force
-raw replay. At the same observation time and source authority, v5 messages replace
+On an existing organization realm, v5 introduced the integer `connector.normalizerVersion`
+after validating tenant ownership and the previous mapping. V6 uses that same
+mapping and new receipt keys to replay author/reaction labels. At the same
+observation time and source authority, a higher normalization version replaces
 the previous interpretation regardless of hash order. Older source observations
 cannot undo newer edits, and suppression remains sticky. Drain old writers, deploy
 the new worker, replay and verify all objects before claiming completion. Preserve
-old receipts and source objects; do not clear or recreate the shared realm. A
-rollback to an older writer requires coordinated replay verification because that
-writer does not know normalization-version ordering.
+old receipts and source objects; do not clear or recreate the shared realm.
+Rollback requires coordinated receipt and normalization-version verification;
+restoring earlier code alone does not restore earlier derived bodies.
 
 Pre-realm flat indexes still require the explicit realm migration described in
 [organization realms](organization-realms.md). Carry suppression records forward;

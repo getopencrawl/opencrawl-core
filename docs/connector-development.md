@@ -237,3 +237,11 @@ Check searchable document kinds as well as text extraction. Container names,
 topics and descriptions can be stored for permission checks yet excluded by a
 query's kind filter. Prove retrieval for each intended readable surface through
 the product adapter, retaining its current resource visibility checks.
+
+Include visible attribution in the field inventory. Slack author labels can live
+in `username`, `bot_profile.name` and the name fields of `user_profile`, including
+parent context on a broadcast. Reaction names provide readable emoji aliases.
+The message normalizer explicitly includes these public-message labels; it does
+not copy profile contact fields, reaction-user IDs or arbitrary metadata into the
+body. Verify this allowlist independently from block-text extraction, and replay
+existing raw records under a new interpretation version when it changes.

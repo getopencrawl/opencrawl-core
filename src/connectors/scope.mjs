@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 
-export const PIPELINE_VERSION = 'slack-v5';
+export const PIPELINE_VERSION = 'slack-v6';
 export const PROVIDER_STREAMS = {
   slack: ['canonical_messages', 'file_documents', 'channel_messages', 'messages', 'threads', 'channels', 'users', 'channel_members'],
   granola: ['notes', 'transcripts'], circleback: ['meetings', 'transcripts'],
