@@ -21,11 +21,12 @@ test('compact excerpts preserve exact source text and find evidence beyond navig
 test('duplicate groups preserve changed values, distinct resources and roles, and count the candidate window', () => {
   const text = 'Original evidence about the rollout. '.repeat(5);
   const hit = (id, extra={}) => ({id, source:'sessions', text, provenance:{sessionId:'s',userId:'u',kind:'message',role:'user'}, ...extra});
-  const input = [hit('one'), hit('two',{text:text.replaceAll(' ', '\n')}), hit('changed',{text:text+'It was canceled.'}), hit('other-role',{provenance:{sessionId:'s',userId:'u',kind:'message',role:'assistant'}}), hit('short',{text:'yes'}), hit('short-again',{text:'yes'})];
+  const input = [hit('one'), hit('two',{text:text+'  \r\n'}), hit('changed',{text:text+'It was canceled.'}), hit('other-role',{provenance:{sessionId:'s',userId:'u',kind:'message',role:'assistant'}}), hit('short',{text:'yes'}), hit('short-again',{text:'yes'})];
   const grouped = groupDuplicates(input);
   assert.equal(grouped.suppressed, 1); assert.equal(grouped.results.length, 5);
   assert.equal(grouped.results[0].duplicateCount, 1);assert.deepEqual(grouped.results[0].duplicateIds,['two']);
   assert.equal(input[0].duplicateCount, undefined);
+  assert.equal(groupDuplicates([hit('code',{text:'if ready:\n    execute()\n'+text}),hit('changed-code',{text:'if ready:\nexecute()\n'+text})]).suppressed,0);
   const connector = {source:'connectors',text,provenance:{provider:'notion',connectionId:'c',workspaceId:'w',sourceId:'a',kind:'page'}};
   assert.equal(groupDuplicates([{...connector,id:'a'}, {...connector,id:'b',provenance:{...connector.provenance,sourceId:'b'}}]).suppressed,0);
 });

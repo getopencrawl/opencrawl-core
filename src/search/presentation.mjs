@@ -38,7 +38,8 @@ export function workspaceHit(source, hit, sourceRank) {
 export function groupDuplicates(hits) {
   const groups = new Map(), results = [];
   for (const hit of hits) {
-    const p = hit.provenance, normalized = hit.text.replace(/\s+/gu, ' ').trim();
+    // Preserve indentation and line breaks: whitespace can change code meaning.
+    const p = hit.provenance, normalized = hit.text.replace(/\r\n/g, '\n').replace(/[\t ]+$/gm, '').replace(/\n+$/, '');
     const scope = hit.source === 'sessions'
       ? [p.sessionId, p.userId, p.installationId, p.harness, p.kind, p.role]
       : [p.provider, p.connectionId, p.workspaceId, p.parentKind || p.kind, p.parentId || p.sourceId];

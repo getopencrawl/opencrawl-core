@@ -30,9 +30,10 @@ ordering; it does not claim a jointly calibrated relevance score. The underlying
 retrieval remains lexical BM25. Semantic retrieval, reranking and cross-passage
 reasoning are not added by this interface.
 
-Whitespace-equivalent text of at least 80 characters is grouped within the same
+Text of at least 80 characters that differs only in line endings or trailing
+line whitespace is grouped within the same
 session/uploader/installation/role or connector resource. Changed values and
-wording are retained; this is not fuzzy similarity grouping. `duplicateCount`
+wording, indentation and line breaks are retained; this is not fuzzy similarity grouping. `duplicateCount`
 counts additional candidates in the current window and `duplicateIds` gives up
 to three individually fetchable examples. Root `deduplicated` counts suppressed
 candidates. Grouping occurs before pagination, without changing original rank.
