@@ -14,6 +14,9 @@ The reusable path reads Airbyte JSONL.gz from an S3-compatible bucket and indexe
 stock Slack `channel_messages`, `threads`, `channels`, `users`, and
 `channel_members`. `messages` is also accepted as a channel-message stream alias.
 This is lexical search; embeddings and thread summaries are not required.
+Public channel names, topics and purposes are searchable as channel documents,
+under the same current-visibility checks as messages and files. Missing, private
+or suppressed channel metadata excludes both the channel and its content.
 
 The `slack-v5` normalizer includes fallback `text`, visible Block Kit and rich-text
 content, menu option labels/descriptions/confirmation text, attachment

@@ -5,7 +5,7 @@ import {connectorMapping} from '../search/mapping.mjs';
 export {connectorMapping};
 // Atomic comparison at the destination protects against retries and concurrent,
 // out-of-order files. Suppressions persist across source replay.
-export const SEARCHABLE_KINDS = ['message', 'file', 'file_chunk', 'meeting', 'transcript', 'page', 'passage', 'database', 'comment', 'commit', 'pull_request', 'issue', 'review', 'issue_comment', 'review_comment', 'commit_comment', 'release'];
+export const SEARCHABLE_KINDS = ['message', 'channel', 'file', 'file_chunk', 'meeting', 'transcript', 'page', 'passage', 'database', 'comment', 'commit', 'pull_request', 'issue', 'review', 'issue_comment', 'review_comment', 'commit_comment', 'release'];
 const UPSERT = `if (ctx._source.connector == null) { ctx._source = params.doc; }
 else if (ctx._source.connector.deleted == true) { ctx.op = 'none'; }
 else if (ctx._source.connector.containsKey('sourceAuthority') && (!params.doc.connector.containsKey('sourceAuthority') || params.doc.connector.sourceAuthority < ctx._source.connector.sourceAuthority)) { ctx.op = 'none'; }

@@ -232,3 +232,8 @@ Keep non-lexical tails explicitly accounted for by exact content comparison.
 Distinguish a missing indexed term from a matching document ranked outside the
 result limit, and distinguish a scoped server-side probe from authenticated user
 retrieval. Neither an index-only query nor stored text proves the latter.
+
+Check searchable document kinds as well as text extraction. Container names,
+topics and descriptions can be stored for permission checks yet excluded by a
+query's kind filter. Prove retrieval for each intended readable surface through
+the product adapter, retaining its current resource visibility checks.
