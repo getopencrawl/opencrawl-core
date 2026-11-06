@@ -205,3 +205,23 @@ personal environment above using their HTTPS receiver hostname. DELETE
 credential cannot search/read, issue credentials or revoke credentials. The
 receiver always binds the operator's fixed tenant/user, including for delegated
 tokens. Changing that fixed identity invalidates old delegations.
+
+## Search workspace knowledge
+
+`opencrawl search "words" --json` queries sessions and all authorized indexed
+connectors. Use `--source sessions|connectors`, `--match any|all|phrase`,
+`--session-id ID` with sessions, and `--limit 1..40`. Follow `data.next` with
+`--cursor TOKEN` and otherwise identical arguments. Pages are live and bounded;
+inspect `coverage`, `partial`, `truncated` and `windowExhausted` before claiming
+completeness. Results contain compact verbatim excerpts and source provenance.
+Whitespace-equivalent passages within a session/resource are grouped; use
+`--no-dedupe` to inspect all occurrences. `duplicateCount` counts additional
+candidates in the current search window.
+
+Expand a result with `opencrawl fetch <result-id> --json`. Fetch returns up to
+6,000 characters of the original indexed passage. Continue with
+`--offset <nextOffset> --content-version <version>`; use `--length 1..16000` to
+control page size. A changed passage requires restarting from offset 0. Access
+and source visibility are checked again on every read. One indexed passage may
+be only part of a larger document or session.
+For self-hosting, set `OPENCRAWL_TOKEN` and `--api`; otherwise saved OAuth is used.

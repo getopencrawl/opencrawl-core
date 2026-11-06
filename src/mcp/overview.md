@@ -5,11 +5,17 @@ material, organize it, and make it useful to people and AI agents. Its product
 core runs independently of the managed hosted service; the hosted service adds
 managed operation and account access.
 
-Available today: account authentication, CLI enrollment, and agent-session
-capture through the separate CLI and session API. The baseline MCP connection
-provides the read-only `opencrawl` overview tool and `test_connection` tool. It does not
-expose captured sessions or provide crawling, indexing, search, or retrieval.
-Describe those as product direction, not currently callable services.
+Available tools depend on this deployment. The baseline exposes the read-only
+`opencrawl` overview and `test_connection`. If `search` is listed, it can expose captured sessions
+and indexed workspace connector data under the current authenticated workspace.
+Use `search` to find evidence, inspect provenance and coverage, then refine your
+query or follow its cursor. Results are compact verbatim excerpts; use `fetch`
+with a result ID for fuller indexed text, then `nextOffset` and `version` for
+longer passages. Equivalent passages within a session/resource are grouped;
+set `dedupe=false` to inspect every occurrence. These are source evidence, not
+generated answers.
+Unavailable or pending sources and bounded candidate windows are explicit;
+zero results do not establish that information does not exist.
 
 Use `test_connection` when asked to confirm connectivity. Report success only
 after the server returns `connected: true`; include its server time if useful.

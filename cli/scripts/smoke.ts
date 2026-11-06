@@ -45,9 +45,26 @@ try {
     const command = ['node', join(install, 'node_modules/@getopencrawl/cli/bin/opencrawl.cjs')];
     if (run([...command, '--version']).trim() !== pkg.version) throw new Error('Installed version mismatch');
     const status = JSON.parse(run([...command, 'status', '--json']));
-    if (status.data.authenticated !== false || status.data.index.available !== false) throw new Error('Incorrect initial status');
+    if (status.data.authenticated !== false || status.data.index.available !== null) throw new Error('Incorrect initial status');
     const fail = Bun.spawnSync([...command, 'whoami', '--json'], {env: {...process.env, OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config')}, stdout: 'pipe', stderr: 'pipe'});
     if (fail.exitCode !== 2 || JSON.parse(fail.stdout.toString()).error.code !== 'AUTH_REQUIRED') throw new Error('Invalid authentication exit code');
+    const requests: string[] = [];
+    const api = Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request) {
+      if(request.headers.get('authorization')!=='Bearer smoke-search-token')return new Response('',{status:401});
+      const path=new URL(request.url).pathname,input=await request.json() as any;requests.push(path);
+      const hit={id:'sessions:smoke',source:'sessions',title:'Smoke',text:'verbatim evidence',provenance:{sessionId:'smoke'}};
+      if(path==='/api/search'&&input.query==='evidence')return Response.json({schemaVersion:1,data:{results:[hit],coverage:[{source:'sessions',state:'ready'}],partial:false,next:null}});
+      if(path==='/api/search/fetch'&&input.id===hit.id)return Response.json({schemaVersion:1,data:{...hit,offset:0,totalChars:hit.text.length,nextOffset:null,version:'a'.repeat(64)}});
+      return new Response('',{status:400});
+    }});
+    try {
+      for(const args of [['search','evidence'],['fetch','sessions:smoke']]) {
+        const child=Bun.spawn([...command,...args,'--json','--api',api.url.origin],{env:{...process.env,OPENCRAWL_NO_UPDATE:'1',OPENCRAWL_TOKEN:'smoke-search-token',OPENCRAWL_CONFIG_HOME:join(scratch,'config')},stdout:'pipe',stderr:'pipe'});
+        const [out,err,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
+        if(code||!out.includes('verbatim evidence'))throw new Error('Packaged search/fetch failed: '+err);
+      }
+      if(requests.join(',')!=='/api/search,/api/search/fetch')throw new Error('Packaged search/fetch routes mismatch');
+    } finally {api.stop(true);}
     console.log('Packaged npm install, native binary, JSON status and auth-required exit verified.');
   } finally { server.stop(true); }
 } finally { rmSync(scratch, {recursive: true, force: true}); }
