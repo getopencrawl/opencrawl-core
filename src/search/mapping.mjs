@@ -31,3 +31,11 @@ export const realmMapping = {dynamic:'strict', properties:{
   text:{type:'text'}, title:{type:'text'}, sourceKey:{type:'keyword',index:false,doc_values:false},
   connector:metadata(connectorMapping), session:metadata(sessionIndexMapping), board:metadata(boardIndexMapping),
 }};
+
+/** Realm mapping with a passage embedding for hybrid search (opt-in per realm generation).
+ * Lucene HNSW with filtering; cosine similarity over unit-length vectors. */
+export function realmMappingWithVectors(dimensions) {
+  if (!Number.isInteger(dimensions) || dimensions < 1 || dimensions > 4096) throw new Error('Invalid embedding dimensions');
+  return {...realmMapping, properties: {...realmMapping.properties,
+    embedding: {type: 'knn_vector', dimension: dimensions, method: {name: 'hnsw', engine: 'lucene', space_type: 'cosinesimil'}}}};
+}

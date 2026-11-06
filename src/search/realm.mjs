@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {signRequest} from '../sessions/s3-store.mjs';
-import {realmMapping} from './mapping.mjs';
+import {realmMapping,realmMappingWithVectors} from './mapping.mjs';
 export {realmMapping};
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (message,status=503) => Object.assign(new Error(message),{status,permanent:status===403});
@@ -15,7 +15,7 @@ export function realmField(corpus,field) {
 }
 export function realmDocument(corpus,id,document) {
   if(!corpora.has(corpus)||typeof id!=='string'||!/^[A-Za-z0-9_:-]{1,256}$/.test(id)||typeof document?.tenantId!=='string'||!document.tenantId) throw fail('Document realm scope required',403);
-  const {tenantId,text,title,sourceKey,...metadata}=document;
+  const {tenantId,text,title,sourceKey,embedding,...metadata}=document;
   const raw=document.timestamp;
   let timestamp= typeof raw==='number'?raw:typeof raw==='string'&&/^\d{10}(\.\d+)?$/.test(raw)?Number(raw)*1000:Date.parse(raw);
   if(!Number.isFinite(timestamp)) timestamp=Date.parse(document.receivedAt)||document.extractedAt;
@@ -24,17 +24,20 @@ export function realmDocument(corpus,id,document) {
   return {schema:1,tenantId,corpus,id,source,kind:document.kind||'message',
     ...(Number.isFinite(timestamp)?{timestamp:new Date(timestamp).toISOString()}:{}),
     ...(author?{author}:{}),
-    ...(text!==undefined?{text}:{}),...(title!==undefined?{title}:{}),...(sourceKey!==undefined?{sourceKey}:{}),[corpus]:metadata};
+    ...(text!==undefined?{text}:{}),...(title!==undefined?{title}:{}),...(sourceKey!==undefined?{sourceKey}:{}),...(embedding!==undefined?{embedding}:{}),[corpus]:metadata};
 }
 function compatible(actual,expected) {
   if(expected.type && (actual?.type||(actual?.properties?'object':undefined))!==expected.type) return false;
   if(expected.dynamic && actual?.dynamic!==expected.dynamic) return false;
-  for(const option of ['index','doc_values','ignore_malformed','analyzer']) if(expected[option]!==undefined && actual?.[option]!==expected[option]) return false;
+  for(const option of ['index','doc_values','ignore_malformed','analyzer','dimension']) if(expected[option]!==undefined && actual?.[option]!==expected[option]) return false;
   for(const key of ['properties','fields']) for(const [name,value] of Object.entries(expected[key]||{})) if(!compatible(actual?.[key]?.[name],value))return false;
   return true;
 }
-/** One tenant-bound index, mapping and transport for every searchable corpus. */
-export function createRealm({endpoint,index,tenantId,environment='selfhost',generation='v1',username,password,credentials,region='us-east-1',replicas=0,fetch:send=globalThis.fetch}) {
+/** One tenant-bound index, mapping and transport for every searchable corpus.
+ * `vectors: {dimensions}` adds a passage embedding field for hybrid search. Enabling it on an
+ * existing deployment needs a new realm generation (see search/migration.mjs). */
+export function createRealm({endpoint,index,tenantId,environment='selfhost',generation='v1',username,password,credentials,region='us-east-1',replicas=0,vectors,fetch:send=globalThis.fetch}) {
+  const mapping=vectors?realmMappingWithVectors(vectors.dimensions):realmMapping;
   if(typeof tenantId!=='string'||!tenantId)throw fail('Realm tenant required',403);
   index ||= realmIndex(environment,tenantId,generation);
   const base=new URL(endpoint);
@@ -45,10 +48,10 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
   let ready;
   async function ensureIndex(){
     ready ||= (async()=>{
-      try{await request('',{settings:{number_of_shards:1,number_of_replicas:replicas},mappings:{...realmMapping,_meta:{schema:1,tenantId}}},'PUT');}
+      try{await request('',{settings:{number_of_shards:1,number_of_replicas:replicas,...(vectors?{'index.knn':true}:{})},mappings:{...mapping,_meta:{schema:1,tenantId}}},'PUT');}
       catch(e){if(e.status!==400||e.type!=='resource_already_exists_exception')throw e;}
-      const mapping=(await request('/_mapping',undefined,'GET'))?.[index]?.mappings;
-      if(mapping?._meta?.tenantId!==tenantId||mapping?._meta?.schema!==1||!compatible(mapping,realmMapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');
+      const actual=(await request('/_mapping',undefined,'GET'))?.[index]?.mappings;
+      if(actual?._meta?.tenantId!==tenantId||actual?._meta?.schema!==1||!compatible(actual,mapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');
     })().catch(e=>{ready=undefined;throw e;});
     return ready;
   }

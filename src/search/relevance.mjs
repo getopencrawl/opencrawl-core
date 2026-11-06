@@ -46,3 +46,16 @@ export function passages(text, size = 8000) {
   if (current || !out.length) out.push(current);
   return out;
 }
+
+/** Reciprocal rank fusion: merge ranked lists of hits by `key`, weighting each list. */
+export function fuseRankings(lists, {key = hit => hit.id, k = 60} = {}) {
+  const fused = new Map();
+  for (const {hits, weight = 1} of lists) {
+    hits.forEach((hit, rank) => {
+      const id = key(hit), row = fused.get(id) ?? {hit, score: 0};
+      row.score += weight / (k + rank + 1);
+      fused.set(id, row);
+    });
+  }
+  return [...fused.values()].sort((a, b) => b.score - a.score).map(({hit, score}) => ({...hit, score}));
+}
