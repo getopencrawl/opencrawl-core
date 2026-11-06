@@ -6,26 +6,32 @@ import {join, dirname, resolve, sep, basename} from 'node:path';
 import {homedir, hostname} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
-import {configDir, atomicJson, accessToken, withSessionLock} from '../session.ts';
+import {configDir, atomicFile, atomicJson, accessToken, withSessionLock, syncDirectory} from '../session.ts';
+import {removeLegacyService} from './legacy-service.ts';
 import {CliError} from '../oauth.ts';
 import {parseRecord, detectOrigin, hash, type Harness} from './parse.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
-export type CaptureConfig = {disabled?:boolean,schemaVersion:1,harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
+export type CaptureConfig = {disabled?:boolean,authPending?:boolean,schemaVersion:1,harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 // `owner` in the saved schema is cached attribution, not an enrollment constraint.
 export async function refreshCaptureIdentity(config:CaptureConfig,token?:string) {
   const {principal}=await request(config.api,'/api/sessions/identity',{},token);
   if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
-  // Authentication can outlive uninstall or reconfiguration. Update only the
-  // receipt of identity, never restore the stale enrollment snapshot.
+  // Authentication may finish after uninstall or another worker initializes a
+  // prepared cloud image. Serialize the identity update with reconfiguration.
   await withSessionLock('capture:configuration',async()=>{
     const current=readCaptureConfig();
-    if(!current || current.api!==config.api || current.installationId!==config.installationId)throw new CliError('CAPTURE_CONFIG_CHANGED','Capture configuration changed during authentication. Retry with the current configuration.');
+    const pending=config.authPending && config.installationId==='pending';
+    if(!current || current.api!==config.api || (!pending && current.installationId!==config.installationId))throw new CliError('CAPTURE_CONFIG_CHANGED','Capture configuration changed during authentication. Retry with the current configuration.');
     config.owner=principal;
-    atomicJson(join(captureDir(),'config.json'),{...current,owner:principal});
+    if(config.authPending){
+      config.installationId=current.installationId==='pending'?randomUUID():current.installationId;
+      config.authPending=false;
+    }
+    atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
   });
   return principal;
 }
@@ -66,7 +72,8 @@ export function commandForSelf() {
   return process.argv[1]?.endsWith('.ts') ? [process.execPath,resolve(process.argv[1])] : [process.execPath];
 }
 export function kick(config:CaptureConfig) {
-  const child=spawn(config.command[0],[...config.command.slice(1),'collect','flush'],{
+  if(!config.command.length)return;
+  const child=spawn(config.command[0],[...config.command.slice(1),'collect','worker'],{
     detached:true,stdio:'ignore',windowsHide:true,env:{...process.env,OPENCRAWL_CONFIG_HOME:dirname(configDir()),OPENCRAWL_NO_UPDATE:'1'}});
   child.on('error',()=>{});child.unref();
 }
@@ -74,7 +81,7 @@ export function recordError(error:any) {
   // Status only: never include transcript content, credentials, or a provider response.
   atomicJson(join(captureDir(),'last-error.json'),{at:new Date().toISOString(),code:error?.code || 'CAPTURE_FAILED'});
 }
-function ensureDirectories() {for(const dir of ['queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});}
+function ensureDirectories() {for(const dir of ['queue','state','blobs','notices','sources'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});}
 const under = (file:string,dir:string) => file.startsWith(dir+sep);
 function transcriptAllowed(file:string, config:CaptureConfig, harness:Harness, approvedHistory=false) {
   const path=realpathSync(file);
@@ -108,7 +115,7 @@ function attachmentTransform(value:any, attachments:any[], cwd:string, localFile
   if(bytes){
     if(bytes.length>32*1024*1024){attachments.push({status:'too_large',path,mimeType:mime});return {...value,data:undefined,image_url:undefined,captureStatus:'too_large'};}
     const sha256=hash(bytes),dest=join(captureDir(),'blobs',sha256);
-    try{writeFileSync(dest,bytes,{mode:0o600,flag:'wx'});}catch(e:any){if(e.code!=='EEXIST')throw e;}
+    atomicFile(dest,bytes);
     const a={sha256,size:bytes.length,mimeType:mime??null,path:path??null,status:'captured'};attachments.push(a);
     return {type:'opencrawl_attachment',...a};
   }
@@ -119,6 +126,7 @@ function attachmentTransform(value:any, attachments:any[], cwd:string, localFile
 }
 function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   if(!events.length)return;
+  if(config.authPending)throw new CliError('CAPTURE_AUTH_PENDING','Capture identity has not been authenticated yet');
   if(!meta.sessionId)throw new CliError('CAPTURE_SESSION_UNKNOWN','Transcript has no session identity');
   const batch={schemaVersion:1,owner:config.owner,installationId:config.installationId,host:hostname(),...meta,events,attachments};
   const size=Buffer.byteLength(JSON.stringify(batch));
@@ -244,22 +252,120 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     return meta;
   });
 }
+/** Hook work is only a durable local handoff. Never scan, parse or upload here. */
 export async function captureHook(harness:Harness,event:any) {
   const config=readCaptureConfig();if(!config||config.disabled)return;
   ensureDirectories();
-  const sessionId=event.session_id;
+  const sessionId=event?.session_id;
   if(typeof sessionId!=='string' || !/^[\w.:-]{1,200}$/.test(sessionId))throw new CliError('CAPTURE_SESSION_UNKNOWN','Hook missing session ID');
-  const file=event.transcript_path || findTranscript(config,harness,sessionId);
-  const meta=file && existsSync(file) ? await captureTranscript(config,harness,file,event) : {harness,sessionId,origin:harness==='claude-code'&&process.env.CLAUDE_CODE_REMOTE==='true'?'cloud':'unknown',originEvidence:null,parentSessionId:null};
-  // Hooks can carry input/results before the harness flushes its transcript. Keep both; dedupe downstream.
-  const attachments:any[]=[];
-  const data=attachmentTransform(event,attachments,event.cwd??homedir());
-  enqueue(config,meta,[{id:randomUUID(),kind:'hook',timestamp:new Date().toISOString(),data}],attachments);
+  const id=randomUUID();
+  atomicJson(join(captureDir(),'notices',id+'.json'),{id,at:new Date().toISOString(),harness,event});
   kick(config);
 }
+
+// The original event is kept only until its immutable batch is spooled. Its ID
+// and timestamp survive a crash between enqueue and notice removal.
+export async function drainCaptureNotices(config=readCaptureConfig()!) {
+  ensureDirectories();
+  return withSessionLock('capture:notices',async()=>{
+  let processed=0,firstError:any;
+  for(const name of readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json'))) {
+    const path=join(captureDir(),'notices',name),notice=read(path);
+    if(!notice)continue;
+    try {
+    const {harness,event,id,at}=notice;
+    const file=event.transcript_path || findTranscript(config,harness,event.session_id);
+    // Persist the source BEFORE retiring the notice; a tail written after Stop
+    // remains discoverable on this worker's polls and the next CLI invocation.
+    const source={harness,sessionId:event.session_id,path:file??null,origin:process.env.CLAUDE_CODE_REMOTE==='true'?'cloud':'unknown'};
+    atomicJson(join(captureDir(),'sources',hash(harness+':'+event.session_id+':'+(file??''))+'.json'),source);
+    const meta=file && existsSync(file) ? await captureTranscript(config,harness,file,event) :
+      {harness,sessionId:event.session_id,origin:source.origin,originEvidence:null,parentSessionId:null};
+    if(harness==='claude-code'&&typeof event.agent_transcript_path==='string'&&event.agent_transcript_path!==file){
+      const child=event.agent_transcript_path;
+      atomicJson(join(captureDir(),'sources',hash(harness+':'+event.session_id+':'+child)+'.json'),{...source,path:child});
+      if(existsSync(child))await captureTranscript(config,harness,child,event);
+    }
+    const attachments:any[]=[];
+    const data=attachmentTransform(event,attachments,event.cwd??homedir());
+    enqueue(config,meta,[{id,kind:'hook',timestamp:at,data}],attachments);
+    unlinkSync(path);syncDirectory(dirname(path));processed++;
+    }catch(error){firstError??=error;}
+  }
+  if(firstError)throw firstError;
+  return processed;
+  },Infinity);
+}
+
+async function reconcileSources(config:CaptureConfig,seen:Map<string,string>) {
+  let changed=false;
+  for(const name of readdirSync(join(captureDir(),'sources')).filter(n=>n.endsWith('.json'))) {
+    const sourceFile=join(captureDir(),'sources',name),source=read(sourceFile);
+    const path=source.path || findTranscript(config,source.harness,source.sessionId);
+    if(!path || !existsSync(path))continue;
+    if(!source.path){source.path=path;atomicJson(sourceFile,source);}
+    const st=statSync(path),signature=JSON.stringify([st.dev,st.ino,st.size,st.mtimeMs]);
+    if(seen.get(path)===signature)continue;
+    await captureTranscript(config,source.harness,path,{session_id:source.sessionId});
+    seen.set(path,signature);changed=true;
+  }
+  return changed;
+}
+
+const queuedNames=()=>readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'));
+const noticeNames=()=>readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json'));
+const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
+/** One lazy worker per installation; contention is an ordinary successful wake. */
+export async function captureWorker({idleMs=30_000,pollMs=1000}={}) {
+  const config=readCaptureConfig();if(!config||config.disabled)return;
+  ensureDirectories();
+  let observedNotices:string[]=[];
+  try {
+    await withSessionLock('capture:worker',async()=>{
+      removeLegacyService();
+      const seen=new Map<string,string>();let activeAt=Date.now(),failures=0;
+      while(readCaptureConfig() && !readCaptureConfig()!.disabled) {
+        let captureError:any;
+        try {
+          if(config.authPending)await refreshCaptureIdentity(config);
+          const processed=await drainCaptureNotices(config);
+          const changed=await reconcileSources(config,seen);
+          if(processed||changed)activeAt=Date.now();
+        }catch(error){captureError=error;}
+        try {
+          if(queuedNames().length){const result=await flushCaptures({wait:false});if(result.uploaded)activeAt=Date.now();}
+        }catch(error){captureError??=error;}
+        if(captureError){recordError(captureError);failures++;}
+        else {
+          failures=0;
+          observedNotices=noticeNames();
+          if(!observedNotices.length&&!queuedNames().length&&Date.now()-activeAt>=idleMs)break;
+        }
+        // Retry while there is durable work, with bounded resource use. A later
+        // invocation also recovers it if the host kills this process.
+        await sleep(failures?Math.min(60_000,1000*2**Math.min(failures,6)):pollMs);
+      }
+    },0);
+  } catch(error:any) {if(error?.code!=='SESSION_BUSY')throw error;return;}
+  // Release-before-recheck closes the idle-exit lost-wakeup race. Hooks arriving
+  // before release are seen here; hooks arriving later can acquire the lock.
+  if(!readCaptureConfig()?.disabled && (queuedNames().length || noticeNames().some(n=>!observedNotices.includes(n))))kick(config);
+}
+
+export function wakeCaptures() {
+  const config=readCaptureConfig();if(config&&!config.disabled)kick(config);
+}
+/** Explicit flush waits for capture and upload ownership, then fences current sources. */
+export async function flushCaptureWork() {
+  const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
+  if(!config.disabled){if(config.authPending)await refreshCaptureIdentity(config);await drainCaptureNotices(config);await reconcileSources(config,new Map());}
+  return flushCaptures();
+}
+
 export async function syncCaptures() {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
   if(config.disabled)return {uploaded:0};
+  if(config.authPending)await refreshCaptureIdentity(config);
   const errors:any[]=[];
   for(const harness of config.harnesses??['claude-code','codex'] as Harness[]) {
     const dirs=harness==='codex'?['sessions','archived_sessions']:['projects'];
@@ -273,7 +379,7 @@ export async function syncCaptures() {
   if(errors.length){recordError(errors[0]);throw errors[0];}
   return result;
 }
-export async function flushCaptures() {
+export async function flushCaptures({wait=true}={}) {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
   ensureDirectories();
   return withSessionLock('capture:flush',async()=>{
@@ -283,6 +389,7 @@ export async function flushCaptures() {
     const principal=await refreshCaptureIdentity(config,token);
     let uploaded=0;
     for(const name of readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'))) {
+      if(!wait&&readCaptureConfig()?.disabled)break;
       const path=join(captureDir(),'queue',name),batch=read(path);
       // Reject a different human before uploading attachment bytes: a later
       // batch rejection cannot undo a blob already stored under their identity.
@@ -309,11 +416,12 @@ export async function flushCaptures() {
     }
     try{unlinkSync(join(captureDir(),'last-error.json'));}catch{}
     return {uploaded};
-  });
+  },wait?Infinity:0).catch(error=>{if(!wait&&error?.code==='SESSION_BUSY')return {uploaded:0};throw error;});
 }
 export function captureStatus() {
   const config=readCaptureConfig();
-  return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.owner,installationId:config?.installationId,
+  return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.authPending?null:config?.owner,authenticationPending:Boolean(config?.authPending),installationId:config?.installationId,
     queued:existsSync(join(captureDir(),'queue'))?readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json')).length:0,
+    pendingHooks:existsSync(join(captureDir(),'notices'))?noticeNames().length:0,
     lastUpload:read(join(captureDir(),'last-upload.json')),lastError:read(join(captureDir(),'last-error.json'))};
 }

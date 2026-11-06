@@ -1,4 +1,4 @@
-import {mkdirSync, chmodSync, readFileSync, writeFileSync, renameSync, unlinkSync, openSync, closeSync, statSync} from 'node:fs';
+import {mkdirSync, chmodSync, readFileSync, writeFileSync, renameSync, unlinkSync, openSync, closeSync, statSync, fsyncSync} from 'node:fs';
 import {join, dirname} from 'node:path';
 import {homedir} from 'node:os';
 import {createHash, randomUUID} from 'node:crypto';
@@ -8,14 +8,26 @@ export type Session = Tokens & {auth: AuthConfig};
 export const configDir = () => join(process.env.OPENCRAWL_CONFIG_HOME || process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencrawl');
 export const sessionFile = (api: string) => join(configDir(), createHash('sha256').update(api).digest('hex') + '.json');
 
-export function atomicJson(file: string, value: unknown) {
+export function atomicFile(file: string, bytes: string|Buffer) {
   mkdirSync(dirname(file), {recursive: true, mode: 0o700});
   chmodSync(dirname(file), 0o700);
   const temp = `${file}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600, flag: 'wx'});
+    const fd = openSync(temp, 'wx', 0o600);
+    try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
     renameSync(temp, file);
+    syncDirectory(dirname(file));
   } finally { try { unlinkSync(temp); } catch {} }
+}
+
+export function atomicJson(file: string, value: unknown) { atomicFile(file, JSON.stringify(value) + '\n'); }
+
+// Windows does not expose directory fsync through node:fs. File flush + atomic
+// rename still provide process-crash safety; POSIX additionally flushes the entry.
+export function syncDirectory(directory: string) {
+  if (process.platform === 'win32') return;
+  const fd = openSync(directory, 'r');
+  try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 
 export function readSession(api: string): Session | null {
@@ -33,10 +45,10 @@ export function readSession(api: string): Session | null {
 
 // Serializes rotation and logout across agent processes. A dead owner can be
 // reclaimed; a live owner is never evicted just because a request is slow.
-export async function withSessionLock<T>(api: string, operation: () => Promise<T>): Promise<T> {
+export async function withSessionLock<T>(api: string, operation: () => Promise<T>, waitMs = 20_000): Promise<T> {
   const file = sessionFile(api) + '.lock';
   mkdirSync(configDir(), {recursive: true, mode: 0o700});
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + waitMs;
   while (true) {
     try {
       const fd = openSync(file, 'wx', 0o600);
