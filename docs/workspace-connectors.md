@@ -8,7 +8,8 @@ the provider, tenant, workspace, connection and exact
 `raw/v1/source=<provider>/workspace=<workspace>/connection=<connection>/` prefix.
 This is an assertion by the trusted resolver that every selected resource is
 team-visible, not a permission inferred from API credentials or connection scope.
-The hosted resolver requires a separate opt-in on each connection. Personal and
+The hosted resolver supplies this binding for active team connections and trusts
+upstream ingestion to exclude non-global resources. Personal and
 subteam resources require a future permission model and are not supported here.
 
 ## Indexed content
