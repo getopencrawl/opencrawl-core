@@ -55,6 +55,18 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
     assert.equal((await search.search(principal, [binding], {query: 'grapefruit'})).hits.length, 0);
     assert.equal((await search.search(principal, [binding], {query: 'kumquat'})).hits.length, 1);
     assert.equal((await search.search(principal, [binding], {query: 'dragonfruit'})).hits.length, 1);
+    const labelled={channel_id:'C123',ts:'1234567893.000001',text:'Public attribution example',username:'maracuyabyline',
+      bot_profile:{name:'soursopbot',token:'HIDDEN_PROFILE_TOKEN'},user_profile:{display_name:'feijoaauthor',email:'HIDDEN_PROFILE_EMAIL'},
+      root:{user_profile:{display_name:'jabuticabaparent'}},reactions:[{name:'rambutanreaction',users:['HIDDEN_REACTOR']}]};
+    const labelledFixed=normalizeSlack(binding,'canonical_messages',{_airbyte_extracted_at:2000,_airbyte_data:labelled},'raw');
+    const labelledLegacy=structuredClone(labelledFixed);labelledLegacy.document.normalizerVersion=5;labelledLegacy.document.text=labelled.text;labelledLegacy.document.contentHash='f'.repeat(64);
+    await search.putDocuments(principal,binding,[labelledLegacy]);
+    await ingest('canonical_messages',labelled,2000,'attribution-replay');
+    await search.putDocuments(principal,binding,[labelledLegacy]);
+    await search.refresh();
+    const labelQueries=['maracuyabyline','soursopbot','feijoaauthor','jabuticabaparent','rambutanreaction'];
+    for(const query of labelQueries){const result=await search.search(principal,[binding],{query});assert.equal(result.hits.length,1);assert.equal(result.hits[0].id,labelledFixed.id);assert.equal(result.hits[0].tenantId,tenantId);}
+    assert.equal((await search.search(principal,[binding],{query:'HIDDEN_PROFILE_EMAIL'})).hits.length,0);
     // Direct history is authoritative even when a newer search snapshot exists.
     await ingest('canonical_messages', {...message,text:'pineapple canonicalguava',blocks:[],attachments:[]}, 1500, 'canonical');
     await ingest('channel_messages', {...message,text:'searchpreviewpapaya',blocks:[],attachments:[]}, 3000, 'newer-preview');
@@ -83,7 +95,7 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
     assert.equal((await search.search(principal,[binding],{query:'interoperability'})).hits.length,0);
     assert.equal((await search.search(principal,[binding],{query:'shortreplacement'})).hits.length,1);
     await search.suppress(principal,binding,{kind:'message',sourceId:'C123:'+formatted.ts});
-    await search.putDocuments(principal,binding,[{...fixed,document:{...fixed.document,extractedAt:4000,normalizerVersion:6}}]);
+    await search.putDocuments(principal,binding,[{...fixed,document:{...fixed.document,extractedAt:4000,normalizerVersion:fixed.document.normalizerVersion+1}}]);
     await search.refresh();
     assert.equal((await search.search(principal,[binding],{query:'interoperability'})).hits.length,0);
     await search.suppress(principal, binding, {kind: 'message', sourceId: 'C123:' + message.ts});
@@ -94,6 +106,7 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
     await ingest('channels', {...channel, is_private: true}, 4000, 'private');
     await search.refresh();
     assert.equal((await search.search(principal, [binding], {query: 'pineapple'})).hits.length, 0);
+    for(const query of labelQueries)assert.equal((await search.search(principal,[binding],{query})).hits.length,0);
     for (const query of ['general', 'coconuttopic', 'lycheepurpose']) {
       assert.equal((await search.search(principal, [binding], {query})).hits.length, 0);
     }

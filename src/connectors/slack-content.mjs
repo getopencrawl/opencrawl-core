@@ -102,6 +102,22 @@ export function slackMessageText(data) {
     const rendered = chunks.splice(start).join('\n');
     if (rendered) chunks.push(rendered);
   }
+  function attribution(message) {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) invalidRecord('Invalid Slack attribution');
+    add(message.username);
+    for (const [profile, fields] of [[message.bot_profile, ['name']], [message.user_profile, ['display_name', 'real_name', 'name', 'first_name']]]) {
+      if (profile === undefined || profile === null) continue;
+      if (typeof profile !== 'object' || Array.isArray(profile)) invalidRecord('Invalid Slack author profile');
+      for (const field of fields) add(profile[field]);
+    }
+    list(message.reactions, reaction => {
+      if (!reaction || typeof reaction !== 'object' || Array.isArray(reaction)) invalidRecord('Invalid Slack reaction');
+      if (++nodes > MAX_NODES) invalidRecord('Slack visible content is too complex');
+      if (reaction.name === undefined || reaction.name === null || reaction.name === '') return;
+      if (typeof reaction.name !== 'string') invalidRecord('Invalid Slack reaction label');
+      add(':' + reaction.name + ':');
+    });
+  }
   add(data.text);
   list(data.blocks, value => group(() => node(value)));
   list(data.attachments, attachment => group(() => {
@@ -117,6 +133,12 @@ export function slackMessageText(data) {
     if (!file || typeof file !== 'object' || Array.isArray(file)) invalidRecord('Invalid Slack file');
     add(file.title); add(file.name);
   });
+  // Public-message attribution and reaction labels are readable context too.
+  // Keep this allowlist separate from profile contact fields, reaction user IDs,
+  // action payloads and arbitrary metadata. A broadcast can carry parent labels;
+  // the parent's body remains a separate native message document.
+  attribution(data);
+  if (data.root !== undefined && data.root !== null) attribution(data.root);
   // Deduplicate complete presentation units only. Dropping individual rich-text
   // fragments (or substrings of the fallback) can remove words and change phrases.
   const result = [...new Set(chunks)];
