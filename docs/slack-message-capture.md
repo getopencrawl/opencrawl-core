@@ -47,3 +47,41 @@ API scopes, retention, inaccessible histories, pagination failures, and messages
 newer than the cutoff must appear in coverage reports. A successful workflow
 alone does not prove completeness: reconcile its API page identities and all
 readable source fields with raw objects, index records and authenticated retrieval.
+
+## Refresh known messages
+
+A finite set of known messages can be refreshed with
+`createSlackMessageReferenceCapture` from
+`@1patch/opencrawl-core/connectors/slack-source-message-references`, or the
+`captureSlackMessageReferencesV1` workflow on the existing source worker.
+The standalone runner supports `references` mode with config:
+
+```json
+{"references":[{"channelId":"C123","ts":"1793965360.600579"},
+ {"channelId":"C123","ts":"1793965361.000001","threadTs":"1793965360.600579"}]}
+```
+
+Add these references to the existing binding/S3 config. The operation accepts
+1–1000 unique native identities, checks `conversations.info` for a public channel
+(including archived channels), and reads the exact inclusive timestamp range
+through history or replies. The workspace-verified adapter must support
+`conversations.info`. Capture preserves native fallback text and blocks, including
+accessibility text that a search connector's synthesized fallback may omit.
+
+Checkpoints and exact API pages live under
+`capture/message-references-v1/<run-id>/`. A run ID binds the ordered reference
+set and authorized scope; use the same inputs to resume. Raw envelopes land in
+`stream=canonical_messages/` and use the existing normalizer, source authority,
+receipts and indexing queue. No index-generation change is needed when only the
+source acquisition changes. An absent message is a failed reference, not a
+verified deletion. Scope changes and malformed/partial responses fail closed.
+
+This is supplemental observation of named resources, not a full inventory or
+an extension of a prior census cutoff. Preserve both observation windows in the
+audit. Serialize reference refreshes with full captures for the same workspace:
+method pacing is durable within each run, while Slack quota is shared across all
+callers. The workflow does not acquire a global quota lock. Operators must avoid
+competing full and targeted captures and must not suspend another ingestion
+system to make an audit appear complete. After capture, reconcile native fields,
+raw identities, successful receipts, exact indexed bodies and authenticated
+retrieval before closing the repair.

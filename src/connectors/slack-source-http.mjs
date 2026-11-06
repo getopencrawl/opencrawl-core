@@ -35,7 +35,7 @@ export function createSlackHttpSource({token,workspaceId,fetch:send=globalThis.f
  }
  return {
   async request(method,query) {
-   if(!['conversations.list','conversations.history','conversations.replies','files.list','files.info'].includes(method))throw new Error('Unsupported source method');
+   if(!['conversations.list','conversations.info','conversations.history','conversations.replies','files.list','files.info'].includes(method))throw new Error('Unsupported source method');
    await verifyWorkspace();
    const url=new URL('https://slack.com/api/'+method);for(const[k,v]of Object.entries(query))if(v!==undefined)url.searchParams.set(k,String(v));
    const response=await send(url,{headers:{authorization:'Bearer '+token},redirect:'error',signal:AbortSignal.timeout(30000)});
