@@ -1,6 +1,6 @@
 {
   "name": "@1patch/opencrawl-core",
-  "version": "0.2.6",
+  "version": "0.2.8",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
