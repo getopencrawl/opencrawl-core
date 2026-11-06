@@ -29,3 +29,20 @@ test('portable capture durably stores attachments and idempotent account-scoped 
  assert.ok(await ingest.getBatch(principal,{...odd,batchId:oddReceipt.batchId}));
  assert.equal(await ingest.getBatch({...principal,userId:'owner2'},{...odd,batchId:oddReceipt.batchId}),null);
 });
+
+
+test('teammates read an attributed batch; other teams and forged authors fail closed',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'capture-team-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const ingest=createSessionIngest({store:createLocalSessionStore(dir)});
+ const author={tenantId:'team-a',userId:'alice',name:'Alice',email:'alice@example.net'};
+ const reader={tenantId:'team-a',userId:'bob'};
+ const batch={schemaVersion:1,owner:{...author,name:'Spoofed'},installationId:'device',sessionId:'session',harness:'codex',origin:'cli',
+   events:[{id:'event',kind:'message',data:{role:'user',content:'team knowledge'}}],attachments:[]};
+ const {batchId}=await ingest.putBatch(author,batch);
+ const receipt={harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,batchId,userId:author.userId};
+ assert.deepEqual((await ingest.getBatch(reader,receipt)).owner,author);
+ assert.equal(await ingest.getBatch({...reader,tenantId:'team-b'},{...receipt,tenantId:'team-a'}),null);
+ await assert.rejects(ingest.getBatch(null,receipt),/Authentication/);
+ await assert.rejects(ingest.getBatch(reader,{...receipt,userId:'../alice'}),/Invalid author/);
+ await assert.rejects(ingest.putBatch(reader,batch),/owner/);
+});
