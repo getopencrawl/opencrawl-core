@@ -1,4 +1,5 @@
 import {authorize, objectStream, receiptKey, selectedObject, validateBinding} from './scope.mjs';
+import {normalizeSlackFile} from './slack-files.mjs';
 import {normalizeSlack} from './slack.mjs';
 import {normalizeGitHub} from './github.mjs';
 import {readRecords} from './records.mjs';
@@ -33,6 +34,17 @@ export function createConnectorPipeline({binding, store, search, checkActive = a
         heartbeat({records});
       }
       const result = await readRecords(store, key, async envelope => {
+        if(binding.provider==='slack' && stream==='file_documents') {
+          await flush();
+          const file=await normalizeSlackFile(binding,envelope,key,{store});
+          // Publish the manifest only after every immutable chunk has committed.
+          for(let offset=0;offset<file.chunks.length;offset+=8) {
+            await active();await search.putDocuments(principal,binding,file.chunks.slice(offset,offset+8));
+            heartbeat({records, fileChunks:Math.min(offset+8,file.chunks.length)});
+          }
+          await active();await search.putDocuments(principal,binding,[file.manifest]);
+          records++;heartbeat({records});return;
+        }
         const documents = binding.provider === 'slack' ? [normalizeSlack(binding, stream, envelope, key)] : normalizeGitHub(binding, stream, envelope, key);
         for (const normalized of documents) {
           const bytes = Buffer.byteLength(JSON.stringify(normalized));

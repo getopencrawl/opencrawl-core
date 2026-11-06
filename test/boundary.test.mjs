@@ -16,6 +16,8 @@ function checkImports(source, file, root = sourceRoot) {
     const specifier = match[1];
     assert.ok(!specifier.includes('\\'), `Escaped dependency needs review: ${specifier}`);
     if (specifier.startsWith('node:') || ['@modelcontextprotocol/server', '@modelcontextprotocol/node', 'zod'].includes(specifier)) continue;
+    // Document parsers run only in the bounded, credential-free extraction thread.
+    if (file.href.endsWith('/connectors/document-text-worker.mjs') && ['parse5', 'pdfjs-dist/legacy/build/pdf.mjs'].includes(specifier)) continue;
     // Temporal is an optional customer-operated adapter, not a domain dependency.
     if ((file.href.includes('/connectors/temporal/') || file.href.includes('/sessions/temporal/')) && ['@temporalio/worker', '@temporalio/activity', '@temporalio/workflow', '@temporalio/common', '@temporalio/client'].includes(specifier)) continue;
     assert.ok(specifier.startsWith('./') || specifier.startsWith('../'), `Forbidden core dependency: ${specifier}`);
@@ -39,8 +41,9 @@ test('core runs without any hosted service or credentials', () => {
 
 test('core runtime imports stay inside src, Node builtins, or reviewed portable libraries', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url)));
-  // Reviewed portable MCP SDK (Apache-2.0) and schema validation (MIT).
-  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@modelcontextprotocol/node', '@modelcontextprotocol/server', 'zod']);
+  // Reviewed portable MCP SDK/PDF.js (Apache-2.0), schema validation and parse5 (MIT).
+  // PDF/HTML parsing is lazy and isolated; no hosted credentials or external fetches.
+  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@modelcontextprotocol/node', '@modelcontextprotocol/server', 'parse5', 'pdfjs-dist', 'zod']);
   assert.deepEqual(pkg.optionalDependencies || {}, {});
   const temporal = ['@temporalio/activity', '@temporalio/client', '@temporalio/common', '@temporalio/worker', '@temporalio/workflow'];
   assert.deepEqual(Object.keys(pkg.peerDependencies).sort(), temporal);
