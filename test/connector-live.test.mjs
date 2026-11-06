@@ -45,8 +45,20 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
     assert.equal((await search.search(principal, [binding], {query: 'grapefruit'})).hits.length, 0);
     assert.equal((await search.search(principal, [binding], {query: 'kumquat'})).hits.length, 1);
     assert.equal((await search.search(principal, [binding], {query: 'dragonfruit'})).hits.length, 1);
+    // Direct history is authoritative even when a newer search snapshot exists.
+    await ingest('canonical_messages', {...message,text:'pineapple canonicalguava',blocks:[],attachments:[]}, 1500, 'canonical');
+    await ingest('channel_messages', {...message,text:'searchpreviewpapaya',blocks:[],attachments:[]}, 3000, 'newer-preview');
+    await search.refresh();
+    assert.equal((await search.search(principal,[binding],{query:'canonicalguava'})).hits.length,1);
+    assert.equal((await search.search(principal,[binding],{query:'searchpreviewpapaya'})).hits.length,0);
+    await ingest('canonical_messages',{...message,text:'pineapple shorterquince',blocks:[],attachments:[]},4000,'canonical-edit');
+    await ingest('canonical_messages',{...message,text:'canonicalguava',blocks:[],attachments:[]},1500,'canonical-replay');
+    await search.refresh();
+    assert.equal((await search.search(principal,[binding],{query:'canonicalguava'})).hits.length,0);
+    assert.equal((await search.search(principal,[binding],{query:'shorterquince'})).hits.length,1);
     await search.suppress(principal, binding, {kind: 'message', sourceId: 'C123:' + message.ts});
     await ingest('channel_messages', message, 3000, 'after-suppression');
+    await ingest('canonical_messages',message,5000,'canonical-after-suppression');
     await search.refresh();
     assert.equal((await search.search(principal, [binding], {query: 'pineapple'})).hits.length, 1);
     await ingest('channels', {id: 'C123', name: 'general', is_private: true}, 4000, 'private');

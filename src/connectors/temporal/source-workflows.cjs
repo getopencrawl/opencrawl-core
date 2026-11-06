@@ -9,3 +9,13 @@ exports.captureSlackFilesV1=async function captureSlackFilesV1(input) {
  }
  return continueAsNew(run);
 };
+
+exports.captureSlackMessagesV1=async function captureSlackMessagesV1(input) {
+ const run={...input,runId:input.runId||workflowInfo().runId,cutoff:input.cutoff??Date.now()};
+ for(let step=0;step<100;step++) {
+  const result=await activities.captureMessagePage(run);
+  if(result.done){if(result.failed)throw ApplicationFailure.nonRetryable(`${result.failed} Slack history resources could not be captured`,'SlackHistoryIncomplete');return result;}
+  if(result.waitMs>0)await sleep(result.waitMs);
+ }
+ return continueAsNew(run);
+};

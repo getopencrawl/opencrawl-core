@@ -1,6 +1,6 @@
 {
   "name": "@1patch/opencrawl-core",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -30,7 +30,8 @@
     "./board/search": "./src/board/search.mjs",
     "./connectors/slack-source": "./src/connectors/slack-source-files.mjs",
     "./connectors/slack-source-http": "./src/connectors/slack-source-http.mjs",
-    "./connectors/slack-source-temporal": "./src/connectors/temporal/source-worker.mjs"
+    "./connectors/slack-source-temporal": "./src/connectors/temporal/source-worker.mjs",
+    "./connectors/slack-source-messages": "./src/connectors/slack-source-messages.mjs"
   },
   "files": [
     "src",

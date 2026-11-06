@@ -28,4 +28,13 @@ test('real Temporal: file capture resumes committed checkpoints and keeps docume
  const history=await handle.fetchHistory(),raw=JSON.stringify(history);assert.doesNotMatch(raw,/PRIVATE_DOCUMENT_SENTINEL|PRIVATE_PROVIDER_ERROR/);
  for(const value of raw.matchAll(/"data":"([A-Za-z0-9+/=]+)"/g))assert.doesNotMatch(Buffer.from(value[1],'base64').toString(),/PRIVATE_DOCUMENT_SENTINEL|PRIVATE_PROVIDER_ERROR/);
  await Worker.runReplayHistory({workflowBundle:{codePath:bundlePath}},history);
+ const messageData=new Map();let historyCalls=0;
+ const messages=await createSlackSourceWorker({address:env.address,namespace:'default',taskQueue:'history-test',bundlePath,resolve:async()=>({binding,store:{bucket:'fixture',get:async k=>messageData.get(k),put:async(k,v)=>messageData.set(k,v)},now:()=>clock+=70000,request:async method=>({status:200,data:{ok:true,...(method==='conversations.list'?{channels:[{id:'C1',is_private:false}]}:{messages:++historyCalls===1?[{ts:'1.000001',reply_count:1,text:'PRIVATE_HISTORY_SENTINEL'}]:[{ts:'2.000001',thread_ts:'1.000001',text:'PRIVATE_REPLY_SENTINEL'}]})}})})});
+ const messageHandle=await env.client.workflow.start('captureSlackMessagesV1',{taskQueue:'history-test',workflowId:'history-fixture',args:[{connectionId:'conn'}]});
+ const messageResult=await messages.worker.runUntil(()=>messageHandle.result());await messages.connection.close();
+ assert.equal(messageResult.failed,0);assert.equal(messageResult.emitted,3);assert.equal(historyCalls,2);
+ const messageHistory=await messageHandle.fetchHistory(),serialized=JSON.stringify(messageHistory);
+ assert.doesNotMatch(serialized,/PRIVATE_HISTORY_SENTINEL|PRIVATE_REPLY_SENTINEL/);
+ for(const value of serialized.matchAll(/"data":"([A-Za-z0-9+/=]+)"/g))assert.doesNotMatch(Buffer.from(value[1],'base64').toString(),/PRIVATE_HISTORY_SENTINEL|PRIVATE_REPLY_SENTINEL/);
+ await Worker.runReplayHistory({workflowBundle:{codePath:bundlePath}},messageHistory);
 });

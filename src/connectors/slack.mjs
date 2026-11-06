@@ -22,7 +22,7 @@ export function normalizeSlack(binding, stream, envelope, sourceKey) {
   if (!data || typeof data !== 'object' || Array.isArray(data) || !Number.isSafeInteger(extractedAt) || extractedAt < 0) invalidRecord('Invalid Airbyte envelope');
   if (envelope._airbyte_meta?.changes?.length) invalidRecord('Airbyte record contains lossy source changes');
   let kind, sourceId, body, channelId = '', threadTs = '', timestampValue = '', authorId = '', title = '';
-  if (['channel_messages', 'messages', 'threads'].includes(stream)) {
+  if (['canonical_messages', 'channel_messages', 'messages', 'threads'].includes(stream)) {
     kind = 'message'; channelId = slackId(data.channel_id); timestampValue = timestamp(data.ts);
     sourceId = channelId + ':' + timestampValue;
     threadTs = data.thread_ts ? timestamp(data.thread_ts) : timestampValue;
@@ -43,6 +43,8 @@ export function normalizeSlack(binding, stream, envelope, sourceKey) {
     // Channel visibility is checked again at search time against current metadata.
     publicChannel: kind === 'channel' ? data.is_private === false && data.is_im !== true && data.is_mpim !== true : false,
   };
+  // Direct history/replies observations are authoritative over search previews.
+  if(stream==='canonical_messages')document.sourceAuthority=1;
   // Stream aliases/thread-parent duplicates share identity; deterministic tie handling
   // makes equal-time deliveries independent of arrival order.
   document.contentHash = digest({...document, sourceKey: undefined});

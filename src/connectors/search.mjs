@@ -4,7 +4,7 @@ import {authorize, digest, documentId, validateBinding} from './scope.mjs';
 export const connectorMapping = {dynamic: 'strict', properties: {
   ...Object.fromEntries(['tenantId', 'connectionId', 'workspaceId', 'provider', 'kind', 'sourceId', 'channelId', 'threadTs', 'timestamp', 'authorId', 'contentHash', 'parentId', 'parentKind', 'resourceVersion', 'relatedId', 'discussionId', 'repository', 'state', 'speakers', 'startTime', 'endTime', 'fileId', 'extractionStatus', 'partPath'].map(key => [key, {type: 'keyword'}])),
   title: {type: 'text'}, text: {type: 'text'}, extractedAt: {type: 'long'}, deleted: {type: 'boolean'}, publicChannel: {type: 'boolean'},
-  available: {type:'boolean'}, partStart:{type:'integer'}, partEnd:{type:'integer'}, partOverlap:{type:'integer'},
+  sourceAuthority:{type:'integer'}, available: {type:'boolean'}, partStart:{type:'integer'}, partEnd:{type:'integer'}, partOverlap:{type:'integer'},
   componentCount: {type: 'integer'}, versionAt: {type: 'long'}, sequence: {type: 'integer'}, chunkCount: {type: 'integer'}, heading: {type: 'text'},
   summary: {type: 'text', index: false}, url: {type: 'keyword', index: false, doc_values: false},
   sourceKey: {type: 'keyword', index: false, doc_values: false},
@@ -18,6 +18,8 @@ export function connectorIndex(environment, tenantId, generation = 'v1') {
 // out-of-order files. Suppressions persist across source replay.
 export const SEARCHABLE_KINDS = ['message', 'file', 'file_chunk', 'meeting', 'transcript', 'page', 'passage', 'database', 'comment', 'commit', 'pull_request', 'issue', 'review', 'issue_comment', 'review_comment', 'commit_comment', 'release'];
 const UPSERT = `if (ctx._source.deleted == true) { ctx.op = 'none'; }
+else if (ctx._source.containsKey('sourceAuthority') && (!params.doc.containsKey('sourceAuthority') || params.doc.sourceAuthority < ctx._source.sourceAuthority)) { ctx.op = 'none'; }
+else if (params.doc.containsKey('sourceAuthority') && (!ctx._source.containsKey('sourceAuthority') || params.doc.sourceAuthority > ctx._source.sourceAuthority)) { ctx._source = params.doc; }
 else if (ctx._source.extractedAt == null ||
  (params.doc.containsKey('versionAt') && (!ctx._source.containsKey('versionAt') || params.doc.versionAt > ctx._source.versionAt)) ||
  ((!params.doc.containsKey('versionAt') || params.doc.versionAt == ctx._source.versionAt) &&
