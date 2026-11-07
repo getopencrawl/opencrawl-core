@@ -70,7 +70,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
 }
 export function commandForSelf() {
   if(process.env.OPENCRAWL_LAUNCHER && process.env.OPENCRAWL_NODE) return [process.env.OPENCRAWL_NODE,process.env.OPENCRAWL_LAUNCHER];
-  return process.argv[1]?.endsWith('.ts') ? [process.execPath,resolve(process.argv[1])] : [process.execPath];
+  return /\.[cm]?[jt]s$/.test(process.argv[1]??'') ? [process.execPath,resolve(process.argv[1])] : [process.execPath];
 }
 export function recordError(error:any) {
   // Status only: never include transcript content, credentials, or a provider response.
