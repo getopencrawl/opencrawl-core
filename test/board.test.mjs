@@ -21,7 +21,7 @@ const post = (id, text = 'Taking auth refresh') => ({id, topic: 'auth', text});
 
 test('read-only browsing is scoped, paginated newest first and never changes the stored board', async t => {
   const f = await fixture(t), board = f.make();
-  assert.deepEqual(await board.read(a), {topics: [], messages: [], next: null});
+  assert.deepEqual(await board.read(a), {topics: [], topicSummaries: [], messages: [], next: null});
   for (let i = 1; i <= 25; i++) await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [post(String(i))]});
   await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [{id: 'other', topic: 'deploy', text: '<script>alert(1)</script>\nPlain text'}]});
   await board.sync(b, {workspace: b.tenantId, agent: 'codex', posts: [post('1', 'Other tenant secret')]});
@@ -29,6 +29,10 @@ test('read-only browsing is scoped, paginated newest first and never changes the
   const before = await f.store.readVersion(key);
   const first = await board.read({...a, userId: 'teammate'});
   assert.deepEqual(first.topics, ['auth', 'deploy']);
+  assert.deepEqual(first.topicSummaries, [
+    {topic: 'deploy', posts: 1, latest: {id: 26, timestamp: 10000000, name: 'codex'}},
+    {topic: 'auth', posts: 25, latest: {id: 25, timestamp: 10000000, name: 'codex'}},
+  ]);
   assert.deepEqual(first.messages.map(m => m.id), Array.from({length: 20}, (_, i) => 26 - i));
   assert.equal(first.next, 7);
   assert.ok(first.messages.every(m => !('requestId' in m) && m.author === 'alice'));
@@ -38,12 +42,14 @@ test('read-only browsing is scoped, paginated newest first and never changes the
   const second = await board.read(a, {before: first.next});
   assert.deepEqual(second.messages.map(m => m.id), [6, 5, 4, 3, 2, 1]);
   assert.equal(second.next, null);
+  assert.deepEqual(second.topicSummaries.map(t => [t.topic, t.posts, t.latest.id]), [['auth', 26, 27], ['deploy', 1, 26]]);
   const filtered = await board.read(a, {topic: 'auth'});
   assert.ok(filtered.messages.every(m => m.topic === 'auth'));
   const tail = await board.read(a, {topic: 'auth', before: filtered.next});
   assert.deepEqual([...filtered.messages, ...tail.messages].map(m => m.id), [27, ...Array.from({length: 25}, (_, i) => 25 - i)]);
   assert.deepEqual((await board.read(a, {topic: 'missing'})).messages, []);
   assert.equal((await board.read(b)).messages[0].text, 'Other tenant secret');
+  assert.deepEqual((await board.read(b)).topicSummaries, [{topic: 'auth', posts: 1, latest: {id: 1, timestamp: 10000000, name: 'codex'}}]);
   assert.deepEqual(await f.store.readVersion(key), stored);
   assert.notDeepEqual(before, stored); // Only the explicit sync above changed storage.
   for (const principal of [{}, {tenantId: 'a'}, {...a, captureAccess: 'read'}, {...a, captureAccess: null}]) {
