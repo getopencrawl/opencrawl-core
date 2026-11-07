@@ -5,6 +5,7 @@ import {createObjectStore, awsCredentials} from '../sessions/s3-store.mjs';
 import {createConnectorSearch} from './search.mjs';
 import {createConnectorPipeline} from './pipeline.mjs';
 import {validateBinding} from './scope.mjs';
+import {sourcePaginationProgress, advanceSourcePagination} from './workflow.mjs';
 
 /** Customer-owned local CLI, no hosted account. The config file is operator trusted. */
 const [action, configPath, query] = process.argv.slice(2);
@@ -18,8 +19,10 @@ if (action === 'search') console.log(JSON.stringify(await search.search({tenantI
 else {
   const pipeline = createConnectorPipeline({binding, ...guardConnectorWrites({binding, store, search})});
   let cursor = null, objects = 0, records = 0;
+  let progress = sourcePaginationProgress();
   do {
     const page = await pipeline.listPage({cursor});
+    progress = advanceSourcePagination(progress, page);
     for (const key of page.keys) { const result = await pipeline.processObject({key}); objects++; records += result.records; }
     cursor = page.cursor;
   } while (cursor);

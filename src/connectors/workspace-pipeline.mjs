@@ -1,6 +1,7 @@
 import {authorize, digest, invalidRecord, objectStream, selectedObject, pipelineVersion} from './scope.mjs';
 import {readRecords} from './records.mjs';
 import {workspaceAccumulator} from './workspace.mjs';
+import {sourcePaginationProgress, advanceSourcePagination} from './workflow.mjs';
 
 export function createWorkspacePipeline({binding, store, search, checkActive = async () => {}, heartbeat = () => {}}) {
   const principal = {tenantId: binding.tenantId};
@@ -8,9 +9,11 @@ export function createWorkspacePipeline({binding, store, search, checkActive = a
   async function active() {authorize(principal, binding); await checkActive(binding);}
   async function inventory() {
     let cursor, keys = [], ignored = 0;
+    let progress = sourcePaginationProgress();
     do {
       await active();
       const page = await store.listPage(binding.rawPrefix, {continuationToken: cursor, maxKeys: 1000});
+      progress = advanceSourcePagination(progress, {keys: page?.keys, cursor: page?.nextToken ?? null});
       for (const key of page.keys) {if (selectedObject(binding, key)) keys.push(key); else ignored++;}
       cursor = page.nextToken;
       if (keys.length + ignored > 10000) invalidRecord('Workspace snapshot exceeds 10000 objects; partition before retrying');

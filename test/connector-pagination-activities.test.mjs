@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {MockActivityEnvironment} from '@temporalio/testing';
 import {connectorActivities} from '../src/connectors/temporal/worker.mjs';
 import {sessionActivities} from '../src/sessions/temporal/worker.mjs';
+import {paginationFixture} from './fixtures/connector-pagination-paths.mjs';
 
 test('both real list activities reject pending pagination failures before source resolution or provider access', async () => {
   const resolve = async () => assert.fail('pending pagination failure must not resolve credentials or fetch provider');
@@ -23,4 +24,15 @@ test('legacy object activity inputs carrying a pending flag still reach normal s
     await assert.rejects(env.run(operation, {paginationFailure: 'cycle', key: 'fixture'}), error => error.type === expected);
   }
   assert.equal(resolved, 2);
+});
+
+test('real workspace object activities fail cyclic inventory nonretryably without a receipt', async () => {
+  const env = new MockActivityEnvironment();
+  for (const provider of ['granola', 'circleback', 'notion']) {
+    const h = paginationFixture(provider, {list: cursor => ({keys: [], nextToken: cursor === 'A' ? 'B' : 'A'})});
+    const activity = connectorActivities({resolve: async () => h}).processObject;
+    await assert.rejects(env.run(activity, {key: h.binding.rawPrefix + 'workspace-snapshot'}),
+      error => error.type === 'SourcePaginationFailed' && error.nonRetryable === true && error.message === 'Source pagination cursor cycle detected');
+    assert.equal(h.summary().lists, 3); assert.deepEqual(h.summary().receipts, []);
+  }
 });

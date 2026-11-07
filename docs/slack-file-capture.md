@@ -43,6 +43,16 @@ rate limits, persists request reservations before sending, retries activities,
 and continues as new every 100 steps. Source
 bodies, API responses, credentials and checkpoint contents stay out of history.
 
+Channel enumeration and each file's comment cursor use the shared pagination
+guard. Their scoped run/cutoff checkpoint stores one anchor token and decimal
+counters per cursor stream, including across 100-step continuations. Advancing
+empty pages remain valid; cycles are rejected before the offending raw page or
+derived record is written. Retries retain the previous cursor/progress and the
+existing pacing reservation. Terminal cursors clear progress. Legacy checkpoints
+initialize from their saved cursor; a rollback may carry progress unchanged until
+updated capture code resumes. These failures use the existing nonretryable
+`InvalidSlackSource` activity boundary without changing workflow commands.
+
 ## Storage and publication contract
 
 All keys are relative to the authorized connection's `rawPrefix`:

@@ -33,6 +33,15 @@ explicit failed-resource counts; a workflow with such failures does not succeed.
 Operators must coordinate independent audits with capture because the provider's
 rate budget is shared across callers.
 
+The shared pagination guard also covers channel enumeration, each channel's
+history, and each thread's replies. Progress belongs to that cursor's scoped
+run/cutoff checkpoint; it survives restarts and continuations, resets at terminal
+pages, and never crosses channel/thread boundaries. Advancing empty pages remain
+valid. Cycles fail before publishing the offending page or messages through the
+existing nonretryable `InvalidSlackSource` activity boundary. Legacy checkpoints
+remain usable; the same retry and rollback rules as [file capture](slack-file-capture.md)
+apply. Opaque cursor values are not included in the failure message.
+
 Canonical messages share native message identity with existing Airbyte records.
 Their explicit `sourceAuthority` makes direct history authoritative over search
 previews even if the preview is delivered later. Newer canonical observations
