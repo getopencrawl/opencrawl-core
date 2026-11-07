@@ -50,12 +50,25 @@ jobs:
             docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
               opencrawl-node-runtime:test node -e 'const fs=require("node:fs"),crypto=require("node:crypto");const p=JSON.parse(fs.readFileSync("/usr/share/opencrawl-node-runtime/patched.json"));if(process.getuid()===0||p.expectation!=="patched"||p.result.inputReset!==true||p.binarySha256!==crypto.createHash("sha256").update(fs.readFileSync(process.execPath)).digest("hex"))process.exit(1);console.log(JSON.stringify({patched:true,architecture:process.arch,binarySha256:p.binarySha256}))'
           fi
-      - name: Record exact image identity
+      - name: Retain native acceptance receipts and exact image identity
         if: success()
-        run: docker image inspect opencrawl-node-runtime:test --format '{{json .}}' > node-runtime-image.json
+        run: |
+          set -euo pipefail
+          docker image inspect opencrawl-node-runtime:test --format '{{json .}}' > node-runtime-image.json
+          mkdir node-runtime-proof
+          id=$(docker create --network none --read-only --cap-drop ALL opencrawl-node-runtime:test /usr/local/bin/node)
+          trap 'docker rm "$id" >/dev/null' EXIT
+          if [ "$BUILD_TARGET" = prepared ]; then
+            docker cp "$id:/proof/baseline.json" node-runtime-proof/baseline.json
+            docker cp "$id:/proof/node-gzwrite.patch" node-runtime-proof/node-gzwrite.patch
+          else
+            docker cp "$id:/usr/share/opencrawl-node-runtime/." node-runtime-proof/
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: success()
         with:
           name: portable-node-${{ matrix.arch }}-${{ inputs.target || 'prepared' }}
-          path: node-runtime-image.json
+          path: |
+            node-runtime-image.json
+            node-runtime-proof/
           if-no-files-found: error
