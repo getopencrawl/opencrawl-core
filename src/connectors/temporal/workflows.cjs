@@ -7,9 +7,11 @@ const activities = proxyActivities({
 });
 
 exports.indexConnectorV1 = async function indexConnectorV1(input) {
-  const result = await runConnectorSegment(input, activities);
+  const result = await runConnectorSegment(input, activities, {deferPaginationFailure: true});
   const failed = (input.failed || 0) + result.failed;
-  if (result.cursor) return continueAsNew({...input, cursor: result.cursor, failed});
+  if (result.cursor) return continueAsNew({...input, cursor: result.cursor, failed,
+    ...(result.paginationProgress && {paginationProgress: result.paginationProgress}),
+    ...(result.paginationFailure && {paginationFailure: result.paginationFailure})});
   if (failed) throw ApplicationFailure.nonRetryable(`${failed} source objects failed; inspect failed activities and replay after repair`, 'ConnectorObjectsFailed');
   return result;
 };

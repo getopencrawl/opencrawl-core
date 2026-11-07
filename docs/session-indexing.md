@@ -4,6 +4,24 @@ The ingest API authenticates the user, validates ownership and the envelope, and
 
 A separate Node.js worker runs `indexSessionsV1` on Temporal. A five-minute durable schedule discovers captured objects in bounded S3 pages and executes indexing activities. Temporal owns activity retry/backoff, timeouts and the discovery cursor. After five pages a workflow continues as new to bound history. Each activity retries five times; an exhausted object does not block the rest of the sweep, but causes a visible failed workflow. The next scheduled sweep can retry repaired objects. Schedule overlap is SKIP.
 
+Session and connector sweeps detect cyclic provider cursors across continuations.
+The workflow retains one checkpoint token and two decimal counters (constant
+token count, logarithmic counter bytes), with no page-count ceiling. Advancing
+pages containing only filtered objects still count as progress. On a cycle, the
+workflow finishes the current page and passes a fixed failure code to its next
+existing list activity, continuing as new first when the segment ends. The list
+activity rejects with nonretryable `SourcePaginationFailed` before accessing the
+provider. No extra activity is added after a terminal page.
+
+Failure remains at the existing activity boundary so old and new workflow code
+replay the same command sequence, including rolling updates and rollback. Legacy
+workers may ignore the additive checkpoint/failure fields and carry stale state
+across continuations; new workers resume checking that state when they take over.
+Cycle enforcement requires the updated workflow and activity implementations.
+A legacy activity may ignore a pending failure and finish on a terminal provider
+page; the workflow does not add an extra call just to enforce that failure.
+The standalone shared runner instead reports pagination errors immediately.
+
 The workflow carries only an operator-configured source reference, S3 object keys, cursors and counts. Transcript text and attachment bytes remain in S3. Activities validate each complete event against the same conditional identity ledger as capture **before** writing any search chunk, then normalize text and attachment references, validate every OpenSearch bulk item, and only then write an idempotent success receipt. A bypassed receiver or conflicting raw object therefore cannot replace only part of an event. Stable document IDs and deterministic JSON traversal make retry after a partial write safe. Activity failures are sanitized before entering Temporal history.
 
 ## Single-tenant self-hosting
