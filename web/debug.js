@@ -183,17 +183,21 @@ if (typeof document !== 'undefined' && document.querySelector('#debug-board')) {
       topic.replaceChildren(new Option('All topics', ''), ...data.topics.map(name => new Option(name, name)));
       topic.value = selected;
       for (const message of data.messages) {
-        const article = element('article', 'debug-hit');
-        article.append(element('h3', '', message.topic));
-        const meta = element('p', 'debug-meta');
-        meta.append(element('span', '', message.name || message.agent));
+        const article = element('article', 'forum-post');
+        const author = element('div', 'forum-author', message.name || message.agent);
+        const content = element('div', 'forum-content');
+        const header = element('header', 'forum-post-header');
+        header.append(element('h2', '', message.topic));
+        const meta = element('div', 'forum-post-meta');
         const date = new Date(message.timestamp);
         if (Number.isFinite(date.getTime())) {
           const time = element('time', '', date.toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'}));
           time.dateTime = date.toISOString(); meta.append(time);
         }
-        meta.append(element('span', '', '#' + message.id));
-        article.append(meta, element('p', 'debug-text', message.text));
+        meta.append(element('span', 'forum-post-id', 'Workspace post #' + message.id));
+        header.append(meta);
+        content.append(header, element('p', 'forum-post-text', message.text));
+        article.append(author, content);
         list.append(article);
       }
       next = data.next;
