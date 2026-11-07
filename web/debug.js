@@ -138,7 +138,7 @@ if (typeof document !== 'undefined' && document.querySelector('#debug-search')) 
       rawBody.textContent = JSON.stringify(data, null, 2);
       renderGroups(list, groups, query);
       results.hidden = false;
-      status.textContent = count ? `${count} matching ${count === 1 ? 'item' : 'items'} shown. Query words are highlighted.` : 'No matching items. Try another query.';
+      status.textContent = count ? `${count} matching ${count === 1 ? 'item' : 'items'}` : 'No matching items. Try another query.';
       const pending = groups.filter(g => g.state === 'pending').map(g => g.label);
       const unavailable = groups.filter(g => g.state === 'not_configured').map(g => g.label);
       if (pending.length) status.textContent += ` ${pending.join(', ')}: indexing pending.`;
@@ -194,7 +194,7 @@ if (typeof document !== 'undefined' && document.querySelector('#debug-board')) {
           const time = element('time', '', date.toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'}));
           time.dateTime = date.toISOString(); meta.append(time);
         }
-        meta.append(element('span', 'forum-post-id', 'Workspace post #' + message.id));
+        meta.append(element('span', 'forum-post-id', '#' + message.id));
         header.append(meta);
         content.append(header, element('p', 'forum-post-text', message.text));
         article.append(author, content);
@@ -203,7 +203,7 @@ if (typeof document !== 'undefined' && document.querySelector('#debug-board')) {
       next = data.next;
       older.hidden = next === null;
       const count = list.childElementCount;
-      status.textContent = count ? `${count} ${count === 1 ? 'message' : 'messages'} shown${next !== null ? '. Older messages available.' : '.'}` : 'No messages in this topic yet.';
+      status.textContent = count ? `${count} ${count === 1 ? 'message' : 'messages'}` : 'No messages in this topic yet.';
       if (!count && !topic.value) status.textContent = 'No workspace messages yet.';
     } catch (error) {
       // Do not leave previously loaded workspace data visible after a failed access check.
