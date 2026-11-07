@@ -1,5 +1,6 @@
 void (async () => {
  const {deriveOnboarding,hasReceipt}=await import('./onboarding-state.js');
+ const {requestJson}=await import('./http.js');
  const q=selector=>document.querySelector(selector);
  const screens=[...document.querySelectorAll('[data-screen]')];
  const copyState={},copyTimers={},snippetTimers=new Map();
@@ -42,9 +43,7 @@ void (async () => {
   polling=true;controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),10000);
   const retry=q('#retry-status');retry.disabled=true;
   try{
-   const response=await fetch('/api/onboarding',{credentials:'same-origin',cache:'no-store',signal:controller.signal});
-   if(!response.ok)throw Error('Status unavailable');
-   const {data}=await response.json();status=data;paintHistory();
+   const {data}=await requestJson('/api/onboarding',{signal:controller.signal});status=data;paintHistory();
    document.querySelectorAll('[data-signal]').forEach(item=>{
     const signal=item.dataset.signal;
     const wasComplete=item.hasAttribute('data-complete');

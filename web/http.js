@@ -7,6 +7,7 @@ export async function requestJson(path, options = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (response.status === 401) location.assign('/auth/login');
+  if (data.error?.code === 'ORGANIZATION_REQUIRED') location.assign('/organizations');
   if (response.status === 402) location.assign('/billing');
   if (data.onboardingUrl && /^\/onboarding(?:\/|$)/.test(data.onboardingUrl)) location.assign(data.onboardingUrl);
   if (!response.ok) throw Object.assign(new Error(typeof data.error === 'string' ? data.error : data.error?.message || 'We couldn’t complete that request. Try again.'), {status: response.status});

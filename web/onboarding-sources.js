@@ -58,7 +58,7 @@ list.addEventListener('click', async event => {
  }
  pending.add(id); errors.delete(id); render(); announce(`Connecting ${item.name}`);
  try {
-  const result = await api(`/api/integrations/${encodeURIComponent(id)}/connect`, {method:'POST',body:JSON.stringify(apiKey?{apiKey}:{})});
+  const result = await api(`/api/integrations/${encodeURIComponent(id)}/connect`, {method:'POST',body:JSON.stringify(apiKey?{apiKey}:{}),signal:AbortSignal.timeout(120000)});
   apiKey = null;
   if (result.redirectUrl) {
    const url = new URL(result.redirectUrl);
