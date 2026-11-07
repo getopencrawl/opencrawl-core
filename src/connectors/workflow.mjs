@@ -27,7 +27,8 @@ export function assertSourcePaginationPage(page) {
   if (page.cursor !== null && (typeof page.cursor !== 'string' || !page.cursor)) throw new SourcePaginationError('invalid-cursor');
 }
 
-function paginationProgress(cursor, state) {
+// One guard for durable segments, the local CLI, and nested snapshot inventories.
+export function sourcePaginationProgress(cursor = null, state) {
   if (cursor !== null && (typeof cursor !== 'string' || !cursor)) throw new SourcePaginationError('invalid-cursor');
   if (state === undefined) return {anchor: cursor, window: 1n, distance: 0n};
   if (!state || state.version !== 1 || typeof state.anchor !== 'string' || !state.anchor ||
@@ -44,9 +45,10 @@ function paginationProgress(cursor, state) {
   return {anchor: state.anchor, window, distance};
 }
 
-function advancePagination(progress, cursor) {
+export function advanceSourcePagination(progress, page) {
+  assertSourcePaginationPage(page);
+  const cursor = page.cursor;
   if (cursor === null) return null;
-  if (typeof cursor !== 'string' || !cursor) throw new SourcePaginationError('invalid-cursor');
   if (cursor === progress.anchor) throw new SourcePaginationError('cycle');
   // Brent's algorithm retains one checkpoint token across segment boundaries.
   // Decimal BigInt counters use logarithmic bytes, without a page-count ceiling.
@@ -54,6 +56,10 @@ function advancePagination(progress, cursor) {
   return distance === progress.window
     ? {anchor: cursor, window: progress.window * 2n, distance: 0n}
     : {...progress, distance};
+}
+
+export function sourcePaginationCheckpoint(progress) {
+  return progress ? {version: 1, anchor: progress.anchor, window: String(progress.window), distance: String(progress.distance)} : undefined;
 }
 
 export async function runConnectorSegment(input, {listPage, processObject}, {deferPaginationFailure = false} = {}) {
@@ -69,15 +75,12 @@ export async function runConnectorSegment(input, {listPage, processObject}, {def
   }
   progress = guard(() => {
     assertSourcePaginationInput(input);
-    return paginationProgress(input.cursor ?? null, input.paginationProgress);
+    return sourcePaginationProgress(input.cursor ?? null, input.paginationProgress);
   });
   const {paginationProgress: _progress, paginationFailure: _failure, ...activityInput} = input;
   for (let pageNumber = 0; pageNumber < 5; pageNumber++) {
     const page = await listPage({...activityInput, cursor, ...(paginationFailure && {paginationFailure})});
-    if (!paginationFailure) progress = guard(() => {
-      assertSourcePaginationPage(page);
-      return advancePagination(progress, page.cursor);
-    });
+    if (!paginationFailure) progress = guard(() => advanceSourcePagination(progress, page));
     for (let offset = 0; offset < page.keys.length; offset += 2) {
       const results = await Promise.allSettled(page.keys.slice(offset, offset + 2).map(key => processObject({...activityInput, key})));
       for (const result of results) {
@@ -88,7 +91,5 @@ export async function runConnectorSegment(input, {listPage, processObject}, {def
     cursor = page.cursor;
     if (!cursor) break;
   }
-  return {cursor, indexed, failed, ...(paginationFailure && {paginationFailure}), ...(progress && {paginationProgress: {
-    version: 1, anchor: progress.anchor, window: String(progress.window), distance: String(progress.distance),
-  }})};
+  return {cursor, indexed, failed, ...(paginationFailure && {paginationFailure}), ...(progress && {paginationProgress: sourcePaginationCheckpoint(progress)})};
 }

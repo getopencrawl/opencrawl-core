@@ -62,6 +62,17 @@ per line. This admits the GitHub source's bounded diffs while discarding them
 before indexing. Temporal heartbeats cover I/O; activities retain the existing
 10-minute timeout and bounded concurrency.
 
+Both the initial and final inventory use the shared pagination guard, with fresh
+progress for each traversal. Cyclic cursors fail even when every page is empty;
+advancing empty/filtered pages remain valid. The 10,000-object limit counts
+selected and ignored objects. An incomplete inventory never produces a success
+receipt, including when documents were already written before the final check.
+In Temporal this ends the snapshot activity with nonretryable
+`SourcePaginationFailed`; the existing outer workflow counts the failed object
+and reports `ConnectorObjectsFailed` when its sweep ends.
+Raw store adapters may omit a terminal `nextToken` or return `null`; canonical
+pipeline pages use `cursor: null`.
+
 Children commit before their parent publishes the current revision. Search
 validates scope and checks every passage against its current parent revision;
 old passages cannot leak through normal or raw results. Source revision precedes

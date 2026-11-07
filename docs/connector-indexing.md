@@ -113,6 +113,12 @@ before calling the same core search API. OpenSearch basic auth is supported via
 protected `search.username`/`search.password`; the hosted adapter uses SigV4.
 Do not expose an unauthenticated object store or OpenSearch endpoint publicly.
 
+Local indexing checks every page with the same cursor guard as durable sweeps.
+Advancing empty or filtered pages continue; cyclic cursors fail with a fixed
+error. Objects remain sequential and fail fast: an object error stops later
+objects/pages, and the CLI refreshes search and reports success only after a
+complete traversal.
+
 ## Durable Temporal adapter
 
 The optional `connectors/temporal` export uses pinned `@temporalio/worker`,
