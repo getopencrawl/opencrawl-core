@@ -120,3 +120,18 @@ test('real OpenSearch: exact vector realms score every passage in scope',{skip:!
  const mapping=Object.values(await (await fetch(`${endpoint}/opencrawl-${environment}-realm-*/_mapping`)).json())[0].mappings;
  assert.equal(mapping.properties.embedding.method,undefined);
 });
+
+test('rerank reorders the head by relevance and falls back to fused order on failure or timeout',async()=>{
+ const hit=(id,i)=>({_id:id,_score:10-i,_source:{tenantId:'tenant-a',userId:'same-user',text:'passage '+id}});
+ const fetch=async(url,options)=>realmResponse('session',{hits:{total:{value:3},hits:['a','b','c'].map(hit)}});
+ const make=rerank=>createSessionSearch({endpoint:'http://localhost:9200',tenantId:'tenant-a',index:'sessions-test',fetch,rerank,rerankDepth:2,rerankTimeoutMs:50});
+ const seen=[];
+ const good=await make(async(query,hits)=>{seen.push(hits.map(h=>h.text));return hits.map(h=>h.id==='b'?0.9:0.1);}).search(owner,{query:'q',text:false});
+ assert.deepEqual(good.hits.map(h=>h.id),['b','a','c']);
+ assert.deepEqual(seen,[['passage a','passage b']]);
+ assert.equal(good.reranked,true);assert.equal(good.hits[0].relevance,0.9);assert.ok(!('text' in good.hits[0]));
+ const failed=await make(async()=>{throw new Error('429');}).search(owner,{query:'q'});
+ assert.deepEqual(failed.hits.map(h=>h.id),['a','b','c']);assert.equal(failed.reranked,false);
+ const slow=await make(()=>new Promise(r=>setTimeout(()=>r([0,1]),500))).search(owner,{query:'q'});
+ assert.deepEqual(slow.hits.map(h=>h.id),['a','b','c']);assert.equal(slow.reranked,false);
+});

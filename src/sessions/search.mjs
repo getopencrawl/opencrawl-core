@@ -9,8 +9,12 @@ const fail=(status,message)=>{throw Object.assign(new Error(message),{status});}
 export const MAX_SEARCH_LIMIT=500;
 /** `embed(texts) -> Promise<number[][]>` (unit vectors) with `vectors: {dimensions}` enables hybrid
  * search: passages are embedded on write, and each query fuses lexical and vector rankings.
- * `embedQuery` (default `embed`) embeds queries, for models with query-specific encodings. */
-export function createSessionSearch({embed,embedQuery=embed,...options}) {
+ * `embedQuery` (default `embed`) embeds queries, for models with query-specific encodings.
+ * `rerank(query, hits) -> Promise<number[]>` scores the top `rerankDepth` fused hits (each with
+ * text) for relevance, e.g. a cross-encoder or a calibrated judge; they are reordered by score and
+ * get `relevance`. A rerank failure or a miss of `rerankTimeoutMs` keeps the fused order, so the
+ * search latency budget holds even when the reranker is slow or throttled. */
+export function createSessionSearch({embed,embedQuery=embed,rerank,rerankDepth=100,rerankTimeoutMs=2000,...options}) {
   if(Boolean(embed)!==Boolean(options.vectors))throw new Error('Configure embed together with vectors.dimensions');
   const resolve=createRealmResolver(options), f=field=>realmField('session',field);
   return {
@@ -42,7 +46,7 @@ export function createSessionSearch({embed,embedQuery=embed,...options}) {
     async search(principal,{query='',limit=20,raw=false,text=true}={}) {
       sessionScope(principal);
       if(typeof query!=='string'||query.length>4000||!Number.isInteger(limit)||limit<1||limit>MAX_SEARCH_LIMIT)fail(400,'Invalid search query or limit');
-      const collection=resolve(principal).collection('session'),excludes=text?['embedding']:['embedding','text'];
+      const collection=resolve(principal).collection('session'),excludes=text||rerank?['embedding']:['embedding','text'];
       const lexical=collection.search(principal,{size:limit,track_total_hits:true,_source:{excludes},
         query:{bool:{filter:[{term:{tenantId:principal.tenantId}}],must:query?[relevanceQuery(query)]:[{match_all:{}}]}},
         sort:query?['_score',{[f('receivedAt')]:'desc'}]:[{[f('receivedAt')]:'desc'},{[f('sequence')]:'asc'}]});
@@ -57,8 +61,21 @@ export function createSessionSearch({embed,embedQuery=embed,...options}) {
       }
       if(raw)return result;
       const shape=hit=>({id:hit._id,score:hit._score,...hit._source});
-      const hits=dense?fuseRankings([{hits:result.hits.hits.map(shape)},{hits:dense.hits.hits.map(shape)}]).slice(0,limit):result.hits.hits.map(shape);
-      return {total:result.hits.total?.value??0,hits};
+      let hits=dense?fuseRankings([{hits:result.hits.hits.map(shape)},{hits:dense.hits.hits.map(shape)}]).slice(0,limit):result.hits.hits.map(shape);
+      let reranked=false;
+      if(rerank&&query.trim()&&hits.length>1){
+        const head=hits.slice(0,rerankDepth);
+        let timer;
+        const deadline=new Promise(resolve=>{timer=setTimeout(()=>resolve(null),rerankTimeoutMs);});
+        const scores=await Promise.race([Promise.resolve().then(()=>rerank(query,head)).catch(()=>null),deadline]);
+        clearTimeout(timer);
+        if(Array.isArray(scores)&&scores.length===head.length&&scores.every(Number.isFinite)){
+          const order=head.map((hit,i)=>({hit,i,relevance:scores[i]})).sort((a,b)=>b.relevance-a.relevance||a.i-b.i);
+          hits=[...order.map(({hit,relevance})=>({...hit,relevance})),...hits.slice(rerankDepth)];reranked=true;
+        }
+      }
+      if(!text)hits=hits.map(({text:_,...hit})=>hit);
+      return {total:result.hits.total?.value??0,hits,reranked};
     },
     /** Activity counts for reporting. Never returns transcript text. With team:true the caller
      * must already have authorized the principal for its whole tenant. */
