@@ -1,5 +1,15 @@
 # Integrations
 
+> **Not part of the search pipeline yet.** Nothing in this directory feeds the
+> OpenCrawl index today. For searchable agent sessions, use `deploy/` and
+> `opencrawl collect` (see the [top-level README](../README.md)). The core indexer
+> reads gzip JSONL under `raw/v1/source=…/workspace=…/connection=…/stream=…/`
+> ([`src/connectors/scope.mjs`](../src/connectors/scope.mjs)); the Airbyte tooling
+> here writes uncompressed JSONL under `<path>/<source>/<stream>/`, and stock
+> Airbyte sources emit different streams than the indexer's normalizers expect.
+> Slack has a native, indexable path: see
+> [connector indexing](../docs/connector-indexing.md).
+
 Connects a self-hosted OpenCrawl to the context people already have: the data in
 their tools (Google Drive, Notion, Slack, GitHub, databases, and more) and the
 transcripts of the agent sessions they run. Both land in the same S3 bucket, so
@@ -7,7 +17,7 @@ their agents can search all of it through one index.
 
 ```
  data sources ──► Airbyte (self-hosted) ──► S3 bucket ──────────┬──► OpenCrawl indexer ──► search / MCP
-  Drive, Notion,   auth, sync schedules,     <path>/<source>/    │    (not built yet)
+  Drive, Notion,   auth, sync schedules,     <path>/<source>/    │    (not wired yet)
   Slack, DBs ...   583 sources                                   │
                                                                  │
  agent sessions ─► collector ─► receiver ──► S3 bucket ──────────┘
@@ -18,7 +28,7 @@ their agents can search all of it through one index.
 | Directory | Status |
 | --- | --- |
 | [`airbyte/`](airbyte/README.md) | Working: local install, production Helm values, source sign-in, S3 landing, sync CLI |
-| [`agent-sessions/`](agent-sessions/README.md) | Working: Claude Code, Codex and Gemini CLI capture, ChatGPT and Claude.ai exports, MCP, S3 landing |
+| [`agent-sessions/`](agent-sessions/README.md) | Legacy: captures to S3 in a layout the indexer does not read. Use `opencrawl collect` instead |
 
 This directory is operator tooling: scripts, deployment config and small API
 clients. It is not part of the published `@getopencrawl/opencrawl-core` package, and

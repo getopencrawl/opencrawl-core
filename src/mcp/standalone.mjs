@@ -39,7 +39,8 @@ export function standaloneMcp({token, origin, revision, boardPath, boardSearch, 
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const port = Number(process.env.PORT || 8093);
+  // 8094 so it can run beside the session receiver's default 8093.
+  const port = Number(process.env.PORT || 8094);
   const workspace = process.env.OPENCRAWL_SEARCH_CONFIG ? await configuredWorkspaceSearch(process.env.OPENCRAWL_SEARCH_CONFIG) : {};
   const sessionSettings = process.env.OPENCRAWL_OPENSEARCH_URL ? {endpoint: process.env.OPENCRAWL_OPENSEARCH_URL, index: process.env.OPENCRAWL_OPENSEARCH_INDEX || undefined,
     username: process.env.OPENCRAWL_OPENSEARCH_USERNAME, password: process.env.OPENCRAWL_OPENSEARCH_PASSWORD, tenantId: workspace.principal?.tenantId || process.env.OPENCRAWL_TENANT_ID || 'self-hosted'} : null;
@@ -47,6 +48,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const server = standaloneMcp({principal:{tenantId:process.env.OPENCRAWL_TENANT_ID||'self-hosted',userId:process.env.OPENCRAWL_USER_ID||'owner'}, ...workspace, token: process.env.MCP_TOKEN, origin: process.env.MCP_ORIGIN || `http://127.0.0.1:${port}`, boardPath: process.env.OPENCRAWL_BOARD_PATH,
     recentSessions: capture ? createRecentSessions({...sessionSettings, ...capture}) : undefined,
     boardSearch: sessionSettings || undefined});
-  server.listen(port, '127.0.0.1');
+  // HOST is for containers; MCP_ORIGIN still pins the Host header clients must send.
+  server.listen(port, process.env.HOST || '127.0.0.1');
   process.on('SIGTERM', () => server.close());
 }

@@ -34,6 +34,10 @@ for (const folder of folders) {
   if (folder === 'cli') await waitForAvailability(folders.filter(name => name !== 'cli'));
   const directory = join(dist, folder);
   const pkg = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
+  const packed=Bun.spawnSync(['npm','pack','--dry-run','--json','--ignore-scripts'],{cwd:directory,stdout:'pipe',stderr:'pipe'});
+  if(packed.exitCode)throw new Error('Package inspection failed for '+pkg.name);
+  const files=JSON.parse(packed.stdout.toString())[0].files.map((entry:any)=>entry.path);
+  for(const required of ['LICENSE','THIRD_PARTY_NOTICES.txt','runtime/opencrawl.js'])if(!files.includes(required))throw new Error(pkg.name+' omits '+required);
   const existing = dryRun ? null : Bun.spawnSync(['npm', 'view', `${pkg.name}@${pkg.version}`, 'version', '--registry=https://registry.npmjs.org'], {stdout: 'pipe', stderr: 'pipe'});
   if (existing?.exitCode === 0) {
     if (folder === 'cli') throw new Error('This CLI version is already published. Increment cli/package.json.');

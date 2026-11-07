@@ -84,7 +84,8 @@ across restart, backup/restore, migration/upgrade and rollback expectations,
 resource limits and support boundaries. Public source and install artifacts must
 not require private GitHub Packages access. Select a public license explicitly,
 review asset/dependency rights, and document security/contribution policies before
-calling this open source. The current repository remains private and UNLICENSED.
+calling this open source. The repository remains private while preparing release. Core and CLI are
+Apache-2.0; plugins remain MIT. See docs/self-host.md for the supported preview.
 
 Session capture now has an authenticated single-tenant receiver. Both it and the
 hosted shell land immutable gzip batches and attachment blobs through the same
