@@ -19,8 +19,8 @@ Known Codex context wrappers (AGENTS.md/environment/page context, agent
 notifications and interrupted-turn notices) also do not count as human prompts.
 Absent messages are null. Captured metadata titles are preferred; otherwise the
 first user text supplies a title with `titleSource: first_user_message`, falling
-back to the session ID. Titles are limited to 200 characters and message text to
-4,000 UTF-16 units, with `truncated` and `totalChars` on each message.
+back to the session ID. Captured titles and message text are returned in full;
+the snapshot reader does not apply character limits or truncate source content.
 
 `recentSessionsStatus.state` is `ready`, `not_configured` or `unavailable`; a
 failed or timed-out lookup does not hide accepted board posts. Source scope is

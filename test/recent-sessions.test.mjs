@@ -74,29 +74,34 @@ test('real realm: newest ten org sessions, original first/last text, tool exclus
     return {key,batch};
   }
   for(let i=0;i<12;i++)await add(owner,'session-'+i,[event('message','user','Session '+i,i)]);
+  const firstText='Actual request '+ '🌿'.repeat(9000)+' FIRST-END';
+  const lastText='Follow-up '+ 'x'.repeat(17000)+' LAST-END';
+  const assistantText='Latest non-tool answer '+ 'y'.repeat(17000)+' ASSISTANT-END';
+  const capturedTitle='Captured title '+ 't'.repeat(400)+' TITLE-END';
+  const fallbackText='Other machine\n'+ 'm'.repeat(500)+' FALLBACK-END';
   const original=await add(teammate,'session-11',[
     event('context','user','# AGENTS.md instructions\nInjected context',19),
-    event('first','user','Actual request',20),event('answer','assistant','Earlier answer',21),event('last','user','Follow-up '+ 'x'.repeat(17000),22),
-    {id:'native',kind:'agent_message',sequence:23,timestamp:'2026-11-01T00:23:00Z',data:{author:'assistant',recipient:'all',content:[{type:'text',text:'Latest non-tool answer'}]}},
+    event('first','user',firstText,20),event('answer','assistant','Earlier answer',21),event('last','user',lastText,22),
+    {id:'native',kind:'agent_message',sequence:23,timestamp:'2026-11-01T00:23:00Z',data:{author:'assistant',recipient:'all',content:[{type:'text',text:assistantText}]}},
     ...Array.from({length:25},(_,i)=>event('tool-'+i,'assistant','',24+i,{data:{role:'assistant',content:[{type:'tool_use',name:'Bash',input:{command:'do not expose'}}]}})),
     event('tool-result','user','',49,{data:{role:'user',content:[{type:'tool_result',content:'not a user request'}]}}),
     event('notification','user','<subagent_notification>Agent finished</subagent_notification>',49),
-    {id:'title',kind:'session_metadata',sequence:50,timestamp:'2026-11-01T00:50:00Z',data:{title:'Captured title'}},
+    {id:'title',kind:'session_metadata',sequence:50,timestamp:'2026-11-01T00:50:00Z',data:{title:capturedTitle}},
   ]);
   await add(owner,'session-11',[event('claude','user','Other harness',51)],'claude-code');
-  await add(owner,'session-11',[event('machine','user','Other machine',52)],'codex','device-2');
+  await add(owner,'session-11',[event('machine','user',fallbackText,52)],'codex','device-2');
   await add(foreign,'session-11',[event('secret','user','FOREIGN SECRET',59)]);
   // Re-upload old activity now: receivedAt must not determine recency.
   await add(owner,'ancient',[event('ancient','user','Historical backfill',0)]);
   await search.refresh(owner);await search.refresh(foreign);
   const rows=await recent.read(owner);
   assert.equal(rows.length,10);assert.equal(rows[0].installationId,'device-2');assert.equal(rows[1].harness,'claude-code');
-  const row=rows[2];assert.equal(row.userId,'bob');assert.equal(row.sessionId,'session-11');assert.equal(row.title,'Captured title');
+  const row=rows[2];assert.equal(row.userId,'bob');assert.equal(row.sessionId,'session-11');assert.equal(row.title,capturedTitle);
   assert.equal(row.titleSource,'captured');assert.equal(row.titleTimestamp,'2026-11-01T00:50:00.000Z');assert.equal(row.lastActivityAt,row.titleTimestamp);
-  assert.equal(row.firstUserMessage.text,'Actual request');assert.equal(row.firstUserMessage.timestamp,'2026-11-01T00:20:00.000Z');
-  assert.equal(row.lastUserMessage.totalChars,17010);assert.equal(row.lastUserMessage.text.length,4000);assert.equal(row.lastUserMessage.truncated,true);
-  assert.equal(row.latestAssistantMessage.text,'Latest non-tool answer');assert.equal(row.latestAssistantMessage.timestamp,'2026-11-01T00:23:00.000Z');assert.equal(row.partial,false);
-  assert.equal(rows[0].titleSource,'first_user_message');assert.equal(rows[0].latestAssistantMessage,null);
+  assert.equal(row.firstUserMessage.text,firstText);assert.equal(row.firstUserMessage.timestamp,'2026-11-01T00:20:00.000Z');
+  assert.equal(row.lastUserMessage.text,lastText);
+  assert.equal(row.latestAssistantMessage.text,assistantText);assert.equal(row.latestAssistantMessage.timestamp,'2026-11-01T00:23:00.000Z');assert.equal(row.partial,false);
+  assert.equal(rows[0].title,fallbackText.replace(/\s+/g,' ').trim());assert.equal(rows[0].titleSource,'first_user_message');assert.equal(rows[0].latestAssistantMessage,null);
   assert.ok(!JSON.stringify(rows).includes('FOREIGN SECRET'));assert.ok(!rows.some(r=>r.sessionId==='ancient'));
   assert.deepEqual(await recent.read({...owner,tenantId:'empty'}),[]);
   t.after(()=>fetch(endpoint+'/'+realmIndex(environment,'empty'),{method:'DELETE'}));
