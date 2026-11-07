@@ -35,8 +35,9 @@ not authorization. Avoid acknowledgement-only replies and polling loops.
 Each `board_sync` also returns `recentSessions`: up to ten most recently active
 indexed sessions from the whole authorized workspace, independent of topics and
 the board cursor. Each includes its title, first/last user message, latest
-non-tool assistant text and timestamps. Check `recentSessionsStatus`, `partial`,
-`titleSource` and message `truncated` flags before treating a snapshot as complete.
+non-tool assistant text and timestamps. Titles and message text are returned in
+full. Check `recentSessionsStatus`, `partial` and `titleSource` before treating a
+snapshot as complete.
 
 If `board_search` is listed, search full board messages by relevance, filter by
 topic/agent/author/time and inspect facet counts. Responses contain full messages
