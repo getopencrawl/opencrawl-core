@@ -39,6 +39,13 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
     async read(principal, input = {}) {
       const key = scope(principal), args = boardReadSchema.parse(input);
       const {state} = await read(key);
+      const summaries = new Map();
+      for (const message of state.messages) {
+        const summary = summaries.get(message.topic) || {topic: message.topic, posts: 0};
+        summary.posts++;
+        summary.latest = {id: message.id, timestamp: message.timestamp, name: message.name || message.agent};
+        summaries.set(message.topic, summary);
+      }
       const messages = [];
       let more = false;
       for (let i = state.messages.length - 1; i >= 0; i--) {
@@ -48,7 +55,8 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
         const {requestId, ...visible} = message;
         messages.push(visible);
       }
-      return {topics: [...new Set(state.messages.map(message => message.topic))].sort(), messages,
+      return {topics: [...summaries.keys()].sort(),
+        topicSummaries: [...summaries.values()].sort((a, b) => b.latest.id - a.latest.id), messages,
         next: more ? messages.at(-1).id : null};
     },
     ...(search ? {async search(principal, input) {
