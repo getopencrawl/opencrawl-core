@@ -18,6 +18,8 @@ replay the same command sequence, including rolling updates and rollback. Legacy
 workers may ignore the additive checkpoint/failure fields and carry stale state
 across continuations; new workers resume checking that state when they take over.
 Cycle enforcement requires the updated workflow and activity implementations.
+A legacy activity may ignore a pending failure and finish on a terminal provider
+page; the workflow does not add an extra call just to enforce that failure.
 The standalone shared runner instead reports pagination errors immediately.
 
 The workflow carries only an operator-configured source reference, S3 object keys, cursors and counts. Transcript text and attachment bytes remain in S3. Activities validate each complete event against the same conditional identity ledger as capture **before** writing any search chunk, then normalize text and attachment references, validate every OpenSearch bulk item, and only then write an idempotent success receipt. A bypassed receiver or conflicting raw object therefore cannot replace only part of an event. Stable document IDs and deterministic JSON traversal make retry after a partial write safe. Activity failures are sanitized before entering Temporal history.

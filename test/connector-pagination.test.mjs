@@ -113,9 +113,11 @@ test('deferred failure processes the cycle page and uses only the next existing 
   assert.deepEqual(processed, ['1', '2', '3']);
   assert.equal(calls.length, 4); assert.equal(calls[3].paginationFailure, 'cycle');
 
-  let terminalLists = 0;
-  const result = await runConnectorSegment({}, {listPage: async () => {terminalLists++; return {keys: [], cursor: null};}}, {deferPaginationFailure: true});
-  assert.equal(terminalLists, 1); assert.equal(result.cursor, null);
+  for (const input of [{}, {paginationFailure: 'cycle'}]) {
+    let terminalLists = 0;
+    const result = await runConnectorSegment(input, {listPage: async () => {terminalLists++; return {keys: [], cursor: null};}}, {deferPaginationFailure: true});
+    assert.equal(terminalLists, 1); assert.equal(result.cursor, null);
+  }
 });
 
 test('pending failure codes remain fixed and bounded when older code carries them forward', async () => {
