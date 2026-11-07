@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.2.27",
+  "version": "0.2.28",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -29,6 +29,7 @@
     "./sessions/cloud-setup": "./src/sessions/cloud-setup.mjs",
     "./usage": "./src/usage.mjs",
     "./board": "./src/board/board.mjs",
+    "./board/http": "./src/board/http.mjs",
     "./board/search": "./src/board/search.mjs",
     "./connectors/slack-source": "./src/connectors/slack-source-files.mjs",
     "./connectors/slack-source-http": "./src/connectors/slack-source-http.mjs",

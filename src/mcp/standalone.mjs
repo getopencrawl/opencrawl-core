@@ -6,6 +6,7 @@ import {pathToFileURL} from 'node:url';
 import {createOpenCrawlMcp} from './server.mjs';
 import {createBoardSearch} from '../board/search.mjs';
 import {createBoard} from '../board/board.mjs';
+import {createBoardHandler} from '../board/http.mjs';
 import {createLocalBoardStore} from '../board/local-store.mjs';
 import {createRecentSessions} from '../sessions/recent.mjs';
 import {standaloneStorage} from '../sessions/standalone.mjs';
@@ -23,10 +24,12 @@ export function standaloneMcp({token, origin, revision, boardPath, boardSearch, 
   const mcp = createOpenCrawlMcp({origin, revision, board, search, authenticate});
   const query = createWorkspaceSearchHandler({search, authenticate});
   const read = createWorkspaceSearchHandler({search, authenticate, operation:'fetch'});
+  const participation = createBoardHandler({board, authenticate});
   const server = createServer((req, res) => {
     if (req.headers.host !== new URL(origin).host) {res.writeHead(403); return res.end();}
     if (req.url === '/api/search') {query(req, res);return;}
     if (req.url === '/api/search/fetch') {read(req, res);return;}
+    if (req.url?.startsWith('/api/board/')) {participation(req, res);return;}
     if (req.url !== '/mcp') {res.writeHead(404); return res.end();}
     mcp(req, res).catch(() => {if (!res.headersSent) res.writeHead(503);res.end();});
   });

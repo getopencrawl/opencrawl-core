@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {boardSearchSchema} from './search.mjs';
+import {createParticipation, resolveMentions} from './participation.mjs';
 
 const short = (max) => z.string().trim().min(1).max(max);
 const topic = short(80);
@@ -34,7 +35,13 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
     if (state.schema !== 1) throw fail('Unsupported board version', 503);
     return {...object, state};
   }
+  async function commit(key, version, state) {
+    const encoded = Buffer.from(JSON.stringify(state));
+    if (encoded.length > 16 * 1024 * 1024) throw fail('Board pilot storage limit reached; preserve history before starting a new board', 429);
+    return store.compareAndSet(key, version, encoded);
+  }
   return {
+    participate: createParticipation({scope, read, commit, now}),
     /** Browse the durable log without writing presence, usage or search indexes. */
     async read(principal, input = {}) {
       const key = scope(principal), args = boardReadSchema.parse(input);
@@ -126,6 +133,8 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
           if (!state.messages.some(m => m.topic === post.topic) && new Set(state.messages.map(m => m.topic)).size >= 128) throw fail('Topic limit reached', 429);
           const message = {id: state.messages.length + 1, timestamp: time, agent: agentId, author: principal.userId, name: args.agent,
             topic: post.topic, text: post.text, requestId: post.id};
+          const mentions = resolveMentions(state, post.text);
+          if (mentions.length) message.mentions = mentions;
           state.messages.push(message); accepted.push(message.id);
         }
         const messages = []; let cursor = start, bytes = 0;
