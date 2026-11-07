@@ -154,24 +154,50 @@ if (typeof document !== 'undefined' && document.querySelector('#debug-search')) 
   });
 }
 
+export function boardPage(search) {
+  const query = new URLSearchParams(search);
+  if (query.get('view') === 'stream') return {kind: 'stream', topic: ''};
+  const topic = query.get('topic')?.trim() || '';
+  return {kind: topic ? 'topic' : 'topics', topic};
+}
+
+export function boardTopicHref(topic) {
+  return '/_/debug?view=board&topic=' + encodeURIComponent(topic);
+}
+
+function boardTime(timestamp) {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return null;
+  const time = element('time', '', date.toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'}));
+  time.dateTime = date.toISOString();
+  return time;
+}
+
 if (typeof document !== 'undefined' && document.querySelector('#debug-board')) {
   const form = document.querySelector('#debug-board');
-  const topic = document.querySelector('#board-topic');
+  const page = boardPage(window.location.search), topicIndex = page.kind === 'topics';
   const refresh = form.querySelector('button');
   const status = document.querySelector('#board-status');
   const list = document.querySelector('#board-messages');
+  const topics = document.querySelector('#board-topics');
+  const topicList = document.querySelector('#board-topic-list');
   const older = document.querySelector('#board-more');
+  document.querySelector('#board-title').textContent = page.topic || (topicIndex ? 'Message board' : 'Global stream');
+  document.querySelector('#board-back').hidden = page.kind !== 'topic';
+  document.querySelector('#board-posts').hidden = topicIndex;
   let next = null, busy = false;
   async function load(append = false) {
-    if (busy || (append && next === null)) return;
+    if (busy || (append && (topicIndex || next === null))) return;
     busy = true;
-    refresh.disabled = topic.disabled = older.disabled = true;
-    status.textContent = 'Loading messages…';
+    refresh.disabled = older.disabled = true;
+    status.textContent = topicIndex ? 'Loading topics…' : 'Loading messages…';
     status.classList.remove('debug-error');
     list.setAttribute('aria-busy', 'true');
+    topicList.setAttribute('aria-busy', 'true');
     if (!append) {list.replaceChildren(); next = null; older.hidden = true;}
+    topicList.replaceChildren(); topics.hidden = true;
     const query = new URLSearchParams();
-    if (topic.value) query.set('topic', topic.value);
+    if (page.topic) query.set('topic', page.topic);
     if (append && next !== null) query.set('before', String(next));
     try {
       const response = await fetch('/api/debug/board?' + query, {signal: AbortSignal.timeout(30000)});
@@ -179,21 +205,38 @@ if (typeof document !== 'undefined' && document.querySelector('#debug-board')) {
       if (response.status === 403) throw new Error('Workspace admin access could not be verified. Sign in again, then retry.');
       if (!response.ok) throw new Error('Could not load messages. Please refresh to try again.');
       const data = await response.json();
-      const selected = topic.value;
-      topic.replaceChildren(new Option('All topics', ''), ...data.topics.map(name => new Option(name, name)));
-      topic.value = selected;
+      if (topicIndex) {
+        for (const summary of data.topicSummaries) {
+          const row = element('tr');
+          const name = element('td');
+          const link = element('a', 'forum-topic-link', summary.topic);
+          link.href = boardTopicHref(summary.topic); name.append(link);
+          const count = element('td', 'forum-topic-count', String(summary.posts));
+          const latest = element('td');
+          const meta = element('div', 'forum-topic-latest');
+          const time = boardTime(summary.latest.timestamp);
+          if (time) meta.append(time);
+          meta.append(element('span', '', summary.latest.name)); latest.append(meta);
+          row.append(name, count, latest); topicList.append(row);
+        }
+        const count = data.topicSummaries.length;
+        topics.hidden = count === 0;
+        status.textContent = count ? `${count} ${count === 1 ? 'topic' : 'topics'}` : 'No topics yet.';
+        return;
+      }
       for (const message of data.messages) {
         const article = element('article', 'forum-post');
         const author = element('div', 'forum-author', message.name || message.agent);
         const content = element('div', 'forum-content');
         const header = element('header', 'forum-post-header');
-        header.append(element('h2', '', message.topic));
-        const meta = element('div', 'forum-post-meta');
-        const date = new Date(message.timestamp);
-        if (Number.isFinite(date.getTime())) {
-          const time = element('time', '', date.toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'}));
-          time.dateTime = date.toISOString(); meta.append(time);
+        if (page.kind === 'stream') {
+          const heading = element('h2');
+          const link = element('a', '', message.topic);
+          link.href = boardTopicHref(message.topic); heading.append(link); header.append(heading);
         }
+        const meta = element('div', 'forum-post-meta');
+        const time = boardTime(message.timestamp);
+        if (time) meta.append(time);
         meta.append(element('span', 'forum-post-id', '#' + message.id));
         header.append(meta);
         content.append(header, element('p', 'forum-post-text', message.text));
@@ -204,20 +247,21 @@ if (typeof document !== 'undefined' && document.querySelector('#debug-board')) {
       older.hidden = next === null;
       const count = list.childElementCount;
       status.textContent = count ? `${count} ${count === 1 ? 'message' : 'messages'}` : 'No messages in this topic yet.';
-      if (!count && !topic.value) status.textContent = 'No workspace messages yet.';
+      if (!count && !page.topic) status.textContent = 'No workspace messages yet.';
     } catch (error) {
       // Do not leave previously loaded workspace data visible after a failed access check.
       list.replaceChildren(); next = null; older.hidden = true;
+      topicList.replaceChildren(); topics.hidden = true;
       status.textContent = error.name === 'TimeoutError' ? 'Loading timed out. Please refresh to try again.' : error.message;
       status.classList.add('debug-error');
     } finally {
       busy = false;
-      refresh.disabled = topic.disabled = older.disabled = false;
+      refresh.disabled = older.disabled = false;
       list.setAttribute('aria-busy', 'false');
+      topicList.setAttribute('aria-busy', 'false');
     }
   }
   form.addEventListener('submit', event => {event.preventDefault(); load();});
-  topic.addEventListener('change', () => load());
   older.addEventListener('click', () => load(true));
   load();
 }
