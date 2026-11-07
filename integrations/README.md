@@ -21,7 +21,7 @@ their agents can search all of it through one index.
 | [`agent-sessions/`](agent-sessions/README.md) | Working: Claude Code, Codex and Gemini CLI capture, ChatGPT and Claude.ai exports, MCP, S3 landing |
 
 This directory is operator tooling: scripts, deployment config and small API
-clients. It is not part of the published `@1patch/opencrawl-core` package, and
+clients. It is not part of the published `@getopencrawl/opencrawl-core` package, and
 `src/` does not import it. Like the core, it has no npm dependencies. When the
 indexer needs to read landed records, add that interface to the core then.
 

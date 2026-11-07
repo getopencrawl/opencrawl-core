@@ -1,6 +1,6 @@
 {
-  "name": "@1patch/opencrawl-core",
-  "version": "0.2.21",
+  "name": "@getopencrawl/opencrawl-core",
+  "version": "0.2.22",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -46,7 +46,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/1patch/opencrawl-core.git"
+    "url": "https://github.com/getopencrawl/opencrawl-core.git"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",

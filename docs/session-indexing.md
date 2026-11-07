@@ -104,7 +104,7 @@ or repair an already mixed index.
 
 For hosted adapters, the same public
 `auditSessionEventSource({store, prefix, resolvePrincipal, initialize})` export
-from `@1patch/opencrawl-core/sessions` uses the trusted stored-owner resolver used
+from `@getopencrawl/opencrawl-core/sessions` uses the trusted stored-owner resolver used
 by indexing. A fixed single-tenant adapter instead passes `principal`. Supply
 exactly one; request input cannot supply either. The report contains only counts
 and up to 100 hashed conflict identities. Its lower-level
@@ -143,7 +143,7 @@ truncated}`. Each response contains only channel-visible hits within the result
 limit; pre-visibility totals and maximum scores are omitted. Raw mode does not
 accept an index, DSL or alternative principal from the query input.
 
-`renderDebug` from `@1patch/opencrawl-core/debug` and `web/debug.js` / `debug.css`
+`renderDebug` from `@getopencrawl/opencrawl-core/debug` and `web/debug.js` / `debug.css`
 provide a query box, readable result excerpts, and expandable item/full-response JSON. Load `debug.js` as a module. Query terms are highlighted literally in the displayed text; these highlights are a reading aid, not an OpenSearch analyzer explanation. The embedding runtime must protect
 both the page and `POST /api/debug/search`, resolve its own trusted principal,
 and provide the shared tokens and layout. This UI performs no identity selection.
