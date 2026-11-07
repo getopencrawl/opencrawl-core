@@ -4,6 +4,7 @@ import {ApplicationFailure} from '@temporalio/common';
 import {fileURLToPath} from 'node:url';
 import {writeFile} from 'node:fs/promises';
 import {createConnectorPipeline} from '../pipeline.mjs';
+import {SourcePaginationError, assertSourcePaginationInput, assertSourcePaginationPage} from '../workflow.mjs';
 
 export async function buildConnectorWorkflows(path) {
   const {code} = await bundleWorkflowCode({workflowsPath: fileURLToPath(new URL('./workflows.cjs', import.meta.url))});
@@ -19,6 +20,7 @@ export function connectorActivities({resolve}) {
   async function operation(input, action) {
     const pulse = setInterval(() => heartbeat(), 10000);
     try {
+      if (action === 'listPage') assertSourcePaginationInput(input);
       heartbeat();
       const resolved = await resolve(input);
       const identity = resolved.search.identity;
@@ -32,8 +34,11 @@ export function connectorActivities({resolve}) {
         }
         if (Context.current().cancellationSignal.aborted) throw new Error('Indexing cancelled');
       }});
-      return await pipeline[action](input);
+      const result = await pipeline[action](input);
+      if (action === 'listPage') assertSourcePaginationPage(result);
+      return result;
     } catch (error) {
+      if (error instanceof SourcePaginationError) throw ApplicationFailure.nonRetryable(error.message, 'SourcePaginationFailed');
       if (error.permanent) throw ApplicationFailure.nonRetryable(error.message, 'InvalidConnectorInput');
       throw error;
     } finally { clearInterval(pulse); }

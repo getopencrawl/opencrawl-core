@@ -53,7 +53,7 @@ test('malformed persisted progress fails before any activity; counters are canon
   for (const state of [null, {}, {...valid, version: 2}, {...valid, anchor: null}, {...valid, anchor: ''},
     {...valid, window: '04'}, {...valid, window: '0'}, {...valid, window: '1'}, {...valid, window: '3'},
     {...valid, window: 4}, {...valid, distance: '01'}, {...valid, distance: '-1'}, {...valid, distance: '4'},
-    {...valid, distance: '0'}, {...valid, anchor: 'B'}, {...valid, distance: null},
+    {...valid, distance: null},
     {...valid, window: '4\n'}, {...valid, distance: '1\n'}]) {
     let calls = 0;
     await assert.rejects(runConnectorSegment({cursor: 'B', paginationProgress: state}, {
@@ -83,11 +83,49 @@ test('counter advancement beyond Number precision has no rollover or corpus limi
   assert.deepEqual(result.paginationProgress, {version: 1, anchor: 'Bx', window: String(window * 2n), distance: '4'});
 });
 
-test('legacy replay path preserves five-page commands, argument shape and continuation result', async () => {
+test('deferred guard preserves five-page commands when legacy activities ignore its failure flag', async () => {
   const calls = [];
   const result = await runConnectorSegment({sourceId: 'fixture'}, {
     listPage: async input => {calls.push(input); return {keys: [], cursor: input.cursor === 'A' ? 'B' : 'A'};},
-  }, {trackPagination: false});
-  assert.deepEqual(calls, [null, 'A', 'B', 'A', 'B'].map(cursor => ({sourceId: 'fixture', cursor})));
-  assert.deepEqual(result, {cursor: 'A', indexed: 0, failed: 0});
+  }, {deferPaginationFailure: true});
+  assert.deepEqual(calls, [null, 'A', 'B', 'A', 'B'].map((cursor, index) => ({sourceId: 'fixture', cursor,
+    ...(index >= 3 && {paginationFailure: 'cycle'})})));
+  assert.deepEqual(result, {cursor: 'A', indexed: 0, failed: 0, paginationFailure: 'cycle'});
+});
+
+test('legacy workers may advance the cursor while carrying an unchanged checkpoint', async () => {
+  const input = {cursor: '20', paginationProgress: {version: 1, anchor: '15', window: '16', distance: '0'}};
+  const result = await runConnectorSegment(input, {listPage: async ({cursor}) => ({keys: [], cursor: String(Number(cursor) + 1)})});
+  assert.equal(result.cursor, '25');
+  assert.deepEqual(result.paginationProgress, {...input.paginationProgress, distance: '5'});
+});
+
+test('deferred failure processes the cycle page and uses only the next existing list command', async () => {
+  const processed = [], calls = [];
+  await assert.rejects(runConnectorSegment({cursor: 'A'}, {
+    listPage: async input => {
+      calls.push(input);
+      if (input.paginationFailure) throw new Error('activity rejected before fetch');
+      return {keys: [String(calls.length)], cursor: input.cursor === 'A' ? 'B' : 'A'};
+    },
+    processObject: async ({key}) => {processed.push(key); return {records: 1};},
+  }, {deferPaginationFailure: true}), /activity rejected/);
+  assert.deepEqual(processed, ['1', '2', '3']);
+  assert.equal(calls.length, 4); assert.equal(calls[3].paginationFailure, 'cycle');
+
+  let terminalLists = 0;
+  const result = await runConnectorSegment({}, {listPage: async () => {terminalLists++; return {keys: [], cursor: null};}}, {deferPaginationFailure: true});
+  assert.equal(terminalLists, 1); assert.equal(result.cursor, null);
+});
+
+test('pending failure codes remain fixed and bounded when older code carries them forward', async () => {
+  for (const inputFlag of ['cycle', [], ['cycle'], null, {payload: 'untrusted'}, 'unknown']) {
+    const calls = [];
+    const result = await runConnectorSegment({paginationFailure: inputFlag}, {
+      listPage: async input => {calls.push(input); return {keys: [], cursor: 'next'};},
+    }, {deferPaginationFailure: true});
+    const expected = inputFlag === 'cycle' ? 'cycle' : 'invalid-progress';
+    assert.equal(result.paginationFailure, expected);
+    assert.ok(calls.every(input => input.paginationFailure === expected));
+  }
 });
