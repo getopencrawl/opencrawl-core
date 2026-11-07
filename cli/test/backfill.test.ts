@@ -64,6 +64,9 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   expect((await cli(['backfill'])).data.status).toBe('decision_required');
   expect((await cli(['backfill','--harness','codex'])).error.code).toBe('BACKFILL_CONSENT_REQUIRED');
   expect((await cli(['backfill','--dry-run'])).data.status).toBe('preview');
+  // Without --api, collect commands use the installed collector's deployment, not the hosted default.
+  {const child=Bun.spawn([process.execPath,resolve(import.meta.dir,'../src/cli.ts'),'collect','backfill','--dry-run','--json'],{env:{...process.env,OPENCRAWL_API_URL:''},stdout:'pipe',stderr:'pipe'});
+   const out=JSON.parse(await new Response(child.stdout).text());await child.exited;expect(out.data.status).toBe('preview');expect(out.data.api).toBe(api);}
   const start=requests;
   const preview=backfillPreview(api);
   expect(preview.sources.map(s=>s.files)).toEqual([2,2]);expect(requests).toBe(start);expect(captureStatus().queued).toBe(0);

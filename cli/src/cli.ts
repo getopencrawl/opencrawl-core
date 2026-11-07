@@ -1,6 +1,7 @@
 import {searchWorkspace, searchInput, formatSearch, fetchWorkspace, fetchInput, formatFetch} from './search.ts';
 import {upgradeCaptureHooks} from './capture/install.ts';
 import {collectCommand} from './capture/command.ts';
+import {readCaptureConfig} from './capture/runtime.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs} from 'node:util';
 import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest} from './oauth.ts';
@@ -91,7 +92,10 @@ export async function main(args = process.argv.slice(2)) {
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
     if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
-    const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL ?? 'https://app.getopencrawl.com');
+    const explicitApi = (parsed.values.api as string | undefined) ?? (process.env.OPENCRAWL_API_URL || undefined);
+    // Collect commands after install default to the deployment the collector was installed for.
+    const installedApi = !explicitApi && command === 'collect' && parsed.positionals[1] !== 'install' ? readCaptureConfig()?.api : undefined;
+    const api = apiOrigin(explicitApi ?? installedApi ?? 'https://app.getopencrawl.com');
     if (command === 'fetch') {
       const data = await fetchWorkspace(api, fetchInput(parsed.positionals[1], parsed.values));
       emit(data, formatFetch(data));
