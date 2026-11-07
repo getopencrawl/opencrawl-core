@@ -1,0 +1,61 @@
+name: Portable Node runtime
+on:
+  pull_request:
+    paths: ['tools/node-runtime/**', 'integrations/agent-sessions/compose.yaml', '.github/workflows/node-runtime.yml']
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Prepared verifies only upstream inputs; runtime also compiles and tests the patch
+        type: choice
+        options: [prepared, runtime]
+        default: runtime
+permissions:
+  contents: read
+jobs:
+  native:
+    name: Native ${{ matrix.arch }} runtime (${{ inputs.target || 'prepared' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x64, runner: ubuntu-24.04}
+          - {arch: arm64, runner: ubuntu-24.04-arm}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    env:
+      BUILD_TARGET: ${{ inputs.target || 'prepared' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Check ABI rejection cases and available capacity
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tools/node-runtime -p '*_test.py'
+          test "$(nproc)" -ge 2
+          test "$(awk '/MemTotal/ {print $2}' /proc/meminfo)" -ge 6291456
+          test "$(df -Pk . | awk 'NR==2 {print $4}')" -ge 10485760
+          case "$BUILD_TARGET" in prepared|runtime) ;; *) exit 1 ;; esac
+      - name: Build exact public inputs on the native architecture
+        timeout-minutes: 330
+        run: docker build --target "$BUILD_TARGET" --tag opencrawl-node-runtime:test tools/node-runtime
+      - name: Verify the upstream red baseline or completed patched runtime
+        run: |
+          set -euo pipefail
+          if [ "$BUILD_TARGET" = prepared ]; then
+            docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+              --entrypoint /usr/local/bin/node opencrawl-node-runtime:test \
+              /proof/verify.mjs baseline /proof/ci-baseline.json
+          else
+            docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+              opencrawl-node-runtime:test node -e 'const fs=require("node:fs"),crypto=require("node:crypto");const p=JSON.parse(fs.readFileSync("/usr/share/opencrawl-node-runtime/patched.json"));if(process.getuid()===0||p.expectation!=="patched"||p.result.inputReset!==true||p.binarySha256!==crypto.createHash("sha256").update(fs.readFileSync(process.execPath)).digest("hex"))process.exit(1);console.log(JSON.stringify({patched:true,architecture:process.arch,binarySha256:p.binarySha256}))'
+          fi
+      - name: Record exact image identity
+        if: success()
+        run: docker image inspect opencrawl-node-runtime:test --format '{{json .}}' > node-runtime-image.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: portable-node-${{ matrix.arch }}-${{ inputs.target || 'prepared' }}
+          path: node-runtime-image.json
+          if-no-files-found: error

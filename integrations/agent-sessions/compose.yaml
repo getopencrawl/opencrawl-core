@@ -4,7 +4,13 @@
 name: opencrawl-agent-sessions
 services:
   receiver:
-    image: node:24-alpine
+    # Build the portable patched glibc runtime from this repository's public inputs.
+    # No hosted registry, OpenCrawl account or prebuilt private artifact is needed.
+    image: opencrawl-node-runtime:24.22.2-opencrawl-zlib1-local
+    pull_policy: build
+    build:
+      context: ../../tools/node-runtime
+      target: runtime
     restart: unless-stopped
     working_dir: /app
     command: ["node", "receiver.mjs"]
@@ -31,7 +37,7 @@ services:
     depends_on:
       s3: {condition: service_started, required: false}
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7171/health"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7171/health',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
       retries: 30
 

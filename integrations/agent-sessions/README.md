@@ -25,6 +25,12 @@ S3 and SeaweedFS 4.52.
 
 ## Quickstart
 
+The receiver now builds its patched glibc Node runtime locally from public
+inputs in [`tools/node-runtime`](../../tools/node-runtime/README.md). The first
+build can take several hours and requires a native x64 or arm64 builder with
+at least 6 GiB RAM and 10 GiB free disk; later starts reuse its build cache.
+There is no private registry requirement or fallback to `node:24-alpine`.
+
 Requires Docker, Node 20 or newer, and an S3 bucket with an access key that can
 list it and read and write `opencrawl/agent-sessions/*` (see "S3" below).
 
