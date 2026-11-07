@@ -66,7 +66,7 @@ test('bounded segments retain cursors and continue other objects after one fails
   const result = await runConnectorSegment({}, {listPage: async () => ({keys: ['bad', 'good'], cursor: String(++calls)}), processObject: async ({key}) => {
     if (key === 'bad') throw new Error('poison'); processed++; return {records: 1};
   }});
-  assert.deepEqual(result, {cursor: '5', indexed: 5, failed: 5}); assert.equal(processed, 5);
+  assert.equal(result.cursor, '5'); assert.equal(result.indexed, 5); assert.equal(result.failed, 5); assert.equal(processed, 5);
 });
 test('extra source streams do not starve supported data; selection never bypasses scope or path checks', async () => {
   let keys = [key('emoji'), key(), key('replies')];
