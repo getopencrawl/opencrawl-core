@@ -82,9 +82,10 @@ Before claiming a supported self-host distribution, verify clean installation,
 authentication for network exposure, a meaningful product operation, persistence
 across restart, backup/restore, migration/upgrade and rollback expectations,
 resource limits and support boundaries. Public source and install artifacts must
-not require private GitHub Packages access. Select a public license explicitly,
-review asset/dependency rights, and document security/contribution policies before
-calling this open source. The current repository remains private and UNLICENSED.
+not require private GitHub Packages access. The repository is public under
+Apache-2.0 with `SECURITY.md` and `CONTRIBUTING.md`; `deploy/compose.yaml` is the
+supported single-tenant session stack. Backup/restore and upgrade guidance remain
+open before a 1.0 self-host release.
 
 Session capture now has an authenticated single-tenant receiver. Both it and the
 hosted shell land immutable gzip batches and attachment blobs through the same

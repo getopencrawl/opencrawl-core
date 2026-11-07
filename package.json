@@ -2,7 +2,7 @@
   "name": "@getopencrawl/opencrawl-core",
   "version": "0.2.23",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "exports": {
     ".": "./src/index.mjs",
     "./web/*": "./web/*",

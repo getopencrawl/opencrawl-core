@@ -3,7 +3,7 @@
   "version": "0.4.14",
   "description": "OpenCrawl CLI: sign in now, query the index as features become available",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "bin": {
     "opencrawl": "bin/opencrawl.cjs"
   },
