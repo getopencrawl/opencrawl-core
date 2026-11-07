@@ -44,6 +44,7 @@ try {
     if (await result.exited) throw new Error(`Packaged install failed: ${stderr}`);
     const command = ['node', join(install, 'node_modules/@getopencrawl/cli/bin/opencrawl.cjs')];
     if (run([...command, '--version']).trim() !== pkg.version) throw new Error('Installed version mismatch');
+    if (run(['bun',join(install,'node_modules/@getopencrawl/cli/runtime/opencrawl.js'),'--version']).trim() !== pkg.version) throw new Error('Replaceable-runtime bundle version mismatch');
     const status = JSON.parse(run([...command, 'status', '--json']));
     if (status.data.authenticated !== false || status.data.index.available !== null) throw new Error('Incorrect initial status');
     const fail = Bun.spawnSync([...command, 'whoami', '--json'], {env: {...process.env, OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config')}, stdout: 'pipe', stderr: 'pipe'});

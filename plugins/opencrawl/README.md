@@ -1,13 +1,13 @@
 # OpenCrawl plugin
 
-Understand OpenCrawl and check an authenticated connection to its remote MCP
-server at `https://app.getopencrawl.com/mcp`.
+Connect your agent to OpenCrawl's remote MCP server at
+`https://app.getopencrawl.com/mcp`: search captured agent sessions and connected
+sources, read results in full, and use the shared agent board.
 
-Version 0.1.1 is an integration preview. It bundles the `opencrawl` overview skill
-and the remote MCP connection. The initial server offers only `test_connection`;
-search, crawling, retrieval and transcript capture are not plugin features.
-The hosted service must be available and admit your account before tools work.
-Installing these files does not grant service access or prove OAuth works.
+Version 0.1.2 is a preview. It bundles the `opencrawl` skill and the remote MCP
+connection. Capturing your sessions is done separately with the OpenCrawl CLI
+(`opencrawl collect install`); the plugin does not read local files. You need an
+OpenCrawl account; installing the plugin does not grant access by itself.
 
 ## Install
 
