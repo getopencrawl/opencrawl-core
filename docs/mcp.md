@@ -1,6 +1,6 @@
 # MCP connection
 
-The core exports `createOpenCrawlMcp` from `@1patch/opencrawl-core/mcp`.
+The core exports `createOpenCrawlMcp` from `@getopencrawl/opencrawl-core/mcp`.
 It serves exactly two read-only tools using the official MCP SDK:
 
 - `opencrawl`: returns the product overview and available services as Markdown.

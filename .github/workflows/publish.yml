@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: 24.22.2
           registry-url: https://npm.pkg.github.com
-          scope: '@1patch'
+          scope: '@getopencrawl'
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - name: Record the source revision in the package
@@ -26,13 +26,13 @@ jobs:
           npm pack --json > package-artifact.json
           archive=$(node -p "require('./package-artifact.json')[0].filename")
           npm publish "$archive" --access restricted
-          npm view "@1patch/opencrawl-core@$(node -p "require('./package.json').version")" version dist --json > package-metadata.json
+          npm view "@getopencrawl/opencrawl-core@$(node -p "require('./package.json').version")" version dist --json > package-metadata.json
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: core-package-${{ github.sha }}
           path: |
-            1patch-opencrawl-core-*.tgz
+            getopencrawl-opencrawl-core-*.tgz
             package-metadata.json
           retention-days: 14

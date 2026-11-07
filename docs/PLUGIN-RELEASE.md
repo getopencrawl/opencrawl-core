@@ -8,7 +8,7 @@ package bump or shell deployment is needed for package-only edits.
 
 Maintain public files in `plugins/`, run its validation and packaging checks,
 and core `npm test`. Review every public file before exporting. The public
-repository is `1patch/opencrawl-plugins`.
+repository is `getopencrawl/opencrawl-plugins`.
 
 Export only the `plugins/` subtree with `git subtree split --prefix=plugins`,
 inspect the resulting Git tree/history, and push that split commit to the public

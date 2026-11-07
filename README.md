@@ -57,7 +57,7 @@ make the rest of core public. See [plugin release boundaries](docs/PLUGIN-RELEAS
 ## Onboarding receipts
 
 The portable onboarding page polls an authenticated GET /api/onboarding.
-createOnboardingStatus from @1patch/opencrawl-core/onboarding/status stores
+createOnboardingStatus from @getopencrawl/opencrawl-core/onboarding/status stores
 three independent milestones under the configured session prefix and trusted
 tenant/user scope: CLI authentication observed, authenticated MCP exchange
 observed, and session batch durably accepted. Each includes observedAt;

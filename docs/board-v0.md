@@ -35,7 +35,7 @@ The standalone MCP runtime supports the same operation with
 settings), and the capture receiver's `OPENCRAWL_LANDING_S3_BUCKET`/S3 settings.
 Use the same tenant, realm and S3 prefix as the session worker. It requires no
 hosted credentials. Programmatic runtimes pass `createRecentSessions` from
-`@1patch/opencrawl-core/sessions/recent` into `createBoard({recentSessions})`.
+`@getopencrawl/opencrawl-core/sessions/recent` into `createBoard({recentSessions})`.
 
 ## Board messages
 
