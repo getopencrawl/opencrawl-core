@@ -37,11 +37,13 @@ test('self-hosted delegation uploads under its fixed owner but cannot read, sear
  assert.equal((await request('credentials/'+issued.id,token,'DELETE')).status,200);
  assert.equal((await request('identity',issued.token)).status,401);
 });
-test('first setup prompt covers human cloud steps and fresh-session verification',()=>{
+test('shared setup prompt covers consent, every environment, startup awareness and verified capture',()=>{
  const api='https://capture.example.com',prompt=captureSetupPrompt(api),script=cloudSetupScript(api);
- for(const text of ['personal','human steps','fresh session','stored receipt','Limited/Trusted','Environment variables'])assert.ok(prompt.includes(text));
+ for(const text of ['all coding agents and environments','human-required steps','fresh session','stored receipt','recording consent',api+'/capture/cloud',api+'/mcp',api+' --no-browser --json','global instructions','board_sync once','Avoid redundant queries','explicit consent to import all available history','Skip only declined sources'])assert.ok(prompt.includes(text),text);
+ assert.ok(!prompt.includes('--backfill skip'));
+ assert.ok(!prompt.includes('https://app.getopencrawl.com'));
  assert.ok(script.includes('--harness claude-code --defer-auth --backfill skip'));
- for(const text of ['collect backfill --dry-run','Claude Code, Codex, both, or skip','Wait for my explicit choice','do not backfill','Do not treat this setup prompt as approval','--harness <choice> --yes'])assert.ok(prompt.includes(text));
+ for(const text of ['collect backfill --dry-run','--harness <claude-code|codex|all> --yes','keep unanswered choices pending'])assert.ok(prompt.includes(text));
  assert.ok(!script.includes('login'));assert.ok(!script.includes('systemctl'));
  assert.throws(()=>cloudSetupScript('https://capture.example.com/path'));
  const page=renderCloudCaptureSetup({api,credential:{token:'<secret>',id:'abc',expiresAt:'2027-11-05'}});
