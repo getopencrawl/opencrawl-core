@@ -1,18 +1,18 @@
+import {captureSetupPrompt} from './sessions/cloud-setup.mjs';
+import {escapeHtml as escape} from './frontend-html.mjs';
+import {statusIcon, arrowIcon as arrow} from './frontend-icons.mjs';
 import {renderOnboardingShell} from './onboarding-shell.mjs';
 /** The primary instruction follows the next unmet requirement; receipts remain authoritative. */
-const escape = value => String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const statusIcon='<svg class="signal-mark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>';
 const copyIcon='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const disclosureChevron='<svg class="signal-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 const commandText=text=>String(text).split('\n').map(line=>line.split(' ').map(token=>`<span class="command-token">${escape(token)}</span>`).join(' ')).join('\n');
 const copyBar=(text,label,attributes='')=>`<button type="button" class="command-snippet" data-copy="${escape(text)}" aria-label="${escape(label)}" ${attributes}${text?'':' disabled'}><code>${commandText(text)}</code><span class="snippet-feedback" aria-hidden="true"><span class="snippet-icon">${copyIcon}</span><span class="snippet-done">Copied</span></span></button><p class="snippet-copy-help signal-instruction" hidden>Copy the selected text with your keyboard or selection menu.</p>`;
-const arrow='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>';
-export function renderOnboarding({mcpUrl,setupPrompt,nextUrl='/integrations',panel=true}={}) {
- const prompt=setupPrompt || 'Set up OpenCrawl for this agent. Install the CLI with npm i -g @getopencrawl/cli@next, run opencrawl login, then opencrawl collect install --backfill skip. Help me complete sign-in. Connect OpenCrawl’s remote MCP server and complete its sign-in, then call test_connection and confirm it returns connected: true. Guide me through starting a new coding session to verify recording. Do not paste credentials into chat.';
+export function renderOnboarding({mcpUrl,setupPrompt,nextUrl='/onboarding/sources'}={}) {
+ const api=new URL(mcpUrl).origin;
+ const prompt=setupPrompt || captureSetupPrompt(api);
  const verify='Call the OpenCrawl MCP tool test_connection. Confirm that it returns connected: true. If OpenCrawl is not available, help me connect its remote MCP server and sign in, then retry test_connection.';
  const session='Tell me which project we are working in and briefly describe its purpose.';
  const mcp=`Connect OpenCrawl’s remote MCP server at ${mcpUrl||''}. Guide me through sign-in, then call the OpenCrawl MCP tool test_connection and confirm it returns connected: true. Do not paste credentials into chat.`;
- const api=mcpUrl?new URL(mcpUrl).origin:'';
  const deploymentArgs=api && api!=='https://app.getopencrawl.com'?' --api '+api:'';
  const collectionCommand='opencrawl collect install'+deploymentArgs;
  const historyCommand='opencrawl collect backfill'+deploymentArgs;
@@ -41,5 +41,5 @@ export function renderOnboarding({mcpUrl,setupPrompt,nextUrl='/integrations',pan
  <section id="connection-error" aria-labelledby="error-title" hidden><h1 id="error-title" tabindex="-1">Let’s reconnect</h1><p class="focus-description" id="error-description">We couldn’t check your progress. Try again to pick up where you left off.</p><div class="focus-action"><button class="primary" type="button" id="retry-status">Try again ${arrow}</button></div><p class="focus-reassurance">You don’t need to repeat your setup.</p></section>
  <section id="manual-copy" aria-labelledby="manual-title" hidden><h1 id="manual-title" tabindex="-1">Copy this prompt</h1><p class="focus-description">Automatic copying isn’t available. Copy the selected text, then paste it into your coding agent.</p><label class="sr-only" for="copy-fallback">Prompt to copy</label><textarea id="copy-fallback" readonly rows="6"></textarea><div class="focus-action"><button class="primary" type="button" id="manual-next">I’ve copied it ${arrow}</button></div></section>
  <p id="progress-announcement" class="sr-only" role="status" aria-live="polite"></p>
- `,{panel,nextUrl});
+ `,{nextUrl});
 }

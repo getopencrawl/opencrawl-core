@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.2.25",
+  "version": "0.2.26",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -41,7 +41,9 @@
     "./frontend/document": "./src/frontend-document.mjs",
     "./onboarding/state": "./web/onboarding-state.js",
     "./onboarding/sources": "./src/onboarding-sources.mjs",
-    "./onboarding/invite": "./src/onboarding-invite.mjs"
+    "./onboarding/invite": "./src/onboarding-invite.mjs",
+    "./workspace": "./src/workspace.mjs",
+    "./frontend/icons": "./src/frontend-icons.mjs"
   },
   "files": [
     "src",

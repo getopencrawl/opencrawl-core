@@ -1,30 +1,29 @@
-const main=document.querySelector('[data-page]');
-const page=main?.dataset.page;
+import {requestJson} from './http.js';
+const form=document.querySelector('#search-form');
+const input=document.querySelector('#search-query');
+const feedback=document.querySelector('#search-feedback');
+const results=document.querySelector('#search-results');
 const errorBox=document.querySelector('#workspace-error');
-async function api(path,options={}){
- const response=await fetch(path,{...options,headers:{'content-type':'application/json',...options.headers},signal:AbortSignal.timeout(10000)});
- if(response.status===403||response.redirected){const data=await response.json().catch(()=>({}));location.assign(data.onboardingUrl==='/integrations'?'/integrations':'/');throw Error('Complete setup to open your workspace.');}
- if(!response.ok)throw Error('We couldn’t load this. Please try again.');
- return response.json();
+function element(tag, className, text) {
+ const node=document.createElement(tag); node.className=className; node.textContent=text; return node;
 }
-function showError(message){errorBox.textContent=message;errorBox.hidden=false;}
-function clearError(){errorBox.hidden=true;}
-function element(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node;}
-async function search(event){
- event?.preventDefault();
- const input=document.querySelector('#search-query'),query=input.value.trim();if(!query)return;
- const button=document.querySelector('#search-form button'),feedback=document.querySelector('#search-feedback'),results=document.querySelector('#search-results');
- button.disabled=true;button.textContent='Searching…';clearError();feedback.textContent='Searching your workspace…';
- try{
-  const data=await api('/api/search',{method:'POST',body:JSON.stringify({query})});
-  results.replaceChildren();document.querySelector('#search-start').hidden=true;
-  const items=data.results||[];
-  feedback.textContent=items.length?`${items.length} sample ${items.length===1?'result':'results'} for “${query}”`:`No results for “${query}”. Try a different phrase, or connect another source.`;
-  for(const item of items){const article=element('article','result');article.append(element('span','result-source',item.source),element('h2','',item.title),element('p','',item.excerpt));results.append(article);}
- }catch(error){feedback.textContent='';showError(error.message);}finally{button.disabled=false;button.textContent='Search';}
-}
-if(page==='search'){
- document.querySelector('#search-form').addEventListener('submit',search);
- document.querySelector('#sample-query').addEventListener('click',()=>{document.querySelector('#search-query').value='What did we decide about onboarding?';void search();});
-}
-if(page==='usage')void (async()=>{try{const data=await api('/api/usage');const list=document.querySelector('#usage-values');list.replaceChildren();for(const [label,key] of [['Searches','queries'],['Sessions received','sessions'],['Sources connected','sources']]){const row=element('div');row.append(element('dt','',label),element('dd','',String(data[key]??0)));list.append(row);}}catch(error){showError(error.message);}})();
+form.addEventListener('submit', async event => {
+ event.preventDefault(); const query=input.value.trim(); if(!query)return;
+ const button=form.querySelector('button'),label=button.querySelector('span');
+ button.disabled=true; label.textContent='Searching…'; errorBox.hidden=true; feedback.textContent='Searching your workspace…';
+ try {
+  const data=await requestJson('/api/workspace/search',{method:'POST',body:JSON.stringify({query})});
+  results.replaceChildren(); document.querySelector('#search-start').hidden=true;
+  feedback.textContent=data.results.length?`${data.results.length} ${data.results.length===1?'result':'results'} for “${query}”`:`No results for “${query}”. Try another phrase. New sources may still be indexing.`;
+  if(data.partial)feedback.textContent+=' Some sources are temporarily unavailable.';
+  for(const item of data.results) {
+   const article=element('article','result','');
+   article.append(element('span','result-source',item.source==='sessions'?'Coding session':item.provenance?.provider || 'Connected source'),element('h2','',item.title),element('p','',item.text));
+   if(item.url) {
+    try {const url=new URL(item.url); if(['https:','http:'].includes(url.protocol)){const link=element('a','result-link','Open source');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';article.append(link);}}catch{}
+   }
+   results.append(article);
+  }
+ } catch(error) {feedback.textContent='';errorBox.textContent=error.message;errorBox.hidden=false;}
+ finally {button.disabled=false;label.textContent='Search';}
+});

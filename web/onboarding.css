@@ -10,10 +10,6 @@ body[data-onboarding] .brand img{width:32px;height:auto}
 .focus-action{display:flex;justify-content:center;margin-top:28px}
 .focus-action .primary{min-height:48px;min-width:228px;gap:20px;padding:12px 22px;font-size:var(--text-ui);border-radius:var(--radius-control);font-weight:550}
 .focus-action .primary svg{width:18px;height:18px}
-.sharing-note{font-size:var(--text-xs);line-height:1.6;color:var(--quiet);margin:16px auto 0}
-.server-url,.prompt-prose{overflow-wrap:anywhere}
-.server-url{font-family:var(--font-mono);font-size:var(--text-xs)}
-.focus-waiting{display:flex;align-items:center;justify-content:center;gap:9px;font-size:var(--text-sm);color:var(--muted);margin:28px auto 0;min-height:32px}
 .waiting-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0}
 .focus-loading{display:flex;align-items:center;justify-content:center;gap:10px;color:var(--muted);font-size:var(--text-ui);min-height:180px}
 .focus-reassurance{margin:24px auto 0;color:var(--quiet);font-size:var(--text-sm)}
@@ -42,7 +38,7 @@ body[data-onboarding] .brand img{width:32px;height:auto}
 @media(prefers-reduced-motion:reduce){.signal-mark{animation:none}}
 @media(max-height:800px){.signal-checklist{margin-top:32px;padding-top:0}.signal-checklist li{min-height:44px}}
 
-/* Optional v1 panel variant: reuse the shared Night surface unchanged. */
+/* The shared Night panel contains every onboarding step. */
 .focus-content.focus-panel{max-width:640px;padding:var(--space-8);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-panel);box-shadow:var(--shadow-paper)}
 @media(max-width:600px){.focus-content.focus-panel{padding:var(--space-6)}}
 
@@ -50,9 +46,8 @@ body[data-onboarding] .brand img{width:32px;height:auto}
 /* The boxed setup follows a single left edge from instruction to signals. */
 .focus-content.focus-panel{text-align:left}
 .focus-panel .focus-description{margin-inline:0;max-width:48ch}
-.focus-panel .focus-action,.focus-panel .focus-waiting{justify-content:flex-start}
+.focus-panel .focus-action{justify-content:flex-start}
 .focus-panel .signal-checklist{margin-inline:0;max-width:none}
-.focus-panel .focus-help>summary{margin-inline:0}
 .focus-panel .focus-reassurance{margin-inline:0}
 
 /* Split copy/reveal control from v1; copying preserves the screen layout. */

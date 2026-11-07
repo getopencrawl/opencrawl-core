@@ -1,17 +1,12 @@
+import {statusIcon as check,plusIcon as plus} from './icons.js';
+import {requestJson as api} from './http.js';
+import {requestSecret} from './secret-dialog.js';
 const q=selector=>document.querySelector(selector);
 const list=q('#connector-list'),query=q('#connector-query'),searchBox=q('.connector-search'),catalog=q('.connector-catalog'),next=q('#next-step');
-const check='<svg class="signal-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>';
-const plus='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 let items=[],loaded=false,loading=false;
 const pending=new Set(),errors=new Map();
-const connected=item=>['connected','synced'].includes(item.state);
+const connected=item=>['connected','syncing','synced'].includes(item.state);
 function announce(text){q('#sources-announcement').textContent=text;}
-async function api(path,options={}){
- const response=await fetch(path,{credentials:'same-origin',cache:'no-store',...options,headers:{'content-type':'application/json',...options.headers},signal:AbortSignal.timeout(10000)});
- if(response.status===403){location.assign('/onboarding?variant=panel');throw Error('Complete agent setup first');}
- if(!response.ok)throw Error('Request failed');
- return response.json();
-}
 function render(){
  searchBox.hidden=!loaded||items.length<15;
  if(searchBox.hidden)query.value='';
@@ -34,7 +29,7 @@ function render(){
   status.innerHTML=done||busy?check:plus;
   if(done)button.setAttribute('data-connected','');
   button.append(logoSlot,name,status);cell.append(button);
-  if(errors.has(item.id)){const error=document.createElement('p');error.className='connector-tile-error';error.id=`connector-error-${item.id}`;error.setAttribute('role','alert');error.textContent='Couldn’t connect';button.setAttribute('data-error','');button.setAttribute('aria-describedby',error.id);cell.append(error);}
+  if(errors.has(item.id)){const error=document.createElement('p');error.className='connector-tile-error';error.id=`connector-error-${item.id}`;error.setAttribute('role','alert');error.textContent=errors.get(item.id);button.setAttribute('data-error','');button.setAttribute('aria-describedby',error.id);cell.append(error);}
   list.append(cell);
  }
  if(focusId)[...list.querySelectorAll('button')].find(button=>button.dataset.sourceId===focusId)?.focus({preventScroll:true});
@@ -42,22 +37,39 @@ function render(){
 async function load(){
  if(loading)return;const restoreFocus=q('#retry-sources')===document.activeElement;loading=true;loaded=false;next.hidden=true;query.disabled=true;
  q('#sources-loading').hidden=false;q('#sources-error').hidden=true;q('#sources-empty').hidden=true;list.hidden=true;catalog.setAttribute('aria-busy','true');
- try{const data=await api('/api/integrations');if(!Array.isArray(data.items))throw Error();items=data.items;loaded=true;query.disabled=false;query.placeholder=`Search ${items.length} connectors…`;render();if(restoreFocus)(searchBox.hidden?list.querySelector('button')||q('#sources-title'):query).focus();}
+ try{const data=await api('/api/onboarding/sources');if(!Array.isArray(data.items))throw Error();items=data.items;loaded=true;query.disabled=false;query.placeholder=`Search ${items.length} connectors…`;render();if(restoreFocus)(searchBox.hidden?list.querySelector('button')||q('#sources-title'):query).focus();}
  catch{q('#sources-error').hidden=false;}
  finally{loading=false;q('#sources-loading').hidden=true;catalog.setAttribute('aria-busy','false');}
 }
-list.addEventListener('click',async event=>{
- const button=event.target.closest('button[data-source-id]');if(!button)return;
- const id=button.dataset.sourceId,item=items.find(item=>item.id===id);
- if(!item||connected(item)||pending.has(id))return;
- pending.add(id);errors.delete(id);render();announce(`Connecting ${item.name}`);
- try{
-  await api(`/api/integrations/${encodeURIComponent(id)}/connect`,{method:'POST',body:'{}'});
-  const data=await api('/api/integrations');
-  if(!Array.isArray(data.items)||!data.items.some(source=>source.id===id&&connected(source)))throw Error();
-  items=data.items;announce(`${item.name} connected. Next is available.`);
- }catch{errors.set(id,true);announce(`Couldn’t connect ${item.name}. Try again.`);}
- finally{pending.delete(id);render();}
+async function refreshConnections() {
+ const data = await api('/api/onboarding/sources');
+ if (!Array.isArray(data.items)) throw Error('Invalid connector response');
+ items = data.items; render();
+}
+list.addEventListener('click', async event => {
+ const button = event.target.closest('button[data-source-id]');
+ if (!button) return;
+ const id = button.dataset.sourceId, item = items.find(item => item.id === id);
+ if (!item || connected(item) || pending.has(id)) return;
+ let apiKey;
+ if (item.auth === 'api-key') {
+  apiKey = await requestSecret({title:item.keyHelp?.title || `Connect ${item.name}`,body:item.keyHelp?.body || 'Use your workspace API key.',label:item.keyHelp?.label || 'API key',placeholder:item.keyHelp?.placeholder,action:`Connect ${item.name}`});
+  if (!apiKey) return;
+ }
+ pending.add(id); errors.delete(id); render(); announce(`Connecting ${item.name}`);
+ try {
+  const result = await api(`/api/integrations/${encodeURIComponent(id)}/connect`, {method:'POST',body:JSON.stringify(apiKey?{apiKey}:{})});
+  apiKey = null;
+  if (result.redirectUrl) {
+   const url = new URL(result.redirectUrl);
+   if (url.protocol !== 'https:') throw Error('Invalid sign-in destination');
+   location.assign(url.href); return;
+  } else {
+   await refreshConnections(); pending.delete(id); render(); announce(`${item.name} connected. Next is available.`);
+  }
+ } catch (error) {
+  apiKey = null; pending.delete(id); errors.set(id,error.message); render(); announce(error.message);
+ }
 });
 query.addEventListener('input',()=>{render();const count=items.filter(item=>item.name.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase())).length;announce(`${count} ${count===1?'connector':'connectors'} found`);});
 q('#clear-connector-search').addEventListener('click',()=>{query.value='';render();query.focus();});

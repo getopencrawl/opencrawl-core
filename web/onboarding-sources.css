@@ -35,3 +35,9 @@
  .connector-catalog,.connector-message{min-height:376px}
  .connector-search{margin-top:var(--space-6)}
 }
+.secret-dialog{width:min(440px,calc(100% - 32px));padding:var(--space-6);border:1px solid var(--line-strong);border-radius:var(--radius-panel);background:var(--surface);color:var(--text)}
+.secret-dialog::backdrop{background:rgb(0 0 0 / .75)}
+.secret-dialog p{margin-top:var(--space-3);color:var(--muted);font-size:var(--text-ui)}
+.secret-dialog label{display:grid;gap:var(--space-2);margin-top:var(--space-5);font-size:var(--text-ui)}
+.secret-dialog input{width:100%;min-width:0;min-height:44px;padding:var(--space-3);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface-subtle);font-size:16px}
+.dialog-actions{display:flex;justify-content:flex-end;gap:var(--space-3);margin-top:var(--space-6)}

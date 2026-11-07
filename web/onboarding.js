@@ -49,7 +49,7 @@ void (async () => {
     const signal=item.dataset.signal;
     const wasComplete=item.hasAttribute('data-complete');
     const historyState=hasReceipt(status.history)?status.history.state:undefined;
-    const done=signal==='history'?historyState==='complete':hasReceipt(status[signal==='recording'?'session':signal])||(signal==='mcp'&&hasReceipt(status.mcpTest));
+    const done=signal==='history'?['complete','received'].includes(historyState):hasReceipt(status[signal==='recording'?'session':signal])||(signal==='mcp'&&hasReceipt(status.mcpTest));
     const deferred=signal==='recording'?!done:signal==='history'?historyState!=='importing'&&!done:signal==='session'?!done&&!hasReceipt(status.mcpTest):signal==='mcpTest'&&!done&&!(hasReceipt(status.cli)&&hasReceipt(status.mcp));
     item.toggleAttribute('data-pending',deferred);item.toggleAttribute('data-complete',done);
     if(done&&!wasComplete)closeDisclosure(item.querySelector(':scope > details'));
@@ -57,7 +57,7 @@ void (async () => {
     item.querySelector('.signal-label').textContent=labels[signal][done?1:0];
     const detail=item.querySelector('.signal-detail');
     if(signal==='history')detail.toggleAttribute('data-complete',done);
-    if(signal==='history')detail.textContent={complete:'Imported',skipped:'Skipped',importing:'Importing'}[historyState]||(hasReceipt(status.session)?'Not started':'');
+    if(signal==='history')detail.textContent={complete:'Imported',received:'Received',skipped:'Skipped',importing:'Importing'}[historyState]||(hasReceipt(status.session)?'Not started':'');
     if(detail){detail.hidden=!detail.textContent;item.toggleAttribute('data-detail',Boolean(detail.textContent));}
     item.querySelector('.signal-status').textContent=signal==='history'&&historyState==='skipped'?'Skipped':signal==='history'&&historyState==='importing'?'Importing':done?'Complete':deferred?'Pending':'Waiting';
    });
@@ -128,12 +128,6 @@ void (async () => {
   if(!button.hasAttribute('data-copy-error'))snippetTimers.set(button,setTimeout(()=>clearSnippetFeedback(button),1500));
  }));
  q('#retry-status').addEventListener('click',()=>void refresh());
- window.addEventListener('previewstatechange',()=>{
-  document.querySelectorAll('.command-snippet').forEach(clearSnippetFeedback);
-  Object.values(copyTimers).forEach(clearTimeout);
-  Object.keys(copyState).forEach(key=>delete copyState[key]);
-  mode='loading';void refresh();
- });
  document.addEventListener('visibilitychange',()=>void refresh());window.addEventListener('online',()=>void refresh());
  const interval=setInterval(()=>void refresh(),5000);
  window.addEventListener('pagehide',()=>{clearInterval(interval);snippetTimers.forEach(clearTimeout);Object.values(copyTimers).forEach(clearTimeout);controller?.abort();});

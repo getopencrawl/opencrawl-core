@@ -1,17 +1,12 @@
-import {parseInvitationEmails} from './invitation-emails.js';
+import {statusIcon as check} from './icons.js';
+import {requestJson} from './http.js';
 const q=selector=>document.querySelector(selector);
 const form=q('#invite-form'),field=q('#invite-emails'),button=q('#send-invites'),next=q('#next-step');
-const check='<svg class="signal-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>';
 let busy=false;
 function updateButton(){button.disabled=busy||!field.value.trim();button.textContent=busy?'Inviting…':'Invite';field.disabled=busy;}
 function showError(message){q('#invite-error').textContent=message;q('#invite-error').hidden=false;}
 function clearError(){q('#invite-error').textContent='';q('#invite-error').hidden=true;field.removeAttribute('aria-invalid');}
-async function api(options={}){
- const response=await fetch('/api/onboarding/invites',{credentials:'same-origin',cache:'no-store',...options,headers:{'content-type':'application/json'},signal:AbortSignal.timeout(10000)});
- if(response.status===403){location.assign('/integrations');throw Error('Complete source setup first.');}
- const data=await response.json().catch(()=>({}));if(!response.ok)throw Error(data.error||'We couldn’t send your invitations. Try again.');
- if(!Array.isArray(data.items))throw Error('We couldn’t update invitations. Try again.');return data;
-}
+const api = options => requestJson('/api/onboarding/invites', options);
 function render(data){
  const list=q('#invitation-list');list.replaceChildren();list.hidden=!data.items.length;
  for(const invitation of data.items){
@@ -26,18 +21,27 @@ async function load(){
  const retry=q('#retry-invites');retry.disabled=true;q('#invite-load-error').hidden=true;
  try{render(await api());}catch{q('#invite-load-error').hidden=false;}finally{retry.disabled=false;}
 }
+if (form) {
 field.addEventListener('input',()=>{clearError();updateButton();});
 form.addEventListener('submit',async event=>{
  event.preventDefault();if(busy)return;
- const {emails,error}=parseInvitationEmails(field.value);
- if(error||emails.length!==1||!field.validity.valid){showError('Enter one valid email address, like teammate@company.com.');field.setAttribute('aria-invalid','true');field.focus();return;}
+ const email=field.value.trim().toLowerCase();
+ if(!field.validity.valid||!email.slice(email.lastIndexOf('@')+1).includes('.')||email.length>254){showError('Enter one valid email address, like teammate@company.com.');field.setAttribute('aria-invalid','true');field.focus();return;}
  busy=true;updateButton();clearError();
  try{
-  const data=await api({method:'POST',body:JSON.stringify({emails})});render(data);field.value='';
-  q('#invite-feedback').textContent=data.addedCount===0?'This teammate is already on the list.':data.simulated?'':'Invitation sent.';
+  const data=await api({method:'POST',body:JSON.stringify({email})});render(data);field.value='';
+  q('#invite-feedback').textContent=data.addedCount===0?'This teammate is already on the list.':'Invitation sent.';
   q('#invite-feedback').hidden=!q('#invite-feedback').textContent;
+  q('#invite-feedback').classList.toggle('sr-only',data.addedCount!==0);
  }catch(error){showError(error.message);}
  finally{busy=false;updateButton();field.focus();}
 });
 q('#retry-invites').addEventListener('click',()=>void load());
 updateButton();void load();
+}
+next.addEventListener('click', async event => {
+ event.preventDefault(); if (next.getAttribute('aria-busy') === 'true') return;
+ next.setAttribute('aria-busy','true');
+ try { const result=await requestJson('/api/onboarding/finish',{method:'POST',body:'{}'}); location.assign(result.workspaceUrl); }
+ catch(error) { const feedback=q('#invite-feedback') || document.createElement('p'); feedback.textContent=error.message; feedback.hidden=false; feedback.classList.remove('sr-only'); feedback.setAttribute('role','alert'); if(!feedback.parentNode)q('#invite-title').parentNode.append(feedback); next.removeAttribute('aria-busy'); }
+});

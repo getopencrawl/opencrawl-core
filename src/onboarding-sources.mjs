@@ -1,3 +1,4 @@
+import {escapeHtml as escape} from './frontend-html.mjs';
 import {renderOnboardingShell} from './onboarding-shell.mjs';
 
 export function renderSourcesOnboarding(){
@@ -11,5 +12,11 @@ export function renderSourcesOnboarding(){
  <div id="sources-empty" class="connector-message" hidden><p>No connectors found</p><button type="button" class="text-button" id="clear-connector-search">Clear search</button></div>
  <div id="sources-error" class="connector-message" hidden><p role="alert">We couldn’t load your connectors.</p><button type="button" id="retry-sources">Try again</button></div>
  </div><p id="sources-announcement" class="sr-only" role="status" aria-live="polite"></p>
- </section>`,{panel:true,step:'sources',nextUrl:'/onboarding/invite',backUrl:'/onboarding'});
+ </section>`,{step:'sources',nextUrl:'/onboarding/invite',backUrl:'/onboarding'});
+}
+
+/** Keep provider callbacks inside the same onboarding frame. */
+export function renderSourceCallback({ok,name,reason}) {
+ const title=ok?`${name} is connected`:reason==='declined'?`${name} wasn’t connected`:'Try connecting again';
+ return renderOnboardingShell(`<section data-page="integration-callback" data-ok="${Boolean(ok)}" data-return-to="/onboarding/sources"><h1>${escape(title)}</h1><p class="focus-description">${ok?'Your import has started. Return to your sources to continue setup.':'Your other connections are saved. Return to your sources and try again.'}</p></section>`,{step:'sources',nextUrl:'/onboarding/sources',nextLabel:'Continue',nextHidden:false});
 }

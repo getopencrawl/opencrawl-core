@@ -20,7 +20,7 @@ test('receipts persist, fail closed by scope, and only follow durable accepted s
   t.after(()=>rm(directory,{recursive:true,force:true}));
   const store=createLocalSessionStore(directory);
   const status=createOnboardingStatus({store});
-  assert.deepEqual(await status.read(principal), {cli:null,mcp:null,mcpTest:null,session:null});
+  assert.deepEqual(await status.read(principal), {cli:null,mcp:null,mcpTest:null,session:null,history:null,completed:null});
   await assert.rejects(status.read({userId:'user-a'}), /Authentication/);
   await status.cli(principal);
   await status.mcp(principal, {name:'codex'});
@@ -33,7 +33,7 @@ test('receipts persist, fail closed by scope, and only follow durable accepted s
   await ingest.putBatch(principal,batch);
   assert.equal((await createOnboardingStatus({store:createLocalSessionStore(directory)}).read(principal)).session.harness,'codex');
   for (const other of [{...principal,tenantId:'tenant-b'},{...principal,userId:'user-b'}]) {
-    assert.deepEqual(await status.read(other),{cli:null,mcp:null,mcpTest:null,session:null});
+    assert.deepEqual(await status.read(other),{cli:null,mcp:null,mcpTest:null,session:null,history:null,completed:null});
   }
   let receipts=0;
   const broken={...memorySessionStore(),put:async()=>{throw new Error('storage down');}};
@@ -102,4 +102,22 @@ test('test_connection fails rather than acknowledging an unrecorded verification
   await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp')));
   t.after(()=>client.close());
   assert.equal((await client.callTool({name:'test_connection',arguments:{}})).isError,true);
+});
+
+
+test('history receipts cannot complete recording and completion is durable and scoped', async () => {
+ const store=memorySessionStore(), status=createOnboardingStatus({store});
+ await assert.rejects(status.complete(principal), {status:409});
+ await status.cli(principal); await status.mcpTest(principal);
+ await status.session(principal,{...batch,events:[{id:'hook',kind:'hook'}]});
+ assert.equal((await status.read(principal)).session,null);
+ await status.session(principal,{...batch,captureMode:'history'});
+ assert.equal((await status.read(principal)).history.state,'received');
+ assert.equal((await status.read(principal)).session,null);
+ await assert.rejects(status.complete(principal),{status:409});
+ await status.session(principal,{...batch,captureMode:'live'});
+ const completion=await status.complete(principal);
+ assert.deepEqual(await createOnboardingStatus({store}).complete(principal),completion);
+ assert.equal((await status.read({...principal,userId:'another'})).completed,null);
+ await assert.rejects(status.complete({...principal,captureAccess:'write'}),{status:403});
 });
