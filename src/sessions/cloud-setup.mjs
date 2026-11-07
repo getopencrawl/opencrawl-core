@@ -6,8 +6,8 @@ export function cloudSetupScript(api) {
   // notice; the same async hook authenticates after secrets are injected.
   return `#!/bin/sh
 set -eu
-npm install --prefix "$HOME/.local/share/opencrawl-cloud" --no-audit --no-fund @getopencrawl/cli@0.4.16
-OPENCRAWL_NO_UPDATE=1 "$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl" collect install --api ${quote(api)} --harness claude-code --defer-auth --backfill skip --json
+npm install --prefix "$HOME/.local/share/opencrawl-cloud" --no-audit --no-fund @getopencrawl/cli@0.4.17
+OPENCRAWL_NO_UPDATE=1 "$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl" collect install --yes --api ${quote(api)} --harness claude-code --defer-auth --backfill skip --json
 `;
 }
 
@@ -25,7 +25,7 @@ export function captureSetupPrompt(api) {
 
 Help me create or sign into OpenCrawl at ${api} and select my workspace if needed. Confirm the destination and recording consent: capture shares user/agent messages, tool arguments/results, and attachments with my team, attributed to me, excluding system prompt snapshots. Respect existing approvals; guide sensitive changes, sign-in, hook trust, and human-required steps. Keep credentials out of chats and repositories.
 
-Install/update with npm i -g @getopencrawl/cli@next. For local/SSH setup, run opencrawl login --api ${api} --no-browser --json, then opencrawl collect install --api ${api} --json. Use ${api}/capture/cloud for Claude cloud setup. Enable all supported capture hooks and complete trust/restart steps. Authenticate the CLI in each environment and each supported agent's MCP at ${api}/mcp separately; call test_connection through each agent’s authenticated MCP connection. Upload-only capture credentials do not grant retrieval access.
+Install/update with npm i -g @getopencrawl/cli@next. For local/SSH setup, run opencrawl login --api ${api} --no-browser --json, then opencrawl collect install --yes --api ${api} --json. Use ${api}/capture/cloud for Claude cloud setup. Enable all supported capture hooks and complete trust/restart steps. Authenticate the CLI in each environment and each supported agent's MCP at ${api}/mcp separately; call test_connection through each agent’s authenticated MCP connection. Upload-only capture credentials do not grant retrieval access.
 
 Discover available history in every approved environment. Preview local sources with opencrawl collect backfill --dry-run --api ${api} --json. Show sources, counts, and destination; request explicit consent to import all available history. Import approved sources using opencrawl collect backfill --harness <claude-code|codex|all> --yes --api ${api} --json and verify completion. Skip only declined sources; keep unanswered choices pending while continuing independent setup.
 

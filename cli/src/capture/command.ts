@@ -2,12 +2,16 @@ import {CliError} from '../oauth.ts';
 import {installCapture,uninstallCapture,upgradeCaptureHooks} from './install.ts';
 import {captureHook,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,recordError} from './runtime.ts';
 import {backfill,backfillPreview,selection,setupBackfill} from './backfill.ts';
+import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
+import {captureNotice} from './policy.ts';
 export async function collectCommand(action:string,api:string,values:any) {
-  if((values.backfill!==undefined || values['defer-auth']) && action!=='install' || values['dry-run'] && action!=='backfill' || values.yes && action!=='backfill')throw new CliError('INVALID_USAGE','Use --backfill with collect install; --dry-run and --yes with collect backfill.',64);
+  if((values.backfill!==undefined || values['defer-auth']) && action!=='install' || values['dry-run'] && action!=='backfill' || values.yes && !['backfill','install','purge'].includes(action))throw new CliError('INVALID_USAGE','Use --backfill with install; --dry-run with backfill; --yes with install, backfill or purge.',64);
+  if(values.project!==undefined && action!=='exclude' || values['session-id']!==undefined && action!=='exclude')throw new CliError('INVALID_USAGE','Use --project or --session-id with collect exclude.',64);
   switch(action) {
     case 'install': {
       const mode=values.backfill??(process.env.CLAUDE_CODE_REMOTE==='true'?'skip':'ask');
       if(!['ask','skip','all','claude-code','codex'].includes(mode))throw new CliError('INVALID_USAGE','Use --backfill ask, skip, all, claude-code, or codex.',64);
+      if(!await approveCapture(values.yes===true,values.json))return {status:'consent_required',notice:captureNotice,nextStep:'Confirm the destination and recording scope with the user, then run collect install --yes. This does not approve history import.'};
       const installed=await installCapture(api,{deferAuth:values['defer-auth']===true,...(values.harness?{harnesses:[values.harness]}:{})});
       return {...installed,backfill:await setupBackfill(api,mode,values.json)};
     }
@@ -20,6 +24,8 @@ export async function collectCommand(action:string,api:string,values:any) {
       }
       catch(e){if(values.yes)recordError(e);throw e;}
     }
+    case 'exclude': return excludeCapture(values.project,values['session-id']);
+    case 'purge': return purgeLocalCapture(values.yes===true);
     case 'uninstall': return uninstallCapture();
     case 'status': return captureStatus();
     case 'sync': try{return await syncCaptures();}catch(e){recordError(e);throw e;}
@@ -37,6 +43,6 @@ export async function collectCommand(action:string,api:string,values:any) {
       }catch(e){try{recordError(e);}catch{}}
       return null;
     }
-    default: throw new CliError('INVALID_USAGE','Use collect install, backfill, status, sync, flush, or uninstall.',64);
+    default: throw new CliError('INVALID_USAGE','Use collect install, backfill, status, sync, flush, exclude, uninstall, or purge.',64);
   }
 }

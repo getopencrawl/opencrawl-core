@@ -30,8 +30,8 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
   The source guard is a regression aid, not a sandbox or isolation proof.
 - Add fail-closed resource/scope tests with the first data-bearing operation.
   Prove a single-tenant path without hosted credentials for each product feature.
-- Keep the repository private and existing licensing unchanged until an explicit
-  release decision. Only `plugins/` has an approved public MIT release; see
+- Core and CLI are Apache-2.0; `plugins/` remains MIT. Keep repository visibility
+  private until an explicit publication instruction; see
   `docs/PLUGIN-RELEASE.md`. Do not promise self-host readiness from the greeting smoke
   runner. Package, CLI and optional integration releases are distinct artifacts.
 - Describe placement and validation in each PR. Core runtime releases must be

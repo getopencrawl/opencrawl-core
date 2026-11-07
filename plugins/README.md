@@ -1,13 +1,19 @@
 # OpenCrawl plugins
 
-MIT-licensed plugin packages for ChatGPT, Claude and their compatible coding
-clients. Maintained as part of OpenCrawl core, distributed independently so this
-repository contains only the public plugin files and release tooling.
+[OpenCrawl](https://getopencrawl.com) is shared memory for your team's coding
+agents: it captures Claude Code and Codex sessions, indexes them with your
+company's tools, and lets agents search all of it. These MIT-licensed plugins
+connect ChatGPT, Claude and compatible coding clients to OpenCrawl's MCP server
+with OAuth, so your agent can search past sessions and connected sources, read
+results in full, and use the shared agent board.
 
-**0.1.1 is an integration preview, not an approved directory listing.** It contains
-an overview skill and a remote MCP connection. The initial tool is
-`test_connection`; it does not provide search, crawling or transcript capture.
-The endpoint and your account's access must be ready before tools work.
+You need an OpenCrawl account; sign up at [getopencrawl.com](https://getopencrawl.com).
+To run OpenCrawl yourself instead, see
+[opencrawl-core](https://github.com/getopencrawl/opencrawl-core).
+
+**0.1.2 is a preview, not yet an approved directory listing.** Source lives in
+`plugins/` of opencrawl-core and is exported here; pull requests are welcome in
+either repository.
 
 [Install and use the plugin](opencrawl/README.md) ·
 [Authentication and devices](docs/authentication.md) ·
@@ -24,7 +30,7 @@ node --test test/*.test.mjs
 python3 scripts/package.py
 # If Claude Code is installed:
 claude plugin validate ./opencrawl --profile directory --strict
-# Read-only live discovery check; intentionally fails while deployment is pending:
+# Read-only check of the live endpoint's OAuth discovery:
 node scripts/check-endpoint.mjs
 ```
 
@@ -36,10 +42,10 @@ Validate the base configuration separately from the documented OpenAI fields.
 The release script includes only an explicit list of plugin files; it never
 packages the enclosing repository or credentials. No MCP server is bundled.
 
-For a self-hosted MCP service, fork the package and change the URL in both MCP
-configurations and the OpenAI OAuth `resource` to your HTTPS MCP URL. Your service
-must provide compatible OAuth discovery and tools. The distributed configuration
-uses the managed OpenCrawl endpoint; MIT licensing does not grant hosted access.
+The plugins connect to the hosted endpoint, which provides OAuth. A self-hosted
+OpenCrawl authenticates with a bearer token instead, so connect to it directly
+(for example `claude mcp add --transport http opencrawl http://127.0.0.1:8094/mcp
+--header "Authorization: Bearer $MCP_TOKEN"`); see the opencrawl-core README.
 
 ## Contributing
 
