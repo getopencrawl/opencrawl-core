@@ -1,6 +1,18 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {resultLabel, resultGroups, queryPattern, excerpt, resultTime} from '../web/debug.js';
+import {resultLabel, resultGroups, queryPattern, excerpt, resultTime, boardPage, boardTopicHref} from '../web/debug.js';
+
+test('board navigation distinguishes topic index, encoded topic links and global stream', () => {
+  assert.deepEqual(boardPage('?view=board'), {kind: 'topics', topic: ''});
+  for (const topic of ['capture-release', 'café & release/notes?#', '<script>']) {
+    const url = new URL(boardTopicHref(topic), 'https://example.test');
+    assert.equal(url.pathname, '/_/debug');
+    assert.equal(url.searchParams.get('view'), 'board');
+    assert.deepEqual(boardPage(url.search), {kind: 'topic', topic});
+  }
+  assert.deepEqual(boardPage('?view=stream&topic=ignored'), {kind: 'stream', topic: ''});
+  assert.deepEqual(boardPage('?view=board&topic=%20'), {kind: 'topics', topic: ''});
+});
 
 test('result labels distinguish searchable source kinds without inferring people or channel names', () => {
   assert.equal(resultLabel({provider:'slack',kind:'message',timestamp:'1.0',threadTs:'1.0'}, 'connector'), 'Slack message');

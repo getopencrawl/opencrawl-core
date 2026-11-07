@@ -61,7 +61,8 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   }
   expect((await cli(['install','--no-background'])).data.backfill.status).toBe('decision_required');
   expect((await cli(['install','--no-background','--backfill','skip'])).data.backfill.status).toBe('skipped');
-  expect((await cli(['backfill'])).error.code).toBe('BACKFILL_CONSENT_REQUIRED');
+  expect((await cli(['backfill'])).data.status).toBe('decision_required');
+  expect((await cli(['backfill','--harness','codex'])).error.code).toBe('BACKFILL_CONSENT_REQUIRED');
   expect((await cli(['backfill','--dry-run'])).data.status).toBe('preview');
   const start=requests;
   const preview=backfillPreview(api);
@@ -83,6 +84,7 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   phase='resume';expect((await backfill(api,'codex',true)).processed).toBe(2);
   expect(new Set(batches.map(b=>b.harness+'/'+b.origin))).toEqual(new Set(['claude-code/cli','claude-code/desktop','codex/cli','codex/desktop']));
   expect(JSON.stringify(batches)).not.toContain('EXCLUDED');
+  expect(batches.every(b=>b.captureMode==='history')).toBe(true);
   expect(batches.filter(b=>b.harness==='claude-code').every(b=>b.attachments[0].status==='captured')).toBe(true);
   for(const receipt of receipts){expect(await ingest.getBatch(principal,receipt)).not.toBeNull();expect(await ingest.getBatch({...principal,tenantId:'other'},receipt)).toBeNull();}
   const beforeReplay=requests;

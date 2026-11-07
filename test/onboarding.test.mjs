@@ -20,16 +20,20 @@ test('receipts persist, fail closed by scope, and only follow durable accepted s
   t.after(()=>rm(directory,{recursive:true,force:true}));
   const store=createLocalSessionStore(directory);
   const status=createOnboardingStatus({store});
-  assert.deepEqual(await status.read(principal), {cli:null,mcp:null,session:null});
+  assert.deepEqual(await status.read(principal), {cli:null,mcp:null,mcpTest:null,session:null,history:null,completed:null});
   await assert.rejects(status.read({userId:'user-a'}), /Authentication/);
   await status.cli(principal);
+  await status.mcp(principal, {name:'codex'});
+  assert.equal((await status.read(principal)).mcpTest,null);
+  await status.mcpTest(principal);
+  assert.ok((await createOnboardingStatus({store:createLocalSessionStore(directory)}).read(principal)).mcpTest.observedAt);
   const ingest=createSessionIngest({store,onStored:status.session});
   await assert.rejects(ingest.putBatch({...principal,userId:'user-b'},batch), /owner/);
   assert.equal((await status.read(principal)).session,null);
   await ingest.putBatch(principal,batch);
   assert.equal((await createOnboardingStatus({store:createLocalSessionStore(directory)}).read(principal)).session.harness,'codex');
   for (const other of [{...principal,tenantId:'tenant-b'},{...principal,userId:'user-b'}]) {
-    assert.deepEqual(await status.read(other),{cli:null,mcp:null,session:null});
+    assert.deepEqual(await status.read(other),{cli:null,mcp:null,mcpTest:null,session:null,history:null,completed:null});
   }
   let receipts=0;
   const broken={...memorySessionStore(),put:async()=>{throw new Error('storage down');}};
@@ -45,7 +49,7 @@ test('real MCP clients record independent authenticated identities in legacy and
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   const origin='http://127.0.0.1:'+server.address().port;
   const calls=[];
-  handler=createOpenCrawlMcp({origin,authenticate:async req=>req.headers.authorization==='Bearer test'?principal:null,onAuthenticated:(who,info,request)=>{calls.push(request);return status.mcp(who,info);}});
+  handler=createOpenCrawlMcp({origin,authenticate:async req=>req.headers.authorization==='Bearer test'?principal:null,onAuthenticated:(who,info,request)=>{calls.push(request);return status.mcp(who,info);},onConnectionTest:status.mcpTest});
   t.after(async()=>{await handler.close();await new Promise(r=>server.close(r));});
   assert.equal((await fetch(origin+'/mcp')).status,401);
   assert.equal((await status.read(principal)).mcp,null);
@@ -53,11 +57,20 @@ test('real MCP clients record independent authenticated identities in legacy and
     const client=new Client({name,version:'1'},{versionNegotiation:{mode}});
     await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers:{authorization:'Bearer test'}}}));
     await client.listTools();
-    await client.callTool({name:'test_connection',arguments:{}});
+    const before=(await status.read(principal)).mcpTest;
+    if (mode === 'legacy') assert.equal(before,null);
+    assert.equal((await client.callTool({name:'test_connection',arguments:{url:'https://untrusted.test'}})).isError,true);
+    assert.deepEqual((await status.read(principal)).mcpTest,before);
+    await client.callTool({name:'opencrawl',arguments:{}});
+    assert.deepEqual((await status.read(principal)).mcpTest,before);
+    const result=await client.callTool({name:'test_connection',arguments:{}});
+    assert.notEqual(result.isError,true);
+    assert.ok((await status.read(principal)).mcpTest.observedAt);
     await client.close();
     assert.equal((await status.read(principal)).mcp.client,expected || null);
   }
   assert.equal((await status.read({...principal,userId:'user-b'})).mcp,null);
+  assert.equal((await status.read({...principal,userId:'user-b'})).mcpTest,null);
   assert.ok(calls.some(c=>c.method==='tools/call'&&c.tool==='test_connection'));
   assert.ok(calls.some(c=>c.method==='tools/list'&&c.tool===null));
 });
@@ -75,4 +88,36 @@ test('single-tenant receiver exposes authenticated onboarding without hosted ser
   const result=await (await fetch(base+'/api/onboarding',{headers})).json();
   assert.ok(result.data.cli.observedAt);
   assert.equal(result.data.session.harness,'codex');
+});
+
+
+test('test_connection fails rather than acknowledging an unrecorded verification', async t => {
+  let handler;
+  const server=createServer((req,res)=>handler(req,res));
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const origin='http://127.0.0.1:'+server.address().port;
+  handler=createOpenCrawlMcp({origin,authenticate:async()=>principal,onConnectionTest:async()=>{throw new Error('receipt storage unavailable');}});
+  t.after(async()=>{await handler.close();await new Promise(resolve=>server.close(resolve));});
+  const client=new Client({name:'codex',version:'1'});
+  await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp')));
+  t.after(()=>client.close());
+  assert.equal((await client.callTool({name:'test_connection',arguments:{}})).isError,true);
+});
+
+
+test('history receipts cannot complete recording and completion is durable and scoped', async () => {
+ const store=memorySessionStore(), status=createOnboardingStatus({store});
+ await assert.rejects(status.complete(principal), {status:409});
+ await status.cli(principal); await status.mcpTest(principal);
+ await status.session(principal,{...batch,events:[{id:'hook',kind:'hook'}]});
+ assert.equal((await status.read(principal)).session,null);
+ await status.session(principal,{...batch,captureMode:'history'});
+ assert.equal((await status.read(principal)).history.state,'received');
+ assert.equal((await status.read(principal)).session,null);
+ await assert.rejects(status.complete(principal),{status:409});
+ await status.session(principal,{...batch,captureMode:'live'});
+ const completion=await status.complete(principal);
+ assert.deepEqual(await createOnboardingStatus({store}).complete(principal),completion);
+ assert.equal((await status.read({...principal,userId:'another'})).completed,null);
+ await assert.rejects(status.complete({...principal,captureAccess:'write'}),{status:403});
 });

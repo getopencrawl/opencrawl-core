@@ -14,7 +14,10 @@ export async function collectCommand(action:string,api:string,values:any) {
     case 'backfill': {
       const selected=selection(values.harness);
       if(values['dry-run'] && values.yes)throw new CliError('INVALID_USAGE','Use either --dry-run or --yes, not both.',64);
-      try{return values['dry-run']?backfillPreview(api,selected):await backfill(api,selected,values.yes===true);}
+      try{
+        if(!values['dry-run'] && !values.yes && values.harness===undefined)return await setupBackfill(api,'ask',values.json);
+        return values['dry-run']?backfillPreview(api,selected):await backfill(api,selected,values.yes===true);
+      }
       catch(e){if(values.yes)recordError(e);throw e;}
     }
     case 'uninstall': return uninstallCapture();

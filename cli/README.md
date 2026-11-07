@@ -171,10 +171,10 @@ hook binds identity before parsing or uploading, without blocking the agent.
 
 ### Optional history import
 
-`collect install` asks terminal users whether to import past Claude Code sessions,
+`collect install` and `collect backfill` ask terminal users whether to import past Claude Code sessions,
 Codex sessions, both, or skip (the default). Desktop coding sessions use the same
-native transcript stores. A JSON/noninteractive install returns
-`backfill.status=decision_required` with a preview and instructions for the agent
+native transcript stores. A JSON/noninteractive invocation returns
+`decision_required` (`backfill.status` during installation) with a preview and instructions for the agent
 to ask the user. It never assumes consent. `npm install` itself reads no history.
 
 Claude history includes native `.claude/projects` transcripts mirrored by Claude
@@ -195,6 +195,7 @@ the user's choice. The setup request alone is not consent to import history.
 
 ```sh
 opencrawl collect install --backfill skip  # future collection only
+opencrawl collect backfill  # interactive history import; defaults to skip
 opencrawl collect backfill --dry-run --json  # local metadata only; no upload
 # Only after the user chooses a source:
 opencrawl collect backfill --harness claude-code --yes

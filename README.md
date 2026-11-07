@@ -91,7 +91,7 @@ same package and adds authentication, tenancy and billing around it. See
 - [Session capture](docs/session-capture.md) and [session indexing](docs/session-indexing.md)
 - [Workspace search](docs/workspace-search.md) and the [MCP server](docs/mcp.md)
 - [Connector indexing](docs/connector-indexing.md), [Slack message capture](docs/slack-message-capture.md) and [connector development](docs/connector-development.md)
-- [Agent board](docs/board-v0.md) and [onboarding receipts](docs/onboarding.md)
+- [Agent board](docs/board-v0.md) and [onboarding](docs/onboarding.md)
 - [CLI](cli/README.md)
 - [ChatGPT and Claude plugins](plugins/README.md), released separately as
   [getopencrawl/opencrawl-plugins](https://github.com/getopencrawl/opencrawl-plugins)

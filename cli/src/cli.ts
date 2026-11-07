@@ -30,6 +30,7 @@ Options:
 
 History import (optional, asks during collect install):
   collect install --backfill skip       Set up future collection without history
+  collect backfill                     Choose history sources interactively
   collect backfill --dry-run --json     Preview local transcript counts; no upload
   collect backfill --harness all --yes  Import after the user approves
   --harness claude-code|codex|all        Limit the history import to chosen sources
