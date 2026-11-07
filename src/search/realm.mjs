@@ -4,7 +4,7 @@ import {realmMapping} from './mapping.mjs';
 export {realmMapping};
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (message,status=503) => Object.assign(new Error(message),{status,permanent:status===403});
-const corpora = new Set(['connector','session','board']);
+const corpora = new Set(['connector','session','board','memory']);
 export function realmIndex(environment,tenantId,generation='v1') {
   if (!/^[a-z][a-z0-9-]{0,24}$/.test(environment) || !/^v[1-9][0-9]*$/.test(generation) || typeof tenantId!=='string' || !tenantId) throw fail('Invalid realm scope',403);
   return `opencrawl-${environment}-realm-${hash(tenantId)}-${generation}`;
@@ -20,7 +20,7 @@ export function realmDocument(corpus,id,document) {
   let timestamp= typeof raw==='number'?raw:typeof raw==='string'&&/^\d{10}(\.\d+)?$/.test(raw)?Number(raw)*1000:Date.parse(raw);
   if(!Number.isFinite(timestamp)) timestamp=Date.parse(document.receivedAt)||document.extractedAt;
   const author=document.author??document.authorId??document.userId;
-  const source=corpus==='connector'?document.provider:corpus==='session'?document.harness:'board';
+  const source=corpus==='connector'?document.provider:['session','memory'].includes(corpus)?document.harness:'board';
   return {schema:1,tenantId,corpus,id,source,kind:document.kind||'message',
     ...(Number.isFinite(timestamp)?{timestamp:new Date(timestamp).toISOString()}:{}),
     ...(author?{author}:{}),
@@ -52,9 +52,15 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
       // Validate ownership and every existing field before making any change.
       const previous=structuredClone(realmMapping);
       delete previous.properties.connector.properties.normalizerVersion;
+      if(!mapping?.properties?.memory)delete previous.properties.memory;
       if(mapping?._meta?.tenantId===tenantId && mapping?._meta?.schema===1 &&
         !mapping.properties?.connector?.properties?.normalizerVersion && compatible(mapping,previous)) {
         await request('/_mapping',{properties:{connector:{properties:{normalizerVersion:{type:'integer'}}}}},'PUT');
+        mapping=(await request('/_mapping',undefined,'GET'))?.[index]?.mappings;
+      }
+      const withoutMemory=structuredClone(realmMapping);delete withoutMemory.properties.memory;
+      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&!mapping.properties?.memory&&compatible(mapping,withoutMemory)) {
+        await request('/_mapping',{properties:{memory:realmMapping.properties.memory}},'PUT');
         mapping=(await request('/_mapping',undefined,'GET'))?.[index]?.mappings;
       }
       if(mapping?._meta?.tenantId!==tenantId||mapping?._meta?.schema!==1||!compatible(mapping,realmMapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');

@@ -1,5 +1,6 @@
 import {gzipSync, gunzipSync} from 'node:zlib';
 import {digest,sessionScope,reserveSessionEvents} from './event-identity.mjs';
+import {createMemoryIngest,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
 export {digest,sessionScope,auditSessionEventIdentities,auditSessionEventSource} from './event-identity.mjs';
 
 const id = value => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
@@ -8,12 +9,17 @@ export const MAX_BATCH_BYTES = 16 * 1024 * 1024;
 export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const MAX_STORED_BATCH_BYTES = MAX_BATCH_BYTES + 1024 * 1024;
 
-export function createSessionIngest({store, prefix = 'capture-v1', onStored=undefined}) {
+export function createSessionIngest({store, prefix = 'capture-v1', onStored=undefined,onMemoryStored=undefined}) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = principal => `${prefix}/${sessionScope(principal)}`;
   // Existence checks must not download attachment bodies on every batch retry.
   const exists = (key, maxBytes) => store.has ? store.has(key, {maxBytes}) : store.get(key, {maxBytes}).then(Boolean);
   return {
+    async putMemorySnapshot(principal,snapshot) {
+      const receipt=await createMemoryIngest({store,prefix}).putSnapshot(principal,snapshot);
+      if(onMemoryStored)await onMemoryStored(principal,{harness:snapshot.harness,files:receipt.files,snapshotId:receipt.snapshotId});
+      return receipt;
+    },
     async putAttachment(principal, hash, bytes) {
       const keyPrefix = scope(principal);
       if (!(bytes instanceof Uint8Array)) fail(400, 'Invalid attachment bytes');
@@ -90,6 +96,7 @@ export function createCaptureHandler({ingest, authenticate, search=undefined, cr
       if(principal.captureAccess==='write' && !(
         req.method==='GET' && url.pathname==='/api/sessions/identity' ||
         req.method==='POST' && url.pathname==='/api/sessions/batches' ||
+        req.method==='POST' && url.pathname==='/api/sessions/memories' ||
         req.method==='PUT' && /^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(url.pathname))) return send(403,{error:{code:'CAPTURE_WRITE_ONLY'}});
       if(credentials && req.method==='POST' && url.pathname==='/api/sessions/credentials') return send(200,{data:await credentials.issue(principal)});
       const credential=/^\/api\/sessions\/credentials\/([a-f0-9]{64})$/.exec(url.pathname);
@@ -106,6 +113,10 @@ export function createCaptureHandler({ingest, authenticate, search=undefined, cr
       if (url.pathname === '/api/sessions/batches' && req.method === 'POST') {
         let batch; try {batch = JSON.parse(await readBody(req, MAX_BATCH_BYTES));} catch(e) {if(e.status)throw e;fail(400,'Invalid JSON');}
         return send(200, {data:await ingest.putBatch(principal,batch)});
+      }
+      if (url.pathname === '/api/sessions/memories' && req.method === 'POST') {
+        let snapshot;try{snapshot=JSON.parse(await readBody(req,MAX_MEMORY_BYTES));}catch(e){if(e.status)throw e;fail(400,'Invalid memory JSON');}
+        return send(200,{data:await ingest.putMemorySnapshot(principal,snapshot)});
       }
       if (url.pathname === '/api/sessions/batches' && req.method === 'GET') {
         const batch = await ingest.getBatch(principal, Object.fromEntries(url.searchParams));
