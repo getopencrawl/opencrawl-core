@@ -37,7 +37,11 @@
     "./search": "./src/search/workspace.mjs",
     "./search/realm": "./src/search/realm.mjs",
     "./search/migration": "./src/search/migration.mjs",
-    "./connectors/slack-source-message-references": "./src/connectors/slack-source-message-references.mjs"
+    "./connectors/slack-source-message-references": "./src/connectors/slack-source-message-references.mjs",
+    "./frontend/document": "./src/frontend-document.mjs",
+    "./onboarding/state": "./web/onboarding-state.js",
+    "./onboarding/sources": "./src/onboarding-sources.mjs",
+    "./onboarding/invite": "./src/onboarding-invite.mjs"
   },
   "files": [
     "src",

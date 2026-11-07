@@ -61,7 +61,8 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   }
   expect((await cli(['install','--no-background'])).data.backfill.status).toBe('decision_required');
   expect((await cli(['install','--no-background','--backfill','skip'])).data.backfill.status).toBe('skipped');
-  expect((await cli(['backfill'])).error.code).toBe('BACKFILL_CONSENT_REQUIRED');
+  expect((await cli(['backfill'])).data.status).toBe('decision_required');
+  expect((await cli(['backfill','--harness','codex'])).error.code).toBe('BACKFILL_CONSENT_REQUIRED');
   expect((await cli(['backfill','--dry-run'])).data.status).toBe('preview');
   const start=requests;
   const preview=backfillPreview(api);

@@ -16,6 +16,7 @@ export function createOnboardingStatus({store, prefix = 'capture-v1', now = () =
       const client = clientInfo ? mcpClientName(clientInfo.name) : previous ? JSON.parse(previous.toString()).client : null;
       return record(principal, 'mcp', {client});
     },
+    mcpTest: principal => record(principal, 'mcpTest'),
     session: (principal, batch) => {
       if (!['claude-code', 'codex'].includes(batch.harness)) throw new Error('Unknown session harness');
       return record(principal, 'session', {harness: batch.harness});
@@ -23,11 +24,11 @@ export function createOnboardingStatus({store, prefix = 'capture-v1', now = () =
     async read(principal) {
       sessionScope(principal);
       if (principal.captureAccess === 'write') throw Object.assign(new Error('Capture credentials cannot read onboarding status'), {status: 403});
-      const values = await Promise.all(['cli','mcp','session'].map(async kind => {
+      const values = await Promise.all(['cli','mcp','mcpTest','session'].map(async kind => {
         const bytes = await store.get(key(principal, kind));
         return bytes ? JSON.parse(bytes.toString()) : null;
       }));
-      return {cli: values[0], mcp: values[1], session: values[2]};
+      return {cli: values[0], mcp: values[1], mcpTest: values[2], session: values[3]};
     },
   };
 }

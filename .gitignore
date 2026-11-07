@@ -3,3 +3,5 @@ node_modules/
 revision.json
 !.env.example
 cli/dist/
+
+.preview/

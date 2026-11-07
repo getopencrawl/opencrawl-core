@@ -11,7 +11,7 @@ const overview = await readFile(new URL('./overview.md', import.meta.url), 'utf8
 
 // Authentication belongs to the runtime adapter. No account or tenant data is
 // exposed by this initial surface; every MCP request still requires a principal.
-export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated,
+export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated, onConnectionTest,
   observationTimeoutMs = 1000, onObservationError = event => console.error(JSON.stringify(event)), board, search}) {
   if (typeof authenticate !== 'function' || new URL(origin).origin !== origin) throw new Error('MCP requires authentication and a canonical origin');
   if (!Number.isInteger(observationTimeoutMs) || observationTimeoutMs < 1 || observationTimeoutMs > 10000) throw new Error('Invalid MCP observation timeout');
@@ -33,6 +33,7 @@ export function createOpenCrawlMcp({authenticate, origin, revision = 'developmen
       annotations: {readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false},
     }, async () => {
       const result = {connected: true, server: 'opencrawl', serverTime: new Date().toISOString(), revision};
+      if (onConnectionTest) await onConnectionTest(context.getStore());
       return {content: [{type: 'text', text: JSON.stringify(result)}], structuredContent: result};
     });
     if (search) server.registerTool('search', {
