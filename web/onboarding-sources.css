@@ -1,0 +1,43 @@
+.connector-search{display:flex;align-items:center;gap:var(--space-3);margin-top:var(--space-6);padding:0 var(--space-3);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface-subtle)}
+.connector-search:focus-within{outline:2px solid var(--accent);outline-offset:3px}
+.connector-search>svg{width:18px;height:18px;flex-shrink:0;color:var(--quiet)}
+.connector-search input{width:100%;min-width:0;min-height:48px;padding:0;border:0;outline:none;background:transparent;color:var(--text);font-size:16px}
+.connector-search input::placeholder{color:var(--quiet)}
+.connector-search:has(input:disabled){opacity:.6}
+.connector-catalog{margin-top:var(--space-4);min-height:216px}
+.connector-search[hidden]+.connector-catalog{margin-top:var(--space-6)}
+#connector-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3);list-style:none;padding:0;margin:0}
+.connector-cell{min-width:0}
+.connector-tile{display:grid;grid-template-columns:32px minmax(0,1fr) 20px;align-items:center;gap:var(--space-3);width:100%;height:64px;padding:var(--space-2) var(--space-3);border-color:var(--line-strong);background:var(--surface-subtle);white-space:normal;text-align:left}
+.connector-tile:hover:not([aria-disabled="true"]){border-color:var(--accent);background:var(--surface-raised)}
+.connector-tile:hover:not([aria-disabled="true"]) .connector-tile-status{color:var(--accent-hover)}
+.connector-logo-slot{display:flex;align-items:center;justify-content:center;width:32px;height:32px}
+.connector-logo{display:block;width:32px;height:32px;object-fit:contain}
+.connector-name{font-size:var(--text-ui);line-height:20px;font-weight:550;overflow-wrap:anywhere}
+.connector-tile-status{display:flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--quiet)}
+.connector-tile-status>svg{width:20px;height:20px}
+.connector-tile[data-connected],.connector-tile[data-connected]:hover{border-color:color-mix(in srgb,var(--success) 35%,var(--line));background:var(--surface-subtle);cursor:default}
+.connector-tile[data-connected] .connector-tile-status{color:var(--success)}
+.connector-tile-status .signal-mark{width:20px;height:20px;color:var(--accent)}
+.connector-tile[data-connected] .signal-mark{color:var(--success);animation:none}
+.connector-tile[data-connected] .signal-mark circle{stroke-dasharray:none}
+.connector-tile[data-connected] .signal-mark path{visibility:visible}
+.connector-tile[aria-busy="true"]{cursor:wait}
+.connector-tile[data-error]{border-color:var(--danger)}
+.connector-tile-error{margin:var(--space-2) 0 0;color:var(--danger);font-size:var(--text-xs);line-height:1.5}
+.connector-message{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:var(--space-3);min-height:216px;color:var(--muted);font-size:var(--text-ui)}
+#sources-loading{flex-direction:row;align-items:center;justify-content:flex-start}
+.connector-spinner{width:18px;height:18px;border:1.5px solid var(--accent);border-right-color:transparent;border-radius:50%}
+#clear-connector-search{padding-inline:0;color:var(--accent)}
+@media(max-width:600px){
+ #connector-list{grid-template-columns:minmax(0,1fr);gap:var(--space-2)}
+ .connector-tile{height:56px}
+ .connector-catalog,.connector-message{min-height:376px}
+ .connector-search{margin-top:var(--space-6)}
+}
+.secret-dialog{width:min(440px,calc(100% - 32px));padding:var(--space-6);border:1px solid var(--line-strong);border-radius:var(--radius-panel);background:var(--surface);color:var(--text)}
+.secret-dialog::backdrop{background:rgb(0 0 0 / .75)}
+.secret-dialog p{margin-top:var(--space-3);color:var(--muted);font-size:var(--text-ui)}
+.secret-dialog label{display:grid;gap:var(--space-2);margin-top:var(--space-5);font-size:var(--text-ui)}
+.secret-dialog input{width:100%;min-width:0;min-height:44px;padding:var(--space-3);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface-subtle);font-size:16px}
+.dialog-actions{display:flex;justify-content:flex-end;gap:var(--space-3);margin-top:var(--space-6)}

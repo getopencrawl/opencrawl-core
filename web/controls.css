@@ -4,10 +4,10 @@ button,input,textarea,select,.button-link{font:inherit;color:inherit}
 :is(button,.button-link):hover:not(:disabled){background:var(--surface-subtle);border-color:var(--line-strong)}
 :is(button,.button-link):active:not(:disabled){background:var(--surface-raised)}
 button:disabled{color:var(--quiet);background:var(--surface);border-color:var(--line);cursor:not-allowed;opacity:1}
-/* Primary: lavender face over hairline coral and cobalt layers, which widen on hover. */
-:is(button,.button-link).primary{color:var(--on-primary);background:var(--primary);border-color:var(--primary);box-shadow:var(--logo-layers);font-weight:500}
+/* Primary: plain lavender at rest; coral and cobalt peek out only on hover. */
+:is(button,.button-link).primary{color:var(--on-primary);background:var(--primary);border-color:var(--primary);box-shadow:none;font-weight:500}
 :is(button,.button-link).primary:hover:not(:disabled){color:var(--on-primary);background:var(--primary-hover);border-color:var(--primary-hover);box-shadow:var(--logo-layers-wide)}
-:is(button,.button-link).primary:active:not(:disabled){box-shadow:none}
+:is(button,.button-link).primary:active:not(:disabled){background:var(--primary);border-color:var(--primary);box-shadow:none}
 .primary:disabled{color:var(--quiet);background:var(--surface-subtle);border-color:var(--line);box-shadow:none}
 /* Secondary: a muted indigo version of the primary, as on the landing page's Book call. */
 :is(button,.button-link).secondary{color:var(--on-secondary);background:var(--secondary);border-color:var(--secondary-line);box-shadow:var(--logo-layers-soft)}
