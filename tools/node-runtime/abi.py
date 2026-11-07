@@ -24,7 +24,7 @@ def check_versions(text):
     for name in names:
         match = re.fullmatch(r'(GLIBC|GLIBCXX|CXXABI)_([0-9]+(?:\.[0-9]+)+)', name)
         if not match:
-            if name in {'GCC_3.0', 'GCC_3.3', 'GCC_4.2.0'}:
+            if name in {'GCC_3.0', 'GCC_3.3', 'GCC_3.4', 'GCC_4.2.0'}:
                 continue
             raise ValueError('Unreviewed ELF version requirement: ' + name)
         family, version = match.groups()

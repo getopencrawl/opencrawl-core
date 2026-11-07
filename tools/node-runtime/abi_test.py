@@ -54,7 +54,7 @@ class NodeRuntimeAbiTest(unittest.TestCase):
     def test_supported_requirements_ignore_exported_definitions(self):
         self.assertEqual(abi.check_versions('Version definition section\n Name: GLIBC_9.99\n'
             'Version needs section\n Name: GLIBC_2.28\n Name: GLIBC_2.2.5\n Name: GLIBCXX_3.4.25\n'
-            ' Name: CXXABI_1.3.11\n Name: GCC_3.0\n'),
+            ' Name: CXXABI_1.3.11\n Name: GCC_3.0\n Name: GCC_3.4\n'),
             {'GLIBC': '2.28', 'GLIBCXX': '3.4.25', 'CXXABI': '1.3.11'})
 
     def test_new_or_unknown_runtime_requirements_fail(self):
