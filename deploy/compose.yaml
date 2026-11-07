@@ -54,7 +54,7 @@ services:
       <<: *env
       HOST: 0.0.0.0
       PORT: "8094"
-      # Clients must send this exact Host header: use 127.0.0.1, not localhost.
+      # Pins the Host header (localhost and [::1] on this port are also accepted).
       MCP_ORIGIN: http://127.0.0.1:${OPENCRAWL_MCP_PORT:-8094}
       MCP_TOKEN: ${MCP_TOKEN:?run ./up.sh or set it in .env}
       OPENCRAWL_SEARCH_CONFIG: /run/opencrawl/search.json

@@ -53,8 +53,8 @@ claude mcp add --transport http opencrawl http://127.0.0.1:8094/mcp \
   --header "Authorization: Bearer $MCP_TOKEN"
 ```
 
-Use `127.0.0.1`, not `localhost`: the server checks the Host header. Stop with
-`docker compose -f deploy/compose.yaml down` (add `-v` to delete the data).
+Stop with `docker compose -f deploy/compose.yaml down` (add `-v` to delete the
+data).
 
 ## What it does
 
