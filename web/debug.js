@@ -138,7 +138,7 @@ if (typeof document !== 'undefined' && document.querySelector('#debug-search')) 
       rawBody.textContent = JSON.stringify(data, null, 2);
       renderGroups(list, groups, query);
       results.hidden = false;
-      status.textContent = count ? `${count} matching ${count === 1 ? 'item' : 'items'} shown. Query words are highlighted.` : 'No matching items. Try another query.';
+      status.textContent = count ? `${count} matching ${count === 1 ? 'item' : 'items'}` : 'No matching items. Try another query.';
       const pending = groups.filter(g => g.state === 'pending').map(g => g.label);
       const unavailable = groups.filter(g => g.state === 'not_configured').map(g => g.label);
       if (pending.length) status.textContent += ` ${pending.join(', ')}: indexing pending.`;
