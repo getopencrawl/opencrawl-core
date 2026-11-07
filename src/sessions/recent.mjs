@@ -6,7 +6,6 @@ const identityFields = ['userId', 'harness', 'installationId', 'sessionId'];
 const f = key => realmField('session', key);
 const invalid = () => new Error('Invalid recent session response');
 const iso = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
-const excerpt = text => ({text: text.slice(0, 4000), totalChars: text.length, truncated: text.length > 4000});
 
 // Only message text is context. Tool arguments/results, thinking, attachments,
 // transport metadata and routing instructions must never become message text.
@@ -85,7 +84,7 @@ export function createRecentSessions({store, prefix, ...options}) {
             ...(after ? {search_after: after} : {})});
           for (const hit of found.hits.hits) {
             const {event, batch} = await original(hit), message = sessionMessage(event);
-            if (message?.role === role) return {...excerpt(message.text), timestamp: iso(event.timestamp), receivedAt: iso(batch.receivedAt), eventId: event.id};
+            if (message?.role === role) return {text: message.text, timestamp: iso(event.timestamp), receivedAt: iso(batch.receivedAt), eventId: event.id};
           }
           if (found.hits.hits.length < 20) return null;
           after = found.hits.hits.at(-1).sort;
@@ -103,10 +102,10 @@ export function createRecentSessions({store, prefix, ...options}) {
       for (const hit of metadata.hits.hits) {
         const {event, batch} = await original(hit);
         const candidate = event.data?.title ?? event.data?.customTitle ?? batch.title;
-        if (typeof candidate === 'string' && candidate.trim()) {title = candidate.slice(0, 200); titleTimestamp = iso(event.timestamp); break;}
+        if (typeof candidate === 'string' && candidate.trim()) {title = candidate; titleTimestamp = iso(event.timestamp); break;}
       }
       const titleSource = title ? 'captured' : firstUserMessage ? 'first_user_message' : 'session_id';
-      title ||= firstUserMessage?.text.replace(/\s+/g, ' ').trim().slice(0, 200) || `Session ${identity.sessionId}`;
+      title ||= firstUserMessage?.text.replace(/\s+/g, ' ').trim() || `Session ${identity.sessionId}`;
       if (titleSource === 'first_user_message') titleTimestamp = firstUserMessage.timestamp;
       sessions.push({...identity, title, titleSource, titleTimestamp, lastActivityAt, firstUserMessage, lastUserMessage, latestAssistantMessage, partial});
     }
