@@ -4,7 +4,7 @@ MIT-licensed plugin packages for ChatGPT, Claude and their compatible coding
 clients. Maintained as part of OpenCrawl core, distributed independently so this
 repository contains only the public plugin files and release tooling.
 
-**0.1.0 is an integration preview, not an approved directory listing.** It contains
+**0.1.1 is an integration preview, not an approved directory listing.** It contains
 an overview skill and a remote MCP connection. The initial tool is
 `test_connection`; it does not provide search, crawling or transcript capture.
 The endpoint and your account's access must be ready before tools work.

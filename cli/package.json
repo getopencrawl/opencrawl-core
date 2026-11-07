@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/cli",
-  "version": "0.4.13",
+  "version": "0.4.14",
   "description": "OpenCrawl CLI: sign in now, query the index as features become available",
   "type": "module",
   "license": "UNLICENSED",
@@ -13,7 +13,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/1patch/opencrawl-core.git",
+    "url": "https://github.com/getopencrawl/opencrawl-core.git",
     "directory": "cli"
   },
   "engines": {

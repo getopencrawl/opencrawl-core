@@ -3,7 +3,7 @@
 Understand OpenCrawl and check an authenticated connection to its remote MCP
 server at `https://app.getopencrawl.com/mcp`.
 
-Version 0.1.0 is an integration preview. It bundles the `opencrawl` overview skill
+Version 0.1.1 is an integration preview. It bundles the `opencrawl` overview skill
 and the remote MCP connection. The initial server offers only `test_connection`;
 search, crawling, retrieval and transcript capture are not plugin features.
 The hosted service must be available and admit your account before tools work.
@@ -13,12 +13,12 @@ Installing these files does not grant service access or prove OAuth works.
 
 Claude: upload the release ZIP in Customize > Plugins > Add > Upload plugin,
 then connect OpenCrawl from the plugin's Connectors tab. You can also add
-`https://github.com/1patch/opencrawl-plugins` as a custom marketplace.
+`https://github.com/getopencrawl/opencrawl-plugins` as a custom marketplace.
 
 Claude Code:
 
 ```text
-/plugin marketplace add 1patch/opencrawl-plugins
+/plugin marketplace add getopencrawl/opencrawl-plugins
 /plugin install opencrawl@opencrawl
 ```
 
@@ -29,7 +29,7 @@ submission portal. A GitHub release does not create an official directory listin
 Codex supports this repository's custom marketplace:
 
 ```sh
-codex plugin marketplace add https://github.com/1patch/opencrawl-plugins.git
+codex plugin marketplace add https://github.com/getopencrawl/opencrawl-plugins.git
 codex plugin add opencrawl@opencrawl
 ```
 
@@ -48,6 +48,6 @@ account metadata under their own policies; this package is not a promise of
 zero server logging. Hosted policy: https://app.getopencrawl.com/privacy.
 
 For setup, limitations and support see
-https://github.com/1patch/opencrawl-plugins. Source is MIT licensed; hosted service
+https://github.com/getopencrawl/opencrawl-plugins. Source is MIT licensed; hosted service
 access and the rest of OpenCrawl are separate. Report non-sensitive problems in
 GitHub issues; report vulnerabilities through GitHub private vulnerability reporting.

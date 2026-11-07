@@ -16,7 +16,7 @@ not guarantee eligibility or acceptance.
 
 ## Claude
 
-Submit `1patch/opencrawl-plugins`, plugin path `opencrawl`, and tag `v0.1.0` at
+Submit `getopencrawl/opencrawl-plugins`, plugin path `opencrawl`, and tag `v0.1.1` at
 https://claude.ai/directory/manage. The GitHub account connected in that Claude
 organization must have push access. Validate the source, complete data handling
 and compliance fields, submit, and publish when the review allows it. Submit the
