@@ -216,7 +216,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
             let record;try{record=JSON.parse(line);}catch{throw new CliError('CAPTURE_INVALID_RECORD','Invalid transcript record; cursor retained');}
             const auditMessage=!desktopAudit||['user','assistant'].includes(record.type)&&!nativeIds.has(record.uuid);
             if(desktopAudit&&auditMessage&&(!record.session_id||typeof record.session_id!=='string'))throw new CliError('CAPTURE_SESSION_UNKNOWN','Desktop audit message has no session identity');
-            if(desktopAudit&&auditMessage&&meta.sessionId!==record.session_id)enqueue(config,meta,events.splice(0),attachments.splice(0));
+            if(desktopAudit&&auditMessage&&meta.sessionId!==record.session_id)enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));
             if(!desktopAudit||auditMessage)metadata(record);
             const parsed=auditMessage?parseRecord(harness,record,position):null;
             if(parsed&&desktopAudit){parsed.timestamp=record._audit_timestamp??record.timestamp??null;parsed.parentId=record.parent_tool_use_id??null;}
@@ -238,9 +238,9 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
           }
           position+=Buffer.byteLength(line)+1;
           if(++linesSinceYield===200){linesSinceYield=0;await yieldToOwner();}
-          if(events.length>=200){enqueue(config,meta,events.splice(0),attachments.splice(0));}
+          if(events.length>=200){enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));}
         }
-        enqueue(config,meta,events,attachments);
+        enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events,attachments);
         offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
       }
     } finally{closeSync(fd);if(compressed)try{unlinkSync(readPath);}catch{}}

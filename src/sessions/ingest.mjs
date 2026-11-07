@@ -34,6 +34,7 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
       if (batch?.schemaVersion !== 1 || !id(batch.installationId) || !id(batch.sessionId) ||
           !['claude-code', 'codex'].includes(batch.harness) || !Array.isArray(batch.events) || !batch.events.length ||
           !['cli', 'desktop', 'cloud', 'subagent', 'unknown'].includes(batch.origin)) fail(400, 'Invalid capture batch');
+      if (batch.captureMode !== undefined && !['live','history'].includes(batch.captureMode)) fail(400, 'Invalid capture mode');
       if (batch.owner?.userId !== principal.userId || batch.owner?.tenantId !== principal.tenantId) fail(403, 'Capture owner does not match signed-in account');
       if (batch.events.length > 1000 || !batch.events.every(e => e && id(e.id) && typeof e.kind === 'string')) fail(400, 'Invalid events');
       if (!Array.isArray(batch.attachments) || batch.attachments.length > 1000) fail(400, 'Invalid attachments');
