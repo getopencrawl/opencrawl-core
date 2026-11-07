@@ -2,6 +2,7 @@ import importlib.util
 import pathlib
 import re
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location('node_runtime_abi', pathlib.Path(__file__).parent / 'abi.py')
 abi = importlib.util.module_from_spec(spec)
@@ -9,6 +10,47 @@ spec.loader.exec_module(abi)
 
 
 class NodeRuntimeAbiTest(unittest.TestCase):
+    @staticmethod
+    def header(machine=62, kind=3):
+        value=bytearray(20);value[:7]=b'\x7fELF\x02\x01\x01'
+        value[16:18]=kind.to_bytes(2,'little');value[18:20]=machine.to_bytes(2,'little')
+        return bytes(value)
+
+    def test_architecture_bound_loader_is_an_allowed_glibc_dependency(self):
+        for machine,(architecture,loader) in abi.LOADERS.items():
+            with self.subTest(architecture=architecture):
+                dynamic='(NEEDED) Shared library: [libc.so.6]\n(NEEDED) Shared library: ['+loader.rsplit('/',1)[1]+']'
+                result=abi.elf_layout(self.header(machine),'[Requesting program interpreter: '+loader+']',dynamic)
+                self.assertEqual(result['architecture'],architecture);self.assertEqual(result['interpreter'],loader)
+                self.assertIsNone(abi.elf_layout(self.header(machine),'',dynamic,False)['interpreter'])
+
+    def test_wrong_architecture_or_loader_and_local_search_path_are_denied(self):
+        loader=abi.LOADERS[62][1];programs='[Requesting program interpreter: '+loader+']'
+        for header,interp,dynamic in [
+                (self.header(183),programs,'(NEEDED) [libc.so.6]'),
+                (self.header(),programs,'(NEEDED) [ld-linux-aarch64.so.1]'),
+                (self.header(),programs,'(NEEDED) [libunreviewed.so]'),
+                (self.header(),programs,'(NEEDED) [libc.so.6]\n(RUNPATH) [/tmp/local]'),
+                (self.header(),programs,'(NEEDED) [libc.so.6]\n(NEEDED) [libc.so.6]'),
+                (self.header(),'[Requesting program interpreter: /tmp/ld-linux-x86-64.so.2]','(NEEDED) [libc.so.6]'),
+                (self.header(42),programs,'(NEEDED) [libc.so.6]'),
+                (self.header(kind=1),programs,'(NEEDED) [libc.so.6]'),
+                (self.header()[:4]+b'\x01'+self.header()[5:],programs,'(NEEDED) [libc.so.6]'),
+                (self.header()[:5]+b'\x02'+self.header()[6:],programs,'(NEEDED) [libc.so.6]')]:
+            with self.subTest(header=header,interpreter=interp,dynamic=dynamic),self.assertRaises(ValueError):
+                abi.elf_layout(header,interp,dynamic)
+
+    def test_addon_is_a_shared_object_without_an_interpreter(self):
+        for header,programs in [(self.header(kind=2),''),(self.header(),'[Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]')]:
+            with self.subTest(header=header,programs=programs),self.assertRaises(ValueError):
+                abi.elf_layout(header,programs,'(NEEDED) [libc.so.6]',False)
+
+    def test_node_and_addon_must_have_the_same_architecture(self):
+        with mock.patch.object(abi.sys,'argv',['abi.py','node','addon','unused-output']),\
+             mock.patch.object(abi,'inspect',side_effect=[{'architecture':'x64'},{'architecture':'arm64'}]),\
+             self.assertRaisesRegex(ValueError,'architectures differ'):
+            abi.main()
+
     def test_supported_requirements_ignore_exported_definitions(self):
         self.assertEqual(abi.check_versions('Version definition section\n Name: GLIBC_9.99\n'
             'Version needs section\n Name: GLIBC_2.28\n Name: GLIBC_2.2.5\n Name: GLIBCXX_3.4.25\n'
