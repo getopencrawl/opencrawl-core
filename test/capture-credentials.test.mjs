@@ -39,7 +39,7 @@ test('self-hosted delegation uploads under its fixed owner but cannot read, sear
 });
 test('shared setup prompt covers consent, every environment, startup awareness and verified capture',()=>{
  const api='https://capture.example.com',prompt=captureSetupPrompt(api),script=cloudSetupScript(api);
- for(const text of ['all coding agents and environments','human-required steps','fresh session','stored receipt','recording consent',api+'/capture/cloud',api+'/mcp',api+' --no-browser --json','global instructions','board_sync once','Avoid redundant queries','explicit consent to import all available history','Skip only declined sources'])assert.ok(prompt.includes(text),text);
+ for(const text of ['all coding agents and environments','human-required steps','fresh session','stored receipt','recording consent',api+'/capture/cloud',api+'/mcp',api+' --no-browser --json','global instructions','opencrawl board instructions','stable session identity','native context-notification','receipt acknowledgment','explicit consent to import all available history','Skip only declined sources'])assert.ok(prompt.includes(text),text);
  assert.ok(!prompt.includes('--backfill skip'));
  assert.ok(!prompt.includes('https://app.getopencrawl.com'));
  assert.ok(script.includes('--harness claude-code --defer-auth --backfill skip'));

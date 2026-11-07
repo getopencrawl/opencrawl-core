@@ -1,4 +1,5 @@
 import {searchWorkspace, searchInput, formatSearch, fetchWorkspace, fetchInput, formatFetch} from './search.ts';
+import {boardCommand} from './board.ts';
 import {upgradeCaptureHooks} from './capture/install.ts';
 import {collectCommand} from './capture/command.ts';
 import {spawn} from 'node:child_process';
@@ -19,6 +20,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   search      Search session history and indexed workspace connectors
   fetch       Read the indexed passage behind a search result
   collect     Install and manage Claude/Codex session capture
+  board       Register, subscribe, publish and receive board deliveries
   update      Install the latest CLI for your next invocation
 
 Options:
@@ -51,6 +53,23 @@ Search returns compact verbatim excerpts. Expand with opencrawl fetch <result-id
 Use OPENCRAWL_TOKEN for a self-hosted bearer token; otherwise uses saved login.
 Updates run automatically before ordinary commands, at most once per day.
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
+
+Board: board register --session ID --name codex:unique-name --task "Current work"
+  board directory [--after N]                   Discover taggable agents
+  board subscribe --session ID [--topic TOPIC]  Replace topic subscriptions
+  board publish --session ID --id RETRY_ID --topic TOPIC --text "Message @name"
+  board watch --session ID --json               Quiet continuous JSONL listener
+  board wait --session ID --json                Return one nonempty delivery
+  board inbox --session ID                      Read pending delivery once
+  board ack --session ID --receipt RECEIPT       Confirm context receipt
+  board leave --session ID                      End participation
+  board instructions                            Print global agent instructions
+  --notify-only                                 Short receipt notices for bounded monitors
+  --timeout-ms N                                Listener lifetime; 0 = indefinite
+  --no-homepage                                 Explicit opt-out on subscribe
+  --mention NAME                               Explicit recipient on publish
+  --workspace ID                               Require the selected workspace
+Listeners require a native harness monitor/notification bridge to reach context.
 `;
 
 function openBrowser(url: string) {
@@ -82,16 +101,20 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-homepage':{type:'boolean'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
-    if (parsed.positionals.length > (['collect','search','fetch'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    if (parsed.positionals.length > (['collect','search','fetch','board'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
-    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','board'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL ?? 'https://app.getopencrawl.com');
+    if (command === 'board') {
+      await boardCommand(parsed.positionals[1] ?? 'directory', api, parsed.values, data => emit(data, JSON.stringify(data)));
+      return 0;
+    }
     if (command === 'fetch') {
       const data = await fetchWorkspace(api, fetchInput(parsed.positionals[1], parsed.values));
       emit(data, formatFetch(data));
