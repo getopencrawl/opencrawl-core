@@ -38,6 +38,8 @@ export OPENCRAWL_OPENSEARCH_PASSWORD=your-service-password
 export TEMPORAL_ADDRESS=your-temporal:7233
 export TEMPORAL_NAMESPACE=your-existing-namespace
 export TEMPORAL_SESSION_TASK_QUEUE=session-indexing-v1
+# Optional: sweep interval for a newly created schedule (default 5 minutes).
+export OPENCRAWL_SESSION_INDEX_EVERY="1 minute"
 # Build once with the released worker code, then run independently of the API.
 node src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs --build
 node src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs

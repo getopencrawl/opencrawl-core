@@ -42,6 +42,8 @@ services:
     environment:
       <<: *env
       TEMPORAL_SESSION_TASK_QUEUE: session-indexing-v1
+      # New sessions become searchable within about a minute (hosted sweeps every five).
+      OPENCRAWL_SESSION_INDEX_EVERY: 1 minute
     healthcheck: {disable: true}
     depends_on: {s3: {condition: service_started}, opensearch: {condition: service_healthy}, temporal: {condition: service_healthy}}
 

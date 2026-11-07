@@ -37,8 +37,8 @@ OPENCRAWL_SESSIONS_TOKEN=$OPENCRAWL_SESSIONS_TOKEN \
 ```
 
 This installs Claude Code and Codex hooks. New sessions are uploaded as they
-happen, and setup offers a one-time import of your existing history. Indexing
-runs every five minutes.
+happen, and setup offers a one-time import of your existing history. New
+sessions become searchable within about a minute.
 
 Search from the terminal:
 

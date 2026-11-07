@@ -23,8 +23,16 @@ export function standaloneMcp({token, origin, revision, boardPath, boardSearch, 
   const mcp = createOpenCrawlMcp({origin, revision, board, search, authenticate});
   const query = createWorkspaceSearchHandler({search, authenticate});
   const read = createWorkspaceSearchHandler({search, authenticate, operation:'fetch'});
+  // Host pinning blocks DNS rebinding. Loopback names are interchangeable, so a
+  // 127.0.0.1 origin also accepts localhost and [::1] on the same port.
+  const {host, hostname, port} = new URL(origin);
+  const loopback = ['127.0.0.1', 'localhost', '[::1]'];
+  const hosts = new Set(loopback.includes(hostname) ? loopback.map(name => port ? `${name}:${port}` : name) : [host]);
   const server = createServer((req, res) => {
-    if (req.headers.host !== new URL(origin).host) {res.writeHead(403); return res.end();}
+    if (!hosts.has(req.headers.host)) {
+      res.writeHead(403, {'content-type': 'application/json'});
+      return res.end(JSON.stringify({error: 'host_not_allowed', allowed: [...hosts][0]}));
+    }
     if (req.url === '/api/search') {query(req, res);return;}
     if (req.url === '/api/search/fetch') {read(req, res);return;}
     if (req.url !== '/mcp') {res.writeHead(404); return res.end();}

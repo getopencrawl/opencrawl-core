@@ -22,7 +22,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href) {
   const {sourceId,resolve}=standaloneSessionResolver();
   const {worker,connection}=await createSessionWorker({...config,bundlePath,resolve});
   const scheduling=await sessionClient(config);
-  await ensureSessionSchedule(scheduling.client,{sourceId,taskQueue:config.taskQueue});
+  await ensureSessionSchedule(scheduling.client,{sourceId,taskQueue:config.taskQueue,every:process.env.OPENCRAWL_SESSION_INDEX_EVERY||undefined});
   for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>worker.shutdown());
   try {await worker.run();}finally {await scheduling.connection.close();await connection.close();}
 }

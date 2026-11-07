@@ -1,11 +1,12 @@
 import {ScheduleAlreadyRunning,ScheduleOverlapPolicy} from '@temporalio/client';
 import {digest} from '../ingest.mjs';
 export {connectorClient as sessionClient} from '../../connectors/temporal/client.mjs';
-export async function ensureSessionSchedule(client,{sourceId,taskQueue}) {
+// `every` applies when the schedule is first created; an existing schedule keeps its interval.
+export async function ensureSessionSchedule(client,{sourceId,taskQueue,every='5 minutes'}) {
   if(!/^[A-Za-z0-9_-]{1,80}$/.test(sourceId||'')||!taskQueue)throw new Error('Invalid session schedule');
   const args=[{sourceId}],scheduleId='sessions-'+digest(sourceId);
   try {
-    await client.schedule.create({scheduleId,spec:{intervals:[{every:'5 minutes'}]},
+    await client.schedule.create({scheduleId,spec:{intervals:[{every}]},
       action:{type:'startWorkflow',workflowType:'indexSessionsV1',taskQueue,args},
       policies:{overlap:ScheduleOverlapPolicy.SKIP,catchupWindow:'1 hour',pauseOnFailure:false}});
     await client.schedule.getHandle(scheduleId).trigger(ScheduleOverlapPolicy.SKIP);

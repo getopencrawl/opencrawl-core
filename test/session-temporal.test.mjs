@@ -48,6 +48,9 @@ test('real Temporal: retry, restart with queued work, durable schedule and histo
  let description;
  for(let i=0;i<50;i++){description=await schedule.describe();if(description.info.recentActions.length)break;await new Promise(r=>setTimeout(r,100));}
  assert.equal(description.spec.intervals[0].every,300000);
+ const fast=await ensureSessionSchedule(env.client,{sourceId:'fixture-fast',taskQueue:options.taskQueue,every:'1 minute'});
+ const fastSchedule=env.client.schedule.getHandle(fast);await fastSchedule.pause('isolated test');
+ assert.equal((await fastSchedule.describe()).spec.intervals[0].every,60000);await fastSchedule.delete();
  const action=description.info.recentActions.at(-1).action;
  const queued=env.client.workflow.getHandle(action.workflow.workflowId);
  runtime=await createSessionWorker(options);

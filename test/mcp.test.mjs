@@ -52,6 +52,21 @@ test('standalone adapter requires a secret and rejects anonymous and forged host
   });
   assert.equal(await status({host: '127.0.0.1:8093'}), 401);
   assert.equal(await status({host: '127.0.0.1:8093', authorization: 'Bearer ' + 'a'.repeat(32)}), 405);
+  // Loopback aliases on the same port are accepted; other names and ports are not.
+  assert.equal(await status({host: 'localhost:8093'}), 401);
+  assert.equal(await status({host: '[::1]:8093'}), 401);
+  for (const host of ['localhost:8094', 'evil.example:8093', 'localhost.evil.example:8093', '127.0.0.1']) assert.equal(await status({host}), 403);
+});
+
+test('non-loopback origins accept only their exact host', async t => {
+  const server = standaloneMcp({token: 'a'.repeat(32), origin: 'https://mcp.example.org'});
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const status = host => new Promise((resolve, reject) => {
+    const req = request(`http://127.0.0.1:${server.address().port}/mcp`, {headers: {host}}, res => {res.resume();resolve(res.statusCode);});req.on('error', reject);req.end();
+  });
+  assert.equal(await status('mcp.example.org'), 401);
+  for (const host of ['localhost', '127.0.0.1', 'mcp.example.org:443', 'evil.example']) assert.equal(await status(host), 403);
 });
 
 test('receipt failures preserve committed tool results and resource denials', async t => {
