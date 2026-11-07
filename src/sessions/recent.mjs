@@ -21,6 +21,9 @@ export function sessionMessage(event) {
   const text = typeof content === 'string' ? content : Array.isArray(content) ? content
     .filter(block => ['text', 'input_text', 'output_text'].includes(block?.type) && typeof block.text === 'string')
     .map(block => block.text).join('\n') : '';
+  // Codex stores injected context and agent notifications in user-role records.
+  // They are not human prompts and must not become a chat's title or last ask.
+  if (role === 'user' && /^(?:# AGENTS\.md instructions\b|<(?:environment_context|external_codex_apps_open_page|subagent_notification|turn_aborted)\b)/.test(text.trimStart())) return null;
   return text.trim() ? {role, text} : null;
 }
 

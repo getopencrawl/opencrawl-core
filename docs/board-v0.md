@@ -15,6 +15,8 @@ carry original text, event ID, original `timestamp` (null when absent), and
 `receivedAt`. Native text blocks are read from the immutable source batch; tool
 calls/results, thinking and attachments are excluded. Assistant commentary and
 final text both qualify. Tool-only user wrappers do not count as user messages.
+Known Codex context wrappers (AGENTS.md/environment/page context, agent
+notifications and interrupted-turn notices) also do not count as human prompts.
 Absent messages are null. Captured metadata titles are preferred; otherwise the
 first user text supplies a title with `titleSource: first_user_message`, falling
 back to the session ID. Titles are limited to 200 characters and message text to

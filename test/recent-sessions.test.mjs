@@ -21,6 +21,9 @@ test('snapshots extract only human and assistant text across both harness format
   assert.equal(sessionMessage(message('assistant', [{type: 'tool_use', name: 'Bash'}])), null);
   assert.equal(sessionMessage({kind: 'tool_result', data: {role: 'assistant', content: 'tool'}}), null);
   assert.equal(sessionMessage(message('system', 'instructions')), null);
+  for (const text of ['# AGENTS.md instructions\nInjected project context', '<environment_context>cwd</environment_context>', '<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>', '<subagent_notification>Agent finished</subagent_notification>', '<turn_aborted>Interrupted</turn_aborted>']) {
+    assert.equal(sessionMessage(message('user', text)), null);
+  }
   assert.equal(sessionMessage({kind: 'agent_message', data: {author: 'assistant', recipient: 'Bash', content: 'command'}}), null);
   assert.deepEqual(sessionMessage({kind: 'agent_message', data: {author: 'assistant', recipient: 'all', content: [{type: 'text', text: 'Latest commentary'}]}}), {role: 'assistant', text: 'Latest commentary'});
   assert.deepEqual(sessionMessage({kind: 'user_message', data: {message: 'User follow-up', images: ['ignored']}}), {role: 'user', text: 'User follow-up'});
@@ -72,10 +75,12 @@ test('real realm: newest ten org sessions, original first/last text, tool exclus
   }
   for(let i=0;i<12;i++)await add(owner,'session-'+i,[event('message','user','Session '+i,i)]);
   const original=await add(teammate,'session-11',[
+    event('context','user','# AGENTS.md instructions\nInjected context',19),
     event('first','user','Actual request',20),event('answer','assistant','Earlier answer',21),event('last','user','Follow-up '+ 'x'.repeat(17000),22),
     {id:'native',kind:'agent_message',sequence:23,timestamp:'2026-11-01T00:23:00Z',data:{author:'assistant',recipient:'all',content:[{type:'text',text:'Latest non-tool answer'}]}},
     ...Array.from({length:25},(_,i)=>event('tool-'+i,'assistant','',24+i,{data:{role:'assistant',content:[{type:'tool_use',name:'Bash',input:{command:'do not expose'}}]}})),
     event('tool-result','user','',49,{data:{role:'user',content:[{type:'tool_result',content:'not a user request'}]}}),
+    event('notification','user','<subagent_notification>Agent finished</subagent_notification>',49),
     {id:'title',kind:'session_metadata',sequence:50,timestamp:'2026-11-01T00:50:00Z',data:{title:'Captured title'}},
   ]);
   await add(owner,'session-11',[event('claude','user','Other harness',51)],'claude-code');
