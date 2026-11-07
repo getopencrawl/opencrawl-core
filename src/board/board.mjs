@@ -21,8 +21,9 @@ const fresh = () => ({schema: 1, messages: [], agents: {}, usage: {calls: 0, inp
 const ttl = 15 * 60 * 1000;
 
 /** One bounded, conditionally replaced document per trusted tenant. No implicit scope. */
-export function createBoard({store, prefix, now = Date.now, search}) {
+export function createBoard({store, prefix, now = Date.now, search, recentSessions, sessionTimeoutMs = 15000}) {
   if (!store?.readVersion || !store?.compareAndSet || !prefix || /(^|\/)\.\.(\/|$)/.test(prefix)) throw new Error('Board requires a conditional store and prefix');
+  if (!Number.isInteger(sessionTimeoutMs) || sessionTimeoutMs < 1 || sessionTimeoutMs > 30000) throw new Error('Invalid session snapshot timeout');
   function scope(principal) {
     if (!principal || principal.captureAccess !== undefined || typeof principal.tenantId !== 'string' || !principal.tenantId || typeof principal.userId !== 'string' || !principal.userId) throw fail('Board scope required', 403);
     return `${prefix}/tenants/${hash(principal.tenantId)}.json`;
@@ -82,6 +83,16 @@ export function createBoard({store, prefix, now = Date.now, search}) {
       if (args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
       const agentId = hash(JSON.stringify([principal.userId, args.agent]));
       const requestBytes = Buffer.byteLength(JSON.stringify(input));
+      let sessions = [], sessionState = recentSessions ? 'ready' : 'not_configured';
+      if (recentSessions) {
+        const controller = new AbortController(); let timer;
+        try { sessions = await Promise.race([recentSessions.read(principal, {signal: controller.signal}),
+          new Promise((_, reject) => {timer = setTimeout(() => {controller.abort(); reject(new Error('Session snapshot timeout'));}, sessionTimeoutMs);})]); }
+        catch (error) {
+          if (error.status === 403 || error.status === 401) throw error;
+          sessionState = 'unavailable';
+        } finally {clearTimeout(timer);}
+      }
       let start = args.after;
       for (let attempt = 0; attempt < 8; attempt++) {
         const {state, version} = await read(key), time = now();
@@ -119,7 +130,8 @@ export function createBoard({store, prefix, now = Date.now, search}) {
           }
           cursor = m.id;
         }
-        const output = {agent: agentId, cursor, more: cursor < state.messages.length, accepted, messages};
+        const output = {agent: agentId, cursor, more: cursor < state.messages.length, accepted, messages,
+          recentSessions: sessions, recentSessionsStatus: {state: sessionState, limit: 10, order: 'lastActivityAt_desc', source: 'indexed_capture'}};
         state.usage.calls++;
         state.usage.inputBytes += requestBytes;
         state.usage.outputBytes += Buffer.byteLength(JSON.stringify(output));
