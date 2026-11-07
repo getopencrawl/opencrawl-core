@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
 import {atomicJson,withSessionLock} from '../src/session.ts';
-import {captureDir,captureTranscript,flushCaptures,readCaptureConfig,type CaptureConfig} from '../src/capture/runtime.ts';
+import {captureDir,captureTranscript,captureHook,flushCaptures,readCaptureConfig,type CaptureConfig} from '../src/capture/runtime.ts';
 import {excludeCapture,purgeLocalCapture} from '../src/capture/controls.ts';
 import {collectCommand} from '../src/capture/command.ts';
 import {captureExcluded,projectPath} from '../src/capture/policy.ts';
@@ -51,6 +51,16 @@ test('project and session exclusions block new bytes and queued uploads; purge i
     writeFileSync(fresh,readFileSync(transcript,'utf8').replaceAll('session"','new-session"'));
     await captureTranscript(config,'codex',fresh);
     expect(readdirSync(queue)).toHaveLength(1);expect(readdirSync(join(captureDir(),'blobs'))).toEqual(beforeBlobs);
+    await captureHook('codex',{session_id:'new-session',cwd:project,prompt:'private hook'});
+    expect(readdirSync(join(captureDir(),'notices'))).toHaveLength(0);
+    const mixed=join(config.roots.codex,'sessions','mixed.jsonl');
+    writeFileSync(mixed,readFileSync(transcript,'utf8').replaceAll('session"','mixed-session"')+[
+      {type:'turn_context',payload:{cwd:project+'-different'}},
+      {type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'allowed fixture'}]}},
+    ].map(r=>JSON.stringify(r)+'\n').join(''));
+    await captureTranscript(config,'codex',mixed);
+    const allowed=readdirSync(queue).map(n=>JSON.parse(readFileSync(join(queue,n),'utf8'))).find(b=>b.sessionId==='mixed-session');
+    expect(JSON.stringify(allowed)).toContain('allowed fixture');expect(JSON.stringify(allowed)).not.toContain('private fixture');
     await excludeCapture(undefined,'blocked');
     expect(captureExcluded(readCaptureConfig()!,{cwd:project+'-different',sessionId:'blocked:child'})).toBe(true);
     await expect(purgeLocalCapture(false)).rejects.toMatchObject({code:'PURGE_CONSENT_REQUIRED'});

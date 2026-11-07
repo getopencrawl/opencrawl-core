@@ -166,8 +166,8 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     const parserVersion=offset===0?2:old.parserVersion??1;
     const nativeIds=desktopAudit&&offset<st.size?desktopNativeMessageIds(path):new Set<string>();
     const fd=openSync(readPath,'r');
-    let meta:any=old.meta??{harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path};
-    let codexIdentityRead=false;
+    let meta:any=(offset>0?old.meta:null)??{harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path};
+    let codexIdentityRead=Boolean(offset>0&&old.meta?.sessionId);
     function metadata(r:any) {
         const p=r.payload??r;
         if(desktopAudit){
@@ -201,12 +201,8 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
       if(p.cli_version || r.version)meta.harnessVersion=p.cli_version??r.version;
     }
     try {
-      // Metadata lives at the beginning and is inexpensive to reread, even on multi-GB rollouts.
-      const head=Buffer.alloc(Math.min(st.size,65536));readSync(fd,head,0,head.length,0);
-      for(const line of head.toString('utf8').split('\n')) {
-        let r;try{r=JSON.parse(line);}catch{continue;}
-        if(!desktopAudit)metadata(r);
-      }
+      // Apply metadata in record order. Looking ahead at a later working
+      // directory could incorrectly allow earlier records from an excluded project.
       while(offset<st.size) {
         await yieldToOwner();
         let bytes=Buffer.alloc(Math.min(st.size-offset,48*1024*1024));readSync(fd,bytes,0,bytes.length,offset);
@@ -225,7 +221,7 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
             if(desktopAudit&&auditMessage&&(!record.session_id||typeof record.session_id!=='string'))throw new CliError('CAPTURE_SESSION_UNKNOWN','Desktop audit message has no session identity');
             const priorMeta={...meta};
             if(!desktopAudit||auditMessage)metadata(record);
-            if(meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd)enqueue(config,{...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));
+            if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd))enqueue(config,{...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));
             const parsed=auditMessage?parseRecord(harness,record,position):null;
             if(parsed&&desktopAudit){parsed.timestamp=record._audit_timestamp??record.timestamp??null;parsed.parentId=record.parent_tool_use_id??null;}
             if(parsed && !captureExcluded(readCaptureConfig()??config,meta)) {
@@ -263,6 +259,7 @@ export async function captureHook(harness:Harness,event:any) {
   ensureDirectories();
   const sessionId=event?.session_id;
   if(typeof sessionId!=='string' || !/^[\w.:-]{1,200}$/.test(sessionId))throw new CliError('CAPTURE_SESSION_UNKNOWN','Hook missing session ID');
+  if(captureExcluded(config,{sessionId,cwd:event.cwd}))return;
   const id=randomUUID();
   atomicJson(join(captureDir(),'notices',id+'.json'),{id,at:new Date().toISOString(),harness,event});
   },Infinity);

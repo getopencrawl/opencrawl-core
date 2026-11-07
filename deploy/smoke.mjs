@@ -50,7 +50,9 @@ try {
     const fetched=await client.callTool({name:'fetch',arguments:{id:hit.id}});
     assert.ok(!fetched.isError);assert.ok(fetched.structuredContent.text.includes(state.marker));
     const board=await client.callTool({name:'board_search',arguments:{workspace:state.principal.tenantId,query:state.marker}});
-    assert.ok(!board.isError);assert.ok(board.structuredContent.messages.some(message=>message.text===state.marker));
+    assert.ok(!board.isError);
+    const boardResult=board.structuredContent??JSON.parse(board.content.find(item=>item.type==='text').text);
+    assert.ok(boardResult.messages.some(message=>message.text===state.marker));
   }
 }finally{await client.close();}
 console.log('Self-host '+action+' verified with synthetic data.');

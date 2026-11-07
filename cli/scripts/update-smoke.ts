@@ -73,7 +73,7 @@ try {
     const launcher = join(installedRoot, 'bin/opencrawl.cjs');
     if (sync(['node', launcher, '--version']) !== original.version) throw new Error('Initial installation mismatch');
     // Preserve an existing personal-scope installation and offline queue through
-    // the real npm update. The updated binary must recover without collect install.
+    // the real npm update. A changed destination must not redirect that queue.
     const principal={tenantId:'org_team',userId:'human',name:'Human'};
     const store=createLocalSessionStore(join(scratch,'objects'));
     const token='upgrade-fixture-token-at-least-32-characters';
@@ -94,6 +94,12 @@ try {
     const receipt = JSON.parse(await asyncRun(['node', worker]));
     if (!receipt.updated || receipt.version !== version) throw new Error('Upgrade was not promoted');
     if (sync(['node', launcher, '--version']) !== version) throw new Error('Original launcher did not adopt the updated launcher and binary');
+    const rejected=Bun.spawn(['node',launcher,'collect','flush','--json'],{env,stdout:'pipe',stderr:'pipe'});
+    const [rejection,diagnostic,exitCode]=await Promise.all([new Response(rejected.stdout).text(),new Response(rejected.stderr).text(),rejected.exited]);
+    if(!exitCode||diagnostic||JSON.parse(rejection).error?.code!=='CAPTURE_DESTINATION_CHANGED')throw new Error('Updated collector redirected the queue');
+    if(readFileSync(join(capture,'queue','before-update.json'),'utf8')!==JSON.stringify(batch))throw new Error('Rejected destination changed queued bytes');
+    // Returning to the original team recovers the exact original queue.
+    principal.tenantId=config.owner.tenantId;
     const flushed=JSON.parse(await asyncRun(['node',launcher,'collect','flush','--json']));
     // Metadata commands never start capture processes. Explicit flush owns recovery.
     if(flushed.data?.uploaded!==1)throw new Error('Updated collector returned an invalid upload count');
