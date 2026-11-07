@@ -1,10 +1,14 @@
 import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {validateBinding,digest,invalidRecord} from './scope.mjs';
+import {SourcePaginationError,sourcePaginationProgress,advanceSourcePagination,sourcePaginationCheckpoint} from './workflow.mjs';
 export {seedSlackSourceCatalog} from './slack-source-catalog.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const id=value=>typeof value==='string'&&/^[A-Z][A-Z0-9]{1,100}$/.test(value);
 const timestamp=value=>typeof value==='string'&&/^\d{1,16}\.\d{1,6}$/.test(value);
+function pagination(operation) {
+ try{return operation();}catch(error){if(error instanceof SourcePaginationError)invalidRecord('Invalid Slack message cursor progression');throw error;}
+}
 /** Canonical history/replies capture has no search-result or backfill-date filter.
  * Method-specific durable pacing respects Slack's restrictive history tier. */
 export function createSlackMessageCapture({binding,store,request,checkActive=async()=>{},now=Date.now}) {
@@ -47,6 +51,10 @@ export function createSlackMessageCapture({binding,store,request,checkActive=asy
   const task=pending.find(p=>(state.nextDue[p.method]||0)<=now());
   if(!task)return {done:false,waitMs:Math.max(1,Math.min(...pending.map(p=>state.nextDue[p.method]))-now())};
   ({method,query,target}=task);
+  // Root enumeration, each channel, and each thread retain separate progress;
+  // the enclosing checkpoint binds their run, cutoff window, and trusted scope.
+  const cursorOwner=target||state;
+  const progress=pagination(()=>sourcePaginationProgress(cursorOwner.cursor===''?null:cursorOwner.cursor,cursorOwner.paginationProgress));
   // Persist the request reservation even when transport or response processing
   // fails; retries retain the same cursor but must respect the method window.
   state.nextDue[method]=now()+(method==='conversations.list'?3500:65000);await save();await active();
@@ -60,8 +68,9 @@ export function createSlackMessageCapture({binding,store,request,checkActive=asy
    if(!target)throw new Error('Public channel enumeration failed');
    const code=typeof data?.error==='string'?data.error.slice(0,100):'invalid_response';target.error=code;state.errors.push({method,channel:query.channel,thread:query.ts,code});await save();return {done:false,waitMs:0};
   }
-  const cursor=data.response_metadata?.next_cursor||'';
+  const cursor=data.response_metadata?.next_cursor??'';
   if(typeof cursor!=='string'||cursor.length>10000||cursor&&cursor===query.cursor||data.has_more&&!cursor)invalidRecord('Incomplete or repeated Slack history cursor');
+  const nextProgress=pagination(()=>advanceSourcePagination(progress,{keys:[],cursor:cursor||null}));
   const page=Buffer.from(JSON.stringify({method,query,observedAt:at,data}));await put(prefix+'pages/'+hash(page)+'.json',page,'application/json');
   if(method==='conversations.list') {
    if(!Array.isArray(data.channels))invalidRecord('Missing public channels');
@@ -69,7 +78,7 @@ export function createSlackMessageCapture({binding,store,request,checkActive=asy
    // Remember every published public channel before the raw write. Only a
    // completed enumeration can revoke channels missing from its current scope.
    await saveCatalog();
-   await emit('channels',data.channels,at);state.cursor=cursor;state.listed=!cursor;
+   await emit('channels',data.channels,at);state.cursor=cursor;state.paginationProgress=sourcePaginationCheckpoint(nextProgress);state.listed=!cursor;
    if(state.listed)await emit('channels',state.priorChannels.filter(channel=>!state.channels[channel]).map(id=>({id,is_private:true})),at);
   } else {
    if(!state.channels[query.channel]||!Array.isArray(data.messages))invalidRecord('History response outside enumerated public scope');
@@ -78,7 +87,7 @@ export function createSlackMessageCapture({binding,store,request,checkActive=asy
     if(m.reply_count>0){const ts=m.thread_ts||m.ts;state.threads[query.channel+':'+ts]||={channel:query.channel,ts,cursor:'',done:false};}
    }
    await emit('canonical_messages',data.messages.map(m=>({...m,channel_id:query.channel})),at);
-   target.cursor=cursor;target.done=!cursor;
+   target.cursor=cursor;target.paginationProgress=sourcePaginationCheckpoint(nextProgress);target.done=!cursor;
   }
   state.pages++;await save();return {done:false,waitMs:0,pages:state.pages,emitted:state.emitted};
  }};

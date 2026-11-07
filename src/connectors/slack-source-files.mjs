@@ -1,14 +1,18 @@
 import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {validateBinding,digest,invalidRecord} from './scope.mjs';
+import {SourcePaginationError,sourcePaginationProgress,advanceSourcePagination,sourcePaginationCheckpoint} from './workflow.mjs';
 export {seedSlackSourceCatalog} from './slack-source-catalog.mjs';
 const MAX=20*1024*1024;
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const validId=value=>typeof value==='string'&&/^[A-Z][A-Z0-9]{1,100}$/.test(value);
 function nextCursor(data,current) {
- const next=data.response_metadata?.next_cursor||'';
+ const next=data.response_metadata?.next_cursor??'';
  if(typeof next!=='string'||next.length>10000||next&&next===current)invalidRecord('Invalid or repeated source cursor');
  return next;
+}
+function pagination(operation) {
+ try{return operation();}catch(error){if(error instanceof SourcePaginationError)invalidRecord('Invalid Slack file cursor progression');throw error;}
 }
 function apiText(file,comments) {
  const parts=[];
@@ -58,6 +62,10 @@ export function createSlackFileCapture({binding,store,request,download,checkActi
   else if(target=Object.values(state.channels).find(c=>!c.done&&!c.error)){method='files.list';query={channel:target.id,count:100,page:target.page||1,ts_to:Math.floor(cutoff/1000),show_files_hidden_by_limit:true};}
   else if(target=Object.values(state.files).find(f=>!f.done&&!f.error)){method='files.info';query={file:target.id,limit:100,cursor:target.cursor||undefined};}
   else return {done:true,channels:Object.keys(state.channels).length,files:Object.keys(state.files).length,emitted:state.emitted,failed:state.errors.length};
+  // The scoped run/cutoff and each file identity own independent cursor walks.
+  // Legacy checkpoints have no progress; older workers may carry it unchanged.
+  const cursorOwner=method==='files.list'?null:target||state;
+  const progress=cursorOwner&&pagination(()=>sourcePaginationProgress(cursorOwner.cursor===''?null:cursorOwner.cursor,cursorOwner.paginationProgress));
   // Reserve pacing durably before sending. A lost response or failed decode must
   // not make a Temporal retry send the same request inside the provider window.
   state.nextDue=now()+3500;await save();await active();
@@ -74,6 +82,16 @@ export function createSlackFileCapture({binding,store,request,download,checkActi
    if(method==='files.info'&&['file_not_found','access_denied','not_in_channel'].includes(code)){await emit('file_documents',target.channels.map(channel_id=>({format_version:1,id:target.id,channel_id,available:false})),observedAt);}
    target.error=code;state.errors.push({method,id:target.id,code});await save();return {done:false,waitMs:3500};
   }
+  let file,shared,cursor,nextProgress;
+  if(method==='files.info') {
+   file=data.file;if(!file||file.id!==target.id)invalidRecord('File identity mismatch');
+   shared=[...new Set([...(file.channels||[]),...Object.keys(file.shares?.public||{})])].filter(id=>state.channels[id]);
+  }
+  if(method==='conversations.list'||method==='files.info'&&shared.length) {
+   cursor=nextCursor(data,cursorOwner.cursor);
+   nextProgress=pagination(()=>advanceSourcePagination(progress,{keys:[],cursor:cursor||null}));
+  }
+  // Reject cyclic responses before publishing either raw pages or derived records.
   // Preserve the exact API envelope separately from searchable derived records.
   const sourcePage=Buffer.from(JSON.stringify({method,query,observedAt,data}));
   await put(binding.rawPrefix+'capture/files-v1/'+runId+'/pages/'+hash(sourcePage)+'.json',sourcePage,'application/json');state.pages++;
@@ -81,21 +99,19 @@ export function createSlackFileCapture({binding,store,request,download,checkActi
    if(!Array.isArray(data.channels))invalidRecord('Missing public channels');
    for(const channel of data.channels){if(!validId(channel.id)||channel.is_private!==false||channel.is_im||channel.is_mpim)invalidRecord('Invalid public channel');state.channels[channel.id]||={id:channel.id,page:1,done:false};}
    await saveCatalog();
-   await emit('channels',data.channels,observedAt);state.cursor=nextCursor(data,state.cursor);state.listed=!state.cursor;
+   await emit('channels',data.channels,observedAt);state.cursor=cursor;state.paginationProgress=sourcePaginationCheckpoint(nextProgress);state.listed=!state.cursor;
    if(state.listed){const missing=state.priorChannels.filter(id=>!state.channels[id]);await emit('channels',missing.map(id=>({id,is_private:true})),observedAt);}
   } else if(method==='files.list') {
    if(!Array.isArray(data.files)||!Number.isInteger(data.paging?.pages)||data.paging.pages<0||data.paging.page!==query.page)invalidRecord('Invalid file listing pagination');
    for(const file of data.files){if(!validId(file.id))invalidRecord('Invalid file identity');const saved=state.files[file.id]||={id:file.id,channels:[],comments:{},cursor:'',done:false};if(!saved.channels.includes(target.id))saved.channels.push(target.id);}
    target.done=query.page>=data.paging.pages;target.page=query.page+1;
   } else {
-   const file=data.file;if(!file||file.id!==target.id)invalidRecord('File identity mismatch');
-   const shared=[...new Set([...(file.channels||[]),...Object.keys(file.shares?.public||{})])].filter(id=>state.channels[id]);
    if(!shared.length) {
     await emit('file_documents',target.channels.map(channel_id=>({format_version:1,id:target.id,channel_id,available:false})),observedAt);target.done=true;
    } else {
     if(data.comments!==undefined&&!Array.isArray(data.comments))invalidRecord('Invalid file comments');
     for(const comment of data.comments||[]){if(typeof comment.id!=='string'||typeof comment.comment!=='string')invalidRecord('Invalid file comment');target.comments[comment.id]=comment.comment;}
-    target.cursor=nextCursor(data,target.cursor);
+    target.cursor=cursor;target.paginationProgress=sourcePaginationCheckpoint(nextProgress);
     if(!target.cursor) {
      if(Number.isInteger(file.comments_count)&&file.comments_count>Object.keys(target.comments).length)invalidRecord('File comment count exceeds captured comments');
      if(Number.isInteger(data.paging?.pages)&&data.paging.pages>1&&!data.response_metadata)invalidRecord('File comments require cursor pagination');
