@@ -1,0 +1,115 @@
+# Single-tenant self-hosted OpenCrawl: capture, indexing and search for agent sessions.
+# Start with ./up.sh (creates .env with fresh secrets). Every host port binds to loopback.
+name: opencrawl
+
+x-runtime: &runtime
+  build: {context: .., dockerfile: deploy/Dockerfile}
+  image: opencrawl-core:local
+  restart: unless-stopped
+  environment: &env
+    OPENCRAWL_TENANT_ID: ${OPENCRAWL_TENANT_ID:-self-hosted}
+    OPENCRAWL_USER_ID: ${OPENCRAWL_USER_ID:-owner}
+    OPENCRAWL_USER_NAME: ${OPENCRAWL_USER_NAME:-Owner}
+    OPENCRAWL_LANDING_S3_BUCKET: opencrawl
+    OPENCRAWL_LANDING_S3_REGION: us-east-1
+    OPENCRAWL_LANDING_S3_ENDPOINT: http://s3:8333
+    OPENCRAWL_LANDING_S3_ACCESS_KEY_ID: ${OPENCRAWL_S3_ACCESS_KEY_ID:?run ./up.sh or set it in .env}
+    OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY: ${OPENCRAWL_S3_SECRET_ACCESS_KEY:?run ./up.sh or set it in .env}
+    OPENCRAWL_OPENSEARCH_URL: http://opensearch:9200
+    TEMPORAL_ADDRESS: temporal:7233
+    TEMPORAL_NAMESPACE: default
+  healthcheck: &tcp
+    test: ["CMD", "node", "-e", "require('net').connect(process.env.PORT,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+    interval: 5s
+    retries: 30
+
+services:
+  receiver:
+    <<: *runtime
+    command: ["node", "src/sessions/standalone.mjs"]
+    environment:
+      <<: *env
+      HOST: 0.0.0.0
+      PORT: "8093"
+      OPENCRAWL_SESSIONS_TOKEN: ${OPENCRAWL_SESSIONS_TOKEN:?run ./up.sh or set it in .env}
+    ports: ["127.0.0.1:${OPENCRAWL_SESSIONS_PORT:-8093}:8093"]
+    depends_on: {s3: {condition: service_started}, opensearch: {condition: service_healthy}}
+
+  worker:
+    <<: *runtime
+    # Bundles the workflow code once per start, then indexes captured sessions every five minutes.
+    command: ["sh", "-c", "node src/sessions/temporal/standalone.mjs /tmp/session-bundle.cjs --build && exec node src/sessions/temporal/standalone.mjs /tmp/session-bundle.cjs"]
+    environment:
+      <<: *env
+      TEMPORAL_SESSION_TASK_QUEUE: session-indexing-v1
+    healthcheck: {disable: true}
+    depends_on: {s3: {condition: service_started}, opensearch: {condition: service_healthy}, temporal: {condition: service_healthy}}
+
+  mcp:
+    <<: *runtime
+    command: ["node", "src/mcp/standalone.mjs"]
+    environment:
+      <<: *env
+      HOST: 0.0.0.0
+      PORT: "8094"
+      # Clients must send this exact Host header: use 127.0.0.1, not localhost.
+      MCP_ORIGIN: http://127.0.0.1:${OPENCRAWL_MCP_PORT:-8094}
+      MCP_TOKEN: ${MCP_TOKEN:?run ./up.sh or set it in .env}
+      OPENCRAWL_SEARCH_CONFIG: /run/opencrawl/search.json
+      OPENCRAWL_BOARD_PATH: /data/board.sqlite
+    configs: [{source: search, target: /run/opencrawl/search.json}]
+    volumes: ["board:/data"]
+    ports: ["127.0.0.1:${OPENCRAWL_MCP_PORT:-8094}:8094"]
+    depends_on: {opensearch: {condition: service_healthy}}
+
+  s3:
+    # SeaweedFS (Apache-2.0): single-node S3 API.
+    image: chrislusf/seaweedfs:4.52
+    restart: unless-stopped
+    command: >-
+      mini -dir=/data -bucket=opencrawl -admin.password=${OPENCRAWL_S3_SECRET_ACCESS_KEY}
+      -webdav=false -s3.port.iceberg=0 -s3.port.lance=0
+    environment:
+      AWS_ACCESS_KEY_ID: ${OPENCRAWL_S3_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${OPENCRAWL_S3_SECRET_ACCESS_KEY}
+    volumes: ["s3:/data"]
+
+  opensearch:
+    # Security plugin off: reachable only on this compose network, never published.
+    image: opensearchproject/opensearch:3.9.0
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+    volumes: ["opensearch:/usr/share/opensearch/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow"]
+      interval: 5s
+      retries: 60
+
+  temporal:
+    # Temporal dev server with SQLite persistence; fine for one team, not for HA.
+    image: temporalio/temporal:1.10.0
+    restart: unless-stopped
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/data/temporal.db"]
+    user: root
+    volumes: ["temporal:/data"]
+    ports: ["127.0.0.1:8233:8233"]
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
+      interval: 5s
+      retries: 60
+
+configs:
+  search:
+    content: |
+      {"principal": {"tenantId": "${OPENCRAWL_TENANT_ID:-self-hosted}", "userId": "${OPENCRAWL_USER_ID:-owner}"},
+       "sessions": {"endpoint": "http://opensearch:9200", "environment": "selfhost"}}
+
+volumes:
+  s3:
+  opensearch:
+  temporal:
+  board:
