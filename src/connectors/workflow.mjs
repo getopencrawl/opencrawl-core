@@ -12,7 +12,8 @@ function paginationProgress(cursor, state) {
     throw new SourcePaginationError('Invalid source pagination progress');
   }
   const window = BigInt(state.window), distance = BigInt(state.distance);
-  if (!cursor || window < 2n || (window & (window - 1n)) !== 0n || distance >= window ||
+  if (String(window) !== state.window || String(distance) !== state.distance ||
+      !cursor || window < 2n || (window & (window - 1n)) !== 0n || distance >= window ||
       (distance === 0n) !== (state.anchor === cursor)) throw new SourcePaginationError('Invalid source pagination progress');
   return {anchor: state.anchor, window, distance};
 }

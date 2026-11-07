@@ -53,7 +53,8 @@ test('malformed persisted progress fails before any activity; counters are canon
   for (const state of [null, {}, {...valid, version: 2}, {...valid, anchor: null}, {...valid, anchor: ''},
     {...valid, window: '04'}, {...valid, window: '0'}, {...valid, window: '1'}, {...valid, window: '3'},
     {...valid, window: 4}, {...valid, distance: '01'}, {...valid, distance: '-1'}, {...valid, distance: '4'},
-    {...valid, distance: '0'}, {...valid, anchor: 'B'}, {...valid, distance: null}]) {
+    {...valid, distance: '0'}, {...valid, anchor: 'B'}, {...valid, distance: null},
+    {...valid, window: '4\n'}, {...valid, distance: '1\n'}]) {
     let calls = 0;
     await assert.rejects(runConnectorSegment({cursor: 'B', paginationProgress: state}, {
       listPage: async () => {calls++;},
