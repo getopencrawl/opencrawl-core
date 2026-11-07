@@ -1,7 +1,7 @@
 # Plugin distribution boundary
 
-Only `plugins/` is approved for public MIT distribution. The rest of this
-repository remains private and retains its existing licensing. Plugin manifests
+`plugins/` is MIT licensed and exported to its own public repository; the rest
+of core is Apache-2.0. Plugin manifests
 and skills are portable client artifacts outside the core runtime package.
 They do not import hosted implementation or carry hosted credentials. No runtime
 package bump or shell deployment is needed for package-only edits.

@@ -10,12 +10,13 @@ import {configDir, atomicFile, atomicJson, accessToken, withSessionLock, syncDir
 import {CliError} from '../oauth.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, type Harness} from './parse.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
+import {captureExcluded, type CaptureExclusions} from './policy.ts';
 
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
-export type CaptureConfig = {disabled?:boolean,authPending?:boolean,schemaVersion:1,hookMode?:'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
+export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
-// `owner` in the saved schema is cached attribution, not an enrollment constraint.
+// Enrollment and every queued payload remain bound to their original destination.
 export async function refreshCaptureIdentity(config:CaptureConfig,token?:string) {
   const {principal}=await request(config.api,'/api/sessions/identity',{},token);
   if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
@@ -25,6 +26,7 @@ export async function refreshCaptureIdentity(config:CaptureConfig,token?:string)
     const current=readCaptureConfig();
     const pending=config.authPending && config.installationId==='pending';
     if(!current || current.api!==config.api || (!pending && current.installationId!==config.installationId))throw new CliError('CAPTURE_CONFIG_CHANGED','Capture configuration changed during authentication. Retry with the current configuration.');
+    if(!current.authPending && (current.owner.userId!==principal.userId || current.owner.tenantId!==principal.tenantId))throw new CliError('CAPTURE_DESTINATION_CHANGED','Capture is enrolled to another account or team. Sign back into that destination; queued data has not moved. To change destination, uninstall and resolve or explicitly purge pending data before reinstalling.');
     config.owner=principal;
     if(config.authPending){
       config.installationId=current.installationId==='pending'?randomUUID():current.installationId;
@@ -68,7 +70,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
 }
 export function commandForSelf() {
   if(process.env.OPENCRAWL_LAUNCHER && process.env.OPENCRAWL_NODE) return [process.env.OPENCRAWL_NODE,process.env.OPENCRAWL_LAUNCHER];
-  return process.argv[1]?.endsWith('.ts') ? [process.execPath,resolve(process.argv[1])] : [process.execPath];
+  return /\.[cm]?[jt]s$/.test(process.argv[1]??'') ? [process.execPath,resolve(process.argv[1])] : [process.execPath];
 }
 export function recordError(error:any) {
   // Status only: never include transcript content, credentials, or a provider response.
@@ -119,6 +121,9 @@ function attachmentTransform(value:any, attachments:any[], cwd:string, localFile
 }
 function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   if(!events.length)return;
+  const current=readCaptureConfig();
+  if(current && (current.api!==config.api || current.installationId!==config.installationId || current.owner.tenantId!==config.owner.tenantId || current.owner.userId!==config.owner.userId))throw new CliError('CAPTURE_CONFIG_CHANGED','Capture enrollment changed; retry with its current configuration.');
+  if(captureExcluded(current??config,meta))return;
   if(config.authPending)throw new CliError('CAPTURE_AUTH_PENDING','Capture identity has not been authenticated yet');
   if(!meta.sessionId)throw new CliError('CAPTURE_SESSION_UNKNOWN','Transcript has no session identity');
   const batch={schemaVersion:1,owner:config.owner,installationId:config.installationId,host:hostname(),...meta,events:events.map(finalizeEventIdentity),attachments};
@@ -128,6 +133,8 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
 }
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
 export async function captureTranscript(config:CaptureConfig,harness:Harness,file:string,hook:any={},reconcileHistory=false) {
+  return withSessionLock('capture:spool',async()=>{
+  if(readCaptureConfig()?.disabled)throw new CliError('CAPTURE_DISABLED','Capture is uninstalled. Reinstall before importing transcripts.');
   ensureDirectories();
   const path=transcriptAllowed(file,config,harness,reconcileHistory);
   const desktopAudit=harness==='claude-code'&&basename(path)==='audit.jsonl'&&isClaudeDesktopTranscript(path,config);
@@ -159,8 +166,8 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     const parserVersion=offset===0?2:old.parserVersion??1;
     const nativeIds=desktopAudit&&offset<st.size?desktopNativeMessageIds(path):new Set<string>();
     const fd=openSync(readPath,'r');
-    let meta:any=old.meta??{harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path};
-    let codexIdentityRead=false;
+    let meta:any=(offset>0?old.meta:null)??{harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path};
+    let codexIdentityRead=Boolean(offset>0&&old.meta?.sessionId);
     function metadata(r:any) {
         const p=r.payload??r;
         if(desktopAudit){
@@ -194,12 +201,8 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
       if(p.cli_version || r.version)meta.harnessVersion=p.cli_version??r.version;
     }
     try {
-      // Metadata lives at the beginning and is inexpensive to reread, even on multi-GB rollouts.
-      const head=Buffer.alloc(Math.min(st.size,65536));readSync(fd,head,0,head.length,0);
-      for(const line of head.toString('utf8').split('\n')) {
-        let r;try{r=JSON.parse(line);}catch{continue;}
-        if(!desktopAudit)metadata(r);
-      }
+      // Apply metadata in record order. Looking ahead at a later working
+      // directory could incorrectly allow earlier records from an excluded project.
       while(offset<st.size) {
         await yieldToOwner();
         let bytes=Buffer.alloc(Math.min(st.size-offset,48*1024*1024));readSync(fd,bytes,0,bytes.length,offset);
@@ -216,11 +219,12 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
             let record;try{record=JSON.parse(line);}catch{throw new CliError('CAPTURE_INVALID_RECORD','Invalid transcript record; cursor retained');}
             const auditMessage=!desktopAudit||['user','assistant'].includes(record.type)&&!nativeIds.has(record.uuid);
             if(desktopAudit&&auditMessage&&(!record.session_id||typeof record.session_id!=='string'))throw new CliError('CAPTURE_SESSION_UNKNOWN','Desktop audit message has no session identity');
-            if(desktopAudit&&auditMessage&&meta.sessionId!==record.session_id)enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));
+            const priorMeta={...meta};
             if(!desktopAudit||auditMessage)metadata(record);
+            if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd))enqueue(config,{...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));
             const parsed=auditMessage?parseRecord(harness,record,position):null;
             if(parsed&&desktopAudit){parsed.timestamp=record._audit_timestamp??record.timestamp??null;parsed.parentId=record.parent_tool_use_id??null;}
-            if(parsed) {
+            if(parsed && !captureExcluded(readCaptureConfig()??config,meta)) {
               // Only native attachment blocks may cause file reads. A tool argument/result can
               // contain arbitrary JSON that resembles an attachment but was never opened.
               const localFiles=new Set<any>();
@@ -246,15 +250,19 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     } finally{closeSync(fd);if(compressed)try{unlinkSync(readPath);}catch{}}
     return meta;
   });
+  },Infinity);
 }
 /** Hook work is only a durable local handoff. Never scan, parse or upload here. */
 export async function captureHook(harness:Harness,event:any) {
+  return withSessionLock('capture:configuration',async()=>{
   const config=readCaptureConfig();if(!config||config.disabled)return;
   ensureDirectories();
   const sessionId=event?.session_id;
   if(typeof sessionId!=='string' || !/^[\w.:-]{1,200}$/.test(sessionId))throw new CliError('CAPTURE_SESSION_UNKNOWN','Hook missing session ID');
+  if(captureExcluded(config,{sessionId,cwd:event.cwd}))return;
   const id=randomUUID();
   atomicJson(join(captureDir(),'notices',id+'.json'),{id,at:new Date().toISOString(),harness,event});
+  },Infinity);
 }
 
 // The original event is kept only until its immutable batch is spooled. Its ID
@@ -281,9 +289,11 @@ export async function drainCaptureNotices(config=readCaptureConfig()!) {
       atomicJson(join(captureDir(),'sources',hash(harness+':'+event.session_id+':'+child)+'.json'),{...source,path:child});
       if(existsSync(child))await captureTranscript(config,harness,child,event);
     }
-    const attachments:any[]=[];
-    const data=attachmentTransform(event,attachments,event.cwd??homedir());
-    enqueue(config,meta,[{id,kind:'hook',timestamp:at,data}],attachments);
+    if(!captureExcluded(readCaptureConfig()??config,{...meta,cwd:meta?.cwd??event.cwd})) {
+      const attachments:any[]=[];
+      const data=attachmentTransform(event,attachments,event.cwd??homedir());
+      enqueue(config,{...meta,cwd:meta?.cwd??event.cwd},[{id,kind:'hook',timestamp:at,data}],attachments);
+    }
     unlinkSync(path);syncDirectory(dirname(path));processed++;
     }catch(error){firstError??=error;}
   }
@@ -403,16 +413,15 @@ export async function flushCaptures({wait=true}={}) {
     // and blob writes. If this credential expires, retain the queue for a retry.
     const token=staticCaptureToken(config.api)||await accessToken(config.api);
     const principal=await refreshCaptureIdentity(config,token);
-    let uploaded=0;
+    let uploaded=0,excluded=0;
     for(const name of readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'))) {
       if(!wait&&readCaptureConfig()?.disabled)break;
       const path=join(captureDir(),'queue',name),batch=read(path);
       // Reject a different human before uploading attachment bytes: a later
       // batch rejection cannot undo a blob already stored under their identity.
       if(batch.owner?.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Queued capture belongs to another user. Sign back in as its author to upload it; queued data is retained.');
-      // Current authentication selects the team. Keep the recorded human; the
-      // server validates authorship and membership on every upload.
-      batch.owner={...batch.owner,tenantId:principal.tenantId};
+      if(batch.owner?.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Queued capture belongs to another team. Sign back into its original destination or explicitly purge local pending data.');
+      if(captureExcluded(readCaptureConfig()??config,batch)){excluded++;continue;}
       for(const a of batch.attachments)if(a.status==='captured'){
         await request(config.api,'/api/sessions/attachments/'+a.sha256,{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readFileSync(join(captureDir(),'blobs',a.sha256))},token);
       }
@@ -431,12 +440,13 @@ export async function flushCaptures({wait=true}={}) {
       if(!referenced.has(name)&&Date.now()-statSync(path).mtimeMs>86400000)unlinkSync(path);
     }
     try{unlinkSync(join(captureDir(),'last-error.json'));}catch{}
-    return {uploaded};
+    return excluded?{uploaded,excluded}:{uploaded};
   },wait?Infinity:0).catch(error=>{if(!wait&&error?.code==='SESSION_BUSY')return {uploaded:0};throw error;});
 }
 export function captureStatus() {
   const config=readCaptureConfig();
   return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.authPending?null:config?.owner,authenticationPending:Boolean(config?.authPending),installationId:config?.installationId,
+    exclusions:config?.exclusions??{projects:[],sessions:[]},
     queued:existsSync(join(captureDir(),'queue'))?readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json')).length:0,
     pendingHooks:existsSync(join(captureDir(),'notices'))?noticeNames().length:0,
     lastUpload:read(join(captureDir(),'last-upload.json')),lastError:read(join(captureDir(),'last-error.json'))};

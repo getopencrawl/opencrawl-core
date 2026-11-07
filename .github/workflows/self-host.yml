@@ -1,0 +1,45 @@
+name: Self-host preview
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  self-host:
+    name: Self-host smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: opencrawl-smoke
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: ./deploy/up.sh
+      - name: Verify capture, indexing, MCP and authorization
+        run: |
+          node deploy/smoke.mjs seed "$RUNNER_TEMP/receipt.json"
+          docker compose -f deploy/compose.yaml exec -T worker node deploy/trigger-index.mjs
+          node deploy/smoke.mjs verify "$RUNNER_TEMP/receipt.json"
+      - name: Verify restart persistence
+        run: |
+          docker compose -f deploy/compose.yaml restart
+          docker compose -f deploy/compose.yaml up -d --wait --wait-timeout 240
+          node deploy/smoke.mjs verify "$RUNNER_TEMP/receipt.json"
+      - name: Verify backup and restore into empty disposable volumes
+        run: |
+          node deploy/backup.mjs create "$RUNNER_TEMP/opencrawl-backup"
+          docker compose -f deploy/compose.yaml down -v
+          node deploy/backup.mjs restore "$RUNNER_TEMP/opencrawl-backup"
+          docker compose -f deploy/compose.yaml up -d --wait --wait-timeout 240
+          node deploy/smoke.mjs verify "$RUNNER_TEMP/receipt.json"
+      - name: Show service diagnostics on failure
+        if: failure()
+        run: docker compose -f deploy/compose.yaml logs --tail 60
+      - name: Remove only this job's disposable stack and backup
+        if: always()
+        run: |
+          docker compose -f deploy/compose.yaml down -v --remove-orphans
+          rm -rf "$RUNNER_TEMP/opencrawl-backup"
