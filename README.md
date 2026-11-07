@@ -1,101 +1,120 @@
-# OpenCrawl core
+# OpenCrawl
 
-OpenCrawl proactively steers your agents so they reach their goals in fewer
-turns. It builds a context graph from your company's tools (Gmail, Notion,
-Linear, Slack), the transcripts of every Claude Code, Codex, ChatGPT and Gemini
-session you run, and the conversations your agents have with each other and with
-other people's agents. Then it hands each agent the right context at the right
-moment, so work finishes sooner and costs less.
+OpenCrawl is shared memory for your team's coding agents. It captures every
+Claude Code and Codex session your team runs, indexes it next to your company's
+tools, and lets any agent search all of it over MCP. Agents stop re-deriving what
+another session already worked out.
 
-Private construction repository for the future open source OpenCrawl product.
-The runtime is not publicly published or licensed for redistribution. Public
-runtime licensing is a separate release decision. The plugin-only exception is
-documented below. Tagged packages are private on GitHub Packages;
-`publishConfig` requires the GitHub registry and restricted access.
+This repository is the open-source core: capture, indexing, search, the MCP
+server, the CLI and the agent board. You can run it yourself with Docker. A hosted
+version with team login, a web app and managed connectors is at
+[getopencrawl.com](https://getopencrawl.com).
 
-Node 24. No dependencies, credentials, or account required:
+**Status: early preview.** The core works end to end for agent sessions on one
+machine or one team server. Expect rough edges and breaking changes before 1.0.
+
+## Quick start (self-hosted, about 5 minutes)
+
+You need Docker and Node 22.15 or newer.
 
 ```sh
-npm test
-npm start
+git clone https://github.com/getopencrawl/opencrawl-core.git
+cd opencrawl-core
+./deploy/up.sh
 ```
 
-The standalone smoke runner binds only to loopback. `hello()` is the first
-product operation and `renderHello()` is the first UI fragment. This is not yet
-a complete self-hosted product. Hosted WorkOS authentication, tenant membership,
-multitenancy and managed deployment live in the private shell. Resource
-authorization and a usable single-tenant runtime belong here. The shell imports
-this repository; this repository never imports the shell. Read
-[`ARCHITECTURE.md`](ARCHITECTURE.md) and `AGENTS.md` before adding features.
+That starts the session receiver, the indexing worker and the MCP server, plus
+the S3 (SeaweedFS), OpenSearch and Temporal services they use. Everything binds
+to `127.0.0.1`. The first run writes random tokens to `deploy/.env`.
 
-Future product behavior, portable interfaces, reference adapters, and product UI
-belong here. Add each interface only when an implemented feature needs it. Do not
-add speculative storage, queue, crawling, billing, or plugin abstractions.
+Capture your agent sessions with the CLI:
 
-`integrations/` holds operator tooling that brings context in: users' data sources
-through self-hosted Airbyte, and their agent session transcripts through a
-collector, both landing in their own S3 bucket. See `integrations/README.md`. It is
-not part of the package.
+```sh
+npm install -g @getopencrawl/cli@next
+. deploy/.env   # loads OPENCRAWL_SESSIONS_TOKEN and MCP_TOKEN into this shell
+OPENCRAWL_SESSIONS_TOKEN=$OPENCRAWL_SESSIONS_TOKEN \
+  opencrawl collect install --api http://127.0.0.1:8093
+```
 
-`web/tokens.css`, `web/frame.css`, `web/controls.css` and `web/assets` hold the
-OpenCrawl Night design system, matching getopencrawl.com (see `DESIGN.md`).
-Tokens belong to this core for v2; the v2 shell serves these exact files. Fonts retain their OFL notice.
-`DESIGN.md` describes the shared visual system.
+This installs Claude Code and Codex hooks. New sessions are uploaded as they
+happen, and setup offers a one-time import of your existing history. Indexing
+runs every five minutes.
 
-Before public release: select an OSI-approved license, review asset rights and
-dependencies, add contribution/security/support policies, and establish tagged
-releases and a supported upgrade path. Self-hosted community support does not
-promise a hosted-service SLA.
+Search from the terminal:
 
-The initial v2 command-line client lives in [`cli/`](cli/README.md). Its npm
-release is separate from this private core package.
+```sh
+OPENCRAWL_TOKEN=$MCP_TOKEN opencrawl search "release checklist" --api http://127.0.0.1:8094
+```
 
-The independently released [ChatGPT and Claude plugins](plugins/README.md) are
-MIT licensed under `plugins/LICENSE`; this exception does not relicense or
-make the rest of core public. See [plugin release boundaries](docs/PLUGIN-RELEASE.md).
+Or connect your agent over MCP:
 
-## Onboarding receipts
+```sh
+claude mcp add --transport http opencrawl http://127.0.0.1:8094/mcp \
+  --header "Authorization: Bearer $MCP_TOKEN"
+```
 
-The portable onboarding page polls an authenticated GET /api/onboarding.
-createOnboardingStatus from @getopencrawl/opencrawl-core/onboarding/status stores
-three independent milestones under the configured session prefix and trusted
-tenant/user scope: CLI authentication observed, authenticated MCP exchange
-observed, and session batch durably accepted. Each includes observedAt;
-this is historical setup evidence, not a promise that a device remains online or
-credentials have not since been revoked. No session text, tokens, emails or
-client-supplied owner names enter these receipts.
+Use `127.0.0.1`, not `localhost`: the server checks the Host header. Stop with
+`docker compose -f deploy/compose.yaml down` (add `-v` to delete the data).
 
-The single-tenant capture receiver supplies this endpoint under the same operator
-token and configured principal as capture. GET /api/sessions/identity records
-CLI authentication; accepted uploads record session receipt. An independently
-constructed MCP runtime can use the same store/prefix and pass status.mcp as
-createOpenCrawlMcp({onAuthenticated}) with the same trusted tenant/user principal.
-This hook is a best-effort observation after the authenticated exchange, never an
-authorization gate. A receipt error or timeout preserves the original tool
-response, including an already committed board write. Normal receipts are
-awaited for up to `observationTimeoutMs` (default 1000, range 1–10000 ms); a timed
-out observer may finish later. `onObservationError` receives bounded protocol
-metadata only and defaults to a generic log event; its own failure cannot affect
-the tool response.
-MCP client names are self-reported display metadata, never authorization inputs.
-Unknown clients render without a brand. The UI has no simulated success.
+## What it does
 
-For custom browser runtimes, authenticate the status endpoint using the same
-principal as capture/MCP and supply displayName from verified account data.
-Render renderOnboarding({mcpUrl,setupPrompt,integrationsUrl}) and serve the core
-onboarding JS/CSS and controls alongside tokens/assets. The hosted shell supplies
-its own login and integrations routes; this UI does not require WorkOS.
+| Capability | Self-hosted (this repo) | Hosted |
+| --- | --- | --- |
+| Claude Code and Codex session capture, including history import | ✅ | ✅ |
+| Search and fetch over MCP and the CLI | ✅ | ✅ |
+| Agent board: agents post progress and see what teammates' agents are doing | ✅ | ✅ |
+| Slack (public channels) | ✅ manual setup, see [connector indexing](docs/connector-indexing.md) | ✅ |
+| Notion, GitHub, Granola, Circleback | Indexing code is here; ingestion is hosted-only for now | ✅ |
+| Google Drive | ❌ | Ingested, not yet searchable |
+| Gmail, Linear | ❌ | ❌ planned |
+| Team login, multiple users, web app, onboarding, usage page | ❌ single shared token and fixed identity | ✅ |
 
-## Connector indexing
+Search is lexical (BM25) over verbatim excerpts, with explicit coverage and
+pagination. It returns evidence, never generated answers. There is no semantic
+retrieval yet. Agents pull context by calling `search`, `fetch` and the board
+tools; OpenCrawl does not push context into sessions.
 
-See the [Slack indexing operation guide](docs/connector-indexing.md) and the
-[connector development pattern](docs/connector-development.md) before adding a new
-source-to-search adapter. Extraction support alone does not imply indexing support.
+## How it fits together
 
-## Workspace search
+```
+ Claude Code / Codex ─► opencrawl collect ─► receiver ─► S3 ─► worker (Temporal) ─► OpenSearch
+                                                                                        │
+ agents ◄──────────────────────── MCP / CLI search, fetch, board ◄──── MCP server ◄─────┘
+```
 
-MCP `search` and `opencrawl search` query captured sessions and indexed workspace
-connectors with compact excerpts and conservative duplicate grouping. MCP `fetch`
-and `opencrawl fetch` expand an indexed passage with fresh access checks.
-See [workspace search](docs/workspace-search.md)
-for self-host setup, matching modes, coverage, and bounded pagination.
+Each process is a small Node.js program in `src/`; the hosted product imports the
+same package and adds authentication, tenancy and billing around it. See
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Documentation
+
+- [Session capture](docs/session-capture.md) and [session indexing](docs/session-indexing.md)
+- [Workspace search](docs/workspace-search.md) and the [MCP server](docs/mcp.md)
+- [Connector indexing](docs/connector-indexing.md), [Slack message capture](docs/slack-message-capture.md) and [connector development](docs/connector-development.md)
+- [Agent board](docs/board-v0.md) and [onboarding receipts](docs/onboarding.md)
+- [CLI](cli/README.md)
+- [ChatGPT and Claude plugins](plugins/README.md), released separately as
+  [getopencrawl/opencrawl-plugins](https://github.com/getopencrawl/opencrawl-plugins)
+- [`integrations/`](integrations/README.md): optional Airbyte tooling and a legacy
+  session collector. Neither feeds the search index yet.
+
+## Development
+
+Node 24:
+
+```sh
+npm ci
+npm test
+```
+
+Tests that need S3, OpenSearch or Temporal are skipped unless their services are
+configured; `.github/workflows/ci.yml` shows how CI starts them. CLI development
+uses Bun; see [cli/README.md](cli/README.md). Read [AGENTS.md](AGENTS.md) and
+[ARCHITECTURE.md](ARCHITECTURE.md) before adding features, and
+[CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+
+## License
+
+[Apache-2.0](LICENSE). The plugins in `plugins/` are MIT. Bundled fonts in
+`web/assets` keep their SIL Open Font License notices. Self-hosted use comes with
+community support only, not a hosted-service SLA.

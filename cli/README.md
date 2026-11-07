@@ -1,15 +1,17 @@
 # opencrawl
 
-The OpenCrawl CLI. This initial release installs an automatically updating
-command and signs you in. **Index queries are not available yet.**
-
-Once published:
+The OpenCrawl CLI: capture Claude Code and Codex sessions, and search them
+together with indexed workspace connectors.
 
 ```sh
 npm install -g @getopencrawl/cli@next
-opencrawl login
-opencrawl status --json
+opencrawl login                  # hosted OpenCrawl
+opencrawl collect install        # capture Claude Code and Codex sessions
+opencrawl search "release checklist"
 ```
+
+For a self-hosted deployment, skip `login` and pass tokens instead; see
+[Self-hosted](#self-hosted).
 
 For SSH, remote machines and coding agents:
 
@@ -22,8 +24,8 @@ The CLI waits for approval. It needs no client secret, inbound port, localhost
 callback or browser on the machine running the command. No authentication runs
 during package installation. Installation does not configure agents or telemetry.
 
-`whoami` verifies your identity with the service. `status` reports the version,
-sign-in state and unavailable index. `logout` removes this deployment's local
+`whoami` verifies your identity with the service. `status` reports the version
+and sign-in state. `logout` removes this deployment's local
 credentials; it does not revoke other devices or the server session. Use your
 identity provider's session controls to revoke access remotely.
 
@@ -93,16 +95,8 @@ publication cannot advertise an incomplete stable launcher. Retry skips already
 published immutable versions. Increment `cli/package.json` for every release.
 The main core package retains its separate private GitHub Packages release.
 
-Create the free npm `getopencrawl` organization and grant the publisher access to
-its packages before the first release. Bootstrap publication uses an npm token
-or interactive npm authentication; configure npm trusted publishing for each
-package afterwards. A public npm package does not require a public GitHub repo,
-but its tarballs and binaries are public. Review the package allowlist with
-`npm pack --dry-run` before publishing. The current construction license remains
-UNLICENSED pending the repository's separate public-license decision.
-
-Prior art: OnePatch's npm/native launcher, device login, automatic refresh and
-background upgrades; Glen's small npm entry point for agents.
+Review the package allowlist with `npm pack --dry-run` before publishing. The CLI
+is Apache-2.0 licensed.
 
 
 ### Session capture
@@ -111,7 +105,21 @@ After signing in, run `opencrawl collect install` to install Claude Code and Cod
 
 `opencrawl collect status --json` reports the last authenticated identity, queued uploads, last receipt and errors. `collect sync` reconciles active transcripts; `collect flush` processes pending hooks and known transcript tails, then waits for queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
 
-Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service determines the current team from login and validates human attribution. Existing collectors and queued personal-scope uploads automatically use that team after updating, without reinstalling or resetting. Self-hosted users can supply `OPENCRAWL_SESSIONS_TOKEN` and `--api` for the portable receiver. See [capture architecture and limits](../docs/session-capture.md).
+Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service determines the current team from login and validates human attribution. Existing collectors and queued personal-scope uploads automatically use that team after updating, without reinstalling or resetting. Self-hosted users supply tokens instead of signing in; see below and [capture architecture and limits](../docs/session-capture.md).
+
+### Self-hosted
+
+Start the stack with `./deploy/up.sh` from the repository root, then use the tokens
+it writes to `deploy/.env`:
+
+```sh
+OPENCRAWL_SESSIONS_TOKEN=... opencrawl collect install --api http://127.0.0.1:8093
+OPENCRAWL_TOKEN=... opencrawl search "release checklist" --api http://127.0.0.1:8094
+```
+
+`opencrawl login` needs a deployment that serves `/.well-known/opencrawl-cli`; the
+self-hosted stack does not include a login server yet. `status` reports
+`authenticated: false` against it even when token-based search works.
 
 Newly spooled events receive a versioned ID after attachment extraction and all
 event normalization. The ID covers the source record/notice identity and every

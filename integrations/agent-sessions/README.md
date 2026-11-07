@@ -1,4 +1,10 @@
-# Agent sessions
+# Agent sessions (legacy)
+
+> **Legacy collector.** Sessions captured this way land in S3 but are **not
+> indexed or searchable**. For searchable sessions, run `./deploy/up.sh` and
+> `opencrawl collect install` as described in the [top-level README](../../README.md).
+> This collector remains for its ChatGPT/Claude.ai export import and Gemini CLI
+> capture, which `opencrawl collect` does not cover yet.
 
 Captures the transcripts of every agent session people run (Claude Code, Codex,
 Gemini CLI, ChatGPT, Claude) and lands them in the user's own S3 bucket, for the
