@@ -60,18 +60,27 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
   function authorizedKey(key) {
     if(typeof key!=='string'||!key.startsWith(sourcePrefix)||!(sourceBatchIdentity(prefix,key)||memorySourceIdentity(prefix,key)))throw Object.assign(new Error('Session object outside authorized source'),{permanent:true});
   }
+  const receiptKey=key=>statePrefix+'/batches/'+digest(key)+'.json';
+  async function indexed(key) {
+    const receipt=await store.get(receiptKey(key));
+    return Boolean(receipt&&JSON.parse(receipt).status==='indexed');
+  }
   return {
     async listPage({cursor=null}={}) {
       if(cursor!==null&&(typeof cursor!=='string'||cursor.length>8192))throw Object.assign(new Error('Invalid session cursor'),{permanent:true});
       await checkActive();
       const page=await store.listPage(sourcePrefix,{continuationToken:cursor,maxKeys:50});
-      return {keys:page.keys.filter(key=>sourceBatchIdentity(prefix,key)||memorySourceIdentity(prefix,key)),cursor:page.nextToken||null};
+      const keys=page.keys.filter(key=>sourceBatchIdentity(prefix,key)||memorySourceIdentity(prefix,key));
+      // Every run rereads the whole prefix. Drop already-indexed objects here with
+      // concurrent receipt reads rather than one serialized activity per object,
+      // so new uploads are not queued behind a full replay of history.
+      const pending=await Promise.all(keys.map(async key=>await indexed(key)?null:key));
+      return {keys:pending.filter(Boolean),cursor:page.nextToken||null};
     },
     async processObject({key}) {
       authorizedKey(key);await checkActive();
-      const stateKey=statePrefix+'/batches/'+digest(key)+'.json';
-      const receipt=await store.get(stateKey);
-      if(receipt&&JSON.parse(receipt).status==='indexed')return {records:0,skipped:true};
+      const stateKey=receiptKey(key);
+      if(await indexed(key))return {records:0,skipped:true};
       const bytes=await store.get(key);
       if(!bytes)throw new Error('Session source object unavailable');
       const memory=Boolean(memorySourceIdentity(prefix,key));
