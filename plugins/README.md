@@ -21,13 +21,13 @@ either repository.
 
 ## Build and validate
 
-Node 24 and Python 3 are sufficient; no dependency install or private package
+Node 24 is sufficient; no dependency install or private package
 access is required.
 
 ```sh
 node scripts/validate.mjs
 node --test test/*.test.mjs
-python3 scripts/package.py
+node scripts/package.mts
 # If Claude Code is installed:
 claude plugin validate ./opencrawl --profile directory --strict
 # Read-only check of the live endpoint's OAuth discovery:
@@ -35,6 +35,9 @@ node scripts/check-endpoint.mjs
 ```
 
 The deterministic release ZIP is written under `dist/` with SHA-256 checksums.
+Its fixed file order, timestamps, Unix modes and uncompressed bytes are preserved
+by the Node packager. Compression bytes and therefore the archive checksum can
+change when the pinned Node/zlib toolchain changes.
 Both platform manifests share one skill and one canonical remote endpoint.
 The MCP file uses OpenAI's documented `extensions.com.openai.auth` overlay;
 the base Agent Plugins 1.0.0 MCP JSON Schema does not yet recognize that overlay.

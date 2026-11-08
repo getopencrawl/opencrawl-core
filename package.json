@@ -67,12 +67,13 @@
   },
   "scripts": {
     "start": "node dist/src/standalone.mjs",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "test": "npm run build && npm run typecheck:tooling && node --test test/*.test.mjs",
     "sessions": "node dist/src/sessions/standalone.mjs",
     "mcp": "node dist/src/mcp/standalone.mjs",
     "build": "node tools/build.mts",
     "typecheck": "tsc --noEmit",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "typecheck:tooling": "tsc --project tsconfig.tooling.json"
   },
   "dependencies": {
     "@modelcontextprotocol/node": "2.1.2",

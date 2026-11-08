@@ -15,4 +15,4 @@ jobs:
           node-version: 24.22.2
       - run: node scripts/validate.mjs
       - run: node --test test/*.test.mjs
-      - run: python3 scripts/package.py
+      - run: node scripts/package.mts

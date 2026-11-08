@@ -358,3 +358,18 @@ control page size. A changed passage requires restarting from offset 0. Access
 and source visibility are checked again on every read. One indexed passage may
 be only part of a larger document or session.
 For self-hosting, set `OPENCRAWL_TOKEN` and `--api`; otherwise saved OAuth is used.
+
+## Process ownership acceptance
+
+Linux CI runs the real packaged CLI through `scripts/process-ownership.mts` in a
+fresh PID namespace. The test checks a 200-hook burst, bounded HTTP concurrency,
+late transcript tails, crash and deadline recovery, idle shutdown, and parent
+loss while keeping HOME, USERPROFILE and all skill installation paths inside a
+temporary fixture. No installed agent configuration or credentials are used.
+
+A small test-only C init fixture exposes raw `fork` and exact `waitpid` calls.
+This is needed because Node/libuv normally reaps children: a Node PID 1 would
+hide the adopted zombies that this test must detect. The fixture first proves
+that it leaves an adopted child as a zombie, then reaps only explicitly selected
+PIDs. All capture behavior and acceptance assertions remain in TypeScript. CI
+compiles this fixture; it adds no production dependency.
