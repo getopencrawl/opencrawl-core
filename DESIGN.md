@@ -260,7 +260,7 @@ bounded presentation stylesheet; do not restyle it with the console page heading
 ## Layout
 
 `AppShell` is the only workspace shell. One route registry drives the top bar
-and page routing through the shared router. The hosted routes are Usage, Sources,
+and page routing through the shared router. The hosted routes are Usage, Integrations,
 Diagnostics, Settings, Team and Billing. Deployment adapters supply only their
 supported routes; the shared shell does not imply hosted capabilities in the
 single-tenant adapter.
@@ -308,7 +308,8 @@ Onboarding copy/reveal disclosures keep their established immediate transitions.
 
 Use the shared badge, control and panel radii. Controls and compact insets have
 small corners; onboarding panels and dialogs use the larger panel radius. Source
-logos retain their original assets within the shared 32px slot. Identity initials
+logos retain their original assets: compact slots in Usage and 44px icons in
+Integrations. Identity initials
 use compact square workspace avatars and circular user avatars. Dividers and
 field borders are hairlines, with a stronger boundary only where interaction needs it.
 
@@ -368,7 +369,7 @@ accent underline, roving focus, arrow-key navigation and Home/End support.
 Section uses a top divider, heading, optional description/actions and consistent
 vertical padding. An inset or code block is a subtle surface with control-radius
 corners and shared padding, not an additional navigation frame. Source identity,
-metadata, progress and actions use the shared source-row pattern. Table owns the
+metadata, progress and actions use the shared connection-card patterns. Table owns the
 labeled overflow region, spacing, separators and tabular numeral presentation.
 
 ### Feedback and dialogs
@@ -473,3 +474,19 @@ The shared `oc-connection-*` patterns own this presentation. Use shared Button,
 Dialog and Icon primitives for connection, help and removal. Keep sign-in
 recovery distinct from sync and deletion retries. `/sources` and its
 `/integrations` alias share one React page and the canonical AppShell top bar.
+
+## Team management
+
+Team uses the same centered 800px column and display heading as Integrations.
+The member roster is the primary content: initials, a name and email grouped as
+one identity, with the role aligned at the right. Display the actual member
+count beside the section heading. Keep invitation controls beside the roster,
+pending invitations in their own list, and domain access in a compact panel.
+Activity and rankings belong to the Usage report, not membership administration.
+
+Use the shared `oc-management-*`, `oc-member-*`, `oc-invite-form` and
+`oc-access-row` patterns with existing Section, Field, Input and Button controls.
+Only show actions supported by the server. Invitations have explicit busy,
+success and failure feedback; a failed list refresh must not suggest that a
+successful invitation should be sent again. Clear displayed team information
+and privileged controls when membership or authentication is revoked.
