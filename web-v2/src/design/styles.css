@@ -415,10 +415,6 @@ img { max-width: 100%; }
 .oc-invite-form .field-inline { flex-wrap: nowrap; align-items: flex-end; }
 .oc-invite-form .field-inline > .oc-button { align-self: flex-end; }
 .oc-invitation-email { color: var(--text); overflow-wrap: anywhere; }
-.oc-access-row { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: var(--space-4); }
-.oc-access-row > :first-child { min-width: 0; flex: 1 1 260px; }
-.oc-access-row h3 { font-size: var(--text-title); font-weight: 500; overflow-wrap: anywhere; }
-.oc-access-row p { margin-top: var(--space-2); color: var(--muted); font-size: var(--text-sm); max-width: 58ch; }
 .oc-management-footer { padding-top: var(--space-3); }
 .oc-management-footer .oc-section-heading p { font-size: var(--text-sm); }
 @media (max-width: 800px) {
