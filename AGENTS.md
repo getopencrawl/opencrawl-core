@@ -48,3 +48,14 @@ namespace, common document envelope, shared mapping and transport. Keep
 source-specific metadata and resource visibility checks inside that contract.
 Do not introduce per-feature index routing. Existing data requires verified
 migration and rollback coverage before switching runtime reads or writes.
+
+## React web console
+
+`web-v2/` owns the current TypeScript React console, shared design primitives,
+router, and preserved onboarding. Read `web-v2/AGENTS.md` before frontend changes.
+New pages use AppShell and the shared route registry; do not fork workspace
+navigation, form controls, icons, tokens, or CSS. Legacy HTML exports remain only
+for compatibility with older runtime consumers. New UI work belongs in web-v2.
+Run its strict typecheck, architecture tests, build, and browser regression suite
+alongside core checks. The hosted shell consumes the published source exports;
+its provider/account/billing pages must reuse the same design system.

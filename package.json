@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.2.30",
+  "version": "0.2.31",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
@@ -44,12 +44,21 @@
     "./onboarding/sources": "./src/onboarding-sources.mjs",
     "./onboarding/invite": "./src/onboarding-invite.mjs",
     "./workspace": "./src/workspace.mjs",
-    "./frontend/icons": "./src/frontend-icons.mjs"
+    "./frontend/icons": "./src/frontend-icons.mjs",
+    "./web-v2": "./web-v2/src/index.ts",
+    "./web-v2/styles.css": "./web-v2/src/styles.css",
+    "./web-v2/architecture": "./web-v2/tools/architecture.ts"
   },
   "files": [
     "src",
     "web",
-    "revision.json"
+    "revision.json",
+    "web-v2/src",
+    "web-v2/tools",
+    "web-v2/package.json",
+    "web-v2/package-lock.json",
+    "web-v2/tsconfig.json",
+    "web-v2/README.md"
   ],
   "repository": {
     "type": "git",
