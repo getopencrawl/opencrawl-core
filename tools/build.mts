@@ -1,11 +1,11 @@
-import {cpSync, existsSync, readdirSync, mkdirSync, rmSync} from 'node:fs';
+import {cpSync, readdirSync, mkdirSync, rmSync} from 'node:fs';
 import {resolve, dirname, relative} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 rmSync(resolve(root, 'dist/src'), {recursive: true, force: true});
-const compiler = resolve(root, 'node_modules/.bin/tsc');
-const result = spawnSync(compiler, ['--project', 'tsconfig.json'], {cwd: root, stdio: 'inherit'});
+const compiler = resolve(root, 'node_modules/typescript/bin/tsc');
+const result = spawnSync(process.execPath, [compiler, '--project', 'tsconfig.json'], {cwd: root, stdio: 'inherit'});
 if (result.status !== 0) process.exit(result.status ?? 1);
 function assets(directory: string): void {
   for (const entry of readdirSync(directory, {withFileTypes: true})) {
@@ -19,3 +19,8 @@ function assets(directory: string): void {
   }
 }
 assets(resolve(root, 'src'));
+
+// Legacy browser entrypoint and the backend share one strict TypeScript source.
+mkdirSync(resolve(root, 'web'), {recursive: true});
+cpSync(resolve(root, 'dist/src/onboarding-state.mjs'), resolve(root, 'web/onboarding-state.js'));
+cpSync(resolve(root, 'dist/src/onboarding-state.mjs.map'), resolve(root, 'web/onboarding-state.mjs.map'));

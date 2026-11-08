@@ -39,8 +39,8 @@ export TEMPORAL_ADDRESS=your-temporal:7233
 export TEMPORAL_NAMESPACE=your-existing-namespace
 export TEMPORAL_SESSION_TASK_QUEUE=session-indexing-v1
 # Build once with the released worker code, then run independently of the API.
-node src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs --build
-node src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs
+node dist/src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs --build
+node dist/src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs
 ```
 
 `npm ci` in the core repository installs the pinned Temporal SDK. Package consumers install the optional `@temporalio/{activity,client,common,worker,workflow}` peers at 1.25.0 explicitly. Use an operator-controlled source ID (`OPENCRAWL_SESSION_SOURCE_ID`, default `self-hosted-sessions-v1`) and dedicated task queue for each fixed source binding. The worker lists and processes only the configured tenant/user namespace. It requires no hosted shell, WorkOS or OpenCrawl account. Stop its worker and pause its exact schedule before changing that fixed authorization policy. Remote services require their normal network/authentication protections; the provided plain connection configuration assumes a private trusted Temporal network.
@@ -79,14 +79,14 @@ or repair an already mixed index.
 1. Run the read-only audit using the candidate release and the existing receiver's
    storage and fixed identity environment. This can run during normal operation
    for diagnostics, but its results are not a cutover proof while writers run:
-   `node src/sessions/audit.mjs`.
+   `node dist/src/sessions/audit.mjs`.
 2. Pause the exact session-indexing schedule and drain/stop its workers, including
    already running activities. Stop accepting capture requests and drain/stop
    every old receiver. Also stop any direct source writer. Preserve client queues;
    clients will retry. Leave connector workers and unrelated schedules alone.
    Do this **before** starting any candidate worker, because workers also create
    ledgers. A rolling overlap of old and new capture code is unsafe here.
-3. With the source quiescent, run `node src/sessions/audit.mjs --initialize`.
+3. With the source quiescent, run `node dist/src/sessions/audit.mjs --initialize`.
    Require a successful exit, `conflicts: 0` and `initialized === sessions`.
    The command inventories all accepted raw batches, including batches with
    existing indexing receipts, and reserves their identities using compare-and-set.
