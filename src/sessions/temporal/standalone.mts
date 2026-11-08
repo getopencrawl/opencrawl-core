@@ -17,7 +17,7 @@ export function standaloneSessionResolver(env=process.env) {
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href) {
   const bundlePath=process.argv[2];
-  if(!bundlePath)throw new Error('Usage: node src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs');
+  if(!bundlePath)throw new Error('Usage: node dist/src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs');
   const config={address:process.env.TEMPORAL_ADDRESS!,namespace:process.env.TEMPORAL_NAMESPACE!,taskQueue:process.env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1'};
   if(process.argv.includes('--build')){await buildSessionWorkflows(bundlePath);process.exit(0);}
   const {sourceId,resolve}=standaloneSessionResolver();

@@ -12,7 +12,7 @@ import {sourcePaginationProgress, advanceSourcePagination} from './workflow.mjs'
 
 /** Customer-owned local CLI, no hosted account. The config file is operator trusted. */
 const [action, configPath, query] = process.argv.slice(2);
-if (!['index', 'search'].includes(action) || !configPath) throw new Error('Usage: node src/connectors/standalone.mjs index|search config.json [query]');
+if (!['index', 'search'].includes(action) || !configPath) throw new Error('Usage: node dist/src/connectors/standalone.mjs index|search config.json [query]');
 const config = JSON.parse(await readFile(configPath, 'utf8')) as {binding: ConnectorBinding; s3: Parameters<typeof createObjectStore>[0]; search: RealmOptions};
 const binding = validateBinding(config.binding);
 const store = createObjectStore({...config.s3, credentials: awsCredentials()});

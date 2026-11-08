@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {runConnectorSegment, SourcePaginationError} from '../dist/src/connectors/workflow.mjs';
+import {runConnectorSegment, SourcePaginationError, assertSourcePaginationPage} from '../dist/src/connectors/workflow.mjs';
 
 async function sweep(listPage, {input = {}, maxSegments = 10000, processObject = async () => ({records: 1})} = {}) {
   for (let segment = 0; segment < maxSegments; segment++) {
@@ -130,4 +130,8 @@ test('pending failure codes remain fixed and bounded when older code carries the
     assert.equal(result.paginationFailure, expected);
     assert.ok(calls.every(input => input.paginationFailure === expected));
   }
+});
+
+test('missing terminal cursor retains its durable invalid-cursor failure code', () => {
+  assert.throws(() => assertSourcePaginationPage({keys: []}), error => error instanceof SourcePaginationError && error.code === 'invalid-cursor');
 });

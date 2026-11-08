@@ -2,7 +2,7 @@ import type {ConnectionReference, SourceActivities} from './types.mjs';
 import type {CaptureRun, ReferenceRun} from '../capture-types.mjs';
 const {proxyActivities,continueAsNew,sleep,workflowInfo,ApplicationFailure}=require('@temporalio/workflow') as typeof import('@temporalio/workflow');
 const activities=proxyActivities<SourceActivities>({startToCloseTimeout:'3 minutes',heartbeatTimeout:'45 seconds',retry:{initialInterval:'5 seconds',maximumInterval:'1 minute',maximumAttempts:5}});
-exports.captureSlackFilesV1=async function captureSlackFilesV1(input: ConnectionReference & Partial<CaptureRun>) {
+async function captureSlackFilesV1(input: ConnectionReference & Partial<CaptureRun>) {
  const run={...input,runId:input.runId||workflowInfo().runId,cutoff:input.cutoff??Date.now()};
  for(let step=0;step<100;step++) {
   const result=await activities.captureFilePage(run);
@@ -12,7 +12,7 @@ exports.captureSlackFilesV1=async function captureSlackFilesV1(input: Connection
  return continueAsNew(run);
 };
 
-exports.captureSlackMessagesV1=async function captureSlackMessagesV1(input: ConnectionReference & Partial<CaptureRun>) {
+async function captureSlackMessagesV1(input: ConnectionReference & Partial<CaptureRun>) {
  const run={...input,runId:input.runId||workflowInfo().runId,cutoff:input.cutoff??Date.now()};
  for(let step=0;step<100;step++) {
   const result=await activities.captureMessagePage(run);
@@ -22,7 +22,7 @@ exports.captureSlackMessagesV1=async function captureSlackMessagesV1(input: Conn
  return continueAsNew(run);
 };
 
-exports.captureSlackMessageReferencesV1=async function captureSlackMessageReferencesV1(input: ConnectionReference & Omit<ReferenceRun, 'runId'> & {runId?: string}) {
+async function captureSlackMessageReferencesV1(input: ConnectionReference & Omit<ReferenceRun, 'runId'> & {runId?: string}) {
  const run={...input,runId:input.runId||workflowInfo().runId};
  for(let step=0;step<100;step++) {
   const result=await activities.captureMessageReference(run);
@@ -31,3 +31,5 @@ exports.captureSlackMessageReferencesV1=async function captureSlackMessageRefere
  }
  return continueAsNew(run);
 };
+
+export = {captureSlackFilesV1, captureSlackMessagesV1, captureSlackMessageReferencesV1};
