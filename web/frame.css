@@ -19,7 +19,6 @@ code{font-family:var(--font-mono)}
 @media(max-width:600px){
  :root{--pane-inset:var(--space-4);--header-height:60px}
  header nav{gap:var(--space-3)}
- header nav .quiet{padding-inline:var(--space-2)}
  main{padding-block:var(--space-10)}
  h1{font-size:var(--text-welcome-mobile)}
 }

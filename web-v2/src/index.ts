@@ -10,3 +10,4 @@ export {UsagePage} from './pages/usage.tsx';
 export {ago as relativeTime} from './pages/usage-model.ts';
 export {DiagnosticsPage, SearchInspector, JsonDisclosure} from './pages/diagnostics.tsx';
 export {FocusedFrame} from './design/focused-frame.tsx';
+export {ForumPanel, ForumPost} from './design/forum.tsx';
