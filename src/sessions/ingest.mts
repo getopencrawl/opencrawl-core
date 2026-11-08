@@ -5,13 +5,14 @@ import type {SearchAdapter} from '../search/types.mjs';
 import type {createCaptureCredentials} from './credentials.mjs';
 import type {IncomingMessage} from 'node:http';
 export interface SessionIngestOptions {store: ObjectStore; prefix?: string; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
+export interface SessionBatchReceipt {harness: string; installationId: string; sessionId: string; batchId: string; userId?: string}
 import {serviceError} from './types.mjs';
 import {gzipSync, gunzipSync} from 'node:zlib';
 import {digest,sessionScope,reserveSessionEvents} from './event-identity.mjs';
 import {createMemoryIngest,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
 export {digest,sessionScope,auditSessionEventIdentities,auditSessionEventSource} from './event-identity.mjs';
 
-const id = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
+const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 export const MAX_BATCH_BYTES = 16 * 1024 * 1024;
 export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
@@ -76,12 +77,12 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
       return {batchId, eventCount: batch.events.length, stored: true};
     },
     // The author selects a record within the authenticated tenant; it grants no authority.
-    async getBatch(principal: Principal, {harness, installationId, sessionId, batchId, userId=principal?.userId}: Record<string, string>) {
+    async getBatch(principal: Principal, {harness, installationId, sessionId, batchId, userId=principal?.userId}: Partial<SessionBatchReceipt>) {
       sessionScope(principal);
       if (!principal) fail(401, 'Authentication required');
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot read batches');
       if (!id(userId)) fail(400, 'Invalid author');
-      if (!['claude-code','codex'].includes(harness) || !id(installationId) || !id(sessionId) || !/^[a-f0-9]{64}$/.test(batchId)) fail(400, 'Invalid receipt');
+      if (!['claude-code','codex'].includes(harness ?? '') || !id(installationId) || !id(sessionId) || !/^[a-f0-9]{64}$/.test(batchId ?? '')) fail(400, 'Invalid receipt');
       const data = await store.get(`${scope({...principal,userId})}/${harness}/${digest(installationId)}/${digest(sessionId)}/${batchId}.json.gz`, {maxBytes: MAX_STORED_BATCH_BYTES});
       if (!data) return null;
       const batch = parseJson<SessionBatch>(gunzipSync(data,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}));
