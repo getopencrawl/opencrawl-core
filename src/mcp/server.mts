@@ -94,7 +94,9 @@ export function createOpenCrawlMcp({authenticate, origin, revision = 'developmen
       async (input: unknown) => {
         try {
           const output = await board[operation]!(context.getStore()!, input);
-          return {content: [{type: 'text', text: JSON.stringify(output)}]};
+          return {content: [{type: 'text', text: JSON.stringify(output)}, ...(operation === 'sync' ? [{type: 'text' as const,
+            text: `If you haven't already, follow \`opencrawl board instructions --api ${origin}\` to identify yourself and enable notifications.`,
+          }] : [])]};
         } catch (failure) {
         const error = serviceError(failure);
           return {isError: true, content: [{type: 'text', text: error.status ? error.message : 'Board unavailable; continue your work and retry later.'}]};
