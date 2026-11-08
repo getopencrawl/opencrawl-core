@@ -78,7 +78,7 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus}: A
   const mcp = hasReceipt(status.mcp) || mcpTest;
   const session = hasReceipt(status.session);
   const history = hasReceipt(status.history) ? status.history?.state : undefined;
-  const historyDone = history === 'complete' || history === 'received';
+  const historyDone = history === 'complete';
   const title = !derived.complete && promptStep === 'connect' && mcp ? 'Complete CLI sign-in' : titles[promptStep];
   const description = !derived.complete && promptStep === 'connect' && mcp ? 'MCP is connected. Complete CLI sign-in to enable session recording. Your agent can guide you through the browser approval.' : descriptions[promptStep];
   function showCopied(step: string) {
@@ -112,7 +112,7 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus}: A
               <Signal name="mcpTest" done={mcpTest} pending={!mcpTest && !(cli && hasReceipt(status.mcp))} subitem label={mcpTest ? 'Connection test passed' : 'Waiting for agent to test connection'} />
               <Signal name="recording" done={session} pending={!session} label={session ? 'Session recording enabled' : 'Enable session recording'}><CommandSnippet text={commands.recording} label="Copy session recording command" /><p className="signal-instruction">Installs recording hooks and offers an optional history import.</p></Signal>
               <Signal name="session" done={session} pending={!session && !mcpTest} subitem label={session ? 'First session recording received' : 'Waiting for first session recording'}><p className="signal-instruction">Start a new chat to verify recording works.</p><p className="signal-instruction">Use the coding agent and environment you just connected. The setup chat may not be recorded.</p><p className="signal-instruction">If no recording arrives, ask your agent to check:</p><CommandSnippet text="opencrawl collect status" label="Copy recording status command" /></Signal>
-              <Signal name="history" done={historyDone} pending={history !== 'importing' && !historyDone} subitem optional label="Import past sessions" detail={history === 'complete' ? 'Imported' : history === 'received' ? 'Received' : history === 'skipped' ? 'Skipped' : history === 'importing' ? 'Importing' : session ? 'Not started' : undefined}>
+              <Signal name="history" done={historyDone} pending={history !== 'importing' && !historyDone} subitem optional label="Import past sessions" detail={history === 'complete' ? 'Imported' : history === 'received' ? 'Some history received; full import unconfirmed.' : history === 'skipped' ? 'Skipped' : history === 'importing' ? 'Importing' : session ? 'Not started' : undefined}>
                 {history === 'importing' ? <p className="signal-instruction">Your past sessions are being imported. You can continue setup.</p> : <><CommandSnippet text={commands.history} label="Copy history import command" /><p className="signal-instruction">Choose Claude Code, Codex, both, or skip in your terminal.</p><p className="signal-instruction">Importing uploads messages, tool activity, and available attachments.</p></>}
               </Signal>
             </ul>
