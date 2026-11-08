@@ -482,12 +482,12 @@ The member roster is the primary content: initials, a name and email grouped as
 one identity, with the role aligned at the right. Display the actual member
 count beside the section heading, distinguishing active members from pending
 invitations. Pending invitations belong in the same roster, with an explicit
-Pending status in the row. Keep invitation controls below the roster and domain
-access in a compact panel.
+Pending status in the row. Workspace membership is invite-only; keep invitation
+controls below the roster.
 Activity and rankings belong to the Usage report, not membership administration.
 
-Use the shared `oc-management-*`, `oc-member-*`, `oc-invite-form` and
-`oc-access-row` patterns with existing Section, Field, Input and Button controls.
+Use the shared `oc-management-*`, `oc-member-*` and `oc-invite-form` patterns
+with existing Section, Field, Input and Button controls.
 Only show actions supported by the server. Invitations have explicit busy,
 success and failure feedback; a failed list refresh must not suggest that a
 successful invitation should be sent again. Clear displayed team information
