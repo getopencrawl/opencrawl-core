@@ -207,3 +207,11 @@ test('search returns another teammate with attribution and rejects foreign tenan
  await assert.rejects(search.search(owner),/ownership scope/);
  await assert.rejects(search.search(owner,{raw:true}),/ownership scope/);
 });
+
+// Hosted notification adapters must reuse core's existing memory key contract.
+test('public session indexer exposes the existing memory source identity validator', async () => {
+ const {memorySourceIdentity}=await import('@getopencrawl/opencrawl-core/sessions/indexer');
+ const {memorySourceIdentity: existing}=await import('../dist/src/memories/snapshot.mjs');
+ assert.equal(memorySourceIdentity,existing);
+ assert.equal(memorySourceIdentity('sessions/test/v1','outside/the/source.json.gz'),null);
+});
