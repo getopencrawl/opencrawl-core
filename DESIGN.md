@@ -459,3 +459,17 @@ Section's level-three variant. Report panels use 24px padding and 12px corners;
 metrics use 20px padding, 12px gaps and 32px figures. The display heading is 40px.
 Unavailable measurements stay distinct from measured zero, and tables scroll
 inside their own container at narrow widths.
+
+## Integrations restoration
+
+Keep the original Integrations directory composition: a centered 800px column,
+40px heading, and one catalog-ordered stack of source cards. Cards use the shared
+Night surface, 24px padding, 12px corners, inherited provider icons, and quiet
+disconnect controls. Connection status, genuine import progress and per-stream
+counts remain visible inside each card. Imported stream counts describe ingest
+progress; they do not replace Usage's indexed document-type counts.
+
+The shared `oc-connection-*` patterns own this presentation. Use shared Button,
+Dialog and Icon primitives for connection, help and removal. Keep sign-in
+recovery distinct from sync and deletion retries. `/sources` and its
+`/integrations` alias share one React page and the canonical AppShell top bar.
