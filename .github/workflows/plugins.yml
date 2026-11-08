@@ -4,7 +4,7 @@ permissions:
   contents: read
 jobs:
   validate:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     defaults:
       run:
         working-directory: plugins
