@@ -5,8 +5,8 @@ import {join} from 'node:path';
 import {createServer} from 'node:http';
 import {finalizeEventIdentity,hash} from '../src/capture/parse.ts';
 import {captureDir,captureTranscript,drainCaptureNotices,flushCaptures,type CaptureConfig} from '../src/capture/runtime.ts';
-import {createSessionIngest,auditSessionEventIdentities} from '../../src/sessions/ingest.mjs';
-import {createLocalSessionStore} from '../../src/sessions/local-store.mjs';
+import {createSessionIngest,auditSessionEventIdentities} from '../../dist/src/sessions/ingest.mjs';
+import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 
 async function fixture(run:(directory:string,config:CaptureConfig)=>Promise<void>) {
  const directory=mkdtempSync(join(tmpdir(),'capture-wire-identity-')),saved=process.env.OPENCRAWL_CONFIG_HOME;

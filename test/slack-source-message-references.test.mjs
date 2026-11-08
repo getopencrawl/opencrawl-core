@@ -1,8 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gunzipSync} from 'node:zlib';
-import {createSlackMessageReferenceCapture} from '../src/connectors/slack-source-message-references.mjs';
-import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
+import {createSlackMessageReferenceCapture} from '../dist/src/connectors/slack-source-message-references.mjs';
+import {createConnectorPipeline} from '../dist/src/connectors/pipeline.mjs';
 const binding={tenantId:'fixture',connectionId:'conn',workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:'raw/v1/source=slack/workspace=T123/connection=conn/'};
 const input={runId:'references',references:[{channelId:'C1',ts:'1.000001'},{channelId:'C1',ts:'2.000001',threadTs:'1.000001'}]};
 const ok=data=>({status:200,data:{ok:true,...data}});

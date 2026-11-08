@@ -1,8 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {createObjectStore} from '../src/sessions/s3-store.mjs';
-import {createConnectorWriteBarrier} from '../src/connectors/write-barrier.mjs';
+import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
+import {createConnectorWriteBarrier} from '../dist/src/connectors/write-barrier.mjs';
 
 test('real S3 conditional writes fence independent connector writers and retain the tombstone', {
   skip: !process.env.OPENCRAWL_TEST_S3_ENDPOINT,

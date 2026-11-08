@@ -2,12 +2,12 @@ import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gzipSync} from 'node:zlib';
-import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
-import {validateBinding, documentId, selectedObject} from '../src/connectors/scope.mjs';
-import {passages} from '../src/connectors/documents.mjs';
-import {normalizeGitHub} from '../src/connectors/github.mjs';
-import {workspaceAccumulator} from '../src/connectors/workspace.mjs';
+import {createConnectorPipeline} from '../dist/src/connectors/pipeline.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
+import {validateBinding, documentId, selectedObject} from '../dist/src/connectors/scope.mjs';
+import {passages} from '../dist/src/connectors/documents.mjs';
+import {normalizeGitHub} from '../dist/src/connectors/github.mjs';
+import {workspaceAccumulator} from '../dist/src/connectors/workspace.mjs';
 
 export const bindingFor = provider => ({tenantId: 'fixture-team', connectionId: 'fixture-conn', workspaceId: 'workspace', provider,
   access: 'workspace-global', rawPrefix: `raw/v1/source=${provider}/workspace=workspace/connection=fixture-conn/`});

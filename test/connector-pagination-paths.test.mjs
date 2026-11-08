@@ -4,7 +4,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {paginationFixture} from './fixtures/connector-pagination-paths.mjs';
-import {SourcePaginationError} from '../src/connectors/workflow.mjs';
+import {SourcePaginationError} from '../dist/src/connectors/workflow.mjs';
 
 const cycle = cursor => ({keys: [], nextToken: cursor === 'A' ? 'B' : 'A'});
 const isCycle = error => error instanceof SourcePaginationError && error.code === 'cycle' && error.message === 'Source pagination cursor cycle detected';

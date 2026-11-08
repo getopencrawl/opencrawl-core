@@ -6,9 +6,9 @@ import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {createServer} from 'node:http';
-import {standaloneCapture} from '../../src/sessions/standalone.mjs';
-import {createSessionIngest} from '../../src/sessions/ingest.mjs';
-import {createLocalSessionStore} from '../../src/sessions/local-store.mjs';
+import {standaloneCapture} from '../../dist/src/sessions/standalone.mjs';
+import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
+import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 const nodeExecutable = Bun.which('node');
 if (!nodeExecutable) throw new Error('Node is required for the npm upgrade smoke test.');
 const npmCommand = [nodeExecutable, createRequire(import.meta.url)('../bin/opencrawl.cjs').npmCli(nodeExecutable)];
@@ -107,7 +107,7 @@ try {
     if(status.queued!==0||status.owner.tenantId!==principal.tenantId||status.installationId!==config.installationId)throw new Error('Updated capture status is inconsistent');
     if(readFileSync(join(capture,'state','cursor.json'),'utf8')!=='{"offset":42}')throw new Error('Upgrade changed capture cursor');
     const stored=await createSessionIngest({store}).getBatch(principal,{...batch,batchId:status.lastUpload.batchId});
-    if(stored?.owner.userId!==principal.userId||stored?.owner.tenantId!==principal.tenantId||stored?.events[0].data.content!=='synthetic upgrade fixture')throw new Error('Upgrade lost attribution or queued content');
+    if(stored?.owner.userId!==principal.userId||stored?.owner.tenantId!==principal.tenantId||stored?.events[0].data?.content!=='synthetic upgrade fixture')throw new Error('Upgrade lost attribution or queued content');
     console.log(`Real npm upgrade ${original.version} → ${version}, original-command reuse and queued capture recovery without reinstall verified.`);
   } finally { server.stop(true); }
  } finally {

@@ -3,8 +3,8 @@ import {createServer,type IncomingMessage} from 'node:http';
 import {mkdtempSync,readFileSync,writeFileSync,readdirSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {createSessionIngest,createCaptureHandler} from '../../src/sessions/ingest.mjs';
-import {createLocalSessionStore} from '../../src/sessions/local-store.mjs';
+import {createSessionIngest,createCaptureHandler} from '../../dist/src/sessions/ingest.mjs';
+import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 import {installCapture} from '../src/capture/install.ts';
 import {captureDir,readCaptureConfig,flushCaptures,refreshCaptureIdentity} from '../src/capture/runtime.ts';
 import {hash} from '../src/capture/parse.ts';
@@ -58,6 +58,7 @@ test('capture pins queued data to its original team and human before any attachm
   const sent=JSON.parse(payloads[0]);expect(sent.owner).toEqual(principal);
   const receipt={...sent,batchId:hash(payloads[0]),userId:principal.userId};
   const stored=await ingest.getBatch({...principal,userId:'teammate'},receipt);
+  if(!stored)throw new Error('Expected the stored capture batch');
   expect(stored.owner).toEqual(principal);expect(stored.events).toEqual(batch.events);
   expect(await ingest.getBatch({...principal,tenantId:'org_other'},receipt)).toBeNull();
   expect(readCaptureConfig()).toEqual({...installed,owner:principal});

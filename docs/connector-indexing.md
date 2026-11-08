@@ -103,8 +103,8 @@ configuration file (credentials stay in environment variables):
 Set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for your object store, then:
 
 ```sh
-node src/connectors/standalone.mjs index /path/to/config.json
-node src/connectors/standalone.mjs search /path/to/config.json 'release checklist'
+node dist/src/connectors/standalone.mjs index /path/to/config.json
+node dist/src/connectors/standalone.mjs search /path/to/config.json 'release checklist'
 ```
 
 The CLI is local and takes an operator-controlled scope; it exposes no network
@@ -134,7 +134,7 @@ For the standalone worker, add `temporal` to the protected config above, with
 persistent Temporal server first. Then run:
 
 ```sh
-node src/connectors/temporal/standalone.mjs /path/to/config.json /path/to/workflow-bundle.cjs
+node dist/src/connectors/temporal/standalone.mjs /path/to/config.json /path/to/workflow-bundle.cjs
 ```
 
 It creates a five-minute durable schedule and triggers its initial sweep. Restart

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createObjectStore} from '../src/sessions/s3-store.mjs';
+import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
 
 test('S3 pagination omits persisted end-of-list null and preserves opaque tokens',async()=>{
  const requests=[];

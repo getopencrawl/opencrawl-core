@@ -1,8 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {seedSlackSourceCatalog as seedFiles} from '../src/connectors/slack-source-files.mjs';
-import {seedSlackSourceCatalog as seedMessages,createSlackMessageCapture} from '../src/connectors/slack-source-messages.mjs';
-import {digest} from '../src/connectors/scope.mjs';
+import {seedSlackSourceCatalog as seedFiles} from '../dist/src/connectors/slack-source-files.mjs';
+import {seedSlackSourceCatalog as seedMessages,createSlackMessageCapture} from '../dist/src/connectors/slack-source-messages.mjs';
+import {digest} from '../dist/src/connectors/scope.mjs';
 import {gunzipSync} from 'node:zlib';
 
 const binding={tenantId:'team',connectionId:'connection',workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:'raw/v1/source=slack/workspace=T123/connection=connection/'};

@@ -4,7 +4,7 @@ import { readFile, readdir, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { hello, renderHello } from '../src/index.mjs';
+import { hello, renderHello } from '../dist/src/index.mjs';
 
 const sourceRoot = new URL('../src/', import.meta.url);
 
@@ -17,7 +17,7 @@ function checkImports(source, file, root = sourceRoot) {
     assert.ok(!specifier.includes('\\'), `Escaped dependency needs review: ${specifier}`);
     if (specifier.startsWith('node:') || ['@modelcontextprotocol/server', '@modelcontextprotocol/node', 'zod'].includes(specifier)) continue;
     // Document parsers run only in the bounded, credential-free extraction thread.
-    if (file.href.endsWith('/connectors/document-text-worker.mjs') && ['parse5', 'pdfjs-dist/legacy/build/pdf.mjs'].includes(specifier)) continue;
+    if (file.href.endsWith('/connectors/document-text-worker.mts') && ['parse5', 'pdfjs-dist/legacy/build/pdf.mjs'].includes(specifier)) continue;
     // Temporal is an optional customer-operated adapter, not a domain dependency.
     if ((file.href.includes('/connectors/temporal/') || file.href.includes('/sessions/temporal/')) && ['@temporalio/worker', '@temporalio/activity', '@temporalio/workflow', '@temporalio/common', '@temporalio/client'].includes(specifier)) continue;
     assert.ok(specifier.startsWith('./') || specifier.startsWith('../'), `Forbidden core dependency: ${specifier}`);

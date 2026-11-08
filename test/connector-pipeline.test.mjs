@@ -1,14 +1,14 @@
-import {realmIndex} from '../src/search/realm.mjs';
+import {realmIndex} from '../dist/src/search/realm.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gzipSync} from 'node:zlib';
-import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
-import {normalizeSlack} from '../src/connectors/slack.mjs';
-import {documentId, receiptKey, validateBinding} from '../src/connectors/scope.mjs';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
-import {runConnectorSegment} from '../src/connectors/workflow.mjs';
-import {createObjectStore} from '../src/sessions/s3-store.mjs';
+import {createConnectorPipeline} from '../dist/src/connectors/pipeline.mjs';
+import {normalizeSlack} from '../dist/src/connectors/slack.mjs';
+import {documentId, receiptKey, validateBinding} from '../dist/src/connectors/scope.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
+import {runConnectorSegment} from '../dist/src/connectors/workflow.mjs';
+import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
 
 const binding = {tenantId: 'tenant-a', connectionId: 'conn', workspaceId: 'T123', provider: 'slack', access: 'team-public', rawPrefix: 'raw/v1/source=slack/workspace=T123/connection=conn/'};
 const key = (stream = 'channel_messages', file = '1') => `${binding.rawPrefix}stream=${stream}/date=2026-11-04/sync=1/${file}.jsonl.gz`;
