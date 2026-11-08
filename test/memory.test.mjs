@@ -36,7 +36,9 @@ test('native memory snapshots authenticate, land immutably, retry and share the 
     await assert.rejects(ingest.putMemorySnapshot({...owner,tenantId:'tenant-b'},s),/owner/);
     await assert.rejects(createSessionPipeline({store,prefix,search,principal:{...owner,userId:'bob'}}).processObject({key}),/outside/);
   }
-  assert.equal((await pipeline.listPage()).keys.length,2);
+  // Both snapshots are discoverable as memory objects, then filtered once indexed.
+  assert.equal((await createSessionPipeline({store,prefix,search:{...search,identity:'fresh-index'},principal:owner}).listPage()).keys.length,2);
+  assert.equal((await pipeline.listPage()).keys.length,0);
   assert.equal(calls.length,2);
 });
 test('malformed paths, duplicate files, false owners and changed stored content fail before indexing',async()=>{
