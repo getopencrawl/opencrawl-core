@@ -39,3 +39,9 @@ tree. Usage is one page ordered Agent sessions, Data sources, Team. Show real
 indexed document-type counts inside each source tile, separately from imported
 records; never compare distinct corpora with relative-size bars. Restore and
 review one screen before redesigning another.
+
+Integrations preserves the original centered, catalog-ordered stack of connection
+cards through the shared `oc-connection-*` patterns. Keep per-stream import counts
+visible; use real progress only when it measures completed work against a known
+total. Retain shared dialogs and the distinct recovery paths for sign-in, sync,
+and permanent deletion.
