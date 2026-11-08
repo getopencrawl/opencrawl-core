@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-08T00:18:07.477961Z",
+  "title": "Design System: OpenCrawl Night",
+  "extensions": {
+    "typographyMeta": {
+      "display": {
+        "displayName": "Legacy display",
+        "purpose": "Established large display surfaces; not the console page heading."
+      },
+      "console-heading": {
+        "displayName": "Console heading",
+        "purpose": "The single page title in PageHeader."
+      },
+      "console-heading-compact": {
+        "displayName": "Compact console heading",
+        "purpose": "Page heading at 800px and below."
+      },
+      "mono": {
+        "displayName": "Technical text",
+        "purpose": "Identifiers, commands and selectable copy fields."
+      },
+      "metric": {
+        "displayName": "Metric value",
+        "purpose": "Operational metrics with tabular numerals."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-paper",
+        "value": "inset 0 1px 0 rgb(255 255 255 / .04)",
+        "purpose": "Inherited subtle inset highlight on the approved onboarding panel."
+      },
+      {
+        "name": "shadow-floating",
+        "value": "0 8px 28px rgb(0 0 0 / .6)",
+        "purpose": "Inherited floating-surface elevation token."
+      },
+      {
+        "name": "shadow-dialog",
+        "value": "0 35px 120px rgb(0 0 0 / .6)",
+        "purpose": "React modal elevation."
+      },
+      {
+        "name": "logo-layers-wide",
+        "value": "-2px 0 0 var(--brand-coral), 2px 0 0 var(--brand-cobalt)",
+        "purpose": "Primary button hover only; removed at rest and press."
+      }
+    ],
+    "motion": [
+      {
+        "name": "motion-fast",
+        "value": "160ms ease-out",
+        "purpose": "Shared control and navigation state transitions."
+      },
+      {
+        "name": "pending-spin",
+        "value": "1s linear infinite",
+        "purpose": "Existing pending indicator rotation; reduced motion suppresses repetition."
+      },
+      {
+        "name": "reduced-motion",
+        "value": ".01ms",
+        "purpose": "Console transition and animation duration under prefers-reduced-motion, with one animation iteration."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "console-content-compact",
+        "value": "1100px"
+      },
+      {
+        "name": "console-mobile",
+        "value": "800px"
+      },
+      {
+        "name": "focused-and-stacked-content",
+        "value": "600px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Shared React console primary action; native semantics and keyboard focus.",
+      "html": "<button type=\"button\" class=\"ds-button-primary\">Continue</button>",
+      "css": ".ds-button-primary{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:var(--control-height);padding:var(--space-2) var(--space-4);border:1px solid transparent;border-radius:var(--radius-control);background:transparent;color:var(--text);font-family:var(--font-sans);font-size:var(--text-ui);font-weight:500;line-height:var(--leading-ui);text-decoration:none;white-space:nowrap;cursor:pointer;transition:background var(--motion-fast),color var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast);background:var(--primary);border-color:var(--primary);color:var(--on-primary);}.ds-button-primary:hover:not(:disabled){background:var(--primary-hover);border-color:var(--primary-hover);color:var(--on-primary);box-shadow:var(--logo-layers-wide);}.ds-button-primary:active:not(:disabled){box-shadow:none;}.ds-button-primary:focus-visible { outline: var(--console-focus-ring); outline-offset: var(--console-focus-offset); }.ds-button-primary:disabled{background:var(--surface-subtle);color:var(--quiet);border-color:var(--line);box-shadow:none;cursor:not-allowed;}@media(max-width:800px),(pointer:coarse){.ds-button-primary{min-height:44px;}}@media(prefers-reduced-motion:reduce){.ds-button-primary{transition-duration:.01ms;}}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Shared React console secondary action; native semantics and keyboard focus.",
+      "html": "<button type=\"button\" class=\"ds-button-secondary\">Refresh</button>",
+      "css": ".ds-button-secondary{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:var(--control-height);padding:var(--space-2) var(--space-4);border:1px solid transparent;border-radius:var(--radius-control);background:transparent;color:var(--text);font-family:var(--font-sans);font-size:var(--text-ui);font-weight:500;line-height:var(--leading-ui);text-decoration:none;white-space:nowrap;cursor:pointer;transition:background var(--motion-fast),color var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast);background:var(--surface-subtle);border-color:var(--control-line);color:var(--text);}.ds-button-secondary:hover:not(:disabled){background:var(--surface-raised);border-color:var(--quiet);}.ds-button-secondary:focus-visible { outline: var(--console-focus-ring); outline-offset: var(--console-focus-offset); }.ds-button-secondary:disabled{background:var(--surface-subtle);color:var(--quiet);border-color:var(--line);box-shadow:none;cursor:not-allowed;}@media(max-width:800px),(pointer:coarse){.ds-button-secondary{min-height:44px;}}@media(prefers-reduced-motion:reduce){.ds-button-secondary{transition-duration:.01ms;}}"
+    },
+    {
+      "name": "Quiet Button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "Shared React console quiet action; native semantics and keyboard focus.",
+      "html": "<button type=\"button\" class=\"ds-button-quiet\">Cancel</button>",
+      "css": ".ds-button-quiet{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:var(--control-height);padding:var(--space-2) var(--space-4);border:1px solid transparent;border-radius:var(--radius-control);background:transparent;color:var(--text);font-family:var(--font-sans);font-size:var(--text-ui);font-weight:500;line-height:var(--leading-ui);text-decoration:none;white-space:nowrap;cursor:pointer;transition:background var(--motion-fast),color var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast);color:var(--muted);}.ds-button-quiet:hover:not(:disabled){background:var(--surface-subtle);color:var(--text);}.ds-button-quiet:focus-visible { outline: var(--console-focus-ring); outline-offset: var(--console-focus-offset); }.ds-button-quiet:disabled{background:var(--surface-subtle);color:var(--quiet);border-color:var(--line);box-shadow:none;cursor:not-allowed;}@media(max-width:800px),(pointer:coarse){.ds-button-quiet{min-height:44px;}}@media(prefers-reduced-motion:reduce){.ds-button-quiet{transition-duration:.01ms;}}"
+    },
+    {
+      "name": "Plain Button",
+      "kind": "button",
+      "refersTo": "button-plain",
+      "description": "Shared React console plain action; native semantics and keyboard focus.",
+      "html": "<button type=\"button\" class=\"ds-button-plain\">Details</button>",
+      "css": ".ds-button-plain{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:var(--control-height);padding:var(--space-2) var(--space-4);border:1px solid transparent;border-radius:var(--radius-control);background:transparent;color:var(--text);font-family:var(--font-sans);font-size:var(--text-ui);font-weight:500;line-height:var(--leading-ui);text-decoration:none;white-space:nowrap;cursor:pointer;transition:background var(--motion-fast),color var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast);color:var(--text);}.ds-button-plain:hover:not(:disabled){background:var(--surface-subtle);color:var(--text);}.ds-button-plain:focus-visible { outline: var(--console-focus-ring); outline-offset: var(--console-focus-offset); }.ds-button-plain:disabled{background:var(--surface-subtle);color:var(--quiet);border-color:var(--line);box-shadow:none;cursor:not-allowed;}@media(max-width:800px),(pointer:coarse){.ds-button-plain{min-height:44px;}}@media(prefers-reduced-motion:reduce){.ds-button-plain{transition-duration:.01ms;}}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Shared React console danger action; native semantics and keyboard focus.",
+      "html": "<button type=\"button\" class=\"ds-button-danger\">Remove source</button>",
+      "css": ".ds-button-danger{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:var(--control-height);padding:var(--space-2) var(--space-4);border:1px solid transparent;border-radius:var(--radius-control);background:transparent;color:var(--text);font-family:var(--font-sans);font-size:var(--text-ui);font-weight:500;line-height:var(--leading-ui);text-decoration:none;white-space:nowrap;cursor:pointer;transition:background var(--motion-fast),color var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast);color:var(--danger);background:var(--danger-wash);border-color:var(--danger);}.ds-button-danger:hover:not(:disabled){color:var(--strong);border-color:var(--danger-strong);}.ds-button-danger:focus-visible { outline: var(--console-focus-ring); outline-offset: var(--console-focus-offset); }.ds-button-danger:disabled{background:var(--surface-subtle);color:var(--quiet);border-color:var(--line);box-shadow:none;cursor:not-allowed;}@media(max-width:800px),(pointer:coarse){.ds-button-danger{min-height:44px;}}@media(prefers-reduced-motion:reduce){.ds-button-danger{transition-duration:.01ms;}}"
+    },
+    {
+      "name": "Labeled Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Visible label, adjacent guidance and invalid/disabled treatments.",
+      "html": "<div class=\"ds-field\"><label for=\"ds-source-name\">Source name</label><input id=\"ds-source-name\" class=\"ds-input\" placeholder=\"Enter a name\" aria-describedby=\"ds-source-hint\"><span id=\"ds-source-hint\">Use a name your workspace recognizes.</span></div>",
+      "css": ".ds-field{display:grid;gap:var(--space-2);font-family:var(--font-sans);color:var(--text);}.ds-field>label{font-size:var(--text-sm);font-weight:500;}.ds-field>span{font-size:var(--text-sm);color:var(--muted);}.ds-input{width:100%;min-width:0;min-height:var(--control-height);padding:var(--space-2) var(--space-3);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface);color:var(--text);font-family:var(--font-sans);font-size:var(--text-ui);line-height:var(--leading-ui);caret-color:var(--accent);}.ds-input::placeholder{color:var(--quiet);opacity:1;}.ds-input:focus-visible { outline: var(--console-focus-ring); outline-offset: var(--console-focus-offset); }.ds-input[aria-invalid=\"true\"]{border-color:var(--danger);}.ds-input:disabled{background:var(--surface-subtle);color:var(--quiet);cursor:not-allowed;}@media(max-width:800px){.ds-input{min-height:44px;font-size:16px;}}@media(pointer:coarse){.ds-input{min-height:44px;}}"
+    },
+    {
+      "name": "Workspace Navigation",
+      "kind": "nav",
+      "refersTo": "navigation-item",
+      "description": "The shared sidebar link treatment, including the current page.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Workspace preview\"><a class=\"ds-nav-link\" href=\"#overview\" aria-current=\"page\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M3 10 12 3l9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z\"/></svg>Overview</a><a class=\"ds-nav-link\" href=\"#sources\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M7 7h10v10H7z M3 3h3 M18 3h3v3 M21 18v3h-3 M6 21H3v-3\"/></svg>Sources</a></nav>",
+      "css": ".ds-nav{display:grid;gap:var(--space-1);background:var(--surface);font-family:var(--font-sans);font-size:var(--text-ui);}.ds-nav-link{display:flex;align-items:center;gap:var(--space-3);min-height:var(--control-height);padding:var(--space-2) var(--space-3);border-radius:var(--radius-control);color:var(--muted);text-decoration:none;transition:background var(--motion-fast),color var(--motion-fast);}.ds-nav-link:hover{background:var(--surface-subtle);color:var(--text);}.ds-nav-link[aria-current=\"page\"]{background:var(--wash);color:var(--accent);}.ds-nav-link:focus-visible { outline: var(--console-focus-ring); outline-offset: var(--console-focus-offset); }@media(max-width:800px),(pointer:coarse){.ds-nav-link{min-height:44px;}}@media(prefers-reduced-motion:reduce){.ds-nav-link{transition-duration:.01ms;}}"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Readable operational status with the shared semantic color pairs.",
+      "html": "<div class=\"ds-badges\"><span class=\"ds-badge\">Connected</span><span class=\"ds-badge ds-badge-success\">Synced</span><span class=\"ds-badge ds-badge-warning\">Pending</span><span class=\"ds-badge ds-badge-danger\">Failed</span></div>",
+      "css": ".ds-badges{display:flex;flex-wrap:wrap;gap:var(--space-2);}.ds-badge{display:inline-flex;align-items:center;padding:var(--space-1) var(--space-2);border-radius:var(--radius-badge);font-family:var(--font-sans);font-size:var(--text-xs);line-height:1.25;color:var(--muted);background:var(--surface-raised);white-space:nowrap;}.ds-badge-success{color:var(--success);background:var(--success-wash);}.ds-badge-warning{color:var(--pending);background:var(--pending-wash);}.ds-badge-danger{color:var(--danger);background:var(--danger-wash);}"
+    },
+    {
+      "name": "Technical Inset",
+      "kind": "card",
+      "refersTo": "inset",
+      "description": "The shared quiet code surface, used within an operational section.",
+      "html": "<div class=\"ds-inset\"><code>opencrawl collect status --json</code></div>",
+      "css": ".ds-inset{padding:var(--space-4);background:var(--surface-subtle);border-radius:var(--radius-control);color:var(--text);overflow:auto;overflow-wrap:anywhere;}.ds-inset code{font-family:var(--font-mono);font-size:var(--text-sm);line-height:var(--leading-ui);}"
+    },
+    {
+      "name": "Dialog Surface",
+      "kind": "custom",
+      "refersTo": "dialog",
+      "description": "Static preview of the native modal surface; the React Dialog supplies modal behavior.",
+      "html": "<section class=\"ds-dialog\" role=\"region\" aria-labelledby=\"ds-dialog-title\"><h2 id=\"ds-dialog-title\">Remove source</h2><p>Review the source and its imported content before removing it.</p></section>",
+      "css": ".ds-dialog{width:min(var(--console-dialog-width),calc(100vw - var(--space-8)));max-height:calc(100dvh - var(--space-8));padding:var(--space-6);border:0;border-radius:var(--radius-panel);background:var(--surface-raised);color:var(--text);box-shadow:var(--shadow-dialog);font-family:var(--font-sans);font-size:var(--text-ui);line-height:var(--leading-ui);}.ds-dialog h2{margin:0 0 var(--space-3);font-size:var(--text-heading);font-weight:600;letter-spacing:var(--tracking-heading);color:var(--strong);}.ds-dialog p{margin:0;color:var(--muted);}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Night",
+    "overview": "Night is the getopencrawl.com identity: a plain black canvas, near-black surfaces\nwith hairline boundaries, Geist type, and periwinkle actions drawn from the\nOpenCrawl mark. The console applies that identity to compact, readable operational\nwork. Hierarchy comes from type, spacing, rows and sections; color identifies\ninteraction and meaningful status.\n\nCore owns the shared visual system for hosted and single-tenant deployments.\n`web/tokens.css` remains the canonical palette, fonts, spacing, radii and elevation\nsource. `web-v2/src/design/tokens.css` extends it with console dimensions and focus\nconstants; `web-v2/src/design/styles.css` owns the React layout and component\npresentation. The frontmatter records their approved values; update the owning\nCSS and this document together. Color aliases are resolved here without changing\nthe source color format. The sidecar carries motion, depth and component previews.\n\nThe retained `web/frame.css` and `web/controls.css` describe the earlier shared\nframe and controls; they do not own the React workspace shell. React onboarding\npreserves its approved presentation in `web-v2/src/onboarding/onboarding.css`.\nUse the existing self-hosted fonts, OC marks, provider logos and shared SVG icons.\nThe font license remains at `web/assets/Geist-OFL.txt`.",
+    "keyCharacteristics": [
+      "Dark-only Night palette and inherited brand assets.",
+      "One React workspace shell, with compact rows and a persistent desktop sidebar.",
+      "Quiet default controls, visible keyboard focus and explicit operational states.",
+      "A separate focused onboarding composition within the same design system."
+    ],
+    "rules": [
+      {
+        "name": "The Shared Palette Rule",
+        "body": "Feature pages use the canonical Night tokens; a new\nreusable visual value belongs in the core design system, never a page-local palette.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Shell Rule",
+        "body": "Pages own their content; core owns workspace navigation,\nresponsive chrome and shared layout. Internal links use the router and preserve\nhistory without document reloads. Full navigation is for external authorization,\nauthentication and deployment boundaries.",
+        "section": "layout"
+      }
+    ],
+    "dos": [
+      "Do reuse the Night tokens, existing brand assets and self-hosted Geist fonts.",
+      "Do compose each workspace page from the shared shell, layout and controls.",
+      "Do show labeled loading, empty, error, busy and current states with recovery.",
+      "Do preserve the approved onboarding composition, receipts and optional invitations.",
+      "Do verify keyboard focus, narrow layouts, internal history and onboarding appearance."
+    ],
+    "donts": [
+      "Don't create another workspace navigation, page-local palette or feature stylesheet.",
+      "Don't substitute new illustrations, fonts or provider marks for the inherited assets.",
+      "Don't use status color without explanatory text or make client visibility an authority check.",
+      "Don't replace onboarding's focused panel with the console sidebar or change its gates for styling."
+    ]
+  }
+}
