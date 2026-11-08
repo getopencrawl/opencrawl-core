@@ -15,6 +15,7 @@ export function searchGroups(data: DiagnosticSearch) {
   return [
     ...(data.sessions || []).map(session => ({label:'Agent sessions', hits:session.response.hits?.hits || [], total:session.response.hits?.total?.value, state:session.response.state})),
     ...(data.connectors ? [{label:'Connected sources', hits:(data.connectors.responses || []).flatMap(response => response.hits?.hits || []), state:data.connectors.state, truncated:data.connectors.truncated}] : []),
+    ...(data.memories ? [{label:'Agent memories', hits:data.memories.hits?.hits || [], total:data.memories.hits?.total?.value, state:data.memories.state, truncated:data.memories.truncated}] : []),
   ];
 }
 export function JsonDisclosure({label, value}: {label: string; value: unknown}) {

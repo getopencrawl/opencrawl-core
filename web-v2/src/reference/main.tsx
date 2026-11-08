@@ -6,6 +6,7 @@ import {AppShell} from '../app.tsx';
 import {Button, CopyField, EmptyState, Field, Input, LoadingState, Notice, PageHeader, Section, Table} from '../design/components.tsx';
 import {JsonDisclosure, SearchInspector} from '../pages/diagnostics.tsx';
 import type {DiagnosticSearch, NavigationItem} from '../index.ts';
+import {workspaceSearchDiagnostics} from './search.ts';
 
 type ObjectValue = Record<string, unknown>;
 function object(value: unknown): ObjectValue {return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {};}
@@ -19,10 +20,7 @@ async function request(path: string, signal: AbortSignal, body?: ObjectValue): P
 }
 const adapter = {async search(query: string, signal: AbortSignal): Promise<DiagnosticSearch> {
   const response = await request('/api/reference/search', signal, {query});
-  const data = object(response.data), results = rows(data.results), coverage = rows(data.coverage);
-  const group = (source: string) => results.filter(item => item.source === source).map(item => ({_id:text(item.id), _source:{...object(item.provenance), title:item.title, text:item.text, provenance:item.provenance, passageId:item.id}}));
-  const sessionHits = group('sessions'), connectorHits = group('connectors');
-  return {sessions:[{scope:'workspace',response:{state:text(coverage.find(item => item.source === 'sessions')?.state),hits:{hits:sessionHits,total:{value:sessionHits.length}}}}], connectors:{state:text(coverage.find(item => item.source === 'connectors')?.state),truncated:Boolean(data.truncated), responses:[{hits:{hits:connectorHits,total:{value:connectorHits.length}}}]}};
+  return workspaceSearchDiagnostics(response.data);
 }};
 function PassageReader() {
   const [id, setId] = useState(''), [result, setResult] = useState<ObjectValue | null>(null), [error, setError] = useState(''), [busy,setBusy] = useState(false);

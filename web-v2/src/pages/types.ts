@@ -20,6 +20,7 @@ export interface SearchResponse {state?: string; hits?: {total?: {value: number}
 export interface DiagnosticSearch {
   sessions?: Array<{scope: string; response: SearchResponse}>;
   connectors?: {state?: string; truncated?: boolean; responses?: SearchResponse[]};
+  memories?: SearchResponse & {truncated?: boolean};
 }
 export interface BoardMessage {id: number; timestamp: number; name: string; agent: string; topic: string; text: string}
 export interface BoardReport {
