@@ -480,8 +480,10 @@ recovery distinct from sync and deletion retries. `/sources` and its
 Team uses the same centered 800px column and display heading as Integrations.
 The member roster is the primary content: initials, a name and email grouped as
 one identity, with the role aligned at the right. Display the actual member
-count beside the section heading. Keep invitation controls beside the roster,
-pending invitations in their own list, and domain access in a compact panel.
+count beside the section heading, distinguishing active members from pending
+invitations. Pending invitations belong in the same roster, with an explicit
+Pending status in the row. Keep invitation controls below the roster and domain
+access in a compact panel.
 Activity and rankings belong to the Usage report, not membership administration.
 
 Use the shared `oc-management-*`, `oc-member-*`, `oc-invite-form` and
@@ -490,3 +492,8 @@ Only show actions supported by the server. Invitations have explicit busy,
 success and failure feedback; a failed list refresh must not suggest that a
 successful invitation should be sent again. Clear displayed team information
 and privileged controls when membership or authentication is revoked.
+
+Team updates automatically every 30 seconds while visible and when returning
+to the page. Normal use has no Refresh button. Background updates preserve
+input and focus, skip overlapping reads, pause during mutations and while hidden,
+and stop on unmount. Keep a retry action for initial loading failures.
