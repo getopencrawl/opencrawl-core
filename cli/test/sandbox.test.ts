@@ -112,6 +112,14 @@ test.skipIf(process.platform !== 'darwin' || !existsSync('/usr/bin/sandbox-exec'
     expect(human.output).toBe('');
     expect(human.error).toContain('Permission denied');
     expect(human.error).not.toContain('login to repair');
+    const preload = join(directory, 'registry-fixture.cjs');
+    writeFileSync(preload, `global.fetch = async () => Response.json({name: '@getopencrawl/cli', version: '0.0.0'});`);
+    const update = Bun.spawn(['/usr/bin/sandbox-exec', '-p', profile, Bun.which('node')!, '--require', preload, resolve(import.meta.dir, '../bin/opencrawl.cjs'), 'update', '--json'], {env: {...process.env, XDG_CACHE_HOME: directory}, stdout: 'pipe', stderr: 'pipe'});
+    expect(await update.exited).toBe(1);
+    const updateOutput = await new Response(update.stdout).text();
+    expect(JSON.parse(updateOutput)).toMatchObject({schemaVersion: 1, error: {code: 'PERMISSION_DENIED'}});
+    expect(updateOutput).toContain('cache directory');
+    expect(await new Response(update.stderr).text()).toBe('');
   } finally {
     server.stop(true);
     if (previous === undefined) delete process.env.OPENCRAWL_CONFIG_HOME; else process.env.OPENCRAWL_CONFIG_HOME = previous;
