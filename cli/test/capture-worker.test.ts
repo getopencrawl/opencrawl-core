@@ -4,7 +4,7 @@ import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
 import {installCapture,uninstallCapture,upgradeCaptureHooks} from '../src/capture/install.ts';
-import {captureHook,captureWorker,captureDir,captureStatus,readCaptureConfig,flushCaptures,drainCaptureNotices} from '../src/capture/runtime.ts';
+import {captureHook,captureWorker,captureDir,captureStatus,readCaptureConfig,flushCaptures,flushCaptureWork,drainCaptureNotices} from '../src/capture/runtime.ts';
 import {withSessionLock,sessionFile} from '../src/session.ts';
 import {backfill} from '../src/capture/backfill.ts';
 import {hash} from '../src/capture/parse.ts';
@@ -35,7 +35,7 @@ async function fixture(run:(f:any)=>Promise<void>){
   const path=join(dir,'claude','projects','fixture','session.jsonl');mkdirSync(join(path,'..'),{recursive:true});
   const record=(id:string)=>JSON.stringify({type:'user',uuid:id,sessionId:'session',message:{role:'user',content:'synthetic '+id}})+'\n';
   writeFileSync(path,record('one'));
-  await run({dir,api,path,record,batches,payloads,get requests(){return requests;},set delay(v:number){delay=v;},set loseAck(v:boolean){loseAck=v;},set holdAck(v:boolean){holdAck=v;}});
+  await run({dir,api,path,record,batches,payloads,owner,get requests(){return requests;},set delay(v:number){delay=v;},set loseAck(v:boolean){loseAck=v;},set holdAck(v:boolean){holdAck=v;}});
  }finally{
   try{await uninstallCapture(dir);}catch{}
   server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));
@@ -119,6 +119,35 @@ test('credential-free cloud preparation returns before network; first hook stays
  expect(readCaptureConfig()!.authPending).toBe(false);expect(readCaptureConfig()!.installationId).not.toBe('pending');
  expect(f.batches.every((b:any)=>b.owner.userId==='fixture'&&b.installationId!=='pending')).toBe(true);
  expect(f.batches.length).toBeGreaterThan(0);expect(captureStatus().pendingHooks).toBe(0);
+}));
+
+test('repeated cloud preparation preserves enrollment and pending notices across a team or author change',async()=>fixture(async f=>{
+ const original=readCaptureConfig()!;
+ await captureHook('claude-code',{session_id:'session',transcript_path:f.path,hook_event_name:'SessionStart'});
+ expect(captureStatus().pendingHooks).toBe(1);
+ const before=f.requests;
+ delete process.env.OPENCRAWL_SESSIONS_TOKEN;
+ rmSync(join(captureDir(),'receiver-token.json'));
+ const setup=await installCapture(f.api,{home:f.dir,command:[],harnesses:['claude-code'],deferAuth:true});
+ expect(f.requests).toBe(before);
+ expect(setup.owner).toEqual(original.owner);
+ expect(setup.installationId).toBe(original.installationId);
+ expect(readCaptureConfig()!.authPending).not.toBe(true);
+ process.env.OPENCRAWL_SESSIONS_TOKEN='synthetic-runtime-token';
+ for(const changed of [{...original.owner,tenantId:'other-team'},{...original.owner,userId:'other-user'}]){
+  Object.assign(f.owner,changed);
+  await expect(flushCaptureWork()).rejects.toMatchObject({code:'CAPTURE_DESTINATION_CHANGED'});
+  expect(f.payloads).toHaveLength(0);
+  const queued=readdirSync(join(captureDir(),'queue')).map(name=>JSON.parse(readFileSync(join(captureDir(),'queue',name),'utf8')));
+  expect(queued.length).toBeGreaterThan(0);
+  expect(queued.every(batch=>batch.owner.tenantId===original.owner.tenantId&&batch.owner.userId===original.owner.userId)).toBe(true);
+ }
+ Object.assign(f.owner,original.owner);
+ await flushCaptureWork();
+ expect(f.batches.length).toBeGreaterThan(0);
+ expect(f.batches.every((batch:any)=>batch.owner.tenantId===original.owner.tenantId&&batch.owner.userId===original.owner.userId)).toBe(true);
+ expect(captureStatus().queued).toBe(0);
+ expect(captureStatus().pendingHooks).toBe(0);
 }));
 
 test('competing worker processes exit successfully while one drains the durable queue',async()=>fixture(async f=>{
