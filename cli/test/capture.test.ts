@@ -59,6 +59,13 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     expect(settings.hooks.Stop[1].hooks[0].command).toContain('--managed');
     expect(settings.permissions).toEqual({allow:['Read']});expect(settings.hooks.Stop).toHaveLength(2);
     expect((Bun.TOML.parse(readFileSync(join(process.env.CODEX_HOME,'config.toml'),'utf8')) as any).features).toEqual({hooks:true,other:true});
+    // Codex runs SessionEnd synchronously within 3s: record locally, never upload there.
+    const codexInstalled=JSON.parse(readFileSync(join(process.env.CODEX_HOME,'hooks.json'),'utf8')).hooks;
+    expect(codexInstalled.SessionEnd[0].hooks[0]).toMatchObject({timeout:3});
+    expect(codexInstalled.SessionEnd[0].hooks[0].async).toBeUndefined();
+    expect(codexInstalled.SessionEnd[0].hooks[0].command).not.toContain('--managed');
+    expect(codexInstalled.Stop[0].hooks[0]).toMatchObject({async:true,timeout:120});
+    expect(codexInstalled.Stop[0].hooks[0].command).toContain('--managed');
     const beforeClaude=readFileSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8');
     const codexHooks=join(process.env.CODEX_HOME,'hooks.json'),goodHooks=readFileSync(codexHooks,'utf8');
     writeFileSync(codexHooks,JSON.stringify({hooks:{Stop:'invalid'}}));
