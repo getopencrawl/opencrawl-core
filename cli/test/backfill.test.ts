@@ -3,9 +3,9 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,utim
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
-import {standaloneCapture} from '../../src/sessions/standalone.mjs';
-import {createLocalSessionStore} from '../../src/sessions/local-store.mjs';
-import {createSessionIngest} from '../../src/sessions/ingest.mjs';
+import {standaloneCapture} from '../../dist/src/sessions/standalone.mjs';
+import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
+import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
 import {installCapture} from '../src/capture/install.ts';
 import {captureDir,captureStatus,readCaptureConfig,syncCaptures,captureTranscript,type CaptureConfig} from '../src/capture/runtime.ts';
 import {backfillPreview,backfill,chooseBackfill,setupBackfill} from '../src/capture/backfill.ts';

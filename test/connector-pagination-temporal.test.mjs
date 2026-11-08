@@ -4,7 +4,7 @@ import {fileURLToPath} from 'node:url';
 import {TestWorkflowEnvironment} from '@temporalio/testing';
 import {ApplicationFailure} from '@temporalio/common';
 import {Worker, Runtime, DefaultLogger, bundleWorkflowCode} from '@temporalio/worker';
-import {assertSourcePaginationInput, assertSourcePaginationPage} from '../src/connectors/workflow.mjs';
+import {assertSourcePaginationInput, assertSourcePaginationPage} from '../dist/src/connectors/workflow.mjs';
 
 function isPaginationFailure(error) {
   assert.equal(error.cause?.name, 'ActivityFailure');

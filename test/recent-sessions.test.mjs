@@ -1,13 +1,13 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {createRecentSessions, sessionMessage} from '../src/sessions/recent.mjs';
-import {createSessionIngest} from '../src/sessions/ingest.mjs';
-import {batchDocuments} from '../src/sessions/indexer.mjs';
-import {createSessionSearch} from '../src/sessions/search.mjs';
-import {realmIndex} from '../src/search/realm.mjs';
+import {createRecentSessions, sessionMessage} from '../dist/src/sessions/recent.mjs';
+import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
+import {batchDocuments} from '../dist/src/sessions/indexer.mjs';
+import {createSessionSearch} from '../dist/src/sessions/search.mjs';
+import {realmIndex} from '../dist/src/search/realm.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
-import {createBoard} from '../src/board/board.mjs';
+import {createBoard} from '../dist/src/board/board.mjs';
 import {gunzipSync} from 'node:zlib';
 
 test('snapshots extract only human and assistant text across both harness formats', () => {

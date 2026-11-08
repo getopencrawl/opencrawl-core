@@ -1,9 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gunzipSync} from 'node:zlib';
-import {createSlackFileCapture} from '../src/connectors/slack-source-files.mjs';
-import {createSlackHttpSource,slackDownloadUrl} from '../src/connectors/slack-source-http.mjs';
-import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
+import {createSlackFileCapture} from '../dist/src/connectors/slack-source-files.mjs';
+import {createSlackHttpSource,slackDownloadUrl} from '../dist/src/connectors/slack-source-http.mjs';
+import {createConnectorPipeline} from '../dist/src/connectors/pipeline.mjs';
 const binding={tenantId:'tenant-a',connectionId:'conn',workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:'raw/v1/source=slack/workspace=T123/connection=conn/'};
 const input={runId:'run-1',cutoff:1000};
 function setup(handler) {

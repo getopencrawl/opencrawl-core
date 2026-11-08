@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {createServer} from 'node:http';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
-import {createBoard} from '../src/board/board.mjs';
-import {realmIndex} from '../src/search/realm.mjs';
-import {createBoardSearch} from '../src/board/search.mjs';
-import {createOpenCrawlMcp} from '../src/mcp/server.mjs';
+import {createBoard} from '../dist/src/board/board.mjs';
+import {realmIndex} from '../dist/src/search/realm.mjs';
+import {createBoardSearch} from '../dist/src/board/search.mjs';
+import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
 
 const endpoint = process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
 test('real OpenSearch and MCP: relevance, phrase boost, facets, scope, full text and stable pagination', {skip: !endpoint}, async t => {

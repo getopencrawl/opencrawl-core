@@ -1,12 +1,12 @@
-import {realmIndex} from '../src/search/realm.mjs';
+import {realmIndex} from '../dist/src/search/realm.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
-import {createObjectStore} from '../src/sessions/s3-store.mjs';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
-import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
-import {normalizeSlack} from '../src/connectors/slack.mjs';
+import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
+import {createConnectorPipeline} from '../dist/src/connectors/pipeline.mjs';
+import {normalizeSlack} from '../dist/src/connectors/slack.mjs';
 
 test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and two tenants', {
   skip: !process.env.OPENCRAWL_TEST_S3_ENDPOINT || !process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
