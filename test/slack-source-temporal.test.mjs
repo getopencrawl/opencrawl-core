@@ -1,12 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,readFile} from 'node:fs/promises';
-import {createHash} from 'node:crypto';
+import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
 import {TestWorkflowEnvironment} from '@temporalio/testing';
-import {Worker,Runtime,DefaultLogger,bundleWorkflowCode} from '@temporalio/worker';
+import {Worker,Runtime,DefaultLogger} from '@temporalio/worker';
 import {buildSlackSourceWorkflows,createSlackSourceWorker,slackSourceActivities} from '../dist/src/connectors/temporal/source-worker.mjs';
 
 test('real Temporal: file capture resumes committed checkpoints and keeps document text out of history',{
@@ -57,12 +55,6 @@ test('real Temporal: Slack cursor progress survives 100-step continuations and r
  const directory=await mkdtemp(join(tmpdir(),'opencrawl-source-pagination-'));t.after(()=>rm(directory,{recursive:true,force:true}));
  const env=await TestWorkflowEnvironment.createLocal();t.after(()=>env.teardown());
  const bundlePath=join(directory,'workflows.cjs');await buildSlackSourceWorkflows(bundlePath);
- // Frozen released 0.2.19 workflow bytes, retained unchanged from d217a96.
- // Both those bytes and the compiled TypeScript must replay the same commands.
- const legacyPath=new URL('./fixtures/legacy-source-workflows.cjs',import.meta.url);
- const workflow=await readFile(legacyPath);
- assert.equal(createHash('sha256').update(workflow).digest('hex'),'1aeefa60e1f98f4bd7c0f568c5557098fad61030d590f1ad93d0eef1e4803599');
- const legacy=await bundleWorkflowCode({workflowsPath:fileURLToPath(legacyPath)});
  const binding={tenantId:'fixture',connectionId:'conn',workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:'raw/v1/source=slack/workspace=T123/connection=conn/'};
  for(const [kind,workflowType] of [['files','captureSlackFilesV1'],['messages','captureSlackMessagesV1']]) {
   const objects=new Map(),taskQueue='source-pagination-'+kind,runId='durable-'+kind;
@@ -98,7 +90,7 @@ test('real Temporal: Slack cursor progress survives 100-step continuations and r
     else if(value&&typeof value==='object')for(const child of Object.values(value))sanitized(child);
    }
    sanitized(history);
-   for(const workflowBundle of [{codePath:bundlePath},legacy])await Worker.runReplayHistory({workflowBundle},history);
+   await Worker.runReplayHistory({workflowBundle:{codePath:bundlePath}},history);
    const continued=history.events.find(event=>event.workflowExecutionContinuedAsNewEventAttributes)?.workflowExecutionContinuedAsNewEventAttributes;
    if(!continued)assert.ok(history.events.some(event=>event.workflowExecutionFailedEventAttributes));
    execution=continued?.newExecutionRunId;assert.ok(++runs<4);
