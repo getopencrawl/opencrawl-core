@@ -23,6 +23,7 @@ const paths: Record<IconName, string> = {
   search: 'M21 21l-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
   warning: 'm12 3 10 18H2Z M12 9v4 M12 17h.01',
   'arrow-right': 'M5 12h14m-5-5 5 5-5 5',
+  'arrow-left': 'M19 12H5m5-5-5 5 5 5',
   'arrow-up-right': 'M7 17 17 7 M7 7h10v10',
   trash: 'M4 7h16 M10 11v6 M14 11v6 M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12 M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3',
 };

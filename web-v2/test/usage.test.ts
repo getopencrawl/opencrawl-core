@@ -120,6 +120,22 @@ test('source tiles show indexed and imported breakdowns without redundant aggreg
   assert.equal(speciesLabel('Already readable'), 'Already readable');
 });
 
+test('a partial index inventory marks only its aggregate unavailable and keeps measured details visible', () => {
+  for (const missing of ['sessionEvents','connectorDocuments'] as const) {
+    const data = report();
+    assert.ok(data.ingestion?.index);
+    data.ingestion.index[missing] = null;
+    const html = render(data), summary = html.match(/<p class="report-summary">(.*?)<\/p>/)?.[1] ?? '';
+    assert.match(summary, /13,144 records/);
+    assert.match(summary, /Indexed total is unavailable/);
+    assert.match(summary, /median <strong>28 ms<\/strong>/);
+    assert.doesNotMatch(summary, /documents indexed/);
+    assert.match(sourceCard(html,'Slack'), /<span>Messages<\/span><span>3,550<\/span>/);
+    assert.match(sourceCard(html,'Slack'), /Imported channel records/);
+    assert.match(html, /Daily agent sessions/);
+  }
+});
+
 test('missing species remain unavailable even with an indexed total; empty and measured zero remain distinct', () => {
   const data = report();
   assert.ok(data.ingestion);

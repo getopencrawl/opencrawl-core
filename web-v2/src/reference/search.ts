@@ -10,11 +10,13 @@ export function workspaceSearchDiagnostics(value: unknown): DiagnosticSearch {
   const data = object(value), results = rows(data.results), coverage = rows(data.coverage);
   const group = (source: string): SearchResponse & {truncated: boolean} => {
     const status = coverage.find(item => item.source === source);
-    const hits = results.filter(item => item.source === source).map(item => ({_id:text(item.id), _source:{...object(item.provenance), title:item.title, text:item.text, provenance:item.provenance, passageId:item.id}}));
-    return {state:text(status?.state), truncated:Boolean(status?.truncated), hits:{hits,total:{value:hits.length}}};
+    const hits = results.filter(item => item.source === source).map(item => ({_id:text(item.id), _source:{...object(item.provenance), title:item.title, text:item.text, ...(typeof item.url === 'string' ? {url:item.url} : {}), ...('excerpt' in item ? {excerpt:item.excerpt} : {}), provenance:item.provenance, passageId:item.id}}));
+    return {state:text(status?.state), truncated:Boolean(status?.truncated), hits:{hits}};
   };
   const sessions = group('sessions'), connectors = group('connectors');
   return {
+    ...(typeof data.partial === 'boolean' ? {partial:data.partial} : {}),
+    ...(typeof data.truncated === 'boolean' ? {truncated:data.truncated} : {}),
     sessions:[{scope:'workspace',response:sessions}],
     connectors:{state:connectors.state,truncated:connectors.truncated,responses:[connectors]},
     ...(coverage.some(item => item.source === 'memories') || results.some(item => item.source === 'memories') ? {memories:group('memories')} : {}),

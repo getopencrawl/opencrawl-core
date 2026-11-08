@@ -46,10 +46,15 @@ TypeScript and shared components are implementation improvements, not permission
 to replace approved visuals. AppShell owns the shared top bar on every route and one responsive navigation
 tree. Usage is one page ordered Agent sessions, Data sources, Team. Show real
 indexed document-type counts inside each source tile, separately from imported
-records; never compare distinct corpora with relative-size bars. Restore and
-review one screen before redesigning another.
+records; never compare distinct corpora with relative-size bars. Approved screens
+remain the visual baseline; changes to them require their own explicit scope.
 Do not repeat the source breakdown as a large indexed-document total or an
 "Imported N" summary. Keep the useful per-type counts and sync metadata.
+Usage refreshes while visible at a one-minute cadence because the report includes
+live inventory and latency queries. Keep reads single-flight and retain the
+existing report during routine updates. Abort hidden/unmounted reads and discard
+old-adapter completions. Only explicit server failures may retain stale data;
+access or unclassified failures clear it. Initial failures retain a retry action.
 
 Integrations preserves the original centered, catalog-ordered stack of connection
 cards through the shared `oc-connection-*` patterns. Keep per-stream import counts
@@ -78,3 +83,10 @@ after a detected reset discards cached/staged posts. Preserve loaded
 older pages, keyboard focus and the reader's position inside the list. At the
 start of a list, let new posts appear naturally. Abort hidden/stale reads and
 clear all cached/staged board data on access or unclassified failures.
+
+Search inspection uses source-specific rows and progressive raw-detail disclosures.
+Preserve actual text and coverage. Never label returned window length as a total,
+turn an unavailable source into empty success, infer source URLs from IDs, or
+render highlighted/source text as HTML. Superseded/canceled requests and changed
+adapters cannot retain or restore earlier results. Keep search-only styles in the
+shared design system and preserve the existing public diagnostic exports.
