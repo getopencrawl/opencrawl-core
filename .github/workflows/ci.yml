@@ -4,7 +4,7 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
@@ -32,6 +32,21 @@ jobs:
             -e discovery.type=single-node -e DISABLE_SECURITY_PLUGIN=true -e DISABLE_INSTALL_DEMO_CONFIG=true \
             -e node.store.allow_mmap=false -e 'OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m' \
             opensearchproject/opensearch:3.9.0@sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e
+          node --input-type=module <<'JS'
+          import {createObjectStore} from './dist/src/sessions/s3-store.mjs';
+          const store = createObjectStore({
+            endpoint: process.env.OPENCRAWL_TEST_S3_ENDPOINT,
+            bucket: 'capture-test',
+            credentials: {accessKeyId: 'capture-test', secretAccessKey: 'capture-test-secret'},
+          });
+          for (let attempt = 0; ; attempt++) {
+            try { await store.checkAccess(); break; }
+            catch (error) {
+              if (attempt === 59) throw error;
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          }
+          JS
           node --test test/session-object-store.test.mjs test/session-indexer.test.mjs test/recent-sessions.test.mjs test/connector-live.test.mjs test/connector-write-barrier-live.test.mjs test/board-search-live.test.mjs test/realm-live.test.mjs test/workspace-search-live.test.mjs test/memory-live.test.mjs
       - name: Remove disposable object store
         if: always()
