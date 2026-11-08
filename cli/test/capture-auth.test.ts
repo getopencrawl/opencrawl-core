@@ -68,8 +68,10 @@ test('capture pins queued data to its original team and human before any attachm
   // A mismatched queued batch is blocked even if the enrollment matches login.
   writeFileSync(queue,JSON.stringify({...sent,owner:{...principal,tenantId:'org_next'}}));
   const previousAttachments=attachmentAuthors.length;
-  await expect(flushCaptures()).rejects.toMatchObject({code:'CAPTURE_DESTINATION_CHANGED'});
-  expect(attachmentAuthors).toHaveLength(previousAttachments);
+  for(const wait of [true,false]){
+   await expect(flushCaptures({wait})).rejects.toMatchObject({code:'CAPTURE_DESTINATION_CHANGED'});
+   expect(attachmentAuthors).toHaveLength(previousAttachments);
+  }
   // A rejected request retains its queued data. The CLI does not forge the author.
   writeFileSync(queue,JSON.stringify(batch));authorized=false;
   await expect(flushCaptures()).rejects.toMatchObject({code:'CAPTURE_UPLOAD_FAILED'});

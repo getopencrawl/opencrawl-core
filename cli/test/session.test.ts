@@ -2,7 +2,7 @@ import {test, expect} from 'bun:test';
 import {mkdtempSync, rmSync, statSync, readFileSync, existsSync, writeFileSync, mkdirSync, unlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
-import {saveSession, sessionFile, accessToken, readSession, logout} from '../src/session.ts';
+import {saveSession, sessionFile, accessToken, readSession, logout,withSessionLock} from '../src/session.ts';
 
 test('separate deployments, restrictive permissions, concurrent refresh and logout', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'opencrawl-session-'));
@@ -44,6 +44,43 @@ test('simultaneous processes recover a killed owner without admitting two critic
   expect(existsSync(exclusive)).toBe(false);
  }finally{for(const child of children){child.kill();await child.exited;}rmSync(directory,{recursive:true,force:true});}
 },15000);
+
+test('a crash while publishing a PID marker never leaves an empty legacy lock',async()=>{
+ const directory=mkdtempSync(join(tmpdir(),'opencrawl-marker-crash-')),previous=process.env.OPENCRAWL_CONFIG_HOME;
+ const module=resolve(import.meta.dir,'../src/session.ts');process.env.OPENCRAWL_CONFIG_HOME=directory;
+ try{
+  for(const timing of ['before','after']){
+   const key='marker-'+timing,marker=sessionFile(key)+'.lock',reached=join(directory,'reached-'+timing);
+   const code=`
+    import {mock} from 'bun:test';
+    import * as fs from 'node:fs';
+    const original={...fs},paths=new Map();
+    const marker=${JSON.stringify(marker)},timing=${JSON.stringify(timing)};
+    const crash=()=>{original.writeFileSync(${JSON.stringify(reached)},timing);process.kill(process.pid,'SIGKILL');};
+    mock.module('node:fs',()=>({...original,
+      openSync:(path,...args)=>{const fd=original.openSync(path,...args);paths.set(fd,String(path));return fd;},
+      writeFileSync:(target,...args)=>{
+        const path=typeof target==='number'?paths.get(target):String(target);
+        const matches=path===marker||path?.startsWith(marker+'.');
+        if(matches&&timing==='before')crash();
+        const result=original.writeFileSync(target,...args);
+        if(matches&&timing==='after')crash();
+        return result;
+      }
+    }));
+    const {withSessionLock}=await import(${JSON.stringify(module)});
+    await withSessionLock(${JSON.stringify(key)},async()=>{});
+   `;
+   const child=Bun.spawn([process.execPath,'-e',code],{env:process.env,stdout:'ignore',stderr:'pipe'});
+   try{
+    expect(await child.exited).not.toBe(0);
+    expect(readFileSync(reached,'utf8')).toBe(timing);
+    expect(existsSync(marker)&&readFileSync(marker,'utf8')==='').toBe(false);
+    let acquired=false;await withSessionLock(key,async()=>{acquired=true;},1000);expect(acquired).toBe(true);
+   }finally{child.kill();await child.exited;}
+  }
+ }finally{if(previous===undefined)delete process.env.OPENCRAWL_CONFIG_HOME;else process.env.OPENCRAWL_CONFIG_HOME=previous;rmSync(directory,{recursive:true,force:true});}
+});
 
 test('process exit releases ownership and a live legacy owner is never evicted',async()=>{
  const directory=mkdtempSync(join(tmpdir(),'opencrawl-lock-exit-')),previous=process.env.OPENCRAWL_CONFIG_HOME;

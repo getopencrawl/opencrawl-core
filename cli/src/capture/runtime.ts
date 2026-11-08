@@ -432,15 +432,19 @@ export async function flushCaptures({wait=true}={}) {
     };
     const current=async()=>staticToken||await adopt(await accessToken(config.api));
     const renew=staticToken?undefined:async(rejected:string)=>adopt(await accessToken(config.api,rejected));
-    let uploaded=0,excluded=0;
-    for(const name of readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'))) {
-      if(!wait&&readCaptureConfig()?.disabled)break;
-      const path=join(captureDir(),'queue',name),batch=read(path);
-      // Reject a different human before uploading attachment bytes: a later
-      // batch rejection cannot undo a blob already stored under their identity.
-      if(batch.owner?.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Queued capture belongs to another user. Sign back in as its author to upload it; queued data is retained.');
-      if(batch.owner?.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Queued capture belongs to another team. Sign back into its original destination or explicitly purge local pending data.');
-      if(captureExcluded(readCaptureConfig()??config,batch)){excluded++;continue;}
+    let uploaded=0,excluded=0,visited=0,scheduled=0,stopped=false,failure:unknown;
+    let names=readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'));
+    if(!wait){
+      // Split capacity between draining old work and making fresh activity
+      // visible. Filename hashes have no useful chronological ordering.
+      const dated=names.map(name=>({name,mtime:statSync(join(captureDir(),'queue',name)).mtimeMs}));
+      dated.sort((a,b)=>a.mtime-b.mtime||a.name.localeCompare(b.name));
+      names=[];
+      for(let lo=0,hi=dated.length-1;lo<=hi;){names.push(dated[lo++].name);if(lo<=hi)names.push(dated[hi--].name);}
+    }
+    const deadline=wait?Infinity:Date.now()+10_000;
+    const upload=async(name:string,batch:any)=>{
+      const path=join(captureDir(),'queue',name);
       for(const a of batch.attachments)if(a.status==='captured'){
         await request(config.api,'/api/sessions/attachments/'+a.sha256,{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readFileSync(join(captureDir(),'blobs',a.sha256))},await current(),renew);
       }
@@ -448,7 +452,30 @@ export async function flushCaptures({wait=true}={}) {
       if(receipt.batchId!==hash(JSON.stringify(batch)) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
       atomicJson(join(captureDir(),'last-upload.json'),{at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId});
       unlinkSync(path);uploaded++;
-    }
+    };
+    const worker=async()=>{
+      try {
+        while(!failure&&!stopped&&visited<names.length){
+          if(!wait&&(scheduled>=32||Date.now()>=deadline))break;
+          const latest=readCaptureConfig();
+          if(!wait&&(!latest||latest.disabled)){stopped=true;break;}
+          if(latest&&(latest.api!==config.api||latest.installationId!==config.installationId||latest.owner.userId!==principal.userId||latest.owner.tenantId!==principal.tenantId))throw new CliError('CAPTURE_DESTINATION_CHANGED','Capture destination changed during upload; queued data is retained.');
+          const name=names[visited++],batch=read(join(captureDir(),'queue',name));
+          // Validate before sending any attachment bytes, even on a parallel pass.
+          if(batch.owner?.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Queued capture belongs to another user. Sign back in as its author to upload it; queued data is retained.');
+          if(batch.owner?.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Queued capture belongs to another team. Sign back into its original destination or explicitly purge local pending data.');
+          if(captureExcluded(latest??config,batch)){excluded++;continue;}
+          scheduled++;
+          await upload(name,batch);
+        }
+      }catch(error){failure??=error;}
+    };
+    // A background pass must return to notice processing. Always settle the
+    // in-flight uploads before releasing ownership, including after a failure.
+    await Promise.all(Array.from({length:wait?1:4},worker));
+    if(failure)throw failure;
+    const result=excluded?{uploaded,excluded}:{uploaded};
+    if(visited<names.length||stopped)return result;
     const referenced=new Set<string>();
     for(const name of readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'))) {
       for(const a of read(join(captureDir(),'queue',name),{attachments:[]}).attachments)if(a.sha256)referenced.add(a.sha256);
@@ -459,7 +486,7 @@ export async function flushCaptures({wait=true}={}) {
       if(!referenced.has(name)&&Date.now()-statSync(path).mtimeMs>86400000)unlinkSync(path);
     }
     try{unlinkSync(join(captureDir(),'last-error.json'));}catch{}
-    return excluded?{uploaded,excluded}:{uploaded};
+    return result;
   },wait?Infinity:0).catch(error=>{if(!wait&&error?.code==='SESSION_BUSY')return {uploaded:0};throw error;});
 }
 export function captureStatus() {
