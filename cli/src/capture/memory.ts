@@ -19,7 +19,7 @@ export const memoryDue=(s:MemoryState,now=Date.now())=>!(s.successAt&&now-s.succ
 const check=(signal?:AbortSignal)=>signal?.throwIfAborted();
 // Consolidated memories can contain facts from many projects/sessions. Until
 // they have reliable provenance for every entry, exclusions must fail closed.
-const excluded=(config:CaptureConfig)=>{const exclusions=(config as CaptureConfig&{exclusions?:{projects:string[],sessions:string[]}}).exclusions;return Boolean(exclusions?.projects?.length||exclusions?.sessions?.length);};
+const excluded=(config:CaptureConfig)=>Boolean(config.exclusions?.projects?.length||config.exclusions?.sessions?.length);
 const maybeStat=async(path:string)=>{try{return await lstat(path);}catch(e:any){if(e.code==='ENOENT')return null;throw e;}};
 
 /** Only native memory directories; never follow symlinks, links in Markdown,
