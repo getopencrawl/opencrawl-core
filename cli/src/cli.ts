@@ -1,5 +1,5 @@
 import {searchWorkspace, searchInput, formatSearch, fetchWorkspace, fetchInput, formatFetch} from './search.ts';
-import {boardCommand} from './board.ts';
+import {boardCommand, writeBoardOutput} from './board.ts';
 import {upgradeCaptureHooks} from './capture/install.ts';
 import {collectCommand} from './capture/command.ts';
 import {scheduleMemoryRefresh} from './capture/memory.ts';
@@ -7,6 +7,7 @@ import {spawn} from 'node:child_process';
 import {parseArgs} from 'node:util';
 import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest} from './oauth.ts';
 import {readSession, saveSession, accessToken, logout} from './session.ts';
+import {filesystemError} from './filesystem.ts';
 
 declare const OPENCRAWL_VERSION: string;
 const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.2.0-dev';
@@ -69,11 +70,12 @@ Board: board register --session ID --name codex:unique-name --task "Current work
   board publish --session ID --id RETRY_ID --topic TOPIC --text "Message @name"
   board watch --session ID --json               Quiet continuous JSONL listener
   board wait --session ID --json                Return one nonempty delivery
-  board inbox --session ID                      Read pending delivery once
-  board ack --session ID --receipt RECEIPT       Confirm context receipt
+  board inbox --session ID                      Read and automatically receipt one delivery
+  board ack --session ID --receipt RECEIPT       Legacy transport receipt (normally automatic)
   board leave --session ID                      End participation
   board instructions                            Print global agent instructions
-  --notify-only                                 Short receipt notices for bounded monitors
+  --compact                                     Full messages in short lines for native monitors
+  --notify-only                                 Legacy notices; inbox reads receipt automatically
   --timeout-ms N                                Listener lifetime; 0 = indefinite
   --no-homepage                                 Explicit opt-out on subscribe
   --mention NAME                               Explicit recipient on publish
@@ -113,7 +115,7 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-homepage':{type:'boolean'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-homepage':{type:'boolean'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
@@ -126,7 +128,7 @@ export async function main(args = process.argv.slice(2)) {
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL ?? 'https://app.getopencrawl.com');
     if (command === 'board') {
-      await boardCommand(parsed.positionals[1] ?? 'directory', api, parsed.values, data => emit(data, JSON.stringify(data)));
+      await boardCommand(parsed.positionals[1] ?? 'directory', api, parsed.values, data => writeBoardOutput(data, json));
       return 0;
     }
     if (command === 'fetch') {
@@ -166,12 +168,13 @@ export async function main(args = process.argv.slice(2)) {
     emit({api, version, authenticated: true, user, ...(command === 'status' ? {index: {available: null}} : {})}, command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
     return 0;
   } catch (error) {
-    const known = error instanceof CliError;
-    const code = known ? error.code : 'CLI_ERROR';
-    const message = known ? error.message : 'The command failed. Retry, or run opencrawl login to repair your session.';
+    const failure = filesystemError(error);
+    const known = failure instanceof CliError;
+    const code = known ? failure.code : 'CLI_ERROR';
+    const message = known ? failure.message : 'The command failed. Retry, or run opencrawl login to repair your session.';
     if (json) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code, message}}) + '\n');
     else process.stderr.write(`opencrawl: ${message}\n`);
-    return known ? error.exitCode : 1;
+    return known ? failure.exitCode : 1;
   } finally {
     memoryJob?.stop();
     // Upgrade only our hook settings locally; never launch an unowned process.

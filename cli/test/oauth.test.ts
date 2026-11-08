@@ -1,8 +1,16 @@
 import {test, expect} from 'bun:test';
-import {discover, startDevice, pollDevice, refresh, secureUrl, apiOrigin} from '../src/oauth.ts';
+import {discover, startDevice, pollDevice, refresh, secureUrl, apiOrigin, jsonRequest} from '../src/oauth.ts';
 const auth = {clientId: 'public-client', deviceAuthorizationEndpoint: 'https://auth.example/device', tokenEndpoint: 'https://auth.example/token'};
 const device = {device_code: 'secret-device-code', user_code: 'ABCD-EFGH', verification_uri: 'https://auth.example/device', expires_in: 60, interval: 1};
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), {status});
+
+test('non-JSON HTTP errors preserve status without exposing response bodies',async()=>{
+  for(const status of [400,401,408,425,429,500,502,503,504]){
+    const result=await jsonRequest('https://example.com',{},(async()=>new Response('private proxy response',{status})) as unknown as typeof fetch);
+    expect(result.response.status).toBe(status);expect(result.body).toEqual({});
+  }
+  await expect(jsonRequest('https://example.com',{},(async()=>new Response('private proxy response')) as unknown as typeof fetch)).rejects.toMatchObject({code:'INVALID_RESPONSE'});
+});
 
 test('discovery accepts a portable OAuth deployment without provider dependencies', async () => {
   const fetcher: any = async (url: string) => { expect(url).toBe('https://api.example/.well-known/opencrawl-cli'); return response({schemaVersion: 1, auth}); };
@@ -58,6 +66,6 @@ test('refresh persists the rotated-token contract and redacts invalid grants', a
 
 test('proxy rejection identifies the blocked host without echoing the response',async()=>{
   const {jsonRequest}=await import('../src/oauth.ts');
-  try {await jsonRequest('https://capture.example.com/health',{},(async()=>new Response('proxy secret body',{status:403})) as unknown as typeof fetch);throw new Error('expected error');}
+  try {await jsonRequest('https://capture.example.com/health',{},(async()=>new Response('proxy secret body',{status:403})) as unknown as unknown as typeof fetch);throw new Error('expected error');}
   catch(error:any){expect(error.code).toBe('NETWORK_BLOCKED');expect(error.message).toContain('capture.example.com');expect(error.message).not.toContain('secret body');}
 });
