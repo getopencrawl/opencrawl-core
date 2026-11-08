@@ -38,6 +38,7 @@ int main(int argc, char **argv) {
   close(sockets[1]); FILE *input = fdopen(dup(sockets[0]), "r");
   FILE *channel = fdopen(sockets[0], "w");
   if (!input || !channel) fail("fdopen");
+  require(fcntl(fileno(input), F_SETFD, FD_CLOEXEC) == 0, "close input on exec");
   setvbuf(channel, NULL, _IONBF, 0);
   char command[4096];
   while (fgets(command, sizeof command, input)) {
@@ -47,7 +48,8 @@ int main(int argc, char **argv) {
       pid_t intermediate = fork(); if (intermediate < 0) fail("fork control");
       if (!intermediate) { close(pipefd[0]); close(sockets[0]); pid_t orphan = fork(); if (orphan < 0) _exit(1);
         if (!orphan) { close(pipefd[1]); struct timespec delay = {0, 200000000}; nanosleep(&delay, NULL); _exit(0); }
-        if (write(pipefd[1], &orphan, sizeof orphan) != sizeof orphan) _exit(1); _exit(0); }
+        if (write(pipefd[1], &orphan, sizeof orphan) != sizeof orphan) { _exit(1); }
+        _exit(0); }
       close(pipefd[1]); pid_t orphan; require(read(pipefd[0], &orphan, sizeof orphan) == sizeof orphan, "control PID"); close(pipefd[0]); require(reap(intermediate) == 0, "control exit"); fprintf(channel, "%d\n", orphan);
     } else if (!strcmp(command, "parent-loss") || !strcmp(command, "pid1-worker")) {
       char config[4096]; require(fgets(config, sizeof config, input) != NULL, "config missing"); config[strcspn(config, "\n")] = 0;
