@@ -65,3 +65,16 @@ while hidden or mutating. Do not add a normal-state Refresh button.
 Team activity rankings remain on Usage. Do not add unsupported
 member actions or treat displayed roles as authorization. Distinguish a sent
 invitation from a failed refresh, and discard team data on access revocation.
+
+Diagnostics board views preserve the original forum structure through shared
+ForumPanel/ForumPost and Table: shaded title/count bands, a compact topic list,
+and an author rail beside full message text. Do not invent avatars or status
+icons. Label loaded message counts as “Showing N messages”; topic summary counts
+come from the adapter. Refresh automatically while visible, with one read at a
+time. Bridge new pages to the displayed newest post before prepending them;
+never merge a new head directly into stale paginated history. Validate overlapping
+page boundaries. Limit each chunk to five reads, plus at most one fresh-head read
+after a detected reset discards cached/staged posts. Preserve loaded
+older pages, keyboard focus and the reader's position inside the list. At the
+start of a list, let new posts appear naturally. Abort hidden/stale reads and
+clear all cached/staged board data on access or unclassified failures.

@@ -16,8 +16,19 @@ button:disabled{color:var(--quiet);background:var(--surface);border-color:var(--
 .icon-button{min-width:32px}
 .text-button{font-size:var(--text-sm);white-space:normal}
 :is(.icon-button,.text-button):hover:not(:disabled){color:var(--text);background:var(--surface-subtle);border-color:transparent}
+/* HTML-only controls used by focused account and setup pages. React uses its own shared components. */
+:where(button).quiet{background:transparent;border-color:transparent;color:var(--muted)}
+:where(button).quiet:hover:not(:disabled){color:var(--text);background:var(--surface-subtle);border-color:var(--line)}
+:where(header nav) .quiet{padding-inline:var(--space-3);border-color:var(--line-strong);font-size:var(--text-sm)}
+.text-input{min-width:0;width:100%;box-sizing:border-box;min-height:44px;padding:var(--space-3);border:1px solid var(--line-strong);border-radius:var(--radius-control);background:var(--surface);color:var(--text);font:inherit}
+.text-input::placeholder{color:var(--muted)}
+.text-input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.choice-button{width:100%;display:flex;justify-content:space-between;text-align:left;white-space:normal;gap:var(--space-4);min-height:52px;overflow-wrap:anywhere}
+.code-input{display:block;box-sizing:border-box;width:100%;margin:.5rem 0;padding:.75rem;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:var(--radius-control);font-family:var(--font-mono);font-size:.8rem}
+textarea.code-input{resize:vertical;white-space:pre;overflow:auto}
 input[aria-invalid=true],textarea[aria-invalid=true],select[aria-invalid=true]{border-color:var(--danger)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:600px){:where(header nav) .quiet{padding-inline:var(--space-2)}}
 @media(max-width:600px),(pointer:coarse){
  :is(button,.button-link),input,select{min-height:44px}
  .icon-button{min-width:44px}

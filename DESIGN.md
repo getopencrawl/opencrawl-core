@@ -152,7 +152,7 @@ components:
     typography: "{typography.ui}"
     rounded: "{rounded.control}"
     padding: "8px 12px"
-  navigation-item-active:
+  navigation-item-active-mobile:
     backgroundColor: "{colors.wash}"
     textColor: "{colors.accent}"
   badge:
@@ -363,10 +363,11 @@ copy/reveal control retains its separate feedback timing and unchanged dimension
 
 ### Navigation and tabs
 
-Desktop navigation links occupy the header height, with 12px horizontal padding
-and 4px gaps. The active page uses normal bright text and a 2px primary-color
-stroke at the bottom of its target, separated from the label by the header's
-vertical space. Do not replace it with a faint text underline. Mobile navigation
+Desktop navigation stays grouped at the right. Links have 40px padded targets
+with 12px horizontal padding and 4px gaps, leaving vertical room inside the 72px
+header. The active page uses bright text and a 2px accent stroke close beneath
+the label, inside the target. Do not stretch the target to the header height or
+move the stroke to the header bottom. Mobile navigation
 links use muted text, a subtle hover surface and a periwinkle active wash.
 Active links expose their current-page semantics. The mobile navigation drawer traps
 focus while open, closes with Escape, restores the toggle's focus on dismissal
@@ -511,6 +512,29 @@ to the page. Normal use has no Refresh button. Background updates preserve
 input and focus, skip overlapping reads, pause during mutations and while hidden,
 and stop on unmount. Keep a retry action for initial loading failures.
 
+## Diagnostics forum
+
+The topic index, individual thread and global stream retain the original forum
+composition. Shared `ForumPanel` provides the bordered surface, shaded title band,
+count strip and pagination footer. Shared `Table` supplies the compact Topic,
+Posts and Latest post columns; the last column places the date above the author.
+Shared `ForumPost` supplies the 190px author rail, timestamp/message-number header
+and full, wrapping message body. On narrow screens the author sits above the
+message. Use Night surfaces, Geist and the existing small control radius. Do not
+add decorative avatars, truncation, topic cards or a normal-state Refresh button.
+
+The count strip says “Showing N messages” for a paginated thread or stream.
+Automatic updates reconnect a bounded staged chain to existing history before
+prepending it. Each continuation verifies an overlapping boundary post. A normal
+chunk reads at most five pages; a detected history reset discards cached/staged
+posts and permits one additional fresh-head recovery read. Updates retain loaded
+older messages and preserve the reading position
+only after the reader has scrolled into the list. The beginning of the list
+reveals new posts naturally. Topic navigation remains SPA history. Loading,
+empty and error states keep the same title/panel frame. Access and unclassified
+read failures discard board data; explicit server failures may retain confirmed
+posts with visible retry status.
+
 ## Text separators
 
 Centered-dot separators (U+00B7) are forbidden in every authored UI, including
@@ -530,3 +554,30 @@ Source tiles show the actual indexed-content and imported-record breakdowns,
 with source identity and sync metadata. Do not add aggregate "indexed documents"
 or "Imported N" totals above those lists. Those totals obscure source-specific
 meaning and duplicate the useful counts.
+
+
+## Legacy HTML control ownership
+
+`web/controls.css` owns visual presentation for server-rendered controls used on
+authentication, organization selection, provider handoff and cloud-capture pages.
+Use its existing primary/quiet button treatments and `button-link primary` for
+primary anchors. Shared field and choice presentation uses `text-input`,
+`code-input` and `choice-button`. Keep canonical disabled states and touch targets.
+React controls and the preserved React onboarding stylesheet remain separate;
+do not import this legacy stylesheet into the React workspace.
+
+Deployment page styles may arrange controls but may not redefine their visual
+properties. For example, `.org-form > button { justify-self:start }` is placement
+and belongs in hosted layout. Colors, backgrounds, borders, fonts, padding,
+outlines, shadows, disabled appearance and control sizing belong here, including
+state and responsive rules. A rule such as `.org-form input { border:1px solid
+var(--line); padding:12px; font:inherit }` is a control implementation and must not
+be added to hosted `shell.css`, even when it uses approved tokens.
+
+Enforcement coverage is deliberately explicit: the architecture tests reject
+authored JavaScript, duplicate React controls/navigation, React inline styles,
+hosted React stylesheets and prohibited separator text. They do not parse CSS
+declaration ownership in the legacy hosted stylesheet. Review that boundary
+manually and validate affected HTML controls in the browser. Do not claim the
+React AST checker enforces legacy CSS ownership, or replace a CSS parser with
+an exact-current-string assertion or selector/declaration regex.
