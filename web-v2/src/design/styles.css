@@ -245,7 +245,7 @@ img { max-width: 100%; }
 .report-metric-value{color:var(--strong);font-size:var(--report-metric);font-weight:600;letter-spacing:var(--tracking-heading);line-height:1.1;font-variant-numeric:tabular-nums}
 .report-metric-value small{margin-left:3px;color:var(--muted);font-size:var(--text-ui);font-weight:500;letter-spacing:0}
 .report-metric-note{color:var(--muted);font-size:var(--text-sm)}
-.report-highlights{grid-template-columns:repeat(3,minmax(0,1fr))}
+.report-highlights{grid-template-columns:repeat(2,minmax(0,1fr))}
 .report-highlight{background:linear-gradient(160deg,var(--wash),transparent 70%),var(--surface);border-color:color-mix(in srgb,var(--brand-face) 25%,var(--line))}
 .report-highlight strong{color:var(--strong);font-size:var(--text-heading);font-weight:600}
 .report-highlight span{color:var(--muted);font-size:var(--text-sm)}
@@ -335,11 +335,9 @@ img { max-width: 100%; }
 .usage-report > .report-section:first-of-type { margin-top: 0; }
 .report-section > .oc-section-heading { margin-bottom: var(--space-5); }
 .report-section > .oc-section-heading h2 { font-size: var(--console-metric); line-height: 1.25; }
-.report-source-label { margin: 0 0 var(--space-2); font-weight: 500; color: var(--quiet); font-size: var(--text-xs); }
 .report-indexed-species { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 .report-indexed-species > li { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-4); color: var(--muted); font-size: var(--text-sm); }
 .report-indexed-species > li > :last-child { color: var(--text); font-variant-numeric: tabular-nums; }
-.report-source-imported { margin: auto 0 0; color: var(--quiet); font-size: var(--text-sm); }
 .report-leaderboard-table th:nth-child(3), .report-leaderboard-table td:nth-child(3) { text-align: right; }
 .report-leaderboard-table th:first-child, .report-leaderboard-table td:first-child { width: var(--space-10); color: var(--quiet); }
 @media (max-width: 600px) {

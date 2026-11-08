@@ -453,14 +453,14 @@ Preserve the original Usage screen's Night typography, source identities, cards
 and quiet surfaces. The user's current refinement replaces its tabs with one
 continuous page ordered **Agent sessions**, **Data sources**, then **Team**.
 The source tiles show actual indexed document-type counts for each connection;
-imported records remain explicitly separate. Missing breakdowns are unavailable,
+import breakdowns and Imported/Indexed labels are omitted. Missing breakdowns are unavailable,
 never inferred from ingestion rows. Do not use progress or relative-size bars to
 compare different index corpora.
 
 Agent sessions groups captured sessions, messages, tool calls, machines, daily
 activity and available tool/harness/surface breakdowns. Do not relabel messages
 as turns without an independently measured turn count. Team is the per-person
-leaderboard and activity highlights; workspace membership administration stays
+leaderboard and session/tool-call highlights, without a Most sources connected tile; workspace membership administration stays
 on the Team management route.
 
 Usage is the hosted home at `/`; `/usage` preserves query parameters when redirecting
@@ -552,10 +552,9 @@ records and source count, measured indexed documents, and median query time. Use
 for unavailable measurements, and retain the accepted section order and per-source
 indexed document types without reintroducing aggregate comparison bars.
 
-Source tiles show the actual indexed-content and imported-record breakdowns,
-with source identity and sync metadata. Do not add aggregate "indexed documents"
-or "Imported N" totals above those lists. Those totals obscure source-specific
-meaning and duplicate the useful counts.
+Source tiles show only actual indexed document-type counts, with source identity
+and sync metadata. Omit Imported/Indexed labels, import breakdowns and aggregate
+totals so each card presents one content breakdown.
 
 
 ## Legacy HTML control ownership

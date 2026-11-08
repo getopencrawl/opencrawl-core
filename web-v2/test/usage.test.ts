@@ -97,21 +97,17 @@ test('the summary distinguishes measured zero from missing or incomplete reporti
   assert.equal(summary, 'Source reporting is unavailable.');
 });
 
-test('source tiles show indexed and imported breakdowns without redundant aggregate totals', () => {
+test('source tiles show only content-type counts without import details or technical labels', () => {
   const html = render(), slack = sourceCard(html, 'Slack');
   for (const name of ['Slack', 'Notion', 'GitHub']) {
-    assert.doesNotMatch(sourceCard(html, name), /report-source-count|indexed documents?|<strong>Imported<\/strong>/);
+    assert.doesNotMatch(sourceCard(html, name), /report-source-count|report-source-label|report-source-imported|Imported|Indexed|indexed documents?/);
   }
-  const indexed = slack.match(/<ul[^>]+aria-label="Indexed content in Slack"[^>]*>(.*?)<\/ul>/)?.[1];
+  const indexed = slack.match(/<ul[^>]+aria-label="Content in Slack"[^>]*>(.*?)<\/ul>/)?.[1];
   assert.ok(indexed);
   assert.match(indexed, /<span>Messages<\/span><span>3,550<\/span>/);
   assert.match(indexed, /<span>Files<\/span><span>0<\/span>/);
   assert.doesNotMatch(indexed, /Imported channel records|1,910|18/);
-  assert.doesNotMatch(slack, /1,910/);
-  assert.match(slack, /<h4 class="report-source-label">Imported<\/h4>/);
-  assert.match(slack, /aria-label="Imported records from Slack"/);
-  assert.match(slack, /Imported channel records/);
-  assert.match(slack, /<span>Imported channel records<\/span><span>18<\/span>/);
+  assert.doesNotMatch(slack, /Imported channel records|1,910/);
   const github = sourceCard(html, 'GitHub');
   assert.doesNotMatch(github, /report-source-imported/);
   assert.match(github, /Pull requests/);
@@ -131,7 +127,7 @@ test('a partial index inventory marks only its aggregate unavailable and keeps m
     assert.match(summary, /median <strong>28 ms<\/strong>/);
     assert.doesNotMatch(summary, /documents indexed/);
     assert.match(sourceCard(html,'Slack'), /<span>Messages<\/span><span>3,550<\/span>/);
-    assert.match(sourceCard(html,'Slack'), /Imported channel records/);
+    assert.doesNotMatch(sourceCard(html,'Slack'), /Imported channel records/);
     assert.match(html, /Daily agent sessions/);
   }
 });
@@ -144,20 +140,20 @@ test('missing species remain unavailable even with an indexed total; empty and m
   delete source.indexedSpecies;
   let html = sourceCard(render(data), 'Slack');
   assert.doesNotMatch(html, /report-source-count|indexed documents?/);
-  assert.match(html, /Indexed breakdown unavailable/);
+  assert.match(html, /Content breakdown unavailable/);
   assert.doesNotMatch(html, /report-indexed-species/);
   source.indexed = null;
   html = sourceCard(render(data), 'Slack');
-  assert.match(html, /Indexed breakdown unavailable/);
+  assert.match(html, /Content breakdown unavailable/);
   assert.doesNotMatch(html, /report-source-count|indexed documents?/);
   source.indexed = 0;
   source.indexedSpecies = [{name: 'message', count: 0}];
   html = sourceCard(render(data), 'Slack');
   assert.doesNotMatch(html, /report-source-count|indexed documents?/);
   assert.match(html, /<span>Messages<\/span><span>0<\/span>/);
-  assert.doesNotMatch(html, /Indexed breakdown unavailable/);
+  assert.doesNotMatch(html, /Content breakdown unavailable/);
   source.indexedSpecies = [];
-  assert.match(sourceCard(render(data), 'Slack'), /No indexed content yet/);
+  assert.match(sourceCard(render(data), 'Slack'), /No content yet/);
 });
 
 test('Agent sessions retains measured activity, breakdowns and contextual facts without treating messages as turns', () => {
@@ -195,7 +191,7 @@ test('unavailable reporting does not masquerade as empty and never hides the oth
 test('Team leaderboard orders measured sessions then tool calls and retains actual member stats without mutating input', () => {
   const data = report();
   const html = render(data);
-  assert.match(html, /Most sources connected/);
+  assert.doesNotMatch(html, /Most sources connected/);
   assert.match(html, /Most sessions/);
   assert.match(html, /Most tool calls/);
   assert.match(html, /Ranked by sessions, then tool calls/);
