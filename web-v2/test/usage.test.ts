@@ -19,7 +19,7 @@ function report(): UsageReport {
           rows: [{label: 'Imported channel records', count: 18}], lastSyncedAt: '2026-11-07T19:40:00Z'},
         {name: 'Notion', icon: '/assets/integrations/notion.svg', account: 'example', state: 'synced', records: 4,
           units: ['page', 'pages'], indexed: 12, indexedSpecies: [{name: 'page', count: 12}], lastSyncedAt: '2026-11-07T19:41:00Z'},
-        {name: 'GitHub', icon: '/assets/integrations/github.svg', account: 'example · 60 repositories', state: 'synced', records: 11230,
+        {name: 'GitHub', icon: '/assets/integrations/github.svg', account: 'example, 60 repositories', state: 'synced', records: 11230,
           units: ['commit', 'commits'], indexed: 16136,
           indexedSpecies: [{name: 'commit', count: 11230}, {name: 'pull_request', count: 4000}, {name: 'issue_comment', count: 906}],
           lastSyncedAt: '2026-11-07T19:41:00Z'},
@@ -58,12 +58,43 @@ test('one Usage page contains Agent sessions, Data sources and Team in order wit
   assert.match(html, /Daily agent sessions/);
   assert.match(html, /aria-label="Slack"/);
   assert.match(html, /Member activity/);
-  assert.doesNotMatch(html, /role="tab|What’s in the index|Indexed source records|1,357,516|analytics come next|turns saved/i);
+  assert.doesNotMatch(html, /role="tab|What’s in the index|Indexed source records|analytics come next|turns saved/i);
   const sources = html.slice(html.indexOf('>Data sources</h2>'), html.indexOf('>Team</h2>'));
   assert.doesNotMatch(sources, /<svg|report-bars|bar-track/);
   const adapter: ConsoleDataAdapter = {usage: async () => report(), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
   const page = renderToStaticMarkup(createElement(MemoryRouter, {initialEntries: ['/?tab=team']}, createElement(UsagePage, {adapter})));
   assert.doesNotMatch(page, /role="tablist"|role="tab"/);
+});
+
+test('the restored top-level narrative uses measured imports, index totals and query speed before the report sections', () => {
+  const html = render();
+  const summary = html.match(/<p class="report-summary">(.*?)<\/p>/)?.[1];
+  assert.ok(summary);
+  assert.equal(summary.replace(/<[^>]*>/g, ''), 'OpenCrawl has brought in 13,144 records from 3 sources, with 1,357,516 documents indexed. Recent index queries took a median 28 ms.');
+  assert.deepEqual([...summary.matchAll(/<strong>(.*?)<\/strong>/g)].map(match => match[1]), ['13,144 records', '1,357,516 documents indexed', '28 ms']);
+  assert.ok(html.indexOf('report-summary') < html.indexOf('>Agent sessions</h2>'));
+});
+
+test('the summary distinguishes measured zero from missing or incomplete reporting', () => {
+  const data = report();
+  assert.ok(data.ingestion?.index);
+  data.ingestion.sources = [{name: 'Example source', icon: '/source.svg', state: 'synced', records: 0, indexed: 0, lastSyncedAt: null}];
+  Object.assign(data.ingestion.index, {sessionEvents: 0, connectorDocuments: 0, searchMs: 0});
+  let summary = render(data).match(/<p class="report-summary">(.*?)<\/p>/)?.[1] ?? '';
+  assert.match(summary, /<strong>0 records<\/strong> from 1 source, with <strong>0 documents indexed<\/strong>/);
+  assert.match(summary, /median <strong>0 ms<\/strong>/);
+  data.ingestion.sources[0]!.records = Number.NaN;
+  data.ingestion.index.connectorDocuments = Number.NaN;
+  data.ingestion.index.searchMs = null;
+  summary = render(data).match(/<p class="report-summary">(.*?)<\/p>/)?.[1] ?? '';
+  assert.match(summary, /OpenCrawl is connected to 1 source/);
+  assert.match(summary, /Imported record counts are unavailable/);
+  assert.doesNotMatch(summary, /brought in|documents indexed|median|NaN|<strong>0/);
+  data.ingestion.sources = [];
+  assert.match(render(data), /No sources are connected yet\. Connect your team’s tools/);
+  data.ingestion = null;
+  summary = render(data).match(/<p class="report-summary">(.*?)<\/p>/)?.[1] ?? '';
+  assert.equal(summary, 'Source reporting is unavailable.');
 });
 
 test('source tiles render actual indexed species including zero and keep imported progress separate', () => {
@@ -114,7 +145,7 @@ test('Agent sessions retains measured activity, breakdowns and contextual facts 
   for (const label of ['Sessions', 'Messages', 'Tool calls', 'Machines']) {
     assert.equal((agents.match(new RegExp(`<dt>${label}</dt>`, 'g')) || []).length, 1, label);
   }
-  for (const text of ['Busiest day: 2026-11-07 with 5 sessions', 'Where agents run', 'Claude Code', 'Terminal', 'opencrawl · search', 'OpenCrawl tool calls:', '5 minutes ago', '2026-11-01']) {
+  for (const text of ['Busiest day: 2026-11-07 with 5 sessions', 'Where agents run', 'Claude Code', 'Terminal', 'opencrawl: search', 'OpenCrawl tool calls:', '5 minutes ago', '2026-11-01']) {
     assert.ok(agents.includes(text), text);
   }
   assert.match(agents, /Agent sessions per day/);
