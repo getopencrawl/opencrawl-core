@@ -63,8 +63,8 @@ def harness(dist, node, directory):
         def do_POST(self):
             raw = self.rfile.read(int(self.headers['Content-Length']))
             batch = json.loads(raw)
-            (root / 'retained-batch.json').write_bytes(raw)
             with mutex:
+                (root / 'retained-batch.json').write_bytes(raw)
                 state['active'] += 1
                 state['peak'] = max(state['peak'], state['active'])
             try:
