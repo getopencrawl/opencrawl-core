@@ -4,7 +4,7 @@ import { readFile, readdir, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { hello, renderHello } from '../dist/src/index.mjs';
+import { hello } from '../dist/src/index.mjs';
 
 const sourceRoot = new URL('../src/', import.meta.url);
 
@@ -36,7 +36,6 @@ async function checkTree(directory, root = directory) {
 
 test('core runs without any hosted service or credentials', () => {
   assert.deepEqual(hello(), {message: 'hello world'});
-  assert.equal(renderHello(), '<main><h1>hello world</h1></main>');
 });
 
 test('core runtime imports stay inside src, Node builtins, or reviewed portable libraries', async () => {

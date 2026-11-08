@@ -27,8 +27,8 @@ in domain logic. No duplicated hosted version of a core operation.
 | Optional customer-operated integrations and storage adapters | Hosted vendor accounts, shared credentials and commercial service operation |
 
 The hosted integrations page (Composio, managed Airbyte), hosted indexing glue,
-WorkOS auth and our infra stay in the shell on purpose. Self-hosters use plain
-Airbyte from `integrations/airbyte` and wire up sources themselves.
+WorkOS auth and our infra stay in the shell on purpose. The supported self-host
+stack and its capture/indexing path are documented in `docs/self-host.md`.
 
 Classify by responsibility. A local HTTP server, self-host authentication adapter,
 Compose/Helm example, or optional S3-compatible client can live here. Keep these
@@ -36,11 +36,11 @@ adapters out of domain logic. Selecting an AWS storage option must not require
 every user to have AWS credentials. Third-party services retain their own
 licenses; bundling or offering them as managed services needs separate review.
 
-`src/` contains the package runtime, `web/` shared assets, `cli/` the independent
-client, and `integrations/` optional operator tooling. The latter is not included
-in the current core npm package. Add seams only alongside an implemented feature
-and a working reference adapter; an interface without a usable implementation
-does not deliver self-hosting.
+`src/` contains the package runtime, `web/` shared assets, `web-v2/` the React
+console, `cli/` the independent client, and `deploy/` the single-tenant stack.
+Add seams only alongside an implemented feature and a working reference adapter;
+an interface without a usable implementation does not deliver self-hosting.
+Do not retain disconnected ingestion tools or superseded UI implementations.
 
 ## Trust and scope
 
@@ -96,12 +96,6 @@ across deployments. The CLI's local spool is a retry buffer, not a separate
 server-side source. The shared OpenSearch worker enforces explicit scope; the
 standalone runtime fixes one tenant/user while the hosted adapter supplies its
 authorized scope resolver. See `docs/session-indexing.md`.
-
-The older optional `integrations/agent-sessions` receiver uses a separate legacy
-protocol. Its optional-token/direct-network behavior does not describe the new
-`npm run sessions` receiver, which requires a token, checks bucket access before
-listening, and defaults to loopback. Do not expose the legacy receiver directly
-without addressing its authentication defaults.
 
 Publish tested immutable core runtime versions. The hosted consumer advances its
 package version, integrity lock and Git source pin together; it verifies embedded

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {deriveOnboarding} from '../web/onboarding-state.js';
+import {deriveOnboarding} from '../dist/src/onboarding-state.mjs';
 
 const receipt={observedAt:'2026-11-05T12:00:00.000Z'};
 
