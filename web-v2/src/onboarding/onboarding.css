@@ -1,0 +1,226 @@
+/* Approved onboarding presentation, owned by the React onboarding flow. */
+/* One focal point: the current blocker and the action that clears it. */
+body[data-onboarding]{--onboarding-header-width:960px;min-height:100svh;display:flex;flex-direction:column}
+body[data-onboarding] .app-header{height:var(--header-height);flex-shrink:0;width:100%;border:0;max-width:none;padding-inline:max(var(--pane-inset),calc((100% - var(--onboarding-header-width))/2))}
+body[data-onboarding] .brand{font-size:var(--text-heading)}
+body[data-onboarding] .brand img{width:32px;height:auto}
+.focus-onboarding{width:100%;flex:1;display:grid;align-items:start;padding:40px 24px 64px}
+.focus-content{width:100%;max-width:480px;margin-inline:auto;text-align:center}
+.focus-content h1{font-size:2.25rem;font-weight:550;letter-spacing:-.035em;line-height:1.18;outline:none;text-wrap:balance}
+.focus-description{font-size:1rem;color:var(--muted);line-height:1.65;margin:18px auto 0;max-width:39ch;text-wrap:pretty}
+.focus-action{display:flex;justify-content:center;margin-top:28px}
+.focus-action .primary{min-height:48px;min-width:228px;gap:20px;padding:12px 22px;font-size:var(--text-ui);border-radius:var(--radius-control);font-weight:550}
+.focus-action .primary svg{width:18px;height:18px}
+.waiting-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0}
+.focus-loading{display:flex;align-items:center;justify-content:center;gap:10px;color:var(--muted);font-size:var(--text-ui);min-height:180px}
+.focus-reassurance{margin:24px auto 0;color:var(--quiet);font-size:var(--text-sm)}
+#copy-fallback{width:100%;margin-top:24px;border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface);color:var(--text);padding:16px;font-size:16px;line-height:1.6;resize:vertical;text-align:left}
+@media(max-width:600px){body[data-onboarding] .app-header{height:60px;padding-inline:var(--space-4)}.focus-onboarding{padding:20px 24px 56px}.focus-content h1{font-size:1.875rem}.focus-description{font-size:var(--text-body);max-width:35ch}.focus-action{margin-top:24px}.focus-action .primary{min-width:228px;max-width:100%}}
+
+.signal-checklist{list-style:none;margin:32px auto 0;padding:0;max-width:340px;text-align:left;font-size:var(--text-sm)}
+.signal-checklist li{display:flex;align-items:center;gap:12px;min-height:44px;color:var(--muted)}
+.signal-status{margin-left:auto;font-size:var(--text-xs);color:var(--quiet)}
+.signal-checklist [data-complete]{color:var(--text)}
+
+@media(max-height:800px){
+ .focus-onboarding{padding-block:24px 40px}
+ .focus-content h1{font-size:1.875rem}
+ .focus-description{margin-top:12px;line-height:1.5}
+ .focus-action{margin-top:20px}
+ .signal-checklist{margin-top:32px}
+ .signal-checklist li{min-height:44px}
+}
+
+/* Pending signals use the original quiet spinner vocabulary. */
+.signal-checklist{margin-top:32px;padding-top:0}
+.signal-checklist li{gap:12px;min-height:44px}
+.signal-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@keyframes signal-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.signal-mark{animation:none}}
+@media(max-height:800px){.signal-checklist{margin-top:32px;padding-top:0}.signal-checklist li{min-height:44px}}
+
+/* The shared Night panel contains every onboarding step. */
+.focus-content.focus-panel{max-width:640px;padding:var(--space-8);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-panel);box-shadow:var(--shadow-paper)}
+@media(max-width:600px){.focus-content.focus-panel{padding:var(--space-6)}}
+
+
+/* The boxed setup follows a single left edge from instruction to signals. */
+.focus-content.focus-panel{text-align:left}
+.focus-panel .focus-description{margin-inline:0;max-width:48ch}
+.focus-panel .focus-action{justify-content:flex-start}
+.focus-panel .signal-checklist{margin-inline:0;max-width:none}
+.focus-panel .focus-reassurance{margin-inline:0}
+
+/* Split copy/reveal control from v1; copying preserves the screen layout. */
+.prompt-actions{display:inline-flex;max-width:100%;border-radius:var(--radius-control);background:var(--primary);box-shadow:none;transition:box-shadow var(--motion-fast)}
+.prompt-actions:has(>.primary:hover:not(:disabled)){box-shadow:var(--logo-layers-wide)}
+.prompt-actions:has(>.primary:active:not(:disabled)){box-shadow:none}
+.prompt-actions:not(:has(>.primary:enabled)){box-shadow:none}
+.focus-action .prompt-actions>.primary{position:relative;min-height:48px;border:0;background:transparent;box-shadow:none}
+.prompt-actions>.primary:hover:not(:disabled),.prompt-actions>.primary:active:not(:disabled){box-shadow:none}
+.focus-action .prompt-actions>.primary:focus-visible{z-index:1}
+.focus-action .prompt-actions>.primary:disabled{background:var(--surface-subtle);color:var(--quiet)}
+.focus-action .prompt-actions .copy-prompt{min-width:184px;gap:0;border-top-right-radius:0;border-bottom-right-radius:0}
+.focus-action .prompt-actions .prompt-toggle{min-width:44px;width:44px;padding:0;border-top-left-radius:0;border-bottom-left-radius:0}
+.prompt-actions .prompt-toggle::before{content:'';position:absolute;inset-block:0;inset-inline-start:0;width:1px;background:color-mix(in srgb,var(--on-primary) 30%,var(--primary));pointer-events:none}
+.prompt-toggle,.prompt-toggle svg,.prompt-preview{transition:none;animation:none}
+.prompt-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}
+.prompt-preview{margin-top:var(--space-5);padding:var(--space-4);border:1px solid var(--line);border-radius:var(--radius-control);background:var(--surface-subtle);text-align:left}
+.prompt-preview p{color:var(--muted);font:var(--text-sm)/1.75 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
+
+
+/* Original v1 status SVG and states, shared by pending and completed checks. */
+.signal-mark{width:20px;height:20px;flex-shrink:0;color:var(--accent);animation:signal-spin 1s linear infinite}
+.signal-mark circle{stroke-dasharray:42 15}
+.signal-mark path{visibility:hidden}
+.signal-checklist [data-complete] .signal-mark{color:var(--success);animation:none}
+.signal-checklist [data-complete] .signal-mark circle{stroke-dasharray:none}
+.signal-checklist [data-complete] .signal-mark path{visibility:visible}
+@media(prefers-reduced-motion:reduce){.signal-mark{animation:none}}
+
+.signal-checklist [data-pending] .signal-mark{color:var(--quiet);animation:none}
+.signal-checklist [data-pending] .signal-mark circle{stroke-dasharray:none}
+
+/* Reserve the full action label while showing brief copy feedback. */
+.focus-action .prompt-actions .copy-prompt{display:inline-grid}
+.copy-prompt>span,.copy-prompt::after{grid-area:1/1}
+.copy-prompt::after{content:attr(data-label);visibility:hidden}
+
+/* Required recording and optional history are separate outcomes. */
+.signal-detail{display:block;color:var(--muted);font-size:var(--text-xs);line-height:20px;font-weight:400}
+.optional-label{font-size:var(--text-xs);color:var(--quiet);margin-left:8px}
+
+.signal-detail[data-complete]{color:var(--success)}
+
+
+@media(max-height:650px) and (min-width:601px){
+ .focus-onboarding{padding-block:16px 24px}
+ .focus-content.focus-panel{padding-block:24px}
+ .focus-content h1{font-size:1.75rem}
+ .focus-panel .focus-description{max-width:none}
+ .focus-action{margin-top:16px}
+ .signal-checklist{margin-top:24px}
+ .signal-checklist li{min-height:36px}
+}
+
+/* Sign-in status rows double as native, keyboard-accessible disclosures. */
+.signal-checklist .expandable-signal{display:block;min-height:0}
+.signal-disclosure{width:100%}
+.signal-disclosure>summary{display:flex;align-items:center;gap:12px;list-style:none;min-height:44px;margin-inline:-8px;padding:0 8px;border-radius:var(--radius-control);cursor:pointer;color:inherit}
+.signal-disclosure>summary::-webkit-details-marker{display:none}
+.signal-disclosure>summary::marker{content:''}
+.signal-disclosure>summary:hover .signal-label,.signal-disclosure>summary:hover .signal-chevron{color:var(--strong)}
+.signal-heading{display:inline-flex;align-items:center;gap:8px;min-width:0;max-width:100%}
+.signal-chevron{width:14px;height:14px;flex:0 0 14px;color:var(--quiet);transition:none}
+.signal-disclosure[open]>summary .signal-chevron{transform:rotate(180deg)}
+.signal-command{margin:0 0 12px 32px;text-align:left}
+@media(max-height:650px) and (min-width:601px){.signal-disclosure>summary{min-height:36px}}
+
+.signal-instruction{margin-top:8px;color:var(--muted);font-size:var(--text-sm);line-height:1.6}
+
+.signal-command>.signal-instruction:first-child{margin-top:0;margin-bottom:8px}
+.signal-checklist .expandable-signal[data-detail]>.signal-disclosure>summary{min-height:56px}
+
+.command-snippet{display:flex;justify-content:space-between;align-items:center;gap:16px;width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text);text-align:left;cursor:pointer;transition:none}
+.command-snippet:hover:not(:disabled){background:var(--surface-raised);border-color:var(--line-strong)}
+.command-snippet code{display:block;min-width:0;padding:0;border:0;background:transparent;color:inherit;font:var(--text-ui)/1.6 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;user-select:none}
+.snippet-feedback{display:grid;align-items:center;justify-items:end;flex-shrink:0;width:var(--space-12)}
+.snippet-feedback>span{grid-area:1/1}
+.snippet-icon{display:flex}
+.snippet-icon svg{width:16px;height:16px}
+.snippet-done{text-align:right;visibility:hidden;color:var(--accent);font-size:var(--text-xs);line-height:1.4}
+.command-snippet[data-copied] .snippet-icon,.command-snippet[data-copy-error] .snippet-icon{visibility:hidden}
+.command-snippet[data-copied] .snippet-done,.command-snippet[data-copy-error] .snippet-done{visibility:visible}
+
+.help-content>p+.command-snippet{margin-top:8px}
+
+.command-snippet[data-copy-error] code{user-select:text}
+
+.command-token{display:inline-block;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* Child checks align their status icon with the parent label column. */
+.signal-checklist .signal-subitem{margin-inline-start:32px}
+
+/* Keep setup inside the panel; forward navigation belongs to the flow. */
+.onboarding-flow{width:100%;max-width:480px;margin-inline:auto}
+.onboarding-flow-panel{max-width:640px}
+.onboarding-navigation{display:flex;justify-content:flex-end;margin-top:var(--space-6)}
+.onboarding-navigation .button-link{min-width:104px;min-height:44px;gap:var(--space-2);padding-inline:var(--space-5);font-weight:550}
+.signal-checklist [data-signal="history"]>.signal-disclosure>summary{min-height:56px}
+.focus-onboarding .signal-mark{stroke-width:1.5}
+@media(max-height:800px) and (min-width:601px){
+ .focus-onboarding{padding-bottom:var(--space-6)}
+ .focus-content.focus-panel{padding-block:var(--space-6)}
+ .focus-panel .focus-description{max-width:none}
+}
+
+/* Shared navigation between onboarding steps. */
+.onboarding-navigation.has-back{justify-content:space-between}
+.onboarding-back{display:inline-flex;align-items:center;gap:var(--space-2);min-height:44px;padding-inline:var(--space-5);border:1px solid transparent;border-radius:var(--radius-control);color:var(--muted);font-size:var(--text-ui);text-decoration:none}
+.onboarding-back svg{width:18px;height:18px;transform:rotate(180deg)}
+.onboarding-back:hover{color:var(--strong)}
+.onboarding-navigation .onboarding-skip{background:transparent;border-color:transparent;color:var(--muted)}
+.onboarding-navigation .onboarding-skip:hover{background:transparent;border-color:transparent;color:var(--strong)}
+
+.connector-search{display:flex;align-items:center;gap:var(--space-3);margin-top:var(--space-6);padding:0 var(--space-3);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface-subtle)}
+.connector-search:focus-within{outline:2px solid var(--accent);outline-offset:3px}
+.connector-search>svg{width:18px;height:18px;flex-shrink:0;color:var(--quiet)}
+.connector-search input{width:100%;min-width:0;min-height:48px;padding:0;border:0;outline:none;background:transparent;color:var(--text);font-size:16px}
+.connector-search input::placeholder{color:var(--quiet)}
+.connector-search:has(input:disabled){opacity:.6}
+.connector-catalog{margin-top:var(--space-4);min-height:216px}
+.connector-search[hidden]+.connector-catalog{margin-top:var(--space-6)}
+#connector-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3);list-style:none;padding:0;margin:0}
+.connector-cell{min-width:0}
+.connector-tile{display:grid;grid-template-columns:32px minmax(0,1fr) 20px;align-items:center;gap:var(--space-3);width:100%;height:64px;padding:var(--space-2) var(--space-3);border-color:var(--line-strong);background:var(--surface-subtle);white-space:normal;text-align:left}
+.connector-tile:hover:not([aria-disabled="true"]){border-color:var(--accent);background:var(--surface-raised)}
+.connector-tile:hover:not([aria-disabled="true"]) .connector-tile-status{color:var(--accent-hover)}
+.connector-logo-slot{display:flex;align-items:center;justify-content:center;width:32px;height:32px}
+.connector-logo{display:block;width:32px;height:32px;object-fit:contain}
+.connector-name{font-size:var(--text-ui);line-height:20px;font-weight:550;overflow-wrap:anywhere}
+.connector-tile-status{display:flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--quiet)}
+.connector-tile-status>svg{width:20px;height:20px}
+.connector-tile[data-connected],.connector-tile[data-connected]:hover{border-color:color-mix(in srgb,var(--success) 35%,var(--line));background:var(--surface-subtle);cursor:default}
+.connector-tile[data-connected] .connector-tile-status{color:var(--success)}
+.connector-tile-status .signal-mark{width:20px;height:20px;color:var(--accent)}
+.connector-tile[data-connected] .signal-mark{color:var(--success);animation:none}
+.connector-tile[data-connected] .signal-mark circle{stroke-dasharray:none}
+.connector-tile[data-connected] .signal-mark path{visibility:visible}
+.connector-tile[aria-busy="true"]{cursor:wait}
+.connector-tile[data-error]{border-color:var(--danger)}
+.connector-tile-error{margin:var(--space-2) 0 0;color:var(--danger);font-size:var(--text-xs);line-height:1.5}
+.connector-message{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:var(--space-3);min-height:216px;color:var(--muted);font-size:var(--text-ui)}
+#sources-loading{flex-direction:row;align-items:center;justify-content:flex-start}
+.connector-spinner{width:18px;height:18px;border:1.5px solid var(--accent);border-right-color:transparent;border-radius:50%}
+#clear-connector-search{padding-inline:0;color:var(--accent)}
+@media(max-width:600px){
+ #connector-list{grid-template-columns:minmax(0,1fr);gap:var(--space-2)}
+ .connector-tile{height:56px}
+ .connector-catalog,.connector-message{min-height:376px}
+ .connector-search{margin-top:var(--space-6)}
+}
+.secret-dialog{width:min(440px,calc(100% - 32px));padding:var(--space-6);border:1px solid var(--line-strong);border-radius:var(--radius-panel);background:var(--surface);color:var(--text)}
+.secret-dialog::backdrop{background:rgb(0 0 0 / .75)}
+.secret-dialog p{margin-top:var(--space-3);color:var(--muted);font-size:var(--text-ui)}
+.secret-dialog label{display:grid;gap:var(--space-2);margin-top:var(--space-5);font-size:var(--text-ui)}
+.secret-dialog input{width:100%;min-width:0;min-height:44px;padding:var(--space-3);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface-subtle);font-size:16px}
+.dialog-actions{display:flex;justify-content:flex-end;gap:var(--space-3);margin-top:var(--space-6)}
+
+.invite-editor{margin-top:var(--space-6)}
+.invite-entry{display:flex;align-items:stretch;gap:var(--space-3)}
+#invite-emails{display:block;flex:1;min-width:0;width:100%;min-height:48px;padding:var(--space-3);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text);font-size:16px;line-height:1.5;transition:border-color var(--motion-fast)}
+#invite-emails:hover:not(:disabled){border-color:var(--line-strong)}
+#invite-emails::placeholder{color:var(--quiet)}
+#invite-emails[aria-invalid="true"]{border-color:var(--danger)}
+#invite-emails:disabled{color:var(--muted);cursor:wait}
+.invite-error{margin-top:var(--space-3);color:var(--danger);font-size:var(--text-sm);line-height:1.5;overflow-wrap:anywhere}
+.invite-entry .primary{flex:none;min-width:96px;min-height:48px;font-weight:550}
+.invite-feedback{margin-top:var(--space-3);color:var(--muted);font-size:var(--text-sm);line-height:1.5}
+.invitation-list{list-style:none;margin:0 0 var(--space-3);padding:0}
+.invitation-list>li{display:grid;grid-template-columns:20px minmax(0,1fr);gap:var(--space-3);align-items:center;min-height:48px;font-size:var(--text-ui)}
+.invitation-email{overflow-wrap:anywhere}
+.invitation-list .signal-mark{width:20px;height:20px;animation:none;color:var(--success)}
+.invitation-list .signal-mark circle{stroke-dasharray:none}
+.invitation-list .signal-mark path{visibility:visible}
+.invite-load-error{display:flex;align-items:center;gap:var(--space-3);margin-top:var(--space-4);color:var(--muted);font-size:var(--text-sm)}
+@media(max-width:600px){.invite-load-error{align-items:flex-start;flex-direction:column;gap:var(--space-2)}}
