@@ -175,3 +175,28 @@ test('the unmodified 0.4.12 installed launcher delegates through the compatibili
   expect(result.status).toBe(0);
   expect(result.stdout.trim()).toBe('0.4.14');
 }));
+
+test('an old installed launcher preserves permission errors from a cached updater', async () => isolated(async (directory, root) => {
+  mkdirSync(join(root, 'bin'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({name: '@getopencrawl/cli', version: '0.4.12'}));
+  writeFileSync(join(root, 'bin/opencrawl.cjs'), readFileSync(resolve(import.meta.dir, 'fixtures/launcher-0.4.12.cjs')));
+  release(directory, '0.4.21', {launcher: readFileSync(resolve(import.meta.dir, '../bin/opencrawl.cjs'), 'utf8')});
+  writeFileSync(join(cache(directory), 'current.json'), JSON.stringify({version: '0.4.21'}));
+  const preload = join(directory, 'denied-cache.cjs');
+  writeFileSync(preload, `
+    const fs = require('node:fs'), mkdir = fs.mkdirSync;
+    global.fetch = async () => Response.json({name:'@getopencrawl/cli', version:'0.4.21'});
+    fs.mkdirSync = function(file, ...args) {
+      if (String(file) === ${JSON.stringify(cache(directory))}) throw Object.assign(new Error('never-print-secret-path'), {code:process.env.FIXTURE_DENIAL});
+      return mkdir.call(this, file, ...args);
+    };
+  `);
+  for (const code of ['EPERM', 'EACCES', 'EROFS']) {
+    const result = spawnSync(node, ['--require', preload, join(root, 'bin/opencrawl.cjs'), 'update', '--json'], {env: {...process.env, OPENCRAWL_NO_UPDATE:'1', FIXTURE_DENIAL:code}, encoding:'utf8'});
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({schemaVersion:1, error:{code:'PERMISSION_DENIED'}});
+    expect(result.stdout).toContain(code);
+    expect(result.stdout).not.toContain('never-print');
+    expect(result.stderr).toBe('');
+  }
+}));
