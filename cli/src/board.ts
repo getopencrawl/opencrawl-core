@@ -1,4 +1,5 @@
 import {CliError, jsonRequest} from './oauth.ts';
+import {filesystemError} from './filesystem.ts';
 import {accessToken, withSessionLock, configDir, atomicJson} from './session.ts';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
@@ -129,7 +130,13 @@ export async function boardCommand(operation: string, api: string, values: Optio
   if (operation !== 'directory') {
     file = join(configDir(), 'board', createHash('sha256').update(JSON.stringify([api, sessionId(values)])).digest('hex') + '.json');
     try {saved = JSON.parse(readFileSync(file, 'utf8'));}
-    catch (error: any) {if(error.code !== 'ENOENT') throw new CliError('BOARD_STATE_ERROR', 'Could not read the local board registration.');}
+    catch (error: any) {
+      if (error.code !== 'ENOENT') {
+        const failure = filesystemError(error, 'read local board registration');
+        if (failure instanceof CliError) throw failure;
+        throw new CliError('BOARD_STATE_ERROR', 'Could not read the local board registration.');
+      }
+    }
   }
   const workspace = values.workspace ?? saved.workspace;
   const scoped = (input: Record<string, unknown>) => ({...input, ...(workspace ? {workspace} : {})});

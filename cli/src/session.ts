@@ -1,10 +1,11 @@
 import {Database} from 'bun:sqlite';
-import {mkdirSync, chmodSync, readFileSync, writeFileSync, renameSync, unlinkSync, openSync, closeSync, statSync, fsyncSync} from 'node:fs';
+import {mkdirSync, chmodSync, fchmodSync, fstatSync, readFileSync, writeFileSync, renameSync, unlinkSync, openSync, closeSync, statSync, fsyncSync} from 'node:fs';
 import {join, dirname} from 'node:path';
 import {homedir} from 'node:os';
 import {createHash, randomUUID} from 'node:crypto';
 import {setTimeout as pause} from 'node:timers/promises';
 import {CliError, refresh, type AuthConfig, type Tokens} from './oauth.ts';
+import {filesystemError} from './filesystem.ts';
 
 export type Session = Tokens & {auth: AuthConfig};
 export const configDir = () => join(process.env.OPENCRAWL_CONFIG_HOME || process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencrawl');
@@ -34,13 +35,22 @@ export function syncDirectory(directory: string) {
 
 export function readSession(api: string): Session | null {
   try {
-    const file = sessionFile(api);
-    chmodSync(file, 0o600);
-    const session = JSON.parse(readFileSync(file, 'utf8'));
-    if (!session?.auth?.clientId || !session.auth.tokenEndpoint || !session.accessToken || !session.refreshToken || !Number.isFinite(session.expiresAt)) throw new Error();
-    return session;
+    const fd = openSync(sessionFile(api), 'r');
+    try {
+      // Secure credentials need no writes to read. Repair loose POSIX modes on
+      // the opened inode, and fail closed if the sandbox prevents that repair.
+      if (process.platform !== 'win32') {
+        const mode = fstatSync(fd).mode & 0o7777;
+        if (mode !== 0o600 && mode !== 0o400) fchmodSync(fd, 0o600);
+      }
+      const session = JSON.parse(readFileSync(fd, 'utf8'));
+      if (!session?.auth?.clientId || !session.auth.tokenEndpoint || !session.accessToken || !session.refreshToken || !Number.isFinite(session.expiresAt)) throw new Error();
+      return session;
+    } finally { closeSync(fd); }
   } catch (error: any) {
     if (error?.code === 'ENOENT') return null;
+    const failure = filesystemError(error, 'read or secure saved credentials');
+    if (failure instanceof CliError) throw failure;
     throw new CliError('CREDENTIALS_ERROR', 'Could not read saved credentials. Run opencrawl logout, then login again.');
   }
 }
@@ -52,9 +62,17 @@ const heldLocks=new Set<()=>void>();
 process.once('exit',()=>{for(const release of heldLocks)try{release();}catch{}});
 const lockIdentity=(file:string)=>{const st=statSync(file,{bigint:true});return [st.dev,st.ino,st.birthtimeNs,st.ctimeNs].join(':');};
 export async function withSessionLock<T>(api: string, operation: () => Promise<T>, waitMs = 20_000,signal?:AbortSignal): Promise<T> {
+  try { return await lockedSession(api, operation, waitMs, signal); }
+  catch (error) { throw filesystemError(error, 'update local OpenCrawl state'); }
+}
+
+async function lockedSession<T>(api: string, operation: () => Promise<T>, waitMs: number, signal?:AbortSignal): Promise<T> {
   signal?.throwIfAborted();
   const file = sessionFile(api) + '.lock',database=file+'.sqlite';
   mkdirSync(configDir(), {recursive: true, mode: 0o700});
+  // Check write access before SQLite obscures the OS error as CANTOPEN, and
+  // create the lock database privately without ever replacing its inode.
+  closeSync(openSync(database, 'a', 0o600));
   const db=new Database(database,{create:true});
   const deadline=Date.now()+waitMs;
   let transaction=false,identity:string|undefined,released=false;
@@ -116,11 +134,18 @@ export async function logout(api: string) {
 }
 
 export async function accessToken(api: string, rejectedToken?: string, fetcher = fetch,signal?:AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
+  const usable = (session: Session) => session.expiresAt > Date.now() + 60_000 && (!rejectedToken || rejectedToken !== session.accessToken);
+  const current = readSession(api);
+  if (!current) throw new CliError('AUTH_REQUIRED', 'Run opencrawl login to sign in.', 2);
+  // Atomic session publication makes this snapshot safe without a disk lock.
+  // Rotation still rereads under the cross-process lock after a 401 or expiry.
+  if (usable(current)) return current.accessToken;
   return withSessionLock(api, async () => {
     signal?.throwIfAborted();
     const session = readSession(api);
     if (!session) throw new CliError('AUTH_REQUIRED', 'Run opencrawl login to sign in.', 2);
-    if (session.expiresAt > Date.now() + 60_000 && (!rejectedToken || rejectedToken !== session.accessToken)) return session.accessToken;
+    if (usable(session)) return session.accessToken;
     const cancellable=signal?((input:any,init:any)=>fetcher(input,{...init,signal:init?.signal?AbortSignal.any([signal,init.signal]):signal})) as typeof fetch:fetcher;
     const next = {...session, ...await refresh(session.auth, session.refreshToken, cancellable)};
     atomicJson(sessionFile(api), next);
