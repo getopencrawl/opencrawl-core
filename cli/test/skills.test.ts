@@ -3,7 +3,6 @@ import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync,
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {agentSkills, skillTargets} from '../src/skills.ts';
-import {collectCommand} from '../src/capture/command.ts';
 
 async function fixture(run: (home: string) => Promise<void>) {
   const home = mkdtempSync(join(tmpdir(), 'opencrawl-skills-')), saved = {...process.env};
@@ -70,13 +69,17 @@ test('CLI skill status is read-only and does not require login or capture enroll
 }));
 
 test('approved capture setup installs skills without replacing existing hooks or requiring runtime credentials', () => fixture(async home => {
-  process.env.HOME = home; process.env.USERPROFILE = home;
-  process.env.CLAUDE_CONFIG_DIR = join(home, 'claude'); process.env.CODEX_HOME = join(home, 'codex');
-  delete process.env.OPENCRAWL_SESSIONS_TOKEN; delete process.env.CLAUDE_CODE_REMOTE;
-  mkdirSync(process.env.CLAUDE_CONFIG_DIR);
-  const settings = join(process.env.CLAUDE_CONFIG_DIR, 'settings.json');
+  // homedir may be cached by the runtime: isolate HOME before process startup.
+  const claude = join(home, 'claude');
+  const env: NodeJS.ProcessEnv = {...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: join(home, 'codex')};
+  delete env.OPENCRAWL_SESSIONS_TOKEN; delete env.CLAUDE_CODE_REMOTE;
+  mkdirSync(claude);
+  const settings = join(claude, 'settings.json');
   writeFileSync(settings, JSON.stringify({hooks: {Stop: [{hooks: [{type: 'command', command: 'echo existing'}]}]}}));
-  const result = await collectCommand('install', 'http://127.0.0.1:8093', {yes: true, json: true, harness: 'claude-code', 'defer-auth': true, backfill: 'skip'}) as any;
+  const child = Bun.spawnSync(['bun', resolve(import.meta.dir, '../src/cli.ts'), 'collect', 'install', '--yes', '--harness', 'claude-code', '--defer-auth', '--backfill', 'skip', '--api', 'http://127.0.0.1:8093', '--json'], {env, stdout: 'pipe', stderr: 'pipe'});
+  expect(child.exitCode).toBe(0);
+  const result = JSON.parse(child.stdout.toString()).data;
+  expect(result.skills.results.every((r: any) => r.directory.startsWith(home))).toBe(true);
   expect(result.skills.results.some((r: any) => r.clients.includes('claude-code') && r.status === 'installed')).toBe(true);
   expect(readFileSync(join(home, 'claude/skills/opencrawl/SKILL.md'), 'utf8')).toContain('http://127.0.0.1:8093');
   expect(JSON.parse(readFileSync(settings, 'utf8')).hooks.Stop[0].hooks[0].command).toBe('echo existing');
