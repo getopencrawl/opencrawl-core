@@ -33,18 +33,19 @@ export function Field({label, hint, error, children, className = ''}: {label: Re
   const child = isValidElement<Record<string, unknown>>(children) ? cloneElement(children, {id: children.props.id ?? id, 'aria-describedby': [children.props['aria-describedby'], hint || error ? descriptionId : undefined].filter(Boolean).join(' ') || undefined, 'aria-invalid': error ? true : children.props['aria-invalid']}) : children;
   return <div className={`oc-field ${className}`}><label htmlFor={isValidElement<Record<string, unknown>>(children) ? String(children.props.id ?? id) : id}>{label}</label>{child}{(hint || error) && <div className={error ? 'oc-field-error' : 'oc-field-hint'} id={descriptionId} role={error ? 'alert' : undefined}>{error || hint}</div>}</div>;
 }
-export function PageHeader({title, description, actions}: {title: string; description?: ReactNode; actions?: ReactNode}) {
-  return <div className="oc-page-header"><div><h1 tabIndex={-1} data-page-heading>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="actions">{actions}</div>}</div>;
+export function PageHeader({title, description, actions, variant = 'default'}: {title: string; description?: ReactNode; actions?: ReactNode; variant?: 'default' | 'report'}) {
+  return <div className={`oc-page-header${variant === 'report' ? ' oc-report-header' : ''}`}><div><h1 tabIndex={-1} data-page-heading>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="actions">{actions}</div>}</div>;
 }
-export function Section({title, description, actions, children, className = '', ...props}: Omit<SurfaceProps, 'title'> & {title?: ReactNode; description?: ReactNode; actions?: ReactNode}) {
+export function Section({title, description, actions, children, className = '', headingLevel = 2, ...props}: Omit<SurfaceProps, 'title'> & {title?: ReactNode; description?: ReactNode; actions?: ReactNode; headingLevel?: 2 | 3}) {
   const id = useId();
-  return <section {...props} className={`oc-section ${className}`} aria-labelledby={title ? id : props['aria-labelledby']}>{(title || description || actions) && <div className="oc-section-heading"><div>{title && <h2 id={id}>{title}</h2>}{description && <p>{description}</p>}</div>{actions && <div className="actions">{actions}</div>}</div>}{children}</section>;
+  const Heading = headingLevel === 3 ? 'h3' : 'h2';
+  return <section {...props} className={`oc-section ${className}`} aria-labelledby={title ? id : props['aria-labelledby']}>{(title || description || actions) && <div className="oc-section-heading"><div>{title && <Heading id={id}>{title}</Heading>}{description && <p>{description}</p>}</div>{actions && <div className="actions">{actions}</div>}</div>}{children}</section>;
 }
 export function Notice({tone = 'info', title, children, className = ''}: {tone?: 'info' | 'success' | 'warning' | 'danger'; title?: string; children: ReactNode; className?: string}) {
   return <div className={`oc-notice oc-notice-${tone} ${className}`} role={tone === 'danger' ? 'alert' : 'status'}>{title && <strong>{title}</strong>}<div>{children}</div></div>;
 }
-export function StatusBadge({tone = 'neutral', children, className = ''}: {tone?: 'neutral' | 'success' | 'warning' | 'danger'; children: ReactNode; className?: string}) {
-  return <span className={`oc-badge oc-badge-${tone} ${className}`}>{children}</span>;
+export function StatusBadge({tone = 'neutral', children, className = '', variant = 'default'}: {tone?: 'neutral' | 'success' | 'warning' | 'danger'; children: ReactNode; className?: string; variant?: 'default' | 'pill'}) {
+  return <span className={`oc-badge oc-badge-${tone}${variant === 'pill' ? ' oc-status-pill' : ''} ${className}`}>{children}</span>;
 }
 export function EmptyState({title, description, action, actions}: {title: string; description?: ReactNode; action?: ReactNode; actions?: ReactNode}) {
   return <div className="oc-empty"><h3>{title}</h3>{description && <p>{description}</p>}{(action || actions) && <div className="actions">{action || actions}</div>}</div>;
@@ -73,7 +74,31 @@ export function CopyField({value, label, multiline = false}: {value: string; lab
 }
 export function Tabs({items, value, onChange, label}: {items: ReadonlyArray<{value: string; label: string}>; value: string; onChange: (value: string) => void; label: string}) {
   const ref = useRef<HTMLDivElement>(null);
-  return <div className="oc-tabs" role="tablist" aria-label={label} ref={ref} onKeyDown={event => {let index = items.findIndex(item => item.value === value); if (event.key === 'ArrowRight') index = (index + 1) % items.length; else if (event.key === 'ArrowLeft') index = (index - 1 + items.length) % items.length; else if (event.key === 'Home') index = 0; else if (event.key === 'End') index = items.length - 1; else return; event.preventDefault(); const item = items[index]; if (!item) return; onChange(item.value); ref.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[index]?.focus();}}>{items.map(item => <Button key={item.value} variant="plain" role="tab" aria-selected={item.value === value} tabIndex={item.value === value ? 0 : -1} onClick={() => onChange(item.value)}>{item.label}</Button>)}</div>;
+  return <div className="oc-tabs" role="tablist" aria-label={label} ref={ref} onKeyDown={event => {const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')); const focused = buttons.findIndex(button => button === document.activeElement); let index = focused < 0 ? items.findIndex(item => item.value === value) : focused; if (event.key === 'ArrowRight') index = (index + 1) % items.length; else if (event.key === 'ArrowLeft') index = (index - 1 + items.length) % items.length; else if (event.key === 'Home') index = 0; else if (event.key === 'End') index = items.length - 1; else return; event.preventDefault(); const item = items[index]; if (!item) return; onChange(item.value); buttons[index]?.focus();}}>{items.map(item => <Button key={item.value} variant="plain" role="tab" aria-selected={item.value === value} tabIndex={item.value === value ? 0 : -1} onClick={() => onChange(item.value)}>{item.label}</Button>)}</div>;
+}
+
+export interface MetricItem {label: string; value: ReactNode; note?: ReactNode; title?: string}
+export function MetricGrid({items}: {items: ReadonlyArray<MetricItem>}) {
+  return <dl className="report-metrics">{items.map(item => <div className="report-metric" key={item.label}><dt>{item.label}</dt><dd><span className="report-metric-value" title={item.title}>{item.value}</span>{item.note && <span className="report-metric-note">{item.note}</span>}</dd></div>)}</dl>;
+}
+
+export function BarList({rows, total, label}: {rows: ReadonlyArray<{name: string; count: number}>; total?: number; label: string}) {
+  const maximum = total ?? Math.max(0, ...rows.map(row => row.count));
+  if (!rows.length) return <p className="report-note">Nothing yet.</p>;
+  return <ul className="report-bars" aria-label={label}>{rows.map(row => <li key={row.name}><span className="report-bar-label" title={row.name}>{row.name}</span><svg className="report-bar-track" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect width={maximum > 0 && row.count > 0 ? Math.min(100, Math.max(2, row.count / maximum * 100)) : 0} height="6" rx="1"/></svg><span className="report-bar-count">{row.count.toLocaleString('en-US')}</span></li>)}</ul>;
+}
+
+export function ActivityChart({daily}: {daily: ReadonlyArray<{date: string; sessions: number; events: number}>}) {
+  if (!daily.length) return <p className="report-note">No activity yet.</p>;
+  const peak = Math.max(0, ...daily.map(day => day.sessions));
+  const maximum = Math.max(1, peak);
+  const width = 100 / daily.length;
+  const busiest = daily.reduce((best, day) => day.sessions > best.sessions ? day : best, daily[0]!);
+  const sessions = (value: number) => `${value.toLocaleString('en-US')} ${value === 1 ? 'session' : 'sessions'}`;
+  return <figure className="report-chart"><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={`Agent sessions per day. Busiest day ${busiest.date} with ${sessions(busiest.sessions)}.`}>{daily.map((day, index) => {
+    const height = day.sessions ? Math.max(3, day.sessions / maximum * 100) : 0;
+    return <rect key={day.date} x={index * width + width * .15} y={100 - height} width={width * .7} height={height} rx=".6"><title>{`${day.date}: ${sessions(day.sessions)}, ${day.events.toLocaleString('en-US')} events`}</title></rect>;
+  })}</svg><figcaption><span>{daily[0]!.date}</span><span>Peak {sessions(peak)} a day</span><span>{daily.at(-1)!.date}</span></figcaption></figure>;
 }
 
 export {Icon} from './icons.tsx';
