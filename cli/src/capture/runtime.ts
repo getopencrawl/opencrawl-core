@@ -6,6 +6,7 @@ import {join, dirname, resolve, sep, basename} from 'node:path';
 import {homedir, hostname} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {setImmediate as yieldToOwner} from 'node:timers/promises';
+import {setTimeout as pause} from 'node:timers/promises';
 import {configDir, atomicFile, atomicJson, accessToken, withSessionLock, syncDirectory} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, type Harness} from './parse.ts';
@@ -17,8 +18,9 @@ const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSyn
 export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 // Enrollment and every queued payload remain bound to their original destination.
-export async function refreshCaptureIdentity(config:CaptureConfig,token?:string) {
-  const {principal}=await request(config.api,'/api/sessions/identity',{},token);
+export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
+  const {principal}=await request(config.api,'/api/sessions/identity',{signal},token);
+  signal?.throwIfAborted();
   if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   // Authentication may finish after uninstall or another worker initializes a
   // prepared cloud image. Serialize the identity update with reconfiguration.
@@ -33,7 +35,7 @@ export async function refreshCaptureIdentity(config:CaptureConfig,token?:string)
       config.authPending=false;
     }
     atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
-  });
+  },20_000,signal);
   return principal;
 }
 function staticCaptureToken(api:string) {
@@ -42,26 +44,29 @@ function staticCaptureToken(api:string) {
 }
 export async function request(api:string,path:string,init:RequestInit={},tokenOverride?:string) {
   const staticToken=tokenOverride || staticCaptureToken(api);
-  let token=staticToken || await accessToken(api);
+  const signal=init.signal??undefined;
+  signal?.throwIfAborted();
+  let token=staticToken || await accessToken(api,undefined,fetch,signal);
   const method=init.method??'GET';
   // Only retry operations whose payloads are read-only or content-addressed.
   // A lost response after storage must resend the same batch/blob, not lose it.
-  const retryable=method==='GET'||method==='POST'&&path==='/api/sessions/batches'||method==='PUT'&&/^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(path);
+  const retryable=method==='GET'||method==='POST'&&['/api/sessions/batches','/api/sessions/memories'].includes(path)||method==='PUT'&&/^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(path);
   const send=async()=>{
     for(let attempt=0;;attempt++){
       let response:Response;
-      try {response=await fetch(api+path,{...init,headers:{...init.headers,authorization:'Bearer '+token},signal:AbortSignal.timeout(20000),redirect:'error'});}
-      catch(error){if(!retryable||attempt===4)throw error;await new Promise(r=>setTimeout(r,250*2**attempt));continue;}
+      signal?.throwIfAborted();
+      try {response=await fetch(api+path,{...init,headers:{...init.headers,authorization:'Bearer '+token},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(20000)]):AbortSignal.timeout(20000),redirect:'error'});}
+      catch(error){if(signal?.aborted||!retryable||attempt===4)throw error;await pause(250*2**attempt,undefined,{signal});continue;}
       if(!retryable||attempt===4||![429,502,503,504].includes(response.status))return response;
       const retryAfter=response.headers.get('retry-after');
       const seconds=retryAfter===null?NaN:Number(retryAfter);
       const delay=Number.isFinite(seconds)?seconds*1000:retryAfter?Date.parse(retryAfter)-Date.now():0;
       await response.body?.cancel();
-      await new Promise(r=>setTimeout(r,Math.min(30000,Math.max(250*2**attempt,Number.isFinite(delay)?delay:0))));
+      await pause(Math.min(30000,Math.max(250*2**attempt,Number.isFinite(delay)?delay:0)),undefined,{signal});
     }
   };
   let res=await send();
-  if(res.status===401 && !staticToken){token=await accessToken(api,token);res=await send();}
+  if(res.status===401 && !staticToken){token=await accessToken(api,token,fetch,signal);res=await send();}
   const body=await res.json().catch(()=>{throw res.status>=500||res.status===429
     ?new CliError('CAPTURE_RETRY_EXHAUSTED',`Capture endpoint ${new URL(api).hostname} is temporarily unavailable (HTTP ${res.status}). Queued data is retained; retry the approved import.`)
     :new CliError('CAPTURE_NETWORK_BLOCKED',`Capture endpoint ${new URL(api).hostname} returned HTTP ${res.status} without JSON. Check this host in your cloud environment network allowlist.`);});
@@ -280,7 +285,7 @@ export async function drainCaptureNotices(config=readCaptureConfig()!) {
     const file=event.transcript_path || findTranscript(config,harness,event.session_id);
     // Persist the source BEFORE retiring the notice; a tail written after Stop
     // remains discoverable on this worker's polls and the next CLI invocation.
-    const source={harness,sessionId:event.session_id,path:file??null,origin:process.env.CLAUDE_CODE_REMOTE==='true'?'cloud':'unknown'};
+    const source={harness,sessionId:event.session_id,path:file??null,cwd:typeof event.cwd==='string'?event.cwd:undefined,origin:process.env.CLAUDE_CODE_REMOTE==='true'?'cloud':'unknown'};
     atomicJson(join(captureDir(),'sources',hash(harness+':'+event.session_id+':'+(file??''))+'.json'),source);
     const meta=file && existsSync(file) ? await captureTranscript(config,harness,file,event) :
       {harness,sessionId:event.session_id,origin:source.origin,originEvidence:null,parentSessionId:null};

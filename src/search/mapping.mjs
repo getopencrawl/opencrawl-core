@@ -25,9 +25,13 @@ export const boardIndexMapping = {dynamic: 'strict', properties: {
 
 const metadata = mapping => ({type:'object', dynamic:'strict', properties:Object.fromEntries(
   Object.entries(mapping.properties).filter(([key]) => !['tenantId','text','title','sourceKey'].includes(key)))});
+export const memoryMapping={dynamic:'strict',properties:{
+  ...Object.fromEntries(['userId','installationId','harness','host','snapshotId','kind','path','project','sourceSessionId'].map(k=>[k,{type:'keyword'}])),
+  generation:{type:'long'},chunk:{type:'integer'},receivedAt:{type:'date'},modifiedAt:{type:'date'},
+}};
 export const realmMapping = {dynamic:'strict', properties:{
   schema:{type:'integer'}, tenantId:{type:'keyword'}, corpus:{type:'keyword'}, id:{type:'keyword'},
   source:{type:'keyword'}, kind:{type:'keyword'}, timestamp:{type:'date'}, author:{type:'keyword'},
   text:{type:'text'}, title:{type:'text'}, sourceKey:{type:'keyword',index:false,doc_values:false},
-  connector:metadata(connectorMapping), session:metadata(sessionIndexMapping), board:metadata(boardIndexMapping),
+  connector:metadata(connectorMapping), session:metadata(sessionIndexMapping), board:metadata(boardIndexMapping),memory:{type:'object',...memoryMapping},
 }};

@@ -2,6 +2,7 @@ import {searchWorkspace, searchInput, formatSearch, fetchWorkspace, fetchInput, 
 import {boardCommand} from './board.ts';
 import {upgradeCaptureHooks} from './capture/install.ts';
 import {collectCommand} from './capture/command.ts';
+import {scheduleMemoryRefresh} from './capture/memory.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs} from 'node:util';
 import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest} from './oauth.ts';
@@ -49,7 +50,7 @@ Agents: ask the user to choose Claude, Codex, both, or skip before importing.
 History includes messages, tool arguments/results and available attachments.
 
 Search: opencrawl search "words" --json
-  --source all|sessions|connectors   Default: all
+  --source all|sessions|connectors|memories   Default: all
   --match any|all|phrase                    Default: any; all requires every term
   --limit 1..40                     Default: 10
   --session-id ID                   Narrow a sessions-only query
@@ -105,6 +106,9 @@ export async function identity(api: string, fetcher = fetch, initialToken?: stri
 }
 
 export async function main(args = process.argv.slice(2)) {
+  // Process-owned work overlaps commands and async hooks. It is cancelled when
+  // the command ends, so quick commands never wait and no orphan worker exists.
+  let memoryJob:ReturnType<typeof scheduleMemoryRefresh>|undefined=undefined;
   let json = args.includes('--json');
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
@@ -113,6 +117,8 @@ export async function main(args = process.argv.slice(2)) {
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
+    const localHook=command==='collect'&&parsed.positionals[1]==='hook'&&!parsed.values.managed;
+    if(command!=='logout'&&!(command==='collect'&&parsed.positionals[1]==='uninstall')&&!parsed.values['dry-run']&&!localHook)memoryJob=scheduleMemoryRefresh();
     if (parsed.positionals.length > (['collect','search','fetch','board'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
@@ -167,6 +173,7 @@ export async function main(args = process.argv.slice(2)) {
     else process.stderr.write(`opencrawl: ${message}\n`);
     return known ? error.exitCode : 1;
   } finally {
+    memoryJob?.stop();
     // Upgrade only our hook settings locally; never launch an unowned process.
     if(args[0]!=='collect' && args[0]!=='logout')try{await upgradeCaptureHooks();}catch{}
   }

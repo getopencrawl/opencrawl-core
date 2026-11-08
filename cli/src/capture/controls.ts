@@ -35,13 +35,13 @@ export async function excludeCapture(project?:string, session?:string) {
 export async function purgeLocalCapture(approved:boolean) {
   if(!approved)throw new CliError('PURGE_CONSENT_REQUIRED','Run collect uninstall, then collect purge --yes to permanently delete local pending capture data. Uploaded data is unchanged.',64);
   // Never remove lock databases: another process may still have one open.
-  return withSessionLock('capture:worker',()=>withSessionLock('capture:notices',()=>withSessionLock('capture:spool',()=>withSessionLock('capture:flush',()=>withSessionLock('capture:configuration',async()=>{
+  return withSessionLock('capture:memories',()=>withSessionLock('capture:worker',()=>withSessionLock('capture:notices',()=>withSessionLock('capture:spool',()=>withSessionLock('capture:flush',()=>withSessionLock('capture:configuration',async()=>{
     const config=readCaptureConfig();
     if(!config?.disabled)throw new CliError('CAPTURE_ACTIVE','Run collect uninstall and wait for active capture to stop before purging.');
-    for(const name of ['queue','blobs','notices','sources','state','last-upload.json','last-error.json']) {
+    for(const name of ['queue','blobs','notices','sources','state','memories','last-upload.json','last-error.json']) {
       const path=join(captureDir(),name);
       if(existsSync(path))rmSync(path,{recursive:true,force:true});
     }
     return {localCaptureDataDeleted:true,uploadedDataDeleted:false,notice:'Original harness transcripts, credentials and hook backups are unchanged. Reinstalling can capture active conversations again; retain exclusions for sensitive projects.'};
-  },0),0),0),0),0);
+  },0),0),0),0),0),0);
 }
