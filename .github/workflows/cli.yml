@@ -77,7 +77,9 @@ jobs:
       - run: bun cli/scripts/update-smoke.ts
       - name: Capture ownership under non-reaping PID 1
         if: runner.os == 'Linux'
-        run: sudo unshare --fork --pid --mount-proc python3 cli/scripts/process-ownership.py "$PWD/cli/dist" "$(command -v node)"
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror cli/scripts/process-ownership-init.c -o "$RUNNER_TEMP/process-ownership-init"
+          sudo unshare --fork --pid --mount-proc "$RUNNER_TEMP/process-ownership-init" "$(command -v node)" "$PWD/cli/scripts/process-ownership.mts" "$PWD/cli/dist"
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
     needs: [build, checks]
