@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react';
+import {useCallback, useEffect, useRef, useState} from 'react';
 import {ActivityChart, BarList, Button, EmptyState, LoadingState, MetricGrid, Notice, PageHeader, Section, StatusBadge, Table} from '../design/components.js';
 import {Link} from '../router.js';
 import type {ConsoleDataAdapter, UsageReport} from './types.js';
@@ -14,33 +14,61 @@ export function date(value: string | number | null | undefined) {
 }
 
 export function useUsage(adapter: ConsoleDataAdapter) {
-  const [data, setData] = useState<UsageReport | null>(null);
-  const [error, setError] = useState('');
-  const [revision, setRevision] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const latest = useRef(0);
+  const [state, setState] = useState<{adapter: ConsoleDataAdapter; data: UsageReport | null; error: string; loading: boolean}>({adapter, data: null, error: '', loading: true});
+  const reader = useRef<{adapter: ConsoleDataAdapter; refresh: () => void} | null>(null);
 
   useEffect(() => {
-    const controller = new AbortController();
-    const request = ++latest.current;
-    const current = () => request === latest.current && !controller.signal.aborted;
-    setLoading(true);
-    setError('');
-    setData(null);
-    void (async () => {
+    let disposed = false, request: AbortController | null = null;
+    let data: UsageReport | null = null, error = '';
+    let successfulAt = -Infinity, attemptedAt = -Infinity;
+    const publish = (loading: boolean) => {if (!disposed) setState({adapter, data, error, loading});};
+    // Reports include live inventory/latency queries and member receipts. Keep
+    // those reads single-flight and at most once a minute during normal use.
+    async function load(manual = false) {
+      if (disposed || request || document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (!manual && (now - successfulAt < 60_000 || now - attemptedAt < 10_000)) return;
+      attemptedAt = now;
+      const current = new AbortController(); request = current;
+      if (!data) error = '';
+      publish(data === null);
       try {
-        const report = await adapter.usage(controller.signal);
-        if (current()) setData(report);
+        const report = await adapter.usage(current.signal);
+        if (disposed || current.signal.aborted) return;
+        data = report; error = ''; successfulAt = Date.now();
       } catch (failure: unknown) {
-        if (current()) setError(failure instanceof Error ? failure.message : 'Usage could not load. Try again.');
+        if (disposed || current.signal.aborted) return;
+        const transient = typeof failure === 'object' && failure !== null && 'status' in failure &&
+          typeof failure.status === 'number' && Number.isInteger(failure.status) && failure.status >= 500 && failure.status <= 599;
+        if (!transient) data = null;
+        error = failure instanceof Error ? failure.message : 'Usage could not load. Try again.';
       } finally {
-        if (current()) setLoading(false);
+        if (request === current) request = null;
+        if (!current.signal.aborted) publish(false);
       }
-    })();
-    return () => controller.abort();
-  }, [adapter, revision]);
+    }
+    const refresh = () => {void load();};
+    const visibility = () => {
+      if (document.visibilityState === 'visible') refresh();
+      else {request?.abort(); request = null; attemptedAt = -Infinity; publish(false);}
+    };
+    const currentReader = {adapter, refresh: () => {void load(true);}};
+    reader.current = currentReader;
+    publish(true); refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', visibility);
+    return () => {
+      disposed = true; request?.abort(); request = null;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', visibility);
+      if (reader.current === currentReader) reader.current = null;
+    };
+  }, [adapter]);
 
-  return {data, error, loading, refresh: () => setRevision(value => value + 1)};
+  const refresh = useCallback(() => {if (reader.current?.adapter === adapter) reader.current.refresh();}, [adapter]);
+  return {...(state.adapter === adapter ? state : {data: null, error: '', loading: true}), refresh};
 }
 
 /** Compact source table retained for existing non-report consumers. */
@@ -220,6 +248,7 @@ function UsageSummary({report}: {report: UsageReport}) {
   return <p className="report-summary">
     {records === null ? <>OpenCrawl is connected to {plural(data.sources.length, 'source')}</> : <>OpenCrawl has brought in <strong>{plural(records, 'record')}</strong> from {plural(data.sources.length, 'source')}</>}
     {indexed !== null && <>, with <strong>{plural(indexed, 'document')} indexed</strong></>}.
+    {indexed === null && <> Indexed total is unavailable.</>}
     {records === null && <> Imported record counts are unavailable.</>}
     {searchMs !== null && <> Recent index queries took a median <strong>{count(searchMs)} ms</strong>.</>}
   </p>;
@@ -241,7 +270,7 @@ export function UsagePage({adapter}: {adapter: ConsoleDataAdapter}) {
   return (
     <div className="usage-report">
       <PageHeader variant="report" title="Usage" description={scope}/>
-      {error && <Notice tone="danger">{error} <Button onClick={refresh} disabled={loading}>Try again</Button></Notice>}
+      {error && <Notice tone={data ? 'warning' : 'danger'}>{data ? 'Usage couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}{!data && <Button onClick={refresh} disabled={loading}>Try again</Button>}</Notice>}
       {loading && <LoadingState label="Loading usage"/>}
       {data && <UsageReportView data={data} now={now}/>}
     </div>
