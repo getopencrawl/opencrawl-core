@@ -6,7 +6,7 @@ export function cloudSetupScript(api) {
   // notice; the same async hook authenticates after secrets are injected.
   return `#!/bin/sh
 set -eu
-npm install --prefix "$HOME/.local/share/opencrawl-cloud" --no-audit --no-fund @getopencrawl/cli@0.4.17
+npm install --prefix "$HOME/.local/share/opencrawl-cloud" --no-audit --no-fund @getopencrawl/cli@0.4.18
 OPENCRAWL_NO_UPDATE=1 "$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl" collect install --yes --api ${quote(api)} --harness claude-code --defer-auth --backfill skip --json
 `;
 }

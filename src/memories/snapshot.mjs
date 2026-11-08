@@ -42,8 +42,8 @@ export function createMemoryIngest({store,prefix}) {
 }
 export function verifyStoredMemory({prefix,key,snapshot,principal}) {
   const identity=memorySourceIdentity(prefix,key);
-  validateMemorySnapshot(snapshot,principal);
   const {receivedAt,snapshotId,...original}=snapshot;
+  validateMemorySnapshot(original,principal);
   if(!identity||identity.tenantHash!==digest(principal.tenantId)||identity.userHash!==digest(principal.userId)||
     identity.harness!==snapshot.harness||identity.installationHash!==digest(snapshot.installationId)||identity.generation!==snapshot.generation||
     identity.snapshotId!==snapshotId||memorySnapshotId(original)!==snapshotId||!Number.isFinite(Date.parse(receivedAt)))fail(403,'Stored memory scope or content mismatch');

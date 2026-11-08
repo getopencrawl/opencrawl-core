@@ -61,8 +61,10 @@ including a source session ID where the file supplies one. Reads are team-wide
 inside the authorized tenant, just like captured sessions; uploader identity is
 attribution and write ownership. Current scope is checked on every search/fetch.
 
-Release the tested core package before updating the hosted package/lock/Git pin;
-then publish the CLI. Existing session and connector documents are preserved.
+Release the tested core package before updating the hosted package/lock/Git pin.
+Publish CLI 0.4.18 before the hosted rollout exposes its pinned cloud setup script;
+early clients retry against the old receiver without losing their local memories.
+Existing session and connector documents are preserved.
 Rolling back to the prior CLI stops new scans; prior server code ignores the new
 object paths and mapping fields. Retain source objects and indexing receipts.
 The memory mapping adds no index, cluster, daemon or infrastructure service.
