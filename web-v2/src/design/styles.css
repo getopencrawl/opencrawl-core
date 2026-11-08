@@ -117,10 +117,11 @@ img { max-width: 100%; }
 .oc-textarea { resize: vertical; line-height: var(--leading-prose); }
 .oc-copy-field { display: flex; align-items: end; gap: var(--space-2); }
 .oc-copy-field > .oc-field { flex: 1; }
-.oc-tabs { display: flex; gap: var(--space-5); overflow-x: auto; border-bottom: 1px solid var(--line); margin-bottom: var(--space-6); }
-.oc-tabs > .oc-button { flex-shrink: 0; border: 0; border-radius: 0; border-bottom: 2px solid transparent; color: var(--muted); padding-inline: 0; }
+.oc-tabs { display: flex; gap: var(--space-1); overflow-x: auto; border-bottom: 1px solid var(--line); margin-bottom: var(--space-6); }
+.oc-tabs > .oc-button { flex-shrink: 0; border: 0; border-radius: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: var(--space-3) var(--space-4); }
 .oc-tabs > [aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
 .oc-tabs > .oc-button:hover { background: transparent; }
+.oc-tabs + .oc-section { padding-top: 0; border-top: 0; }
 
 /* Feedback, data and protected focus. */
 .oc-notice { display: grid; gap: var(--space-1); padding: var(--space-4); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--muted); }
