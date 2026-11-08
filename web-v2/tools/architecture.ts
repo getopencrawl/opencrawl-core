@@ -4,6 +4,13 @@ export interface ArchitectureViolation {file: string; line: number; rule: string
 const rawControls = new Set(['button', 'input', 'select', 'textarea', 'dialog', 'table']);
 const isDesignFile = (file: string) => file.startsWith('src/design/');
 
+/** Call with authored roots only; generated bundles and dependencies are not source. */
+export function inspectAuthoredFiles(files: ReadonlyArray<string>): ArchitectureViolation[] {
+  return files.filter(file => /\.[cm]?jsx?$/.test(file)).map(file => ({
+    file, line: 1, rule: 'typescript-only', message: 'Author TypeScript only. Compiled JavaScript belongs in dist.',
+  }));
+}
+
 /** Authored interface punctuation must not use centered-dot separators, even encoded. */
 export function inspectUiText(file: string, text: string): ArchitectureViolation[] {
   const forbidden = /\u00b7|&(?:middot|centerdot|#0*183|#x0*b7);?|\\u(?:00b7|\{0*b7\})|\\xb7/gi;

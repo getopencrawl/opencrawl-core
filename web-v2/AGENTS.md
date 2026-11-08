@@ -8,6 +8,10 @@ DTOs and runtime adapters; WorkOS, billing and managed connector code stay outsi
   registry drives navigation and routing together. Use Link, Navigate and router
   hooks for internal paths. Full navigation is reserved for authentication and
   external authorization boundaries.
+- Brand is the only mark/wordmark component. Use the static mark and lowercase
+  opencrawl wordmark; never restore animated logo assets or hide the desktop
+  wordmark. Workspace navigation stays grouped at the right; its active underline
+  sits close below the label. Retain the content-aligned maximum width.
 - Use the components exported from src/design/components.tsx. Never add a second
   native button, field, dialog or table implementation in a feature page. Add a
   shared primitive when an actual feature needs one. Native details/summary and
@@ -44,6 +48,8 @@ tree. Usage is one page ordered Agent sessions, Data sources, Team. Show real
 indexed document-type counts inside each source tile, separately from imported
 records; never compare distinct corpora with relative-size bars. Restore and
 review one screen before redesigning another.
+Do not repeat the source breakdown as a large indexed-document total or an
+"Imported N" summary. Keep the useful per-type counts and sync metadata.
 
 Integrations preserves the original centered, catalog-ordered stack of connection
 cards through the shared `oc-connection-*` patterns. Keep per-stream import counts

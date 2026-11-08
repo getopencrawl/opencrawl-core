@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readdir, readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {join, relative} from 'node:path';
-import {inspectSource, inspectUiText} from '../tools/architecture.ts';
+import {inspectAuthoredFiles, inspectSource, inspectUiText} from '../tools/architecture.ts';
 const root = fileURLToPath(new URL('../', import.meta.url));
 async function files(path: string): Promise<string[]> {const entries = await readdir(path, {withFileTypes: true}); return (await Promise.all(entries.map(entry => entry.isDirectory() ? files(join(path, entry.name)) : [join(path, entry.name)]))).flat();}
 
@@ -24,9 +24,22 @@ test('centered-dot separators cannot return as UI literals, HTML entities or Uni
   assert.deepEqual(inspectSource('src/pages/good.tsx', 'export const View=()=> <StatusBadge><Icon name="check"/>Active</StatusBadge>;'), []);
 });
 
-test('production source obeys the shared component and TypeScript boundaries', async () => {
+test('JavaScript is rejected in UI source, tooling, tests and shared assets', () => {
+  const javascript = ['src/pages/drift.jsx', 'tools/build.mjs', 'test/browser.js', '../web/copy.cjs'];
+  const typescriptAndAssets = ['src/pages/view.tsx', 'tools/build.ts', 'test/browser.ts', '../web/tokens.css', '../web/assets/mark.svg'];
+  const violations = inspectAuthoredFiles([...javascript, ...typescriptAndAssets]);
+  assert.deepEqual(violations.map(item => item.file), javascript);
+  assert.ok(violations.every(item => item.rule === 'typescript-only'));
+});
+
+test('authored UI source, tooling, tests and shared assets contain no JavaScript', async () => {
+  const authored = (await Promise.all(['src', 'tools', 'test', '../web'].map(path => files(join(root, path))))).flat();
+  const violations = inspectAuthoredFiles(authored.map(file => relative(root, file)));
+  assert.deepEqual(violations, [], violations.map(item => `${item.file}: ${item.message}`).join('\n'));
+});
+
+test('production source obeys the shared component and styling boundaries', async () => {
   const sourceFiles = await files(join(root, 'src'));
-  assert.deepEqual(sourceFiles.filter(file => /\.[cm]?jsx?$/.test(file)), [], 'Author TypeScript only. Compiled output belongs in dist.');
   const violations = (await Promise.all(sourceFiles.filter(file => /\.tsx?$/.test(file)).map(async file => inspectSource(relative(root, file), await readFile(file, 'utf8'))))).flat();
   assert.deepEqual(violations, [], violations.map(value => `${value.file}:${value.line} ${value.message}`).join('\n'));
   for (const file of sourceFiles.filter(file => file.endsWith('.css'))) {
@@ -39,8 +52,8 @@ test('production source obeys the shared component and TypeScript boundaries', a
   }
 });
 
-test('remaining shared web assets do not contain separator dots', async () => {
-  const shared = await files(join(root, '../web'));
+test('shared web assets and HTML-producing source do not contain separator dots', async () => {
+  const shared = [...await files(join(root, '../web')), join(root, '../src/sessions/cloud-setup.mts')];
   for (const file of shared.filter(value => /\.(?:css|html?|[cm]?[jt]sx?)$/.test(value))) {
     assert.deepEqual(inspectUiText(relative(root, file), await readFile(file, 'utf8')), [], file);
   }
