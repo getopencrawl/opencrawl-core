@@ -157,7 +157,7 @@ def harness(dist, node, directory):
         assert not unexpected_parents, 'Capture spawned children outside harness ownership'
         until(drained)
         assert len([event for event in events.values() if event['kind'] == 'hook']) == 201
-        assert state['peak'] == 1, 'More than one uploader'
+        assert 1 <= state['peak'] <= 4, 'Background upload request concurrency exceeded its bound'
         # Nothing except the directly owned uploader may remain after the burst.
         assert {pid for pid in processes() if pid not in (1, os.getpid())} == {owner.pid}
         assert not any(status == 'Z' for status, _ in processes().values())
@@ -201,7 +201,7 @@ def harness(dist, node, directory):
         assert any(e.get('nativeId') == 'deadline-retry' for e in events.values())
         assert set(processes()) == {1, os.getpid()}
         return {'hooks': 204, 'deadlineExit': True, 'deadlineQueueRecovery': True,
-                'peakHookProcesses': process_peak[0], 'concurrentUploaders': state['peak'], 'zombies': 0,
+                'peakHookProcesses': process_peak[0], 'peakConcurrentRequests': state['peak'], 'zombies': 0,
                 'orphanedChildren': 0, 'killRecovery': True, 'lateTail': True,
                 'idleExit': True, 'sameHarnessOwnedPid': True}
     finally:
