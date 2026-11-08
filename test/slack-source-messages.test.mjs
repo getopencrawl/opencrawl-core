@@ -1,8 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gunzipSync} from 'node:zlib';
-import {createSlackMessageCapture} from '../src/connectors/slack-source-messages.mjs';
-import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
+import {createSlackMessageCapture} from '../dist/src/connectors/slack-source-messages.mjs';
+import {createConnectorPipeline} from '../dist/src/connectors/pipeline.mjs';
 const binding={tenantId:'fixture',connectionId:'conn',workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:'raw/v1/source=slack/workspace=T123/connection=conn/'};
 const input={runId:'history',cutoff:1800000000000};
 const ok=data=>({status:200,data:{ok:true,...data}});

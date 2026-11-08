@@ -1,10 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createWorkspaceSearch} from '../src/search/workspace.mjs';
-import {excerpt, groupDuplicates} from '../src/search/presentation.mjs';
-import {createSessionSearch} from '../src/sessions/search.mjs';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
-import {documentId} from '../src/connectors/scope.mjs';
+import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
+import {excerpt, groupDuplicates} from '../dist/src/search/presentation.mjs';
+import {createSessionSearch} from '../dist/src/sessions/search.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
+import {documentId} from '../dist/src/connectors/scope.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 
 const principal = {tenantId:'team', userId:'reader'};

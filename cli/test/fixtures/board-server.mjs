@@ -1,7 +1,7 @@
 import {createServer} from 'node:http';
-import {createBoard} from '../../../src/board/board.mjs';
-import {createBoardHandler} from '../../../src/board/http.mjs';
-import {createLocalBoardStore} from '../../../src/board/local-store.mjs';
+import {createBoard} from '../../../dist/src/board/board.mjs';
+import {createBoardHandler} from '../../../dist/src/board/http.mjs';
+import {createLocalBoardStore} from '../../../dist/src/board/local-store.mjs';
 
 const store=createLocalBoardStore(process.argv[2]);
 const board=createBoard({store,prefix:'fixture'});

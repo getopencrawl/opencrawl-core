@@ -1,4 +1,4 @@
-import {realmDocument} from '../src/search/realm.mjs';
+import {realmDocument} from '../dist/src/search/realm.mjs';
 /** Fake engine responses in the persisted envelope, with complete engine metadata. */
 export function realmResponse(corpus,body) {
   const hit=h=>h.found===false?{...h,_id:corpus+':'+h._id}:{...h,_id:corpus+':'+h._id,_source:realmDocument(corpus,h._id,h._source)};

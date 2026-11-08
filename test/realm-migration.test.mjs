@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {migrateRealmCorpus,documentDigest} from '../src/search/migration.mjs';
+import {migrateRealmCorpus,documentDigest} from '../dist/src/search/migration.mjs';
 const principal={tenantId:'org-a',userId:'system'},corpus='session';
 test('migration verifies full content before checkpointing; restart replays uncommitted pages without duplication',async()=>{
  const docs=Array.from({length:3},(_,i)=>({id:String(i),document:{tenantId:'org-a',text:'complete '+i}})),written=new Map();let checkpoint=null,interrupt=true,version='frozen-version';

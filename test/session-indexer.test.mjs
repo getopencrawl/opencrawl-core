@@ -1,14 +1,14 @@
-import {realmIndex} from '../src/search/realm.mjs';
+import {realmIndex} from '../dist/src/search/realm.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
-import {createSessionIngest,digest,sessionScope} from '../src/sessions/ingest.mjs';
-import {createSessionPipeline,batchDocuments} from '../src/sessions/indexer.mjs';
-import {createSessionSearch} from '../src/sessions/search.mjs';
-import {runConnectorSegment} from '../src/connectors/workflow.mjs';
-import {standaloneStorage} from '../src/sessions/standalone.mjs';
+import {createSessionIngest,digest,sessionScope} from '../dist/src/sessions/ingest.mjs';
+import {createSessionPipeline,batchDocuments} from '../dist/src/sessions/indexer.mjs';
+import {createSessionSearch} from '../dist/src/sessions/search.mjs';
+import {runConnectorSegment} from '../dist/src/connectors/workflow.mjs';
+import {standaloneStorage} from '../dist/src/sessions/standalone.mjs';
 import {memorySessionStore as memoryStore} from './session-store-fixture.mjs';
 async function sweep(pipeline) {
  return runConnectorSegment({}, {listPage:input=>pipeline.listPage(input),processObject:async input=>{
@@ -206,4 +206,12 @@ test('search returns another teammate with attribution and rejects foreign tenan
  source={...teammate,tenantId:'another-team'};
  await assert.rejects(search.search(owner),/ownership scope/);
  await assert.rejects(search.search(owner,{raw:true}),/ownership scope/);
+});
+
+// Hosted notification adapters must reuse core's existing memory key contract.
+test('public session indexer exposes the existing memory source identity validator', async () => {
+ const {memorySourceIdentity}=await import('@getopencrawl/opencrawl-core/sessions/indexer');
+ const {memorySourceIdentity: existing}=await import('../dist/src/memories/snapshot.mjs');
+ assert.equal(memorySourceIdentity,existing);
+ assert.equal(memorySourceIdentity('sessions/test/v1','outside/the/source.json.gz'),null);
 });

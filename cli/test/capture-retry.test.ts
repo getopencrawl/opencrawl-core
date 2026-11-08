@@ -5,8 +5,8 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {request} from '../src/capture/runtime.ts';
 import {finalizeEventIdentity,hash} from '../src/capture/parse.ts';
-import {createSessionIngest} from '../../src/sessions/ingest.mjs';
-import {createLocalSessionStore} from '../../src/sessions/local-store.mjs';
+import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
+import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 
 test('capture retries a lost response after durable storage with the identical payload, but does not retry rejection',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-capture-retry-')),saved=process.env.OPENCRAWL_CONFIG_HOME;
@@ -26,7 +26,9 @@ test('capture retries a lost response after durable storage with the identical p
  try {
   const receipt=await request(api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body},'test-token');
   expect(payloads).toEqual([body,body]);expect(receipt).toEqual({stored:true,batchId:hash(body),eventCount:1});
-  expect((await ingest.getBatch(owner,{harness:'codex',installationId:'test',sessionId:'session',batchId:receipt.batchId})).events).toEqual(batch.events);
+  const stored=await ingest.getBatch(owner,{harness:'codex',installationId:'test',sessionId:'session',batchId:receipt.batchId});
+  if(!stored)throw new Error('Expected the retried capture batch');
+  expect(stored.events).toEqual(batch.events);
   reject=true;const before=payloads.length;
   await expect(request(api,'/api/sessions/batches',{method:'POST',body},'test-token')).rejects.toMatchObject({code:'CAPTURE_UPLOAD_FAILED'});
   expect(payloads.length-before).toBe(1);

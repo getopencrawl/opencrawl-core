@@ -59,3 +59,7 @@ for compatibility with older runtime consumers. New UI work belongs in web-v2.
 Run its strict typecheck, architecture tests, build, and browser regression suite
 alongside core checks. The hosted shell consumes the published source exports;
 its provider/account/billing pages must reuse the same design system.
+
+## Backend TypeScript
+
+Backend source under `src/` uses strict TypeScript (`.mts`, or `.cts` for Temporal workflow bundles). Run `npm run build` before invoking compiled entrypoints under `dist/src/`; `npm test` builds first. Keep runtime import extensions `.mjs`/`.cjs`, preserve public package export names, and ship declarations with the compiled package. Do not weaken strict checks or add type-check suppression directives.

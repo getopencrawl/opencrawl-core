@@ -5,9 +5,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {TestWorkflowEnvironment} from '@temporalio/testing';
 import {Worker,Runtime,DefaultLogger} from '@temporalio/worker';
-import {buildSessionWorkflows,createSessionWorker} from '../src/sessions/temporal/worker.mjs';
-import {ensureSessionSchedule} from '../src/sessions/temporal/client.mjs';
-import {createSessionIngest} from '../src/sessions/ingest.mjs';
+import {buildSessionWorkflows,createSessionWorker} from '../dist/src/sessions/temporal/worker.mjs';
+import {ensureSessionSchedule} from '../dist/src/sessions/temporal/client.mjs';
+import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 
 test('real Temporal: retry, restart with queued work, durable schedule and history replay keep content outside history',{

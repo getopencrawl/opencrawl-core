@@ -4,15 +4,15 @@ import {randomUUID} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
 import {createServer} from 'node:http';
 import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
-import {createObjectStore} from '../src/sessions/s3-store.mjs';
-import {createSessionIngest} from '../src/sessions/ingest.mjs';
-import {createSessionPipeline} from '../src/sessions/indexer.mjs';
-import {createSessionSearch} from '../src/sessions/search.mjs';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
-import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
-import {createWorkspaceSearch} from '../src/search/workspace.mjs';
-import {createOpenCrawlMcp} from '../src/mcp/server.mjs';
-import {realmIndex} from '../src/search/realm.mjs';
+import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
+import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
+import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
+import {createSessionSearch} from '../dist/src/sessions/search.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
+import {createConnectorPipeline} from '../dist/src/connectors/pipeline.mjs';
+import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
+import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
+import {realmIndex} from '../dist/src/search/realm.mjs';
 
 const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL,s3=process.env.OPENCRAWL_TEST_S3_ENDPOINT;
 test('live unified MCP searches native sessions and every connector; no private channels, foreign tenants or revoked connections', {skip:!endpoint||!s3}, async t=>{
