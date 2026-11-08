@@ -45,3 +45,9 @@ cards through the shared `oc-connection-*` patterns. Keep per-stream import coun
 visible; use real progress only when it measures completed work against a known
 total. Retain shared dialogs and the distinct recovery paths for sign-in, sync,
 and permanent deletion.
+
+Team administration uses the shared management-page and member-list patterns.
+Keep names and emails together, roles explicit, and invitation controls in the
+member panel. Team activity rankings remain on Usage. Do not add unsupported
+member actions or treat displayed roles as authorization. Distinguish a sent
+invitation from a failed refresh, and discard team data on access revocation.
