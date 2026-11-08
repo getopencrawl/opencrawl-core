@@ -71,6 +71,31 @@ test('finish errors stay in the flow and do not infer completion from a button c
   await expect(page.getByRole('button', {name: 'Skip for now'})).toBeEnabled();
 });
 
+test('received history stays unconfirmed and optional until an explicit completion receipt arrives', async ({page, request}, testInfo) => {
+  await request.post('/__test/state', {data: {status: {...complete, history: {...receipt, state: 'received'}}}});
+  await page.goto('/onboarding');
+  const history = page.locator('[data-signal="history"]');
+  await expect(history).not.toHaveAttribute('data-complete', '');
+  await expect(history.locator('.signal-status')).toHaveText('Pending');
+  await expect(history.locator('.signal-detail')).toHaveText('Some history received; full import unconfirmed.');
+  await expect(history.locator('.optional-label')).toHaveText('Optional');
+  await expect(page.getByRole('link', {name: 'Next', exact: true})).toBeVisible();
+  await page.setViewportSize({width: 390, height: 844});
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({path: testInfo.outputPath('received-history-mobile.png'), fullPage: true});
+  await history.locator('summary').focus();
+  await page.keyboard.press('Enter');
+  await expect(history.locator('details')).toHaveAttribute('open', '');
+  await expect(history.getByText('Choose Claude Code, Codex, both, or skip in your terminal.')).toBeVisible();
+  await request.post('/__test/state', {data: {status: {...complete, history: {...receipt, state: 'complete'}}}});
+  await refresh(page);
+  await expect(history).toHaveAttribute('data-complete', '');
+  await expect(history.locator('.signal-status')).toHaveText('Complete');
+  await expect(history.locator('.signal-detail')).toHaveText('Imported');
+  await expect(history.locator('details')).not.toHaveAttribute('open', '');
+  await expect(page.getByRole('link', {name: 'Next', exact: true})).toBeVisible();
+});
+
 test('leaving a route aborts the pending receipt request', async ({page, request}) => {
   await request.post('/__test/state', {data: {delayStatus: 20_000}});
   await page.goto('/onboarding');
