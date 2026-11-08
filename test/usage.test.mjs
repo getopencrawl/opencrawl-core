@@ -5,11 +5,11 @@ import {createSessionSearch} from '../dist/src/sessions/search.mjs';
 import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
 
 const owner = {tenantId: 'org_a', userId: 'user_a'};
-const bucket = (key, extra = {}) => ({key, doc_count: 4, sessions: {value: 2}, messages: {doc_count: 3}, toolCalls: {value: 5}, last: {value_as_string: '2026-11-05T10:00:00.000Z'}, week: {doc_count: 4}, ...extra});
-const aggregations = people => ({activity: {doc_count: 8, sessions: {value: 3}, messages: {doc_count: 6}, toolCalls: {value: 9}, machines: {value: 2}, opencrawl: {doc_count: 1},
+const bucket = (key, extra = {}) => ({key, doc_count: 4, sessions: {count: {value: 2}}, subagentSessions: {count: {value: 6}}, messages: {doc_count: 3}, toolCalls: {value: 5}, last: {value_as_string: '2026-11-05T10:00:00.000Z'}, week: {doc_count: 4}, ...extra});
+const aggregations = people => ({activity: {doc_count: 8, sessions: {count: {value: 3}}, subagentSessions: {count: {value: 7}}, messages: {doc_count: 6}, toolCalls: {value: 9}, machines: {value: 2}, opencrawl: {doc_count: 1},
   tools: {buckets: [{key: 'Bash', doc_count: 7}]}, harnesses: {buckets: [{key: 'codex', doc_count: 8}]}, origins: {buckets: [{key: 'cli', doc_count: 8}]},
   first: {value_as_string: '2026-11-01T00:00:00.000Z'}, last: {value_as_string: '2026-11-05T10:00:00.000Z'},
-  daily: {buckets: [{key_as_string: '2026-11-05', doc_count: 8, sessions: {value: 3}}]}, people: {buckets: people}}});
+  daily: {buckets: [{key_as_string: '2026-11-05', doc_count: 8, sessions: {count: {value: 3}}}]}, people: {buckets: people}}});
 
 test('session usage counts only the principal, or the whole tenant when asked, and never returns text', async () => {
   const bodies = [];
@@ -23,7 +23,14 @@ test('session usage counts only the principal, or the whole tenant when asked, a
   assert.equal(bodies[0].size, 0);
   assert.deepEqual(bodies[0].aggs.activity.filter, {range: {'session.timestamp': {gte: '2026-10-07T00:00:00.000Z', lte: '2026-11-05T12:00:00.000Z'}}});
   assert.equal(mine.events, 8); assert.equal(mine.lifetimeEvents, 80);
-  assert.equal(mine.sessions, 3); assert.equal(mine.people[0].toolCalls, 5); assert.equal(mine.daily[0].date, '2026-11-05');
+  assert.equal(mine.sessions, 3); assert.equal(mine.subagentSessions, 7); assert.equal(mine.people[0].toolCalls, 5);
+  assert.equal(mine.people[0].sessions, 2); assert.equal(mine.people[0].subagentSessions, 6);
+  // Spawned subagents are counted apart from the sessions a person started.
+  const subagent = {term: {'session.origin': 'subagent'}}, count = {cardinality: {field: 'session.sessionId', precision_threshold: 40000}};
+  for (const aggs of [bodies[0].aggs.activity.aggs, bodies[0].aggs.activity.aggs.people.aggs]) {
+    assert.deepEqual(aggs.sessions, {filter: {bool: {must_not: [subagent]}}, aggs: {count}});
+    assert.deepEqual(aggs.subagentSessions, {filter: subagent, aggs: {count}});
+  } assert.equal(mine.daily[0].date, '2026-11-05');
   assert.doesNotMatch(JSON.stringify(mine), /text/);
   people = [bucket('user_a'), bucket('user_b')];
   await assert.rejects(search.usage(owner), /ownership/);
