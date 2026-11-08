@@ -26,6 +26,8 @@ export function excerpt(text, query, size = 800) {
 export function workspaceHit(source, hit, sourceRank) {
   const provenance = source === 'sessions'
     ? {sessionId: hit.sessionId, eventId: hit.eventId, userId: hit.userId, installationId: hit.installationId, harness: hit.harness, kind: hit.kind, role: hit.role, sequence: hit.sequence, chunk: hit.chunk, timestamp: hit.timestamp, receivedAt: hit.receivedAt}
+    : source==='memories'?{harness:hit.harness,userId:hit.userId,installationId:hit.installationId,host:hit.host,path:hit.path,project:hit.project,
+      snapshotId:hit.snapshotId,generation:hit.generation,modifiedAt:hit.modifiedAt,receivedAt:hit.receivedAt,sourceSessionId:hit.sourceSessionId,chunk:hit.chunk,kind:hit.kind}
     : {provider: hit.provider, connectionId: hit.connectionId, workspaceId: hit.workspaceId, sourceId: hit.sourceId, kind: hit.kind, parentId: hit.parentId, parentKind: hit.parentKind, channelId: hit.channelId, authorId: hit.authorId, timestamp: hit.timestamp, sequence: hit.sequence, heading: hit.heading};
   return {id: source + ':' + hit.id, source, ...(sourceRank ? {sourceRank} : {}),
     title: (hit.title || (source === 'sessions' ? `Session ${hit.sessionId}` : hit.kind) || 'Indexed passage').slice(0, 240),
@@ -42,6 +44,7 @@ export function groupDuplicates(hits) {
     const p = hit.provenance, normalized = hit.text.replace(/\r\n/g, '\n').replace(/[\t ]+$/gm, '').replace(/\n+$/, '');
     const scope = hit.source === 'sessions'
       ? [p.sessionId, p.userId, p.installationId, p.harness, p.kind, p.role]
+      : hit.source==='memories'?[p.harness,p.userId,p.installationId,p.path,p.snapshotId]
       : [p.provider, p.connectionId, p.workspaceId, p.parentKind || p.kind, p.parentId || p.sourceId];
     // Empty and very short messages often carry meaning through their occurrence.
     const key = normalized.length >= 80 ? JSON.stringify([hit.source, scope, createHash('sha256').update(normalized).digest('hex')]) : hit.id;

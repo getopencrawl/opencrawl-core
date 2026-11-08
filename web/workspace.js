@@ -18,7 +18,7 @@ form.addEventListener('submit', async event => {
   if(data.partial)feedback.textContent+=' Some sources are temporarily unavailable.';
   for(const item of data.results) {
    const article=element('article','result','');
-   article.append(element('span','result-source',item.source==='sessions'?'Coding session':item.provenance?.provider || 'Connected source'),element('h2','',item.title),element('p','',item.text));
+   article.append(element('span','result-source',item.source==='sessions'?'Coding session':item.source==='memories'?'Agent memory':item.provenance?.provider || 'Connected source'),element('h2','',item.title),element('p','',item.text));
    if(item.url) {
     try {const url=new URL(item.url); if(['https:','http:'].includes(url.protocol)){const link=element('a','result-link','Open source');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';article.append(link);}}catch{}
    }

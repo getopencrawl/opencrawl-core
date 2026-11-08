@@ -5,7 +5,7 @@ import {excerpt, groupDuplicates, workspaceHit} from './presentation.mjs';
 
 export const workspaceSearchSchema = z.strictObject({
   query: z.string().trim().min(1).max(4000).describe('Words to find. Start with distinctive terms; broaden or reformulate if coverage is insufficient.'),
-  source: z.enum(['all', 'sessions', 'connectors']).default('all'),
+  source: z.enum(['all', 'sessions', 'connectors','memories']).default('all'),
   match: z.enum(['any', 'all', 'phrase']).default('any').describe('any ranks passages matching any words; all requires every analyzed term; phrase requires the analyzed words in order.'),
   sessionId: z.string().min(1).max(200).optional().describe('Restrict to a known session; requires source=sessions.'),
   limit: z.number().int().min(1).max(40).default(10),
@@ -13,7 +13,7 @@ export const workspaceSearchSchema = z.strictObject({
   cursor: z.string().max(2048).optional(),
 }).refine(v => !v.sessionId || v.source === 'sessions', 'sessionId requires source=sessions');
 export const workspaceFetchSchema = z.strictObject({
-  id: z.string().regex(/^(sessions|connectors):[A-Za-z0-9_:-]{1,256}$/).describe('An id returned by search. Access is checked again on every fetch.'),
+  id: z.string().regex(/^(sessions|connectors|memories):[A-Za-z0-9_:-]{1,256}$/).describe('An id returned by search. Access is checked again on every fetch.'),
   offset: z.number().int().min(0).max(10_000_000).default(0),
   length: z.number().int().min(1).max(16000).default(6000),
   version: z.string().regex(/^[a-f0-9]{64}$/).optional().describe('Repeat the returned version when paging, to detect content changes.'),
@@ -26,7 +26,7 @@ const WINDOW = 100, TTL = 5 * 60_000;
  * Scores from independent indexes are not comparable. Interleave their ranks.
  * Cursors are bounded live windows, not snapshots or a claim of exhaustive recall.
  */
-export function createWorkspaceSearch({sessions, connectors, cursorKey = randomBytes(32), now = Date.now} = {}) {
+export function createWorkspaceSearch({sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now} = {}) {
   function sign(value) {return createHmac('sha256', cursorKey).update(value).digest('base64url');}
   function encode(payload) {const data = Buffer.from(JSON.stringify(payload)).toString('base64url'); return data + '.' + sign(data);}
   function decode(cursor, fingerprint) {
@@ -34,7 +34,7 @@ export function createWorkspaceSearch({sessions, connectors, cursorKey = randomB
       const [data, mac, extra] = cursor.split('.'), expected = Buffer.from(sign(data)), actual = Buffer.from(mac || '');
       if (extra || actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error();
       const value = JSON.parse(Buffer.from(data, 'base64url'));
-      if (value.fingerprint !== fingerprint || value.expires < now() || !Number.isInteger(value.offset) || value.offset < 1 || value.offset >= WINDOW * 2) throw new Error();
+      if (value.fingerprint !== fingerprint || value.expires < now() || !Number.isInteger(value.offset) || value.offset < 1 || value.offset >= WINDOW * 3) throw new Error();
       return value;
     } catch {fail(400, 'Invalid or expired search cursor; repeat the original search.');}
   }
@@ -47,9 +47,9 @@ export function createWorkspaceSearch({sessions, connectors, cursorKey = randomB
       const {cursor, ...query} = parsed.data;
       const fingerprint = hash([principal.tenantId, principal.userId, query]);
       const page = cursor ? decode(cursor, fingerprint) : {offset: 0, expires: now() + TTL};
-      const selected = query.source === 'all' ? ['sessions', 'connectors'] : [query.source];
+      const selected = query.source === 'all' ? ['sessions', 'connectors',...(memories?['memories']:[])] : [query.source];
       const groups = await Promise.all(selected.map(async source => {
-        const adapter = source === 'sessions' ? sessions : connectors;
+        const adapter = source === 'sessions' ? sessions : source==='memories'?memories:connectors;
         if (!adapter) return {source, state: 'not_configured', hits: [], truncated: false};
         let result;
         try {result = await adapter.search(principal, {query: query.query, match: query.match, ...(query.sessionId ? {sessionId: query.sessionId} : {}), limit: WINDOW});}
@@ -82,7 +82,7 @@ export function createWorkspaceSearch({sessions, connectors, cursorKey = randomB
       if (!parsed.success) fail(400, 'Invalid fetch request. Use id, offset, length and version only.');
       const {id, offset, length, version} = parsed.data, separator = id.indexOf(':');
       const source = id.slice(0, separator), documentId = id.slice(separator + 1);
-      const adapter = source === 'sessions' ? sessions : connectors;
+      const adapter = source === 'sessions' ? sessions : source==='memories'?memories:connectors;
       if (!adapter) fail(503, 'Source not configured.');
       // Use the SAME adapter path as search: current bindings, channel visibility,
       // deletion and parent revision checks apply to ID lookups too. No text cache.

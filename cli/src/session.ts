@@ -3,6 +3,7 @@ import {mkdirSync, chmodSync, readFileSync, writeFileSync, renameSync, unlinkSyn
 import {join, dirname} from 'node:path';
 import {homedir} from 'node:os';
 import {createHash, randomUUID} from 'node:crypto';
+import {setTimeout as pause} from 'node:timers/promises';
 import {CliError, refresh, type AuthConfig, type Tokens} from './oauth.ts';
 
 export type Session = Tokens & {auth: AuthConfig};
@@ -50,7 +51,8 @@ export function readSession(api: string): Session | null {
 const heldLocks=new Set<()=>void>();
 process.once('exit',()=>{for(const release of heldLocks)try{release();}catch{}});
 const lockIdentity=(file:string)=>{const st=statSync(file,{bigint:true});return [st.dev,st.ino,st.birthtimeNs,st.ctimeNs].join(':');};
-export async function withSessionLock<T>(api: string, operation: () => Promise<T>, waitMs = 20_000): Promise<T> {
+export async function withSessionLock<T>(api: string, operation: () => Promise<T>, waitMs = 20_000,signal?:AbortSignal): Promise<T> {
+  signal?.throwIfAborted();
   const file = sessionFile(api) + '.lock',database=file+'.sqlite';
   mkdirSync(configDir(), {recursive: true, mode: 0o700});
   const db=new Database(database,{create:true});
@@ -69,17 +71,19 @@ export async function withSessionLock<T>(api: string, operation: () => Promise<T
     chmodSync(database,0o600);
     db.exec('PRAGMA busy_timeout=0');
     while(!transaction) {
+      signal?.throwIfAborted();
       try{db.exec('BEGIN IMMEDIATE');transaction=true;}
       catch(error:any){
         if(!String(error.code??'').startsWith('SQLITE_BUSY')&&!String(error.code??'').startsWith('SQLITE_LOCKED'))throw error;
         if(Date.now()>=deadline)throw new CliError('SESSION_BUSY','Another opencrawl process is updating this session. Retry shortly.');
-        await new Promise(resolve=>setTimeout(resolve,50));
+        await pause(50,undefined,{signal});
       }
     }
     // Bridge an older still-running CLI conservatively. Stale PID-file cleanup
     // is now serialized by the transaction, so concurrent recoveries cannot
     // unlink a newly acquired current-client lock or admit two uploaders.
     while(true) {
+      signal?.throwIfAborted();
       try {
         const fd=openSync(file,'wx',0o600);
         try{writeFileSync(fd,String(process.pid));identity=lockIdentity(file);}finally{closeSync(fd);}
@@ -95,7 +99,7 @@ export async function withSessionLock<T>(api: string, operation: () => Promise<T
         }catch(check:any){if(check.code==='ENOENT')continue;throw check;}
         // A reused live PID is never evicted based on elapsed time.
         if(Date.now()>=deadline)throw new CliError('SESSION_BUSY','Another opencrawl process is updating this session. Retry shortly.');
-        await new Promise(resolve=>setTimeout(resolve,50));
+        await pause(50,undefined,{signal});
       }
     }
     heldLocks.add(release);
@@ -111,13 +115,15 @@ export async function logout(api: string) {
   return withSessionLock(api, async () => { try { unlinkSync(sessionFile(api)); } catch (error: any) { if (error.code !== 'ENOENT') throw error; } });
 }
 
-export async function accessToken(api: string, rejectedToken?: string, fetcher = fetch): Promise<string> {
+export async function accessToken(api: string, rejectedToken?: string, fetcher = fetch,signal?:AbortSignal): Promise<string> {
   return withSessionLock(api, async () => {
+    signal?.throwIfAborted();
     const session = readSession(api);
     if (!session) throw new CliError('AUTH_REQUIRED', 'Run opencrawl login to sign in.', 2);
     if (session.expiresAt > Date.now() + 60_000 && (!rejectedToken || rejectedToken !== session.accessToken)) return session.accessToken;
-    const next = {...session, ...await refresh(session.auth, session.refreshToken, fetcher)};
+    const cancellable=signal?((input:any,init:any)=>fetcher(input,{...init,signal:init?.signal?AbortSignal.any([signal,init.signal]):signal})) as typeof fetch:fetcher;
+    const next = {...session, ...await refresh(session.auth, session.refreshToken, cancellable)};
     atomicJson(sessionFile(api), next);
     return next.accessToken;
-  });
+  },20_000,signal);
 }
