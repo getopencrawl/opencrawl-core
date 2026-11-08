@@ -94,7 +94,6 @@ export function SourcesSummary({data}: {data: UsageReport}) {
 function SourceCard({source, now}: {source: UsageSource; now: number}) {
   const status = sourceStatus(source.state);
   const species = source.indexedSpecies;
-  const importedRows = source.rows || [];
 
   return (
     <article className="report-source-card" aria-label={source.name}>
@@ -103,20 +102,11 @@ function SourceCard({source, now}: {source: UsageSource; now: number}) {
         <div className="report-source-identity"><h3>{source.name}</h3>{source.account && <p>{source.account}</p>}</div>
         <StatusBadge variant="pill" tone={status.tone}>{status.label}</StatusBadge>
       </header>
-      <div>
-        <h4 className="report-source-label">Indexed content</h4>
-        {species ? species.length ? (
-          <ul className="report-source-rows report-indexed-species" aria-label={`Indexed content in ${source.name}`}>
-            {species.map(item => <li key={item.name}><span>{speciesLabel(item.name)}</span><span>{count(item.count)}</span></li>)}
-          </ul>
-        ) : <p className="report-note">No indexed content yet.</p> : <p className="report-note">Indexed breakdown unavailable.</p>}
-      </div>
-      {importedRows.length > 0 && <div className="report-source-imported">
-        <h4 className="report-source-label">Imported</h4>
-        <ul className="report-source-rows" aria-label={`Imported records from ${source.name}`}>
-          {importedRows.map(row => <li key={row.label}><span>{row.label}</span><span>{count(row.count)}</span></li>)}
+      {species ? species.length ? (
+        <ul className="report-source-rows report-indexed-species" aria-label={`Content in ${source.name}`}>
+          {species.map(item => <li key={item.name}><span>{speciesLabel(item.name)}</span><span>{count(item.count)}</span></li>)}
         </ul>
-      </div>}
+      ) : <p className="report-note">No content yet.</p> : <p className="report-note">Content breakdown unavailable.</p>}
       <p className="report-source-meta">
         <span>{source.lastSyncedAt ? `Synced ${ago(source.lastSyncedAt, now)}` : 'Not synced yet'}</span>
         {source.connectedBy && <span>Connected by {source.connectedBy}</span>}
@@ -128,7 +118,7 @@ function SourceCard({source, now}: {source: UsageSource; now: number}) {
 function DataSourcesReport({report, now}: {report: UsageReport; now: number}) {
   const data = report.ingestion;
   return (
-    <Section className="report-section" title="Data sources" description="Imported records and indexed documents are measured separately for each source.">
+    <Section className="report-section" title="Data sources">
       {!data ? <EmptyState title="Source reporting isn’t available on this deployment."/> : data.sources.length ? (
         <div className="report-source-grid">
           {data.sources.map((source, index) => <SourceCard key={`${source.name}:${source.account || index}`} source={source} now={now}/>)}
@@ -194,12 +184,10 @@ function SetupDots({member}: {member: UsageMember}) {
 
 function TeamReport({report, now}: {report: UsageReport; now: number}) {
   const members = report.members;
-  const integrator = topMember(members, 'sources');
   const user = topMember(members, 'sessions');
   const builder = topMember(members, 'toolCalls');
   const active = members.filter(member => member.weekEvents > 0).length;
   const highlights = [
-    {label: 'Most sources connected', member: integrator, value: integrator && plural(integrator.sources, 'source')},
     {label: 'Most sessions', member: user, value: user && plural(user.sessions, 'session')},
     {label: 'Most tool calls', member: builder, value: builder && plural(builder.toolCalls, 'tool call')},
   ];
