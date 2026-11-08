@@ -46,6 +46,8 @@ up() {
   [[ -n "$(get_env OPENCRAWL_LANDING_S3_BUCKET)" ]] || die "Set OPENCRAWL_LANDING_S3_BUCKET and its credentials in $ENV_FILE.
 Or run './local.sh up --bundled-s3' to land in a local S3 for development."
 
+  [[ -f "$HERE/../../dist/src/sessions/s3-store.mjs" ]] || die "Build the core first: run npm ci and npm run build from the repository root"
+
   log "Starting the receiver"
   if ! "${COMPOSE[@]}" up -d --wait; then
     "${COMPOSE[@]}" logs --tail 5 receiver >&2

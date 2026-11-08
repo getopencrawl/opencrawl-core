@@ -17,6 +17,7 @@ jobs:
         with:
           node-version: 24.22.2
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
       - run: ./deploy/up.sh
       - name: Verify capture, indexing, MCP and authorization
         run: |

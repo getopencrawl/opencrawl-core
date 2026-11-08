@@ -5,6 +5,9 @@ COPY --chown=node:node package.json package-lock.json ./
 # Full install: the Temporal worker uses the pinned optional peers from devDependencies.
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY --chown=node:node src ./src
+COPY --chown=node:node tools ./tools
+COPY --chown=node:node tsconfig.json ./tsconfig.json
+RUN npm run build
 COPY --chown=node:node web ./web
 COPY --chown=node:node deploy/*.mjs ./deploy/
 COPY --chown=node:node LICENSE ./LICENSE

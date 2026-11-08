@@ -1,9 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {createCaptureCredentials} from '../src/sessions/credentials.mjs';
-import {standaloneCapture} from '../src/sessions/standalone.mjs';
-import {cloudSetupScript,captureSetupPrompt,renderCloudCaptureSetup} from '../src/sessions/cloud-setup.mjs';
+import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
+import {standaloneCapture} from '../dist/src/sessions/standalone.mjs';
+import {cloudSetupScript,captureSetupPrompt,renderCloudCaptureSetup} from '../dist/src/sessions/cloud-setup.mjs';
 import {memorySessionStore as memory} from './session-store-fixture.mjs';
 const owner={tenantId:'fixed',userId:'owner'};
 test('capture delegation is hashed, scoped, expiring and revocable',async()=>{

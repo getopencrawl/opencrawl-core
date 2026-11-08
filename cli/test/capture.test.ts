@@ -3,9 +3,9 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,appe
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
-import {standaloneCapture} from '../../src/sessions/standalone.mjs';
-import {createLocalSessionStore} from '../../src/sessions/local-store.mjs';
-import {createSessionIngest} from '../../src/sessions/ingest.mjs';
+import {standaloneCapture} from '../../dist/src/sessions/standalone.mjs';
+import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
+import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
 import {installCapture,uninstallCapture} from '../src/capture/install.ts';
 import {readCaptureConfig,captureTranscript,captureDir,flushCaptures,captureStatus,captureHook} from '../src/capture/runtime.ts';
 import {parseRecord,detectOrigin,hash} from '../src/capture/parse.ts';
@@ -97,7 +97,10 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     expect(await flushCaptures()).toEqual({uploaded:1});
     const receipt={harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,batchId:hash(JSON.stringify(batch))};
     const fetched=await ingest.getBatch(principal,receipt);
-    expect(fetched.events[2].data.content[0].content).toBe('export const answer=42;');
+    if(!fetched)throw new Error('Expected the uploaded capture batch');
+    const content=fetched.events[2].data?.content;
+    if(!Array.isArray(content)||!content[0]||typeof content[0]!=='object'||!('content' in content[0]))throw new Error('Expected captured source content');
+    expect(content[0].content).toBe('export const answer=42;');
     expect(fetched.owner.name).toBe('Capture Test');
     expect(await ingest.getBatch({...principal,tenantId:'other'},receipt)).toBeNull();
     expect(await ingest.getBatch({...principal,userId:'other'},receipt)).toBeNull();

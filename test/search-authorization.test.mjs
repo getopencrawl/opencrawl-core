@@ -1,10 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createBoard} from '../src/board/board.mjs';
-import {createBoardSearch} from '../src/board/search.mjs';
-import {createRealm} from '../src/search/realm.mjs';
-import {createSessionSearch} from '../src/sessions/search.mjs';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
+import {createBoard} from '../dist/src/board/board.mjs';
+import {createBoardSearch} from '../dist/src/board/search.mjs';
+import {createRealm} from '../dist/src/search/realm.mjs';
+import {createSessionSearch} from '../dist/src/sessions/search.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
 
 const principal={tenantId:'tenant-a',userId:'author'};
 const restrictedAccess=['write','read','',null,false,{}];

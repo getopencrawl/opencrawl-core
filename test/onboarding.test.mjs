@@ -5,11 +5,11 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createServer} from 'node:http';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
-import {createOnboardingStatus} from '../src/onboarding-status.mjs';
-import {createSessionIngest} from '../src/sessions/ingest.mjs';
-import {createOpenCrawlMcp} from '../src/mcp/server.mjs';
-import {standaloneCapture} from '../src/sessions/standalone.mjs';
-import {createLocalSessionStore} from '../src/sessions/local-store.mjs';
+import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
+import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
+import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
+import {standaloneCapture} from '../dist/src/sessions/standalone.mjs';
+import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 
 const principal = {tenantId:'tenant-a', userId:'user-a'};

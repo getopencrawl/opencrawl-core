@@ -26,7 +26,8 @@ services:
       - "127.0.0.1:${OPENCRAWL_SESSIONS_PORT:-7171}:7171"
     volumes:
       - ./receiver.mjs:/app/receiver.mjs:ro
-      - ../../src/sessions/s3-store.mjs:/app/store.mjs:ro
+      - ../../dist/src/sessions/s3-store.mjs:/app/store.mjs:ro
+      - ../../dist/src/sessions/types.mjs:/app/types.mjs:ro
       - ./collector.mjs:/app/collector.mjs:ro
     depends_on:
       s3: {condition: service_started, required: false}

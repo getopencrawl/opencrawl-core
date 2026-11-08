@@ -26,7 +26,7 @@ x-runtime: &runtime
 services:
   receiver:
     <<: *runtime
-    command: ["node", "src/sessions/standalone.mjs"]
+    command: ["node", "dist/src/sessions/standalone.mjs"]
     environment:
       <<: *env
       HOST: 0.0.0.0
@@ -38,7 +38,7 @@ services:
   worker:
     <<: *runtime
     # Bundles the workflow code once per start, then indexes captured sessions every five minutes.
-    command: ["sh", "-c", "node src/sessions/temporal/standalone.mjs /tmp/session-bundle.cjs --build && exec node src/sessions/temporal/standalone.mjs /tmp/session-bundle.cjs"]
+    command: ["sh", "-c", "node dist/src/sessions/temporal/standalone.mjs /tmp/session-bundle.cjs --build && exec node dist/src/sessions/temporal/standalone.mjs /tmp/session-bundle.cjs"]
     environment:
       <<: *env
       TEMPORAL_SESSION_TASK_QUEUE: session-indexing-v1
@@ -51,7 +51,7 @@ services:
 
   mcp:
     <<: *runtime
-    command: ["node", "src/mcp/standalone.mjs"]
+    command: ["node", "dist/src/mcp/standalone.mjs"]
     environment:
       <<: *env
       HOST: 0.0.0.0
