@@ -115,9 +115,14 @@ bun scripts/build.ts             # all five platform packages
 
 The `next` dist-tag keeps this new client separate from the existing v1 `latest`
 release. Publishing must never move that v1 tag. The dedicated CLI workflow builds and signs on macOS, tests those same
-binaries on macOS/Linux/Windows, then publishes the five platform packages first, then publishes `@getopencrawl/cli` last. A failed platform
-publication cannot advertise an incomplete stable launcher. Retry skips already
-published immutable versions. Increment `cli/package.json` for every release.
+binaries on macOS/Linux/Windows, then publishes the five platform packages first.
+It stages `@getopencrawl/cli` under `next-pending` and promotes `next` only after
+all six tarballs are downloadable. Registry metadata alone is not sufficient.
+Retries resume immutable staged packages without republishing; older versions
+cannot downgrade the channel. Increment `cli/package.json` for every new release.
+The launcher package's trusted publisher must allow `npm dist-tag` as well as
+publication. The publishing job pins npm 11.21.2 for OIDC tag support; this does
+not change the npm version required by CLI users. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/#managing-dist-tags-with-trusted-publishing).
 The main core package retains its separate private GitHub Packages release.
 
 Review the package allowlist with `npm pack --dry-run` before publishing. The CLI
