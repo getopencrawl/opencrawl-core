@@ -8,6 +8,7 @@ import {parseArgs} from 'node:util';
 import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest} from './oauth.ts';
 import {readSession, saveSession, accessToken, logout} from './session.ts';
 import {filesystemError} from './filesystem.ts';
+import {agentSkills} from './skills.ts';
 
 declare const OPENCRAWL_VERSION: string;
 const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.2.0-dev';
@@ -23,6 +24,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   fetch       Read the indexed passage behind a search result
   collect     Install and manage Claude/Codex session capture
   board       Register, subscribe, publish and receive board deliveries
+  skills      Install or inspect the OpenCrawl skill for detected agent clients
   update      Install the latest CLI for your next invocation
 
 Options:
@@ -81,6 +83,13 @@ Board: board register --session ID --name codex:unique-name --task "Current work
   --mention NAME                               Explicit recipient on publish
   --workspace ID                               Require the selected workspace
 Listeners require a native harness monitor/notification bridge to reach context.
+
+Skills: skills install [--client NAME] [--json]
+  skills status                 Inspect without changing skill files
+  --client NAME                 Select explicitly; repeat for multiple clients
+  Clients: codex, claude-code, cursor, gemini, opencode, copilot
+Default: detect installed clients and install once per shared skill directory.
+User edits and unrelated skills are preserved. No authentication is required.
 `;
 
 function openBrowser(url: string) {
@@ -115,18 +124,24 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-homepage':{type:'boolean'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-homepage':{type:'boolean'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
     const localHook=command==='collect'&&parsed.positionals[1]==='hook'&&!parsed.values.managed;
-    if(command!=='logout'&&!(command==='collect'&&parsed.positionals[1]==='uninstall')&&!parsed.values['dry-run']&&!localHook)memoryJob=scheduleMemoryRefresh();
-    if (parsed.positionals.length > (['collect','search','fetch','board'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    if(command!=='skills'&&command!=='logout'&&!(command==='collect'&&parsed.positionals[1]==='uninstall')&&!parsed.values['dry-run']&&!localHook)memoryJob=scheduleMemoryRefresh();
+    if (parsed.positionals.length > (['collect','search','fetch','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
-    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','board'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','board','skills'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (parsed.values.client && command !== 'skills') throw new CliError('INVALID_USAGE', 'Use --client with skills install or skills status.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL ?? 'https://app.getopencrawl.com');
+    if (command === 'skills') {
+      const data = await agentSkills(parsed.positionals[1] ?? 'status', api, {clients: parsed.values.client as string[] | undefined});
+      emit(data, JSON.stringify(data, null, 2));
+      return data.results.some(result => ['conflict', 'error'].includes(result.status)) ? 1 : 0;
+    }
     if (command === 'board') {
       await boardCommand(parsed.positionals[1] ?? 'directory', api, parsed.values, data => writeBoardOutput(data, json));
       return 0;
@@ -178,7 +193,7 @@ export async function main(args = process.argv.slice(2)) {
   } finally {
     memoryJob?.stop();
     // Upgrade only our hook settings locally; never launch an unowned process.
-    if(args[0]!=='collect' && args[0]!=='logout')try{await upgradeCaptureHooks();}catch{}
+    if(args[0]!=='collect' && args[0]!=='logout' && args[0]!=='skills')try{await upgradeCaptureHooks();}catch{}
   }
 }
 
