@@ -368,7 +368,10 @@ Active links expose their current-page semantics. The mobile navigation drawer t
 focus while open, closes with Escape, restores the toggle's focus on dismissal
 and makes underlying content inert. Internal page changes focus the new page
 heading; the skip link remains available. Tabs are an in-page control with an
-accent underline, roving focus, arrow-key navigation and Home/End support.
+accent underline, 12px vertical and 16px horizontal label padding, 4px gaps,
+roving focus, arrow-key navigation and Home/End support. The tab list owns the
+single divider above its content; a following Section has no extra top border
+or top padding. Do not stack two rules below the tabs.
 
 ### Sections, insets and tables
 
