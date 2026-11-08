@@ -387,3 +387,47 @@ img { max-width: 100%; }
   .oc-connection-help::before { inset: 13px; }
   .oc-connection-disconnect { width: 44px; }
 }
+
+/* Bounded management pages share the directory's typography and quiet surfaces. */
+.oc-management-page { width: 100%; max-width: var(--chat-width); margin-inline: auto; padding-top: var(--space-4); }
+.oc-management-page > .oc-page-header { align-items: flex-start; }
+.oc-management-page > .oc-page-header p { margin-top: var(--space-5); color: var(--muted); font-size: var(--text-title); }
+.oc-management-page > .oc-page-header > .actions { align-self: flex-start; flex-shrink: 0; width: auto; }
+.oc-management-page > .oc-notice { margin-bottom: var(--space-4); }
+.oc-management-panel { padding: var(--space-6); margin-bottom: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); box-shadow: var(--shadow-paper); }
+.oc-management-panel > .oc-section-heading { align-items: center; margin-bottom: var(--space-4); }
+.oc-management-panel > .oc-notice { margin-top: var(--space-5); }
+.oc-management-panel .oc-section-heading h2 { display: flex; align-items: center; gap: var(--space-3); }
+.oc-member-count { color: var(--quiet); font-size: var(--text-ui); font-weight: 400; font-variant-numeric: tabular-nums; }
+.oc-member-list { list-style: none; margin: 0; padding: 0; }
+.oc-member-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) 0; min-width: 0; }
+.oc-member-row + .oc-member-row { border-top: 1px solid var(--line); }
+.oc-member-row:first-child { padding-top: var(--space-2); }
+.oc-member-row:last-child { padding-bottom: var(--space-2); }
+.oc-member-avatar { display: grid; place-items: center; flex: 0 0 var(--space-10); width: var(--space-10); height: var(--space-10); border-radius: 50%; background: var(--surface-raised); border: 1px solid var(--line-strong); color: var(--muted); font-size: var(--text-sm); font-weight: 500; }
+.oc-member-identity { flex: 1; min-width: 0; }
+.oc-member-name { display: block; color: var(--text); font-size: var(--text-ui); font-weight: 500; overflow-wrap: anywhere; }
+.oc-member-email { display: block; margin-top: var(--space-1); color: var(--muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.oc-member-role { flex-shrink: 0; color: var(--muted); font-size: var(--text-sm); }
+.oc-invite-form { display: grid; gap: var(--space-4); margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px solid var(--line); }
+.oc-invite-form h3 { font-size: var(--text-ui); font-weight: 500; }
+.oc-invite-form p { margin-top: var(--space-1); color: var(--muted); font-size: var(--text-sm); }
+.oc-invite-form .field-inline { flex-wrap: nowrap; align-items: flex-end; }
+.oc-invite-form .field-inline > .oc-button { align-self: flex-end; }
+.oc-invitation-email { color: var(--text); overflow-wrap: anywhere; }
+.oc-management-footer { padding-top: var(--space-3); }
+.oc-management-footer .oc-section-heading p { font-size: var(--text-sm); }
+@media (max-width: 800px) {
+  .oc-management-page { padding-top: 0; }
+  .oc-management-page > .oc-page-header { flex-wrap: nowrap; }
+  .oc-management-page > .oc-page-header p { font-size: var(--text-ui); }
+  .oc-management-panel { padding: var(--space-5); }
+}
+@media (max-width: 480px) {
+  .oc-management-panel { padding: var(--space-4); }
+  .oc-member-row { gap: var(--space-3); flex-wrap: wrap; }
+  .oc-member-avatar { flex-basis: var(--space-8); width: var(--space-8); height: var(--space-8); font-size: var(--text-xs); }
+  .oc-member-role { margin-left: auto; }
+  .oc-invite-form .field-inline { flex-direction: column; align-items: stretch; }
+  .oc-invite-form .field-inline > .oc-button { align-self: stretch; }
+}
