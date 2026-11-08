@@ -6,6 +6,7 @@ import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
 import {discoverMemories,refreshMemories,memoryDue,MEMORY_INTERVAL_MS} from '../src/capture/memory.ts';
 import {captureDir,type CaptureConfig} from '../src/capture/runtime.ts';
+import {withSessionLock} from '../src/session.ts';
 
 function fixture() {
   const dir=mkdtempSync(join(tmpdir(),'opencrawl-memory-test-'));
@@ -62,6 +63,28 @@ test('a cancelled invocation never blocks on authentication or marks an incomple
     await refreshMemories({signal:controller.signal});expect(Date.now()-start).toBeLessThan(1000);
     expect(memoryDue({})).toBe(true);
   }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));if(oldToken===undefined)delete process.env.OPENCRAWL_SESSIONS_TOKEN;else process.env.OPENCRAWL_SESSIONS_TOKEN=oldToken;f.close();}
+});
+test('memory waits asynchronously for a session upload and cancellation leaves the refresh due',async()=>{
+  const f=fixture(),oldToken=process.env.OPENCRAWL_SESSIONS_TOKEN;process.env.OPENCRAWL_SESSIONS_TOKEN='fixture';
+  const uploads:any[]=[];const server=createServer(async(req,res)=>{
+    let data:any={principal:f.config.owner};
+    if(req.method==='POST'){let body='';for await(const part of req)body+=part;const s=JSON.parse(body);uploads.push(s);data={stored:true,snapshotId:createHash('sha256').update(body).digest('hex'),generation:s.generation};}
+    res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({data}));
+  });await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+  let release:()=>void=()=>{};let owner:Promise<unknown>|undefined;
+  try{
+    f.config.api='http://127.0.0.1:'+(server.address() as any).port;f.put(join(captureDir(),'config.json'),JSON.stringify(f.config));
+    f.put(join(f.config.roots.codex,'memories/MEMORY.md'),'codex');f.put(join(f.config.roots['claude-code'],'projects/repo/memory/MEMORY.md'),'Claude');
+    owner=withSessionLock('capture:flush',()=>new Promise<void>(r=>{release=r;}));
+    const pending=refreshMemories();await new Promise(r=>setTimeout(r,120));expect(uploads).toHaveLength(0);
+    release();await owner;await pending;expect(uploads).toHaveLength(2);
+    rmSync(join(captureDir(),'memories'),{recursive:true});
+    owner=withSessionLock('capture:flush',()=>new Promise<void>(r=>{release=r;}));
+    const controller=new AbortController(),start=Date.now();setTimeout(()=>controller.abort(),120);
+    await refreshMemories({signal:controller.signal});expect(Date.now()-start).toBeLessThan(1000);expect(uploads).toHaveLength(2);
+    const states=readdirSync(join(captureDir(),'memories')).map(p=>JSON.parse(readFileSync(join(captureDir(),'memories',p),'utf8')));
+    expect(states.length).toBeGreaterThan(0);expect(states.every(s=>memoryDue(s)&&!s.retryAt&&!s.successAt)).toBe(true);
+  }finally{release();await owner;server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));if(oldToken===undefined)delete process.env.OPENCRAWL_SESSIONS_TOKEN;else process.env.OPENCRAWL_SESSIONS_TOKEN=oldToken;f.close();}
 });
 test('project or session exclusions pause consolidated memory before network or file reads',async()=>{
   const f=fixture();try {
