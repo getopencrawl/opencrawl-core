@@ -119,13 +119,14 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
   const people = data?.people?.length;
   const daily = data?.daily || [];
   const activeDays = daily.filter(day => day.events > 0).length;
+  const subagents = data?.subagentSessions || 0;
   const busiest = daily.reduce<(typeof daily)[number] | undefined>((best, day) => !best || day.sessions > best.sessions ? day : best, undefined);
 
   return (
     <Section className="report-section" title="Agent sessions" description={report.days ? `Captured activity over the last ${report.days} days.` : 'Captured agent activity.'}>
       {!data ? <EmptyState title="Agent reporting isn’t available on this deployment."/> : <>
         <MetricGrid items={[
-          {label: 'Sessions', value: compact(data.sessions), note: `${activeDays} active ${activeDays === 1 ? 'day' : 'days'}`, title: count(data.sessions)},
+          {label: 'Sessions', value: compact(data.sessions), note: `${activeDays} active ${activeDays === 1 ? 'day' : 'days'}${subagents ? ` · plus ${plural(subagents, 'subagent session')}` : ''}`, title: count(data.sessions)},
           {label: 'Messages', value: compact(data.messages), note: 'prompts and replies captured', title: count(data.messages)},
           {label: 'Tool calls', value: compact(data.toolCalls), note: 'tools used across captured sessions', title: count(data.toolCalls)},
           {label: 'Machines', value: count(data.machines), note: people != null ? `${plural(people, 'person', 'people')} capturing` : 'capturing agent sessions'},
@@ -189,7 +190,7 @@ function TeamReport({report, now}: {report: UsageReport; now: number}) {
             </div>
           ) : null)}</dl>
         )}
-        <Section className="report-panel" headingLevel={3} title="Member activity" description={`${report.days ? `Last ${report.days} days.` : 'All captured activity.'} Ranked by sessions, then tool calls. Setup: CLI, MCP, sessions.`}>
+        <Section className="report-panel" headingLevel={3} title="Member activity" description={`${report.days ? `Last ${report.days} days.` : 'All captured activity.'} Ranked by sessions, then tool calls; subagent sessions are counted separately. Setup: CLI, MCP, sessions.`}>
           <Table label="Team usage" className="report-member-table report-leaderboard-table">
             <thead><tr>
               <th scope="col">Rank</th><th scope="col">Member</th><th scope="col">Sessions</th><th scope="col">Messages</th>
@@ -199,7 +200,7 @@ function TeamReport({report, now}: {report: UsageReport; now: number}) {
               <tr key={member.email}>
                 <td>{index + 1}</td>
                 <th scope="row"><span className="report-member">{memberName(member)}{member.you && <em>you</em>}</span>{member.name && <span className="report-email">{member.email}</span>}</th>
-                <td>{count(member.sessions)}</td><td>{count(member.messages)}</td><td>{count(member.toolCalls)}</td><td>{count(member.sources)}</td>
+                <td>{count(member.sessions)}{member.subagentSessions ? <span className="report-email">+{count(member.subagentSessions)} subagent</span> : null}</td><td>{count(member.messages)}</td><td>{count(member.toolCalls)}</td><td>{count(member.sources)}</td>
                 <td><SetupDots member={member}/></td><td>{member.lastAt ? ago(member.lastAt, now) : 'not yet'}</td>
               </tr>
             ))}</tbody>

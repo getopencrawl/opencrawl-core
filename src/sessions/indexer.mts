@@ -26,6 +26,12 @@ function collect(value: unknown,text: string[],attachments: Attachment[],names: 
     collect(fields[key],text,attachments,names,depth+1);
   }
 }
+/** One document per captured event chunk, whichever installation uploaded it.
+ * Event IDs are content-derived, so the same native record re-uploaded from a
+ * cloned machine or a second install overwrites rather than duplicates. */
+export function sessionDocumentId({scope,harness,sessionId,eventId,chunk}: {scope: string; harness: string; sessionId: string; eventId: string; chunk: number}) {
+  return digest(JSON.stringify([scope,harness,sessionId,eventId,chunk]));
+}
 export function batchDocuments({prefix,key,batch,principal}: {prefix: string; key: string; batch: SessionBatch; principal: Principal}): DocumentItem[] {
   const scope=sessionScope(principal),identity=sourceBatchIdentity(prefix,key);
   if(!identity||identity.tenantHash!==digest(principal.tenantId)||identity.userHash!==digest(principal.userId)||
@@ -47,7 +53,7 @@ export function batchDocuments({prefix,key,batch,principal}: {prefix: string; ke
         toolCallId:event.data?.call_id??event.data?.tool_use_id??null,toolNames:[...names],host:batch.host??null,
         attachments:attachments.map(a=>({sha256:a.sha256,size:a.size,mimeType:a.mimeType,path:a.path,
           objectKey:/^[a-f0-9]{64}$/.test(a.sha256??'')?`${prefix}/${scope}/attachments/${a.sha256}`:null}))};
-      documents.push({id:digest(JSON.stringify([scope,batch.harness,batch.installationId,batch.sessionId,event.id,chunk])),document});
+      documents.push({id:sessionDocumentId({scope,harness:batch.harness,sessionId:batch.sessionId,eventId:event.id,chunk}),document});
     }
   }
   return documents;

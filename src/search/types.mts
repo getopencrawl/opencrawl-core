@@ -29,7 +29,7 @@ export interface OpenSearchResponse<T extends SearchDocument = SearchDocument> {
   aggregations?: Record<string, Aggregation>;
   docs: IndexHit<T>[];
   errors?: boolean;
-  items: Array<{index?: {status: number}; update?: {status: number}}>;
+  items: Array<{index?: {status: number}; update?: {status: number}; delete?: {status: number}}>;
   error?: {type?: string};
 }
 export interface QueryBody {[name: string]: unknown; query?: unknown; _source?: string[] | boolean}

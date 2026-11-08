@@ -112,6 +112,15 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
           if(result.errors||!Array.isArray(result.items)||result.items.length!==items.length||result.items.some(item=>{const op=item.index||item.update;return !op||op.status<200||op.status>=300;}))throw fail('Realm bulk contained failed or missing items');
           return result;
         },
+        /** Removes documents of this corpus by ID. Missing IDs are already removed. */
+        async delete(principal: TenantPrincipal,ids: string[]){
+          let body;
+          try {scope(principal);if(!ids.length)return {items:[]};if(ids.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_:-]{1,256}$/.test(id)))throw fail('Invalid document ID',400);body=ids.map(id=>JSON.stringify({delete:{_id:encodedId(id)}})+'\n').join('');}
+          catch(caught){const error=serviceError(caught);throw Object.assign(serviceError(error),{writeOutcome:'not-applied'});}
+          const result=await request('/_bulk',body,'POST','application/x-ndjson');
+          if(!Array.isArray(result.items)||result.items.length!==ids.length||result.items.some(item=>{const op=item.delete;return !op||(op.status<200||op.status>=300)&&op.status!==404;}))throw fail('Realm delete contained failed or missing items');
+          return result;
+        },
         async update(principal: TenantPrincipal,id: string,{script,upsert}: {script: unknown; upsert: SearchDocument}){
           let body;
           try {scope(principal);body={script,upsert:encode(id,upsert)};}
