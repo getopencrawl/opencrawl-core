@@ -8,8 +8,11 @@ read access can read the deployment’s captured sessions.
 
 - [Run locally](docs/self-host.md)
 - [Capture privacy and controls](docs/capture-privacy.md)
-- [CLI](cli/README.md) · [MCP](docs/mcp.md) · [Architecture](ARCHITECTURE.md)
-- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+- [CLI](cli/README.md)
+- [MCP](docs/mcp.md)
+- [Architecture](ARCHITECTURE.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security](SECURITY.md)
 
 [Apache-2.0](LICENSE). Plugins are MIT; bundled fonts retain their OFL notices.
 

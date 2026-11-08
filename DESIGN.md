@@ -261,11 +261,13 @@ bounded presentation stylesheet; do not restyle it with the console page heading
 
 `AppShell` is the only workspace shell. One route registry drives the top bar
 and page routing through the shared router. The hosted routes are Usage, Integrations,
-Diagnostics, Settings, Team and Billing. Deployment adapters supply only their
+Diagnostics, Team and Billing. Deployment adapters supply only their
 supported routes; the shared shell does not imply hosted capabilities in the
 single-tenant adapter.
 
-The desktop top bar is 72px high. Content is centered at 1200px with 32px side
+The desktop top bar is 72px high and centered within the same maximum width as
+the content, including its 32px side insets. It never stretches the logo and
+navigation across a wide monitor. Content is centered at 1200px with 32px side
 insets, 48px top padding and 64px bottom padding. At 800px and below, that same
 navigation tree becomes a focus-managed drawer bounded by 300px and the viewport
 minus 48px. Content padding becomes 32px, 16px and 40px. The mobile header contains
@@ -357,12 +359,19 @@ copy/reveal control retains its separate feedback timing and unchanged dimension
 
 ### Navigation and tabs
 
-Navigation links use muted text, a subtle hover surface and periwinkle active
-state. Active links expose their current-page semantics. The mobile navigation drawer traps
+Desktop navigation links occupy the header height, with 12px horizontal padding
+and 4px gaps. The active page uses normal bright text and a 2px primary-color
+stroke at the bottom of its target, separated from the label by the header's
+vertical space. Do not replace it with a faint text underline. Mobile navigation
+links use muted text, a subtle hover surface and a periwinkle active wash.
+Active links expose their current-page semantics. The mobile navigation drawer traps
 focus while open, closes with Escape, restores the toggle's focus on dismissal
 and makes underlying content inert. Internal page changes focus the new page
 heading; the skip link remains available. Tabs are an in-page control with an
-accent underline, roving focus, arrow-key navigation and Home/End support.
+accent underline, 12px vertical and 16px horizontal label padding, 4px gaps,
+roving focus, arrow-key navigation and Home/End support. The tab list owns the
+single divider above its content; a following Section has no extra top border
+or top padding. Do not stack two rules below the tabs.
 
 ### Sections, insets and tables
 
@@ -497,3 +506,18 @@ Team updates automatically every 30 seconds while visible and when returning
 to the page. Normal use has no Refresh button. Background updates preserve
 input and focus, skip overlapping reads, pause during mutations and while hidden,
 and stop on unmount. Keep a retry action for initial loading failures.
+
+## Text separators
+
+Centered-dot separators (U+00B7) are forbidden in every authored UI, including
+metadata, browser titles, templates, HTML entities, and escaped Unicode forms.
+Use natural punctuation, sentences, spacing, or separate lines. Do not replace
+separator dots with decorative badges. Genuine status indicators and user/source
+content remain intact. The shared architecture guard enforces this rule in core
+and hosted React source.
+
+The Usage report retains its top-level narrative above Agent sessions: imported
+records and source count, measured indexed documents, and median query time. Use
+`report-summary` with the original emphasized numeric spans. Never substitute zero
+for unavailable measurements, and retain the accepted section order and per-source
+indexed document types without reintroducing aggregate comparison bars.

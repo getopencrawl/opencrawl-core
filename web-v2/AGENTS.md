@@ -20,6 +20,11 @@ DTOs and runtime adapters; WorkOS, billing and managed connector code stay outsi
 - All authored code, scripts and tests are TypeScript. Keep strict type checking;
   unknown must be narrowed. Do not use any, ts-ignore, ts-nocheck or HTML-string
   rendering. Compiled JavaScript is output, never source.
+- Never use centered-dot separators (U+00B7) in any authored UI text, metadata,
+  browser titles, templates, or encoded HTML/Unicode forms. Use natural
+  punctuation, sentences, spacing, or separate lines. Status indicator shapes
+  and source content are not separators; preserve those. The architecture guard
+  enforces this rule for core and hosted React source.
 - Async pages distinguish loading, empty, failed and current data. Abort reads on
   teardown, guard stale responses and give actionable failures. Controls preserve
   disabled, busy and error semantics. Client visibility never grants permission.
