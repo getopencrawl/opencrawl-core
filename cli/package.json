@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/cli",
-  "version": "0.4.19",
+  "version": "0.4.22",
   "description": "Capture coding-agent sessions and search workspace knowledge with OpenCrawl",
   "type": "module",
   "license": "Apache-2.0",

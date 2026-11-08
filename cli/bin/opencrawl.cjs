@@ -163,9 +163,13 @@ async function main(args = process.argv.slice(2)) {
   return result.status ?? 1;
 }
 module.exports = {channel: CHANNEL, target, stable, compare, activeRoot, update, installRelease, binary, npmCli, main};
-if (require.main === module) main().then(code => { process.exitCode = code; }).catch(() => {
-  const message = 'Could not run or update OpenCrawl. Retry, or reinstall with npm install -g @getopencrawl/cli@next --include=optional.';
-  if (process.argv.includes('--json')) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code: 'LAUNCHER_ERROR', message}}) + '\n');
+if (require.main === module) main().then(code => { process.exitCode = code; }).catch(error => {
+  const denied = ['EPERM', 'EACCES', 'EROFS'].includes(error?.code);
+  const code = denied ? 'PERMISSION_DENIED' : 'LAUNCHER_ERROR';
+  const message = denied
+    ? `Permission denied (${error.code}) while updating OpenCrawl. Allow write access to the OpenCrawl cache directory, or run opencrawl update outside the sandbox.`
+    : 'Could not run or update OpenCrawl. Retry, or reinstall with npm install -g @getopencrawl/cli@next --include=optional.';
+  if (process.argv.includes('--json')) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code, message}}) + '\n');
   else process.stderr.write(`opencrawl: ${message}\n`);
   process.exitCode = 1;
 });
