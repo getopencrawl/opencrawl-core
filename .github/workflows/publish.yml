@@ -19,6 +19,8 @@ jobs:
           scope: '@getopencrawl'
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
+      - run: npm ci --prefix web-v2 --ignore-scripts --no-audit --no-fund
+      - run: npm run check --prefix web-v2
       - name: Record the source revision in the package
         run: node -e 'require("fs").writeFileSync("revision.json", JSON.stringify({revision:process.env.GITHUB_SHA})+"\n")'
       - name: Publish privately
