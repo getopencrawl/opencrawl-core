@@ -9,6 +9,7 @@ import {digest,sessionScope,MAX_BATCH_BYTES} from './ingest.mjs';
 import {sourceBatchIdentity,reserveSessionEvents} from './event-identity.mjs';
 import {memorySourceIdentity,verifyStoredMemory,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
 export {sourceBatchIdentity} from './event-identity.mjs';
+export {memorySourceIdentity} from '../memories/snapshot.mjs';
 
 function collect(value: unknown,text: string[],attachments: Attachment[],names: Set<string>,depth=0): void {
   if(depth>128)throw Object.assign(new Error('Event structure exceeds supported depth'),{status:400,permanent:true});
