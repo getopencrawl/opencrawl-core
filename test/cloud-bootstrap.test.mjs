@@ -27,7 +27,7 @@ if(process.env.FAIL_INSTALL)process.exit(43);
   assert.equal(r.status,0,r.stderr);
   const install=JSON.parse(readFileSync(join(home,'npm-args')));
   assert.equal(install[0],'install');
-  assert.deepEqual(install.filter(arg=>arg.startsWith('@getopencrawl/cli@')),['@getopencrawl/cli@0.4.16'],
+  assert.deepEqual(install.filter(arg=>arg.startsWith('@getopencrawl/cli@')),['@getopencrawl/cli@0.4.18'],
    'fresh cloud images must install the CLI with bounded uploader ownership and immutable event wire IDs');
   const args=JSON.parse(readFileSync(join(home,'calls')));
   assert.deepEqual(args.slice(0,2),['collect','install']);
@@ -35,6 +35,7 @@ if(process.env.FAIL_INSTALL)process.exit(43);
   assert.equal(args[args.indexOf('--harness')+1],'claude-code');
   assert.equal(args[args.indexOf('--backfill')+1],'skip');
   assert.ok(args.includes('--defer-auth'));
+  assert.ok(args.includes('--yes'));
   const fail=spawnSync('sh',[],{env:{...env,FAIL_INSTALL:'1'},input:script,encoding:'utf8'});
   assert.equal(fail.status,43,'failed preparation must fail the image setup');
  }finally{rmSync(home,{recursive:true,force:true});}

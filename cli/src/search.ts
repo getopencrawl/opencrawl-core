@@ -25,13 +25,13 @@ export const fetchWorkspace = (api: string, input: Record<string, unknown>, fetc
 
 export function searchInput(query: string | undefined, values: Record<string, unknown>) {
   const source = values.source ?? 'all', match = values.match ?? 'any', limit = Number(values.limit ?? 10), sessionId = values['session-id'], cursor = values.cursor;
-  if (!query?.trim() || query.length > 4000 || !['all','sessions','connectors'].includes(source as string) || !['all','any','phrase'].includes(match as string) || !Number.isInteger(limit) || limit < 1 || limit > 40 || (sessionId !== undefined && (source !== 'sessions' || typeof sessionId !== 'string' || !sessionId || sessionId.length > 200)) || (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 2048))) throw new CliError('INVALID_USAGE', 'Use search "words" [--source all|sessions|connectors] [--match any|all|phrase] [--limit 1..40] [--session-id ID] [--cursor TOKEN].', 64);
+  if (!query?.trim() || query.length > 4000 || !['all','sessions','connectors','memories'].includes(source as string) || !['all','any','phrase'].includes(match as string) || !Number.isInteger(limit) || limit < 1 || limit > 40 || (sessionId !== undefined && (source !== 'sessions' || typeof sessionId !== 'string' || !sessionId || sessionId.length > 200)) || (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 2048))) throw new CliError('INVALID_USAGE', 'Use search "words" [--source all|sessions|connectors|memories] [--match any|all|phrase] [--limit 1..40] [--session-id ID] [--cursor TOKEN].', 64);
   return {query: query.trim(), source, match, limit, ...(values['no-dedupe'] ? {dedupe:false} : {}), ...(sessionId ? {sessionId} : {}), ...(cursor ? {cursor} : {})};
 }
 
 export function fetchInput(id: string | undefined, values: Record<string, unknown>) {
   const offset = Number(values.offset ?? 0), length = Number(values.length ?? 6000), version = values['content-version'];
-  if (!id || !/^(sessions|connectors):[A-Za-z0-9_:-]{1,256}$/.test(id) || !Number.isInteger(offset) || offset < 0 || offset > 10_000_000 || !Number.isInteger(length) || length < 1 || length > 16000 || (version !== undefined && (typeof version !== 'string' || !/^[a-f0-9]{64}$/.test(version)))) throw new CliError('INVALID_USAGE', 'Use fetch ID [--offset N] [--length 1..16000] [--content-version VERSION].', 64);
+  if (!id || !/^(sessions|connectors|memories):[A-Za-z0-9_:-]{1,256}$/.test(id) || !Number.isInteger(offset) || offset < 0 || offset > 10_000_000 || !Number.isInteger(length) || length < 1 || length > 16000 || (version !== undefined && (typeof version !== 'string' || !/^[a-f0-9]{64}$/.test(version)))) throw new CliError('INVALID_USAGE', 'Use fetch ID [--offset N] [--length 1..16000] [--content-version VERSION].', 64);
   return {id, offset, length, ...(version ? {version} : {})};
 }
 

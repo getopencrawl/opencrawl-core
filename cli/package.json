@@ -1,15 +1,18 @@
 {
   "name": "@getopencrawl/cli",
-  "version": "0.4.16",
-  "description": "OpenCrawl CLI: sign in now, query the index as features become available",
+  "version": "0.4.18",
+  "description": "Capture coding-agent sessions and search workspace knowledge with OpenCrawl",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "bin": {
     "opencrawl": "bin/opencrawl.cjs"
   },
   "files": [
     "bin/opencrawl.cjs",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.txt",
+    "runtime"
   ],
   "repository": {
     "type": "git",

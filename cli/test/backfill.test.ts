@@ -59,8 +59,8 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
    const [stdout,stderr,exitCode]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
    expect(stderr).toBe('');return {exitCode,...JSON.parse(stdout)};
   }
-  expect((await cli(['install','--no-background'])).data.backfill.status).toBe('decision_required');
-  expect((await cli(['install','--no-background','--backfill','skip'])).data.backfill.status).toBe('skipped');
+  expect((await cli(['install','--yes','--no-background'])).data.backfill.status).toBe('decision_required');
+  expect((await cli(['install','--yes','--no-background','--backfill','skip'])).data.backfill.status).toBe('skipped');
   expect((await cli(['backfill'])).data.status).toBe('decision_required');
   expect((await cli(['backfill','--harness','codex'])).error.code).toBe('BACKFILL_CONSENT_REQUIRED');
   expect((await cli(['backfill','--dry-run'])).data.status).toBe('preview');
@@ -75,6 +75,8 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   await syncCaptures();expect(batches).toHaveLength(0); // Historical mtimes are unchanged by install/skip.
   expect(readdirSync(join(captureDir(),'state'))).toHaveLength(0);
   principal.tenantId='current-team'; // The saved installation still has the previous team.
+  await expect(backfill(api,'claude-code',true)).rejects.toMatchObject({code:'CAPTURE_DESTINATION_CHANGED'});
+  await installCapture(api,{background:false,home:dir,command:[process.execPath,'-e','']}); // Explicit re-enrollment with an empty queue.
   expect((await backfill(api,'claude-code',true)).processed).toBe(2);
   expect(readCaptureConfig()!.owner.tenantId).toBe('current-team');
   expect(batches.every(b=>b.owner.tenantId==='current-team')).toBe(true);

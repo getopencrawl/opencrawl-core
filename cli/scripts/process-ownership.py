@@ -97,7 +97,7 @@ def harness(dist, node, directory):
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Receiver)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     api = f'http://127.0.0.1:{server.server_port}'
-    subprocess.run([node, str(launcher), 'collect', 'install', '--harness', 'claude-code',
+    subprocess.run([node, str(launcher), 'collect', 'install', '--yes', '--harness', 'claude-code',
                     '--defer-auth', '--backfill', 'skip', '--api', api],
                    env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=15)
     settings = json.loads((root / 'claude/settings.json').read_text())

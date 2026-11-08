@@ -1,6 +1,7 @@
 import {gunzipSync} from 'node:zlib';
 import {digest,sessionScope,MAX_BATCH_BYTES} from './ingest.mjs';
 import {sourceBatchIdentity,reserveSessionEvents} from './event-identity.mjs';
+import {memorySourceIdentity,verifyStoredMemory,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
 export {sourceBatchIdentity} from './event-identity.mjs';
 
 function collect(value,text,attachments,names,depth=0) {
@@ -57,14 +58,14 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
   // objects are ignored; no ingest-side work item is needed for discovery.
   const statePrefix=prefix+'/_index/'+digest(search.identity)+'/'+digest(jobId+':'+(principal?sessionScope(principal):'runtime-resolved'));
   function authorizedKey(key) {
-    if(typeof key!=='string'||!key.startsWith(sourcePrefix)||!sourceBatchIdentity(prefix,key))throw Object.assign(new Error('Session object outside authorized source'),{permanent:true});
+    if(typeof key!=='string'||!key.startsWith(sourcePrefix)||!(sourceBatchIdentity(prefix,key)||memorySourceIdentity(prefix,key)))throw Object.assign(new Error('Session object outside authorized source'),{permanent:true});
   }
   return {
     async listPage({cursor=null}={}) {
       if(cursor!==null&&(typeof cursor!=='string'||cursor.length>8192))throw Object.assign(new Error('Invalid session cursor'),{permanent:true});
       await checkActive();
       const page=await store.listPage(sourcePrefix,{continuationToken:cursor,maxKeys:50});
-      return {keys:page.keys.filter(key=>sourceBatchIdentity(prefix,key)),cursor:page.nextToken||null};
+      return {keys:page.keys.filter(key=>sourceBatchIdentity(prefix,key)||memorySourceIdentity(prefix,key)),cursor:page.nextToken||null};
     },
     async processObject({key}) {
       authorizedKey(key);await checkActive();
@@ -73,8 +74,18 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
       if(receipt&&JSON.parse(receipt).status==='indexed')return {records:0,skipped:true};
       const bytes=await store.get(key);
       if(!bytes)throw new Error('Session source object unavailable');
-      const batch=JSON.parse(gunzipSync(bytes,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}));
+      const memory=Boolean(memorySourceIdentity(prefix,key));
+      const batch=JSON.parse(gunzipSync(bytes,{maxOutputLength:(memory?MAX_MEMORY_BYTES:MAX_BATCH_BYTES)+1024*1024}));
       const scope=principal||await resolvePrincipal({key,batch});sessionScope(scope);
+      if(memory) {
+        verifyStoredMemory({prefix,key,snapshot:batch,principal:scope});
+        await checkActive();
+        if(!search.memories)throw new Error('Memory indexing is not configured');
+        const count=await search.memories.putSnapshot(batch,scope,key);
+        await checkActive();
+        await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:count,indexedAt:new Date().toISOString()})),'application/json');
+        return {records:count,skipped:false};
+      }
       const docs=batchDocuments({prefix,key,batch,principal:scope});
       // Check the whole event before any chunk write. Receipt order, shorter
       // payloads and concurrent activities must never assemble mixed revisions.

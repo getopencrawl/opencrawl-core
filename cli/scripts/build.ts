@@ -11,6 +11,12 @@ const targets = [
 const selected = process.argv.includes('--current') ? targets.filter(([os, arch]) => os === process.platform && arch === process.arch) : targets;
 const dist = join(root, 'dist');
 const optionalDependencies: Record<string, string> = {};
+function copyReleaseFiles(directory:string) {
+  for(const name of ['README.md','LICENSE','THIRD_PARTY_NOTICES.txt'])copyFileSync(join(root,name),join(directory,name));
+  mkdirSync(join(directory,'runtime'),{recursive:true});
+  const result=Bun.spawnSync(['bun','build','--target=bun','--define',`OPENCRAWL_VERSION=${JSON.stringify(pkg.version)}`,join(root,'src/cli.ts'),'--outfile',join(directory,'runtime/opencrawl.js')],{stdio:['inherit','inherit','inherit']});
+  if(result.exitCode)throw new Error('Could not build the replaceable-runtime application bundle.');
+}
 for (const [os, arch, target] of selected) {
   const name = `${pkg.name}-${os}-${arch}`;
   const directory = join(dist, `${os}-${arch}`);
@@ -23,8 +29,8 @@ for (const [os, arch, target] of selected) {
     const binary = join(directory, 'bin/opencrawl');
     if (Bun.spawnSync(['codesign', '--force', '--sign', '-', binary]).exitCode !== 0 || Bun.spawnSync(['codesign', '--verify', '--strict', binary]).exitCode !== 0) throw new Error('macOS signing failed.');
   }
-  writeFileSync(join(directory, 'package.json'), JSON.stringify({name, version: pkg.version, description: `OpenCrawl binary for ${os}/${arch}`, license: pkg.license, repository: pkg.repository, os: [os], cpu: [arch], files: [os === 'win32' ? 'bin/opencrawl.exe' : 'bin/opencrawl'], publishConfig: pkg.publishConfig}, null, 2) + '\n');
-  copyFileSync(join(root, 'README.md'), join(directory, 'README.md'));
+  writeFileSync(join(directory, 'package.json'), JSON.stringify({name, version: pkg.version, description: `OpenCrawl binary for ${os}/${arch}`, license: pkg.license, repository: pkg.repository, os: [os], cpu: [arch], files: [os === 'win32' ? 'bin/opencrawl.exe' : 'bin/opencrawl','runtime','LICENSE','THIRD_PARTY_NOTICES.txt'], publishConfig: pkg.publishConfig}, null, 2) + '\n');
+  copyReleaseFiles(directory);
   optionalDependencies[name] = pkg.version;
 }
 const launcher = join(dist, 'cli');
@@ -33,5 +39,5 @@ const {scripts, devDependencies, ...published} = pkg;
 writeFileSync(join(launcher, 'package.json'), JSON.stringify({...published, optionalDependencies}, null, 2) + '\n');
 copyFileSync(join(root, 'bin/opencrawl.cjs'), join(launcher, 'bin/opencrawl.cjs'));
 chmodSync(join(launcher, 'bin/opencrawl.cjs'), 0o755);
-copyFileSync(join(root, 'README.md'), join(launcher, 'README.md'));
+copyReleaseFiles(launcher);
 console.log(`Prepared ${selected.length} platform packages and ${pkg.name}@${pkg.version} in cli/dist.`);

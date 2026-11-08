@@ -1,5 +1,6 @@
 import {createRealmResolver,realmField} from '../search/realm.mjs';
 import {sessionScope} from './ingest.mjs';
+import {createMemorySearch} from '../memories/search.mjs';
 
 import {sessionIndexMapping} from '../search/mapping.mjs';
 export {sessionIndexMapping};
@@ -8,6 +9,7 @@ const fail=(status,message)=>{throw Object.assign(new Error(message),{status});}
 export function createSessionSearch(options) {
   const resolve=createRealmResolver(options), f=field=>realmField('session',field);
   return {
+    memories:createMemorySearch(options),
     identity:resolve.identity,
     ensureIndex:principal=>resolve(principal).ensureIndex(),
     async putDocuments(documents,principal){

@@ -1,6 +1,6 @@
 {
   "name": "opencrawl",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Understand OpenCrawl and verify an authenticated connection to its remote MCP server.",
   "author": {
     "name": "OpenCrawl",

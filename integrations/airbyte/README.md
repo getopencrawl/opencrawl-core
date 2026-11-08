@@ -1,7 +1,8 @@
 # Airbyte
 
 Self-hosted [Airbyte](https://github.com/airbytehq/airbyte) moves data from users'
-tools into an S3 bucket, which the OpenCrawl indexer reads from.
+tools into an S3 bucket. The OpenCrawl indexer does **not** read this landing
+layout yet; see [integrations](../README.md) for the gap.
 
 Verified with Airbyte 2.4.0 (Helm chart 2.4.0), abctl v0.30.4 and Node 22/24.
 
@@ -106,8 +107,8 @@ Airbyte-certified GA connector. Records are uncompressed JSONL at
 `<OPENCRAWL_LANDING_S3_PATH>/<source>/<stream>/`; see [S3_LAYOUT.md](S3_LAYOUT.md)
 for the exact layout and record format. Omit the access keys to use the instance
 role, and set `OPENCRAWL_LANDING_S3_ENDPOINT` for S3-compatible stores such as
-MinIO or R2. The indexer that turns landed
-records into OpenCrawl documents is the next piece of work and does not exist yet.
+MinIO or R2. Connecting this landing layout to the core connector indexer is the
+next piece of work.
 
 ## Production (Kubernetes)
 

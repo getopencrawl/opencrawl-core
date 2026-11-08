@@ -9,7 +9,7 @@ import {installCapture} from '../src/capture/install.ts';
 import {captureDir,readCaptureConfig,flushCaptures,refreshCaptureIdentity} from '../src/capture/runtime.ts';
 import {hash} from '../src/capture/parse.ts';
 
-test('existing capture config and queue follow the authenticated team without reinstall; server owns authorization',async()=>{
+test('capture pins queued data to its original team and human before any attachment upload',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-capture-auth-')),saved={...process.env};
  let principal={tenantId:'personal:alice',userId:'alice',name:'Alice',email:'alice@example.net'},authorized=true,loseResponse=true;
  const token='capture-auth-test-token',store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest({store});
@@ -44,6 +44,12 @@ test('existing capture config and queue follow the authenticated team without re
   const batch={schemaVersion:1,owner:installed.owner,installationId:installed.installationId,sessionId:'session',harness:'codex',origin:'cli',events:[{id:'event',kind:'message',data:{role:'user',content:'shared knowledge'}}],attachments:[{status:'captured',sha256:sha}]};
   const queue=join(captureDir(),'queue','old.json');writeFileSync(queue,JSON.stringify(batch));
   principal={...principal,tenantId:'org_team'};
+  await expect(flushCaptures()).rejects.toMatchObject({code:'CAPTURE_DESTINATION_CHANGED'});
+  expect(payloads).toHaveLength(0);expect(attachmentAuthors).toHaveLength(0);
+  expect(JSON.parse(readFileSync(queue,'utf8'))).toEqual(batch);
+  expect(readCaptureConfig()).toEqual(installed);
+  await expect(installCapture(api,options)).rejects.toMatchObject({code:'CAPTURE_PENDING_DESTINATION'});
+  principal={...principal,tenantId:installed.owner.tenantId};
   // A login/credential change while identity is in flight cannot switch uploads.
   duringIdentity=()=>{process.env.OPENCRAWL_SESSIONS_TOKEN='different-user-token';};
   expect(await flushCaptures()).toEqual({uploaded:1});
@@ -58,21 +64,25 @@ test('existing capture config and queue follow the authenticated team without re
   expect(readFileSync(cursor,'utf8')).toBe('{"offset":42}');
   expect(readFileSync(join(captureDir(),'blobs',sha))).toEqual(blob);
   expect(readdirSync(join(captureDir(),'queue'))).toEqual([]);
-  // Another authorized team change also works; there is no personal-scope exception.
-  principal={...principal,tenantId:'org_next'};writeFileSync(queue,JSON.stringify(sent));
-  expect(await flushCaptures()).toEqual({uploaded:1});
-  expect(JSON.parse(payloads.at(-1)!).owner).toEqual(principal);
+  // A mismatched queued batch is blocked even if the enrollment matches login.
+  writeFileSync(queue,JSON.stringify({...sent,owner:{...principal,tenantId:'org_next'}}));
+  const previousAttachments=attachmentAuthors.length;
+  await expect(flushCaptures()).rejects.toMatchObject({code:'CAPTURE_DESTINATION_CHANGED'});
+  expect(attachmentAuthors).toHaveLength(previousAttachments);
   // A rejected request retains its queued data. The CLI does not forge the author.
   writeFileSync(queue,JSON.stringify(batch));authorized=false;
   await expect(flushCaptures()).rejects.toMatchObject({code:'CAPTURE_UPLOAD_FAILED'});
   expect(JSON.parse(readFileSync(queue,'utf8'))).toEqual(batch);
   authorized=true;principal={...principal,userId:'bob',name:'Bob'};
   const batchesBefore=payloads.length,attachmentsBefore=attachmentAuthors.length;
-  await expect(flushCaptures()).rejects.toMatchObject({code:'CAPTURE_OWNER_MISMATCH'});
+  await expect(flushCaptures()).rejects.toMatchObject({code:'CAPTURE_DESTINATION_CHANGED'});
   expect(payloads).toHaveLength(batchesBefore);expect(attachmentAuthors).toHaveLength(attachmentsBefore);
   expect(JSON.parse(payloads.at(-1)!).owner.userId).toBe('alice');
   expect(JSON.parse(readFileSync(queue,'utf8'))).toEqual(batch);
-  // Reinstall uses current authentication too, retaining installation and cursors.
+  // Explicit re-enrollment cannot move pending data. Resolve it at its owner first.
+  await expect(installCapture(api,options)).rejects.toMatchObject({code:'CAPTURE_PENDING_DESTINATION'});
+  principal={...principal,tenantId:installed.owner.tenantId,userId:installed.owner.userId};await flushCaptures();
+  principal={...principal,userId:'bob',name:'Bob'};
   expect((await installCapture(api,options)).installationId).toBe(installed.installationId);
   expect(readCaptureConfig()!.owner.userId).toBe('bob');
   expect(readFileSync(cursor,'utf8')).toBe('{"offset":42}');
