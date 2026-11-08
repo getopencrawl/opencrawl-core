@@ -50,7 +50,7 @@ export function createReferenceServer(configuration: ReferenceConfiguration) {
         return send(response,200,await proxy('/api/search/fetch',{id:input.id.trim(),length:16000}));
       }
       if(request.method!=='GET')return send(response,405,{error:{message:'Method not allowed.'}});
-      const assets:Record<string,[string,string]>={'/console.js':[join(root,'dist/reference/console.js'),'text/javascript'],'/console.css':[join(root,'dist/styles.css'),'text/css'],...Object.fromEntries(['opencrawl-mark.svg','opencrawl-mark-jitter.svg','geist-sans.woff2','geist-mono.woff2'].map(name=>['/assets/'+name,[join(root,'../web/assets',name),name.endsWith('.svg')?'image/svg+xml':'font/woff2']]))};
+      const assets:Record<string,[string,string]>={'/console.js':[join(root,'dist/reference/console.js'),'text/javascript'],'/console.css':[join(root,'dist/styles.css'),'text/css'],...Object.fromEntries(['opencrawl-mark.svg','geist-sans.woff2','geist-mono.woff2'].map(name=>['/assets/'+name,[join(root,'../web/assets',name),name.endsWith('.svg')?'image/svg+xml':'font/woff2']]))};
       const asset=assets[url.pathname];
       if(asset){response.writeHead(200,{'content-type':asset[1]});response.end(await readFile(asset[0]));return;}
       if(['/','/diagnostics','/agents','/settings'].includes(url.pathname)){response.writeHead(200,{'content-type':'text/html; charset=utf-8'});response.end(shell);return;}

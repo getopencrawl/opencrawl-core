@@ -266,12 +266,16 @@ supported routes; the shared shell does not imply hosted capabilities in the
 single-tenant adapter.
 
 The desktop top bar is 72px high and centered within the same maximum width as
-the content, including its 32px side insets. It never stretches the logo and
-navigation across a wide monitor. Content is centered at 1200px with 32px side
+the content, including its 32px side insets. Its static mark and lowercase
+`opencrawl` wordmark come from the shared Brand component. Navigation and the
+account action stay grouped at the right. Links have padded 40px targets; the
+current page has a bright 2px accent line just below its label, inside the target
+rather than on the header's bottom edge. The mark never animates. Content is centered at 1200px with 32px side
 insets, 48px top padding and 64px bottom padding. At 800px and below, that same
 navigation tree becomes a focus-managed drawer bounded by 300px and the viewport
 minus 48px. Content padding becomes 32px, 16px and 40px. The mobile header contains
-the navigation control, workspace name and existing mark. There is no alternate
+the same static Brand and the navigation control; workspace identity stays in
+the drawer. There is no alternate
 page-specific sidebar or navigation implementation.
 
 Compose shared stacks, rows, action groups, split rows, two-column form grids,
@@ -320,7 +324,7 @@ field borders are hairlines, with a stronger boundary only where interaction nee
 ### Ownership and composition
 
 Consume `web-v2/src/design/components.tsx` through the public React package.
-It owns Button, LinkButton, Field, Input, Select, Textarea, PageHeader, Section,
+It owns Brand, Button, LinkButton, Field, Input, Select, Textarea, PageHeader, Section,
 Notice, StatusBadge, EmptyState, LoadingState, Table, Dialog, CopyField and Tabs.
 The shared icon set is in `src/design/icons.tsx`. Add a shared primitive only when
 a real feature needs it. Hosted pages import the same controls, router and styles;
@@ -521,3 +525,8 @@ records and source count, measured indexed documents, and median query time. Use
 `report-summary` with the original emphasized numeric spans. Never substitute zero
 for unavailable measurements, and retain the accepted section order and per-source
 indexed document types without reintroducing aggregate comparison bars.
+
+Source tiles show the actual indexed-content and imported-record breakdowns,
+with source identity and sync metadata. Do not add aggregate "indexed documents"
+or "Imported N" totals above those lists. Those totals obscure source-specific
+meaning and duplicate the useful counts.
