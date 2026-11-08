@@ -28,12 +28,7 @@ const release = (directory: string, version: string, options?: object) => makePa
 const selected = (root: string) => JSON.parse(readFileSync(join(launcher.activeRoot(root), 'package.json'), 'utf8')).version;
 
 async function children(directory: string, run: (start: (name: string, version: string, mode?: string) => void, wait: (name: string) => Promise<any>, allow: (name: string) => void) => Promise<void>) {
-  const dead = spawn(node, ['-e', ''], {stdio: 'ignore'});
-  await new Promise(resolve => dead.once('exit', resolve));
-  expect(() => process.kill(dead.pid!, 0)).toThrow();
-  writeFileSync(join(directory, 'stale-pid'), String(dead.pid));
   mkdirSync(cache(directory), {recursive: true});
-  writeFileSync(join(cache(directory), 'update.lock'), String(dead.pid));
   writeFileSync(join(directory, 'npm-cli.js'), '// fixture only');
   const running: {child: ChildProcess; exited: Promise<unknown>}[] = [];
   const start = (name: string, version: string, mode = 'update') => {
@@ -101,7 +96,7 @@ test('selection uses the highest complete matching release despite stale pointer
   expect(launcher.activeRoot(root)).toBe(root);
 }));
 
-test('concurrent stale recovery cannot downgrade a newer completed release', async () => isolated(async (directory, root) => {
+test('concurrent updates cannot downgrade a newer completed release', async () => isolated(async (directory, root) => {
   for (const version of ['0.4.0', '0.5.0', '0.6.0']) release(directory, version);
   // Hide the complete fixtures until each real cached-install path is reached.
   const releases = join(cache(directory), 'releases');
@@ -111,16 +106,6 @@ test('concurrent stale recovery cannot downgrade a newer completed release', asy
   }
   await children(directory, async (start, wait, allow) => {
     start('A', '0.5.0'); start('B', '0.4.0');
-    // Old launchers stop after observing the stale PID; new launchers proceed
-    // directly to independent registry checks. Reproduce the old TOCTOU order.
-    const deadline = Date.now() + 15000;
-    while (!existsSync(join(directory, 'A.fetch-entered')) && !existsSync(join(directory, 'A.stale-observed'))) {
-      if (Date.now() > deadline) throw new Error('Updater did not start');
-      await Bun.sleep(10);
-    }
-    if (existsSync(join(directory, 'A.stale-observed'))) {
-      await wait('B.stale-observed'); allow('A.allow-recovery'); await wait('A.fetch-entered'); allow('B.allow-recovery');
-    }
     await Promise.all([wait('A.fetch-entered'), wait('B.fetch-entered')]);
     renameSync(join(directory, '0.5.0'), join(releases, '0.5.0'));
     allow('A.allow-fetch'); expect((await wait('A.result')).ok).toBe(true);
@@ -132,7 +117,7 @@ test('concurrent stale recovery cannot downgrade a newer completed release', asy
     allow('B.allow-fetch'); const delayed = await wait('B.result');
     expect(delayed).toEqual({ok: true, result: {updated: true, version: '0.6.0'}});
     expect(selected(root)).toBe('0.6.0');
-    // Even a concurrent old updater overwriting its hint cannot lower selection.
+    // A stale selection hint cannot lower the highest complete release.
     writeFileSync(join(cache(directory), 'current.json'), JSON.stringify({version: '0.4.0'}));
     expect(selected(root)).toBe('0.6.0');
   });
@@ -164,35 +149,35 @@ test('failed partial npm staging preserves the selected release and removes its 
   });
 }), 30000);
 
-test('the unmodified 0.4.12 installed launcher delegates through the compatibility hint', async () => isolated(async (directory, root) => {
+test('the installed launcher delegates to the highest complete cached release', async () => isolated(async (directory, root) => {
   mkdirSync(join(root, 'bin'));
-  writeFileSync(join(root, 'package.json'), JSON.stringify({name: '@getopencrawl/cli', version: '0.4.12'}));
-  writeFileSync(join(root, 'bin/opencrawl.cjs'), readFileSync(resolve(import.meta.dir, 'fixtures/launcher-0.4.12.cjs')));
-  release(directory, '0.4.13', {launcher: readFileSync(resolve(import.meta.dir, '../bin/opencrawl.cjs'), 'utf8')});
-  release(directory, '0.4.14', {launcher: 'module.exports.main = async () => {process.stdout.write("0.4.14\\n"); return 0;};'});
-  writeFileSync(join(cache(directory), 'current.json'), JSON.stringify({version: '0.4.13'}));
+  writeFileSync(join(root, 'bin/opencrawl.cjs'), readFileSync(resolve(import.meta.dir, '../bin/opencrawl.cjs')));
+  release(directory, '0.2.0', {launcher: readFileSync(resolve(import.meta.dir, '../bin/opencrawl.cjs'), 'utf8')});
+  release(directory, '0.3.0', {launcher: 'module.exports.main = async () => {process.stdout.write("selected-current-fixture\\n"); return 0;};'});
+  writeFileSync(join(cache(directory), 'current.json'), JSON.stringify({version: '0.2.0'}));
   const result = spawnSync(node, [join(root, 'bin/opencrawl.cjs'), '--version'], {env: {...process.env, OPENCRAWL_NO_UPDATE: '1'}, encoding: 'utf8'});
   expect(result.status).toBe(0);
-  expect(result.stdout.trim()).toBe('0.4.14');
+  expect(result.stdout.trim()).toBe('selected-current-fixture');
 }));
 
-test('an old installed launcher preserves permission errors from a cached updater', async () => isolated(async (directory, root) => {
+test('the exported launcher main preserves permission errors through a delegating caller', async () => isolated(async (directory, root) => {
   mkdirSync(join(root, 'bin'));
-  writeFileSync(join(root, 'package.json'), JSON.stringify({name: '@getopencrawl/cli', version: '0.4.12'}));
-  writeFileSync(join(root, 'bin/opencrawl.cjs'), readFileSync(resolve(import.meta.dir, 'fixtures/launcher-0.4.12.cjs')));
-  release(directory, '0.4.21', {launcher: readFileSync(resolve(import.meta.dir, '../bin/opencrawl.cjs'), 'utf8')});
-  writeFileSync(join(cache(directory), 'current.json'), JSON.stringify({version: '0.4.21'}));
+  const installedLauncher = join(root, 'bin/opencrawl.cjs');
+  writeFileSync(installedLauncher, readFileSync(resolve(import.meta.dir, '../bin/opencrawl.cjs')));
+  release(directory, '0.2.0', {launcher: readFileSync(installedLauncher, 'utf8')});
+  const caller = join(directory, 'caller.cjs');
+  writeFileSync(caller, `require(${JSON.stringify(installedLauncher)}).main(process.argv.slice(2)).then(code => {process.exitCode = code;}).catch(() => {process.stdout.write('unexpected caller fallback');process.exitCode = 2;});`);
   const preload = join(directory, 'denied-cache.cjs');
   writeFileSync(preload, `
     const fs = require('node:fs'), mkdir = fs.mkdirSync;
-    global.fetch = async () => Response.json({name:'@getopencrawl/cli', version:'0.4.21'});
+    global.fetch = async () => Response.json({name:'@getopencrawl/cli', version:'0.2.0'});
     fs.mkdirSync = function(file, ...args) {
       if (String(file) === ${JSON.stringify(cache(directory))}) throw Object.assign(new Error('never-print-secret-path'), {code:process.env.FIXTURE_DENIAL});
       return mkdir.call(this, file, ...args);
     };
   `);
   for (const code of ['EPERM', 'EACCES', 'EROFS']) {
-    const result = spawnSync(node, ['--require', preload, join(root, 'bin/opencrawl.cjs'), 'update', '--json'], {env: {...process.env, OPENCRAWL_NO_UPDATE:'1', FIXTURE_DENIAL:code}, encoding:'utf8'});
+    const result = spawnSync(node, ['--require', preload, caller, 'update', '--json'], {env: {...process.env, OPENCRAWL_NO_UPDATE:'1', FIXTURE_DENIAL:code}, encoding:'utf8'});
     expect(result.status).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({schemaVersion:1, error:{code:'PERMISSION_DENIED'}});
     expect(result.stdout).toContain(code);

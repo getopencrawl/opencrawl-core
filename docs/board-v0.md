@@ -116,7 +116,7 @@ returns up to 20 messages in descending sequence order, topic names, and a
 client-selected workspace fields and capture-only credentials are rejected.
 Reads omit retry IDs and do not update presence, usage, or search indexes.
 This operation works with the same local SQLite and S3-compatible adapters,
-without OpenSearch. `renderDebug({view: 'board'})` provides the shared view;
+without OpenSearch. The React `DiagnosticsPage` provides the shared board view;
 its runtime must authenticate `GET /api/debug/board` and derive the scope.
 
 `board_search` searches any topic in the authorized workspace, including the

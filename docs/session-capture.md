@@ -66,7 +66,7 @@ npm run sessions
 opencrawl collect install --api http://localhost:8093
 ```
 
-The receiver defaults to loopback. Use HTTPS when exposing it remotely. The CLI securely saves the receiver token for later hook/background uploads. The operator-configured identity defines the sole tenant/owner; the uploaded body cannot change it. Storage persists in the bucket across receiver restarts. Set the endpoint to your MinIO, SeaweedFS, or other S3-compatible service. The existing `integrations/agent-sessions/compose.yaml` bundled-s3 profile supplies SeaweedFS for local use; point this receiver at its bucket and credentials. AWS role credentials are supported when explicit keys are omitted. Other deployments can supply their own authentication adapter.
+The receiver defaults to loopback. Use HTTPS when exposing it remotely. The CLI securely saves the receiver token for later hook/background uploads. The operator-configured identity defines the sole tenant/owner; the uploaded body cannot change it. Storage persists in the bucket across receiver restarts. Set the endpoint to your MinIO, SeaweedFS, or other S3-compatible service. For a local stack with object storage, follow [self-hosting](self-host.md). AWS role credentials are supported when explicit keys are omitted. Other deployments can supply their own authentication adapter.
 
 ## Hosted deployment
 

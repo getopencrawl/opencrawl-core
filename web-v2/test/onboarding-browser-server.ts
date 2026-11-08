@@ -21,10 +21,6 @@ const javascript = output.outputFiles.find(file => file.path.endsWith('.js'))?.c
 const css = output.outputFiles.find(file => file.path.endsWith('.css'))?.contents;
 if (!javascript || !css) throw new Error('Test fixture build is incomplete');
 
-// Legacy renderers are visual oracles only; they are never dependencies of the React app.
-const {renderOnboarding} = await import(new URL('../../dist/src/onboarding.mjs', import.meta.url).href) as {renderOnboarding: (input: {mcpUrl: string; setupPrompt: string}) => string};
-const {renderDocument} = await import(new URL('../../dist/src/frontend-document.mjs', import.meta.url).href) as {renderDocument: (content: string, options: {onboarding: boolean}) => string};
-const setupPrompt = 'Set up OpenCrawl across all coding agents and environments I use. Inspect existing setup, reuse valid configuration and authentication, and complete what is missing. Keep credentials out of chats and repositories. Confirm recording and history import consent, then verify a newly recorded session.';
 const document = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Onboarding test fixture</title><link rel="stylesheet" href="/fixture.css"></head><body><div id="root"></div><script type="module" src="/fixture.js"></script></body></html>';
 
 async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -46,8 +42,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     res.on('close', () => {if (!res.writableFinished) state.requests.aborted++;});
     if (state.delayStatus) await new Promise(resolve => setTimeout(resolve, state.delayStatus));
     if (res.destroyed) return;
-    // The legacy browser script destructures data; the new contract uses the DTO itself.
-    return json(res, req.headers.referer?.includes('/legacy/') ? {data: snapshot} : snapshot);
+    return json(res, snapshot);
   }
   if (url.pathname === '/api/onboarding/sources') return json(res, {items: state.sources});
   if (url.pathname === '/api/onboarding/invites') {
@@ -79,11 +74,10 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   }
   if (url.pathname === '/fixture.js') {res.writeHead(200, {'content-type': 'text/javascript'}).end(javascript); return;}
   if (url.pathname === '/fixture.css') {res.writeHead(200, {'content-type': 'text/css'}).end(css); return;}
-  if (url.pathname === '/legacy/onboarding') {res.writeHead(200, {'content-type': 'text/html'}).end(renderDocument(renderOnboarding({mcpUrl: 'https://app.getopencrawl.com/mcp', setupPrompt}), {onboarding: true})); return;}
-  if (/^\/(?:assets\/[a-zA-Z0-9_./-]+|[a-z-]+\.(?:css|js))$/.test(url.pathname) && !url.pathname.includes('..')) {
+  if (/^\/assets\/[a-zA-Z0-9_./-]+$/.test(url.pathname) && !url.pathname.includes('..')) {
     try {
       const bytes = await readFile(new URL(`../../web${url.pathname}`, import.meta.url));
-      res.writeHead(200, {'content-type': url.pathname.endsWith('.css') ? 'text/css' : url.pathname.endsWith('.js') ? 'text/javascript' : url.pathname.endsWith('.woff2') ? 'font/woff2' : 'image/svg+xml'}).end(bytes);
+      res.writeHead(200, {'content-type': url.pathname.endsWith('.woff2') ? 'font/woff2' : 'image/svg+xml'}).end(bytes);
       return;
     } catch {res.writeHead(404).end(); return;}
   }
