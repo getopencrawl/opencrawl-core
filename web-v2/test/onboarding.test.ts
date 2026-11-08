@@ -41,6 +41,25 @@ test('completed agent setup preserves the original instruction, full grouped che
   assert.match(html, /class="focus-content focus-panel"/);
 });
 
+test('history completion requires an explicit valid completion receipt and remains optional', () => {
+  const histories: OnboardingStatus['history'][] = [null, {...receipt, state: 'received'}, {...receipt, state: 'importing'},
+    {...receipt, state: 'skipped'}, {observedAt: 'not a date', state: 'complete'}];
+  for (const history of histories) {
+    const html = agent({...complete, history});
+    const row = html.match(/<li[^>]*data-signal="history"[\s\S]*?<\/li>/)?.[0];
+    assert.ok(row);
+    assert.doesNotMatch(row, /data-complete|>Complete</);
+    assert.match(row, /Optional/);
+    assert.match(html, /id="next-step"[^>]*href="\/onboarding\/sources"/);
+    if (history?.state === 'received') assert.match(row, /Some history received; full import unconfirmed\./);
+  }
+  const row = agent({...complete, history: {...receipt, state: 'complete'}}).match(/<li[^>]*data-signal="history"[\s\S]*?<\/li>/)?.[0];
+  assert.ok(row);
+  assert.match(row, /data-complete=""/);
+  assert.match(row, />Imported</);
+  assert.match(row, />Complete</);
+});
+
 test('a tool receipt proves MCP sign-in but does not fabricate CLI or recording receipts', () => {
   const html = agent({mcpTest: receipt});
   assert.match(html, /Complete CLI sign-in/);
