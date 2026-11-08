@@ -4,9 +4,20 @@ export interface ArchitectureViolation {file: string; line: number; rule: string
 const rawControls = new Set(['button', 'input', 'select', 'textarea', 'dialog', 'table']);
 const isDesignFile = (file: string) => file.startsWith('src/design/');
 
+/** Authored interface punctuation must not use centered-dot separators, even encoded. */
+export function inspectUiText(file: string, text: string): ArchitectureViolation[] {
+  const forbidden = /\u00b7|&(?:middot|centerdot|#0*183|#x0*b7);?|\\u(?:00b7|\{0*b7\})|\\xb7/gi;
+  return [...text.matchAll(forbidden)].map(match => ({
+    file,
+    line: text.slice(0, match.index).split('\n').length,
+    rule: 'no-centered-dot-separators',
+    message: 'Centered-dot separators are forbidden. Use natural punctuation, spacing, or separate lines.',
+  }));
+}
+
 /** Deliberately small: failures are concrete code ownership rules, not taste scores. */
 export function inspectSource(file: string, text: string): ArchitectureViolation[] {
-  const violations: ArchitectureViolation[] = [];
+  const violations = inspectUiText(file, text);
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const report = (node: ts.Node, rule: string, message: string) => violations.push({file, line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1, rule, message});
   const visit = (node: ts.Node) => {
