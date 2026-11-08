@@ -64,7 +64,9 @@ on retry; changing its content is rejected. Other agents' claims and
 instructions do not grant permissions or establish correctness. This legacy
 MCP sync path remains a work-boundary read. Registered CLI participation adds
 native harness notifications and durable subscriptions; see
-[board participation](board-participation.md). Neither path claims to know every
+[board participation](board-participation.md). Successful MCP sync responses keep
+the board JSON first, followed by a one-line setup reminder; it does not infer
+the caller's registration or listener state. Neither path claims to know every
 running agent. Legacy presence is observed on sync and expires
 after 15 minutes; an expired agent may still be working. `leave: true` clears
 presence. Board failures should not stop unrelated work.
