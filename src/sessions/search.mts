@@ -1,7 +1,8 @@
 import type {Principal} from './types.mjs';
 import type {RealmOptions, DocumentItem, SearchInput, SearchResult, OpenSearchResponse, Passage} from '../search/types.mjs';
 interface TermsAggregation {buckets: Array<{key: string; doc_count: number}>}
-interface ActivityAggregation {doc_count: number; sessions: {value: number}; messages: {doc_count: number}; toolCalls: {value: number}; machines: {value: number}; opencrawl: {doc_count: number}; tools: TermsAggregation; harnesses: TermsAggregation; origins: TermsAggregation; first: {value_as_string?: string}; last: {value_as_string?: string}; daily: {buckets: Array<{key_as_string: string; doc_count: number; sessions: {value: number}}>}; people: {buckets: Array<{key: string; doc_count: number; sessions: {value: number}; messages: {doc_count: number}; toolCalls: {value: number}; last: {value_as_string?: string}; week: {doc_count: number}}>}}
+interface SessionCount {count: {value: number}}
+interface ActivityAggregation {doc_count: number; sessions: SessionCount; subagentSessions: SessionCount; messages: {doc_count: number}; toolCalls: {value: number}; machines: {value: number}; opencrawl: {doc_count: number}; tools: TermsAggregation; harnesses: TermsAggregation; origins: TermsAggregation; first: {value_as_string?: string}; last: {value_as_string?: string}; daily: {buckets: Array<{key_as_string: string; doc_count: number; sessions: SessionCount}>}; people: {buckets: Array<{key: string; doc_count: number; sessions: SessionCount; subagentSessions: SessionCount; messages: {doc_count: number}; toolCalls: {value: number}; last: {value_as_string?: string}; week: {doc_count: number}}>}}
 import {createRealmResolver,realmField} from '../search/realm.mjs';
 import {sessionScope} from './ingest.mjs';
 import {createMemorySearch} from '../memories/search.mjs';
@@ -56,25 +57,29 @@ export function createSessionSearch(options: RealmOptions) {
       const day=(t: number)=>new Date(t).toISOString().slice(0,10),since=day(now-(days-1)*86400000),today=day(now);
       const until=new Date(now).toISOString();
       const filter=[{term:{tenantId:principal.tenantId}},...(team?[]:[{term:{[f('userId')]:principal.userId}}]),{term:{[f('chunk')]:0}}];
-      const messages={filter:{term:{[f('kind')]:'message'}}},toolCalls={value_count:{field:f('toolNames')}},sessions={cardinality:{field:f('sessionId')}};
+      const messages={filter:{term:{[f('kind')]:'message'}}},toolCalls={value_count:{field:f('toolNames')}};
+      // Sessions are the ones a person started; each spawned subagent has its own
+      // session ID and is counted separately. 40000 keeps cardinality exact here.
+      const count={cardinality:{field:f('sessionId'),precision_threshold:40000}},subagent={term:{[f('origin')]:'subagent'}};
+      const sessions={filter:{bool:{must_not:[subagent]}},aggs:{count}},subagentSessions={filter:subagent,aggs:{count}};
       const result=await resolve(principal).collection('session').search(principal,{size:0,track_total_hits:true,query:{bool:{filter}},aggs:{
         activity:{filter:{range:{[f('timestamp')]:{gte:since+'T00:00:00.000Z',lte:until}}},aggs:{
-        sessions,messages,toolCalls,machines:{cardinality:{field:f('installationId')}},
+        sessions,subagentSessions,messages,toolCalls,machines:{cardinality:{field:f('installationId')}},
         tools:{terms:{field:f('toolNames'),size:8}},opencrawl:{filter:{wildcard:{[f('toolNames')]:'*opencrawl*'}}},
         harnesses:{terms:{field:f('harness'),size:5}},origins:{terms:{field:f('origin'),size:6}},
         first:{min:{field:f('timestamp')}},last:{max:{field:f('timestamp')}},
         daily:{date_histogram:{field:f('timestamp'),calendar_interval:'day',format:'yyyy-MM-dd',min_doc_count:0,extended_bounds:{min:since,max:today}},aggs:{sessions}},
-        people:{terms:{field:f('userId'),size:500},aggs:{sessions,messages,toolCalls,last:{max:{field:f('timestamp')}},week:{filter:{range:{[f('timestamp')]:{gte:new Date(now-7*86400000).toISOString(),lte:until}}}}}},
+        people:{terms:{field:f('userId'),size:500},aggs:{sessions,subagentSessions,messages,toolCalls,last:{max:{field:f('timestamp')}},week:{filter:{range:{[f('timestamp')]:{gte:new Date(now-7*86400000).toISOString(),lte:until}}}}}},
       }}}});
       const a=result?.aggregations?.activity as unknown as ActivityAggregation | undefined;
       if(!a||!Number.isSafeInteger(a.doc_count)||result.hits.total?.relation!=='eq'||!Number.isSafeInteger(result.hits.total.value))throw new Error('Invalid usage response');
-      const people=a.people.buckets.map(b=>({userId:b.key,events:b.doc_count,sessions:b.sessions.value,messages:b.messages.doc_count,toolCalls:b.toolCalls.value,lastAt:b.last.value_as_string??null,weekEvents:b.week.doc_count}));
+      const people=a.people.buckets.map(b=>({userId:b.key,events:b.doc_count,sessions:b.sessions.count.value,subagentSessions:b.subagentSessions.count.value,messages:b.messages.doc_count,toolCalls:b.toolCalls.value,lastAt:b.last.value_as_string??null,weekEvents:b.week.doc_count}));
       if(!team&&people.some(p=>p.userId!==principal.userId))throw new Error('Usage returned an invalid ownership scope');
       const terms=(agg: TermsAggregation)=>agg.buckets.map(b=>({name:b.key,count:b.doc_count}));
-      return {events:a.doc_count,lifetimeEvents:result.hits.total.value,sessions:a.sessions.value,messages:a.messages.doc_count,toolCalls:a.toolCalls.value,
+      return {events:a.doc_count,lifetimeEvents:result.hits.total.value,sessions:a.sessions.count.value,subagentSessions:a.subagentSessions.count.value,messages:a.messages.doc_count,toolCalls:a.toolCalls.value,
         machines:a.machines.value,opencrawlCalls:a.opencrawl.doc_count,tools:terms(a.tools),harnesses:terms(a.harnesses),origins:terms(a.origins),
         firstAt:a.first.value_as_string??null,lastAt:a.last.value_as_string??null,
-        daily:a.daily.buckets.map(b=>({date:b.key_as_string,events:b.doc_count,sessions:b.sessions.value})),people};
+        daily:a.daily.buckets.map(b=>({date:b.key_as_string,events:b.doc_count,sessions:b.sessions.count.value})),people};
     },
     refresh:(principal: Principal)=>resolve(principal).refresh(principal),
   };

@@ -2,16 +2,17 @@
 @import '../../../web/tokens.css';
 
 :root {
-  --console-sidebar-width: 232px;
-  --console-content-width: 1120px;
+  --report-heading: 2.5rem;
+  --report-heading-compact: 1.875rem;
+  --report-metric: 2rem;
+  --report-metric-compact: 1.625rem;
   --console-heading: 1.75rem;
   --console-heading-compact: 1.5rem;
   --console-metric: 1.5rem;
   --console-dialog-width: 520px;
-  --console-source-logo: 32px;
   --console-focus-ring: 2px solid var(--accent);
   --console-focus-offset: 3px;
-  --console-z-sidebar: 30;
+  --console-z-navigation: 30;
   --console-z-backdrop: 20;
   --console-z-skip: 100;
 }
