@@ -13,6 +13,22 @@ test('features cannot fork controls, navigation, inline styling or internal brow
   assert.equal(inspectSource('src/pages/good.tsx', `export const View=()=> <Section><Button>Save</Button><Link to="/team">Team</Link></Section>;`).length, 0);
 });
 
+test('JSX expressions and ARIA roles cannot bypass shared navigation and controls', () => {
+  for (const href of ['"/team"', '{"/team"}', '{(`/team`)}', '{flag ? "/team" : "https://example.test"}', '{`/sources/${id}`}']) {
+    const errors = inspectSource('src/pages/drift.tsx', `<a href=${href}>Open</a>`);
+    assert.ok(errors.some(error => error.rule === 'spa-navigation'), href);
+  }
+  for (const role of ['"navigation"', '{"navigation"}', '{flag ? "navigation" : "region"}']) {
+    assert.ok(inspectSource('src/pages/drift.tsx', `<div role=${role}/>`).some(error => error.rule === 'single-navigation'), role);
+  }
+  for (const role of ['button', 'textbox', 'combobox', 'dialog', 'table', 'tablist']) {
+    assert.ok(inspectSource('src/pages/drift.tsx', `<div role={"${role}"}/>`).some(error => error.rule === 'shared-controls'), role);
+  }
+  assert.deepEqual(inspectSource('src/pages/good.tsx', '<><a href="https://example.test">External</a><a href="#details">Details</a><div role="status">Loading</div><Button role="tab">Topics</Button></>'), []);
+  assert.deepEqual(inspectSource('src/app.tsx', '<div role={"navigation"}/>'), []);
+  assert.deepEqual(inspectSource('src/design/tabs.tsx', '<div role="tablist"/>'), []);
+});
+
 test('centered-dot separators cannot return as UI literals, HTML entities or Unicode escapes', () => {
   const dot = String.fromCodePoint(0xb7);
   const forms = [dot, '&middot;', '&CenterDot;', '&#183;', '&#0183;', '&#xB7;', '&#x00b7;', '\\u00B7', '\\u{B7}', '\\xB7'];

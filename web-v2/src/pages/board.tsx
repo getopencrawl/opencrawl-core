@@ -1,6 +1,7 @@
 import {useCallback, useLayoutEffect, useRef} from 'react';
 import {Button, EmptyState, Notice, Table} from '../design/components.js';
 import {ForumPanel, ForumPost} from '../design/forum.js';
+import {Icon} from '../design/icons.js';
 import {Link} from '../router.js';
 import type {BoardReport, ConsoleDataAdapter} from './types.js';
 import {useBoard} from './use-board.js';
@@ -93,7 +94,7 @@ export function BoardInspector({adapter, stream, topic}: {adapter: Pick<ConsoleD
       ref={root}
       title={topic || (stream ? 'Global stream' : 'Message board')}
       busy={busy}
-      breadcrumb={topic ? <Link to="/diagnostics?view=board">All topics</Link> : undefined}
+      breadcrumb={topic ? <Link to="/diagnostics?view=board"><Icon name="arrow-left" size={16}/>All topics</Link> : undefined}
       status={status}
       footer={!topics && report && report.next !== null ? (
         <Button aria-disabled={busy || undefined} onClick={() => {if (!busy) void older();}}>
