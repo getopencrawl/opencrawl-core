@@ -45,8 +45,8 @@ including its nested source cards and horizontal header. Preserve its character;
 TypeScript and shared components are implementation improvements, not permission
 to replace approved visuals. AppShell owns the shared top bar on every route and one responsive navigation
 tree. Usage is one page ordered Agent sessions, Data sources, Team. Show real
-indexed document-type counts inside each source tile, separately from imported
-records; never compare distinct corpora with relative-size bars. Approved screens
+indexed document-type counts inside each source tile without Imported/Indexed
+labels or import breakdowns; never compare distinct corpora with relative-size bars. Approved screens
 remain the visual baseline; changes to them require their own explicit scope.
 Do not repeat the source breakdown as a large indexed-document total or an
 "Imported N" summary. Keep the useful per-type counts and sync metadata.
@@ -67,7 +67,7 @@ Keep names and emails together, roles explicit, pending invitations in the same
 roster with a Pending state, and invitation controls in the member panel. Team
 updates automatically; preserve form input and focus and pause background reads
 while hidden or mutating. Do not add a normal-state Refresh button.
-Team activity rankings remain on Usage. Do not add unsupported
+Team activity rankings remain on Usage, without a Most sources connected tile. Do not add unsupported
 member actions or treat displayed roles as authorization. Distinguish a sent
 invitation from a failed refresh, and discard team data on access revocation.
 
