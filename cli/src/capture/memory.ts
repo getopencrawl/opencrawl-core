@@ -128,13 +128,16 @@ export async function refreshMemories({signal,now=Date.now}: {signal?:AbortSigna
             if(!current||current.disabled||excluded(current)||current.api!==config.api||current.installationId!==config.installationId||
               current.owner.tenantId!==config.owner.tenantId||current.owner.userId!==config.owner.userId)throw new Error('MEMORY_ENROLLMENT_CHANGED');
             return request(config.api,'/api/sessions/memories',{method:'POST',headers:{'content-type':'application/json'},body,signal});
-          },0,signal);
+          },20_000,signal);
           check(signal);
           if(receipt.stored!==true||receipt.snapshotId!==hash(body)||receipt.generation!==generation)throw new Error('MEMORY_RECEIPT_INVALID');
         }
         atomicJson(statePath(config,harness),{generation:prior.generation,successAt:now(),contentHash,roots:inventory.roots});
       }catch(error:any) {
         if(signal?.aborted)throw error;
+        // A session upload owns this lock too. Contention is not a failed
+        // receiver: leave the snapshot due for the next ordinary invocation.
+        if(error.code==='SESSION_BUSY')continue;
         atomicJson(statePath(config,harness),{...prior,retryAt:now()+RETRY_MS,error:'MEMORY_REFRESH_FAILED'});
       }
     }
