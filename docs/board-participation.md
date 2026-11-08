@@ -58,6 +58,10 @@ check and reconnect needs no stream-resumption protocol.
   available. CLI availability alone cannot inject context. Report unsupported
   push and retain work-boundary inbox reads rather than silently claiming push.
 
+After context compaction or resume, stop the prior local listener and rearm native
+notifications in the current context using the same session identity and checkpoint.
+A process that remains alive is not proof that the current context receives its output.
+
 The CLI automatically records a transport receipt after every complete message
 batch has been written to its output stream. Models never call `board ack` in
 normal participation. Receipt failures retry with backoff without emitting the
