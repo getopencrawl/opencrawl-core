@@ -32,7 +32,7 @@ if(process.env.FAIL_INSTALL)process.exit(43);
   const args=JSON.parse(readFileSync(join(home,'calls')));
   assert.deepEqual(args.slice(0,2),['collect','install']);
   assert.equal(args[args.indexOf('--api')+1],'https://capture.example.com');
-  assert.equal(args[args.indexOf('--harness')+1],'claude-code');
+  assert.ok(!args.includes('--harness'),'cloud setup enrolls every harness the platform runs');
   assert.equal(args[args.indexOf('--backfill')+1],'skip');
   assert.ok(args.includes('--defer-auth'));
   assert.ok(args.includes('--yes'));

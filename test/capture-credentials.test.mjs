@@ -42,7 +42,8 @@ test('shared setup prompt covers consent, every environment, startup awareness a
  for(const text of ['all coding agents and environments','human-required steps','fresh session','stored receipt','recording consent',api+'/capture/cloud',api+'/mcp',api+' --no-browser --json','global instructions','opencrawl board instructions','stable session identity','native context-notification','receipt acknowledgment','explicit consent to import all available history','Skip only declined sources'])assert.ok(prompt.includes(text),text);
  assert.ok(!prompt.includes('--backfill skip'));
  assert.ok(!prompt.includes('https://app.getopencrawl.com'));
- assert.ok(script.includes('--harness claude-code --defer-auth --backfill skip'));
+ assert.ok(script.includes('--defer-auth --backfill skip'));assert.ok(!script.includes('--harness'));
+ for(const text of ['cloud coding platforms','brand-new environment','OPENCRAWL_SESSIONS_TOKEN','every new environment','team-wide template'])assert.ok(prompt.includes(text),text);
  for(const text of ['collect backfill --dry-run','--harness <claude-code|codex|all> --yes','keep unanswered choices pending'])assert.ok(prompt.includes(text));
  assert.ok(!script.includes('login'));assert.ok(!script.includes('systemctl'));
  assert.throws(()=>cloudSetupScript('https://capture.example.com/path'));
