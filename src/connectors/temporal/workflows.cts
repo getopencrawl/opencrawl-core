@@ -8,7 +8,7 @@ const activities = proxyActivities<ConnectorActivities<ConnectorActivityInput>>(
   retry: {initialInterval: '2 seconds', maximumInterval: '1 minute', maximumAttempts: 5},
 });
 
-exports.indexConnectorV1 = async function indexConnectorV1(input: ConnectorActivityInput) {
+async function indexConnectorV1(input: ConnectorActivityInput) {
   const result = await runConnectorSegment(input, activities, {deferPaginationFailure: true});
   const failed = (input.failed || 0) + result.failed;
   if (result.cursor) return continueAsNew({...input, cursor: result.cursor, failed,
@@ -17,3 +17,5 @@ exports.indexConnectorV1 = async function indexConnectorV1(input: ConnectorActiv
   if (failed) throw ApplicationFailure.nonRetryable(`${failed} source objects failed; inspect failed activities and replay after repair`, 'ConnectorObjectsFailed');
   return result;
 };
+
+export = {indexConnectorV1};

@@ -9,7 +9,7 @@ import {createSlackFileCapture} from './slack-source-files.mjs';
 import {createSlackHttpSource} from './slack-source-http.mjs';
 // A stable run ID resumes the same scoped checkpoint after process interruption.
 const [configPath,runId,mode='files']=process.argv.slice(2);
-if(!configPath||!runId||!['files','messages','references'].includes(mode))throw new Error('Usage: SLACK_TOKEN=... node src/connectors/slack-source-standalone.mjs config.json run-id [files|messages|references]');
+if(!configPath||!runId||!['files','messages','references'].includes(mode))throw new Error('Usage: SLACK_TOKEN=... node dist/src/connectors/slack-source-standalone.mjs config.json run-id [files|messages|references]');
 const config=JSON.parse(await readFile(configPath,'utf8')) as {binding: ConnectorBinding; s3: Parameters<typeof createObjectStore>[0]; cutoff: number; references: MessageReference[]};
 const store=createObjectStore({...config.s3,credentials:awsCredentials()});await store.checkAccess();
 const capture=({files:createSlackFileCapture,messages:createSlackMessageCapture,references:createSlackMessageReferenceCapture}[mode as 'files' | 'messages' | 'references'])({binding:config.binding,...guardConnectorWrites({binding:config.binding,store}),...createSlackHttpSource({token:process.env.SLACK_TOKEN,workspaceId:config.binding.workspaceId})});

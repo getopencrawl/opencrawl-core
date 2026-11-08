@@ -18,7 +18,7 @@ const paginationFailures = {
 };
 export type PaginationFailure = keyof typeof paginationFailures;
 export class SourcePaginationError extends Error {
-  code: PaginationFailure;
+  declare code: PaginationFailure;
   constructor(code: PaginationFailure) {
     super(paginationFailures[code]);
     this.code = code;
@@ -34,8 +34,9 @@ export function assertSourcePaginationInput(input: {paginationFailure?: unknown}
 }
 
 export function assertSourcePaginationPage(page: unknown): asserts page is SourcePage {
-  if (!page || typeof page !== 'object' || !('keys' in page) || !('cursor' in page) || !Array.isArray(page.keys) || page.keys.some(key => typeof key !== 'string')) throw new SourcePaginationError('invalid-page');
-  if (page.cursor !== null && (typeof page.cursor !== 'string' || !page.cursor)) throw new SourcePaginationError('invalid-cursor');
+  const candidate = page as {keys?: unknown; cursor?: unknown} | null | undefined;
+  if (!candidate || !Array.isArray(candidate.keys) || candidate.keys.some((key: unknown) => typeof key !== 'string')) throw new SourcePaginationError('invalid-page');
+  if (candidate.cursor !== null && (typeof candidate.cursor !== 'string' || !candidate.cursor)) throw new SourcePaginationError('invalid-cursor');
 }
 
 // One guard for durable segments, the local CLI, and nested snapshot inventories.

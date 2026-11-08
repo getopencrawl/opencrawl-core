@@ -12,7 +12,7 @@ import {buildConnectorWorkflows, createConnectorWorker} from './worker.mjs';
 import {connectorClient, ensureConnectorSchedule} from './client.mjs';
 
 const [configPath, bundlePath] = process.argv.slice(2);
-if (!configPath || !bundlePath) throw new Error('Usage: node src/connectors/temporal/standalone.mjs config.json workflow-bundle.cjs');
+if (!configPath || !bundlePath) throw new Error('Usage: node dist/src/connectors/temporal/standalone.mjs config.json workflow-bundle.cjs');
 const config = JSON.parse(await readFile(configPath, 'utf8')) as {binding: ConnectorBinding; s3: Parameters<typeof createObjectStore>[0]; search: RealmOptions; temporal: WorkerConnectionOptions};
 const binding = validateBinding(config.binding);
 const store = createObjectStore({...config.s3, credentials: awsCredentials()});
