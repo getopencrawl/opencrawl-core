@@ -62,7 +62,7 @@ test('worker tails after Stop, uploads identical retries, and resumes an old sou
  await until(()=>f.payloads.length>=1);
  appendFileSync(f.path,f.record('two'));
  await worker;
- expect(f.payloads[0]).toBe(f.payloads[1]);
+ expect(f.payloads.filter((payload:string)=>payload===f.payloads[0])).toHaveLength(2);
  expect(f.batches.flatMap((b:any)=>b.events).some((e:any)=>e.nativeId==='two')).toBe(true);
  expect(captureStatus().pendingHooks).toBe(0);expect(captureStatus().queued).toBe(0);
  // An append after the tail window is retained in the source and found on wake.
