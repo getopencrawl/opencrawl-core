@@ -7,14 +7,15 @@ import {randomUUID} from 'node:crypto';
 import {type Harness} from './parse.ts';
 import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
-import {captureDir, readCaptureConfig, commandForSelf, request, type CaptureConfig} from './runtime.ts';
+import {captureDir, readCaptureConfig, commandForSelf, request, HOOK_MODE, type CaptureConfig} from './runtime.ts';
 import {captureNotice} from './policy.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 const marker='OpenCrawl session capture';
 const quote=(s:string)=>process.platform==='win32'?'"'+s.replace(/"/g,'""')+'"':"'"+s.replace(/'/g,"'\\''")+"'";
 function readJson(file:string){return existsSync(file)?JSON.parse(readFileSync(file,'utf8')):{};}
 function backup(file:string){if(existsSync(file)){const p=join(captureDir(),'backups',randomUUID()+'.json');copyFileSync(file,p);}}
-function modifyHooks(file:string,events:string[],command:string|null) {
+type HookEntry={command:string,async?:boolean,timeout:number};
+function modifyHooks(file:string,events:string[],entry:((event:string)=>HookEntry)|null) {
   const config=readJson(file);
   if(config.hooks && (typeof config.hooks!=='object'||Array.isArray(config.hooks)))throw new CliError('CAPTURE_INVALID_CONFIG','Existing harness hooks config is invalid');
   const hooks=config.hooks??{};
@@ -27,7 +28,7 @@ function modifyHooks(file:string,events:string[],command:string|null) {
     });
     if(!hooks[event].length)delete hooks[event];
   }
-  if(command)for(const event of events)(hooks[event]??=[]).push({hooks:[{type:'command',command,async:true,timeout:120,statusMessage:marker}]});
+  if(entry)for(const event of events)(hooks[event]??=[]).push({hooks:[{type:'command',...entry(event),statusMessage:marker}]});
   backup(file);atomicJson(file,{...config,hooks});
 }
 function enableCodex(root:string) {
@@ -66,17 +67,21 @@ args.push(...process.argv.slice(2));
 if(process.platform!=='win32')process.execve(file,[file,...args],env);
 else {const r=require('node:child_process').spawnSync(file,args,{stdio:'inherit',windowsHide:true,env});process.exitCode=r.status??1;}
 `);
-  const base=(process.platform==='win32'?'':'exec ')+[quote(node),quote(runner),'collect','hook','--managed'].join(' ');
+  const hook=(...args:string[])=>(process.platform==='win32'?'':'exec ')+[quote(node),quote(runner),'collect','hook',...args].join(' ');
+  const managed=(harness:Harness)=>():HookEntry=>({command:hook('--managed','--harness',harness),async:true,timeout:120});
   if(harnesses.includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),
-    ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','Stop','SubagentStop','SessionEnd'],base+' --harness claude-code');
+    ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','Stop','SubagentStop','SessionEnd'],managed('claude-code'));
+  // Codex runs SessionEnd synchronously within 3s. Record its notice locally;
+  // the next managed hook uploads it instead of delaying exit or being killed.
   if(harnesses.includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),
-    ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SubagentStop','SessionEnd'],base+' --harness codex');
+    ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SubagentStop','SessionEnd'],
+    event=>event==='SessionEnd'?{command:hook('--harness','codex'),timeout:3}:managed('codex')());
 }
 /** Upgrade existing installations without authentication or changing their queue. */
 export async function upgradeCaptureHooks() {
-  const config=readCaptureConfig();if(!config||config.disabled||config.hookMode==='managed')return;
+  const config=readCaptureConfig();if(!config||config.disabled||config.hookMode===HOOK_MODE)return;
   try {await withSessionLock('capture:configuration',async()=>{
-    const current=readCaptureConfig();if(!current||current.disabled||current.hookMode==='managed')return;
+    const current=readCaptureConfig();if(!current||current.disabled||current.hookMode===HOOK_MODE)return;
     const harnesses=current.harnesses??['claude-code','codex'];
     for(const harness of harnesses)mkdirSync(current.roots[harness],{recursive:true,mode:0o700});
     mkdirSync(join(captureDir(),'backups'),{recursive:true,mode:0o700});
@@ -85,7 +90,7 @@ export async function upgradeCaptureHooks() {
     const originals=new Map(files.map(file=>[file,existsSync(file)?readFileSync(file):null]));
     try {
       configureHooks(current,harnesses);
-      atomicJson(join(captureDir(),'config.json'),{...current,hookMode:'managed'});
+      atomicJson(join(captureDir(),'config.json'),{...current,hookMode:HOOK_MODE});
     } catch(error) {
       for(const [file,bytes] of originals) {
         if(bytes===null){try{unlinkSync(file);}catch{}}
@@ -110,7 +115,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   const changed=previous && (previous.api!==api || !deferAuth && (previous.owner.userId!==principal.userId || previous.owner.tenantId!==principal.tenantId));
   if(changed && ['queue','notices'].some(dir=>existsSync(join(captureDir(),dir)) && readdirSync(join(captureDir(),dir)).length))throw new CliError('CAPTURE_PENDING_DESTINATION','Pending capture belongs to the previous destination. Upload it there or uninstall and explicitly purge local pending data before changing destination.');
   for(const dir of ['', 'backups','queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});
-  const config:CaptureConfig={schemaVersion:1,exclusions:previous?.exclusions,hookMode:'managed',api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:preserveOwner?previous.owner:principal,...(authPending?{authPending:true}:{}),
+  const config:CaptureConfig={schemaVersion:1,exclusions:previous?.exclusions,hookMode:HOOK_MODE,api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:preserveOwner?previous.owner:principal,...(authPending?{authPending:true}:{}),
     harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
       'claude-code':!harnesses.includes('claude-code')&&previous?.roots['claude-code']||process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),
       codex:!harnesses.includes('codex')&&previous?.roots.codex||process.env.CODEX_HOME||join(home,'.codex')},
