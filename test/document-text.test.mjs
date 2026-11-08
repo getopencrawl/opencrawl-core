@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {extractDocumentText} from '../src/connectors/document-text.mjs';
+import {extractDocumentText} from '../dist/src/connectors/document-text.mjs';
 
 function pdf(pages) {
  const objects=['<< /Type /Catalog /Pages 2 0 R >>',`<< /Type /Pages /Count ${pages.length} /Kids [${pages.map((_,i)=>`${4+i*2} 0 R`).join(' ')}] >>`,'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
@@ -40,7 +40,7 @@ test('empty PDF text layers are explicit and unsupported/corrupt inputs never re
 });
 
 test('PDF font fragments join inside words while separate positioned labels retain spaces',async()=>{
- const {pdfText}=await import('../src/connectors/document-text-layout.mjs');
+ const {pdfText}=await import('../dist/src/connectors/document-text-layout.mjs');
  const item=(str,x,width)=>({str,width,height:12,transform:[12,0,0,12,x,100]});
  assert.equal(pdfText([item('work',0,24),item('flow',24,20)]),'workflow');
  assert.equal(pdfText([item('15m',0,18),item('1h',24,12),item('6h',42,12)]),'15m 1h 6h');

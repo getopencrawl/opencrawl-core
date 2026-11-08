@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createSlackFileCapture} from '../src/connectors/slack-source-files.mjs';
-import {createSlackMessageCapture} from '../src/connectors/slack-source-messages.mjs';
+import {createSlackFileCapture} from '../dist/src/connectors/slack-source-files.mjs';
+import {createSlackMessageCapture} from '../dist/src/connectors/slack-source-messages.mjs';
 
 const binding={tenantId:'fixture',connectionId:'conn',workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:'raw/v1/source=slack/workspace=T123/connection=conn/'};
 const families=['files-channels','files-info','messages-channels','messages-history','messages-replies'];

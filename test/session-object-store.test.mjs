@@ -2,8 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {gunzipSync} from 'node:zlib';
-import {standaloneStorage,startStandaloneCapture} from '../src/sessions/standalone.mjs';
-import {digest,sessionScope} from '../src/sessions/ingest.mjs';
+import {standaloneStorage,startStandaloneCapture} from '../dist/src/sessions/standalone.mjs';
+import {digest,sessionScope} from '../dist/src/sessions/ingest.mjs';
 
 test('self-hosted startup requires object storage and rejects incomplete or obsolete configuration',()=>{
   assert.throws(()=>standaloneStorage({}),/BUCKET is required/);

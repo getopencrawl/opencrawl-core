@@ -1,8 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
-import {standaloneMcp} from '../src/mcp/standalone.mjs';
-import {createWorkspaceSearch} from '../src/search/workspace.mjs';
+import {standaloneMcp} from '../dist/src/mcp/standalone.mjs';
+import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
 
 const principal = {tenantId: 'team-a', userId: 'alice'};
 const hit = (id, extra = {}) => ({id, tenantId: 'team-a', userId: 'bob', sessionId: 'past', text: 'evidence', ...extra});
@@ -59,8 +59,8 @@ test('real MCP and HTTP expose the same operation and reject forged scope, origi
 });
 
 test('partial OpenSearch shard responses cannot masquerade as complete searches', async () => {
-  const {createSessionSearch}=await import('../src/sessions/search.mjs');
-  const {createConnectorSearch}=await import('../src/connectors/search.mjs');
+  const {createSessionSearch}=await import('../dist/src/sessions/search.mjs');
+  const {createConnectorSearch}=await import('../dist/src/connectors/search.mjs');
   const binding={tenantId:'team-a',connectionId:'c',workspaceId:'w',provider:'notion',access:'workspace-global',rawPrefix:'raw/v1/source=notion/workspace=w/connection=c/'};
   for (const flags of [{timed_out:true},{_shards:{failed:1}}]) {
     const fetch=async()=>Response.json({...flags,hits:{total:{value:0},hits:[]}});

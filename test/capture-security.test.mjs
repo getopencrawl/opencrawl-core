@@ -1,9 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {createSessionIngest, sessionScope, digest, MAX_ATTACHMENT_BYTES, MAX_BATCH_BYTES} from '../src/sessions/ingest.mjs';
-import {createObjectStore} from '../src/sessions/s3-store.mjs';
-import {createOnboardingStatus} from '../src/onboarding-status.mjs';
+import {createSessionIngest, sessionScope, digest, MAX_ATTACHMENT_BYTES, MAX_BATCH_BYTES} from '../dist/src/sessions/ingest.mjs';
+import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
+import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 
 const owner = {tenantId: 'team-a', userId: 'author'};

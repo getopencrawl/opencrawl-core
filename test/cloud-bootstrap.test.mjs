@@ -4,7 +4,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
-import {cloudSetupScript} from '../src/sessions/cloud-setup.mjs';
+import {cloudSetupScript} from '../dist/src/sessions/cloud-setup.mjs';
 
 test('cloud image setup prepares the published CLI without runtime credentials or history import',()=>{
  const home=mkdtempSync(join(tmpdir(),'opencrawl-cloud-'));

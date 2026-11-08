@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Connection} from '@temporalio/client';
 import {NativeConnection, Worker} from '@temporalio/worker';
-import {connectorClient} from '../src/connectors/temporal/client.mjs';
-import {createConnectorWorker} from '../src/connectors/temporal/worker.mjs';
-import {createSlackSourceWorker} from '../src/connectors/temporal/source-worker.mjs';
-import {createSessionWorker} from '../src/sessions/temporal/worker.mjs';
+import {connectorClient} from '../dist/src/connectors/temporal/client.mjs';
+import {createConnectorWorker} from '../dist/src/connectors/temporal/worker.mjs';
+import {createSlackSourceWorker} from '../dist/src/connectors/temporal/source-worker.mjs';
+import {createSessionWorker} from '../dist/src/sessions/temporal/worker.mjs';
 
 const configuration = {address: 'operator-controlled:7233', namespace: 'single-tenant',
   taskQueue: 'test', bundlePath: '/unused/workflows.cjs', resolve: async () => {throw new Error('unused');}};
