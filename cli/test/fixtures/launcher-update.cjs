@@ -20,7 +20,11 @@ module.exports = {makePackage};
 if (require.main === module) {
   const [area, name, version, mode = 'update'] = process.argv.slice(2);
   const file = suffix => path.join(area, name + '.' + suffix);
-  const mark = (suffix, value = true) => fs.writeFileSync(file(suffix), JSON.stringify(value));
+  const mark = (suffix, value = true) => {
+    const destination = file(suffix), temporary = `${destination}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(value));
+    fs.renameSync(temporary, destination);
+  };
   const pause = new Int32Array(new SharedArrayBuffer(4));
   function waitSync(suffix) {
     const deadline = Date.now() + 15000;
