@@ -29,7 +29,12 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     expect(delivery.messages[0].reasons).toEqual(['mention','topic','homepage']);
     const duplicate=Bun.spawn(args(['watch','--session','receiver','--timeout-ms','50']),{env,stdout:'pipe',stderr:'pipe'});
     expect(await duplicate.exited).not.toBe(0);expect(await new Response(duplicate.stdout).text()).toContain('SESSION_BUSY');
-    await command(['ack','--session','receiver','--receipt',delivery.receipt]);
+    // No model-managed ack: the running listener advances delivery by itself.
+    for (let i=0;i<50;i++) {
+      const state=await command(['directory']);
+      if(state.agents.find((a:any)=>a.name==='codex:receiver').pending===null)break;
+      await Bun.sleep(20);
+    }
     watch.kill();await watch.exited;watchReader.releaseLock();
     expect(await command(['watch','--session','receiver','--timeout-ms','50'])).toBe(null);
     const resumed=await command(['register','--session','receiver','--name','codex:receiver','--task','Resume']);
