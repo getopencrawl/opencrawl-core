@@ -27,7 +27,7 @@ export function AppShell({workspace, routes, children, footer}: AppShellProps) {
     query.addEventListener('change', update); return () => query.removeEventListener('change', update);
   }, []);
   useEffect(() => {
-    document.title = `${current?.label ?? 'Workspace'} · OpenCrawl`;
+    document.title = `OpenCrawl: ${current?.label ?? 'Workspace'}`;
     if (previousPath.current === location.pathname) return;
     previousPath.current = location.pathname;
     setMenuOpen(false);

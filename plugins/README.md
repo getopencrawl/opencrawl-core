@@ -15,9 +15,9 @@ To run OpenCrawl yourself instead, see
 `plugins/` of opencrawl-core and is exported here; pull requests are welcome in
 either repository.
 
-[Install and use the plugin](opencrawl/README.md) ·
-[Authentication and devices](docs/authentication.md) ·
-[Directory publication](docs/directories.md)
+- [Install and use the plugin](opencrawl/README.md)
+- [Authentication and devices](docs/authentication.md)
+- [Directory publication](docs/directories.md)
 
 ## Build and validate
 
