@@ -23,8 +23,8 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
   there. Implement the smallest required contract with a working single-tenant
   adapter. Do not build speculative frameworks or duplicate product logic.
 - `src/` is the package product runtime; `web/` contains shared product assets;
-  `cli/` is a separately released portable client; `integrations/` contains
-  optional customer-operated adapters/tooling and is not in the core package.
+  `cli/` is a separately released portable client; `deploy/` provides the
+  supported single-tenant stack. Keep disconnected prototype tools out of the repository.
 - Run `npm test` for core changes; for CLI changes also follow `cli/package.json`
   and its CI checks. Keep dependencies deliberate and review the import graph.
   The source guard is a regression aid, not a sandbox or isolation proof.
@@ -33,7 +33,7 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
 - Core and CLI are Apache-2.0; `plugins/` remains MIT. Keep repository visibility
   private until an explicit publication instruction; see
   `docs/PLUGIN-RELEASE.md`. Do not promise self-host readiness from the greeting smoke
-  runner. Package, CLI and optional integration releases are distinct artifacts.
+  runner. Package and CLI releases are distinct artifacts.
 - Describe placement and validation in each PR. Core runtime releases must be
   tested/published before the shell updates its package, lockfile and Git pin.
 
@@ -54,8 +54,8 @@ migration and rollback coverage before switching runtime reads or writes.
 `web-v2/` owns the current TypeScript React console, shared design primitives,
 router, and preserved onboarding. Read `web-v2/AGENTS.md` before frontend changes.
 New pages use AppShell and the shared route registry; do not fork workspace
-navigation, form controls, icons, tokens, or CSS. Legacy HTML exports remain only
-for compatibility with older runtime consumers. New UI work belongs in web-v2.
+navigation, form controls, icons, tokens, or CSS. Browser UI belongs in web-v2;
+do not retain parallel HTML renderers or superseded browser scripts.
 Run its strict typecheck, architecture tests, build, and browser regression suite
 alongside core checks. The hosted shell consumes the published source exports;
 its provider/account/billing pages must reuse the same design system.

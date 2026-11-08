@@ -33,16 +33,6 @@ if (require.main === module) {
       Atomics.wait(pause, 0, 0, 10);
     }
   }
-  // Expose the old stale-recovery interleaving without replacing filesystem
-  // operations or PID liveness. Fixed launchers need no PID authority or barrier.
-  const kill = process.kill, stale = Number(fs.readFileSync(path.join(area, 'stale-pid')));
-  process.kill = function(pid, signal) {
-    try {return kill.call(process, pid, signal);}
-    catch (error) {
-      if (pid === stale && error.code === 'ESRCH') {mark('stale-observed'); waitSync('allow-recovery');}
-      throw error;
-    }
-  };
   if (mode !== 'update') cp.spawnSync = (_node, args) => {
     // npm is the only substituted boundary: actual stage validation, rename,
     // collision handling and cleanup still run in installRelease.
