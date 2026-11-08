@@ -38,6 +38,25 @@ test('fixed-scope indexing, checkpoints, crash replay and poison records cannot 
  assert.throws(()=>createSessionPipeline({store,prefix,search}),/fixed single-tenant principal/);
 });
 
+test('discovery skips indexed objects without an activity each, and retries unfinished ones',async()=>{
+ const store=memoryStore(),prefix='sessions/test/v1',ingest=createSessionIngest({store,prefix});
+ for(const text of ['first','second','third'])await ingest.putBatch(owner,{...batch(owner,text),sessionId:'session-'+text});
+ let fail='second';const search={identity:'test-index',ensureIndex:async()=>{},putDocuments:async docs=>{if(docs.some(d=>d.document.text.includes(fail)))throw new Error('Interrupted');}};
+ const worker=createSessionPipeline({store,prefix,search,principal:owner});
+ const processed=[];
+ const run=()=>runConnectorSegment({}, {listPage:input=>worker.listPage(input),processObject:async input=>{processed.push(input.key);const r=await worker.processObject(input);return {records:r.skipped?0:1};}});
+ assert.deepEqual(await run(),{cursor:null,indexed:2,failed:1});
+ assert.equal(processed.length,3);
+ processed.length=0;fail='none';
+ // Only the unfinished object reaches an activity; indexed ones are filtered at listing.
+ assert.deepEqual(await run(),{cursor:null,indexed:1,failed:0});
+ assert.equal(processed.length,1);
+ processed.length=0;
+ assert.deepEqual((await worker.listPage({})).keys,[]);
+ assert.deepEqual(await run(),{cursor:null,indexed:0,failed:0});
+ assert.equal(processed.length,0);
+});
+
 test('bulk item errors are failures even with HTTP 200; search binds the team and retains human attribution',async()=>{
  const requests=[];
  const search=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async(url,options)=>{
