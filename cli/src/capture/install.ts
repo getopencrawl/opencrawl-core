@@ -103,10 +103,14 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   if(!principal?.tenantId || !principal?.userId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   return withSessionLock('capture:configuration',async()=>{
   const previous=readCaptureConfig();
+  // Re-running cloud preparation has no authenticated replacement identity.
+  // Preserve a bound destination, including ownership of unprocessed notices.
+  const preserveOwner=deferAuth && previous?.api===api && !previous.authPending;
+  const authPending=deferAuth && !preserveOwner;
   const changed=previous && (previous.api!==api || !deferAuth && (previous.owner.userId!==principal.userId || previous.owner.tenantId!==principal.tenantId));
   if(changed && ['queue','notices'].some(dir=>existsSync(join(captureDir(),dir)) && readdirSync(join(captureDir(),dir)).length))throw new CliError('CAPTURE_PENDING_DESTINATION','Pending capture belongs to the previous destination. Upload it there or uninstall and explicitly purge local pending data before changing destination.');
   for(const dir of ['', 'backups','queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});
-  const config:CaptureConfig={schemaVersion:1,exclusions:previous?.exclusions,hookMode:'managed',api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:principal,...(deferAuth?{authPending:true}:{}),
+  const config:CaptureConfig={schemaVersion:1,exclusions:previous?.exclusions,hookMode:'managed',api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:preserveOwner?previous.owner:principal,...(authPending?{authPending:true}:{}),
     harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
       'claude-code':!harnesses.includes('claude-code')&&previous?.roots['claude-code']||process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),
       codex:!harnesses.includes('codex')&&previous?.roots.codex||process.env.CODEX_HOME||join(home,'.codex')},
@@ -135,7 +139,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   // Retire only legacy OpenCrawl services. Collection itself needs no init system.
   removeLegacyService(home);
   const backgroundStatus='harness-managed';
-  return {notice:captureNotice,exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:deferAuth?null:principal,background:backgroundStatus,harnesses:config.harnesses,
+  return {notice:captureNotice,exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
     nextStep:process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':'Review OpenCrawl hooks in Codex /hooks or desktop Settings > Hooks. Restart existing Claude sessions if hooks have not reloaded.'};
   });
 }
