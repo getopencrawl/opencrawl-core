@@ -8,6 +8,7 @@ import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 import {installCapture} from '../src/capture/install.ts';
 import {captureDir,readCaptureConfig,flushCaptures} from '../src/capture/runtime.ts';
 import {saveSession,readSession} from '../src/session.ts';
+import {hash} from '../src/capture/parse.ts';
 
 test('a flush that outlives its sign-in token renews it, re-verifies identity and keeps uploading',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-capture-renew-')),saved={...process.env};
@@ -63,4 +64,32 @@ test('a flush that outlives its sign-in token renews it, re-verifies identity an
   expect(remaining).toHaveLength(1);
   expect(JSON.parse(readFileSync(join(captureDir(),'queue',remaining[0]),'utf8'))).toEqual(batch(parseInt(remaining[0])));
  }finally{await new Promise<void>(r=>server.close(()=>r()));for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k];Object.assign(process.env,saved);rmSync(dir,{recursive:true,force:true});}
+});
+
+test('parallel rejected uploads share one token refresh and reject a changed destination before resending',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'opencrawl-parallel-renew-')),saved={...process.env};
+ const alice={tenantId:'org_team',userId:'alice'};
+ let refreshedOwner=alice,refreshes=0,accepted=0;
+ const server=createServer(async(req,res)=>{
+  const token=req.headers.authorization?.slice(7);
+  if(req.url==='/token'){
+   refreshes++;await new Promise(r=>setTimeout(r,20));res.end(JSON.stringify({access_token:'token-'+(refreshes+1),refresh_token:'refresh-'+refreshes,expires_in:3600}));return;
+  }
+  if(req.url==='/api/sessions/identity'){res.end(JSON.stringify({data:{principal:token==='token-1'?alice:refreshedOwner}}));return;}
+  const chunks=[];for await(const c of req)chunks.push(c);const raw=Buffer.concat(chunks).toString();
+  if(token==='token-1'){res.writeHead(401);res.end(JSON.stringify({error:{code:'expired'}}));return;}
+  accepted++;res.end(JSON.stringify({data:{stored:true,batchId:hash(raw)}}));
+ });
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const api='http://127.0.0.1:'+(server.address() as any).port;
+ try{
+  for(const key of ['OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_TOKEN'])delete process.env[key];
+  Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex')});
+  await saveSession(api,{auth:{clientId:'public',deviceAuthorizationEndpoint:api+'/device',tokenEndpoint:api+'/token'},accessToken:'token-1',refreshToken:'refresh-0',expiresAt:Date.now()+3600_000} as any);
+  await installCapture(api,{background:false,home:dir,command:[]});const installed=readCaptureConfig()!;
+  const enqueue=()=>{for(let n=0;n<8;n++)writeFileSync(join(captureDir(),'queue',n+'.json'),JSON.stringify({schemaVersion:1,owner:alice,installationId:installed.installationId,sessionId:'parallel',harness:'codex',origin:'cli',events:[{id:'e'+n,kind:'hook',data:{n}}],attachments:[]}));};
+  enqueue();expect(await flushCaptures({wait:false})).toEqual({uploaded:8});expect(refreshes).toBe(1);expect(accepted).toBe(8);
+  enqueue();await saveSession(api,{...readSession(api)!,accessToken:'token-1'});refreshedOwner={...alice,userId:'bob'};
+  await expect(flushCaptures({wait:false})).rejects.toMatchObject({code:'CAPTURE_DESTINATION_CHANGED'});
+  expect(refreshes).toBe(2);expect(accepted).toBe(8);expect(readdirSync(join(captureDir(),'queue'))).toHaveLength(8);
+ }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k];Object.assign(process.env,saved);rmSync(dir,{recursive:true,force:true});}
 });
