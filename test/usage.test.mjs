@@ -1,9 +1,9 @@
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createSessionSearch} from '../src/sessions/search.mjs';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
-import {renderUsage} from '../src/usage.mjs';
+import {createSessionSearch} from '../dist/src/sessions/search.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
+import {renderUsage} from '../dist/src/usage.mjs';
 
 const owner = {tenantId: 'org_a', userId: 'user_a'};
 const bucket = (key, extra = {}) => ({key, doc_count: 4, sessions: {value: 2}, messages: {doc_count: 3}, toolCalls: {value: 5}, last: {value_as_string: '2026-11-05T10:00:00.000Z'}, week: {doc_count: 4}, ...extra});

@@ -5,3 +5,9 @@ revision.json
 cli/dist/
 
 .preview/
+
+dist/
+*.tsbuildinfo
+
+web/onboarding-state.js
+web/onboarding-state.mjs.map

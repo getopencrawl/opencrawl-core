@@ -14,7 +14,7 @@ read adapter. The customer-operated HTTP adapter verifies `auth.test`. The
 standalone runner accepts the same config as [file capture](slack-file-capture.md):
 
 ```sh
-node src/connectors/slack-source-standalone.mjs config.json stable-run-id messages
+node dist/src/connectors/slack-source-standalone.mjs config.json stable-run-id messages
 ```
 
 The config must retain a stable epoch-millisecond `cutoff` across restarts.

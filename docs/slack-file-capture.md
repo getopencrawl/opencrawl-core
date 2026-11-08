@@ -17,9 +17,9 @@ Do not put the token in the config file or source control.
 
 ```sh
 # SLACK_TOKEN is supplied securely through the operator's environment.
-node src/connectors/slack-source-standalone.mjs config.json stable-run-id
-node src/connectors/standalone.mjs index config.json
-node src/connectors/standalone.mjs search config.json 'phrase near document end'
+node dist/src/connectors/slack-source-standalone.mjs config.json stable-run-id
+node dist/src/connectors/standalone.mjs index config.json
+node dist/src/connectors/standalone.mjs search config.json 'phrase near document end'
 ```
 
 Reusing the run ID and cutoff resumes the checkpoint. New runs retain a connection

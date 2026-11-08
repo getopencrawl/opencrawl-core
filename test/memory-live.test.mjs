@@ -1,12 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {createObjectStore} from '../src/sessions/s3-store.mjs';
-import {createSessionIngest} from '../src/sessions/ingest.mjs';
-import {createSessionPipeline} from '../src/sessions/indexer.mjs';
-import {createSessionSearch} from '../src/sessions/search.mjs';
-import {createWorkspaceSearch} from '../src/search/workspace.mjs';
-import {createIndexTransport,realmIndex,realmMapping,createRealm} from '../src/search/realm.mjs';
+import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
+import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
+import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
+import {createSessionSearch} from '../dist/src/sessions/search.mjs';
+import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
+import {createIndexTransport,realmIndex,realmMapping,createRealm} from '../dist/src/search/realm.mjs';
 const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL,s3=process.env.OPENCRAWL_TEST_S3_ENDPOINT;
 test('real memory rebuild: two harnesses, immutable S3, additive mapping, atomic publish, deletion, replay and tenant isolation',{skip:!endpoint||!s3},async t=>{
   const run=randomUUID(),environment='mem-'+run.slice(0,8),owner={tenantId:'memory-'+run,userId:'alice'},other={tenantId:'other-'+run,userId:'alice'};
@@ -42,7 +42,7 @@ test('real memory rebuild: two harnesses, immutable S3, additive mapping, atomic
   // Inject a shard refresh failure after writing passages, before publishing
   // the head. A retry must then activate the complete replacement.
   const interrupted={...snapshots[0].snapshot,generation:gen+1,files:[file('memories/MEMORY.md','violet lighthouse newmemory')]};
-  const {memorySnapshotId}=await import('../src/memories/snapshot.mjs');
+  const {memorySnapshotId}=await import('../dist/src/memories/snapshot.mjs');
   const broken=createSessionSearch({endpoint,environment,fetch:async(url,options)=>String(url).endsWith('/_refresh')?
     new Response(JSON.stringify({_shards:{total:1,successful:0,failed:1}}),{status:200,headers:{'content-type':'application/json'}}):fetch(url,options)});
   await assert.rejects(broken.memories.putSnapshot({...interrupted,snapshotId:memorySnapshotId(interrupted),receivedAt:new Date().toISOString()},owner,'fixture'),/refresh incomplete/);

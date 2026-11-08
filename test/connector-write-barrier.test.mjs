@@ -1,9 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createObjectStore} from '../src/sessions/s3-store.mjs';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
-import {documentId, digest} from '../src/connectors/scope.mjs';
-import {createConnectorWriteBarrier, guardConnectorWrites} from '../src/connectors/write-barrier.mjs';
+import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
+import {documentId, digest} from '../dist/src/connectors/scope.mjs';
+import {createConnectorWriteBarrier, guardConnectorWrites} from '../dist/src/connectors/write-barrier.mjs';
 
 const defer = () => {let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};};
 function fixture() {

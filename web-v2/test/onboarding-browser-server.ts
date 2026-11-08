@@ -22,8 +22,8 @@ const css = output.outputFiles.find(file => file.path.endsWith('.css'))?.content
 if (!javascript || !css) throw new Error('Test fixture build is incomplete');
 
 // Legacy renderers are visual oracles only; they are never dependencies of the React app.
-const {renderOnboarding} = await import(new URL('../../src/onboarding.mjs', import.meta.url).href) as {renderOnboarding: (input: {mcpUrl: string; setupPrompt: string}) => string};
-const {renderDocument} = await import(new URL('../../src/frontend-document.mjs', import.meta.url).href) as {renderDocument: (content: string, options: {onboarding: boolean}) => string};
+const {renderOnboarding} = await import(new URL('../../dist/src/onboarding.mjs', import.meta.url).href) as {renderOnboarding: (input: {mcpUrl: string; setupPrompt: string}) => string};
+const {renderDocument} = await import(new URL('../../dist/src/frontend-document.mjs', import.meta.url).href) as {renderDocument: (content: string, options: {onboarding: boolean}) => string};
 const setupPrompt = 'Set up OpenCrawl across all coding agents and environments I use. Inspect existing setup, reuse valid configuration and authentication, and complete what is missing. Keep credentials out of chats and repositories. Confirm recording and history import consent, then verify a newly recorded session.';
 const document = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Onboarding test fixture</title><link rel="stylesheet" href="/fixture.css"></head><body><div id="root"></div><script type="module" src="/fixture.js"></script></body></html>';
 
