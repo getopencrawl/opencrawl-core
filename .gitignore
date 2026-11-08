@@ -5,3 +5,6 @@ revision.json
 cli/dist/
 
 .preview/
+
+dist/
+*.tsbuildinfo

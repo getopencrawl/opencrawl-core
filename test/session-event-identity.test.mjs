@@ -4,10 +4,10 @@ import {gzipSync,gunzipSync} from 'node:zlib';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {createSessionIngest,digest,sessionScope,auditSessionEventIdentities,auditSessionEventSource} from '../src/sessions/ingest.mjs';
-import {MAX_EVENT_LEDGER_BYTES} from '../src/sessions/event-identity.mjs';
-import {createSessionPipeline,batchDocuments} from '../src/sessions/indexer.mjs';
-import {createLocalSessionStore} from '../src/sessions/local-store.mjs';
+import {createSessionIngest,digest,sessionScope,auditSessionEventIdentities,auditSessionEventSource} from '../dist/src/sessions/ingest.mjs';
+import {MAX_EVENT_LEDGER_BYTES} from '../dist/src/sessions/event-identity.mjs';
+import {createSessionPipeline,batchDocuments} from '../dist/src/sessions/indexer.mjs';
+import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 
 const owner={tenantId:'tenant-a',userId:'author'},prefix='sessions/identity-test/v1';

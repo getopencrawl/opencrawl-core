@@ -5,8 +5,8 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {request} from '../src/capture/runtime.ts';
 import {finalizeEventIdentity,hash} from '../src/capture/parse.ts';
-import {createSessionIngest} from '../../src/sessions/ingest.mjs';
-import {createLocalSessionStore} from '../../src/sessions/local-store.mjs';
+import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
+import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 
 test('capture retries a lost response after durable storage with the identical payload, but does not retry rejection',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-capture-retry-')),saved=process.env.OPENCRAWL_CONFIG_HOME;

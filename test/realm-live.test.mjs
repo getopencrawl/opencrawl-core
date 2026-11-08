@@ -1,11 +1,11 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {createRealm,realmIndex,realmMapping,createIndexTransport} from '../src/search/realm.mjs';
-import {createSessionSearch} from '../src/sessions/search.mjs';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
-import {documentId} from '../src/connectors/scope.mjs';
-import {createBoardSearch} from '../src/board/search.mjs';
+import {createRealm,realmIndex,realmMapping,createIndexTransport} from '../dist/src/search/realm.mjs';
+import {createSessionSearch} from '../dist/src/sessions/search.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
+import {documentId} from '../dist/src/connectors/scope.mjs';
+import {createBoardSearch} from '../dist/src/board/search.mjs';
 const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
 test('real realm mapping upgrade preserves existing documents while adding normalization revision',{skip:!endpoint},async t=>{
  const tenantId='upgrade-'+randomUUID(),index=realmIndex('test',tenantId),request=createIndexTransport({endpoint,index});
@@ -47,9 +47,9 @@ test('one physical organization realm holds all corpora with collision-safe iden
 });
 
 test('real migration freezes legacy writes, copies complete native data, verifies it and detects changed restart sources',{skip:!endpoint},async t=>{
- const {createIndexTransport}=await import('../src/search/realm.mjs');
- const {legacyRealmSource,migrateRealmCorpus}=await import('../src/search/migration.mjs');
- const {sessionIndexMapping}=await import('../src/search/mapping.mjs');
+ const {createIndexTransport}=await import('../dist/src/search/realm.mjs');
+ const {legacyRealmSource,migrateRealmCorpus}=await import('../dist/src/search/migration.mjs');
+ const {sessionIndexMapping}=await import('../dist/src/search/mapping.mjs');
  const environment='test-'+randomUUID().slice(0,8),principal={tenantId:'migrated-org',userId:'author'},legacy='legacy-'+randomUUID(),target=realmIndex(environment,principal.tenantId);
  const request=createIndexTransport({endpoint,index:legacy});
  const realm=createRealm({endpoint,environment,tenantId:principal.tenantId});

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {createSessionIngest,digest} from '../src/sessions/ingest.mjs';
-import {createLocalSessionStore} from '../src/sessions/local-store.mjs';
+import {createSessionIngest,digest} from '../dist/src/sessions/ingest.mjs';
+import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 test('portable capture durably stores attachments and idempotent account-scoped batches',async t=>{
  const dir=await mkdtemp(join(tmpdir(),'capture-core-'));t.after(()=>rm(dir,{recursive:true,force:true}));
  const principal={tenantId:'tenant1',userId:'owner1',name:'Owner'};

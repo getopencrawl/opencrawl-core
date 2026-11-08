@@ -1,9 +1,9 @@
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createSessionSearch} from '../src/sessions/search.mjs';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
-import {documentId} from '../src/connectors/scope.mjs';
+import {createSessionSearch} from '../dist/src/sessions/search.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
+import {documentId} from '../dist/src/connectors/scope.mjs';
 
 test('raw session responses retain OpenSearch fields after ownership checks', async () => {
   const owner = {tenantId: 'tenant', userId: 'user'};

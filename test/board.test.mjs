@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {createBoard} from '../src/board/board.mjs';
-import {createLocalBoardStore} from '../src/board/local-store.mjs';
-import {createObjectStore} from '../src/sessions/s3-store.mjs';
+import {createBoard} from '../dist/src/board/board.mjs';
+import {createLocalBoardStore} from '../dist/src/board/local-store.mjs';
+import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
 
 const a = {tenantId: 'a', userId: 'alice'}, b = {tenantId: 'b', userId: 'bob'};
 async function fixture(t) {
@@ -131,7 +131,7 @@ test('a default sync cursor keeps messages that arrive during a conditional-writ
 test('real MCP clients exchange scoped messages and revoked credentials cannot read', async t => {
   const {createServer} = await import('node:http');
   const {Client, StreamableHTTPClientTransport} = await import('@modelcontextprotocol/client');
-  const {createOpenCrawlMcp} = await import('../src/mcp/server.mjs');
+  const {createOpenCrawlMcp} = await import('../dist/src/mcp/server.mjs');
   const f = await fixture(t); let handler, revoked = false;
   const server = createServer((req, res) => handler(req, res));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

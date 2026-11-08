@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
 import {gzipSync} from 'node:zlib';
-import {createObjectStore} from '../../src/sessions/s3-store.mjs';
-import {createConnectorPipeline} from '../../src/connectors/pipeline.mjs';
-import {guardConnectorWrites} from '../../src/connectors/write-barrier.mjs';
-import {validateBinding} from '../../src/connectors/scope.mjs';
-import * as pagination from '../../src/connectors/workflow.mjs';
+import {createObjectStore} from '../../dist/src/sessions/s3-store.mjs';
+import {createConnectorPipeline} from '../../dist/src/connectors/pipeline.mjs';
+import {guardConnectorWrites} from '../../dist/src/connectors/write-barrier.mjs';
+import {validateBinding} from '../../dist/src/connectors/scope.mjs';
+import * as pagination from '../../dist/src/connectors/workflow.mjs';
 
 // The real S3 adapter, pipeline and write barrier run against a local fetch fixture.
 // The bound makes a regressed infinite traversal fail without hanging the suite.
@@ -81,7 +81,7 @@ async function standalone(scenario) {
     './search.mjs': {createConnectorSearch: () => h.search}, './pipeline.mjs': {createConnectorPipeline},
     './scope.mjs': {validateBinding}, './workflow.mjs': pagination,
   };
-  const entry = new vm.SourceTextModule(await readFile(new URL('../../src/connectors/standalone.mjs', import.meta.url), 'utf8'), {context});
+  const entry = new vm.SourceTextModule(await readFile(new URL('../../dist/src/connectors/standalone.mjs', import.meta.url), 'utf8'), {context});
   await entry.link(specifier => {
     const values = modules[specifier]; assert.ok(values, specifier);
     return new vm.SyntheticModule(Object.keys(values), function () {

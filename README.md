@@ -12,3 +12,5 @@ read access can read the deployment’s captured sessions.
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 [Apache-2.0](LICENSE). Plugins are MIT; bundled fonts retain their OFL notices.
+
+Backend development uses TypeScript 7 with strict checking. `npm run build` compiles source and declarations to `dist/src/`; `npm test` builds before running the backend suite. Published backend exports load compiled JavaScript and include TypeScript declarations.

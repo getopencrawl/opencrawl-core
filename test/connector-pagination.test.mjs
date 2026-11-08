@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {runConnectorSegment, SourcePaginationError} from '../src/connectors/workflow.mjs';
+import {runConnectorSegment, SourcePaginationError} from '../dist/src/connectors/workflow.mjs';
 
 async function sweep(listPage, {input = {}, maxSegments = 10000, processObject = async () => ({records: 1})} = {}) {
   for (let segment = 0; segment < maxSegments; segment++) {

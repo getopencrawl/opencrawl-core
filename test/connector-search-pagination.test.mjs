@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
-import {documentId} from '../src/connectors/scope.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
+import {documentId} from '../dist/src/connectors/scope.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 
 const binding = {tenantId: 'team', connectionId: 'github', workspaceId: 'workspace', provider: 'github', access: 'workspace-global', rawPrefix: 'raw/v1/source=github/workspace=workspace/connection=github/'};

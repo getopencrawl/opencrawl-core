@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {setImmediate} from 'node:timers/promises';
-import {readRecords} from '../src/connectors/records.mjs';
+import {readRecords} from '../dist/src/connectors/records.mjs';
 
 const envelope = text => ({_airbyte_extracted_at: 1, _airbyte_data: {text}});
 function store(bytes) {return {async *read() {for (let i = 0; i < bytes.length; i += 37) yield bytes.subarray(i, i + 37);}};}

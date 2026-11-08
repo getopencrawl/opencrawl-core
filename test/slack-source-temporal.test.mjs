@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {TestWorkflowEnvironment} from '@temporalio/testing';
 import {Worker,Runtime,DefaultLogger} from '@temporalio/worker';
-import {buildSlackSourceWorkflows,createSlackSourceWorker,slackSourceActivities} from '../src/connectors/temporal/source-worker.mjs';
+import {buildSlackSourceWorkflows,createSlackSourceWorker,slackSourceActivities} from '../dist/src/connectors/temporal/source-worker.mjs';
 
 test('real Temporal: file capture resumes committed checkpoints and keeps document text out of history',{
  skip:process.env.OPENCRAWL_TEST_TEMPORAL!=='1',timeout:180000,
@@ -58,7 +58,7 @@ test('real Temporal: Slack cursor progress survives 100-step continuations and r
  const bundlePath=join(directory,'workflows.cjs');await buildSlackSourceWorkflows(bundlePath);
  // These are the released 0.2.19 workflow bytes: the correction changes only
  // activity behavior, so completed and failed histories use the same commands.
- const workflow=await readFile(new URL('../src/connectors/temporal/source-workflows.cjs',import.meta.url));
+ const workflow=await readFile(new URL('../dist/src/connectors/temporal/source-workflows.cjs',import.meta.url));
  assert.equal(createHash('sha256').update(workflow).digest('hex'),'1aeefa60e1f98f4bd7c0f568c5557098fad61030d590f1ad93d0eef1e4803599');
  const binding={tenantId:'fixture',connectionId:'conn',workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:'raw/v1/source=slack/workspace=T123/connection=conn/'};
  for(const [kind,workflowType] of [['files','captureSlackFilesV1'],['messages','captureSlackMessagesV1']]) {
