@@ -45,7 +45,7 @@ def harness(dist, node, directory):
     (scope / 'cli-linux-x64').symlink_to(dist / 'linux-x64', target_is_directory=True)
     shutil.copytree(dist / 'cli', scope / 'cli')
     launcher = scope / 'cli/bin/opencrawl.cjs'
-    env = {**os.environ, 'OPENCRAWL_CONFIG_HOME': str(root / 'config'),
+    env = {**os.environ, 'HOME': str(root), 'USERPROFILE': str(root), 'OPENCRAWL_CONFIG_HOME': str(root / 'config'),
            'CLAUDE_CONFIG_DIR': str(root / 'claude'), 'CODEX_HOME': str(root / 'codex'),
            'XDG_CACHE_HOME': str(root / 'cache'), 'OPENCRAWL_NO_UPDATE': '1',
            'OPENCRAWL_SESSIONS_TOKEN': 'synthetic-process-ownership-fixture'}
@@ -97,9 +97,11 @@ def harness(dist, node, directory):
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Receiver)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     api = f'http://127.0.0.1:{server.server_port}'
-    subprocess.run([node, str(launcher), 'collect', 'install', '--yes', '--harness', 'claude-code',
-                    '--defer-auth', '--backfill', 'skip', '--api', api],
-                   env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=15)
+    setup = subprocess.run([node, str(launcher), 'collect', 'install', '--yes', '--harness', 'claude-code',
+                            '--defer-auth', '--backfill', 'skip', '--api', api, '--json'],
+                           env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=15)
+    assert all(Path(result['directory']).is_relative_to(root)
+               for result in json.loads(setup.stdout)['data']['skills']['results'])
     settings = json.loads((root / 'claude/settings.json').read_text())
     hook = settings['hooks']['Stop'][0]['hooks'][0]
     assert hook['async'] is True

@@ -55,9 +55,11 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   }
   await installCapture(api,{background:false,home:dir,command:[process.execPath,'-e','']});
   async function cli(args:string[]) {
-   const child=Bun.spawn([process.execPath,resolve(import.meta.dir,'../src/cli.ts'),'collect',...args,'--api',api,'--json'],{env:process.env,stdout:'pipe',stderr:'pipe'});
+   const child=Bun.spawn([process.execPath,resolve(import.meta.dir,'../src/cli.ts'),'collect',...args,'--api',api,'--json'],{env:{...process.env,HOME:dir,USERPROFILE:dir},stdout:'pipe',stderr:'pipe'});
    const [stdout,stderr,exitCode]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
-   expect(stderr).toBe('');return {exitCode,...JSON.parse(stdout)};
+   expect(stderr).toBe('');const parsed=JSON.parse(stdout);
+   if(args[0]==='install')expect(parsed.data.skills.results.every((r:any)=>r.directory.startsWith(dir))).toBe(true);
+   return {exitCode,...parsed};
   }
   expect((await cli(['install','--yes','--no-background'])).data.backfill.status).toBe('decision_required');
   expect((await cli(['install','--yes','--no-background','--backfill','skip'])).data.backfill.status).toBe('skipped');
