@@ -28,3 +28,20 @@ DTOs and runtime adapters; WorkOS, billing and managed connector code stay outsi
   behavior or invariant changes. Browser checks must prove history/back/forward,
   no document reload on internal links, desktop/mobile keyboard navigation and
   the approved onboarding appearance.
+
+## Screen-by-screen visual restoration
+
+The approved original Usage screen is the visual specification for the report,
+including its nested source cards and horizontal header. Preserve its character;
+TypeScript and shared components are implementation improvements, not permission
+to replace approved visuals. AppShell owns the shared top bar on every route and one responsive navigation
+tree. Usage is one page ordered Agent sessions, Data sources, Team. Show real
+indexed document-type counts inside each source tile, separately from imported
+records; never compare distinct corpora with relative-size bars. Restore and
+review one screen before redesigning another.
+
+Integrations preserves the original centered, catalog-ordered stack of connection
+cards through the shared `oc-connection-*` patterns. Keep per-stream import counts
+visible; use real progress only when it measures completed work against a known
+total. Retain shared dialogs and the distinct recovery paths for sign-in, sync,
+and permanent deletion.

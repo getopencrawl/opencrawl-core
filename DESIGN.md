@@ -171,10 +171,10 @@ components:
     rounded: "{rounded.panel}"
     padding: "24px"
     width: "min(520px, calc(100vw - 32px))"
-  sidebar:
-    backgroundColor: "{colors.surface}"
-    padding: "24px 12px 16px"
-    width: "232px"
+  workspace-header:
+    backgroundColor: "{colors.bg}"
+    padding: "0 32px"
+    height: "72px"
 ---
 
 # Design System: OpenCrawl Night
@@ -206,7 +206,7 @@ The font license remains at `web/assets/Geist-OFL.txt`.
 **Key Characteristics:**
 
 - Dark-only Night palette and inherited brand assets.
-- One React workspace shell, with compact rows and a persistent desktop sidebar.
+- One React workspace shell with a shared top bar on every workspace route.
 - Quiet default controls, visible keyboard focus and explicit operational states.
 - A separate focused onboarding composition within the same design system.
 
@@ -224,7 +224,7 @@ to the existing OC mark and the primary button's narrow hover layers.
 
 ### Neutral
 
-`bg` is the canvas. `surface` supports the sidebar, fields and onboarding panel;
+`bg` is the canvas. `surface` supports the navigation drawer, fields and onboarding panel;
 `surface-subtle` separates insets, quiet hover states and secondary controls;
 `surface-raised` supports dialogs and neutral badges. `strong` is heading text,
 `text` is primary content, `muted` is supporting copy and `quiet` is metadata.
@@ -259,19 +259,18 @@ bounded presentation stylesheet; do not restyle it with the console page heading
 
 ## Layout
 
-`AppShell` is the only workspace shell. A single route registry drives sidebar
-navigation and page routing through the shared router. The current hosted registry
-places Overview, Sources, Usage and Diagnostics in the workspace group, then
-Settings, Team and Billing in the management group. Deployment adapters supply
-only their supported routes; this list does not imply hosted capabilities in the
+`AppShell` is the only workspace shell. One route registry drives the top bar
+and page routing through the shared router. The hosted routes are Usage, Sources,
+Diagnostics, Settings, Team and Billing. Deployment adapters supply only their
+supported routes; the shared shell does not imply hosted capabilities in the
 single-tenant adapter.
 
-The desktop frame pairs the sidebar token with one fluid content column bounded
-by `--console-content-width` (1120px). Content padding is 40px top, 48px horizontally
-and 64px bottom. At 1100px and below it becomes 32px, 24px and 48px. At 800px and
-below the sidebar becomes a focus-managed overlay, its width bounded by 300px and
-the viewport minus 48px; content padding becomes 24px, 16px and 40px. The mobile
-header contains the navigation control, workspace name and existing mark.
+The desktop top bar is 72px high. Content is centered at 1200px with 32px side
+insets, 48px top padding and 64px bottom padding. At 800px and below, that same
+navigation tree becomes a focus-managed drawer bounded by 300px and the viewport
+minus 48px. Content padding becomes 32px, 16px and 40px. The mobile header contains
+the navigation control, workspace name and existing mark. There is no alternate
+page-specific sidebar or navigation implementation.
 
 Compose shared stacks, rows, action groups, split rows, two-column form grids,
 metric lists and data rows. Forms collapse to one column at the mobile breakpoint.
@@ -358,7 +357,7 @@ copy/reveal control retains its separate feedback timing and unchanged dimension
 ### Navigation and tabs
 
 Navigation links use muted text, a subtle hover surface and periwinkle active
-state. Active links expose their current-page semantics. The mobile sidebar traps
+state. Active links expose their current-page semantics. The mobile navigation drawer traps
 focus while open, closes with Escape, restores the toggle's focus on dismissal
 and makes underlying content inert. Internal page changes focus the new page
 heading; the skip link remains available. Tabs are an in-page control with an
@@ -431,4 +430,46 @@ See [the behavior contract](docs/onboarding.md) and [QA](docs/onboarding-qa.md).
 - **Don't** create another workspace navigation, page-local palette or feature stylesheet.
 - **Don't** substitute new illustrations, fonts or provider marks for the inherited assets.
 - **Don't** use status color without explanatory text or make client visibility an authority check.
-- **Don't** replace onboarding's focused panel with the console sidebar or change its gates for styling.
+- **Don't** replace onboarding's focused panel with workspace navigation or change its gates for styling.
+
+## Approved Usage organization
+
+Preserve the original Usage screen's Night typography, source identities, cards
+and quiet surfaces. The user's current refinement replaces its tabs with one
+continuous page ordered **Agent sessions**, **Data sources**, then **Team**.
+The source tiles show actual indexed document-type counts for each connection;
+imported records remain explicitly separate. Missing breakdowns are unavailable,
+never inferred from ingestion rows. Do not use progress or relative-size bars to
+compare different index corpora.
+
+Agent sessions groups captured sessions, messages, tool calls, machines, daily
+activity and available tool/harness/surface breakdowns. Do not relabel messages
+as turns without an independently measured turn count. Team is the per-person
+leaderboard and activity highlights; workspace membership administration stays
+on the Team management route.
+
+Usage is the hosted home at `/`; `/usage` preserves query parameters when redirecting
+to it. Old tab queries no longer hide sections. The same AppShell top bar is used
+across every workspace route. Keep the remaining screen contents unchanged until
+their individual review.
+
+Shared report patterns include PageHeader's report variant, dotted StatusBadge
+pills, MetricGrid, ActivityChart and report sections. Nested report headings use
+Section's level-three variant. Report panels use 24px padding and 12px corners;
+metrics use 20px padding, 12px gaps and 32px figures. The display heading is 40px.
+Unavailable measurements stay distinct from measured zero, and tables scroll
+inside their own container at narrow widths.
+
+## Integrations restoration
+
+Keep the original Integrations directory composition: a centered 800px column,
+40px heading, and one catalog-ordered stack of source cards. Cards use the shared
+Night surface, 24px padding, 12px corners, inherited provider icons, and quiet
+disconnect controls. Connection status, genuine import progress and per-stream
+counts remain visible inside each card. Imported stream counts describe ingest
+progress; they do not replace Usage's indexed document-type counts.
+
+The shared `oc-connection-*` patterns own this presentation. Use shared Button,
+Dialog and Icon primitives for connection, help and removal. Keep sign-in
+recovery distinct from sync and deletion retries. `/sources` and its
+`/integrations` alias share one React page and the canonical AppShell top bar.
