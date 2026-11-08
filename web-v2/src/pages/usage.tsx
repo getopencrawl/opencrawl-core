@@ -65,7 +65,6 @@ export function SourcesSummary({data}: {data: UsageReport}) {
 
 function SourceCard({source, now}: {source: UsageSource; now: number}) {
   const status = sourceStatus(source.state);
-  const units = source.units || ['record', 'records'];
   const species = source.indexedSpecies;
   const importedRows = source.rows || [];
 
@@ -76,7 +75,6 @@ function SourceCard({source, now}: {source: UsageSource; now: number}) {
         <div className="report-source-identity"><h3>{source.name}</h3>{source.account && <p>{source.account}</p>}</div>
         <StatusBadge variant="pill" tone={status.tone}>{status.label}</StatusBadge>
       </header>
-      <p className="report-source-count"><strong>{count(source.indexed)}</strong> indexed {source.indexed === 1 ? 'document' : 'documents'}</p>
       <div>
         <h4 className="report-source-label">Indexed content</h4>
         {species ? species.length ? (
@@ -85,14 +83,12 @@ function SourceCard({source, now}: {source: UsageSource; now: number}) {
           </ul>
         ) : <p className="report-note">No indexed content yet.</p> : <p className="report-note">Indexed breakdown unavailable.</p>}
       </div>
-      <div className="report-source-imported">
-        <p><strong>Imported</strong> {count(source.records)} {source.records === 1 ? units[0] : units[1]}</p>
-        {importedRows.length > 0 && (
-          <ul className="report-source-rows" aria-label={`Imported records from ${source.name}`}>
-            {importedRows.map(row => <li key={row.label}><span>{row.label}</span><span>{count(row.count)}</span></li>)}
-          </ul>
-        )}
-      </div>
+      {importedRows.length > 0 && <div className="report-source-imported">
+        <h4 className="report-source-label">Imported</h4>
+        <ul className="report-source-rows" aria-label={`Imported records from ${source.name}`}>
+          {importedRows.map(row => <li key={row.label}><span>{row.label}</span><span>{count(row.count)}</span></li>)}
+        </ul>
+      </div>}
       <p className="report-source-meta">
         <span>{source.lastSyncedAt ? `Synced ${ago(source.lastSyncedAt, now)}` : 'Not synced yet'}</span>
         {source.connectedBy && <span>Connected by {source.connectedBy}</span>}

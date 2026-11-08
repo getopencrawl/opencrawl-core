@@ -97,18 +97,23 @@ test('the summary distinguishes measured zero from missing or incomplete reporti
   assert.equal(summary, 'Source reporting is unavailable.');
 });
 
-test('source tiles render actual indexed species including zero and keep imported progress separate', () => {
+test('source tiles show indexed and imported breakdowns without redundant aggregate totals', () => {
   const html = render(), slack = sourceCard(html, 'Slack');
-  assert.match(slack, /<strong>3,550<\/strong> indexed documents/);
+  for (const name of ['Slack', 'Notion', 'GitHub']) {
+    assert.doesNotMatch(sourceCard(html, name), /report-source-count|indexed documents?|<strong>Imported<\/strong>/);
+  }
   const indexed = slack.match(/<ul[^>]+aria-label="Indexed content in Slack"[^>]*>(.*?)<\/ul>/)?.[1];
   assert.ok(indexed);
   assert.match(indexed, /<span>Messages<\/span><span>3,550<\/span>/);
   assert.match(indexed, /<span>Files<\/span><span>0<\/span>/);
   assert.doesNotMatch(indexed, /Imported channel records|1,910|18/);
-  assert.match(slack, /<strong>Imported<\/strong> 1,910 messages/);
+  assert.doesNotMatch(slack, /1,910/);
+  assert.match(slack, /<h4 class="report-source-label">Imported<\/h4>/);
   assert.match(slack, /aria-label="Imported records from Slack"/);
   assert.match(slack, /Imported channel records/);
+  assert.match(slack, /<span>Imported channel records<\/span><span>18<\/span>/);
   const github = sourceCard(html, 'GitHub');
+  assert.doesNotMatch(github, /report-source-imported/);
   assert.match(github, /Pull requests/);
   assert.match(github, /Issue comments/);
   assert.equal(speciesLabel('new_document_kind'), 'New document kind');
@@ -122,17 +127,17 @@ test('missing species remain unavailable even with an indexed total; empty and m
   assert.ok(source);
   delete source.indexedSpecies;
   let html = sourceCard(render(data), 'Slack');
-  assert.match(html, /<strong>3,550<\/strong> indexed documents/);
+  assert.doesNotMatch(html, /report-source-count|indexed documents?/);
   assert.match(html, /Indexed breakdown unavailable/);
   assert.doesNotMatch(html, /report-indexed-species/);
   source.indexed = null;
   html = sourceCard(render(data), 'Slack');
-  assert.match(html, /<strong>Unavailable<\/strong> indexed documents/);
-  assert.doesNotMatch(html, /<strong>0<\/strong> indexed/);
+  assert.match(html, /Indexed breakdown unavailable/);
+  assert.doesNotMatch(html, /report-source-count|indexed documents?/);
   source.indexed = 0;
   source.indexedSpecies = [{name: 'message', count: 0}];
   html = sourceCard(render(data), 'Slack');
-  assert.match(html, /<strong>0<\/strong> indexed documents/);
+  assert.doesNotMatch(html, /report-source-count|indexed documents?/);
   assert.match(html, /<span>Messages<\/span><span>0<\/span>/);
   assert.doesNotMatch(html, /Indexed breakdown unavailable/);
   source.indexedSpecies = [];

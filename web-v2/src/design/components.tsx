@@ -18,6 +18,10 @@ export function Button({variant = 'secondary', busy = false, className = '', dis
 export function LinkButton({variant = 'secondary', className = '', ...props}: Styled<LinkProps> & {variant?: ButtonVariant}) {
   return <Link {...props} className={`oc-button ${variant} ${className}`}/>;
 }
+/** One static mark and wordmark for workspace and focused headers. */
+export function Brand({className = ''}: {className?: string}) {
+  return <Link className={`oc-brand ${className}`} to="/" aria-label="OpenCrawl home"><img src="/assets/opencrawl-mark.svg" width="38" height="20" alt=""/><span>opencrawl</span></Link>;
+}
 export function Input({className = '', ...props}: Styled<InputHTMLAttributes<HTMLInputElement>> & {ref?: React.Ref<HTMLInputElement>}) {
   return <input {...props} className={`oc-input ${className}`}/>;
 }
