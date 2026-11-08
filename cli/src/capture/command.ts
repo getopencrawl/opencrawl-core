@@ -4,6 +4,7 @@ import {captureHook,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWo
 import {backfill,backfillPreview,selection,setupBackfill} from './backfill.ts';
 import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
 import {captureNotice} from './policy.ts';
+import {agentSkills} from '../skills.ts';
 export async function collectCommand(action:string,api:string,values:any) {
   if((values.backfill!==undefined || values['defer-auth']) && action!=='install' || values['dry-run'] && action!=='backfill' || values.yes && !['backfill','install','purge'].includes(action))throw new CliError('INVALID_USAGE','Use --backfill with install; --dry-run with backfill; --yes with install, backfill or purge.',64);
   if(values.project!==undefined && action!=='exclude' || values['session-id']!==undefined && action!=='exclude')throw new CliError('INVALID_USAGE','Use --project or --session-id with collect exclude.',64);
@@ -13,7 +14,9 @@ export async function collectCommand(action:string,api:string,values:any) {
       if(!['ask','skip','all','claude-code','codex'].includes(mode))throw new CliError('INVALID_USAGE','Use --backfill ask, skip, all, claude-code, or codex.',64);
       if(!await approveCapture(values.yes===true,values.json))return {status:'consent_required',notice:captureNotice,nextStep:'Confirm the destination and recording scope with the user, then run collect install --yes. This does not approve history import.'};
       const installed=await installCapture(api,{deferAuth:values['defer-auth']===true,...(values.harness?{harnesses:[values.harness]}:{})});
-      return {...installed,backfill:await setupBackfill(api,mode,values.json)};
+      // Skill setup must not undo working capture or hide its installed state.
+      const skills=await agentSkills('install',api).catch(()=>({status:'error',nextStep:`Capture is installed. Run opencrawl skills install --api ${api} with approved access to agent skill directories.`}));
+      return {...installed,skills,backfill:await setupBackfill(api,mode,values.json)};
     }
     case 'backfill': {
       const selected=selection(values.harness);
