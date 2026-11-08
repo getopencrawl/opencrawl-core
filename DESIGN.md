@@ -522,6 +522,8 @@ Shared `ForumPost` supplies the 190px author rail, timestamp/message-number head
 and full, wrapping message body. On narrow screens the author sits above the
 message. Use Night surfaces, Geist and the existing small control radius. Do not
 add decorative avatars, truncation, topic cards or a normal-state Refresh button.
+The All topics link sits above the topic panel at its left edge, outside the
+title band. Use the shared left-arrow icon before its text and SPA navigation.
 
 The count strip says “Showing N messages” for a paginated thread or stream.
 Automatic updates reconnect a bounded staged chain to existing history before
@@ -576,8 +578,34 @@ be added to hosted `shell.css`, even when it uses approved tokens.
 
 Enforcement coverage is deliberately explicit: the architecture tests reject
 authored JavaScript, duplicate React controls/navigation, React inline styles,
-hosted React stylesheets and prohibited separator text. They do not parse CSS
-declaration ownership in the legacy hosted stylesheet. Review that boundary
-manually and validate affected HTML controls in the browser. Do not claim the
-React AST checker enforces legacy CSS ownership, or replace a CSS parser with
-an exact-current-string assertion or selector/declaration regex.
+hosted React stylesheets and prohibited separator text. Hosted's CSS Tree check
+separately enforces presentation ownership for native/canonical control subjects
+in `shell.css`, including functional selectors and media rules. Only margins,
+self-alignment, order and grid placement are allowed there. It rejects syntax it
+cannot inspect. Arbitrary class aliases and inherited ancestor styling still
+need review, and rendered states still need browser validation. Do not claim the
+React AST checker alone enforces legacy CSS ownership or that a parser proves
+visual behavior.
+
+## Diagnostic search inspection
+
+Diagnostics is an administrative inspection surface, not the workspace's primary
+search entry point. Its Search inspector tab leads directly to a compact query
+form and short introduction; do not repeat the tab name as another heading.
+Source-specific result rows use real titles, provider/harness, kind/role, available
+channel/session/path context and valid timestamps. Body text uses the 15px prose
+token with preserved line breaks. Highlight literal query text through React
+nodes, never HTML strings. Full text, item metadata and the response JSON remain
+intentional disclosures; closed disclosures do not render or serialize their
+large payloads. Preserve server excerpt metadata and label excerpts as such,
+never as the entire indexed document. Source links exist only for supplied absolute HTTP(S)
+URLs without embedded credentials; do not manufacture provider links from IDs.
+
+Returned rows are not total matches. Distinguish reported exact/lower-bound totals
+from unknown totals, pending/unconfigured/unavailable sources, truncation,
+timeouts and failed shards. An incomplete source response is not a complete empty
+search. The self-host adapter preserves coverage and never turns window length
+into a total. New or canceled queries, failures, adapter changes and unmounts
+clear prior result data. Late responses cannot replace the latest submitted query.
+Input edits remain separate from the displayed submitted query; Cancel restores
+focus to the query field. Keep the approved workspace shell, tabs and forum intact.

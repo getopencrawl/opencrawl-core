@@ -6,7 +6,7 @@ export interface UsageReport {
   generatedAt: string;
   ingestion: null | {
     sources: Array<{name: string; icon: string; account?: string; state: string; records: number; indexed: number | null; indexedSpecies?: NamedCount[]; lastSyncedAt: string | null; connectedBy?: string; units?: [string, string]; rows?: Array<{label: string; count: number}>}>;
-    index: null | {sessionEvents: number; connectorDocuments: number; sources: NamedCount[]; searchMs: number | null; probes?: number[]};
+    index: null | {sessionEvents: number | null; connectorDocuments: number | null; sources: NamedCount[]; searchMs: number | null; probes?: number[]};
   };
   agents: null | {
     events: number; lifetimeEvents: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; machines: number; opencrawlCalls: number;
@@ -18,8 +18,12 @@ export interface UsageReport {
   members: Array<{name: string | null; email: string; you: boolean; sources: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
 }
 export interface DiagnosticHit {_id?: string; _score?: number; _source?: Record<string, unknown>}
-export interface SearchResponse {state?: string; hits?: {total?: {value: number}; hits?: DiagnosticHit[]}}
+export interface SearchResponse {
+  state?: string; truncated?: boolean; timed_out?: boolean; _shards?: {failed?: number};
+  hits?: {total?: {value: number; relation?: 'eq' | 'gte'}; hits?: DiagnosticHit[]};
+}
 export interface DiagnosticSearch {
+  partial?: boolean; truncated?: boolean;
   sessions?: Array<{scope: string; response: SearchResponse}>;
   connectors?: {state?: string; truncated?: boolean; responses?: SearchResponse[]};
   memories?: SearchResponse & {truncated?: boolean};

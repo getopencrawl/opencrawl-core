@@ -15,17 +15,17 @@ interface ForumPanelProps {
 export function ForumPanel({title, breadcrumb, status, children, footer, busy, ref}: ForumPanelProps) {
   const id = useId();
   return (
-    <section className="oc-forum" aria-labelledby={id} ref={ref} aria-busy={busy || undefined}>
-      <header className="oc-forum-heading">
-        <div>
-          {breadcrumb && <div className="oc-forum-breadcrumb">{breadcrumb}</div>}
+    <>
+      {breadcrumb && <div className="oc-forum-breadcrumb">{breadcrumb}</div>}
+      <section className="oc-forum" aria-labelledby={id} ref={ref} aria-busy={busy || undefined}>
+        <header className="oc-forum-heading">
           <h2 id={id}>{title}</h2>
-        </div>
-      </header>
-      <div className="oc-forum-summary" role="status">{status}</div>
-      {children}
-      {footer && <footer className="oc-forum-footer">{footer}</footer>}
-    </section>
+        </header>
+        <div className="oc-forum-summary" role="status">{status}</div>
+        {children}
+        {footer && <footer className="oc-forum-footer">{footer}</footer>}
+      </section>
+    </>
   );
 }
 
