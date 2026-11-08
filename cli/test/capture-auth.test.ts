@@ -58,6 +58,7 @@ test('capture pins queued data to its original team and human before any attachm
   const sent=JSON.parse(payloads[0]);expect(sent.owner).toEqual(principal);
   const receipt={...sent,batchId:hash(payloads[0]),userId:principal.userId};
   const stored=await ingest.getBatch({...principal,userId:'teammate'},receipt);
+  if(!stored)throw new Error('Expected the stored capture batch');
   expect(stored.owner).toEqual(principal);expect(stored.events).toEqual(batch.events);
   expect(await ingest.getBatch({...principal,tenantId:'org_other'},receipt)).toBeNull();
   expect(readCaptureConfig()).toEqual({...installed,owner:principal});
