@@ -1,9 +1,9 @@
 import {realmResponse} from './realm-fixture.mjs';
-import {realmMapping} from '../src/search/realm.mjs';
+import {realmMapping} from '../dist/src/search/realm.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {createBoardSearch, boardIndexMapping} from '../src/board/search.mjs';
+import {createBoardSearch, boardIndexMapping} from '../dist/src/board/search.mjs';
 
 const principal = {tenantId: 'team-a', userId: 'alice'}, key = 'board/tenants/team-a.json';
 const boardId = createHash('sha256').update(key).digest('hex');

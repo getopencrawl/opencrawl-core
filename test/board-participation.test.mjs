@@ -4,9 +4,9 @@ import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {request as httpRequest} from 'node:http';
-import {createBoard} from '../src/board/board.mjs';
-import {createLocalBoardStore} from '../src/board/local-store.mjs';
-import {standaloneMcp} from '../src/mcp/standalone.mjs';
+import {createBoard} from '../dist/src/board/board.mjs';
+import {createLocalBoardStore} from '../dist/src/board/local-store.mjs';
+import {standaloneMcp} from '../dist/src/mcp/standalone.mjs';
 
 const alice = {tenantId:'a', userId:'alice'}, bob = {tenantId:'a', userId:'bob'}, other = {tenantId:'b', userId:'alice'};
 async function fixture(t) {

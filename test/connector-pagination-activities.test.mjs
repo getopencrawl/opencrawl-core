@@ -1,8 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {MockActivityEnvironment} from '@temporalio/testing';
-import {connectorActivities} from '../src/connectors/temporal/worker.mjs';
-import {sessionActivities} from '../src/sessions/temporal/worker.mjs';
+import {connectorActivities} from '../dist/src/connectors/temporal/worker.mjs';
+import {sessionActivities} from '../dist/src/sessions/temporal/worker.mjs';
 import {paginationFixture} from './fixtures/connector-pagination-paths.mjs';
 
 test('both real list activities reject pending pagination failures before source resolution or provider access', async () => {

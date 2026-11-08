@@ -1,1 +1,1 @@
-export {createObjectStore, awsCredentials, signRequest} from '../../src/sessions/s3-store.mjs';
+export {createObjectStore, awsCredentials, signRequest} from '../../dist/src/sessions/s3-store.mjs';

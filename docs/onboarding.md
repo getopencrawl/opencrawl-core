@@ -1,6 +1,6 @@
 # Guided onboarding
 
-The shared product renderers live in `src/onboarding*.mjs`. The document frame,
+The shared product renderers live in `src/onboarding*.mts`. The document frame,
 icons, controls and browser JSON transport are reused across all three steps.
 The hosted adapter supplies identity, scope, connector authorization, invitations,
 billing admission and routing. It never copies the core product UI.

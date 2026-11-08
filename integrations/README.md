@@ -4,7 +4,7 @@
 > OpenCrawl index today. For searchable agent sessions, use `deploy/` and
 > `opencrawl collect` (see the [top-level README](../README.md)). The core indexer
 > reads gzip JSONL under `raw/v1/source=…/workspace=…/connection=…/stream=…/`
-> ([`src/connectors/scope.mjs`](../src/connectors/scope.mjs)); the Airbyte tooling
+> ([`src/connectors/scope.mts`](../src/connectors/scope.mts)); the Airbyte tooling
 > here writes uncompressed JSONL under `<path>/<source>/<stream>/`, and stock
 > Airbyte sources emit different streams than the indexer's normalizers expect.
 > Slack has a native, indexable path: see

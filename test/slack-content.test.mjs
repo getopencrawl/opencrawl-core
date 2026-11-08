@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {slackMessageText} from '../src/connectors/slack-content.mjs';
-import {normalizeSlack} from '../src/connectors/slack.mjs';
+import {slackMessageText} from '../dist/src/connectors/slack-content.mjs';
+import {normalizeSlack} from '../dist/src/connectors/slack.mjs';
 const binding={tenantId:'team',connectionId:'slack',workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:'raw/v1/source=slack/workspace=T123/connection=slack/'};
 
 test('a nonempty notification fallback does not hide the complete message blocks',()=>{

@@ -1,4 +1,4 @@
-import {sessionClient} from '../src/sessions/temporal/client.mjs';
+import {sessionClient} from '../dist/src/sessions/temporal/client.mjs';
 const {connection}=await sessionClient({address:process.env.TEMPORAL_ADDRESS,namespace:process.env.TEMPORAL_NAMESPACE});
 try {
   for(const taskQueueType of [1,2]) {

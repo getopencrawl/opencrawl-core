@@ -3,11 +3,11 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
-import {normalizeSlackFile,textChunks} from '../src/connectors/slack-files.mjs';
-import {createConnectorPipeline} from '../src/connectors/pipeline.mjs';
-import {createConnectorSearch} from '../src/connectors/search.mjs';
-import {normalizeSlack} from '../src/connectors/slack.mjs';
-import {receiptKey} from '../src/connectors/scope.mjs';
+import {normalizeSlackFile,textChunks} from '../dist/src/connectors/slack-files.mjs';
+import {createConnectorPipeline} from '../dist/src/connectors/pipeline.mjs';
+import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
+import {normalizeSlack} from '../dist/src/connectors/slack.mjs';
+import {receiptKey} from '../dist/src/connectors/scope.mjs';
 const binding={tenantId:'tenant-a',connectionId:'conn',workspaceId:'T123',provider:'slack',access:'team-public',rawPrefix:'raw/v1/source=slack/workspace=T123/connection=conn/'};
 const key=binding.rawPrefix+'stream=file_documents/date=2026-11-05/sync=1/files.jsonl.gz';
 function fixture(text='full body '.repeat(20000)+'FINAL DOCUMENT TEXT') {
