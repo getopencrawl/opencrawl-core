@@ -1,7 +1,7 @@
 /** Derive setup progress from durable receipts, never clicks or elapsed time. */
-export const hasReceipt = value => typeof value?.observedAt === 'string'
+export const hasReceipt = (value: unknown) => typeof value === 'object' && value !== null && 'observedAt' in value && typeof value.observedAt === 'string'
     && value.observedAt.trim() !== '' && Number.isFinite(Date.parse(value.observedAt));
-export function deriveOnboarding(status) {
+export function deriveOnboarding(status?: {cli?: unknown; mcpTest?: unknown; session?: unknown; mcp?: unknown} | null) {
   const receipt = hasReceipt;
   const milestones = [receipt(status?.cli), receipt(status?.mcpTest), receipt(status?.session)];
   const completedCount = milestones.filter(Boolean).length;

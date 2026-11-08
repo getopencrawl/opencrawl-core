@@ -8,3 +8,6 @@ cli/dist/
 
 dist/
 *.tsbuildinfo
+
+web/onboarding-state.js
+web/onboarding-state.mjs.map
