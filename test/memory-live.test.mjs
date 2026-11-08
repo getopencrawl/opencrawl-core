@@ -11,6 +11,11 @@ const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL,s3=process.env.OPENCRAW
 test('real memory rebuild: two harnesses, immutable S3, additive mapping, atomic publish, deletion, replay and tenant isolation',{skip:!endpoint||!s3},async t=>{
   const run=randomUUID(),environment='mem-'+run.slice(0,8),owner={tenantId:'memory-'+run,userId:'alice'},other={tenantId:'other-'+run,userId:'alice'};
   const index=realmIndex(environment,owner.tenantId),transport=createIndexTransport({endpoint,index});
+  for(let attempt=0;;attempt++) {
+    try{const ready=await fetch(endpoint+'/_cluster/health');if(ready.ok)break;}catch{}
+    if(attempt>=60)throw new Error('OpenSearch did not become ready');
+    await new Promise(r=>setTimeout(r,1000));
+  }
   const objects=[],underlying=createObjectStore({endpoint:s3,bucket:'capture-test',credentials:{accessKeyId:'capture-test',secretAccessKey:'capture-test-secret'}});
   const store={...underlying,put:async(k,b,m)=>{objects.push(k);return underlying.put(k,b,m);}};
   t.after(async()=>{for(const key of objects)await store.delete(key);for(const p of [owner,other])await fetch(endpoint+'/'+realmIndex(environment,p.tenantId),{method:'DELETE'});});
@@ -34,8 +39,17 @@ test('real memory rebuild: two harnesses, immutable S3, additive mapping, atomic
   const initial=await workspace.search(owner,{query:'violet',source:'memories'});assert.equal(initial.results.length,2);
   assert.deepEqual(new Set(initial.results.map(h=>h.provenance.harness)),new Set(['codex','claude-code']));
   const oldId=initial.results.find(h=>h.provenance.harness==='codex').id;
+  // Inject a shard refresh failure after writing passages, before publishing
+  // the head. A retry must then activate the complete replacement.
+  const interrupted={...snapshots[0].snapshot,generation:gen+1,files:[file('memories/MEMORY.md','violet lighthouse newmemory')]};
+  const {memorySnapshotId}=await import('../src/memories/snapshot.mjs');
+  const broken=createSessionSearch({endpoint,environment,fetch:async(url,options)=>String(url).endsWith('/_refresh')?
+    new Response(JSON.stringify({_shards:{total:1,successful:0,failed:1}}),{status:200,headers:{'content-type':'application/json'}}):fetch(url,options)});
+  await assert.rejects(broken.memories.putSnapshot({...interrupted,snapshotId:memorySnapshotId(interrupted),receivedAt:new Date().toISOString()},owner,'fixture'),/refresh incomplete/);
+  assert.equal((await workspace.search(owner,{query:'oldmemory',source:'memories'})).results.length,1);
+  assert.equal((await workspace.search(owner,{query:'newmemory',source:'memories'})).results.length,0);
   await send('codex',gen+1,[file('memories/MEMORY.md','violet lighthouse newmemory')]);
-  assert.equal((await workspace.search(owner,{query:'oldmemory deletewitness',source:'memories'})).results.length,0);
+  for(const query of ['oldmemory','deletewitness'])assert.equal((await workspace.search(owner,{query,source:'memories'})).results.length,0);
   await assert.rejects(workspace.fetch(owner,{id:oldId}),/no longer available/);
   const first=snapshots[0];await search.memories.putSnapshot({...first.snapshot,snapshotId:first.receipt.snapshotId,receivedAt:new Date().toISOString()},owner,first.key);
   assert.equal((await workspace.search(owner,{query:'oldmemory',source:'memories'})).results.length,0);

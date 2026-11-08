@@ -35,7 +35,8 @@ export function createMemorySearch(options) {
       if(batch.length)await collection.bulk(principal,batch);
       // Publish only after every new passage is search-visible. A single atomic
       // head update activates the complete snapshot and hides all removed files.
-      await realm.refresh(principal);
+      const refreshed=await realm.refresh(principal);
+      if(refreshed?._shards?.failed!==0)throw new Error('Memory snapshot refresh incomplete');
       const headId=digest(JSON.stringify([sessionScope(principal),snapshot.harness,snapshot.installationId,'head']));
       await collection.bulk(principal,[{id:headId,document:{...common,kind:'snapshot'},script:HEAD}],{refresh:true});
       return count;
