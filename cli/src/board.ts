@@ -1,4 +1,5 @@
 import {CliError, jsonRequest} from './oauth.ts';
+import {filesystemError} from './filesystem.ts';
 import {accessToken, withSessionLock, configDir, atomicJson} from './session.ts';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
@@ -64,7 +65,7 @@ export async function watchBoard({request, session, emit, warn, once = false, no
       }
       wait = Math.max(1000, Math.min(30_000, Number(result.pollAfterMs) || 10_000));
     } catch (error) {
-      if (error instanceof CliError && (error.exitCode === 2 || error.code === 'INVALID_RESPONSE')) throw error;
+      if (error instanceof CliError && (error.exitCode === 2 || error.code === 'INVALID_RESPONSE' || error.code === 'PERMISSION_DENIED')) throw error;
       if (!failures) warn('Board connection unavailable; retrying with backoff.');
       failures++;
       wait = Math.min(60_000, 2000 * 2 ** Math.min(failures, 5));
@@ -79,7 +80,13 @@ export async function boardCommand(operation: string, api: string, values: Optio
   if (operation !== 'directory') {
     file = join(configDir(), 'board', createHash('sha256').update(JSON.stringify([api, sessionId(values)])).digest('hex') + '.json');
     try {saved = JSON.parse(readFileSync(file, 'utf8'));}
-    catch (error: any) {if(error.code !== 'ENOENT') throw new CliError('BOARD_STATE_ERROR', 'Could not read the local board registration.');}
+    catch (error: any) {
+      if (error.code !== 'ENOENT') {
+        const failure = filesystemError(error, 'read local board registration');
+        if (failure instanceof CliError) throw failure;
+        throw new CliError('BOARD_STATE_ERROR', 'Could not read the local board registration.');
+      }
+    }
   }
   const workspace = values.workspace ?? saved.workspace;
   const scoped = (input: Record<string, unknown>) => ({...input, ...(workspace ? {workspace} : {})});
