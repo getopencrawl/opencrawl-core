@@ -66,6 +66,25 @@ reconciliation.
 
 Discovery currently sweeps the fixed source prefix, including successful receipts checks, using bounded pages. This deliberately favors simple reliable catch-up over low-latency ingestion. Monitor schedule failures, activity retries and sweep lag. S3 credentials need source reads/listing, conditional event-ledger reads/writes and success-receipt reads/writes; source deletion is unnecessary. Back up canonical S3 and Temporal persistence. Rebuild against a new versioned index with its own receipt namespace; never restore receipts without the matching index.
 
+## Installation-independent document IDs (0.2.39)
+
+A session document ID is derived from the author, harness, session, event ID and
+chunk, and no longer from the uploading installation. Event IDs are content
+hashes, so the same native record uploaded from a second install or a cloned
+machine overwrites its document instead of adding a copy that Usage counts twice.
+
+Realms indexed before 0.2.39 keep their older IDs and may already contain such
+copies. After deploying the new worker, run `migrateSessionDocumentIds` from
+`@getopencrawl/opencrawl-core/sessions/document-identity` once per tenant, first
+with `dryRun: true`. It scans the session corpus in native-position order, keeps
+one copy of each record (preferring the current `wire1:` event format) under its
+new ID, and removes the rest. Copies count as the same record only when their
+position, tool fields and the sorted lines of their full text match, which
+tolerates older indexers' key order and chunking without merging distinct
+records. Each step passes its new IDs and removed documents to `backup` before
+writing; `restoreSessionDocumentIds` replays stored steps in reverse to restore
+the prior documents exactly. Runs are idempotent and resume from `report.after`.
+
 ## Immutable event-ID activation
 
 Older receivers accepted different event content under the same ID. Since chunk

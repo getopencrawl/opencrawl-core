@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.2.38",
+  "version": "0.2.39",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
@@ -13,6 +13,7 @@
     "./sessions/search": "./dist/src/sessions/search.mjs",
     "./sessions/recent": "./dist/src/sessions/recent.mjs",
     "./sessions/indexer": "./dist/src/sessions/indexer.mjs",
+    "./sessions/document-identity": "./dist/src/sessions/document-identity.mjs",
     "./onboarding/status": "./dist/src/onboarding-status.mjs",
     "./connectors/pipeline": "./dist/src/connectors/pipeline.mjs",
     "./connectors/search": "./dist/src/connectors/search.mjs",

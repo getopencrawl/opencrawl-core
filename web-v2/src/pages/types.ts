@@ -9,13 +9,13 @@ export interface UsageReport {
     index: null | {sessionEvents: number; connectorDocuments: number; sources: NamedCount[]; searchMs: number | null; probes?: number[]};
   };
   agents: null | {
-    events: number; lifetimeEvents: number; sessions: number; messages: number; toolCalls: number; machines: number; opencrawlCalls: number;
+    events: number; lifetimeEvents: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; machines: number; opencrawlCalls: number;
     people?: Array<{userId: string}>;
     tools: NamedCount[]; harnesses: NamedCount[]; origins: NamedCount[];
     firstAt: string | null; lastAt: string | null;
     daily: Array<{date: string; events: number; sessions: number}>;
   };
-  members: Array<{name: string | null; email: string; you: boolean; sources: number; sessions: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
+  members: Array<{name: string | null; email: string; you: boolean; sources: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
 }
 export interface DiagnosticHit {_id?: string; _score?: number; _source?: Record<string, unknown>}
 export interface SearchResponse {state?: string; hits?: {total?: {value: number}; hits?: DiagnosticHit[]}}

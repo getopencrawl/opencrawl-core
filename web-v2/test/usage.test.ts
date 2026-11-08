@@ -165,6 +165,24 @@ test('Team leaderboard orders measured sessions then tool calls and retains actu
   assert.doesNotMatch(render(data), /<script>/);
 });
 
+test('subagent sessions are reported beside, not inside, the sessions a person started', () => {
+  const data = report();
+  assert.doesNotMatch(render(data), /plus [\d,]+ subagent|\+[\d,]+ subagent/);
+  if (!data.agents) throw new Error('fixture has agents');
+  data.agents.subagentSessions = 2435;
+  const [alex, sam] = data.members;
+  if (!alex || !sam) throw new Error('fixture has members');
+  alex.subagentSessions = 2435;
+  const html = render(data);
+  assert.match(html, /plus 2,435 subagent sessions/);
+  assert.match(html, /Ranked by sessions, then tool calls; subagent sessions are counted separately/);
+  const table = html.slice(html.indexOf('<table'));
+  assert.match(table, /<td>3<span class="report-email">\+2,435 subagent<\/span><\/td>/);
+  // Ranking and highlights still use started sessions only.
+  assert.deepEqual(sortedMembers(data.members).map(member => member.name), ['Sam', 'Alex']);
+  assert.match(html, /Most sessions<\/dt><dd><strong>Sam<\/strong><span>5 sessions/);
+});
+
 test('date formatting and compact source-summary exports remain usable by existing consumers', () => {
   assert.equal(ago('2026-11-07T20:01:00Z', now), 'just now');
   assert.equal(ago('invalid', now), 'never');
