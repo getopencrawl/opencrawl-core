@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.2.37",
+  "version": "0.2.38",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
