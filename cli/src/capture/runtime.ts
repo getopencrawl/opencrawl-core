@@ -15,7 +15,9 @@ import {captureExcluded, type CaptureExclusions} from './policy.ts';
 
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
-export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
+/** Bump when installed hook entries change so the next hook rewrites existing installs. */
+export const HOOK_MODE='managed-v2';
+export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:typeof HOOK_MODE|'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 // Enrollment and every queued payload remain bound to their original destination.
 export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
@@ -42,7 +44,7 @@ function staticCaptureToken(api:string) {
   const saved=read(join(captureDir(),'receiver-token.json'));
   return process.env.OPENCRAWL_SESSIONS_TOKEN || (saved?.api===api?saved.token:null);
 }
-export async function request(api:string,path:string,init:RequestInit={},tokenOverride?:string) {
+export async function request(api:string,path:string,init:RequestInit={},tokenOverride?:string,renew?:(rejected:string)=>Promise<string>) {
   const staticToken=tokenOverride || staticCaptureToken(api);
   const signal=init.signal??undefined;
   signal?.throwIfAborted();
@@ -66,7 +68,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
     }
   };
   let res=await send();
-  if(res.status===401 && !staticToken){token=await accessToken(api,token,fetch,signal);res=await send();}
+  if(res.status===401 && (renew || !staticToken)){token=renew?await renew(token):await accessToken(api,token,fetch,signal);res=await send();}
   const body=await res.json().catch(()=>{throw res.status>=500||res.status===429
     ?new CliError('CAPTURE_RETRY_EXHAUSTED',`Capture endpoint ${new URL(api).hostname} is temporarily unavailable (HTTP ${res.status}). Queued data is retained; retry the approved import.`)
     :new CliError('CAPTURE_NETWORK_BLOCKED',`Capture endpoint ${new URL(api).hostname} returned HTTP ${res.status} without JSON. Check this host in your cloud environment network allowlist.`);});
@@ -416,8 +418,20 @@ export async function flushCaptures({wait=true}={}) {
   return withSessionLock('capture:flush',async()=>{
     // A concurrent login must not switch the identity between the initial check
     // and blob writes. If this credential expires, retain the queue for a retry.
-    const token=staticCaptureToken(config.api)||await accessToken(config.api);
+    const staticToken=staticCaptureToken(config.api);
+    let token=staticToken||await accessToken(config.api);
     const principal=await refreshCaptureIdentity(config,token);
+    // A long flush outlives a short-lived sign-in token. Renew before each request
+    // and after a rejection, re-verifying identity whenever the token changes.
+    const adopt=async(next:string)=>{
+      if(next===token)return token;
+      const current=await refreshCaptureIdentity(config,next);
+      if(current.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Signed-in user changed during upload. Sign back in as the queued author; queued data is retained.');
+      if(current.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Signed-in team changed during upload. Sign back into the original destination; queued data is retained.');
+      return token=next;
+    };
+    const current=async()=>staticToken||await adopt(await accessToken(config.api));
+    const renew=staticToken?undefined:async(rejected:string)=>adopt(await accessToken(config.api,rejected));
     let uploaded=0,excluded=0;
     for(const name of readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'))) {
       if(!wait&&readCaptureConfig()?.disabled)break;
@@ -428,9 +442,9 @@ export async function flushCaptures({wait=true}={}) {
       if(batch.owner?.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Queued capture belongs to another team. Sign back into its original destination or explicitly purge local pending data.');
       if(captureExcluded(readCaptureConfig()??config,batch)){excluded++;continue;}
       for(const a of batch.attachments)if(a.status==='captured'){
-        await request(config.api,'/api/sessions/attachments/'+a.sha256,{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readFileSync(join(captureDir(),'blobs',a.sha256))},token);
+        await request(config.api,'/api/sessions/attachments/'+a.sha256,{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readFileSync(join(captureDir(),'blobs',a.sha256))},await current(),renew);
       }
-      const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(batch)},token);
+      const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(batch)},await current(),renew);
       if(receipt.batchId!==hash(JSON.stringify(batch)) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
       atomicJson(join(captureDir(),'last-upload.json'),{at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId});
       unlinkSync(path);uploaded++;
