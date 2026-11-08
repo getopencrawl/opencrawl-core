@@ -1,5 +1,5 @@
 import {Database} from 'bun:sqlite';
-import {mkdirSync, chmodSync, fchmodSync, fstatSync, readFileSync, writeFileSync, renameSync, unlinkSync, openSync, closeSync, statSync, fsyncSync} from 'node:fs';
+import {mkdirSync, chmodSync, fchmodSync, fstatSync, readFileSync, writeFileSync, renameSync, linkSync, unlinkSync, openSync, closeSync, statSync, fsyncSync} from 'node:fs';
 import {join, dirname} from 'node:path';
 import {homedir} from 'node:os';
 import {createHash, randomUUID} from 'node:crypto';
@@ -103,8 +103,16 @@ async function lockedSession<T>(api: string, operation: () => Promise<T>, waitMs
     while(true) {
       signal?.throwIfAborted();
       try {
-        const fd=openSync(file,'wx',0o600);
-        try{writeFileSync(fd,String(process.pid));identity=lockIdentity(file);}finally{closeSync(fd);}
+        // Publish a complete PID marker exclusively. A kill between creating
+        // an empty marker and writing its PID otherwise looks like a live
+        // legacy writer for 60 seconds, despite the SQLite lock being free.
+        const temporary=`${file}.${randomUUID()}.tmp`;
+        try {
+          writeFileSync(temporary,String(process.pid),{flag:'wx',mode:0o600});
+          linkSync(temporary,file);
+        }finally{try{unlinkSync(temporary);}catch{}}
+        // Removing the temporary hard link changes ctime; record identity last.
+        identity=lockIdentity(file);
         break;
       }catch(error:any){
         if(error.code!=='EEXIST')throw error;
