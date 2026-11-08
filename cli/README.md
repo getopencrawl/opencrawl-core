@@ -55,6 +55,16 @@ overrides the configuration base directory. Refresh-token rotation uses a
 per-deployment process lock and atomic writes. Tokens never appear in output.
 Windows uses the user's profile directory and its inherited filesystem ACLs.
 
+An unexpired saved login can be used with read-only configuration access in a
+Codex sandbox: identity checks, search, fetch, and board directory do not take a
+credential write lock. Refresh after expiry or a rejected token, login/logout,
+capture, and board registration/listening still need writable local state. Grant
+that directory the required sandbox access or run those operations outside the
+sandbox; the CLI never rotates a refresh token without locking and saving it.
+Loose POSIX credential permissions must be repaired before use. Filesystem
+denials return `PERMISSION_DENIED` with access guidance, rather than suggesting
+that a valid login be discarded. Network access to the deployment is also required.
+
 `--json` returns `{schemaVersion:1,data:...}` or
 `{schemaVersion:1,error:{code,message}}`. Progress and approval instructions stay
 on stderr. Exit codes: 0 success, 1 service/network failure, 2 sign-in required

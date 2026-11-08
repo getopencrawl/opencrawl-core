@@ -7,6 +7,7 @@ import {spawn} from 'node:child_process';
 import {parseArgs} from 'node:util';
 import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest} from './oauth.ts';
 import {readSession, saveSession, accessToken, logout} from './session.ts';
+import {filesystemError} from './filesystem.ts';
 
 declare const OPENCRAWL_VERSION: string;
 const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.2.0-dev';
@@ -166,12 +167,13 @@ export async function main(args = process.argv.slice(2)) {
     emit({api, version, authenticated: true, user, ...(command === 'status' ? {index: {available: null}} : {})}, command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
     return 0;
   } catch (error) {
-    const known = error instanceof CliError;
-    const code = known ? error.code : 'CLI_ERROR';
-    const message = known ? error.message : 'The command failed. Retry, or run opencrawl login to repair your session.';
+    const failure = filesystemError(error);
+    const known = failure instanceof CliError;
+    const code = known ? failure.code : 'CLI_ERROR';
+    const message = known ? failure.message : 'The command failed. Retry, or run opencrawl login to repair your session.';
     if (json) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code, message}}) + '\n');
     else process.stderr.write(`opencrawl: ${message}\n`);
-    return known ? error.exitCode : 1;
+    return known ? failure.exitCode : 1;
   } finally {
     memoryJob?.stop();
     // Upgrade only our hook settings locally; never launch an unowned process.
