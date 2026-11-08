@@ -99,6 +99,7 @@ test('wait exits on a nonempty delivery; revoked access stops immediately rather
   }});
   expect(calls).toBe(2);expect(emitted.length).toBe(1);
   await expect(watchBoard({acknowledge:async()=>{},session:'s',emit:()=>{},warn:()=>{},request:async()=>{throw new CliError('BOARD_FORBIDDEN','Revoked',2);}})).rejects.toThrow('Revoked');
+  await expect(watchBoard({acknowledge:async()=>{},session:'s',emit:()=>{},warn:()=>{throw Error('Permission failures must not retry');},request:async()=>{throw new CliError('PERMISSION_DENIED','Allow local state writes.');}})).rejects.toThrow('Allow local state writes.');
 });
 
 test('installed participation instructions describe native delivery without model-managed acknowledgments',()=>{
