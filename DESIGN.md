@@ -197,8 +197,8 @@ presentation. The frontmatter records their approved values; update the owning
 CSS and this document together. Color aliases are resolved here without changing
 the source color format. The sidecar carries motion, depth and component previews.
 
-The retained `web/frame.css` and `web/controls.css` describe the earlier shared
-frame and controls; they do not own the React workspace shell. React onboarding
+The shared `web/frame.css` and `web/controls.css` style hosted authentication,
+organization selection, provider handoffs and cloud-capture setup. React onboarding
 preserves its approved presentation in `web-v2/src/onboarding/onboarding.css`.
 Use the existing self-hosted fonts, OC marks, provider logos and shared SVG icons.
 The font license remains at `web/assets/Geist-OFL.txt`.
