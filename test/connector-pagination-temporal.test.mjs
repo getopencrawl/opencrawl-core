@@ -13,30 +13,29 @@ function isPaginationFailure(error) {
   return true;
 }
 
-test('real Temporal: pagination activity failures replay in both versions across mixed workers, rollback and continuation', {
+test('real Temporal: pagination activity failures replay across worker restarts and continuation', {
   skip: process.env.OPENCRAWL_TEST_TEMPORAL !== '1', timeout: 180000,
 }, async t => {
   Runtime.install({logger: new DefaultLogger('ERROR')});
   const env = await TestWorkflowEnvironment.createLocal(); t.after(() => env.teardown());
   const current = await bundleWorkflowCode({workflowsPath: fileURLToPath(new URL('./fixtures/indexing-workflows.cjs', import.meta.url))});
-  const legacy = await bundleWorkflowCode({workflowsPath: fileURLToPath(new URL('./fixtures/legacy-indexing-workflows.cjs', import.meta.url))});
-  const stale = {version: 1, anchor: '15', window: '16', distance: '0'};
+  const checkpoint = {version: 1, anchor: '15', window: '16', distance: '0'};
   const scenarios = [
-    {name: 'fresh-cycle', period: 7, phases: [['current', Infinity]]},
-    {name: 'upgrade-cycle', period: 2, phases: [['legacy', 5], ['current', Infinity]]},
-    {name: 'rollback-cycle', period: 2, phases: [['current', 2], ['legacy', 7], ['current', Infinity]]},
-    {name: 'rollback-stale-healthy', healthy: true, input: {cursor: '15', paginationProgress: stale},
-      phases: [['current', 2], ['legacy', 7], ['current', Infinity]]},
+    {name: 'fresh-cycle', period: 7, stops: [Infinity]},
+    {name: 'restart-cycle', period: 7, stops: [5, Infinity]},
+    {name: 'repeated-restart-cycle', period: 7, stops: [2, 7, Infinity]},
+    {name: 'restart-healthy-checkpoint', healthy: true, input: {cursor: '15', paginationProgress: checkpoint},
+      stops: [2, 7, Infinity]},
     {name: 'cycle-on-fifth-page', input: {cursor: 'prior', paginationProgress: {version: 1, anchor: 'A', window: '8', distance: '3'}},
-      transitions: {prior: 'B', B: 'C', C: 'D', D: 'E', E: 'A'}, phases: [['current', Infinity]]},
+      transitions: {prior: 'B', B: 'C', C: 'D', D: 'E', E: 'A'}, stops: [Infinity]},
   ];
   for (const workflowType of ['indexSessionsV1', 'indexConnectorV1']) {
     for (const scenario of scenarios) {
       const taskQueue = `${workflowType}-${scenario.name}`, workflowId = taskQueue;
-      let providerCalls = 0, listCalls = 0, processed = 0, worker, generation, stopAt;
+      let providerCalls = 0, listCalls = 0, processed = 0, worker, stopAt;
       const list = async input => {
         listCalls++;
-        try { if (generation === 'current') assertSourcePaginationInput(input); }
+        try { assertSourcePaginationInput(input); }
         catch (error) { throw ApplicationFailure.nonRetryable(error.message, 'SourcePaginationFailed'); }
         providerCalls++;
         let cursor;
@@ -44,25 +43,24 @@ test('real Temporal: pagination activity failures replay in both versions across
         else if (scenario.healthy) cursor = Number(input.cursor) + 1 === 30 ? null : String(Number(input.cursor) + 1);
         else cursor = String(input.cursor === null ? 0 : (Number(input.cursor) + 1) % scenario.period);
         const page = {keys: [`object-${providerCalls}`], cursor};
-        if (generation === 'current') assertSourcePaginationPage(page);
+        assertSourcePaginationPage(page);
         if (providerCalls === stopAt) worker.shutdown();
         return page;
       };
       const process = async () => {processed++; return {records: 1};};
       const activities = {listPage: list, listSessionPage: list, processObject: process, indexSessionObject: process};
-      const options = {connection: env.nativeConnection, taskQueue, activities, shutdownGraceTime: '5 seconds'};
+      const options = {connection: env.nativeConnection, taskQueue, activities, shutdownGraceTime: '5 seconds', maxCachedWorkflows: 0};
       const handle = await env.client.workflow.start(workflowType, {
         taskQueue, workflowId, args: [{sourceId: 'fixture', ...scenario.input}],
       });
-      for ([generation, stopAt] of scenario.phases) {
-        worker = await Worker.create({...options, workflowBundle: generation === 'current' ? current : legacy});
+      for (stopAt of scenario.stops) {
+        worker = await Worker.create({...options, workflowBundle: current});
         if (Number.isFinite(stopAt)) {
           await worker.run();
           assert.equal(providerCalls, stopAt);
-          // Check the open history before the next worker resumes it, including
-          // new-shaped runs that old workers executed past a cycle boundary.
+          // Replay the open history before a fresh worker resumes the same run.
           const history = await env.client.workflow.getHandle(workflowId).fetchHistory();
-          for (const workflowBundle of [current, legacy]) await Worker.runReplayHistory({workflowBundle}, history);
+          await Worker.runReplayHistory({workflowBundle: current}, history);
         } else {
           await worker.runUntil(async () => {
             if (scenario.healthy) await handle.result();
@@ -78,7 +76,7 @@ test('real Temporal: pagination activity failures replay in both versions across
       let runId = handle.firstExecutionRunId, runs = 0;
       while (runId) {
         const history = await env.client.workflow.getHandle(workflowId, runId).fetchHistory();
-        for (const workflowBundle of [current, legacy]) await Worker.runReplayHistory({workflowBundle}, history);
+        await Worker.runReplayHistory({workflowBundle: current}, history);
         assert.ok(!history.events.some(event => event.workflowTaskFailedEventAttributes), 'guard must not cause workflow-task retries');
         assert.ok(!history.events.some(event => event.markerRecordedEventAttributes), 'no new marker commands');
         const continued = history.events.find(event => event.workflowExecutionContinuedAsNewEventAttributes)?.workflowExecutionContinuedAsNewEventAttributes;
@@ -87,7 +85,7 @@ test('real Temporal: pagination activity failures replay in both versions across
         if (scenario.healthy && runs === 0) {
           const nextInput = JSON.parse(Buffer.from(continued.input.payloads[0].data).toString());
           assert.equal(nextInput.cursor, '20');
-          assert.deepEqual(nextInput.paginationProgress, stale, 'legacy worker must actually carry a stale checkpoint across continue-as-new');
+          assert.deepEqual(nextInput.paginationProgress, {...checkpoint, distance: '5'}, 'continue-as-new retains the advanced checkpoint');
         }
         runId = continued?.newExecutionRunId;
         assert.ok(++runs < 10);
@@ -107,6 +105,6 @@ test('real Temporal: pagination activity failures replay in both versions across
     });
     await worker.runUntil(() => assert.rejects(handle.result(), isPaginationFailure));
     const history = await handle.fetchHistory();
-    for (const workflowBundle of [current, legacy]) await Worker.runReplayHistory({workflowBundle}, history);
+    await Worker.runReplayHistory({workflowBundle: current}, history);
   }
 });

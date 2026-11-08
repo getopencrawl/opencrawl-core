@@ -19,8 +19,3 @@ function assets(directory: string): void {
   }
 }
 assets(resolve(root, 'src'));
-
-// Legacy browser entrypoint and the backend share one strict TypeScript source.
-mkdirSync(resolve(root, 'web'), {recursive: true});
-cpSync(resolve(root, 'dist/src/onboarding-state.mjs'), resolve(root, 'web/onboarding-state.js'));
-cpSync(resolve(root, 'dist/src/onboarding-state.mjs.map'), resolve(root, 'web/onboarding-state.mjs.map'));
