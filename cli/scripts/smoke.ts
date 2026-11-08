@@ -47,6 +47,13 @@ try {
     if (run(['bun',join(install,'node_modules/@getopencrawl/cli/runtime/opencrawl.js'),'--version']).trim() !== pkg.version) throw new Error('Replaceable-runtime bundle version mismatch');
     const status = JSON.parse(run([...command, 'status', '--json']));
     if (status.data.authenticated !== false || status.data.index.available !== null) throw new Error('Incorrect initial status');
+    const skillEnv = {CLAUDE_CONFIG_DIR: join(scratch, 'claude')};
+    const skills = JSON.parse(run([...command, 'skills', 'install', '--client', 'claude-code', '--api', 'http://127.0.0.1:8093', '--json'], undefined, skillEnv));
+    if (skills.data.results.length !== 1 || skills.data.results[0].status !== 'installed') throw new Error('Packaged skill installation failed');
+    const skillRoot = join(scratch, 'claude/skills/opencrawl');
+    if (!readFileSync(join(skillRoot, 'SKILL.md'), 'utf8').startsWith('---\nname: opencrawl\n') || !readFileSync(join(skillRoot, 'references/participation.md'), 'utf8').includes('http://127.0.0.1:8093')) throw new Error('Packaged skill documents missing or wrong deployment');
+    const skillStatus = JSON.parse(run(['bun', join(install, 'node_modules/@getopencrawl/cli/runtime/opencrawl.js'), 'skills', 'status', '--client', 'claude-code', '--api', 'http://127.0.0.1:8093', '--json'], undefined, skillEnv));
+    if (skillStatus.data.results[0].status !== 'current') throw new Error('Replaceable runtime could not read the installed skill');
     const fail = Bun.spawnSync([...command, 'whoami', '--json'], {env: {...process.env, OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config')}, stdout: 'pipe', stderr: 'pipe'});
     if (fail.exitCode !== 2 || JSON.parse(fail.stdout.toString()).error.code !== 'AUTH_REQUIRED') throw new Error('Invalid authentication exit code');
     const requests: string[] = [];
@@ -66,6 +73,6 @@ try {
       }
       if(requests.join(',')!=='/api/search,/api/search/fetch')throw new Error('Packaged search/fetch routes mismatch');
     } finally {api.stop(true);}
-    console.log('Packaged npm install, native binary, JSON status and auth-required exit verified.');
+    console.log('Packaged npm install, native binary, agent skill installation, JSON status and auth-required exit verified.');
   } finally { server.stop(true); }
 } finally { rmSync(scratch, {recursive: true, force: true}); }
