@@ -51,7 +51,7 @@ function ReferenceApp() {
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={library}/>},
     {path:'/diagnostics',label:'Diagnostics',icon:'diagnostics',element:<Diagnostics/>},
     {path:'/agents',label:'Agents',icon:'team',element:<Agents/>},
-    {path:'/settings',label:'Settings',icon:'settings',group:'manage',element:<Page title="Settings" bodyWidth="narrow" description="Connection and access settings for this deployment."><Section title="Connection"><CopyField label="MCP endpoint" value={endpoint}/><p className="muted">Change the server’s OPENCRAWL_MCP_URL setting to use a different deployment. Restart this console after updating server configuration.</p></Section><Section title="Access"><p>The console requires its own password. The upstream agent token stays on the server. Your deployment’s fixed identity and resource permissions apply to every request.</p></Section></Page>},
+    {path:'/settings',label:'Settings',icon:'settings',group:'manage',element:<Page title="Settings" description="Connection and access settings for this deployment."><Section title="Connection"><CopyField label="MCP endpoint" value={endpoint}/><p className="muted">Change the server’s OPENCRAWL_MCP_URL setting to use a different deployment. Restart this console after updating server configuration.</p></Section><Section title="Access"><p>The console requires its own password. The upstream agent token stays on the server. Your deployment’s fixed identity and resource permissions apply to every request.</p></Section></Page>},
   ];
   return <AppShell workspace={{name,userName:'Operator'}} routes={routes}/>;
 }
