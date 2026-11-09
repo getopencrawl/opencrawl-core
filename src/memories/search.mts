@@ -59,7 +59,7 @@ export function createMemorySearch(options: RealmOptions) {
       if(!active.length)return {total:0,hits:[],truncated:false};
       const result=await resolve(principal).collection('memory').search(principal,{size:limit,track_total_hits:true,
         query:{bool:{filter:[{term:{[f('kind')]:'passage'}},{terms:{[f('snapshotId')]:active}},visibleTo('memory',principal),...(id?[{term:{id}}]:[]),...timeRange(after,before)],
-          must:query?[textQuery(query,match)]:[{match_all:{}}]}},
+          must:query?[textQuery(query,match,resolve(principal).semantic)]:[{match_all:{}}]}},
         sort:query?['_score',{[f('receivedAt')]:'desc'},{id:'asc'}]:[{[f('receivedAt')]:'desc'},{id:'asc'}]});
       return {total:result.hits.total.value,truncated:result.hits.total.value>result.hits.hits.length,
         hits:result.hits.hits.map(h=>({id:h._id,score:h._score,...h._source} as Passage))};

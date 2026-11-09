@@ -57,6 +57,28 @@ self-host smoke test uses synthetic data to verify authentication, rejected
 cross-tenant writes, attachment storage, search/fetch, board persistence, restart
 and backup restoration. It does not run against your existing deployment.
 
+## Optional: semantic retrieval
+
+Search is lexical by default: BM25 on exact tokens plus English stems. To also rank by meaning,
+deploy OpenSearch's pretrained learned-sparse document encoder inside the bundled cluster. It
+needs no external API or key; the model is downloaded once from artifacts.opensearch.org:
+
+```sh
+docker compose exec -T worker node deploy/semantic.mjs   # prints the model ID
+echo OPENCRAWL_SEMANTIC_MODEL=<model id> >> .env
+docker compose up -d
+```
+
+With `OPENCRAWL_SEMANTIC_MODEL` set, OpenCrawl installs an `opencrawl-semantic-*` ingest pipeline,
+encodes passages that lack the current model's vectors in the background (after startup and after
+each indexing write), and ranks search results by the learned-sparse score with lexical scores as
+a secondary signal. Queries need no model inference. `match: "phrase"` stays lexical, and passages
+not yet encoded still match lexically.
+
+Encoding runs on the OpenSearch node's CPU, about 10 passages per second per node for long
+passages. Large histories take hours to backfill the first time. Unset the variable to return to
+lexical-only ranking; the stored vectors are ignored.
+
 ## Back up and restore
 
 An offline backup briefly stops the stack and then restarts it. It contains raw

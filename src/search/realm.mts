@@ -37,7 +37,10 @@ function compatible(actual: Mapping | undefined,expected: Mapping): boolean {
   return true;
 }
 /** One tenant-bound index, mapping and transport for every searchable corpus. */
-export function createRealm({endpoint,index,tenantId,environment='selfhost',generation='v1',username,password,credentials,region='us-east-1',replicas=0,fetch:send=globalThis.fetch}: RealmOptions) {
+/** The ingest pipeline that encodes `text` with the operator's sparse model. Named by model so a
+ * model change re-encodes through a new pipeline and marker instead of mixing vector spaces. */
+export function semanticPipeline(model: string) {return 'opencrawl-semantic-'+hash(model).slice(0,16);}
+export function createRealm({endpoint,index,tenantId,environment='selfhost',generation='v1',username,password,credentials,region='us-east-1',replicas=0,fetch:send=globalThis.fetch,semanticModel}: RealmOptions) {
   if(typeof tenantId!=='string'||!tenantId)throw fail('Realm tenant required',403);
   index ||= realmIndex(environment,tenantId,generation);
   const base=new URL(endpoint);
@@ -45,7 +48,20 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
   if(Boolean(username)!==Boolean(password)||!Number.isInteger(replicas)||replicas<0||replicas>2)throw fail('Invalid realm configuration',400);
   const scope=(principal: TenantPrincipal)=>{if(principal?.tenantId!==tenantId || principal.captureAccess!==undefined)throw fail('Realm scope denied',403);};
   const request=createIndexTransport({endpoint,index,username,password,credentials,region,fetch:send});
-  let ready: Promise<void> | undefined;
+  semanticModel||=undefined; // unset in .env arrives as an empty string
+  if(semanticModel!==undefined&&(typeof semanticModel!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(semanticModel)))throw fail('Invalid semantic model',400);
+  const pipeline=semanticModel?semanticPipeline(semanticModel):undefined;
+  const cluster=pipeline?createIndexTransport({endpoint,index:'_ingest',username,password,credentials,region,fetch:send,cluster:true}):undefined;
+  let ready: Promise<void> | undefined, encoding: ReturnType<typeof setTimeout> | undefined;
+  /** Encodes this tenant's passages that lack the current model's vectors, as a background
+   * update-by-query through the pipeline (scripted upserts bypass ingest pipelines, and a newer
+   * upsert replaces the encoded document). Debounced; lexical search serves meanwhile. */
+  function encodeMissing(delay=30000){
+    if(!pipeline||encoding)return;
+    encoding=setTimeout(()=>{encoding=undefined;request('/_update_by_query?pipeline='+pipeline+'&conflicts=proceed&wait_for_completion=false&slices=auto',
+      {query:{bool:{filter:[{term:{tenantId}}],must_not:[{term:{semantic:semanticModel}}]}}},'POST').catch(()=>{});},delay);
+    encoding.unref?.();
+  }
   async function ensureIndex(){
     ready ||= (async()=>{
       try{await request('',{settings:{number_of_shards:1,number_of_replicas:replicas},mappings:{...realmMapping,_meta:{schema:1,tenantId}}},'PUT');}
@@ -54,7 +70,8 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
       // The only in-place schema upgrade is an additive normalization revision.
       // Validate ownership and every existing field before making any change.
       // Revisions apply in order; each earlier check ignores fields added by later revisions.
-      const withoutStemming=(value: Mapping)=>{delete value.properties!.text.fields;return value;};
+      const withoutSemantic=(value: Mapping)=>{delete value.properties!.textSparse;delete value.properties!.semantic;return value;};
+      const withoutStemming=(value: Mapping)=>{withoutSemantic(value);delete value.properties!.text.fields;return value;};
       const withoutVisibility=(value: Mapping)=>{withoutStemming(value);delete value.properties!.session.properties!.private;if(value.properties!.memory)delete value.properties!.memory.properties!.private;return value;};
       const previous: Mapping=withoutVisibility(structuredClone(realmMapping));
       delete previous.properties!.connector.properties!.normalizerVersion;
@@ -84,7 +101,17 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
         await request('/_update_by_query?conflicts=proceed&wait_for_completion=false&slices=auto',{query:{match_all:{}}},'POST');
         mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
+      // Semantic vectors are the fourth additive revision: two fields, filled by the pipeline.
+      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&!mapping.properties?.textSparse&&compatible(mapping,withoutSemantic(structuredClone(realmMapping)))) {
+        await request('/_mapping',{properties:{textSparse:realmMapping.properties.textSparse,semantic:realmMapping.properties.semantic}},'PUT');
+        mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
+      }
       if(mapping?._meta?.tenantId!==tenantId||mapping?._meta?.schema!==1||!compatible(mapping,realmMapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');
+      if(pipeline&&cluster) {
+        await cluster('/pipeline/'+pipeline,{description:'OpenCrawl semantic encoding ('+semanticModel+')',processors:[
+          {sparse_encoding:{model_id:semanticModel,field_map:{text:'textSparse'},ignore_failure:true}},{set:{field:'semantic',value:semanticModel}}]},'PUT');
+        encodeMissing(0);
+      }
     })().catch(e=>{ready=undefined;throw e;});
     return ready;
   }
@@ -92,7 +119,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
     if(result?.timed_out!==false||result?._shards?.failed!==0||!Array.isArray(result?.hits?.hits))throw fail('Realm search incomplete');
     return result;
   };
-  return {index,tenantId,identity:base.origin+base.pathname+'/'+index,ensureIndex,scope,
+  return {index,tenantId,identity:base.origin+base.pathname+'/'+index,ensureIndex,scope,semantic:Boolean(pipeline),
     collection(corpus: Corpus){
       if(!corpora.has(corpus))throw fail('Invalid corpus',400);
       const encodedId=(id: string)=>corpus+':'+id;
@@ -106,6 +133,8 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
       return {field:(field: string)=>realmField(corpus,field),encode,id:encodedId,
         async search(principal: TenantPrincipal,body: QueryBody){
           scope(principal);
+          // Semantic queries need the vector field mapped; ensureIndex is memoized per process.
+          if(pipeline)await ensureIndex();
           const query={bool:{filter:[{term:{tenantId}},{term:{corpus}}],must:[body.query||{match_all:{}}]}};
           // Scope/identity fields are always fetched, including for ID-only board snapshots.
           const source=Array.isArray(body._source)?[...new Set(['schema','tenantId','corpus','id',...body._source.map(f=>realmField(corpus,f))])]:body._source;
@@ -128,6 +157,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
           } catch(caught){const error=serviceError(caught);throw Object.assign(serviceError(error),{writeOutcome:'not-applied'});}
           const result=await request('/_bulk'+(refresh?'?refresh=wait_for':''),body,'POST','application/x-ndjson');
           if(result.errors||!Array.isArray(result.items)||result.items.length!==items.length||result.items.some(item=>{const op=item.index||item.update;return !op||op.status<200||op.status>=300;}))throw fail('Realm bulk contained failed or missing items');
+          encodeMissing();
           return result;
         },
         /** Removes documents of this corpus by ID. Missing IDs are already removed. */
@@ -184,11 +214,13 @@ export function createRealmResolver(options: RealmOptions) {
   return resolve;
 }
 
-export function createIndexTransport({endpoint,index,username,password,credentials,region='us-east-1',fetch:send=globalThis.fetch,allowIndexPattern=false}: IndexTransportOptions) {
+export function createIndexTransport({endpoint,index,username,password,credentials,region='us-east-1',fetch:send=globalThis.fetch,allowIndexPattern=false,cluster=false}: IndexTransportOptions) {
   const base=new URL(endpoint);
-  if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!(allowIndexPattern?/^[a-z][a-z0-9_*-]{0,150}$/:/^[a-z][a-z0-9_-]{0,150}$/).test(index))throw fail('Invalid index transport',400);
+  if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!(cluster?index==='_ingest':(allowIndexPattern?/^[a-z][a-z0-9_*-]{0,150}$/:/^[a-z][a-z0-9_-]{0,150}$/).test(index)))throw fail('Invalid index transport',400);
   return async function request<T = OpenSearchResponse>(path: string,body?: unknown,method='POST',contentType='application/json'): Promise<T> {
     if(allowIndexPattern && !(method==='POST'&&path==='/_search'))throw fail('Index patterns are read-only migration inventory',403);
+    // The cluster transport only manages OpenCrawl's own ingest pipelines.
+    if(cluster && !(method==='PUT'&&/^\/pipeline\/opencrawl-semantic-[a-f0-9]{16}$/.test(path)))throw fail('Cluster transport is limited to OpenCrawl pipelines',403);
     let url: URL,headers: Record<string, string>;
     let serialized: string | undefined;
     try {

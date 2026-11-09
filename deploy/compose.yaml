@@ -18,6 +18,8 @@ x-runtime: &runtime
     OPENCRAWL_OPENSEARCH_URL: http://opensearch:9200
     TEMPORAL_ADDRESS: temporal:7233
     TEMPORAL_NAMESPACE: default
+    # Optional semantic retrieval; run deploy/semantic.mjs once and paste the model ID into .env.
+    OPENCRAWL_SEMANTIC_MODEL: ${OPENCRAWL_SEMANTIC_MODEL:-}
   healthcheck: &tcp
     test: ["CMD", "node", "-e", "require('net').connect(process.env.PORT,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
     interval: 5s
@@ -117,7 +119,7 @@ configs:
   search:
     content: |
       {"principal": {"tenantId": "${OPENCRAWL_TENANT_ID:-self-hosted}", "userId": "${OPENCRAWL_USER_ID:-owner}"},
-       "sessions": {"endpoint": "http://opensearch:9200", "environment": "selfhost"}}
+       "sessions": {"endpoint": "http://opensearch:9200", "environment": "selfhost", "semanticModel": "${OPENCRAWL_SEMANTIC_MODEL:-}"}}
 
 volumes:
   s3:

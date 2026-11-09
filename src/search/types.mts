@@ -37,8 +37,11 @@ export interface RealmOptions {
   endpoint: string; index?: string; tenantId?: string; environment?: string; generation?: string;
   username?: string; password?: string; credentials?: CredentialProvider; region?: string;
   replicas?: number; fetch?: typeof globalThis.fetch;
+  /** Optional semantic retrieval: an OpenSearch ML Commons sparse-encoding model the operator
+   * deployed in this cluster (e.g. opensearch-neural-sparse-encoding-doc-v3-distill). */
+  semanticModel?: string;
 }
-export interface IndexTransportOptions extends RealmOptions {index: string; allowIndexPattern?: boolean}
+export interface IndexTransportOptions extends RealmOptions {index: string; allowIndexPattern?: boolean; cluster?: boolean}
 export interface Mapping {
   [option: string]: unknown;
   type?: string; dynamic?: string; properties?: Record<string, Mapping>; fields?: Record<string, Mapping>;
