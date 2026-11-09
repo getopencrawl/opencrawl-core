@@ -10,8 +10,11 @@ DTOs and runtime adapters; WorkOS, billing and managed connector code stay outsi
   external authorization boundaries.
 - Brand is the only mark/wordmark component. Use the static mark and lowercase
   opencrawl wordmark; never restore animated logo assets or hide the desktop
-  wordmark. Workspace navigation stays grouped at the right; its active underline
-  sits close below the label. Retain the content-aligned maximum width.
+  wordmark. Workspace navigation lives in the persistent left sidebar with a lavender
+  selected row. Match the supplied account-footer reference: a full-width docked
+  row below a divider, workspace icon, person above workspace, and one trailing
+  account-menu chevron. Do not duplicate workspace context beneath Brand or make
+  the footer a floating card. Retain the content-aligned maximum width.
 - Use the components exported from src/design/components.tsx. Never add a second
   native button, field, dialog or table implementation in a feature page. Add a
   shared primitive when an actual feature needs one. Native details/summary and
@@ -43,9 +46,9 @@ DTOs and runtime adapters; WorkOS, billing and managed connector code stay outsi
 ## Screen-by-screen visual restoration
 
 The approved original Usage screen is the visual specification for the report,
-including its nested source cards and horizontal header. Preserve its character;
+including its nested source cards. Preserve its character;
 TypeScript and shared components are implementation improvements, not permission
-to replace approved visuals. AppShell owns the shared top bar on every route and one responsive navigation
+to replace approved visuals. AppShell owns the shared left sidebar on every route and one responsive navigation
 tree. Usage is one page ordered Agent sessions, Data sources, Team. Show real
 indexed document-type counts inside each source tile without Imported/Indexed
 labels or import breakdowns; never compare distinct corpora with relative-size bars. Approved screens

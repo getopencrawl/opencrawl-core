@@ -10,8 +10,8 @@ test('one registry owns active SPA navigation and page rendering', () => {
   const routes = [{path:'/', label:'Overview', element:createElement('h1', null, 'Overview page')}, {path:'/diagnostics', label:'Diagnostics', element:createElement('h1', null, 'Diagnostics page')}];
   const html = renderToStaticMarkup(createElement(MemoryRouter, {initialEntries:['/diagnostics']}, createElement(AppShell, {workspace:{name:'Example workspace'}, routes})));
   assert.equal((html.match(/<nav\b/g) || []).length, 1);
-  assert.match(html, /<header[^>]*class="oc-workspace-header"/);
-  assert.doesNotMatch(html, /oc-sidebar|oc-app-header/);
+  assert.match(html, /<aside[^>]*class="oc-sidebar"/);
+  assert.doesNotMatch(html, /oc-workspace-header|oc-app-header/);
   assert.match(html, /aria-current="page"[^>]*class="oc-nav-link oc-nav-active"[^>]*href="\/diagnostics"/);
   assert.match(html, /Diagnostics page/);
   assert.doesNotMatch(html, /Overview page/);
@@ -29,4 +29,19 @@ test('field associates its error with the input and visible label', () => {
   assert.match(html, /aria-invalid="true"/);
   assert.match(html, /aria-describedby=/);
   assert.match(html, /role="alert"/);
+});
+
+test('the docked footer puts the person before their workspace in one account control', () => {
+  const render = (workspace: {name: string; userName?: string; email?: string; role?: string}) => renderToStaticMarkup(createElement(MemoryRouter, null, createElement(AppShell, {workspace, routes: []})));
+  const html = render({name: 'Example workspace', userName: 'Alex', email: 'alex@example.test', role: 'Admin'});
+  const trigger = html.match(/<button[^>]*class="[^"]*oc-account-trigger[^"]*"[^>]*>(.*?)<\/button>/)?.[1];
+  assert.ok(trigger);
+  assert.ok(trigger.indexOf('Alex') < trigger.indexOf('Example workspace'));
+  assert.match(html, /<footer class="oc-account-zone"/);
+  assert.match(trigger, /oc-workspace-icon/);
+  assert.match(html, /popover="auto"/);
+  assert.doesNotMatch(html, /oc-workspace-name|Your account|>Workspace</);
+  const standalone = render({name: 'Self-hosted workspace'});
+  assert.match(standalone, /oc-account-context/);
+  assert.doesNotMatch(standalone, /oc-account-trigger|Your account/);
 });

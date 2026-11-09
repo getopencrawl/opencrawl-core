@@ -1,8 +1,9 @@
 import type {IconName} from '../contracts.ts';
 
 const paths: Record<IconName, string> = {
+  workspace: 'M3 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16 M15 9h4a2 2 0 0 1 2 2v10 M1 21h22 M7 8h2 M7 12h2',
   overview: 'M3 10 12 3l9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z',
-  sources: 'M7 7h10v10H7z M3 3h3 M18 3h3v3 M21 18v3h-3 M6 21H3v-3',
+  sources: 'M9 3v5 M15 3v5 M7 8h10v4a5 5 0 0 1-10 0V8Z M12 17v4',
   usage: 'M4 20V10 M10 20V4 M16 20v-7 M22 20H2',
   diagnostics: 'M3 12h4l3-8 4 16 3-8h4',
   settings: 'M4 7h16 M4 17h16 M8 4v6 M16 14v6',
