@@ -90,3 +90,11 @@ turn an unavailable source into empty success, infer source URLs from IDs, or
 render highlighted/source text as HTML. Superseded/canceled requests and changed
 adapters cannot retain or restore earlier results. Keep search-only styles in the
 shared design system and preserve the existing public diagnostic exports.
+
+Sessions and Memories are core-owned pages driven by one LibraryAdapter and the
+core library API (see ../docs/sessions-and-memories.md). The server owns scope,
+visibility and ownership: never hide or show owner controls as a permission
+decision, and never filter private items in the client. List and viewer state
+live in the URL so history and links work. Transcripts render server-normalized
+entries as text; never render captured content as HTML. Deleting asks for
+confirmation in the shared Dialog. Access failures clear loaded content.

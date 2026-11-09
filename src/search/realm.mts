@@ -53,7 +53,8 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
       let mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       // The only in-place schema upgrade is an additive normalization revision.
       // Validate ownership and every existing field before making any change.
-      const previous: Mapping=structuredClone(realmMapping);
+      const withoutVisibility=(value: Mapping)=>{delete value.properties!.session.properties!.private;if(value.properties!.memory)delete value.properties!.memory.properties!.private;return value;};
+      const previous: Mapping=withoutVisibility(structuredClone(realmMapping));
       delete previous.properties!.connector.properties!.normalizerVersion;
       if(!mapping?.properties?.memory)delete previous.properties!.memory;
       if(mapping?._meta?.tenantId===tenantId && mapping?._meta?.schema===1 &&
@@ -61,9 +62,15 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
         await request('/_mapping',{properties:{connector:{properties:{normalizerVersion:{type:'integer'}}}}},'PUT');
         mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
-      const withoutMemory: Mapping=structuredClone(realmMapping);delete withoutMemory.properties!.memory;
+      const withoutMemory: Mapping=withoutVisibility(structuredClone(realmMapping));delete withoutMemory.properties!.memory;
       if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&!mapping.properties?.memory&&compatible(mapping,withoutMemory)) {
-        await request('/_mapping',{properties:{memory:realmMapping.properties.memory}},'PUT');
+        await request('/_mapping',{properties:{memory:withoutVisibility(structuredClone(realmMapping)).properties!.memory}},'PUT');
+        mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
+      }
+      // Owner visibility is the second additive revision: two boolean fields.
+      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&(!mapping.properties?.session?.properties?.private||!mapping.properties?.memory?.properties?.private)&&
+        compatible(mapping,withoutVisibility(structuredClone(realmMapping)))) {
+        await request('/_mapping',{properties:{session:{properties:{private:{type:'boolean'}}},memory:{properties:{private:{type:'boolean'}}}}},'PUT');
         mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
       if(mapping?._meta?.tenantId!==tenantId||mapping?._meta?.schema!==1||!compatible(mapping,realmMapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');
@@ -120,6 +127,25 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
           const result=await request('/_bulk',body,'POST','application/x-ndjson');
           if(!Array.isArray(result.items)||result.items.length!==ids.length||result.items.some(item=>{const op=item.delete;return !op||(op.status<200||op.status>=300)&&op.status!==404;}))throw fail('Realm delete contained failed or missing items');
           return result;
+        },
+        /** Owner operations over a whole resource (a session or memory file). The
+         * tenant and corpus filters are always applied; conflicts are retried until
+         * no matching document was skipped. */
+        async byQuery(principal: TenantPrincipal,operation: 'update' | 'delete',query: unknown,script?: unknown){
+          scope(principal);
+          if(operation==='update'&&!script)throw fail('Update script required',400);
+          const body={query:{bool:{filter:[{term:{tenantId}},{term:{corpus}}],must:[query]}},...(operation==='update'?{script}:{})};
+          let changed=0;
+          for(let attempt=0;attempt<5;attempt++) {
+            type ByQuery={updated?: number; deleted?: number; version_conflicts?: number; failures?: unknown[]; timed_out?: boolean};
+            let result: ByQuery;
+            try{result=await request<ByQuery>('/_'+operation+'_by_query?refresh=true&conflicts=proceed',body);}
+            catch(caught){const e=serviceError(caught);if(e.status===404)return {changed};throw e;}
+            if(result?.timed_out||!Array.isArray(result?.failures)||result.failures.length)throw fail('Realm '+operation+' by query incomplete');
+            changed+=(operation==='update'?result.updated:result.deleted)??0;
+            if(!result.version_conflicts)return {changed};
+          }
+          throw fail('Realm '+operation+' by query kept conflicting; retry');
         },
         async update(principal: TenantPrincipal,id: string,{script,upsert}: {script: unknown; upsert: SearchDocument}){
           let body;

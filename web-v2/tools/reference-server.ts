@@ -38,6 +38,17 @@ export function createReferenceServer(configuration: ReferenceConfiguration) {
       const url=new URL(request.url || '/',origin);
       if(url.pathname==='/api/reference/config' && request.method==='GET')return send(response,200,{name:configuration.name || 'Local workspace',mcpEndpoint:new URL('/mcp',upstream).href});
       if(url.pathname==='/api/reference/agents' && request.method==='GET')return send(response,200,await proxy('/api/board/directory',{}));
+      const library=/^\/api\/reference\/library\/((?:sessions|memories)\/(?:list|read|visibility|delete))$/.exec(url.pathname);
+      if(library) {
+        if(request.method!=='POST')return send(response,405,{error:{message:'Use POST for this request.'}});
+        if(!request.headers['content-type']?.startsWith('application/json'))return send(response,415,{error:{message:'Send application/json.'}});
+        const input=await readJson(request);
+        // The deployment checks scope and ownership; relay its status and safe message.
+        const upstreamResponse=await fetch(new URL('/api/library/'+library[1],upstream),{method:'POST',headers:{authorization:'Bearer '+configuration.token,'content-type':'application/json'},body:JSON.stringify(input),redirect:'error',signal:AbortSignal.timeout(30000)});
+        const body=record(await upstreamResponse.json().catch(()=>null));
+        if(!upstreamResponse.ok)return send(response,[400,403,404,413].includes(upstreamResponse.status)?upstreamResponse.status:503,{error:{message:typeof record(body.error).message==='string'?record(body.error).message:'This service is unavailable. Check the deployment configuration and try again.'}});
+        return send(response,200,body.data ?? {});
+      }
       if(url.pathname==='/api/reference/search' || url.pathname==='/api/reference/fetch') {
         if(request.method!=='POST')return send(response,405,{error:{message:'Use POST for this request.'}});
         if(!request.headers['content-type']?.startsWith('application/json'))return send(response,415,{error:{message:'Send application/json.'}});
@@ -53,7 +64,7 @@ export function createReferenceServer(configuration: ReferenceConfiguration) {
       const assets:Record<string,[string,string]>={'/console.js':[join(root,'dist/reference/console.js'),'text/javascript'],'/console.css':[join(root,'dist/styles.css'),'text/css'],...Object.fromEntries(['opencrawl-mark.svg','geist-sans.woff2','geist-mono.woff2'].map(name=>['/assets/'+name,[join(root,'../web/assets',name),name.endsWith('.svg')?'image/svg+xml':'font/woff2']]))};
       const asset=assets[url.pathname];
       if(asset){response.writeHead(200,{'content-type':asset[1]});response.end(await readFile(asset[0]));return;}
-      if(['/','/diagnostics','/agents','/settings'].includes(url.pathname)){response.writeHead(200,{'content-type':'text/html; charset=utf-8'});response.end(shell);return;}
+      if(['/','/sessions','/memories','/diagnostics','/agents','/settings'].includes(url.pathname)){response.writeHead(200,{'content-type':'text/html; charset=utf-8'});response.end(shell);return;}
       return send(response,404,{error:{message:'Page not found.'}});
     }catch(error){if(response.headersSent){response.end();return;}const status=error instanceof Error && 'status' in error && typeof error.status==='number'?error.status:503;return send(response,status,{error:{message:status<500&&error instanceof Error?error.message:'The local service is unavailable. Check server configuration and retry.'}});}
   });

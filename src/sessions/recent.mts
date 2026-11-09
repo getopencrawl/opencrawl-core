@@ -4,6 +4,7 @@ interface RecentBucket {key: string[]; lastActivity: {value: number}}
 import {createRealmResolver, realmField} from '../search/realm.mjs';
 import {createSessionIngest, sessionScope, digest} from './ingest.mjs';
 import {sourceBatchIdentity} from './event-identity.mjs';
+import {visibleTo} from './controls.mjs';
 
 const identityFields = ['userId', 'harness', 'installationId', 'sessionId'];
 const f = (key: string) => realmField('session', key);
@@ -40,7 +41,7 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
     const query = (body: QueryBody) => {signal?.throwIfAborted(); return collection.search(principal, body);};
     // max descending selects the correct top buckets across shards. Use the
     // canonical event timestamp (receipt fallback), never backfill upload time.
-    const result = await query({size: 0, query: {term: {[f('chunk')]: 0}}, aggs: {
+    const result = await query({size: 0, query: {bool: {filter: [{term: {[f('chunk')]: 0}}, visibleTo('session', principal)]}}, aggs: {
       recent: {multi_terms: {terms: identityFields.map(key => ({field: f(key)})), size: 10,
         order: [{lastActivity: 'desc'}, {_key: 'asc'}]}, aggs: {lastActivity: {max: {field: 'timestamp'}}}},
     }});
@@ -53,7 +54,7 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
       if (!['codex', 'claude-code'].includes(identity.harness)) throw invalid();
       const filter: QueryBody[] = identityFields.map(key => ({term: {[f(key)]: identity[key]}}));
       const lastActivityAt = new Date(bucket.lastActivity.value).toISOString();
-      filter.push({term: {[f('chunk')]: 0}}, {range: {timestamp: {lte: lastActivityAt}}});
+      filter.push({term: {[f('chunk')]: 0}}, {range: {timestamp: {lte: lastActivityAt}}}, visibleTo('session', principal));
       // Per-session cache only; evict large batches as we advance through history.
       const batches = new Map<string, SessionBatch>();
       async function original(hit: IndexHit) {
