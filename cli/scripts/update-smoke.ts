@@ -18,7 +18,7 @@ const next = original.version.split('.').map(Number); next[2]++;
 const version = next.join('.');
 const platform = `${process.platform}-${process.arch}`;
 const scratch = mkdtempSync(join(tmpdir(), 'opencrawl-upgrade-'));
-const env = {...process.env, OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config'), XDG_CACHE_HOME: join(scratch, 'cache')};
+const env = {...process.env, HOME: scratch, USERPROFILE: scratch, CLAUDE_CONFIG_DIR: join(scratch, 'claude'), CODEX_HOME: join(scratch, 'codex'), OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config'), XDG_CACHE_HOME: join(scratch, 'cache')};
 let captureServer: ReturnType<typeof createServer> | undefined;
 const packages = new Map<string, Map<string, {pkg: any; bytes: Buffer}>>();
 function sync(command: string[], cwd?: string) {
@@ -72,6 +72,15 @@ try {
     const installedRoot = join(install, 'node_modules/@getopencrawl/cli');
     const launcher = join(installedRoot, 'bin/opencrawl.cjs');
     if (sync(['node', launcher, '--version']) !== original.version) throw new Error('Initial installation mismatch');
+    // Seed an older managed skill and a separate user-edited installation.
+    sync(['node', launcher, 'skills', 'install', '--client', 'claude-code', '--client', 'codex', '--api', 'http://127.0.0.1:8093', '--json']);
+    const skillRoot = join(scratch, 'claude/skills/opencrawl'), skillFile = join(skillRoot, 'SKILL.md');
+    const manifestFile = join(skillRoot, '.opencrawl-skill.json');
+    const manifest = JSON.parse(readFileSync(manifestFile, 'utf8')), oldSkill = 'Previous managed skill';
+    writeFileSync(skillFile, oldSkill); manifest.files['SKILL.md'] = createHash('sha256').update(oldSkill).digest('hex');
+    writeFileSync(manifestFile, JSON.stringify(manifest));
+    const customized = join(scratch, '.agents/skills/opencrawl/SKILL.md');
+    writeFileSync(customized, 'User-customized skill');
     // Preserve an existing personal-scope installation and offline queue through
     // the real npm update. A changed destination must not redirect that queue.
     const principal={tenantId:'org_team',userId:'human',name:'Human'};
@@ -93,7 +102,16 @@ try {
     writeFileSync(worker, `const cli=require(${JSON.stringify(launcher)}); cli.update({force:true, root:${JSON.stringify(installedRoot)}, fetcher:async()=>new Response(JSON.stringify({name:'@getopencrawl/cli',version:${JSON.stringify(version)}})), install:v=>cli.installRelease(v,{registry:${JSON.stringify(server.url.origin)}})}).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e);process.exitCode=1});`);
     const receipt = JSON.parse(await asyncRun(['node', worker]));
     if (!receipt.updated || receipt.version !== version) throw new Error('Upgrade was not promoted');
+    // The new launcher performs its ordinary automatic-refresh path. Registry
+    // checking is already current, so this smoke never contacts public npm.
+    writeFileSync(join(env.XDG_CACHE_HOME, 'opencrawl/update.json'), JSON.stringify({checkedAt: Date.now()}));
+    env.OPENCRAWL_NO_UPDATE = '0';
     if (sync(['node', launcher, '--version']) !== version) throw new Error('Original launcher did not adopt the updated launcher and binary');
+    env.OPENCRAWL_NO_UPDATE = '1';
+    if (!readFileSync(skillFile, 'utf8').includes('http://127.0.0.1:8093') || readFileSync(skillFile, 'utf8') === oldSkill) throw new Error('Upgrade did not refresh the managed skill with its saved deployment');
+    if (readFileSync(customized, 'utf8') !== 'User-customized skill') throw new Error('Upgrade overwrote a customized skill');
+    const skillReceipt = JSON.parse(readFileSync(join(env.XDG_CACHE_HOME, 'opencrawl/skills-update.json'), 'utf8'));
+    if (skillReceipt.version !== version || skillReceipt.result.updated !== 1 || skillReceipt.result.conflicts !== 1) throw new Error('Upgrade did not report managed skill outcomes');
     const rejected=Bun.spawn(['node',launcher,'collect','flush','--json'],{env,stdout:'pipe',stderr:'pipe'});
     const [rejection,diagnostic,exitCode]=await Promise.all([new Response(rejected.stdout).text(),new Response(rejected.stderr).text(),rejected.exited]);
     if(!exitCode||diagnostic||JSON.parse(rejection).error?.code!=='CAPTURE_DESTINATION_CHANGED')throw new Error('Updated collector redirected the queue');
@@ -108,7 +126,7 @@ try {
     if(readFileSync(join(capture,'state','cursor.json'),'utf8')!=='{"offset":42}')throw new Error('Upgrade changed capture cursor');
     const stored=await createSessionIngest({store}).getBatch(principal,{...batch,batchId:status.lastUpload.batchId});
     if(stored?.owner.userId!==principal.userId||stored?.owner.tenantId!==principal.tenantId||stored?.events[0].data?.content!=='synthetic upgrade fixture')throw new Error('Upgrade lost attribution or queued content');
-    console.log(`Real npm upgrade ${original.version} → ${version}, original-command reuse and queued capture recovery without reinstall verified.`);
+    console.log(`Real npm upgrade ${original.version} → ${version}, automatic managed-skill refresh with saved deployment/conflict preservation, original-command reuse and queued capture recovery verified.`);
   } finally { server.stop(true); }
  } finally {
   if(captureServer){captureServer.closeAllConnections();await new Promise<void>(r=>captureServer!.close(()=>r()));}

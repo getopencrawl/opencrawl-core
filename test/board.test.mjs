@@ -73,11 +73,31 @@ test('durable scope, authenticated authors, retries and presence expiration', as
   assert.deepEqual((await board.sync(b, {workspace: b.tenantId, agent: 'codex', topics: ['auth'], after: 0})).messages, []);
   const other = await board.sync({...a, userId: 'other'}, {workspace: a.tenantId, agent: 'codex', topics: ['auth'], after: 0});
   assert.notEqual(other.agent, first.agent);
-  assert.equal(other.messages[0].text, 'Taking auth refresh');
+  assert.equal(other.messages[0].preview, 'Taking auth refresh');
+  assert.ok(!('text' in other.messages[0]));
   assert.equal((await f.restart().sync(a, {workspace: a.tenantId, agent: 'reader', topics: ['auth'], after: 0})).messages.length, 1);
   assert.ok((await f.make().topics(a)).topics[0].active.length);
   f.later();
   assert.deepEqual((await f.make().topics(a)).topics[0].active, []);
+});
+
+test('discovery exposes bounded previews; selected fetch is read-only, scoped and paginated', async t => {
+  const f = await fixture(t), board = f.make(), text = ('Specific reusable finding. ' + 'detail '.repeat(60)).trimEnd();
+  await board.sync(a, {workspace: a.tenantId, agent: 'writer', posts: [post('details', text)]});
+  const result = await board.sync(a, {workspace: a.tenantId, agent: 'reader', topics: ['auth'], after: 0});
+  assert.equal(result.messages[0].ref, 'message:1');
+  assert.ok(result.messages[0].preview.length <= 160);
+  assert.ok(!JSON.stringify(result).includes(text));
+  const first = await board.fetch(a, {workspace: a.tenantId, id: result.messages[0].ref, length: 50});
+  assert.equal(first.text, text.slice(0, 50)); assert.equal(first.nextOffset, 50);
+  assert.ok(!('requestId' in first.message));
+  const rest = await board.fetch(a, {workspace: a.tenantId, id: first.id, offset: first.nextOffset, version: first.version});
+  assert.equal(first.text + rest.text, text); assert.equal(rest.nextOffset, null);
+  await assert.rejects(board.fetch(a, {workspace: 'b', id: first.id}), {status: 403});
+  await assert.rejects(board.fetch(b, {workspace: 'b', id: first.id}), {status: 404});
+  await assert.rejects(board.fetch({...a, captureAccess: 'write'}, {workspace: 'a', id: first.id}), {status: 403});
+  await assert.rejects(board.fetch(a, {workspace: 'a', id: first.id, version: '0'.repeat(64)}), {status: 409});
+  await assert.rejects(board.fetch(a, {workspace: 'a', id: first.id, offset: 99999}), {status: 400});
 });
 
 test('concurrent clients do not lose writes; bounded deltas eventually deliver each message once', async t => {
@@ -155,6 +175,8 @@ test('real MCP clients exchange scoped messages and revoked credentials cannot r
   };
   await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'codex', posts: [post('mcp')]});
   assert.equal((await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'claude', topics: ['auth'], after: 0})).messages.length, 1);
+  assert.equal((await call(clients[0], 'board_fetch', {workspace: a.tenantId, id: 'message:1'})).text, 'Taking auth refresh');
+  assert.equal((await clients[1].callTool({name: 'board_fetch', arguments: {workspace: b.tenantId, id: 'message:1'}})).isError, true);
   assert.deepEqual((await call(clients[1], 'board_topics', {})).topics, []);
   revoked = true;
   await assert.rejects(call(clients[0], 'board_topics', {}));
@@ -170,6 +192,6 @@ test('existing boards keep posting, retrying and reading after message 10000', a
   assert.deepEqual((await f.restart().sync(a,args)).accepted,[10001]);
   const read=await f.make().sync(a,{workspace:a.tenantId,agent:'reader',topics:['auth'],after:9999});
   assert.deepEqual(read.messages.map(m=>m.id),[10000,10001]);
-  assert.equal(read.messages[1].text,'Message beyond the old cap');assert.equal(read.more,false);
+  assert.equal(read.messages[1].preview,'Message beyond the old cap');assert.equal(read.more,false);
   assert.deepEqual((await f.make().sync(a,{...args,posts:[post('next')]})).accepted,[10002]);
 });

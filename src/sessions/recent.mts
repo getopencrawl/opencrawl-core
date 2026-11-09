@@ -4,11 +4,12 @@ interface RecentBucket {key: string[]; lastActivity: {value: number}}
 import {createRealmResolver, realmField} from '../search/realm.mjs';
 import {createSessionIngest, sessionScope, digest} from './ingest.mjs';
 import {sourceBatchIdentity} from './event-identity.mjs';
-import {visibleTo} from './controls.mjs';
+import {createControls, visibleTo} from './controls.mjs';
 import {capturedTitle, TITLE_KINDS} from './titles.mjs';
 import {promptText} from './library.mjs';
+import {preview} from '../board/disclosure.mjs';
 
-const identityFields = ['userId', 'harness', 'installationId', 'sessionId'];
+const identityFields = ['userId', 'harness', 'installationId', 'sessionId'] as const;
 const f = (key: string) => realmField('session', key);
 const invalid = () => new Error('Invalid recent session response');
 const iso = (value: unknown) => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
@@ -35,15 +36,26 @@ export function sessionMessage(event: SessionEvent) {
 /** Read the current tenant's ten newest indexed sessions, then verify and read
  * original events from immutable capture. No new projection or reindex needed. */
 export function createRecentSessions({store, prefix, ...options}: RealmOptions & {store: ObjectStore; prefix: string}) {
-  const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix});
-  return {async read(principal: Principal, {signal}: {signal?: AbortSignal} = {}) {
+  const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
+  async function read(principal: Principal, {signal, summary = false, id}: {signal?: AbortSignal; summary?: boolean; id?: string} = {}) {
     sessionScope(principal);
     if (principal.captureAccess !== undefined) throw Object.assign(new Error('Session read access required'), {status: 403});
+    let selection: string[] | undefined;
+    if (id !== undefined) {
+      try {
+        const encoded = id.replace(/^session:/, '');
+        const value: unknown = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+        if (!id.startsWith('session:') || !Array.isArray(value) || value.length !== 5 || value.some(key => typeof key !== 'string' || !/^[A-Za-z0-9_.:-]{1,200}$/.test(key)) || Buffer.from(JSON.stringify(value)).toString('base64url') !== encoded) throw new Error();
+        if (value[0] !== principal.tenantId) throw Object.assign(new Error('Session not found or no longer available.'), {status: 404});
+        selection = value.slice(1);
+      } catch (error) {if ((error as {status?: number}).status) throw error; throw Object.assign(new Error('Invalid session reference.'), {status: 400});}
+    }
     const collection = resolve(principal).collection('session');
     const query = (body: QueryBody) => {signal?.throwIfAborted(); return collection.search(principal, body);};
     // max descending selects the correct top buckets across shards. Use the
     // canonical event timestamp (receipt fallback), never backfill upload time.
-    const result = await query({size: 0, query: {bool: {filter: [{term: {[f('chunk')]: 0}}, visibleTo('session', principal)]}}, aggs: {
+    const result = await query({size: 0, query: {bool: {filter: [{term: {[f('chunk')]: 0}}, visibleTo('session', principal),
+      ...(selection ? identityFields.map((key, i) => ({term: {[f(key)]: selection![i]}})) : [])]}}, aggs: {
       recent: {multi_terms: {terms: identityFields.map(key => ({field: f(key)})), size: 10,
         order: [{lastActivity: 'desc'}, {_key: 'asc'}]}, aggs: {lastActivity: {max: {field: 'timestamp'}}}},
     }});
@@ -52,8 +64,14 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
     const sessions = [];
     for (const bucket of buckets) {
       if (!Array.isArray(bucket.key) || bucket.key.length !== 4 || bucket.key.some(value => typeof value !== 'string' || !/^[A-Za-z0-9_.:-]{1,200}$/.test(value)) || !Number.isFinite(bucket.lastActivity?.value)) throw invalid();
-      const identity = Object.fromEntries(identityFields.map((key, i) => [key, bucket.key[i]]));
+      const identity = {userId: bucket.key[0], harness: bucket.key[1], installationId: bucket.key[2], sessionId: bucket.key[3]};
       if (!['codex', 'claude-code'].includes(identity.harness)) throw invalid();
+      if (selection && bucket.key.some((key, i) => key !== selection![i])) throw invalid();
+      async function authorize() {
+        const control = await controls.read({...principal, userId: identity.userId}, 'sessions', identity.harness, identity.sessionId);
+        return !control?.deletedAt && !(control?.visibility === 'private' && identity.userId !== principal.userId);
+      }
+      if (!await authorize()) continue;
       const filter: QueryBody[] = identityFields.map(key => ({term: {[f(key)]: identity[key]}}));
       const lastActivityAt = new Date(bucket.lastActivity.value).toISOString();
       filter.push({term: {[f('chunk')]: 0}}, {range: {timestamp: {lte: lastActivityAt}}}, visibleTo('session', principal));
@@ -99,9 +117,6 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
         partial = true;
         return null;
       }
-      const firstUserMessage = await select('user', 'asc');
-      const lastUserMessage = await select('user', 'desc');
-      const latestAssistantMessage = await select('assistant', 'desc');
       let title = null, titleTimestamp = null;
       const metadata = await query({size: 20, query: {bool: {filter: [...filter,
         {terms: {[f('kind')]: TITLE_KINDS}}]}}, sort: [{timestamp: 'desc'}, {[f('sequence')]: 'desc'}, {id: 'desc'}]});
@@ -110,11 +125,30 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
         const candidate = capturedTitle(event, batch);
         if (typeof candidate === 'string' && candidate.trim()) {title = candidate; titleTimestamp = iso(event.timestamp); break;}
       }
+      const firstUserMessage = !summary || !title ? await select('user', 'asc') : null;
+      const lastUserMessage = summary ? null : await select('user', 'desc');
+      const latestAssistantMessage = summary ? null : await select('assistant', 'desc');
       const titleSource = title ? 'captured' : firstUserMessage ? 'first_user_message' : 'session_id';
       title ||= firstUserMessage?.text.replace(/\s+/g, ' ').trim() || `Session ${identity.sessionId}`;
       if (titleSource === 'first_user_message') titleTimestamp = firstUserMessage!.timestamp;
-      sessions.push({...identity, title, titleSource, titleTimestamp, lastActivityAt, firstUserMessage, lastUserMessage, latestAssistantMessage, partial});
+      // Recheck owner controls after source reads, including on cached/indexed IDs.
+      if (!await authorize()) continue;
+      const ref = 'session:' + Buffer.from(JSON.stringify([principal.tenantId, ...bucket.key])).toString('base64url');
+      sessions.push({...identity, id: ref, title: summary ? preview(title, 120) : title, titleSource, titleTimestamp, lastActivityAt,
+        firstUserMessage: summary ? null : firstUserMessage, lastUserMessage, latestAssistantMessage, partial});
     }
     return sessions;
-  }};
+  }
+  return {
+    read,
+    async list(principal: Principal, options: {signal?: AbortSignal} = {}) {
+      return (await read(principal, {...options, summary: true})).map(({id, harness, title, titleSource, lastActivityAt, partial}) =>
+        ({id, harness, title: preview(title, 120), titleSource, lastActivityAt, partial}));
+    },
+    async fetch(principal: Principal, id: string, options: {signal?: AbortSignal} = {}) {
+      const row = (await read(principal, {...options, id}))[0];
+      if (!row) throw Object.assign(new Error('Session not found or no longer available.'), {status: 404});
+      return row;
+    },
+  };
 }

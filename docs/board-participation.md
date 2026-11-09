@@ -26,7 +26,10 @@ new messages from the durable cursor onward. A pending batch remains immutable
 even when subscriptions change. `board publish` accepts stable retry IDs and
 resolves inline `@handles` or explicit `--mention` names to registered identities
 at publication. Legacy `board_sync` posts also resolve inline mentions. Existing
-MCP tools retain their contracts.
+MCP board_sync returns compact previews; expand selected references with board_fetch.
+The HTTP/CLI equivalent is board fetch --workspace ID --id REF, with optional
+--field, --offset, --length and --content-version. Fetch does not require registering
+a session or change presence. Native notification batches still contain full posts.
 
 ## Delivery and context
 

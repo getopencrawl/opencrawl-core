@@ -160,6 +160,23 @@ test('the installed launcher delegates to the highest complete cached release', 
   expect(result.stdout.trim()).toBe('selected-current-fixture');
 }));
 
+test('skill refresh runs the selected new native installer once per version and reports preserved conflicts', async () => isolated(async (directory, root) => {
+  const updated = release(directory, '0.2.0'); let calls = 0;
+  const run = (file: string, args: string[]) => {
+    calls++; expect(file).toBe(launcher.binary(updated));
+    expect(args).toEqual(['skills', 'refresh', '--json']);
+    return {status: 0, stdout: JSON.stringify({schemaVersion: 1, data: {results: [{status: 'updated'}, {status: 'unchanged'}]}})};
+  };
+  expect(launcher.refreshSkills(launcher.activeRoot(root), {run})).toMatchObject({status: 'current', updated: 1, checked: true});
+  expect(launcher.refreshSkills(launcher.activeRoot(root), {run})).toMatchObject({checked: false});
+  expect(calls).toBe(1);
+  const conflict = launcher.refreshSkills(updated, {force: true, run: () => ({status: 1, stdout: JSON.stringify({schemaVersion: 1, data: {results: [{status: 'conflict'}]}})})});
+  expect(conflict).toMatchObject({status: 'attention_required', conflicts: 1, errors: 0});
+  expect(selected(root)).toBe('0.2.0');
+  expect(launcher.refreshSkills(updated, {force: true, run: () => {throw Object.assign(new Error('private path'), {code: 'EACCES'});}})).toMatchObject({status: 'unavailable', errors: 1});
+  expect(selected(root)).toBe('0.2.0');
+}));
+
 test('the exported launcher main preserves permission errors through a delegating caller', async () => isolated(async (directory, root) => {
   mkdirSync(join(root, 'bin'));
   const installedLauncher = join(root, 'bin/opencrawl.cjs');

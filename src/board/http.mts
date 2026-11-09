@@ -13,7 +13,7 @@ export function createBoardHandler({board, authenticate}: {board?: ReturnType<ty
     try {
       if (req.method !== 'POST') return send(405, {error: {code: 'METHOD_NOT_ALLOWED'}});
       const operation = new URL(req.url ?? '', 'http://board.invalid').pathname.slice('/api/board/'.length);
-      if (!Object.hasOwn(participationSchemas, operation)) return send(404, {error: {code: 'NOT_FOUND'}});
+      if (operation !== 'fetch' && !Object.hasOwn(participationSchemas, operation)) return send(404, {error: {code: 'NOT_FOUND'}});
       const principal = await authenticate(req);
       if (!principal) return send(401, {error: {code: 'AUTH_REQUIRED'}});
       if (!board?.participate) return send(503, {error: {code: 'BOARD_UNAVAILABLE'}});
@@ -26,7 +26,7 @@ export function createBoardHandler({board, authenticate}: {board?: ReturnType<ty
       let input;
       try {input = JSON.parse(Buffer.concat(chunks).toString());}
       catch {return send(400, {error: {code: 'INVALID_REQUEST'}});}
-      const data = await board.participate(principal, operation, input);
+      const data = operation === 'fetch' ? await board.fetch(principal, input) : await board.participate(principal, operation, input);
       send(200, {data});
     } catch(caught){const error=serviceError(caught);
       const status = error.name === 'ZodError' ? 400 : error.status || 503;
