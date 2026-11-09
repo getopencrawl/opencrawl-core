@@ -29,17 +29,17 @@ function MemoryList({adapter}: {adapter: LibraryAdapter}) {
   const setFilter = (value: string) => {model.filter = value;setFilterValue(value);};
   const {data, error, loading, retry} = useResource(adapter, 'memories/list', scope, 0, signal => adapter('memories/list', {scope}, signal), 'Memories could not load. Try again.');
   const words = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const shown = data?.memories.filter(memory => words.every(word => [memory.path, memory.description, memory.project].some(value => value.toLowerCase().includes(word)))) ?? [];
+  const shown = data?.memories.filter(memory => words.every(word => [memory.title, memory.path, memory.description, memory.project].some(value => value.toLowerCase().includes(word)))) ?? [];
   return <Page title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them. Private memories are visible only to the person who captured them." bodyClassName="oc-library">
     {params.get('deleted') === '1' && <Notice tone="success">Memory deleted. If the agent rewrites the file later, the new version is captured again.</Notice>}
     <Tabs label="Memories shown" value={scope} onChange={value => setParams(value === 'mine' ? {scope: 'mine'} : {})} items={[{value: 'all', label: 'All memories'}, {value: 'mine', label: 'My memories'}]}/>
-    {data && data.memories.length > 0 && <div className="query-form"><Field label="Filter memories"><Input type="search" value={filter} maxLength={200} onChange={event => setFilter(event.target.value)} placeholder="Path, project or description"/></Field></div>}
+    {data && data.memories.length > 0 && <div className="query-form"><Field label="Filter memories"><Input type="search" value={filter} maxLength={200} onChange={event => setFilter(event.target.value)} placeholder="Title, path, project or description"/></Field></div>}
     {error && <Notice tone="danger">{error}</Notice>}
     {error && <div className="actions"><Button onClick={retry}>Try again</Button></div>}
     {!data && loading && <LoadingState label="Loading memories"/>}
     {data?.truncated && <Notice tone="warning">Showing the 1,000 most recently changed memory files.</Notice>}
     {data && (shown.length ? <ul className="oc-rows">{shown.map(memory => <li key={memoryPath(memory)}><Link to={memoryPath(memory)} className="oc-row">
-      <span className="oc-row-title"><span>{memory.description || memory.path}</span><VisibilityBadge value={memory.private}/></span>
+      <span className="oc-row-title"><span>{memory.title}</span><VisibilityBadge value={memory.private}/></span>
       <span className="oc-row-optional mono" title={memory.path}>{memory.path}</span>
       <span className="oc-row-optional">{authorName(memory.userId, memory.mine, data.authors)}</span>
       <span className="oc-row-end"><When value={memory.modifiedAt}/></span>
@@ -59,7 +59,7 @@ function MemoryViewer({adapter, reference}: {adapter: LibraryAdapter; reference:
   const {memory} = data, current: Visibility = visibility ?? (memory.private ? 'private' : 'team');
   return <div className="oc-library oc-library-viewer">
     {back}
-    <PageHeader title={memory.path.split('/').at(-1) || memory.path} actions={memory.mine ? <OwnerControls noun="memory" visibility={current}
+    <PageHeader title={memory.title} actions={memory.mine ? <OwnerControls noun="memory" visibility={current}
       onVisibility={async (value, signal) => {await mutate('memories/visibility', {harness: memory.harness, path: memory.path, visibility: value}, signal); setVisibility(value);}}
       onDelete={async signal => {await mutate('memories/delete', {harness: memory.harness, path: memory.path}, signal); navigate('/memories?deleted=1', {replace: true});}}
       deleteDescription="OpenCrawl removes this memory from search for everyone and ignores this version in future captures. The file on your machine is not changed; if the agent rewrites it, the new version is captured."/> : undefined}/>

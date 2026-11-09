@@ -10,7 +10,13 @@ agents captured and control who else can.
   Order and paging come from the index; text comes from the verified original
   capture batch.
 - **Memories** lists the current memory files agents keep (the newest copy per
-  person, agent and path) with their description, and shows the full file.
+  person, agent and path) with a readable title, and shows the full file.
+  Titles use an explicit frontmatter title/name, a meaningful opening Markdown
+  heading, a frontmatter description, then a filename with timestamp/ID prefixes
+  removed and word separators expanded. Memory indexes and summaries keep their
+  document-wide labels. Lists and viewers use the same bounded, read-time rule,
+  so existing captures improve without reindexing or rewriting the source files.
+  The original path remains visible and filtering includes titles and descriptions.
 
 ## Visibility
 
