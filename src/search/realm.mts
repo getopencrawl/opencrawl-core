@@ -19,7 +19,8 @@ export function realmField(corpus: string,field: string) {
 export function realmDocument(corpus: string,id: string,document: SearchDocument) {
   if(!corpora.has(corpus)||typeof id!=='string'||!/^[A-Za-z0-9_:-]{1,256}$/.test(id)||typeof document?.tenantId!=='string'||!document.tenantId) throw fail('Document realm scope required',403);
   const {tenantId,text,title,sourceKey,...metadata}=document;
-  const raw=document.timestamp;
+  // Memory files are dated by when the agent last wrote them, not by upload time.
+  const raw=document.timestamp??(corpus==='memory'?document.modifiedAt:undefined);
   let timestamp= typeof raw==='number'?raw:typeof raw==='string'&&/^\d{10}(\.\d+)?$/.test(raw)?Number(raw)*1000:Date.parse(String(raw));
   if(!Number.isFinite(timestamp)) timestamp=Date.parse(document.receivedAt ?? '')||(document.extractedAt ?? NaN);
   const author=document.author??document.authorId??document.userId;

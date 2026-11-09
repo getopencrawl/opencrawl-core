@@ -14,13 +14,13 @@ export const workspaceSearchSchema = z.strictObject({
   query: z.string().trim().min(1).max(4000).describe('Words to find. Start with distinctive terms; broaden or reformulate if coverage is insufficient.'),
   source: z.enum(['all', 'sessions', 'connectors','memories']).default('all'),
   match: z.enum(['any', 'all', 'phrase']).default('any').describe('any ranks passages matching any words; all requires every analyzed term; phrase requires the analyzed words in order.'),
-  sessionId: z.string().min(1).max(200).optional().describe('Restrict to a known session; requires source=sessions.'),
+  sessionId: z.string().min(1).max(200).optional().describe('Restrict to a known session and the agent memories written from it (memory frontmatter originSessionId); not with source=connectors.'),
   limit: z.number().int().min(1).max(40).default(10),
   dedupe: z.boolean().default(true).describe('Group whitespace-equivalent passages within the same session/resource. Set false to inspect every occurrence.'),
   after: z.string().datetime({offset: true}).optional().describe('Only passages at or after this time (ISO 8601). Session passages use the captured event time.'),
   before: z.string().datetime({offset: true}).optional().describe('Only passages at or before this time (ISO 8601), e.g. to see what was known as of a date.'),
   cursor: z.string().max(2048).optional(),
-}).refine(v => !v.sessionId || v.source === 'sessions', 'sessionId requires source=sessions')
+}).refine(v => !v.sessionId || v.source !== 'connectors', 'sessionId cannot filter connectors')
   .refine(v => !v.after || !v.before || Date.parse(v.after) <= Date.parse(v.before), 'after must not be later than before');
 export const workspaceFetchSchema = z.strictObject({
   id: z.string().regex(/^(sessions|connectors|memories):[A-Za-z0-9_:-]{1,256}$/).describe('An id returned by search. Access is checked again on every fetch.'),
@@ -57,7 +57,8 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       const {cursor, ...query} = parsed.data;
       const fingerprint = hash([principal.tenantId, principal.userId, query]);
       const page = cursor ? decode(cursor, fingerprint) : {offset: 0, expires: now() + TTL};
-      const selected = query.source === 'all' ? ['sessions', 'connectors',...(memories?['memories']:[])] : [query.source];
+      // A session filter scopes sessions and their memories; connector items belong to no session.
+      const selected = query.source === 'all' ? ['sessions', ...(query.sessionId ? [] : ['connectors']), ...(memories?['memories']:[])] : [query.source];
       const groups = await Promise.all(selected.map(async source => {
         const adapter = source === 'sessions' ? sessions : source==='memories'?memories:connectors;
         if (!adapter) return {source, state: 'not_configured', hits: [], truncated: false};
