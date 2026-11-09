@@ -131,7 +131,7 @@ export function createBoardSearch(options: RealmOptions & {now?: () => number}) 
       for (const id of snapshot.ids.slice(offset, offset + args.limit)) {
         const source = messages[id - 1];
         if (!source || source.id !== id) throw error('Board source changed; restart search', 409);
-        const {requestId, ...message} = source;
+        const {requestId, publication, ...message} = source;
         results.push(message); output.next = offset + results.length < snapshot.ids.length ? token + ':' + (offset + results.length) : null;
         if (Buffer.byteLength(JSON.stringify(output)) > 8192) {results.pop(); break;}
       }

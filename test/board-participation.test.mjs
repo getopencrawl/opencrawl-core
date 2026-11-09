@@ -114,6 +114,53 @@ test('legacy MCP posts resolve registered mentions without changing board_sync c
   assert.equal(batch.messages[0].name,'legacy');
 });
 
+test('MCP and CLI suppress their own cross-transport posts without suppressing peers', async t => {
+  const f=await fixture(t); let board=f.make();
+  await register(board,alice); await register(board,alice,'another','codex:another');
+  await board.participate(alice,'subscribe',{session:'one',homepage:false,topics:['build']});
+  const sync=(principal,agent,posts=[])=>board.sync(principal,{workspace:'a',agent,topics:['build'],after:0,posts});
+  const own=await sync(alice,'codex:one',[{id:'mcp',topic:'build',text:'Own MCP update'}]);
+  assert.deepEqual(own.accepted,[1]); assert.deepEqual(own.messages,[]);
+  f.advance(); assert.equal((await inbox(board)).batch,null);
+  await board.participate(alice,'publish',{session:'one',id:'cli',topic:'build',text:'Own CLI update'});
+  assert.deepEqual((await sync(alice,'CODEX:ONE')).messages,[]);
+  // Display-name equality from another account is never ownership evidence.
+  await sync(bob,'codex:one',[{id:'spoof',topic:'build',text:'Other account, same label'}]);
+  await board.participate(alice,'publish',{session:'another',id:'peer',topic:'build',text:'Same account, other session'});
+  board=f.restart();
+  const batch=(await inbox(board)).batch;
+  assert.deepEqual(batch.messages.map(m=>m.id),[3,4]);
+  assert.ok(batch.messages.every(m=>!('publication' in m)));
+  await ack(board,batch.receipt);
+  assert.equal((await inbox(board)).batch,null);
+  const bobsView=await sync(bob,'codex:one');
+  assert.deepEqual(bobsView.messages.map(m=>m.id),[1,2,4]);
+  assert.deepEqual((await sync(alice,'codex:one',[{id:'mcp',topic:'build',text:'Own MCP update'}])).accepted,[1]);
+  assert.equal((await board.read(alice)).messages.length,4);
+});
+
+test('unknown inline tags warn once per response and retries retain original routing', async t => {
+  const f=await fixture(t),board=f.make();
+  await register(board,alice); await register(board,bob,'two','claude:two');
+  const args={session:'one',id:'tag',topic:'build',text:'@missing @missing @claude:two coordinate'};
+  const first=await board.participate(alice,'publish',args);
+  assert.equal(first.warning,'Tags not notified (unregistered): @missing.');
+  assert.equal(first.mentions.length,1);
+  await register(board,bob,'later','missing');
+  assert.deepEqual(await board.participate(alice,'publish',args),first);
+  await assert.rejects(board.participate(alice,'publish',{...args,mentions:['missing']}),{status:409});
+  const newTarget=await board.participate(bob,'inbox',{session:'later'});
+  assert.equal(newTarget.batch,null); // No retroactive tag on the retry.
+  await assert.rejects(board.participate(alice,'publish',{...args,id:'explicit',mentions:['unknown']}),{status:404});
+  const mcpArgs={workspace:'a',agent:'legacy',posts:[{id:'tag',topic:'build',text:'@notjoined dependency'}]};
+  const mcp=await board.sync(alice,mcpArgs);
+  assert.equal(mcp.warning,'Tags not notified (unregistered): @notjoined.');
+  await register(board,bob,'third','notjoined');
+  const retry=await board.sync(alice,mcpArgs);
+  assert.deepEqual(retry.accepted,mcp.accepted); assert.equal(retry.warning,mcp.warning);
+  assert.ok((await board.read(alice)).messages.every(m=>!('publication' in m)));
+});
+
 test('single-tenant HTTP registration and inbox persist without hosted credentials', async t => {
   const dir=await mkdtemp(join(tmpdir(),'board-http-')); const token='local-test-only-token-'.repeat(3);
   let server;
@@ -135,4 +182,7 @@ test('single-tenant HTTP registration and inbox persist without hosted credentia
   await new Promise(r=>server.close(r)); await start();
   assert.equal((await (await request('directory')).json()).data.agents[0].agent,first.agent);
   assert.equal((await request('inbox',{session:'one',tenantId:'b'})).status,400);
+  const published=await request('publish',{session:'one',id:'warn',topic:'test',text:'@unknown dependency'});
+  assert.equal(published.status,200);
+  assert.equal(published.json().data.warning,'Tags not notified (unregistered): @unknown.');
 });

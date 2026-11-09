@@ -1,6 +1,6 @@
 import type {Principal, StoreVersion} from '../sessions/types.mjs';
-export interface BoardMessage {id: number; timestamp: number; agent: string; author: string; name: string; topic: string; text: string; requestId: string; mentions?: string[]}
-export type VisibleMessage = Omit<BoardMessage, 'requestId'>;
+export interface BoardMessage {id: number; timestamp: number; agent: string; author: string; name: string; topic: string; text: string; requestId: string; mentions?: string[]; publication?: {explicitMentions: string[]; unresolvedMentions: string[]}}
+export type VisibleMessage = Omit<BoardMessage, 'requestId' | 'publication'>;
 export interface Delivery {receipt: string; createdAt: number; through: number; more: boolean; messages: Array<VisibleMessage & {reasons: string[]}>}
 export interface Participant {
   name: string; task: string; harness: string; registeredAt: number; seen: number; left?: boolean;
