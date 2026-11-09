@@ -15,6 +15,7 @@ export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {
 }: DiagnosticOptions & {principal: Principal; admin: boolean; revalidate(): Promise<number>;
   respond(status: number, body: string, type?: string): void; onSearch?(length: number): void}) {
   if (!admin) return respond(403, 'Organization admin access required');
+  try {
       if (route.name === 'debug-board') {
         const json = (status: number, value: unknown) => respond(status, JSON.stringify(value), 'application/json');
         if ([...url.searchParams.keys()].some(key => !['topic', 'before'].includes(key) || url.searchParams.getAll(key).length !== 1)) return json(400, {error: 'INVALID_QUERY'});
@@ -64,4 +65,8 @@ export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {
         onSearch?.(input.query.length);
         return json(200, {sessions, connectors: connected, memories});
       }
+  } catch(error) {
+    if(errorInfo(error).status===403)return respond(403,JSON.stringify({error:'WORKSPACE_ACCESS_DENIED'}),'application/json');
+    throw error;
+  }
 }
