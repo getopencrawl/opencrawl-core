@@ -1,3 +1,5 @@
+import type {createSlackOAuth} from '../integrations/slack-oauth.mjs';
+import {connectorProxyHandler} from '../integrations/proxy-http.mjs';
 import type {IncomingMessage,ServerResponse} from 'node:http';
 import type {Workos,Principal} from '../identity/types.mjs';
 import type {SelfhostSettings} from './settings.mjs';
@@ -46,13 +48,15 @@ type Store=ReturnType<typeof createObjectStore>;
 export interface SelfhostApplicationOptions {
   settings:SelfhostSettings;store:Store;prefix:string;workos?:Workos;
   integrations?:Integrations;providers?:ProviderCatalog;connectors?:ReturnType<typeof createConnectorResolver>;
+  oauth?:ReturnType<typeof createSlackOAuth>;
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one operator-owned WorkOS organization. */
-export function selfhostApplication({settings,store,prefix,workos:sdk,integrations,providers={},connectors,
+export function selfhostApplication({settings,store,prefix,workos:sdk,integrations,providers={},connectors,oauth,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
 }:SelfhostApplicationOptions) {
   const workos=sdk||createWorkos(settings);
+  const credentialProxy=oauth?connectorProxyHandler(oauth):null;
   const admit=singleOrganizationIdentity(workos,settings.organizationId),resolve=singleOrganizationPrincipal(workos,settings.organizationId);
   const identifyCli=cliIdentity(settings,workos),organizations=teamService(workos,roleWriteGuard(store,prefix));
   const onboarding=createOnboardingStatus({store,prefix}),observe=createOnboardingObserver(onboarding);
@@ -116,6 +120,7 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
       if(req.method==='GET'&&url.pathname==='/health')return json(200,{ok:true,mode:'selfhost',revision:settings.revision||'development'});
       if(url.pathname==='/.well-known/opencrawl-cli')return req.method==='GET'?json(200,cliConfiguration(settings)):respond(405,'Method not allowed');
       if(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'].includes(url.pathname)){res.setHeader('Access-Control-Allow-Origin','*');return req.method==='GET'?json(200,mcpMetadata(settings)):respond(405,'Method not allowed');}
+      if(url.pathname==='/api/connector-proxy')return credentialProxy?await credentialProxy(req,res):respond(503,'Connector proxy unavailable');
       if(url.pathname==='/mcp')return await mcp(req,res);
       if(url.pathname.startsWith('/api/sessions/'))return await capture(req,res);
       if(url.pathname==='/api/search')return await query(req,res);
@@ -147,7 +152,8 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
         if(!result.sealedSession)return message(503,'Sign-in is unavailable','Try signing in again.');
         cookie(SESSION,result.sealedSession);return redirect('/');
       }
-      const route=productRoute(req.method||'',url.pathname);
+      const oauthCallback=url.pathname==='/oauth/connectors/slack/callback'&&req.method==='GET';
+      const route=oauthCallback?{name:'connector-oauth-callback'}:productRoute(req.method||'',url.pathname);
       if(!route)return respond(404,'Not found');
       if(route.status)return respond(route.status,'Method not allowed');
       if(req.method==='POST'&&req.headers.origin!==settings.url)return respond(403,'Invalid request origin');
@@ -161,6 +167,7 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
       const current=await admit(identity);
       if(current.status!==200)return respond(current.status,current.status===503?'Sign-in is temporarily unavailable.':'Workspace access denied');
       const {principal,user,member,cacheScope}=current,activeIdentity=identity;
+      if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
       const sources=(p:Principal)=>integrations?integrations.list(p):Promise.resolve([]);
       const consoleApi=createConsoleApi({url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>workos.organizations.getOrganization(id),members,user:id=>workos.userManagement.getUser(id),

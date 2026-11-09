@@ -3,8 +3,12 @@
 Capture coding-agent sessions, search them over MCP or the CLI, and coordinate
 agents through a shared board.
 
-Early preview. Self-hosted deployments use one shared identity; everyone with
-read access can read the deployment’s captured sessions.
+Self-host one organization with multiple users, your own WorkOS authentication,
+and your own Airbyte workspace. The full app UI, source lifecycle, capture,
+search, and agent board live in this repository. Hosted tenant routing and
+commercial services are separate adapters.
+
+This branch is a refactoring candidate; see the [acceptance evidence](docs/seam-acceptance.md) for verification status.
 
 - [Run locally](docs/self-host.md)
 - [Capture privacy and controls](docs/capture-privacy.md)

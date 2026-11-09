@@ -1,7 +1,7 @@
 {
   "version": "7.28.2",
   "type": "DeclarativeSource",
-  "description": "Granola meeting notes and transcripts shared with the whole workspace, read with a Granola workspace API key. Composio has no Granola REST toolkit, so this connector calls Granola directly. Hosted OpenCrawl only.",
+  "description": "Granola meeting notes and transcripts shared with the whole workspace, read with a Granola workspace API key. This connector calls Granola directly using an operator-owned workspace API key.",
   "check": {
     "type": "CheckStream",
     "stream_names": [

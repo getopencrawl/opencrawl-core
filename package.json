@@ -84,7 +84,8 @@
     "./integrations/manifests": "./dist/src/integrations/manifests.mjs",
     "./integrations/github-source/*": "./connectors/github/*",
     "./integrations/destination": "./dist/src/integrations/destination.mjs",
-    "./integrations/single-organization-storage": "./dist/src/integrations/single-organization-storage.mjs"
+    "./integrations/single-organization-storage": "./dist/src/integrations/single-organization-storage.mjs",
+    "./integrations/purge": "./dist/src/integrations/purge.mjs"
   },
   "files": [
     "dist/src",
@@ -97,7 +98,8 @@
     "web-v2/package-lock.json",
     "web-v2/tsconfig.json",
     "web-v2/README.md",
-    "connectors/github"
+    "connectors/github",
+    "web-v2/dist/selfhost"
   ],
   "repository": {
     "type": "git",
@@ -117,8 +119,10 @@
     "mcp": "node dist/src/mcp/standalone.mjs",
     "build": "node tools/build.mts",
     "typecheck": "tsc --noEmit",
-    "prepack": "npm run build",
-    "typecheck:tooling": "tsc --project tsconfig.tooling.json"
+    "prepack": "npm run build && npm run build --prefix web-v2",
+    "typecheck:tooling": "tsc --project tsconfig.tooling.json",
+    "app": "node dist/src/selfhost/server.mjs",
+    "app:worker": "node dist/src/selfhost/worker.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/node": "2.1.2",

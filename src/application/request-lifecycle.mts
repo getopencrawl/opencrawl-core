@@ -1,7 +1,7 @@
 import type {IncomingMessage, ServerResponse} from 'node:http';
 import type {Log} from '../integrations/ports.mjs';
 type DrainResult = {status: string; reason: string};
-interface ShutdownReport extends DrainResult {protocol: number; phase: string; activeHandlers: number; acceptedHandlers: number; completedHandlers: number; rejectedHandlers: number; elapsedMs: number; exitCode: number}
+export interface ShutdownReport extends DrainResult {protocol: number; phase: string; activeHandlers: number; acceptedHandlers: number; completedHandlers: number; rejectedHandlers: number; elapsedMs: number; exitCode: number}
 interface LifecycleOptions {analytics?: {close(): Promise<void>} | null; log?: Log; drainTimeoutMs?: number; exit?: (code: number) => unknown}
 import {createServer} from 'node:http';
 
