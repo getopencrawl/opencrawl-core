@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.2.68",
+  "version": "0.3.0-seam.0",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
@@ -45,7 +45,26 @@
     "./web-v2": "./web-v2/src/index.ts",
     "./web-v2/styles.css": "./web-v2/src/styles.css",
     "./web-v2/architecture": "./web-v2/tools/architecture.ts",
-    "./web-v2/types": "./web-v2/src/types.ts"
+    "./web-v2/types": "./web-v2/src/types.ts",
+    "./identity/auth": "./dist/src/identity/auth.mjs",
+    "./identity/principal": "./dist/src/identity/principal.mjs",
+    "./identity/cli": "./dist/src/identity/cli.mjs",
+    "./identity/mcp": "./dist/src/identity/mcp.mjs",
+    "./identity/team": "./dist/src/identity/team.mjs",
+    "./identity/role-write": "./dist/src/identity/role-write.mjs",
+    "./identity/types": "./dist/src/identity/types.mjs",
+    "./application/types": "./dist/src/application/types.mjs",
+    "./application/console": "./dist/src/application/console.mjs",
+    "./application/rpc": "./dist/src/application/rpc.mjs",
+    "./web-v2/application/*": "./web-v2/src/application/*.ts",
+    "./integrations/airbyte": "./dist/src/integrations/airbyte.mjs",
+    "./integrations/types": "./dist/src/integrations/types.mjs",
+    "./integrations/ports": "./dist/src/integrations/ports.mjs",
+    "./integrations/provisioning": "./dist/src/integrations/provisioning.mjs",
+    "./integrations/counts": "./dist/src/integrations/counts.mjs",
+    "./integrations/github": "./dist/src/integrations/github.mjs",
+    "./integrations/service": "./dist/src/integrations/service.mjs",
+    "./application/source-model": "./dist/src/application/source-model.mjs"
   },
   "files": [
     "dist/src",
@@ -85,7 +104,11 @@
     "@modelcontextprotocol/server": "2.4.0",
     "parse5": "8.1.0",
     "pdfjs-dist": "6.5.438",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "@workos-inc/node": "12.0.0",
+    "jose": "6.2.15",
+    "@trpc/server": "11.25.2",
+    "@trpc/client": "11.25.2"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.4.0",
