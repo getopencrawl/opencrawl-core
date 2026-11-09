@@ -15,6 +15,7 @@ export const sessionIndexMapping={dynamic:'strict',properties:{
   text:{type:'text'},sourceKey:{type:'keyword',index:false,doc_values:false},
   nativeId:{type:'keyword'},parentId:{type:'keyword'},turnId:{type:'keyword'},toolCallId:{type:'keyword'},
   toolNames:{type:'keyword'},attachments:{type:'object',enabled:false},host:{type:'keyword',ignore_above:256},
+  private:{type:'boolean'},
 }};
 
 export const boardIndexMapping = {dynamic: 'strict', properties: {
@@ -28,7 +29,7 @@ const metadata = (mapping: {properties: Record<string, Mapping>}) => ({type:'obj
   Object.entries(mapping.properties).filter(([key]) => !['tenantId','text','title','sourceKey'].includes(key)))});
 export const memoryMapping={dynamic:'strict',properties:{
   ...Object.fromEntries(['userId','installationId','harness','host','snapshotId','kind','path','project','sourceSessionId'].map(k=>[k,{type:'keyword'}])),
-  generation:{type:'long'},chunk:{type:'integer'},receivedAt:{type:'date'},modifiedAt:{type:'date'},
+  generation:{type:'long'},chunk:{type:'integer'},receivedAt:{type:'date'},modifiedAt:{type:'date'},private:{type:'boolean'},
 }};
 export const realmMapping = {dynamic:'strict', properties:{
   schema:{type:'integer'}, tenantId:{type:'keyword'}, corpus:{type:'keyword'}, id:{type:'keyword'},

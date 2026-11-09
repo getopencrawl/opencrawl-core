@@ -50,8 +50,10 @@ and tenant selection. Client-provided tenant IDs, headers, paths, queued payload
 or email domains never establish authority on their own.
 
 Core enforces resource ownership/permissions within that trusted scope. Captured
-sessions are readable by every member of the tenant. The uploader identity is
-authenticated attribution and write ownership, never a private read boundary. Adapters
+sessions and memories are readable by every member of the tenant unless their
+uploader marks them private; a private resource is readable and searchable only by
+its uploader. Visibility changes and deletion are owner-only operations in core
+(`docs/sessions-and-memories.md`); every read path applies the same filter. Adapters
 constrain storage and execution to the same scope. Missing/mismatched scope fails
 closed, with no implicit fallback tenant. The self-host runtime binds a configured
 single scope and supplies local authentication/access policy; it uses the same

@@ -5,19 +5,23 @@ import {AppRouter, Link} from '../router.tsx';
 import {AppShell} from '../app.tsx';
 import {Button, CopyField, EmptyState, Field, Input, LoadingState, Notice, PageHeader, Section, Table} from '../design/components.tsx';
 import {JsonDisclosure, SearchInspector} from '../pages/diagnostics.tsx';
-import type {DiagnosticSearch, NavigationItem} from '../index.ts';
+import type {DiagnosticSearch, LibraryAdapter, NavigationItem} from '../index.ts';
+import {SessionsPage} from '../pages/sessions.tsx';
+import {MemoriesPage} from '../pages/memories.tsx';
 import {workspaceSearchDiagnostics} from './search.ts';
 
 type ObjectValue = Record<string, unknown>;
 function object(value: unknown): ObjectValue {return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {};}
 function rows(value: unknown): ObjectValue[] {return Array.isArray(value) ? value.map(object) : [];}
 function text(value: unknown) {return typeof value === 'string' ? value : '';}
-async function request(path: string, signal: AbortSignal, body?: ObjectValue): Promise<ObjectValue> {
+async function request(path: string, signal: AbortSignal, body?: object): Promise<ObjectValue> {
   const response = await fetch(path, {method: body ? 'POST' : 'GET', headers: body ? {'content-type':'application/json'} : undefined, body: body ? JSON.stringify(body) : undefined, signal});
   const result: unknown = await response.json();
-  if (!response.ok) throw new Error(text(object(object(result).error).message) || 'The local service could not complete this request. Check its configuration and try again.');
+  if (!response.ok) throw Object.assign(new Error(text(object(object(result).error).message) || 'The local service could not complete this request. Check its configuration and try again.'), {status: response.status});
   return object(result);
 }
+// The server validates every response field it relies on; the console only renders.
+const library: LibraryAdapter = async (operation, input, signal) => await request('/api/reference/library/' + operation, signal, input) as never;
 const adapter = {async search(query: string, signal: AbortSignal): Promise<DiagnosticSearch> {
   const response = await request('/api/reference/search', signal, {query});
   return workspaceSearchDiagnostics(response.data);
@@ -43,6 +47,8 @@ function ReferenceApp() {
   const name=text(configuration.name)||'Local workspace', endpoint=text(configuration.mcpEndpoint);
   const routes: NavigationItem[]=[
     {path:'/',label:'Overview',icon:'overview',element:<><PageHeader title="Overview" description="Manage your self-hosted OpenCrawl workspace."/><Section title="Agent connection" description="The deployment’s configured connection is shared by your agents and this console."><CopyField label="MCP endpoint" value={endpoint}/><p className="muted">The endpoint is configured. Run a diagnostic query to verify retrieval against your current index.</p></Section><Section title="Workspace controls"><div className="data-list"><div className="data-row"><div><h3>Inspect retrieval</h3><p>Read indexed text, passages and source provenance.</p></div><Link to="/diagnostics">Open diagnostics</Link></div><div className="data-row"><div><h3>Agent coordination</h3><p>See registered sessions and their current tasks.</p></div><Link to="/agents">View agents</Link></div></div></Section></>},
+    {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={library}/>},
+    {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={library}/>},
     {path:'/diagnostics',label:'Diagnostics',icon:'diagnostics',element:<Diagnostics/>},
     {path:'/agents',label:'Agents',icon:'team',element:<Agents/>},
     {path:'/settings',label:'Settings',icon:'settings',group:'manage',element:<><PageHeader title="Settings" description="Connection and access settings for this deployment."/><Section title="Connection"><CopyField label="MCP endpoint" value={endpoint}/><p className="muted">Change the server’s OPENCRAWL_MCP_URL setting to use a different deployment. Restart this console after updating server configuration.</p></Section><Section title="Access"><p>The console requires its own password. The upstream agent token stays on the server. Your deployment’s fixed identity and resource permissions apply to every request.</p></Section></>},

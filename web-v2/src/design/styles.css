@@ -67,7 +67,8 @@ img { max-width: 100%; }
 @media (min-width: 801px) and (max-width: 960px) {
   .oc-workspace-header { gap: var(--space-4); }
   .oc-brand { font-size: var(--text-brand-compact); }
-  .oc-nav-link { padding-inline: var(--space-2); }
+  .oc-nav-link { padding-inline: var(--space-2); font-size: var(--text-sm); }
+  .oc-workspace-header nav, .oc-nav-group { gap: 0; }
 }
 
 /* Shared layout vocabulary. Feature pages do not own their own CSS. */
@@ -507,3 +508,30 @@ img { max-width: 100%; }
   .oc-search-inspector .query-form > .actions { align-items: stretch; }
   .oc-search-inspector .query-form > .actions > .oc-button { flex: 1; }
 }
+
+/* Session and memory library: lists, owner controls and transcripts. */
+.oc-library { display: grid; gap: var(--space-4); min-width: 0; }
+.oc-library > .oc-page-header { margin-bottom: var(--space-2); }
+.oc-library > .oc-tabs { margin-bottom: var(--space-2); }
+.oc-library-back { display: inline-flex; align-items: center; gap: var(--space-2); width: fit-content; color: var(--muted); text-decoration: none; }
+.oc-library-back:hover { color: var(--text); }
+.oc-library-list { list-style: none; margin: 0; padding: 0; display: grid; border-top: 1px solid var(--line); }
+.oc-library-item { display: grid; gap: var(--space-2); padding: var(--space-4) 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.oc-library-heading { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.oc-library-heading:empty { display: none; }
+.oc-library-title { color: var(--strong); font-weight: 600; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.oc-library-title:hover { color: var(--accent-hover); text-decoration: underline; }
+.oc-library-meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-5); color: var(--muted); font-size: var(--text-sm); }
+.oc-library-meta > div { display: flex; gap: var(--space-2); min-width: 0; }
+.oc-library-meta dt { color: var(--quiet); }
+.oc-library-meta dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.oc-library-controls { display: grid; gap: var(--space-3); }
+.oc-transcript { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+.oc-transcript-message { display: grid; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+.oc-transcript-user { background: var(--surface-subtle); }
+.oc-transcript-message > header { display: flex; align-items: baseline; gap: var(--space-3); color: var(--muted); font-size: var(--text-sm); }
+.oc-transcript-message > header strong { color: var(--strong); }
+.oc-transcript-tool { margin: 0; padding-inline: var(--space-4); }
+.oc-transcript-tool .code-block { max-height: 24rem; }
+.oc-transcript-note { padding-inline: var(--space-4); font-size: var(--text-sm); }
+.oc-memory-text { max-height: none; }
