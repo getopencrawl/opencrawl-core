@@ -10,3 +10,5 @@ dist/
 *.tsbuildinfo
 
 connectors/github/**/__pycache__/
+
+!.env.capture.example

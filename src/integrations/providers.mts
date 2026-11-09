@@ -211,8 +211,7 @@ const providers:ProviderCatalog = {
     id: 'circleback',
     name: 'Circleback',
     description: 'Meeting notes shared with your whole workspace.',
-    // Composio's only Circleback toolkit is its MCP server's OAuth (dynamic client registration,
-    // no Composio-managed app); the proxy calls Circleback's REST API with that grant.
+    // Circleback uses dynamic OAuth client registration; the credential adapter owns the grant.
     toolkit: 'circleback_mcp',
     // Per team, like Granola: only meetings in Circleback's Workspace folder, which holds the
     // meetings shared with everyone in the workspace, so one connection serves the whole team,
@@ -311,7 +310,7 @@ const providers:ProviderCatalog = {
     id: 'github',
     name: 'GitHub',
     description: 'Code, history, pull requests and issues of the repositories you choose.',
-    // Our own read-only GitHub App (github.mjs), not Composio: the owner picks repositories at
+    // The operator-owned read-only GitHub App: the owner picks repositories at
     // install, and its installation tokens can clone. Shown only when the app is configured.
     auth: 'github-app',
     // Per team: one installation serves everyone, stored under workspace=<GitHub account ID>.

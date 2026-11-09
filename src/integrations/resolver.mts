@@ -19,7 +19,7 @@ export interface ConnectorResolverOptions {
   search(tenantId: string): ReturnType<typeof createConnectorSearch>;
 }
 interface ConnectionCount {total: number; kinds: Record<string, number>}
-interface CountSummary extends ConnectionCount {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}
+export interface CountSummary extends ConnectionCount {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}
 export function createConnectorResolver({environment, generation, registry, storage, search: searchFor}: ConnectorResolverOptions) {
   if (!['staging', 'production', 'selfhost'].includes(environment) || !/^v[1-9][0-9]*$/.test(generation)) throw new Error('Invalid connector configuration');
   function reference(value: ConnectorReferenceInput): asserts value is HostedConnectorReference {

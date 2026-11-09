@@ -1,3 +1,4 @@
+import {chmodSync} from 'node:fs';
 import {DatabaseSync, backup} from 'node:sqlite';
 import {mkdirSync, openSync, closeSync} from 'node:fs';
 import {dirname, resolve} from 'node:path';
@@ -13,6 +14,7 @@ export function createSingleOrganizationRegistry({path, organizationId, environm
   const databasePath = resolve(path);
   mkdirSync(dirname(databasePath), {recursive: true, mode: 0o700});
   const db = new DatabaseSync(databasePath);
+  chmodSync(databasePath,0o600);
   db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;');
   db.exec('CREATE TABLE IF NOT EXISTS integration_binding (id INTEGER PRIMARY KEY CHECK(id=1), organization TEXT NOT NULL, environment TEXT NOT NULL); CREATE TABLE IF NOT EXISTS integrations (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, record TEXT NOT NULL);');
   db.prepare('INSERT OR IGNORE INTO integration_binding VALUES (1, ?, ?)').run(organizationId, environment);

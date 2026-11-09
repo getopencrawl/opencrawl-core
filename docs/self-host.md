@@ -1,107 +1,120 @@
-# Self-hosting preview
+# Self-host OpenCrawl
 
-This stack runs capture, indexing, MCP search and the agent board on one machine.
-It uses a single shared identity: anyone with the MCP token can read all captured
-sessions and board messages. It is a local preview, not a multi-user or highly
-available service. Temporal uses its development server with persistent SQLite.
+The default Docker Compose deployment runs the full application for one WorkOS
+organization with multiple users. You operate the WorkOS project, Airbyte
+workspace, connector credentials, and infrastructure. It does not contact an
+OpenCrawl hosted service.
 
-## Start
+This branch is a candidate. [Acceptance status](seam-acceptance.md) distinguishes
+unit/regression checks from a clean-server install and real provider verification.
 
-Requirements: Git, Docker Engine or Docker Desktop with Compose v2.30 or newer,
-Node.js 24.22.2 for maintenance scripts, and at least 4 GB available Docker memory.
-On Linux, OpenSearch requires `vm.max_map_count` of at least 262144.
+## Configure your installation
 
-```sh
-git clone https://github.com/getopencrawl/opencrawl-core.git
-cd opencrawl-core
-./deploy/up.sh
-```
+Clone this repository and check out the branch/revision you intend to run. Install
+Docker Engine with the Compose plugin on your server. Put an HTTPS reverse proxy
+or tailnet HTTPS listener in front of port 8092.
 
-The script creates `deploy/.env` with random credentials, builds the runtime and
-waits for healthy services, including the indexing worker. Keep this file private.
-The receiver listens on `http://127.0.0.1:8093`, MCP on
-`http://127.0.0.1:8094/mcp`, and Temporal UI on `http://127.0.0.1:8233`.
-All published ports bind to loopback. Use exactly `127.0.0.1` for MCP because its
-Host check rejects other names. Remote access requires your own TLS, access
-control and an explicit `MCP_ORIGIN`; do not publish the backing services.
+Run `./deploy/up.sh` once. It creates `deploy/.env` with random local secrets and
+stops. Fill in the empty configuration fields, then run it again. You can also
+run `docker compose up -d --build --wait` directly from `deploy/` after configuring
+`.env`. Choose a fresh `COMPOSE_PROJECT_NAME` for each installation.
 
-Read [capture privacy](capture-privacy.md) before enabling capture. Install the
-CLI, then use the receiver token from the generated environment:
+Configure WorkOS AuthKit with:
 
-```sh
-npm install -g @getopencrawl/cli@next
-set -a
-. ./deploy/.env
-set +a
-opencrawl collect install --api http://127.0.0.1:8093 --backfill skip
-```
+- Your client ID, server API key, and AuthKit origin.
+- One organization ID. Add the initial user to that organization as `admin`.
+- Redirect URI: `https://YOUR-APP/auth/callback`.
+- Sign-in endpoint: `https://YOUR-APP/auth/login`.
+- Logout redirect: `https://YOUR-APP/signed-out`.
+- The device authorization flow for the CLI and OAuth resource/audience
+  `https://YOUR-APP/mcp` for MCP clients.
 
-Confirm recording in the interactive prompt, then review the installed commands
-in Codex `/hooks` or desktop Settings > Hooks. Configure your MCP client with the
-MCP URL above and `Authorization: Bearer <MCP_TOKEN>` from `deploy/.env`; see
-[MCP configuration](mcp.md). Indexing normally runs every five minutes.
-Do not put tokens in shared configuration, screenshots or issue reports.
+Put the application origin in `OPENCRAWL_URL`. Browser, CLI, and MCP admission
+always checks membership in the configured organization. Users may belong to
+other WorkOS organizations; that does not give them a second workspace here.
 
-## Check and stop
+Use an existing Airbyte workspace and API application. Set `AIRBYTE_URL`,
+`AIRBYTE_CLIENT_ID`, `AIRBYTE_CLIENT_SECRET`, and `AIRBYTE_WORKSPACE_ID`. The app
+creates source definitions, sources, destinations, and connections only inside
+that workspace. It does not install or provision Airbyte.
 
-```sh
-docker compose -f deploy/compose.yaml ps
-opencrawl collect status --json
-opencrawl collect flush
-docker compose -f deploy/compose.yaml logs --tail 50 worker
-docker compose -f deploy/compose.yaml stop
-```
+The stack includes SeaweedFS S3, OpenSearch, and PostgreSQL-backed Temporal. Set
+`OPENCRAWL_AIRBYTE_S3_ENDPOINT` to the S3 address reachable **from Airbyte connector
+jobs**. On a separate Airbyte server, bind `OPENCRAWL_S3_BIND` to a private server
+interface and permit that private connection. Keep S3 off the public internet.
+`OPENCRAWL_AIRBYTE_APP_URL` similarly lets Airbyte reach the app's credential
+proxy; it defaults to the public HTTPS application origin. Docker's `s3` hostname
+is meaningful only inside this Compose network.
 
-`stop` preserves all named volumes. Restart with `./deploy/up.sh`. The automated
-self-host smoke test uses synthetic data to verify authentication, rejected
-cross-tenant writes, attachment storage, search/fetch, board persistence, restart
-and backup restoration. It does not run against your existing deployment.
+For existing operator-managed S3/OpenSearch/Temporal services, use a Compose
+override to supply their endpoints and credentials to `app` and `worker` and
+remove the corresponding local service dependencies. Keep a unique object
+prefix and search namespace. The runtime accepts S3-compatible endpoints and
+OpenSearch basic authentication; Temporal adapters also accept explicit SDK
+connection options.
 
-## Back up and restore
+## Connect sources
 
-An offline backup briefly stops the stack and then restarts it. It contains raw
-captures, attachments, search indexes, Temporal state, board data and credentials.
-Store it on encrypted storage with restricted access; keep an off-machine copy.
+Slack uses your own Slack app. Configure user scopes `channels:read`,
+`channels:history`, `search:read`, `users:read`, `team:read`, and `emoji:read`; set
+its redirect to `https://YOUR-APP/oauth/connectors/slack/callback`. Put its client
+ID and secret in `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`. Connect Slack from
+the app. OAuth grants are encrypted using `OPENCRAWL_CONNECTOR_KEY`. Airbyte gets
+a separate revocable capability for that source; it does not get your OAuth
+client secret or provider token. Public-channel restrictions apply in the proxy
+and indexing pipeline. Token rotation is supported. An interrupted token
+exchange with an unknown outcome requires reconnecting that source.
 
-```sh
-node deploy/backup.mjs create /absolute/path/to/new-backup-directory
-```
+Granola takes a **workspace** API key in the Sources UI; personal API keys are
+not supported. GitHub uses your own read-only GitHub App. Its source container is
+in `connectors/github/`; build/register it in your Airbyte workspace as
+`OpenCrawl GitHub (app)`. Set `GITHUB_APP` to the base64 JSON bundle described by
+`src/integrations/github.mts`, with a callback on this installation. Other shared
+provider definitions are available to runtime adapters; this standalone
+composition currently offers Slack, Granola, and GitHub.
 
-The destination must be new. The script records the source revision and checksums
-in `manifest.json`. Preserve the whole directory. To recover, check out that
-revision on the destination, build its image, and choose a new Compose project so
-the destination volumes are empty:
+Sign in, follow onboarding to connect the CLI/MCP client and capture a real
+session, then connect a source. Setup completion uses recorded receipts and
+current source state. Team admins can invite users and manage roles; ordinary
+members can use shared data and keep supported session/memory resources private.
+The UI is the same core application consumed by the cloud shell.
 
-```sh
-export COMPOSE_PROJECT_NAME=opencrawl-recovered
-docker build -f deploy/Dockerfile -t opencrawl-core:local .
-node deploy/backup.mjs restore /absolute/path/to/backup-directory
-./deploy/up.sh
-```
+## Persistence, deletion, and backup
 
-Restore verifies checksums and refuses running services, differing credentials
-or nonempty volumes. In a fresh checkout it restores `deploy/.env`; do not start
-`up.sh` before restoring, since that would generate different credentials.
-If the old deployment is still running, stop it first or configure a separate
-machine to avoid host-port conflicts. Verify known search results, attachments
-and board messages after recovery. Test recovery before relying on a backup.
+Named volumes preserve S3 objects, OpenSearch indexes, the application registry,
+and Temporal's PostgreSQL data. The registry refuses to reopen under a different
+organization. Workers rediscover active connections and captured objects after
+restarting; pending Airbyte creation intents are reconciled before any retry.
 
-There is no automatic upgrade or rollback migration. Back up before changing
-versions. Recover with the recorded source revision and its original image
-versions; do not point older software at a database upgraded by a newer version.
+Disconnect first stops/removes Airbyte resources, revokes the source grant, and
+deletes its landed objects. Search denies the disconnected binding immediately.
+The worker deletes indexed documents and repeats the purge after in-flight
+writes have settled. Session and memory deletion use the shared core lifecycle.
 
-## Delete a deployment
-
-There is no per-session server deletion command yet. For complete removal, first
-uninstall capture on every client and optionally purge their local pending data
-as described in [capture privacy](capture-privacy.md). Then, **only for the Compose
-project you intend to permanently erase**, run:
+Create an offline backup with:
 
 ```sh
-docker compose -f deploy/compose.yaml down --volumes
+node deploy/backup.mjs create /absolute/new-backup-directory
 ```
 
-This permanently deletes that project's capture, search, Temporal and board
-volumes. Remove its private environment file and backup copies separately.
-Original Claude/Codex transcripts remain on their machines. Uninstalling a client
-or revoking a token alone does not delete server data.
+The script stops this Compose stack, saves its data volumes and `.env` with
+restricted permissions, records checksums and source revision, then restarts it.
+The environment includes the encryption key: preserve it alongside the backup.
+It does not back up external WorkOS or Airbyte resources. Use those operators'
+backup procedures as well.
+
+Restore only at the recorded Git revision into empty destination volumes:
+
+```sh
+node deploy/backup.mjs restore /absolute/backup-directory
+cd deploy
+docker compose up -d --wait
+```
+
+Existing destination data is never overwritten. Verify sign-in, a retained
+session, connector retrieval, and board history after restoring. Do not run the
+original and restored stacks against the same Airbyte connections concurrently.
+
+The previous fixed-identity capture/MCP harness remains in
+`deploy/compose.capture.yaml` and `deploy/up-capture.sh` for its existing smoke
+checks. It is separate from the multi-user application described here.
