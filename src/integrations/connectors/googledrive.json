@@ -1,0 +1,960 @@
+{
+  "version": "7.28.2",
+  "type": "DeclarativeSource",
+  "description": "Google Drive shared drives only (never My Drive or files merely shared with the user): shared drives, file metadata, and Google Docs, Sheets and Slides exported as text, through the credential proxy proxy. Requires the configured operator credential proxy.",
+  "check": {
+    "type": "CheckStream",
+    "stream_names": [
+      "drives"
+    ]
+  },
+  "concurrency_level": {
+    "type": "ConcurrencyLevel",
+    "default_concurrency": "{{ config.get('num_workers', 3) }}",
+    "max_concurrency": 10
+  },
+  "api_budget": {
+    "type": "HTTPAPIBudget",
+    "policies": [
+      {
+        "type": "MovingWindowCallRatePolicy",
+        "rates": [
+          {
+            "limit": "{{ config.get('requests_per_minute', 600) }}",
+            "interval": "PT1M"
+          }
+        ],
+        "matchers": [
+          {
+            "method": "POST",
+            "url_path_pattern": "/api/connector-proxy"
+          }
+        ]
+      }
+    ]
+  },
+  "definitions": {
+    "credential_proxy_requester": {
+      "type": "HttpRequester",
+      "url_base": "{{ config.get('credential_proxy_base_url', 'https://credential-proxy.invalid') }}",
+      "path": "/api/connector-proxy",
+      "http_method": "POST",
+      "authenticator": {
+        "type": "ApiKeyAuthenticator",
+        "api_token": "{{ config['credential_proxy_api_key'] }}",
+        "inject_into": {
+          "type": "RequestOption",
+          "inject_into": "header",
+          "field_name": "x-api-key"
+        }
+      },
+      "error_handler": {
+        "type": "CompositeErrorHandler",
+        "error_handlers": [
+          {
+            "type": "DefaultErrorHandler",
+            "max_retries": 10,
+            "backoff_strategies": [
+              {
+                "type": "WaitTimeFromResponse",
+                "wait_time_in_seconds": "{{ ((response.get('headers') or {}).get('retry-after') or (response.get('headers') or {}).get('Retry-After') or 0) | int + 1 }}",
+                "max_waiting_time_in_seconds": 600
+              },
+              {
+                "type": "ExponentialBackoffStrategy",
+                "factor": 5
+              }
+            ],
+            "response_filters": [
+              {
+                "type": "HttpResponseFilter",
+                "action": "RETRY",
+                "predicate": "{{ response.get('status') in [429, 500, 502, 503, 504] or (response.get('status') == 403 and (((response.get('data') or {}).get('error') or {}).get('errors') or [{}])[0].get('reason') in ['rateLimitExceeded', 'userRateLimitExceeded']) }}",
+                "error_message": "Google Drive is rate limiting or unavailable; retrying."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "config_error",
+                "predicate": "{{ response.get('status') == 401 }}",
+                "error_message": "Google Drive rejected the connection. Reconnect Google Drive."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "system_error",
+                "predicate": "{{ (response.get('status') or 0) >= 400 }}",
+                "error_message": "Google Drive returned an unexpected error through the credential proxy proxy."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "drives": {
+      "type": "DeclarativeStream",
+      "name": "drives",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "createdTime": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "hidden": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "restrictions": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "capabilities": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://www.googleapis.com/drive/v3/drives",
+              "parameters": "{{ [{'name': 'pageSize', 'value': '100', 'type': 'query'}, {'name': 'fields', 'value': 'nextPageToken,drives(id,name,createdTime,hidden,restrictions,capabilities(canDownload,canCopy))', 'type': 'query'}] + ([{'name': 'pageToken', 'value': next_page_token.next_page_token, 'type': 'query'}] if next_page_token else []) }}"
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "drives"
+            ]
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ (response.get('data') or {}).get('nextPageToken') }}",
+            "stop_condition": "{{ not (response.get('data') or {}).get('nextPageToken') }}"
+          }
+        }
+      }
+    },
+    "google_files": {
+      "type": "DeclarativeStream",
+      "name": "google_files",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "id",
+            "driveId",
+            "modifiedTime"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "mimeType": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "driveId": {
+              "type": "string"
+            },
+            "drive_name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "parents": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "createdTime": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "modifiedTime": {
+              "type": "string"
+            },
+            "trashed": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "webViewLink": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "size": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "md5Checksum": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "fileExtension": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "description": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "starred": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "version": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "headRevisionId": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "lastModifyingUser": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "owners": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://www.googleapis.com/drive/v3/files",
+              "parameters": "{{ [{'name': 'corpora', 'value': 'drive', 'type': 'query'}, {'name': 'driveId', 'value': stream_partition.drive_id, 'type': 'query'}, {'name': 'includeItemsFromAllDrives', 'value': 'true', 'type': 'query'}, {'name': 'supportsAllDrives', 'value': 'true', 'type': 'query'}, {'name': 'pageSize', 'value': '1000', 'type': 'query'}, {'name': 'orderBy', 'value': 'modifiedTime', 'type': 'query'}, {'name': 'q', 'value': 'trashed = false and (mimeType = \\'application/vnd.google-apps.document\\' or mimeType = \\'application/vnd.google-apps.spreadsheet\\' or mimeType = \\'application/vnd.google-apps.presentation\\') and modifiedTime > \\'' ~ stream_interval.start_time ~ '\\'', 'type': 'query'}, {'name': 'fields', 'value': 'nextPageToken,incompleteSearch,files(id,name,mimeType,driveId,parents,createdTime,modifiedTime,trashed,webViewLink,size,md5Checksum,fileExtension,description,starred,version,headRevisionId,lastModifyingUser(displayName,emailAddress),owners(displayName,emailAddress))', 'type': 'query'}] + ([{'name': 'pageToken', 'value': next_page_token.next_page_token, 'type': 'query'}] if next_page_token else []) }}"
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "files"
+            ]
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('driveId') == stream_partition.drive_id and not record.get('trashed') }}"
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ (response.get('data') or {}).get('nextPageToken') }}",
+            "stop_condition": "{{ not (response.get('data') or {}).get('nextPageToken') }}"
+          }
+        },
+        "partition_router": {
+          "type": "SubstreamPartitionRouter",
+          "parent_stream_configs": [
+            {
+              "type": "ParentStreamConfig",
+              "stream": {
+                "$ref": "#/definitions/drives"
+              },
+              "parent_key": "id",
+              "partition_field": "drive_id",
+              "extra_fields": [
+                [
+                  "name"
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      "transformations": [
+        {
+          "type": "AddFields",
+          "fields": [
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "drive_name"
+              ],
+              "value": "{{ stream_partition.extra_fields.name }}"
+            }
+          ]
+        }
+      ],
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "modifiedTime",
+        "datetime_format": "%Y-%m-%dT%H:%M:%S.%fZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ"
+        ],
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config.get('start_date', '2000-01-01T00:00:00Z') }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        },
+        "lookback_window": "{{ config.get('lookback', 'PT30M') }}",
+        "is_client_side_incremental": false
+      }
+    }
+  },
+  "streams": [
+    {
+      "$ref": "#/definitions/drives"
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "files",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "id",
+            "driveId",
+            "modifiedTime"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "mimeType": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "driveId": {
+              "type": "string"
+            },
+            "drive_name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "parents": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "createdTime": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "modifiedTime": {
+              "type": "string"
+            },
+            "trashed": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "webViewLink": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "size": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "md5Checksum": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "fileExtension": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "description": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "starred": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "version": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "headRevisionId": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "lastModifyingUser": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "owners": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://www.googleapis.com/drive/v3/files",
+              "parameters": "{{ [{'name': 'corpora', 'value': 'drive', 'type': 'query'}, {'name': 'driveId', 'value': stream_partition.drive_id, 'type': 'query'}, {'name': 'includeItemsFromAllDrives', 'value': 'true', 'type': 'query'}, {'name': 'supportsAllDrives', 'value': 'true', 'type': 'query'}, {'name': 'pageSize', 'value': '1000', 'type': 'query'}, {'name': 'orderBy', 'value': 'modifiedTime', 'type': 'query'}, {'name': 'q', 'value': 'trashed = false and modifiedTime > \\'' ~ stream_interval.start_time ~ '\\'', 'type': 'query'}, {'name': 'fields', 'value': 'nextPageToken,incompleteSearch,files(id,name,mimeType,driveId,parents,createdTime,modifiedTime,trashed,webViewLink,size,md5Checksum,fileExtension,description,starred,version,headRevisionId,lastModifyingUser(displayName,emailAddress),owners(displayName,emailAddress))', 'type': 'query'}] + ([{'name': 'pageToken', 'value': next_page_token.next_page_token, 'type': 'query'}] if next_page_token else []) }}"
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "files"
+            ]
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('driveId') == stream_partition.drive_id and not record.get('trashed') }}"
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ (response.get('data') or {}).get('nextPageToken') }}",
+            "stop_condition": "{{ not (response.get('data') or {}).get('nextPageToken') }}"
+          }
+        },
+        "partition_router": {
+          "type": "SubstreamPartitionRouter",
+          "parent_stream_configs": [
+            {
+              "type": "ParentStreamConfig",
+              "stream": {
+                "$ref": "#/definitions/drives"
+              },
+              "parent_key": "id",
+              "partition_field": "drive_id",
+              "extra_fields": [
+                [
+                  "name"
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      "transformations": [
+        {
+          "type": "AddFields",
+          "fields": [
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "drive_name"
+              ],
+              "value": "{{ stream_partition.extra_fields.name }}"
+            }
+          ]
+        }
+      ],
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "modifiedTime",
+        "datetime_format": "%Y-%m-%dT%H:%M:%S.%fZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ"
+        ],
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config.get('start_date', '2000-01-01T00:00:00Z') }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        },
+        "lookback_window": "{{ config.get('lookback', 'PT30M') }}",
+        "is_client_side_incremental": false
+      }
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "contents",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "id",
+            "modifiedTime"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "mimeType": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "driveId": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "modifiedTime": {
+              "type": "string"
+            },
+            "export_mime_type": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "status": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "data": {
+              "type": [
+                "null",
+                "string",
+                "object",
+                "array"
+              ]
+            },
+            "binary_data": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://www.googleapis.com/drive/v3/files/{{ stream_partition.file_id }}/export",
+              "parameters": "{{ [{'name': 'mimeType', 'value': {'application/vnd.google-apps.document': 'text/markdown', 'application/vnd.google-apps.spreadsheet': 'text/csv', 'application/vnd.google-apps.presentation': 'text/plain'}[stream_partition.extra_fields.mimeType], 'type': 'query'}] }}"
+            }
+          },
+          "error_handler": {
+            "type": "CompositeErrorHandler",
+            "error_handlers": [
+              {
+                "type": "DefaultErrorHandler",
+                "max_retries": 10,
+                "backoff_strategies": [
+                  {
+                    "type": "WaitTimeFromResponse",
+                    "wait_time_in_seconds": "{{ ((response.get('headers') or {}).get('retry-after') or (response.get('headers') or {}).get('Retry-After') or 0) | int + 1 }}",
+                    "max_waiting_time_in_seconds": 600
+                  },
+                  {
+                    "type": "ExponentialBackoffStrategy",
+                    "factor": 5
+                  }
+                ],
+                "response_filters": [
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "RETRY",
+                    "predicate": "{{ response.get('status') in [429, 500, 502, 503, 504] or (response.get('status') == 403 and (((response.get('data') or {}).get('error') or {}).get('errors') or [{}])[0].get('reason') in ['rateLimitExceeded', 'userRateLimitExceeded']) }}",
+                    "error_message": "Google Drive is rate limiting or unavailable; retrying."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "IGNORE",
+                    "predicate": "{{ response.get('status') == 404 or (response.get('status') == 403 and (((response.get('data') or {}).get('error') or {}).get('errors') or [{}])[0].get('reason') in ['exportSizeLimitExceeded', 'fileNotExportable', 'cannotExportFile', 'forbidden', 'insufficientFilePermissions']) }}",
+                    "error_message": "Google Drive file is too large to export, not exportable, or no longer shared; skipped."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "config_error",
+                    "predicate": "{{ response.get('status') == 401 }}",
+                    "error_message": "Google Drive rejected the connection. Reconnect Google Drive."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "system_error",
+                    "predicate": "{{ (response.get('status') or 0) >= 400 }}",
+                    "error_message": "Google Drive returned an unexpected error through the credential proxy proxy."
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": []
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('status') == 200 }}"
+          }
+        },
+        "partition_router": {
+          "type": "SubstreamPartitionRouter",
+          "parent_stream_configs": [
+            {
+              "type": "ParentStreamConfig",
+              "stream": {
+                "$ref": "#/definitions/google_files"
+              },
+              "parent_key": "id",
+              "partition_field": "file_id",
+              "incremental_dependency": true,
+              "extra_fields": [
+                [
+                  "name"
+                ],
+                [
+                  "mimeType"
+                ],
+                [
+                  "driveId"
+                ],
+                [
+                  "modifiedTime"
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      "transformations": [
+        {
+          "type": "AddFields",
+          "fields": [
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "id"
+              ],
+              "value": "{{ stream_partition.file_id }}"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "name"
+              ],
+              "value": "{{ stream_partition.extra_fields.name }}"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "mimeType"
+              ],
+              "value": "{{ stream_partition.extra_fields.mimeType }}"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "driveId"
+              ],
+              "value": "{{ stream_partition.extra_fields.driveId }}"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "modifiedTime"
+              ],
+              "value": "{{ stream_partition.extra_fields.modifiedTime }}"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "export_mime_type"
+              ],
+              "value": "{{ {'application/vnd.google-apps.document': 'text/markdown', 'application/vnd.google-apps.spreadsheet': 'text/csv', 'application/vnd.google-apps.presentation': 'text/plain'}[stream_partition.extra_fields.mimeType] }}"
+            }
+          ]
+        },
+        {
+          "type": "RemoveFields",
+          "field_pointers": [
+            [
+              "headers"
+            ],
+            [
+              "successful"
+            ],
+            [
+              "error"
+            ]
+          ]
+        }
+      ],
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "modifiedTime",
+        "datetime_format": "%Y-%m-%dT%H:%M:%S.%fZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ"
+        ],
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config.get('start_date', '2000-01-01T00:00:00Z') }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        },
+        "global_substream_cursor": true,
+        "is_client_side_incremental": false
+      }
+    }
+  ],
+  "spec": {
+    "type": "Spec",
+    "connection_specification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Google Drive shared drives via credential proxy",
+      "type": "object",
+      "required": [
+        "credential_proxy_api_key",
+        "connected_account_id",
+        "user_id",
+        "start_date"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "credential_proxy_api_key": {
+          "type": "string",
+          "title": "credential proxy project API key",
+          "airbyte_secret": true,
+          "order": 0
+        },
+        "connected_account_id": {
+          "type": "string",
+          "title": "credential proxy connected account",
+          "pattern": "^ca_[A-Za-z0-9_-]+$",
+          "order": 1
+        },
+        "user_id": {
+          "type": "string",
+          "title": "credential proxy user ID",
+          "order": 2
+        },
+        "start_date": {
+          "type": "string",
+          "title": "Start date",
+          "description": "Files modified before this are skipped. Hosted OpenCrawl imports everything (2000-01-01).",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "order": 3
+        },
+        "credential_proxy_base_url": {
+          "type": "string",
+          "title": "credential proxy API base URL",
+          "default": "https://credential-proxy.invalid",
+          "order": 4
+        },
+        "requests_per_minute": {
+          "type": "integer",
+          "title": "Requests per minute",
+          "default": 600,
+          "minimum": 1,
+          "maximum": 6000,
+          "order": 5
+        },
+        "lookback": {
+          "type": "string",
+          "title": "Lookback (ISO 8601 duration)",
+          "default": "PT30M",
+          "order": 6
+        },
+        "num_workers": {
+          "type": "integer",
+          "title": "Concurrent requests",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "order": 7
+        }
+      }
+    }
+  }
+}

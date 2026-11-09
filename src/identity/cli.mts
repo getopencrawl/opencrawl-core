@@ -2,7 +2,7 @@ import {errorInfo} from './types.mjs';
 import type {Workos, Principal} from './types.mjs';
 import type {IdentitySettings} from './types.mjs';
 type CliResult = {status: 200; user: {id: string; email: string}; principal?: Principal} | {status: 401 | 403 | 503; code?: string};
-import {userPrincipal} from './principal.mjs';
+import {userPrincipal, singleOrganizationPrincipal} from './principal.mjs';
 import {currentVerifiedUser, currentUserSession} from './auth.mjs';
 import {createRemoteJWKSet, jwtVerify} from 'jose';
 
@@ -15,7 +15,8 @@ export function cliConfiguration(settings: Pick<IdentitySettings, 'clientId'>) {
   }, index: {available: false}};
 }
 
-export function cliIdentity(settings: Pick<IdentitySettings, 'clientId'>, workos: Workos) {
+export function cliIdentity(settings: Pick<IdentitySettings, 'clientId' | 'organizationId'>, workos: Workos) {
+  const fixedPrincipal = settings.organizationId ? singleOrganizationPrincipal(workos, settings.organizationId) : null;
   let keys: ReturnType<typeof createRemoteJWKSet> | undefined;
   return identify;
   function identify(authorization: string | undefined, options: {capture: true}): Promise<Exclude<CliResult, {status: 200}> | {status: 200; user: {id: string; email: string}; principal: Principal}>;
@@ -49,7 +50,7 @@ export function cliIdentity(settings: Pick<IdentitySettings, 'clientId'>, workos
     const {user} = current;
     const result: CliResult = {status: 200, user: {id: user.id, email: user.email}};
     if (capture) {
-      const principal = await userPrincipal(workos, user, payload.org_id);
+      const principal = await (fixedPrincipal ? fixedPrincipal(user, payload.org_id) : userPrincipal(workos, user, payload.org_id));
       if (!principal) return {status:403, code:'ORGANIZATION_REQUIRED'};
       result.principal = {...principal, email:user.email,
         name:[user.firstName,user.lastName].filter(Boolean).join(' ') || null};

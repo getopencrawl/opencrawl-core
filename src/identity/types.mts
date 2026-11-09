@@ -4,4 +4,4 @@ export type HostedUser = Pick<User, 'id' | 'email'> & Partial<Pick<User, 'firstN
 export type Membership = OrganizationMembership;
 export type {Principal} from '../sessions/types.mjs';
 export {errorInfo} from '../errors.mjs';
-export interface IdentitySettings {clientId: string; url: string; authOrigin: string}
+export interface IdentitySettings {clientId: string; url: string; authOrigin: string; organizationId?: string}

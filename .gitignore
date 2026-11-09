@@ -8,3 +8,5 @@ cli/dist/
 
 dist/
 *.tsbuildinfo
+
+connectors/github/**/__pycache__/
