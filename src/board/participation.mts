@@ -2,6 +2,7 @@ import type {Principal} from '../sessions/types.mjs';
 import type {BoardState, BoardMessage, ParticipationOptions} from './types.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
+import {boardIdentity, ownBoardMessage} from './identity.mjs';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const session = text(200);
@@ -29,8 +30,14 @@ export function resolveMentions(state: BoardState, body: string, explicit: strin
   const names = new Map(Object.entries(state.participants || {}).map(([id, p]) => [p.name.toLowerCase(), id]));
   const missing = explicit.filter(value => !names.has(value.toLowerCase()));
   if (missing.length) throw fail(`Unknown agent: ${missing.join(', ')}`, 404);
-  return [...new Set([...explicit, ...inline].map(value => names.get(value.toLowerCase())).filter((id): id is string => Boolean(id)))];
+  return {
+    mentions: [...new Set([...explicit, ...inline].map(value => names.get(value.toLowerCase())).filter((id): id is string => Boolean(id)))],
+    unresolvedMentions: [...new Set(inline.filter(value => !names.has(value.toLowerCase())))],
+  };
 }
+
+export const mentionWarning = (names: string[]) => names.length ? {warning: `Tags not notified (unregistered): ${[...new Set(names)].map(name => '@' + name).join(', ')}.`} : {};
+const explicitNames = (names: string[]) => [...new Set(names.map(name => name.toLowerCase()))].sort();
 
 /** Uses the board's tenant-scoped CAS log; transport and authentication stay outside. */
 export function createParticipation({scope, read, commit, now}: ParticipationOptions) {
@@ -38,7 +45,7 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
     const key = scope(principal), schema = participationSchemas[requestedOperation as Operation];
     if (!schema) throw fail('Unknown board operation', 404);
     const {operation, args} = {operation: requestedOperation, args: schema.parse(input)} as Command;
-    const id = 'session' in args ? hash(JSON.stringify([principal.userId, args.session])) : '';
+    const id = 'session' in args ? boardIdentity(principal.userId, args.session) : '';
     if (args.workspace !== undefined && args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch; use the registered workspace', 403);
     for (let attempt = 0; attempt < 8; attempt++) {
       const {state, version} = await read(key), time = now();
@@ -70,7 +77,7 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
           pending: null, batches: 0, acknowledgedBatches: 0};
         Object.assign(p, {seen: time, left: false, task: args.task, harness: args.harness});
         participants[id] = p;
-        const home = resumed ? [] : state.messages.slice(-5).map(({requestId, ...message}) => message);
+        const home = resumed ? [] : state.messages.slice(-5).map(({requestId, publication, ...message}) => message);
         result = {workspace: principal.tenantId, agent: id, session: args.session, name: p.name, resumed,
           subscriptions: {homepage: p.homepage, mentions: true, topics: p.topics}, home, agents: directory().slice(0, 8), pollAfterMs: 10_000};
       } else {
@@ -94,31 +101,36 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
           result = {agent: id, acknowledged: args.receipt, through: p.ackCursor};
         } else if (operation === 'publish') {
           if (Buffer.byteLength(args.text) > 1024) throw fail('Message exceeds 1024 UTF-8 bytes');
-          const mentions = resolveMentions(state, args.text, args.mentions);
           const duplicate = state.messages.find(m => m.agent === id && m.requestId === args.id);
           if (duplicate) {
-            if (duplicate.text !== args.text || duplicate.topic !== args.topic || JSON.stringify(duplicate.mentions || []) !== JSON.stringify(mentions)) throw fail('Retry id already used for different content', 409);
-            return {agent: id, accepted: [duplicate.id]};
+            const sameRecipients = duplicate.publication
+              ? JSON.stringify(duplicate.publication.explicitMentions) === JSON.stringify(explicitNames(args.mentions))
+              : JSON.stringify(duplicate.mentions || []) === JSON.stringify(resolveMentions(state, args.text, args.mentions).mentions);
+            if (duplicate.text !== args.text || duplicate.topic !== args.topic || !sameRecipients) throw fail('Retry id already used for different content', 409);
+            return {agent: id, accepted: [duplicate.id], mentions: duplicate.mentions || [], ...mentionWarning(duplicate.publication?.unresolvedMentions || [])};
           }
+          const {mentions, unresolvedMentions} = resolveMentions(state, args.text, args.mentions);
           if (!state.messages.some(m => m.topic === args.topic) && new Set(state.messages.map(m => m.topic)).size >= 128) throw fail('Topic limit reached', 429);
           const message = {id: state.messages.length + 1, timestamp: time, agent: id, author: principal.userId, name: p.name,
-            topic: args.topic, text: args.text, requestId: args.id, mentions};
+            topic: args.topic, text: args.text, requestId: args.id, mentions,
+            publication: {explicitMentions: explicitNames(args.mentions), unresolvedMentions}};
           state.messages.push(message); p.seen = time;
-          result = {agent: id, accepted: [message.id], mentions};
+          result = {agent: id, accepted: [message.id], mentions, ...mentionWarning(unresolvedMentions)};
         } else if (operation === 'inbox') {
           if (args.receipt && args.receipt !== p.pending?.receipt) throw fail('Delivery is no longer pending; do not acknowledge another batch', 409);
           dirty = !p.lastPoll || time - p.lastPoll >= 60_000;
           if (dirty) p.lastPoll = p.seen = time;
           if (!p.pending) {
             const unseen = state.messages.slice(p.ackCursor);
+            const own = (m: BoardMessage) => ownBoardMessage(m, principal.userId, id, p.name, state);
             const urgent = (m: BoardMessage) => m.mentions?.includes(id) || p.topics.includes(m.topic);
-            const ready = unseen.some(m => m.agent !== id && urgent(m)) || time >= p.nextHomeAt;
+            const ready = unseen.some(m => !own(m) && urgent(m)) || time >= p.nextHomeAt;
             if (ready) {
               const messages = []; let through = p.ackCursor, bytes = 0;
               for (const m of unseen) {
-                if (m.agent !== id && (p.homepage || urgent(m))) {
+                if (!own(m) && (p.homepage || urgent(m))) {
                   const reasons = [...(m.mentions?.includes(id) ? ['mention'] : []), ...(p.topics.includes(m.topic) ? ['topic'] : []), ...(p.homepage ? ['homepage'] : [])];
-                  const {requestId, ...visible} = m, message = {...visible, reasons};
+                  const {requestId, publication, ...visible} = m, message = {...visible, reasons};
                   const size = Buffer.byteLength(JSON.stringify(message));
                   if (messages.length >= 8 || bytes + size > 8192) break;
                   messages.push(message); bytes += size;

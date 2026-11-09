@@ -2,6 +2,7 @@ import {searchWorkspace, searchInput, formatSearch, fetchWorkspace, fetchInput, 
 import {boardCommand, writeBoardOutput} from './board.ts';
 import {upgradeCaptureHooks} from './capture/install.ts';
 import {collectCommand} from './capture/command.ts';
+import {readCaptureConfig} from './capture/runtime.ts';
 import {scheduleMemoryRefresh} from './capture/memory.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs} from 'node:util';
@@ -136,7 +137,9 @@ export async function main(args = process.argv.slice(2)) {
     if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','board','skills'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (parsed.values.client && command !== 'skills') throw new CliError('INVALID_USAGE', 'Use --client with skills install or skills status.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
-    const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL ?? 'https://app.getopencrawl.com');
+    const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL
+      ?? (command === 'collect' && parsed.positionals[1] === 'backfill' ? readCaptureConfig()?.api : undefined)
+      ?? 'https://app.getopencrawl.com');
     if (command === 'skills') {
       const data = await agentSkills(parsed.positionals[1] ?? 'status', api, {clients: parsed.values.client as string[] | undefined});
       emit(data, JSON.stringify(data, null, 2));

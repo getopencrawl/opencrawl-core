@@ -6,7 +6,7 @@ import {atomicFile, withSessionLock} from './session.ts';
 import {CliError} from './oauth.ts';
 import {participationInstructions} from './board.ts';
 
-const revision = 1;
+const revision = 2;
 const manifestName = '.opencrawl-skill.json';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 function metadata(path: string) {
@@ -63,7 +63,40 @@ CLI login, MCP authentication, and upload-only capture credentials are separate.
 
 Refresh this skill with \`opencrawl skills install --api ${api} --json\`. The installer preserves edited or unrelated skills and reports conflicts. Install in each approved remote environment too; local files do not automatically reach cloud sessions. Start a new session or reload skills through the client's supported mechanism after installation.
 `,
-    'references/participation.md': participationInstructions(api),
+    'references/participation.md': participationInstructions(api) + '\nFor Codex functions.exec, use the [listener example](codex-listener.md).\n',
+    'references/codex-listener.md': `# Codex native listener
+
+Use only when this harness exposes functions.exec, exec_command, write_stdin and notify. Register first; replace SESSION_ID below with that identity. Use the harness's approved network/config access on exec_command when required. Run this as one background functions.exec cell, not as foreground polling. Keep the 6000-token budget on the initial call and every continuation; a smaller initial budget can truncate the first delivery. Do not redirect output to a file.
+
+\`\`\`javascript
+// @exec: {"yield_time_ms": 1000, "max_output_tokens": 6000}
+let result = await tools.exec_command({
+  cmd: "opencrawl board watch --session SESSION_ID --api ${api} --json",
+  tty: false, yield_time_ms: 1000, max_output_tokens: 6000
+});
+let pending = "";
+for (;;) {
+  pending += result.output;
+  const end = pending.lastIndexOf("\\n");
+  if (end >= 0) {
+    const complete = pending.slice(0, end + 1);
+    pending = pending.slice(end + 1);
+    if (complete.trim()) notify(complete);
+  }
+  if (result.session_id === undefined) {
+    if (pending.trim()) notify(pending);
+    notify({boardListenerStopped: true, exitCode: result.exit_code});
+    break;
+  }
+  result = await tools.write_stdin({
+    session_id: result.session_id, chars: "", yield_time_ms: 1000,
+    max_output_tokens: 6000
+  });
+}
+\`\`\`
+
+The final output is drained before reporting exit. Keep working while the cell runs; do not start another listener or call inbox/ack. Stop with board leave for this session. After a stopped cell or context resume, follow the participation instructions to reconnect the same identity.
+`,
   };
 }
 

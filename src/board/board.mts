@@ -7,7 +7,8 @@ import {serviceError} from '../sessions/types.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {boardSearchSchema} from './search.mjs';
-import {createParticipation, resolveMentions} from './participation.mjs';
+import {createParticipation, resolveMentions, mentionWarning} from './participation.mjs';
+import {boardIdentity, ownBoardMessage} from './identity.mjs';
 
 const short = (max: number) => z.string().trim().min(1).max(max);
 const topic = short(80);
@@ -65,7 +66,7 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
         const message = state.messages[i];
         if ((args.before !== undefined && message.id >= args.before) || (args.topic && message.topic !== args.topic)) continue;
         if (messages.length === 20) {more = true; break;}
-        const {requestId, ...visible} = message;
+        const {requestId, publication, ...visible} = message;
         messages.push(visible);
       }
       return {topics: [...summaries.keys()].sort(),
@@ -102,7 +103,7 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
     async sync(principal: Principal, input: unknown) {
       const key = scope(principal), args = syncSchema.parse(input);
       if (args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
-      const agentId = hash(JSON.stringify([principal.userId, args.agent]));
+      const agentId = boardIdentity(principal.userId, args.agent);
       const requestBytes = Buffer.byteLength(JSON.stringify(input));
       let sessions: Awaited<ReturnType<ReturnType<typeof createRecentSessions>['read']>> = [], sessionState = recentSessions ? 'ready' : 'not_configured';
       if (recentSessions) {
@@ -128,32 +129,34 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
           if (!state.agents[agentId] && Object.keys(state.agents).length >= 128) throw fail('Active agent limit reached', 429);
           state.agents[agentId] = {name: args.agent, topics: args.topics, seen: time};
         }
-        const accepted = [];
+        const accepted = [], unresolvedMentions: string[] = [];
         for (const post of args.posts) {
           if (Buffer.byteLength(post.text) > 1024) throw fail('Message exceeds 1024 UTF-8 bytes');
           const duplicate = state.messages.find(m => m.agent === agentId && m.requestId === post.id);
           if (duplicate) {
             if (duplicate.topic !== post.topic || duplicate.text !== post.text) throw fail('Retry id already used for different content', 409);
-            accepted.push(duplicate.id); continue;
+            accepted.push(duplicate.id); unresolvedMentions.push(...duplicate.publication?.unresolvedMentions || []); continue;
           }
           if (!state.messages.some(m => m.topic === post.topic) && new Set(state.messages.map(m => m.topic)).size >= 128) throw fail('Topic limit reached', 429);
           const message: BoardMessage = {id: state.messages.length + 1, timestamp: time, agent: agentId, author: principal.userId, name: args.agent,
             topic: post.topic, text: post.text, requestId: post.id};
-          const mentions = resolveMentions(state, post.text);
+          const resolution = resolveMentions(state, post.text), {mentions} = resolution;
+          message.publication = {explicitMentions: [], unresolvedMentions: resolution.unresolvedMentions};
+          unresolvedMentions.push(...resolution.unresolvedMentions);
           if (mentions.length) message.mentions = mentions;
           state.messages.push(message); accepted.push(message.id);
         }
         const messages: VisibleMessage[] = []; let cursor = start, bytes = 0;
         for (const m of state.messages.slice(start)) {
-          if (args.topics.includes(m.topic) && m.agent !== agentId) {
-            const {requestId, ...message} = m;
+          if (args.topics.includes(m.topic) && !ownBoardMessage(m, principal.userId, agentId, args.agent, state)) {
+            const {requestId, publication, ...message} = m;
             const size = Buffer.byteLength(JSON.stringify(message));
             if (messages.length >= 5 || bytes + size > 4096) break;
             messages.push(message); bytes += size;
           }
           cursor = m.id;
         }
-        const output = {agent: agentId, cursor, more: cursor < state.messages.length, accepted, messages,
+        const output = {agent: agentId, cursor, more: cursor < state.messages.length, accepted, messages, ...mentionWarning(unresolvedMentions),
           recentSessions: sessions, recentSessionsStatus: {state: sessionState, limit: 10, order: 'lastActivityAt_desc', source: 'indexed_capture'}};
         state.usage.calls++;
         state.usage.inputBytes += requestBytes;
