@@ -3,6 +3,7 @@ import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
 import {AgentOnboarding, AppRouter, AppShell, Button, FocusedFrame, InviteOnboarding, Route, Routes, SourcesOnboarding, useLocation, useNavigate, type OnboardingAdapter} from '../../src/index.ts';
 import '../../src/styles.css';
+import {CallbackChoices, readContinuation} from '../../src/application/callback-view.tsx';
 
 declare global {
   interface Window {__onboardingTestNavigate?: (path: string) => void;}
@@ -38,6 +39,7 @@ function Fixture() {
     footer={<Button variant="quiet" onClick={() => {void navigate('/away');}}>Sign out</Button>}
   />;
   return <Routes>
+    <Route path="/callback-selection" element={<CallbackChoices model={readContinuation(JSON.stringify({name:'GitHub',returnTo:'/onboarding/sources',actions:[{label:'Connect first account',url:'https://github.com/login/oauth/authorize?client_id=owned&state=bound.42'},{label:'Connect second account',url:'https://github.com/login/oauth/authorize?client_id=owned&state=bound.43'},{label:'Install for another account',url:'https://github.com/apps/owned-app/installations/new?state=bound'}]}))}/>} />
     <Route path="/onboarding" element={<FocusedFrame footer={account}><AgentOnboarding adapter={adapter} mcpUrl="https://app.getopencrawl.com/mcp" setupPrompt={setupPrompt} /></FocusedFrame>} />
     <Route path="/onboarding/sources" element={<FocusedFrame footer={account}><SourcesOnboarding adapter={adapter} /></FocusedFrame>} />
     <Route path="/onboarding/invite" element={<FocusedFrame footer={account}><InviteOnboarding adapter={adapter} canInvite /></FocusedFrame>} />

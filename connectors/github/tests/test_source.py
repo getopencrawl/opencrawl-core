@@ -22,6 +22,21 @@ class Anonymous:
         return None
 
 
+class RepositoryAccessTest(unittest.TestCase):
+    def test_authorized_ids_exclude_other_and_new_installation_repositories(self):
+        github = types.SimpleNamespace(pages=lambda *args, **kwargs: iter([
+            {'id': 1, 'full_name': 'team/renamed'}, {'id': 2, 'full_name': 'team/secret'},
+            {'id': 3, 'full_name': 'team/new'}]))
+        config = {'app_id': 'owned', 'repository_ids': [1]}
+        self.assertEqual(list(source.SourceOpenCrawlGitHub.repositories(github, config)), [{'id': 1, 'full_name': 'team/renamed'}])
+
+    def test_invalid_empty_repository_grants_fail_closed(self):
+        github = types.SimpleNamespace(pages=lambda *args, **kwargs: self.fail('must not enumerate repositories'))
+        for ids in [[], [0], ['1'], [True], '1']:
+            with self.subTest(ids=ids), self.assertRaises(source.ConfigError):
+                list(source.SourceOpenCrawlGitHub.repositories(github, {'app_id': 'owned', 'repository_ids': ids}))
+
+
 def sh(cwd, *args, env=None):
     return subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True,
                           env={**os.environ, 'GIT_AUTHOR_NAME': 'A', 'GIT_AUTHOR_EMAIL': 'a@x', 'GIT_COMMITTER_NAME': 'A', 'GIT_COMMITTER_EMAIL': 'a@x', **(env or {})}).stdout.strip()

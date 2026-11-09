@@ -3,10 +3,8 @@ import type {GithubInstallation, GithubRepository} from './types.mjs';
 interface GitHubSettings {appId: string | number; slug: string; clientId: string; clientSecret: string; privateKey: string}
 // An operator-owned GitHub App with repository selection and read-only access.
 //
-// Install flow: Connect opens github.com/apps/<slug>/installations/new?state=…; GitHub
-// asks the owner which repositories, then (the app requests OAuth on install) signs the user in
-// and redirects to /integrations/github/callback with code, installation_id and our state. We
-// trust the installation only if the signed-in GitHub user can see it.
+// Authorize first so an existing installation can be reused without reinstalling.
+// A new installation still returns through the same bound OAuth callback.
 import {createPrivateKey} from 'node:crypto';
 import {SignJWT} from 'jose';
 
@@ -42,13 +40,34 @@ export function createGitHubApp({appId, slug, clientId, clientSecret, privateKey
     // The connector mints its own installation tokens from these.
     sourceSettings: () => ({app_id: String(appId), private_key: privateKey}),
     installUrl: (state: string) => `https://github.com/apps/${encodeURIComponent(slug)}/installations/new?state=${encodeURIComponent(state)}`,
+    authorizeUrl: (state: string, redirectUri: string) => 'https://github.com/login/oauth/authorize?' + new URLSearchParams({client_id: clientId, redirect_uri: redirectUri, state}),
     /** Exchanges the OAuth code from the install redirect for a short-lived user token. */
-    async userToken(code: string) {
-      const {status, data} = await call<{access_token?: string; error?: string}>('https://github.com/login/oauth/access_token', {method: 'POST', body: {client_id: clientId, client_secret: clientSecret, code}});
+    async userToken(code: string, redirectUri?: string) {
+      const {status, data} = await call<{access_token?: string; error?: string}>('https://github.com/login/oauth/access_token', {method: 'POST', body: {client_id: clientId, client_secret: clientSecret, code, ...(redirectUri ? {redirect_uri: redirectUri} : {})}});
       if (status !== 200 || !data?.access_token) throw Object.assign(new Error(`GitHub code exchange failed: ${data?.error || status}`), {status: 400});
       return data.access_token;
     },
-    /** The installation, if this user can see it (they installed it or are an admin of its account). */
+    /** Visibility does not imply administration or access to every installed repository. */
+    async userInstallations(userToken: string) {
+      const installations: GithubInstallation[] = [];
+      for (let page = 1; page <= 20; page++) {
+        const res = await call<{installations: GithubInstallation[]}>(`/user/installations?per_page=100&page=${page}`, {token: userToken});
+        if (res.status !== 200 || !Array.isArray(res.data?.installations)) throw fail('user installations', res);
+        installations.push(...res.data.installations);
+        if (res.data.installations.length < 100) return installations;
+      }
+      throw new Error('GitHub installation listing exceeded its limit');
+    },
+    async userRepositories(userToken: string, installationId: string) {
+      const repositories: GithubRepository[] = [];
+      for (let page = 1; page <= 50; page++) {
+        const res = await call<{repositories: GithubRepository[]}>(`/user/installations/${encodeURIComponent(installationId)}/repositories?per_page=100&page=${page}`, {token: userToken});
+        if (res.status !== 200 || !Array.isArray(res.data?.repositories)) throw fail('user repositories', res);
+        repositories.push(...res.data.repositories);
+        if (res.data.repositories.length < 100) return repositories;
+      }
+      throw new Error('GitHub repository listing exceeded its limit');
+    },
     async userInstallation(userToken: string, installationId: string) {
       for (let page = 1; page <= 20; page++) {
         const res = await call<{installations: GithubInstallation[]}>(`/user/installations?per_page=100&page=${page}`, {token: userToken});

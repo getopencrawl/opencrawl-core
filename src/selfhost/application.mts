@@ -138,7 +138,7 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
       }
       if(req.method==='GET'&&url.pathname==='/setup-prompt.txt'){res.setHeader('Access-Control-Allow-Origin','*');return respond(200,captureSetupPrompt(settings.url));}
       if(req.method==='GET'&&url.pathname==='/robots.txt')return respond(200,'User-agent: *\nDisallow: /\n');
-      if(req.method==='GET'&&/^\/console\/assets\/(app\.(js|css)|callback.js)$/.test(url.pathname))return respond(200,await readAsset('web-v2/dist/selfhost/'+url.pathname.split('/').at(-1)),url.pathname.endsWith('.css')?'text/css':'text/javascript; charset=utf-8');
+      if(req.method==='GET'&&/^\/console\/assets\/(app|callback)\.(js|css)$/.test(url.pathname))return respond(200,await readAsset('web-v2/dist/selfhost/'+url.pathname.split('/').at(-1)),url.pathname.endsWith('.css')?'text/css':'text/javascript; charset=utf-8');
       if(req.method==='GET'&&assets.has(url.pathname)){const [file,type]=assets.get(url.pathname)!;return respond(200,await readAsset(file),type);}
       if(req.method==='GET'&&url.pathname==='/signed-out')return message(200,'You’re signed out','You have signed out of OpenCrawl.');
       const jar=cookies(req.headers.cookie);

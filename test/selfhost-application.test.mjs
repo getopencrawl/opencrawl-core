@@ -38,6 +38,7 @@ test('OSS serves its application with no shell, pins login to configured organiz
   assert.ok(f.state.queries.every(q=>q.organizationId===org));
   const page=await f.request('/onboarding');assert.equal(page.status,200);assert.match(await page.text(),/console\/assets\/app.js/);
   assert.equal(await (await f.request('/console/assets/app.js',null)).text(),'asset:web-v2/dist/selfhost/app.js');
+  assert.equal(await (await f.request('/console/assets/callback.css',null)).text(),'asset:web-v2/dist/selfhost/callback.css');
   assert.equal((await f.request('/organizations/select','user_a',{method:'POST',headers:{origin}})).status,404);
 });
 test('OSS admission rejects foreign claims, revoked sessions, missing membership and cross-origin mutations',async t=>{

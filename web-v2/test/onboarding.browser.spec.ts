@@ -9,6 +9,21 @@ test.beforeEach(async ({request}) => {await request.post('/__test/reset', {data:
 
 async function refresh(page: Page) {await page.evaluate(() => window.dispatchEvent(new Event('online')));}
 
+test('GitHub account choice preserves keyboard access, narrow layout and the selected OAuth state',async({page})=>{
+  await page.route('https://github.com/login/oauth/authorize?**',route=>route.fulfill({contentType:'text/html',body:'<h1>GitHub authorization fixture</h1>'}));
+  for(const width of [1280,390]) {
+    await page.setViewportSize({width,height:800});
+    await page.goto('/callback-selection');
+    await expect(page.getByRole('heading',{name:'Connect GitHub',exact:true})).toBeVisible();
+    const second=page.getByRole('link',{name:'Connect second account'});
+    await second.focus();await expect(second).toBeFocused();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL('https://github.com/login/oauth/authorize?client_id=owned&state=bound.43');
+    await expect(page.getByRole('heading',{name:'GitHub authorization fixture'})).toBeVisible();
+  }
+});
+
 test('receipts, manual copy, and the three-step flow preserve one browser document', async ({page, request}) => {
   let documentLoads = 0;
   page.on('request', request => {if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documentLoads++;});

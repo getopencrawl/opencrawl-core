@@ -37,10 +37,10 @@ export async function integrationRequest(req: IncomingMessage,url: URL,route: Ro
         if (!provider) return url.pathname.startsWith('/api/') ? json(404, {error: {code: 'UNKNOWN_INTEGRATION', message: 'Unknown integration.'}}) : message(404, 'Page not found', 'This page may have moved.', '/integrations', 'Open Integrations');
         if (route.name === 'integration-callback') {
           const result = await integrations.complete(principal, provider.id, url.searchParams);
-          track(result.ok ? 'integration_connected' : 'integration_connect_failed', principal, {provider: provider.id, reason: result.ok ? null : result.reason || null});
+          if (!result.actions?.length) track(result.ok ? 'integration_connected' : 'integration_connect_failed', principal, {provider: provider.id, reason: result.ok ? null : result.reason || null});
           const inOnboarding = Boolean(onboarding && !hasReceipt((await guided.progress(principal))?.completed));
           const callback = renderCallback({...result,name:provider.name,returnTo:inOnboarding ? '/onboarding/sources' : '/sources'});
-          return respond(result.ok ? 200 : 400, document(callback,{signedIn:true,title:inOnboarding ? 'Set up your workspace | OpenCrawl' : `${provider.name} | OpenCrawl`}), 'text/html; charset=utf-8');
+          return respond(result.ok || result.actions?.length ? 200 : 400, document(callback,{signedIn:true,title:inOnboarding ? 'Set up your workspace | OpenCrawl' : `${provider.name} | OpenCrawl`}), 'text/html; charset=utf-8');
         }
         try {
           if (route.action === 'connect') {
