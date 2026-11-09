@@ -5,6 +5,7 @@ import type {StoredMemorySnapshot} from '../memories/types.mjs';
 import type {createSessionSearch} from './search.mjs';
 export interface SessionPipelineOptions extends SourceOptions {search: ReturnType<typeof createSessionSearch>; jobId?: string; checkActive?: () => Promise<void>}
 import {gunzipSync} from 'node:zlib';
+import {passages} from '../search/passages.mjs';
 import {digest,sessionScope,MAX_BATCH_BYTES} from './ingest.mjs';
 import {sourceBatchIdentity,reserveSessionEvents} from './event-identity.mjs';
 import {memorySourceIdentity,verifyStoredMemory,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
@@ -59,7 +60,7 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team'}: {
     // developer prompts. Only the explicit human-readable summary is evidence.
     const texts: string[]=[],attachments: Attachment[]=[],names=new Set<string>();collect(data,texts,attachments,names);
     const text=texts.join('\n');
-    const chunks=text.match(/[\s\S]{1,16000}/gu)||[''];
+    const chunks=passages(text);
     for(let chunk=0;chunk<chunks.length;chunk++){
       const document={tenantId:principal.tenantId,userId:principal.userId,installationId:batch.installationId,sessionId:batch.sessionId,
         harness:batch.harness,origin:batch.origin,eventId:event.id,kind:event.kind,role:event.data?.role??null,

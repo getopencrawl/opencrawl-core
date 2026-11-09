@@ -6,6 +6,7 @@ import {digest,sessionScope} from '../sessions/event-identity.mjs';
 import {visibleTo} from '../sessions/controls.mjs';
 import type {ResourceControl} from '../sessions/controls.mjs';
 import {textQuery,timeRange} from '../search/text-query.mjs';
+import {passages} from '../search/passages.mjs';
 
 const f=(field: string)=>realmField('memory',field);
 function fail(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
@@ -31,7 +32,7 @@ export function createMemorySearch(options: RealmOptions) {
         // A deleted memory stays deleted until the agent writes a newer version.
         const control=controls.get(digest(file.path));
         if(control?.deletedAt&&!(Date.parse(file.modifiedAt)>Date.parse(control.deletedAt)))continue;
-        const chunks=file.text.match(/[\s\S]{1,16000}/gu)||[''];
+        const chunks=passages(file.text);
         const sourceSessionId=/^(?:thread_id|originSessionId):\s*["']?([A-Za-z0-9_-]+)/m.exec(file.text)?.[1]??null;
         for(let chunk=0;chunk<chunks.length;chunk++) {
           const item={id:digest(JSON.stringify([sessionScope(principal),snapshot.snapshotId,file.path,chunk])),document:{...common,kind:'passage',
