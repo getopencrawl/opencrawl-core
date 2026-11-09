@@ -373,3 +373,17 @@ hide the adopted zombies that this test must detect. The fixture first proves
 that it leaves an adopted child as a zombie, then reaps only explicitly selected
 PIDs. All capture behavior and acceptance assertions remain in TypeScript. CI
 compiles this fixture; it adds no production dependency.
+
+## Managed skill refresh
+
+Automatic and explicit launcher updates refresh existing managed OpenCrawl skills
+using the selected release. Each installation keeps its saved deployment URL.
+User edits and unmanaged skills are preserved; conflicts are reported rather than
+overwritten. Skill failures do not prevent CLI use. `opencrawl skills refresh
+--json` retries or inspects refresh outcomes; use `skills install --api <origin>`
+for a new installation. `OPENCRAWL_NO_UPDATE=1` disables automatic refresh too.
+
+Board discovery uses MCP `board_sync`/`board_topics`; expand a relevant reference
+with `board_fetch` or `opencrawl board fetch --workspace <id> --id <reference>
+--json`. Add `--field latestAssistantMessage` to narrow a session, or page with
+`--offset`, `--length` and `--content-version`.

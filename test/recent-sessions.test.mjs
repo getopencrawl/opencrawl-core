@@ -9,6 +9,7 @@ import {realmIndex} from '../dist/src/search/realm.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 import {createBoard} from '../dist/src/board/board.mjs';
 import {gunzipSync} from 'node:zlib';
+import {createControls} from '../dist/src/sessions/controls.mjs';
 
 test('snapshots extract only human and assistant text across both harness formats', () => {
   const message = (role, content) => ({kind: 'message', data: {role, content}});
@@ -40,11 +41,11 @@ test('snapshot scope checks precede all reads and reject malformed aggregation i
   await assert.rejects(recent.read({tenantId:'org',userId:'user'}), /Invalid recent/);
 });
 
-test('sync returns org context on every topic/cursor selection without persisting transcript text; outages preserve posts', async () => {
+test('sync uses session discovery without requesting transcripts; outages preserve posts', async () => {
   const objects = new Map(); let calls=0, failure=false, hang=false;
   const store={async readVersion(k){return objects.get(k)||{version:null,data:null};},async compareAndSet(k,v,data){objects.set(k,{version:1,data});return true;}};
   const principal={tenantId:'org',userId:'reader'}, snapshot=[{sessionId:'team-session',title:'Private context'}];
-  const board=createBoard({store,prefix:'board',sessionTimeoutMs:10,recentSessions:{async read(who){assert.deepEqual(who,principal);calls++;if(failure)throw new Error('offline');if(hang)return new Promise(()=>{});return snapshot;}}});
+  const board=createBoard({store,prefix:'board',sessionTimeoutMs:10,recentSessions:{async read(){throw new Error('Sync must not load transcripts');},async list(who){assert.deepEqual(who,principal);calls++;if(failure)throw new Error('offline');if(hang)return new Promise(()=>{});return snapshot;}}});
   let read=await board.sync(principal,{workspace:'org',agent:'reader',topics:[]});
   assert.deepEqual(read.recentSessions,snapshot);assert.equal(read.recentSessionsStatus.state,'ready');
   read=await board.sync(principal,{workspace:'org',agent:'reader',topics:['unrelated'],after:read.cursor,leave:true});
@@ -59,6 +60,22 @@ test('sync returns org context on every topic/cursor selection without persistin
 });
 
 const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
+test('selected session fetch pages only requested text and detects changed content', async () => {
+  let text = 'Evidence '.repeat(2000), calls = 0;
+  const snapshot = () => ({id:'session:selected', userId:'owner', harness:'codex', installationId:'one', sessionId:'one', title:'Selected work', titleSource:'captured', titleTimestamp:null, lastActivityAt:'2026-11-09T00:00:00Z', partial:false,
+    firstUserMessage:{text:'Original request',eventId:'first',timestamp:null,receivedAt:null}, lastUserMessage:null, latestAssistantMessage:{text,eventId:'last',timestamp:null,receivedAt:null}});
+  const store={async readVersion(){return {data:null,version:null};},async compareAndSet(){return true;}};
+  const board=createBoard({store,prefix:'board',recentSessions:{async list(){throw new Error('No discovery needed for selected fetch');},async fetch(who,id){calls++;assert.equal(who.tenantId,'org');assert.equal(id,'session:selected');return snapshot();}}});
+  const args={workspace:'org',id:'session:selected',field:'latestAssistantMessage',length:100};
+  const first=await board.fetch({tenantId:'org',userId:'reader'},args);
+  assert.ok(first.text.length===100);assert.ok(!first.text.includes('Original request'));
+  const next=await board.fetch({tenantId:'org',userId:'reader'},{...args,offset:first.nextOffset,version:first.version});
+  assert.equal(next.offset,100);assert.equal(next.totalChars,first.totalChars);
+  text+=' Changed';
+  await assert.rejects(board.fetch({tenantId:'org',userId:'reader'},{...args,offset:next.nextOffset,version:first.version}),{status:409});
+  assert.equal(calls,3);
+});
+
 test('real realm: newest ten org sessions, original first/last text, tool exclusion, timestamps and source isolation', {skip:!endpoint}, async t => {
   const environment='recent-'+randomUUID().slice(0,8), prefix='sessions/recent', store=memorySessionStore();
   const owner={tenantId:'team',userId:'alice'}, teammate={...owner,userId:'bob'}, foreign={...owner,tenantId:'foreign'};
@@ -107,6 +124,20 @@ test('real realm: newest ten org sessions, original first/last text, tool exclus
   assert.deepEqual(await recent.read({...owner,tenantId:'empty'}),[]);
   t.after(()=>fetch(endpoint+'/'+realmIndex(environment,'empty'),{method:'DELETE'}));
   assert.equal((await recent.read(foreign))[0].firstUserMessage.text,'FOREIGN SECRET');
+  const discovery = await recent.list(owner);
+  assert.equal(discovery.length, 10);
+  assert.ok(discovery.every(item => item.title.length <= 120 && !('firstUserMessage' in item) && !('latestAssistantMessage' in item)));
+  assert.ok(Buffer.byteLength(JSON.stringify(discovery)) < 6000);
+  const selected = await recent.fetch(owner, discovery[2].id);
+  assert.equal(selected.firstUserMessage.text, firstText);
+  assert.equal(selected.latestAssistantMessage.text, assistantText);
+  await assert.rejects(recent.fetch(foreign, discovery[2].id), {status: 404});
+  const controls = createControls({store, prefix});
+  await controls.update(teammate, 'sessions', 'codex', 'session-11', () => ({visibility: 'private', deletedAt: null}));
+  // The index is intentionally stale: current owner controls must still deny.
+  await assert.rejects(recent.fetch(owner, discovery[2].id), {status: 404});
+  assert.ok(!(await recent.list(owner)).some(item => item.id === discovery[2].id));
+  await controls.update(teammate, 'sessions', 'codex', 'session-11', () => ({visibility: 'team', deletedAt: null}));
   // Source ownership is revalidated; an index hit cannot authorize another org's batch.
   const poisoned={...original.batch,owner:foreign};
   const {gzipSync}=await import('node:zlib');store.data.set(original.key,gzipSync(JSON.stringify(poisoned)));

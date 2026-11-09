@@ -135,9 +135,34 @@ async function automaticUpdate() {
   try { await update(); }
   catch { try { write(path.join(cacheRoot(), 'update.json'), {checkedAt: Date.now() - DAY + 15 * 60_000}); } catch {} }
 }
+function refreshSkills(root, {force = false, run = spawnSync} = {}) {
+  const version = read(path.join(root, 'package.json'))?.version;
+  const stateFile = path.join(cacheRoot(), 'skills-update.json'), previous = read(stateFile);
+  if (!force && previous?.version === version && (previous.complete || previous.checkedAt > Date.now() - 15 * 60_000)) return {...previous.result, checked: false};
+  let result = {status: 'unavailable', updated: 0, conflicts: 0, errors: 1};
+  try {
+    // Run the selected release's native installer, never this bootstrap's old
+    // skill text. Refresh preserves each managed destination's saved API.
+    const child = run(binary(root), ['skills', 'refresh', '--json'], {
+      encoding: 'utf8', stdio: 'pipe', windowsHide: true, timeout: 15_000,
+      env: {...process.env, OPENCRAWL_NO_UPDATE: '1'},
+    });
+    const output = JSON.parse(child.stdout || '{}');
+    if (output.schemaVersion === 1 && Array.isArray(output.data?.results)) {
+      const rows = output.data.results;
+      const conflicts = rows.filter(row => row.status === 'conflict').length;
+      const errors = rows.filter(row => row.status === 'error').length;
+      if ([0, 1].includes(child.status) && rows.every(row => ['updated', 'unchanged', 'skipped', 'conflict', 'error'].includes(row.status))) {
+        result = {status: conflicts || errors ? 'attention_required' : 'current', updated: rows.filter(row => row.status === 'updated').length, conflicts, errors};
+      }
+    }
+  } catch {} // A skill conflict, denied directory or old binary cannot break CLI use.
+  try {write(stateFile, {version, checkedAt: Date.now(), complete: result.status === 'current' || result.conflicts > 0 && !result.errors, result});} catch {}
+  return {...result, checked: true};
+}
 async function main(args = process.argv.slice(2)) {
   if (args[0] === '--internal-update') {
-    try { await update(); } catch { write(path.join(cacheRoot(), 'update.json'), {checkedAt: Date.now() - DAY + 15 * 60_000}); }
+    try { await update(); refreshSkills(activeRoot()); } catch { write(path.join(cacheRoot(), 'update.json'), {checkedAt: Date.now() - DAY + 15 * 60_000}); }
     return 0;
   }
   const selected = activeRoot();
@@ -153,7 +178,8 @@ async function main(args = process.argv.slice(2)) {
   if (parsed?.positionals.length === 1 && parsed.positionals[0] === 'update' && !parsed.values.help && !parsed.values.version) {
     try {
       const data = await update({force: true});
-      process.stdout.write(args.includes('--json') ? JSON.stringify({schemaVersion: 1, data}) + '\n' : data.updated ? `Installed opencrawl ${data.version}. Your next invocation will use it.\n` : `opencrawl ${data.version} is current.\n`);
+      const skills = refreshSkills(activeRoot(), {force: true});
+      process.stdout.write(args.includes('--json') ? JSON.stringify({schemaVersion: 1, data: {...data, skills}}) + '\n' : (data.updated ? `Installed opencrawl ${data.version}. Your next invocation will use it.\n` : `opencrawl ${data.version} is current.\n`) + `Managed skills: ${skills.updated} updated, ${skills.conflicts} conflicts, ${skills.errors} errors.\n`);
       return 0;
     } catch (error) {
       // Older npm bootstraps call this exported main and otherwise replace a
@@ -163,6 +189,10 @@ async function main(args = process.argv.slice(2)) {
   }
   if (!(args[0] === 'collect' && ['hook','worker'].includes(args[1]))) await automaticUpdate();
   const root = activeRoot();
+  if (process.env.OPENCRAWL_NO_UPDATE !== '1' && !(args[0] === 'collect' && ['hook', 'worker'].includes(args[1]))) {
+    const skills = refreshSkills(root);
+    if (skills.checked && skills.status !== 'current') process.stderr.write('opencrawl: Managed skill refresh needs attention; run opencrawl skills refresh --json to inspect preserved conflicts or directory access.\n');
+  }
   const result = spawnSync(binary(root), args, {stdio: 'inherit', windowsHide: true, env: {...process.env, OPENCRAWL_LAUNCHER: process.env.OPENCRAWL_LAUNCHER || __filename, OPENCRAWL_NODE: process.execPath}});
   if (result.error) throw new Error('Could not start the OpenCrawl binary. Reinstall @getopencrawl/cli.');
   if (result.signal === 'SIGINT') return 130;
@@ -178,5 +208,5 @@ function reportFailure(error, args) {
   else process.stderr.write(`opencrawl: ${message}\n`);
   return 1;
 }
-module.exports = {channel: CHANNEL, target, stable, compare, activeRoot, update, installRelease, binary, npmCli, main};
+module.exports = {channel: CHANNEL, target, stable, compare, activeRoot, update, installRelease, refreshSkills, binary, npmCli, main};
 if (require.main === module) main().then(code => { process.exitCode = code; }).catch(error => { process.exitCode = reportFailure(error, process.argv.slice(2)); });

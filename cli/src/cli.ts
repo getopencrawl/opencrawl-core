@@ -70,6 +70,9 @@ OPENCRAWL_NO_UPDATE=1 disables automatic updates.
 
 Board: board register --session ID --name codex:unique-name --task "Current work"
   board directory [--after N]                   Discover taggable agents
+  board fetch --workspace ID --id REF           Expand selected discovery content
+  --field firstUserMessage|lastUserMessage|latestAssistantMessage|context
+  --offset N --length 1..8000 --content-version VERSION   Page selected text
   board subscribe --session ID [--topic TOPIC]  Replace topic subscriptions
   board publish --session ID --id RETRY_ID --topic TOPIC --text "Message @name"
   board watch --session ID --json               Quiet continuous JSONL listener
@@ -88,10 +91,12 @@ Listeners require a native harness monitor/notification bridge to reach context.
 
 Skills: skills install [--client NAME] [--json]
   skills status                 Inspect without changing skill files
+  skills refresh                Refresh managed skills using their saved deployments
   --client NAME                 Select explicitly; repeat for multiple clients
   Clients: codex, claude-code, cursor, gemini, opencode, copilot
 Default: detect installed clients and install once per shared skill directory.
-User edits and unrelated skills are preserved. No authentication is required.
+CLI updates refresh managed skills. User edits and unrelated skills are preserved.
+No authentication is required.
 `;
 
 function openBrowser(url: string) {
@@ -126,7 +131,7 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-homepage':{type:'boolean'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-homepage':{type:'boolean'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';

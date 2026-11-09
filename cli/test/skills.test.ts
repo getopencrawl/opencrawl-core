@@ -3,6 +3,7 @@ import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync,
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {agentSkills, skillTargets} from '../src/skills.ts';
+import {createHash} from 'node:crypto';
 
 async function fixture(run: (home: string) => Promise<void>) {
   const home = mkdtempSync(join(tmpdir(), 'opencrawl-skills-')), saved = {...process.env};
@@ -66,6 +67,27 @@ test('CLI skill status is read-only and does not require login or capture enroll
   expect(JSON.parse(r.stdout.toString()).data.results[0].status).toBe('missing');
   expect(existsSync(join(home, 'claude'))).toBe(false);
   expect(existsSync(join(home, 'config/opencrawl/capture/config.json'))).toBe(false);
+}));
+
+test('automatic refresh updates only managed skills, preserves each API and leaves edited files intact', () => fixture(async home => {
+  const options = {home, env: {}, which: () => null, clients: ['codex', 'claude-code']};
+  const initial = await agentSkills('install', 'http://127.0.0.1:8093', options);
+  const directory = initial.results[0]!.directory, skill = join(directory, 'SKILL.md'), manifest = join(directory, '.opencrawl-skill.json');
+  const old = 'Previous managed skill'; writeFileSync(skill, old);
+  const saved = JSON.parse(readFileSync(manifest, 'utf8'));
+  saved.files['SKILL.md'] = createHash('sha256').update(old).digest('hex');
+  saved.revision = 1; writeFileSync(manifest, JSON.stringify(saved));
+  const customized = join(initial.results[1]!.directory, 'references/participation.md');
+  writeFileSync(customized, 'My custom coordination rules');
+  const result = await agentSkills('refresh', 'https://app.getopencrawl.com', options);
+  expect(result.results.map(row => row.status)).toEqual(['updated', 'conflict']);
+  expect(readFileSync(skill, 'utf8')).toContain('http://127.0.0.1:8093');
+  expect(readFileSync(skill, 'utf8')).not.toContain('https://app.getopencrawl.com');
+  expect(JSON.parse(readFileSync(manifest, 'utf8')).api).toBe('http://127.0.0.1:8093');
+  expect(readFileSync(customized, 'utf8')).toBe('My custom coordination rules');
+  rmSync(directory, {recursive: true});
+  expect((await agentSkills('refresh', 'https://app.getopencrawl.com', options)).results[0]!.status).toBe('skipped');
+  expect(existsSync(directory)).toBe(false);
 }));
 
 test('approved capture setup installs skills without replacing existing hooks or requiring runtime credentials', () => fixture(async home => {
