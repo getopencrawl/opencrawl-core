@@ -131,3 +131,21 @@ test('real session and memory library: viewer, private visibility, owner-only co
   await snapshot(alice, generation + 2, [file('memory/project.md', '# Compass rollout v2', new Date().toISOString())]);
   assert.deepEqual((await api(bob, 'memories/list', {})).memories.map(m => m.path), ['memory/project.md']);
 });
+
+test('visibility changes upgrade a realm no indexer has touched since the release', {skip: !endpoint || !s3}, async t => {
+  const run = randomUUID(), environment = 'vis-' + run.slice(0, 8), tenantId = 'visibility-' + run, owner = {tenantId, userId: 'alice'};
+  const index = realmIndex(environment, tenantId), transport = createIndexTransport({endpoint, index});
+  t.after(() => fetch(endpoint + '/' + index, {method: 'DELETE'}));
+  const old = structuredClone(realmMapping); delete old.properties.session.properties.private; delete old.properties.memory.properties.private;
+  await transport('', {settings: {number_of_shards: 1, number_of_replicas: 0}, mappings: {...old, _meta: {schema: 1, tenantId}}}, 'PUT');
+  await transport('/_doc/session:one?refresh=true', {schema: 1, tenantId, corpus: 'session', id: 'one', kind: 'message', text: 'legacy', session: {userId: 'alice', harness: 'codex', sessionId: 'legacy', chunk: 0, kind: 'message'}}, 'PUT');
+  await transport('/_doc/memory:one?refresh=true', {schema: 1, tenantId, corpus: 'memory', id: 'one', kind: 'passage', text: 'legacy memory', memory: {userId: 'alice', harness: 'codex', path: 'memories/a.md', kind: 'passage', chunk: 0}}, 'PUT');
+  const store = createObjectStore({endpoint: s3, bucket: 'capture-test', credentials: {accessKeyId: 'capture-test', secretAccessKey: 'capture-test-secret'}});
+  const prefix = 'sessions/visibility-test/' + run, options = {endpoint, environment, store, prefix};
+  t.after(async () => {for (const key of (await store.list(prefix + '/')).keys) await store.delete(key);});
+  const api = createLibraryApi({sessions: createSessionLibrary(options), memories: createMemoryLibrary(options)});
+  assert.equal((await api(owner, 'sessions/visibility', {harness: 'codex', sessionId: 'legacy', visibility: 'private'})).visibility, 'private');
+  assert.equal((await api(owner, 'memories/visibility', {harness: 'codex', path: 'memories/a.md', visibility: 'private'})).visibility, 'private');
+  const stored = await transport('/_doc/session:one', undefined, 'GET');
+  assert.equal(stored._source.session.private, true);
+});
