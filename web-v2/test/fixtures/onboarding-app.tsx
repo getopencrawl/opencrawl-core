@@ -1,7 +1,7 @@
 /** Browser-test fixture only. It is never a product entrypoint or published asset. */
 import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
-import {AgentOnboarding, AppRouter, Button, FocusedFrame, InviteOnboarding, Route, Routes, SourcesOnboarding, useNavigate, type OnboardingAdapter} from '../../src/index.ts';
+import {AgentOnboarding, AppRouter, AppShell, Button, FocusedFrame, InviteOnboarding, Route, Routes, SourcesOnboarding, useLocation, useNavigate, type OnboardingAdapter} from '../../src/index.ts';
 import '../../src/styles.css';
 
 declare global {
@@ -27,7 +27,16 @@ const account = <form className="header-account" method="post" action="/auth/log
 
 function Fixture() {
   const navigate = useNavigate();
+  const location = useLocation();
   useEffect(() => {window.__onboardingTestNavigate = path => {void navigate(path);}; return () => {delete window.__onboardingTestNavigate;};}, [navigate]);
+  if (location.pathname.startsWith('/workspace')) return <AppShell
+    workspace={{name: 'Example workspace', userName: 'Alex', email: 'alex@example.test', role: 'Admin'}}
+    routes={[
+      {path: '/workspace', label: 'Usage', icon: 'usage', end: true, element: <h1 tabIndex={-1} data-page-heading>Console home</h1>},
+      {path: '/workspace/team', label: 'Team', icon: 'team', element: <h1 tabIndex={-1} data-page-heading>Console team</h1>},
+    ]}
+    footer={<Button variant="quiet" onClick={() => {void navigate('/away');}}>Sign out</Button>}
+  />;
   return <Routes>
     <Route path="/onboarding" element={<FocusedFrame footer={account}><AgentOnboarding adapter={adapter} mcpUrl="https://app.getopencrawl.com/mcp" setupPrompt={setupPrompt} /></FocusedFrame>} />
     <Route path="/onboarding/sources" element={<FocusedFrame footer={account}><SourcesOnboarding adapter={adapter} /></FocusedFrame>} />

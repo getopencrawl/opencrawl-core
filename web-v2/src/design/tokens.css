@@ -6,6 +6,8 @@
   --report-heading-compact: 1.875rem;
   --report-metric: 2rem;
   --report-metric-compact: 1.625rem;
+  --console-sidebar-width: 256px;
+  --console-nav-leading: var(--space-8);
   --console-heading: 1.75rem;
   --console-heading-compact: 1.5rem;
   --console-metric: 1.5rem;
