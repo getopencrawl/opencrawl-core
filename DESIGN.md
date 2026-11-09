@@ -171,10 +171,10 @@ components:
     rounded: "{rounded.panel}"
     padding: "24px"
     width: "min(520px, calc(100vw - 32px))"
-  workspace-header:
-    backgroundColor: "{colors.bg}"
-    padding: "0 32px"
-    height: "72px"
+  workspace-sidebar:
+    backgroundColor: "{colors.surface}"
+    padding: "16px 8px 0"
+    width: "256px"
 ---
 
 # Design System: OpenCrawl Night
@@ -206,7 +206,7 @@ The font license remains at `web/assets/Geist-OFL.txt`.
 **Key Characteristics:**
 
 - Dark-only Night palette and inherited brand assets.
-- One React workspace shell with a shared top bar on every workspace route.
+- One React workspace shell with a persistent left sidebar on every workspace route.
 - Quiet default controls, visible keyboard focus and explicit operational states.
 - A separate focused onboarding composition within the same design system.
 
@@ -259,23 +259,29 @@ bounded presentation stylesheet; do not restyle it with the console page heading
 
 ## Layout
 
-`AppShell` is the only workspace shell. One route registry drives the top bar
-and page routing through the shared router. The hosted routes are Usage, Integrations,
-Diagnostics, Team and Billing. Deployment adapters supply only their
+`AppShell` is the only workspace shell. One route registry drives the left sidebar
+and page routing through the shared router. The hosted routes are Usage, Sessions,
+Memories, Integrations, Diagnostics, Team and Billing. Deployment adapters supply only their
 supported routes; the shared shell does not imply hosted capabilities in the
 single-tenant adapter.
 
-The desktop top bar is 72px high and centered within the same maximum width as
-the content, including its 32px side insets. Its static mark and lowercase
-`opencrawl` wordmark come from the shared Brand component. Navigation and the
-account action stay grouped at the right. Links have padded 40px targets; the
-current page has a bright 2px accent line just below its label, inside the target
-rather than on the header's bottom edge. The mark never animates. Content is centered at 1200px with 32px side
-insets, 48px top padding and 64px bottom padding. At 800px and below, that same
-navigation tree becomes a focus-managed drawer bounded by 300px and the viewport
-minus 48px. Content padding becomes 32px, 16px and 40px. The mobile header contains
-the same static Brand and the navigation control; workspace identity stays in
-the drawer. There is no alternate
+The desktop sidebar is 256px wide and spans the viewport. Its static mark and
+lowercase `opencrawl` wordmark come from Brand. The account footer is a full-width bottom row separated by a rule. It follows the
+supplied reference: rounded-square workspace icon, person name above workspace,
+and one trailing chevron for the whole account menu. Workspace and
+management links form separate groups. Links have padded 44px targets and the
+current page uses a lavender wash. The sidebar scrolls on short viewports.
+The brand, navigation and account rows share a 32px leading column,
+12px gap and aligned text edge. Rows use 8px horizontal insets inside the 8px sidebar gutter. The footer
+uses 16px insets, preserving the same icon and label alignment. Navigation targets are 44px tall with 4px between rows; distinct
+groups are separated by 12px of space, without a navigation divider. Keep the mark and wordmark optically aligned, and dock the identity row to the sidebar edges rather than floating it as a card.
+
+Content is centered at 1200px within the remaining area, with 32px side insets,
+48px top padding and 64px bottom padding. At 800px and below, the same navigation
+tree becomes a focus-managed drawer bounded by 300px and the viewport minus 48px.
+The mobile header retains Brand and its navigation control. Background content
+becomes inert while the drawer is open; Escape, the backdrop and selecting a
+page dismiss it. Content padding becomes 32px, 16px and 40px. There is no alternate
 page-specific sidebar or navigation implementation.
 
 Compose shared stacks, rows, action groups, split rows, two-column form grids,
@@ -464,7 +470,7 @@ leaderboard and session/tool-call highlights, without a Most sources connected t
 on the Team management route.
 
 Usage is the hosted home at `/`; `/usage` preserves query parameters when redirecting
-to it. Old tab queries no longer hide sections. The same AppShell top bar is used
+to it. Old tab queries no longer hide sections. The same AppShell left sidebar is used
 across every workspace route. Keep the remaining screen contents unchanged until
 their individual review.
 
@@ -487,7 +493,7 @@ progress; they do not replace Usage's indexed document-type counts.
 The shared `oc-connection-*` patterns own this presentation. Use shared Button,
 Dialog and Icon primitives for connection, help and removal. Keep sign-in
 recovery distinct from sync and deletion retries. `/sources` and its
-`/integrations` alias share one React page and the canonical AppShell top bar.
+`/integrations` alias share one React page and the canonical AppShell left sidebar.
 
 ## Team management
 
@@ -608,3 +614,20 @@ into a total. New or canceled queries, failures, adapter changes and unmounts
 clear prior result data. Late responses cannot replace the latest submitted query.
 Input edits remain separate from the displayed submitted query; Cancel restores
 focus to the query field. Keep the approved workspace shell, tabs and forum intact.
+
+Metric cards align labels and values at the top regardless of description length.
+Report columns respond to the main pane width: below 900px, use two metric columns
+and one column for paired panels, preserving legibility beside the sidebar.
+
+The account footer matches the supplied person/workspace reference. Its 64px
+row spans the sidebar below a full-width divider; a 32px outlined workspace icon
+sits 16px from the edge. Person name uses 16px type above the 13px workspace name.
+One trailing chevron opens the native account popover above the row. Keep the
+workspace name here instead of repeating it beneath Brand. Outside clicks and
+Escape close the account menu. Inside mobile navigation, the first Escape closes
+account details and the second closes the drawer. Workspace-only adapters show
+static footer context without an empty menu.
+
+The sidebar starts 16px from the top. Keep the wordmark optically aligned with
+the mark using its scoped 2px adjustment. Integrations uses the shared plug icon.
+The footer divider remains the only persistent horizontal rule in navigation.

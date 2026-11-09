@@ -154,3 +154,50 @@ for (const viewport of [{name: 'desktop', width: 1440, height: 1000}, {name: 'mo
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
+
+test('the person and workspace stay together in the docked account menu', async ({page}) => {
+  await page.setViewportSize({width: 1280, height: 800});
+  await page.goto('/workspace');
+  const trigger = page.getByRole('button', {name: 'Alex, Example workspace. Account menu', exact: true});
+  const account = page.getByRole('group', {name: 'Account details', exact: true});
+  await expect(trigger.locator('strong')).toHaveText('Alex');
+  await expect(trigger).toContainText('Example workspace');
+  await expect(page.getByText('Your account', {exact: true})).toHaveCount(0);
+  await expect(page.getByRole('button', {name: 'Sign out', exact: true})).not.toBeVisible();
+  await trigger.click();
+  await expect(account).toBeVisible();
+  await expect(account).toContainText('alex@example.test');
+  await page.keyboard.press('Escape');
+  await expect(account).not.toBeVisible();
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.getByRole('heading', {name: 'Console home'}).click();
+  await expect(account).not.toBeVisible();
+  await trigger.click();
+  await page.getByRole('link', {name: 'Team', exact: true}).click();
+  await expect(page.getByRole('heading', {name: 'Console team'})).toBeVisible();
+  await expect(account).not.toBeVisible();
+});
+
+test('mobile account disclosure closes before the drawer and hidden actions leave the focus loop', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 844});
+  await page.goto('/workspace');
+  const open = page.getByRole('button', {name: 'Open workspace navigation'});
+  const trigger = page.getByRole('button', {name: 'Alex, Example workspace. Account menu', exact: true});
+  const account = page.getByRole('group', {name: 'Account details', exact: true});
+  const sidebar = page.getByRole('complementary', {name: 'Workspace', exact: true});
+  await open.click();
+  await sidebar.getByRole('link', {name: 'OpenCrawl home'}).focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await expect(account).toBeVisible();
+  await page.getByRole('button', {name: 'Sign out', exact: true}).focus();
+  await page.keyboard.press('Escape');
+  await expect(account).not.toBeVisible();
+  await expect(sidebar).toBeVisible();
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(sidebar).not.toBeVisible();
+  await expect(open).toBeFocused();
+});
