@@ -6,13 +6,15 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
 - This repository owns the product and its usable single-tenant self-hosted
   distribution: operations, formats, resource authorization, UI, CLI, contracts,
   reference adapters, and startup/upgrade tools.
-- The separate proprietary hosted shell owns WorkOS, hosted organizations and
-  membership resolution, tenant provisioning/routing, billing, entitlements,
+- The separate proprietary hosted shell owns hosted tenant selection,
+  provisioning/routing, billing, entitlements,
   managed infrastructure, fleet operations and compliance exports.
-- Dependencies point into core. Never import the shell or require WorkOS, an
-  OpenCrawl hosted account, license server, or hosted control plane to use core.
+- Dependencies point into core. Never import the shell or require an OpenCrawl hosted account, license server,
+  or hosted control plane to use core. WorkOS is the supported identity provider
+  for now; self-hosters use their own WorkOS account and one organization.
   Keep provider objects and managed credentials out of domain contracts.
-- Authentication/tenant selection belong to runtime adapters. Core enforces
+- Reusable authentication and team operations belong here; hosted tenant selection
+  belongs to shell. Core enforces
   resource access within an explicit trusted scope. Single tenant does not mean
   unauthenticated; no implicit default scope for hosted calls.
 - Keep self-host HTTP/auth, storage, migrations, backup/restore and startup
@@ -58,8 +60,19 @@ navigation, form controls, icons, tokens, or CSS. Browser UI belongs in web-v2;
 do not retain parallel HTML renderers or superseded browser scripts.
 Run its strict typecheck, architecture tests, build, and browser regression suite
 alongside core checks. The hosted shell consumes the published source exports;
-its provider/account/billing pages must reuse the same design system.
+its commercial and hosted tenancy extensions must reuse the same design system.
 
 ## Backend TypeScript
 
 Backend source under `src/` uses strict TypeScript (`.mts`, or `.cts` for Temporal workflow bundles). Run `npm run build` before invoking compiled entrypoints under `dist/src/`; `npm test` builds first. Keep runtime import extensions `.mjs`/`.cjs`, preserve public package export names, and ship declarations with the compiled package. Do not weaken strict checks or add type-check suppression directives.
+
+## Shared application seam
+
+The single-tenant product supports multiple users through the operator’s own
+WorkOS account. WorkOS is the supported identity adapter for this iteration;
+reusable authentication, membership, role controls, UI, Airbyte and connector
+lifecycle implementations belong in core. Hosted multi-tenant selection and
+provisioning, billing, fleet operation and internal administration belong in
+shell. Source SDK names do not determine ownership. Core requires no account
+or service operated by OpenCrawl. This contract supersedes earlier hosted-only
+classification of reusable identity, integrations and product UI.
