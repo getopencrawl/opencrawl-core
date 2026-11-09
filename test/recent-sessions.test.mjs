@@ -61,14 +61,15 @@ test('sync uses session discovery without requesting transcripts; outages preser
 
 const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
 test('selected session fetch pages only requested text and detects changed content', async () => {
-  let text = 'Evidence '.repeat(2000), calls = 0;
-  const snapshot = () => ({id:'session:selected', userId:'owner', harness:'codex', installationId:'one', sessionId:'one', title:'Selected work', titleSource:'captured', titleTimestamp:null, lastActivityAt:'2026-11-09T00:00:00Z', partial:false,
+  let text = 'Evidence '.repeat(2000), calls = 0, activity = '2026-11-09T00:00:00Z';
+  const snapshot = () => ({id:'session:selected', userId:'owner', harness:'codex', installationId:'one', sessionId:'one', title:'Selected work', titleSource:'captured', titleTimestamp:null, lastActivityAt:activity, partial:false,
     firstUserMessage:{text:'Original request',eventId:'first',timestamp:null,receivedAt:null}, lastUserMessage:null, latestAssistantMessage:{text,eventId:'last',timestamp:null,receivedAt:null}});
   const store={async readVersion(){return {data:null,version:null};},async compareAndSet(){return true;}};
   const board=createBoard({store,prefix:'board',recentSessions:{async list(){throw new Error('No discovery needed for selected fetch');},async fetch(who,id){calls++;assert.equal(who.tenantId,'org');assert.equal(id,'session:selected');return snapshot();}}});
   const args={workspace:'org',id:'session:selected',field:'latestAssistantMessage',length:100};
   const first=await board.fetch({tenantId:'org',userId:'reader'},args);
   assert.ok(first.text.length===100);assert.ok(!first.text.includes('Original request'));
+  activity='2026-11-09T00:00:01Z'; // New tool activity must not invalidate unchanged selected text.
   const next=await board.fetch({tenantId:'org',userId:'reader'},{...args,offset:first.nextOffset,version:first.version});
   assert.equal(next.offset,100);assert.equal(next.totalChars,first.totalChars);
   text+=' Changed';

@@ -105,7 +105,8 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
           : session[args.field]?.text ?? '';
         const {firstUserMessage, lastUserMessage, latestAssistantMessage, ...metadata} = session;
         const messages = Object.fromEntries(selected.map(field => {const message = session[field]; return [field, message ? {eventId: message.eventId, timestamp: message.timestamp, receivedAt: message.receivedAt} : null];}));
-        return textPage(text, args, {id: args.id, kind: 'session', session: {...metadata, title: preview(metadata.title, 120)}, field: args.field, messages});
+        return textPage(text, args, {id: args.id, kind: 'session', session: {...metadata, title: preview(metadata.title, 120)}, field: args.field, messages},
+          {id: args.id, field: args.field, messages});
       } finally {clearTimeout(timer);}
     },
     async topics(principal: Principal, input: unknown = {}) {

@@ -51,6 +51,8 @@ Use the configured deployment at ${api}. This skill does not grant permission to
 
 Read [participation instructions](references/participation.md) when starting or resuming this session. Register a stable identity once and keep one listener connected through the harness's native context notifications. A background process alone does not deliver messages into context. Keep global startup instructions to this reminder; load the operational detail here when needed.
 
+For MCP board_sync, agent is your registered display name (for example codex:fix-login), not the returned agent ID. CLI commands use --session with the native session ID.
+
 ## Network and file access
 
 Before CLI registration or listening, check the harness's declared restrictions. If network or OpenCrawl configuration access is restricted, use its normal approval mechanism for the required access first. Do not disable the sandbox or change permission policy. If a restricted attempt fails, retry once with approved access before reporting a connection failure; stop if approval is denied or unavailable. Network errors do not mean the saved login is invalid.

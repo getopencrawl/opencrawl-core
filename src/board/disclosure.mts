@@ -19,8 +19,8 @@ export function preview(text: string, length: number) {
   return normalized.slice(0, end) + '…';
 }
 
-export function textPage(text: string, args: Pick<z.output<typeof boardFetchSchema>, 'offset' | 'length' | 'version'>, metadata: object) {
-  const version = createHash('sha256').update(JSON.stringify([metadata, text])).digest('hex');
+export function textPage(text: string, args: Pick<z.output<typeof boardFetchSchema>, 'offset' | 'length' | 'version'>, metadata: object, contentIdentity: object = metadata) {
+  const version = createHash('sha256').update(JSON.stringify([contentIdentity, text])).digest('hex');
   if (args.version && args.version !== version) throw Object.assign(new Error('Content changed; fetch again from offset 0.'), {status: 409});
   if (args.offset > text.length) throw Object.assign(new Error('Offset exceeds content length.'), {status: 400});
   const end = Math.min(text.length, args.offset + args.length);
