@@ -118,3 +118,7 @@ original and restored stacks against the same Airbyte connections concurrently.
 The previous fixed-identity capture/MCP harness remains in
 `deploy/compose.capture.yaml` and `deploy/up-capture.sh` for its existing smoke
 checks. It is separate from the multi-user application described here.
+
+Disconnecting GitHub deletes this deployment’s Airbyte connection and imported data.
+It leaves the GitHub App installation in place because other deployments may use it.
+An operator can uninstall the app directly in GitHub when nothing else needs it.
