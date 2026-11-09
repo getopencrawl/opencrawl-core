@@ -36,6 +36,12 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   const integrations=createIntegrations({environment:'selfhost',appUrl:settings.url,registry,buckets,legacyBucket:store.bucket,workspaceId:async()=>workspaceId,destination,airbyte,oauth:oauth||unavailable,providers,github});
   const connectors=createConnectorResolver({environment:'selfhost',generation:'v1',registry,
     async storage(record){destination.validate(record);return store;},search:tenantId=>{if(tenantId!==settings.organizationId)throw new Error('Workspace scope denied');return createConnectorSearch(settings.search);}});
-  async function recover(){const result=[];for(const record of await registry.listTenant(settings.organizationId))result.push(await integrations.recoverRecord(record));return result;}
+  async function recover(){
+    const failures:unknown[]=[];
+    for(const record of await registry.listTenant(settings.organizationId)){
+      try{await integrations.recoverRecord(record);}catch(error){failures.push(error);}
+    }
+    if(failures.length)throw new AggregateError(failures,'Some connections still require recovery');
+  }
   return {registry,integrations,providers,connectors,oauth,recover,close:registry.close};
 }

@@ -457,7 +457,14 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     async recoverRecord(record: IntegrationRecord) {
       requireWritable();
       if (record.environment !== environment || !providers[record.provider] || !TENANT.test(record.tenantId) || !USER.test(record.userId) || !INTEGRATION.test(record.integrationId)) throw new Error('Invalid provisioning recovery scope');
-      return resume(record, providers[record.provider]);
+      // Discovery can race a completed setup or disconnect. Recovery only resumes
+      // unfinished work; it must not sync active or deleted connections at startup.
+      const current = await registry.get(record.tenantId, record.userId, record.integrationId);
+      if (!current) return;
+      if (current.environment !== environment || current.provider !== record.provider || current.tenantId !== record.tenantId || current.userId !== record.userId || current.integrationId !== record.integrationId) throw new Error('Invalid provisioning recovery scope');
+      if (current.status !== 'provisioning' && current.status !== 'disconnecting'
+        && !(current.status === 'error' && ['setup', 'recovery'].includes(current.error || ''))) return;
+      return resume(current, providers[current.provider]);
     },
 
     async list(principal: Principal): Promise<Array<SourceCard & {integrationId?: string; connectedById?: string}>> {
