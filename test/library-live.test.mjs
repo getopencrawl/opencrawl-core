@@ -1,4 +1,4 @@
-import {test} from 'node:test';
+import {test, before} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
@@ -12,6 +12,17 @@ import {createLibraryApi} from '../dist/src/sessions/library-http.mjs';
 import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
 import {createIndexTransport, realmIndex, realmMapping} from '../dist/src/search/realm.mjs';
 const endpoint = process.env.OPENCRAWL_TEST_OPENSEARCH_URL, s3 = process.env.OPENCRAWL_TEST_S3_ENDPOINT;
+
+before(async () => {
+  if (!endpoint || !s3) return;
+  // CI starts OpenSearch alongside the object store. These legacy-mapping
+  // fixtures create indexes directly, so they must wait for its HTTP listener.
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {if ((await fetch(endpoint)).ok) return;} catch { /* service is starting */ }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  throw new Error('Test OpenSearch did not become ready');
+});
 
 test('real session and memory library: viewer, private visibility, owner-only controls, deletion and tombstones', {skip: !endpoint || !s3}, async t => {
   const run = randomUUID(), environment = 'lib-' + run.slice(0, 8), tenantId = 'library-' + run;
