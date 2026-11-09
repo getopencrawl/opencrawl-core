@@ -21,3 +21,16 @@ export function textQuery(query: string, match: MatchMode | string = 'any') {
     minimum_should_match: 1,
   }};
 }
+
+/** Inclusive time bounds on the realm's common `timestamp` (session event time, memory file
+ * modification time, connector item time). Invalid bounds are a client error. */
+export function timeRange(after?: string, before?: string) {
+  const bound = (value: string | undefined) => {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) throw Object.assign(new Error('Invalid time range'), {status: 400});
+    return new Date(value).toISOString();
+  };
+  const gte = bound(after), lte = bound(before);
+  if (gte && lte && gte > lte) throw Object.assign(new Error('Invalid time range'), {status: 400});
+  return gte || lte ? [{range: {timestamp: {...(gte ? {gte} : {}), ...(lte ? {lte} : {})}}}] : [];
+}

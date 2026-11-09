@@ -11,3 +11,11 @@ test('full-text queries rank on exact and stemmed text and keep match semantics'
   }
   assert.equal(STEMMED,'text.english');
 });
+
+test('time ranges are inclusive ISO bounds on the common timestamp and reject invalid input',async()=>{
+  const {timeRange}=await import('../dist/src/search/text-query.mjs');
+  assert.deepEqual(timeRange(),[]);
+  assert.deepEqual(timeRange(undefined,'2024-03-27T12:00:00Z'),[{range:{timestamp:{lte:'2024-03-27T12:00:00.000Z'}}}]);
+  assert.deepEqual(timeRange('2024-03-01T00:00:00+02:00','2024-03-02T00:00:00Z'),[{range:{timestamp:{gte:'2024-02-29T22:00:00.000Z',lte:'2024-03-02T00:00:00.000Z'}}}]);
+  for(const [a,b] of [['nope',undefined],['2024-03-02T00:00:00Z','2024-03-01T00:00:00Z']])assert.throws(()=>timeRange(a,b),e=>e.status===400);
+});
