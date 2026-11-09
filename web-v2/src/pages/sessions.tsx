@@ -1,8 +1,8 @@
 import {useEffect, useRef, useState} from 'react';
-import {Button, EmptyState, Field, Input, LoadingState, Notice, PageHeader, Tabs} from '../design/components.js';
+import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, PageHeader, Tabs} from '../design/components.js';
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
-import type {Harness, LibraryAdapter, LibraryScope, SessionRef, TranscriptEntry, TranscriptEvent, Visibility} from './library-types.js';
+import type {Harness, LibraryAdapter, LibraryScope, SessionRef, SessionSummary, TranscriptEntry, TranscriptEvent, Visibility} from './library-types.js';
 import {MetaList, OwnerControls, VisibilityBadge, When, authorName, byDay, harnessName} from './library-controls.js';
 import {failureMessage, useResource} from './use-resource.js';
 
@@ -27,7 +27,20 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
   const [draft, setDraft] = useState(query), [page, setPage] = useState({key, limit: PAGE});
   const limit = page.key === key ? page.limit : PAGE;
   useEffect(() => setDraft(query), [query]);
-  const {data, error, loading, retry} = useResource(key, limit, signal => adapter('sessions/list', {scope, query, limit}, signal), 'Sessions could not load. Try again.');
+  const {data, error, loading, retry, replace} = useResource(key, limit, signal => adapter('sessions/list', {scope, query, limit}, signal), 'Sessions could not load. Try again.');
+  const [removing, setRemoving] = useState<SessionSummary | null>(null), [removal, setRemoval] = useState({busy: false, error: '', done: ''});
+  const controller = useRef<AbortController | null>(null);
+  useEffect(() => () => controller.current?.abort(), []);
+  async function remove(session: SessionSummary) {
+    controller.current?.abort(); const current = new AbortController(); controller.current = current;
+    setRemoval({busy: true, error: '', done: ''});
+    try {
+      await adapter('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, current.signal);
+      if (current.signal.aborted) return;
+      replace(value => value && {...value, sessions: value.sessions.filter(item => sessionPath(item) !== sessionPath(session))});
+      setRemoving(null); setRemoval({busy: false, error: '', done: session.title});
+    } catch (failure) {if (!current.signal.aborted) setRemoval({busy: false, error: failureMessage(failure, 'The session could not be deleted. Try again.'), done: ''});}
+  }
   const update = (changes: Record<string, string>) => {
     const next = new URLSearchParams(params); next.delete('deleted');
     for (const [name, value] of Object.entries(changes)) if (value) next.set(name, value); else next.delete(name);
@@ -35,7 +48,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
   };
   return <div className="oc-library">
     <PageHeader title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them."/>
-    {params.get('deleted') === '1' && <Notice tone="success">Session deleted. It no longer appears in search for anyone.</Notice>}
+    {(params.get('deleted') === '1' || removal.done) && <Notice tone="success">Session deleted. It no longer appears in search for anyone.</Notice>}
     <Tabs label="Sessions shown" value={scope} onChange={value => update({scope: value === 'mine' ? 'mine' : ''})} items={[{value: 'all', label: 'All sessions'}, {value: 'mine', label: 'My sessions'}]}/>
     <form className="query-form" role="search" onSubmit={event => {event.preventDefault(); update({q: draft.trim()});}}>
       <Field label="Search sessions"><Input type="search" value={draft} maxLength={500} onChange={event => setDraft(event.target.value)} placeholder="Words from the conversation"/></Field>
@@ -46,14 +59,19 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     {!data && loading && <LoadingState label="Loading sessions"/>}
     {data && (data.sessions.length ? <ol className="oc-row-groups" aria-busy={loading || undefined}>{byDay(data.sessions, session => session.lastActivityAt).map(([day, items]) => <li key={day}>
       <h2 className="oc-row-group-label">{day}</h2>
-      <ul className="oc-rows">{items.map(session => <li key={sessionPath(session)}><Link to={sessionPath(session)} className="oc-row">
+      <ul className="oc-rows">{items.map(session => <li key={sessionPath(session)} className="oc-row-item"><Link to={sessionPath(session)} className="oc-row">
         <span className="oc-row-title"><span>{session.title}</span><VisibilityBadge value={session.private}/></span>
         <span className="oc-row-optional">{authorName(session.userId, session.mine, data.authors)}</span>
         <span className="oc-row-optional">{harnessName(session.harness)}</span>
         <span className="oc-row-end"><When value={session.lastActivityAt}/></span>
-      </Link></li>)}</ul>
+      </Link>{session.mine ? <Button variant="quiet" className="oc-icon-button oc-row-action" aria-label={`Delete session: ${session.title}`} title="Delete session" onClick={() => {setRemoval({busy: false, error: '', done: ''}); setRemoving(session);}}><Icon name="trash" size={16}/></Button> : <span className="oc-row-action" aria-hidden="true"/>}</li>)}</ul>
     </li>)}</ol> : <EmptyState title={query ? 'No matching sessions' : scope === 'mine' ? 'You have no captured sessions yet' : 'No captured sessions yet'}
       description={query ? 'Try different words, or clear the search.' : 'Sessions appear here after an agent with OpenCrawl capture finishes a turn.'}/>)}
+    <Dialog open={Boolean(removing)} onClose={() => {if (!removal.busy) setRemoving(null);}} title="Delete this session?"
+      description="OpenCrawl permanently removes the transcript and its search results for everyone in the workspace. If the session is still running, its new activity is discarded."
+      actions={<><Button disabled={removal.busy} onClick={() => setRemoving(null)}>Cancel</Button><Button variant="danger" busy={removal.busy} autoFocus onClick={() => removing && void remove(removing)}>Delete session</Button></>}>
+      {removal.error ? <Notice tone="danger">{removal.error}</Notice> : <p className="oc-row-dialog-title">{removing?.title}</p>}
+    </Dialog>
     {data && data.sessions.length >= limit && limit < MAX && <div className="actions"><Button busy={loading} onClick={() => setPage({key, limit: limit + PAGE})}>Show more sessions</Button></div>}
   </div>;
 }
