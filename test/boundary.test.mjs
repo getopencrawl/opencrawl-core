@@ -45,7 +45,10 @@ test('core runtime imports stay inside src, Node builtins, or reviewed portable 
   assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@modelcontextprotocol/node', '@modelcontextprotocol/server', 'parse5', 'pdfjs-dist', 'zod']);
   assert.deepEqual(pkg.optionalDependencies || {}, {});
   const temporal = ['@temporalio/activity', '@temporalio/client', '@temporalio/common', '@temporalio/worker', '@temporalio/workflow'];
-  assert.deepEqual(Object.keys(pkg.peerDependencies).sort(), temporal);
+  assert.deepEqual(Object.keys(pkg.peerDependencies).sort(), ['@tanstack/react-query', ...temporal]);
+  // The optional MIT React cache is consumed only by web-v2; the runtime remains independent.
+  assert.equal(pkg.peerDependencies['@tanstack/react-query'], '5.107.1');
+  assert.deepEqual(pkg.peerDependenciesMeta['@tanstack/react-query'], {optional:true});
   for (const name of temporal) {
     assert.equal(pkg.peerDependencies[name], '1.25.0');
     assert.deepEqual(pkg.peerDependenciesMeta[name], {optional: true});

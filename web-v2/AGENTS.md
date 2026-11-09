@@ -29,7 +29,9 @@ DTOs and runtime adapters; WorkOS, billing and managed connector code stay outsi
   punctuation, sentences, spacing, or separate lines. Status indicator shapes
   and source content are not separators; preserve those. The architecture guard
   enforces this rule for core and hosted React source.
-- Async pages distinguish loading, empty, failed and current data. Abort reads on
+- Async pages distinguish loading, empty, failed and current data. Use the shared
+  scoped ConsoleDataProvider and data hooks for stale-while-revalidate reads;
+  retain loaded data across navigation and clear it on scope/access changes. Abort reads on
   teardown, guard stale responses and give actionable failures. Controls preserve
   disabled, busy and error semantics. Client visibility never grants permission.
 - Run npm run check before release. Architecture tests enforce these boundaries;

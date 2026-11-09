@@ -29,7 +29,8 @@ export class BoardReader {
   private readonly listeners = new Set<() => void>();
   private request: AbortController | null = null;
   private bridge: Bridge | null = null;
-  constructor(private readonly adapter: Adapter, private readonly topic: string, private readonly topics: boolean, private readonly beforeCommit: () => void = () => {}) {}
+  constructor(private readonly adapter: Adapter, private readonly topic: string, private readonly topics: boolean, private beforeCommit: () => void = () => {}) {}
+  setBeforeCommit(callback: () => void) {this.beforeCommit=callback;}
   readonly snapshot = () => this.value;
   readonly subscribe = (listener: () => void) => {this.listeners.add(listener); return () => {this.listeners.delete(listener);};};
   private publish(update: Partial<BoardSnapshot>) {

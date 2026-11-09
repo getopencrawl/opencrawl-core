@@ -32,6 +32,7 @@ export class SearchReader {
     this.request?.abort(); this.request = null;
     this.publish({...this.value, result: null, state: 'canceled', error: ''});
   }
+  suspend() {if(this.request)this.cancel();}
   async search(input: string) {
     const query = input.trim();
     if (!query || query.length > 4000) return;

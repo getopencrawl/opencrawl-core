@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useRef, useState} from 'react';
+import {consoleResourceKey, useConsoleResource} from '../data.tsx';
 import {ActivityChart, BarList, Button, EmptyState, LoadingState, MetricGrid, Notice, PageHeader, Section, StatusBadge, Table} from '../design/components.js';
 import {Link} from '../router.js';
 import type {ConsoleDataAdapter, UsageReport} from './types.js';
@@ -14,61 +14,8 @@ export function date(value: string | number | null | undefined) {
 }
 
 export function useUsage(adapter: ConsoleDataAdapter) {
-  const [state, setState] = useState<{adapter: ConsoleDataAdapter; data: UsageReport | null; error: string; loading: boolean}>({adapter, data: null, error: '', loading: true});
-  const reader = useRef<{adapter: ConsoleDataAdapter; refresh: () => void} | null>(null);
-
-  useEffect(() => {
-    let disposed = false, request: AbortController | null = null;
-    let data: UsageReport | null = null, error = '';
-    let successfulAt = -Infinity, attemptedAt = -Infinity;
-    const publish = (loading: boolean) => {if (!disposed) setState({adapter, data, error, loading});};
-    // Reports include live inventory/latency queries and member receipts. Keep
-    // those reads single-flight and at most once a minute during normal use.
-    async function load(manual = false) {
-      if (disposed || request || document.visibilityState !== 'visible') return;
-      const now = Date.now();
-      if (!manual && (now - successfulAt < 60_000 || now - attemptedAt < 10_000)) return;
-      attemptedAt = now;
-      const current = new AbortController(); request = current;
-      if (!data) error = '';
-      publish(data === null);
-      try {
-        const report = await adapter.usage(current.signal);
-        if (disposed || current.signal.aborted) return;
-        data = report; error = ''; successfulAt = Date.now();
-      } catch (failure: unknown) {
-        if (disposed || current.signal.aborted) return;
-        const transient = typeof failure === 'object' && failure !== null && 'status' in failure &&
-          typeof failure.status === 'number' && Number.isInteger(failure.status) && failure.status >= 500 && failure.status <= 599;
-        if (!transient) data = null;
-        error = failure instanceof Error ? failure.message : 'Usage could not load. Try again.';
-      } finally {
-        if (request === current) request = null;
-        if (!current.signal.aborted) publish(false);
-      }
-    }
-    const refresh = () => {void load();};
-    const visibility = () => {
-      if (document.visibilityState === 'visible') refresh();
-      else {request?.abort(); request = null; attemptedAt = -Infinity; publish(false);}
-    };
-    const currentReader = {adapter, refresh: () => {void load(true);}};
-    reader.current = currentReader;
-    publish(true); refresh();
-    const timer = window.setInterval(refresh, 60_000);
-    window.addEventListener('focus', refresh);
-    document.addEventListener('visibilitychange', visibility);
-    return () => {
-      disposed = true; request?.abort(); request = null;
-      window.clearInterval(timer);
-      window.removeEventListener('focus', refresh);
-      document.removeEventListener('visibilitychange', visibility);
-      if (reader.current === currentReader) reader.current = null;
-    };
-  }, [adapter]);
-
-  const refresh = useCallback(() => {if (reader.current?.adapter === adapter) reader.current.refresh();}, [adapter]);
-  return {...(state.adapter === adapter ? state : {data: null, error: '', loading: true}), refresh};
+  const resource = useConsoleResource<UsageReport>(consoleResourceKey(adapter, 'usage'), signal => adapter.usage(signal), {autoRefreshMilliseconds: 60_000, staleMilliseconds: 60_000});
+  return {...resource, refresh: resource.reload};
 }
 
 /** Compact source table retained for existing non-report consumers. */

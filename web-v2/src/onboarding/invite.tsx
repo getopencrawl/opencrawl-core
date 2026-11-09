@@ -1,3 +1,4 @@
+import {consoleResourceKey} from '../data.tsx';
 import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {Button, Input} from '../design/components.tsx';
 import {Icon} from '../design/icons.tsx';
@@ -16,7 +17,7 @@ export interface InviteOnboardingProps {
 }
 
 export function InviteOnboarding({adapter, canInvite, initialInvitations, onComplete}: InviteOnboardingProps) {
-  const invitations = useOnboardingResource(signal => adapter.invitations(signal), {enabled: canInvite, initial: initialInvitations});
+  const invitations = useOnboardingResource(signal => adapter.invitations(signal), {key:consoleResourceKey(adapter,'onboarding-invitations'), enabled: canInvite, initial: initialInvitations});
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [finishing, setFinishing] = useState(false);

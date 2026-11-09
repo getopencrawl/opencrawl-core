@@ -4,6 +4,7 @@ import {NavLink, Route, Routes, useLocation} from './router.tsx';
 import type {NavigationItem, WorkspaceIdentity} from './contracts.ts';
 import {Brand, Button, EmptyState, LinkButton} from './design/components.tsx';
 import {Icon} from './design/icons.tsx';
+import {ConsoleDataProvider, useHasConsoleCache} from './data.tsx';
 
 export interface AppShellProps {
   workspace: WorkspaceIdentity;
@@ -13,7 +14,11 @@ export interface AppShellProps {
 }
 
 /** The only workspace shell. Runtime adapters supply pages, never duplicate chrome. */
-export function AppShell({workspace, routes, children, footer}: AppShellProps) {
+export function AppShell(props: AppShellProps) {
+  const provided = useHasConsoleCache();
+  return provided ? <WorkspaceShell {...props}/> : <ConsoleDataProvider scopeKey="single-tenant"><WorkspaceShell {...props}/></ConsoleDataProvider>;
+}
+function WorkspaceShell({workspace, routes, children, footer}: AppShellProps) {
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [compact, setCompact] = useState(() => typeof matchMedia !== 'undefined' && matchMedia('(max-width: 800px)').matches);

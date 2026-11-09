@@ -11,6 +11,8 @@ export {ago as relativeTime} from './pages/usage-model.ts';
 export {DiagnosticsPage, SearchInspector, JsonDisclosure} from './pages/diagnostics.tsx';
 export {FocusedFrame} from './design/focused-frame.tsx';
 export * from './pages/library-types.ts';
+export {libraryResourceKey} from './pages/use-resource.ts';
 export {SessionsPage, sessionPath} from './pages/sessions.tsx';
 export {MemoriesPage, memoryPath} from './pages/memories.tsx';
 export {ForumPanel, ForumPost} from './design/forum.tsx';
+export * from './data.tsx';

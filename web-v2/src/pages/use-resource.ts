@@ -1,9 +1,9 @@
-import {useCallback, useEffect, useRef, useState} from 'react';
+import {useCallback, useRef} from 'react';
+import {accessFailure, consoleResourceKey, responseStatus, useConsoleAccessFailure, useConsoleQueryClient, useConsoleResource} from '../data.tsx';
+import type {LibraryAdapter, LibraryContract, LibraryOperation} from './library-types.ts';
 
 export interface Resource<T> {data: T | null; error: string; loading: boolean; retry: () => void; replace: (update: (current: T | null) => T | null) => void}
-export function failureStatus(failure: unknown) {
-  return typeof failure === 'object' && failure !== null && 'status' in failure && typeof failure.status === 'number' ? failure.status : undefined;
-}
+export const failureStatus = responseStatus;
 export function failureMessage(failure: unknown, fallback: string) {
   const status = failureStatus(failure);
   if (status === 401) return 'Your session expired. Sign in again to continue.';
@@ -11,23 +11,30 @@ export function failureMessage(failure: unknown, fallback: string) {
   return failure instanceof Error && failure.message ? failure.message : fallback;
 }
 
-/** One abortable read per key and version. A new key clears loaded data; a new
- * version (for example, a longer page) keeps it until the read completes. Stale
- * completions are discarded and failures never leave old data on screen. */
-export function useResource<T>(key: string, version: number, load: (signal: AbortSignal) => Promise<T>, fallback: string): Resource<T> {
-  const [data, setData] = useState<T | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(true), [attempt, setAttempt] = useState(0);
-  const loader = useRef(load); loader.current = load;
-  const loadedKey = useRef(key);
-  useEffect(() => {
-    const controller = new AbortController();
-    if (loadedKey.current !== key) {loadedKey.current = key; setData(null);}
-    setLoading(true); setError('');
-    loader.current(controller.signal).then(value => {if (!controller.signal.aborted) {setData(value); setLoading(false);}}).catch((failure: unknown) => {
-      if (controller.signal.aborted) return;
-      setData(null); setError(failureMessage(failure, fallback)); setLoading(false);
-    });
-    return () => controller.abort();
-  }, [key, version, attempt, fallback]);
-  const retry = useCallback(() => setAttempt(value => value + 1), []);
-  return {data, error, loading, retry, replace: setData};
+export const libraryResourceKey = (adapter: LibraryAdapter, operation: string, key: string, version = 0) => [...consoleResourceKey(adapter, 'library'), operation, key, version] as const;
+
+/** Lists and viewers share the trusted workspace cache. Pagination keeps its current page while loading. */
+export function useResource<T>(adapter: LibraryAdapter, operation: string, key: string, version: number, load: (signal: AbortSignal) => Promise<T>, fallback: string): Resource<T> {
+  const resource = useConsoleResource(libraryResourceKey(adapter, operation, key, version), load);
+  const previous = useRef<{key: string; data: T} | null>(null), identity = operation + '\n' + key;
+  if (resource.data) previous.current = {key: identity, data: resource.data};
+  const data = resource.data ?? (resource.loading && previous.current?.key === identity ? previous.current.data : null);
+  return {data, error: resource.error || (!data && !resource.loading ? fallback : ''), loading:resource.loading || resource.refreshing,
+    retry: () => {void resource.reload();}, replace: update => resource.updateData(current => update(current) ?? current)};
+}
+
+/** Invalidate lists and evict cached viewers after privacy/deletion writes, including uncertain outcomes. */
+export function useLibraryMutation(adapter: LibraryAdapter): LibraryAdapter {
+  const client = useConsoleQueryClient(), deny = useConsoleAccessFailure();
+  return useCallback(async <O extends LibraryOperation>(operation: O, input: LibraryContract[O]['input'], signal: AbortSignal): Promise<LibraryContract[O]['output']> => {
+    try {return await adapter(operation, input, signal);}
+    catch (failure) {if (!signal.aborted && accessFailure(failure)) deny?.(failure);throw failure;}
+    finally {
+      if (!signal.aborted && client) {
+        const queryKey = consoleResourceKey(adapter, 'library');
+        client.removeQueries({queryKey, predicate: query => !query.isActive() || String(query.queryKey[3]).endsWith('/read')});
+        void client.invalidateQueries({queryKey});
+      }
+    }
+  }, [adapter, client, deny]);
 }
