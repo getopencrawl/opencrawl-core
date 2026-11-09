@@ -18,6 +18,18 @@ export function VisibilityBadge({value}: {value: boolean}) {
 export function When({value, prefix = ''}: {value: string | null; prefix?: string}) {
   return value ? <time dateTime={value} title={new Date(value).toLocaleString()}>{prefix}{ago(value)}</time> : null;
 }
+/** Groups newest-first rows under Today, Yesterday or a calendar date. */
+export function byDay<T>(items: ReadonlyArray<T>, at: (item: T) => string | null, now = new Date()): Array<[string, T[]]> {
+  const day = (value: Date) => value.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+  const today = day(now), yesterday = day(new Date(now.getTime() - 86400000));
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const value = at(item), date = value ? day(new Date(value)) : '';
+    const label = !value ? 'Unknown date' : date === today ? 'Today' : date === yesterday ? 'Yesterday' : date;
+    groups.set(label, [...groups.get(label) ?? [], item]);
+  }
+  return [...groups];
+}
 /** Metadata as separate, labelled items; never joined with separator glyphs. */
 export function MetaList({items}: {items: ReadonlyArray<{label: string; value: ReactNode}>}) {
   return <dl className="oc-library-meta">{items.filter(item => item.value !== null && item.value !== '').map(item => <div key={item.label}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl>;

@@ -36,11 +36,12 @@ function MemoryList({adapter}: {adapter: LibraryAdapter}) {
     {error && <div className="actions"><Button onClick={retry}>Try again</Button></div>}
     {!data && loading && <LoadingState label="Loading memories"/>}
     {data?.truncated && <Notice tone="warning">Showing the 1,000 most recently changed memory files.</Notice>}
-    {data && (shown.length ? <ul className="oc-library-list">{shown.map(memory => <li key={memoryPath(memory)} className="oc-library-item">
-      <div className="oc-library-heading"><Link to={memoryPath(memory)} className="oc-library-title">{memory.description || memory.path}</Link><VisibilityBadge value={memory.private}/></div>
-      <MetaList items={[{label: 'File', value: <code>{memory.path}</code>}, {label: 'Captured by', value: authorName(memory.userId, memory.mine, data.authors)},
-        {label: 'Agent', value: harnessName(memory.harness)}, {label: 'Updated', value: <When value={memory.modifiedAt}/>}]}/>
-    </li>)}</ul> : <EmptyState title={words.length ? 'No matching memories' : scope === 'mine' ? 'You have no captured memories yet' : 'No captured memories yet'}
+    {data && (shown.length ? <ul className="oc-rows">{shown.map(memory => <li key={memoryPath(memory)}><Link to={memoryPath(memory)} className="oc-row">
+      <span className="oc-row-title"><span>{memory.description || memory.path}</span><VisibilityBadge value={memory.private}/></span>
+      <span className="oc-row-optional mono" title={memory.path}>{memory.path}</span>
+      <span className="oc-row-optional">{authorName(memory.userId, memory.mine, data.authors)}</span>
+      <span className="oc-row-end"><When value={memory.modifiedAt}/></span>
+    </Link></li>)}</ul> : <EmptyState title={words.length ? 'No matching memories' : scope === 'mine' ? 'You have no captured memories yet' : 'No captured memories yet'}
       description={words.length ? 'Try a different filter.' : 'Memories appear after an agent with OpenCrawl capture writes to its memory files.'}/>)}
   </div>;
 }
@@ -55,15 +56,13 @@ function MemoryViewer({adapter, reference}: {adapter: LibraryAdapter; reference:
   const {memory} = data, current: Visibility = visibility ?? (memory.private ? 'private' : 'team');
   return <div className="oc-library oc-library-viewer">
     {back}
-    <PageHeader title={memory.path.split('/').at(-1) || memory.path}/>
-    <div className="oc-library-heading"><VisibilityBadge value={current === 'private'}/></div>
-    <MetaList items={[{label: 'File', value: <code>{memory.path}</code>}, {label: 'Project', value: memory.project}, {label: 'Captured by', value: authorName(memory.userId, memory.mine, data.authors)},
-      {label: 'Agent', value: harnessName(memory.harness)}, {label: 'Updated', value: <When value={memory.modifiedAt}/>},
-      {label: 'Written in', value: memory.sourceSessionId ? <Link to={sessionPath({userId: memory.userId, harness: memory.harness, sessionId: memory.sourceSessionId})}>Source session</Link> : null}]}/>
-    {memory.mine && <OwnerControls noun="memory" visibility={current}
+    <PageHeader title={memory.path.split('/').at(-1) || memory.path} actions={memory.mine ? <OwnerControls noun="memory" visibility={current}
       onVisibility={async (value, signal) => {await adapter('memories/visibility', {harness: memory.harness, path: memory.path, visibility: value}, signal); setVisibility(value);}}
       onDelete={async signal => {await adapter('memories/delete', {harness: memory.harness, path: memory.path}, signal); navigate('/memories?deleted=1', {replace: true});}}
-      deleteDescription="OpenCrawl removes this memory from search for everyone and ignores this version in future captures. The file on your machine is not changed; if the agent rewrites it, the new version is captured."/>}
+      deleteDescription="OpenCrawl removes this memory from search for everyone and ignores this version in future captures. The file on your machine is not changed; if the agent rewrites it, the new version is captured."/> : undefined}/>
+    <MetaList items={[{label: 'Status', value: current === 'private' ? <VisibilityBadge value/> : null}, {label: 'File', value: <code>{memory.path}</code>}, {label: 'Project', value: memory.project}, {label: 'Captured by', value: authorName(memory.userId, memory.mine, data.authors)},
+      {label: 'Agent', value: harnessName(memory.harness)}, {label: 'Updated', value: <When value={memory.modifiedAt}/>},
+      {label: 'Written in', value: memory.sourceSessionId ? <Link to={sessionPath({userId: memory.userId, harness: memory.harness, sessionId: memory.sourceSessionId})}>Source session</Link> : null}]}/>
     {current === 'private' && <Notice>Only you can see this memory. Teammates and their agents cannot read or search it.</Notice>}
     <div className="preserve-text bounded-text oc-memory-text" tabIndex={0} role="region" aria-label="Memory contents">{data.text}</div>
   </div>;

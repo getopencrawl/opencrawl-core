@@ -3,7 +3,7 @@ import {Button, EmptyState, Field, Input, LoadingState, Notice, PageHeader, Tabs
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
 import type {Harness, LibraryAdapter, LibraryScope, SessionRef, TranscriptEntry, TranscriptEvent, Visibility} from './library-types.js';
-import {MetaList, OwnerControls, VisibilityBadge, When, authorName, harnessName} from './library-controls.js';
+import {MetaList, OwnerControls, VisibilityBadge, When, authorName, byDay, harnessName} from './library-controls.js';
 import {failureMessage, useResource} from './use-resource.js';
 
 const PAGE = 50, MAX = 500;
@@ -44,25 +44,61 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     {error && <Notice tone="danger">{error}</Notice>}
     {error && <div className="actions"><Button onClick={retry}>Try again</Button></div>}
     {!data && loading && <LoadingState label="Loading sessions"/>}
-    {data && (data.sessions.length ? <ul className="oc-library-list" aria-busy={loading || undefined}>{data.sessions.map(session => <li key={sessionPath(session)} className="oc-library-item">
-      <div className="oc-library-heading"><Link to={sessionPath(session)} className="oc-library-title">{session.title}</Link><VisibilityBadge value={session.private}/></div>
-      <MetaList items={[{label: 'Captured by', value: authorName(session.userId, session.mine, data.authors)}, {label: 'Agent', value: harnessName(session.harness)},
-        {label: 'Last active', value: <When value={session.lastActivityAt}/>}, {label: 'Events', value: session.events.toLocaleString('en-US')}]}/>
-    </li>)}</ul> : <EmptyState title={query ? 'No matching sessions' : scope === 'mine' ? 'You have no captured sessions yet' : 'No captured sessions yet'}
+    {data && (data.sessions.length ? <ol className="oc-row-groups" aria-busy={loading || undefined}>{byDay(data.sessions, session => session.lastActivityAt).map(([day, items]) => <li key={day}>
+      <h2 className="oc-row-group-label">{day}</h2>
+      <ul className="oc-rows">{items.map(session => <li key={sessionPath(session)}><Link to={sessionPath(session)} className="oc-row">
+        <span className="oc-row-title"><span>{session.title}</span><VisibilityBadge value={session.private}/></span>
+        <span className="oc-row-optional">{authorName(session.userId, session.mine, data.authors)}</span>
+        <span className="oc-row-optional">{harnessName(session.harness)}</span>
+        <span className="oc-row-end"><When value={session.lastActivityAt}/></span>
+      </Link></li>)}</ul>
+    </li>)}</ol> : <EmptyState title={query ? 'No matching sessions' : scope === 'mine' ? 'You have no captured sessions yet' : 'No captured sessions yet'}
       description={query ? 'Try different words, or clear the search.' : 'Sessions appear here after an agent with OpenCrawl capture finishes a turn.'}/>)}
     {data && data.sessions.length >= limit && limit < MAX && <div className="actions"><Button busy={loading} onClick={() => setPage({key, limit: limit + PAGE})}>Show more sessions</Button></div>}
   </div>;
 }
 
-function TranscriptItem({entry, timestamp}: {entry: TranscriptEntry; timestamp: string | null}) {
-  if (entry.type === 'message') return <article className={`oc-transcript-message oc-transcript-${entry.role}`}>
-    <header><strong>{entry.role === 'user' ? 'User' : 'Agent'}</strong><When value={timestamp}/></header>
-    <div className="preserve-text">{entry.text}</div>
-  </article>;
-  const truncated = entry.truncated && <p className="muted">Showing the first 20,000 characters.</p>;
-  if (entry.type === 'tool_call') return <details className="oc-disclosure oc-transcript-tool"><summary>Tool call: <code>{entry.name}</code></summary><pre className="code-block">{entry.input}</pre>{truncated}</details>;
-  if (entry.type === 'tool_result') return <details className="oc-disclosure oc-transcript-tool"><summary>Tool result</summary><pre className="code-block">{entry.text || 'No output.'}</pre>{truncated}</details>;
-  return entry.text ? <details className="oc-disclosure oc-transcript-tool"><summary>{entry.label}</summary><pre className="code-block">{entry.text}</pre>{truncated}</details> : <p className="oc-transcript-note muted">{entry.label}</p>;
+type Activity = Exclude<TranscriptEntry, {type: 'message'}>;
+type Block = {kind: 'message'; key: string; role: 'user' | 'assistant'; text: string; timestamp: string | null; first: boolean} | {kind: 'activity'; key: string; entries: Activity[]};
+/** Consecutive tool calls, results and notes collapse into one line between messages. */
+export function transcriptBlocks(events: ReadonlyArray<TranscriptEvent>): Block[] {
+  const blocks: Block[] = [];
+  let role: string | null = null;
+  for (const event of events) event.entries.forEach((entry, index) => {
+    const key = `${event.eventId}:${index}`;
+    if (entry.type === 'message') {blocks.push({kind: 'message', key, role: entry.role, text: entry.text, timestamp: event.timestamp, first: entry.role !== role}); role = entry.role; return;}
+    const last = blocks.at(-1);
+    if (last?.kind === 'activity') last.entries.push(entry); else blocks.push({kind: 'activity', key, entries: [entry]});
+  });
+  return blocks;
+}
+function activitySummary(entries: ReadonlyArray<Activity>) {
+  const calls = entries.filter(entry => entry.type === 'tool_call').map(entry => entry.type === 'tool_call' ? entry.name : '');
+  if (!calls.length) return entries.map(entry => entry.type === 'note' ? entry.label : 'Tool result').filter((value, index, all) => all.indexOf(value) === index).join(', ');
+  const names = calls.filter((value, index, all) => all.indexOf(value) === index);
+  return `${calls.length} tool ${calls.length === 1 ? 'call' : 'calls'}: ${names.slice(0, 4).join(', ')}${names.length > 4 ? ` and ${names.length - 4} more` : ''}`;
+}
+function ActivityDetail({entry}: {entry: Activity}) {
+  const label = entry.type === 'tool_call' ? <>Call <code>{entry.name}</code></> : entry.type === 'tool_result' ? 'Result' : entry.label;
+  const body = entry.type === 'tool_call' ? entry.input : entry.text;
+  if (!body) return <li className="muted">{label}</li>;
+  return <li><details className="oc-log-tool"><summary>{label}</summary><pre className="code-block">{body}</pre>{entry.truncated && <p className="muted">Showing the first 20,000 characters.</p>}</details></li>;
+}
+const LONG = 1200;
+function MessageText({text}: {text: string}) {
+  const long = text.length > LONG || text.split('\n').length > 14;
+  const [open, setOpen] = useState(false);
+  return <div className="oc-log-body">
+    <div className={`preserve-text oc-log-text${long && !open ? ' oc-log-clamped' : ''}`}>{text}</div>
+    {long && <Button variant="quiet" className="oc-log-more" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Show less' : 'Show full message'}</Button>}
+  </div>;
+}
+function TranscriptBlock({block, turn}: {block: Block; turn: boolean}) {
+  if (block.kind === 'activity') return <li className="oc-log-activity"><span className="oc-log-gutter"/><details className="oc-log-tools"><summary>{activitySummary(block.entries)}</summary><ol>{block.entries.map((entry, index) => <ActivityDetail key={index} entry={entry}/>)}</ol></details></li>;
+  return <li className={`oc-log-${block.role}${turn ? ' oc-log-turn' : ''}`}>
+    <span className="oc-log-gutter">{block.first && <><strong>{block.role === 'user' ? 'User' : 'Agent'}</strong><When value={block.timestamp}/></>}</span>
+    <MessageText text={block.text}/>
+  </li>;
 }
 
 function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference: SessionRef}) {
@@ -88,19 +124,17 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
   const {session} = data, current: Visibility = visibility ?? (session.private ? 'private' : 'team');
   const prompt = events.flatMap(event => event.entries).find(entry => entry.type === 'message' && entry.role === 'user');
   const title = prompt?.type === 'message' ? prompt.text.replace(/\s+/g, ' ').trim().slice(0, 140) : `Session ${session.sessionId}`;
-  const visible = events.filter(event => event.entries.length);
+  const blocks = transcriptBlocks(events);
   return <div className="oc-library oc-library-viewer">
     {back}
-    <PageHeader title={title}/>
-    <div className="oc-library-heading"><VisibilityBadge value={current === 'private'}/></div>
-    <MetaList items={[{label: 'Captured by', value: authorName(session.userId, session.mine, data.authors)}, {label: 'Agent', value: harnessName(session.harness)},
-      {label: 'Origin', value: session.origin}, {label: 'Session ID', value: <code>{session.sessionId}</code>}]}/>
-    {session.mine && <OwnerControls noun="session" visibility={current}
+    <PageHeader title={title} actions={session.mine ? <OwnerControls noun="session" visibility={current}
       onVisibility={async (value, signal) => {await adapter('sessions/visibility', {harness: session.harness, sessionId: session.sessionId, visibility: value}, signal); setVisibility(value);}}
       onDelete={async signal => {await adapter('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, signal); navigate('/sessions?deleted=1', {replace: true});}}
-      deleteDescription="OpenCrawl permanently removes this transcript and its search results for everyone in the workspace. If the session is still running, its new activity is discarded."/>}
+      deleteDescription="OpenCrawl permanently removes this transcript and its search results for everyone in the workspace. If the session is still running, its new activity is discarded."/> : undefined}/>
+    <MetaList items={[{label: 'Status', value: current === 'private' ? <VisibilityBadge value/> : null}, {label: 'Captured by', value: authorName(session.userId, session.mine, data.authors)}, {label: 'Agent', value: harnessName(session.harness)},
+      {label: 'Origin', value: session.origin}, {label: 'Events', value: data.total.toLocaleString('en-US')}, {label: 'Session ID', value: <code>{session.sessionId}</code>}]}/>
     {current === 'private' && <Notice>Only you can see this session. Teammates and their agents cannot read or search it.</Notice>}
-    {visible.length ? <ol className="oc-transcript" aria-label="Transcript">{visible.flatMap(event => event.entries.map((entry, index) => <li key={`${event.eventId}:${index}`}><TranscriptItem entry={entry} timestamp={index === 0 ? event.timestamp : null}/></li>))}</ol>
+    {blocks.length ? <ol className="oc-log" aria-label="Transcript">{blocks.map((block, index) => <TranscriptBlock key={block.key} block={block} turn={index > 0 && block.kind === 'message' && block.role === 'user' && block.first}/>)}</ol>
       : <EmptyState title="No readable messages yet" description="This page contains only capture metadata. Load more of the session to continue."/>}
     <p className="muted" role="status">Showing {events.length.toLocaleString('en-US')} of {data.total.toLocaleString('en-US')} captured events.</p>
     {moreState.error && <Notice tone="danger">{moreState.error}</Notice>}
