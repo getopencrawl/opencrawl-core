@@ -69,7 +69,22 @@ Granola takes a **workspace** API key in the Sources UI; personal API keys are
 not supported. GitHub uses your own read-only GitHub App. Its source container is
 in `connectors/github/`; build/register it in your Airbyte workspace as
 `OpenCrawl GitHub (app)`. Set `GITHUB_APP` to the base64 JSON bundle described by
-`src/integrations/github.mts`, with a callback on this installation. Other shared
+`src/integrations/github.mts`: `appId`, `slug`, `clientId`, `clientSecret`, and the
+generated PEM `privateKey`. Keep this bundle in the private environment file.
+Configure the App's callback URL as
+`https://YOUR-APP/integrations/github/callback`, enable **Request user authorization
+(OAuth) during installation**, and leave webhooks disabled. Grant read-only
+Contents, Issues, Pull requests, Discussions, and Metadata permissions. Install
+it only on the repositories you intend to share with this OpenCrawl organization.
+
+Connect starts with GitHub authorization. It reuses an existing installation,
+offers an account choice if several are accessible, or offers installation if
+none exists. The connector stores a fixed set of repository IDs accessible to
+that user. Adding repositories to the GitHub App does not silently add them to
+the import; reconnect to confirm a changed selection. Rebuild and update the
+registered Airbyte source image when upgrading this connector's source.
+
+Other shared
 provider definitions are available to runtime adapters; this standalone
 composition currently offers Slack, Granola, and GitHub.
 
