@@ -125,8 +125,11 @@ test('real session and memory library: viewer, private visibility, owner-only co
   const generation = Date.now() - 60000;
   await snapshot(alice, generation, [file('memory/user.md', '---\nname: user\ndescription: Alice prefers small PRs\n---\nBody about compass'), file('memory/project.md', '# Compass rollout\nDetails about compass')]);
   const listed = await api(bob, 'memories/list', {});
+  assert.deepEqual(listed.memories.map(m => [m.path, m.title]).sort(), [['memory/project.md', 'Compass rollout'], ['memory/user.md', 'Alice prefers small PRs']]);
   assert.deepEqual(listed.memories.map(m => [m.path, m.description, m.mine]).sort(), [['memory/project.md', 'Compass rollout', false], ['memory/user.md', 'Alice prefers small PRs', false]]);
-  assert.equal((await api(bob, 'memories/read', {userId: 'alice', harness: 'claude-code', path: 'memory/project.md'})).text, '# Compass rollout\nDetails about compass');
+  const opened = await api(bob, 'memories/read', {userId: 'alice', harness: 'claude-code', path: 'memory/project.md'});
+  assert.equal(opened.text, '# Compass rollout\nDetails about compass');
+  assert.equal(opened.memory.title, listed.memories.find(m => m.path === 'memory/project.md').title);
   await assert.rejects(api(bob, 'memories/visibility', {harness: 'claude-code', path: 'memory/user.md', visibility: 'private'}), {status: 404});
   await api(alice, 'memories/visibility', {harness: 'claude-code', path: 'memory/user.md', visibility: 'private'});
   assert.deepEqual((await api(bob, 'memories/list', {})).memories.map(m => m.path), ['memory/project.md']);

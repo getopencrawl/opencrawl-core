@@ -20,7 +20,7 @@ export interface SessionTranscript {
 }
 export interface MemoryRef {userId: string; harness: Harness; path: string}
 export interface MemorySummary extends MemoryRef {
-  project: string; description: string; modifiedAt: string | null; private: boolean; mine: boolean; host: string | null; sourceSessionId: string | null;
+  title: string; project: string; description: string; modifiedAt: string | null; private: boolean; mine: boolean; host: string | null; sourceSessionId: string | null;
 }
 export interface MemoryDocument {memory: Omit<MemorySummary, 'description'>; text: string}
 /** Display names a hosting adapter may attach. They grant no authority. */
