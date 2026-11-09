@@ -55,7 +55,13 @@ checks. The cloud candidate consumes published core `0.3.0-seam.0` at that same
 runtime revision; the source build of this repository does not require access to
 that private package registry.
 
-Still open: live multi-user role/revocation/private-resource proof, real connector
+Live membership revocation also rejected an existing OSS token immediately,
+without affecting its access to the separate cloud test organizations. Reactivation
+restored access. Changing the existing browser user's role to member denied an
+admin diagnostic request; restoring admin made the same session work again.
+These checks used one user and do not establish multi-user/private-resource proof.
+
+Still open: live multi-user/private-resource proof, real connector
 import and retrieval through both UI and agent, connector deletion/restart/restore,
 and complete cloud two-tenant source retrieval and rollback. The WorkOS verifier
 consent and GitHub App setup currently require the operator's browser participation.
