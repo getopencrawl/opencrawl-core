@@ -134,7 +134,8 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
       // Recheck owner controls after source reads, including on cached/indexed IDs.
       if (!await authorize()) continue;
       const ref = 'session:' + Buffer.from(JSON.stringify([principal.tenantId, ...bucket.key])).toString('base64url');
-      sessions.push({...identity, id: ref, title, titleSource, titleTimestamp, lastActivityAt, firstUserMessage, lastUserMessage, latestAssistantMessage, partial});
+      sessions.push({...identity, id: ref, title: summary ? preview(title, 120) : title, titleSource, titleTimestamp, lastActivityAt,
+        firstUserMessage: summary ? null : firstUserMessage, lastUserMessage, latestAssistantMessage, partial});
     }
     return sessions;
   }

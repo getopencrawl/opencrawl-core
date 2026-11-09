@@ -12,7 +12,11 @@ export const boardFetchSchema = z.strictObject({
 
 export function preview(text: string, length: number) {
   const normalized = text.replace(/\s+/g, ' ').trim();
-  return normalized.length <= length ? normalized : normalized.slice(0, length - 1) + '…';
+  if (normalized.length <= length) return normalized;
+  let end = length - 1;
+  const last = normalized.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return normalized.slice(0, end) + '…';
 }
 
 export function textPage(text: string, args: Pick<z.output<typeof boardFetchSchema>, 'offset' | 'length' | 'version'>, metadata: object) {
