@@ -1,7 +1,9 @@
 @import './tokens.css';
 
 *, *::before, *::after { box-sizing: border-box; }
-html { font-synthesis: none; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; font-family: var(--font-sans); background: var(--bg); color: var(--text); font-size: 16px; scrollbar-gutter: stable; scrollbar-color: var(--control-line) var(--surface); scroll-padding-block: var(--space-6); }
+html { font-synthesis: none; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; font-family: var(--font-sans); background: var(--bg); color: var(--text); font-size: 16px; scrollbar-color: var(--control-line) var(--surface); scroll-padding-block: var(--space-6); }
+/* Reserve the workspace gutter without changing focused onboarding geometry. */
+html:has(.oc-app) { scrollbar-gutter: stable; }
 body { margin: 0; font-size: var(--text-ui); line-height: var(--leading-ui); }
 button, input, select, textarea { font: inherit; color: inherit; }
 button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }

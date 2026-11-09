@@ -297,7 +297,8 @@ a card. Page headers reserve a consistent description and action area.
 Use `Page` for every sidebar destination. `AppShell` owns the centered 1200px
 content frame, 32px horizontal insets, 48px top inset and 64px bottom inset.
 At 800px and below these insets become 16px horizontally, 32px above and 40px below.
-The document reserves its scrollbar gutter so short and long pages do not shift.
+The workspace document reserves its scrollbar gutter so short and long pages do
+not shift; focused onboarding retains its original geometry.
 Feature wrappers add no width, centering, top padding or page-title typography.
 
 `Page` owns one `PageHeader` followed by its body. Every H1 starts on the same
