@@ -10,7 +10,7 @@ has evidence. Moving code alone does not satisfy the self-host promise.
 - [x] Multiple WorkOS users in one configured organization can use the app;
   current membership, roles, revocation and private resources are enforced by
   the server. Foreign organization claims and caller-selected scopes fail closed.
-- [ ] OSS imports a real source through the operator's Airbyte and OpenSearch,
+- [x] OSS imports a real source through the operator's Airbyte and OpenSearch,
   retrieves it through the UI and an agent, and passes restart, deletion and
   backup/restore checks.
 - [x] OSS and the cloud candidate execute the same core-owned noncommercial
@@ -18,7 +18,7 @@ has evidence. Moving code alone does not satisfy the self-host promise.
 - [x] Shell contains hosted tenant provisioning/selection/routing, commercial
   policy, fleet operations and internal administration. Reusable product
   behavior has a working OSS implementation.
-- [ ] The isolated cloud candidate passes real source-to-retrieval and tenant
+- [x] The isolated cloud candidate passes real source-to-retrieval and tenant
   isolation checks, preserves existing behavior, and has a verified rollback.
 
 Candidate work must not change main or migrate, deploy over, or mutate existing
@@ -88,7 +88,23 @@ retrieval in core. Shell imports those implementations and supplies tenant routi
 managed credentials/storage, fleet discovery, billing and workspace UI extensions.
 The source guard and browser/adapter tests complement the live paths above.
 
-Still open: OSS real-source deletion/reconnect and backup/restore; Cloud B replacement
-import retrieval; updated rollback; final evidence and independent handoff.
-Repository visibility and publication remain unchanged. See the shell's dated
-evidence checkpoint for the receipts.
+Final lifecycle checks passed at core `48c7d09`: an offline backup with the external
+Airbyte connection paused restored into fresh empty volumes. Browser and MCP
+retrieved the real source and retained capture; second-user private-memory and
+session denial remained intact. The restored copy was stopped and the original
+volumes resumed. OSS disconnect then removed twelve landed objects, its Airbyte
+connection, indexing schedule and index documents. App/worker restart did not
+restore access. Reconnect reused the installed GitHub App, completed Airbyte job
+11 with four rows and returned the new result; the old saved ID remained denied.
+
+Cloud B's replacement import also completed (job 10, four rows). Cloud shell
+`eab3d747d` / core `48c7d09` passed real-source retrieval and bidirectional isolation,
+then the retained shell `4b4b363` / core `88b89b0` did too. Returning to the current
+image passed the same checks; connector actions were reopened. All six predicates
+above now have evidence. See the shell's dated checkpoint and credential-free
+receipts. Independent peer verification is the next review step.
+
+The repositories remain private and both PRs remain drafts; advancing main now
+conflicts with these branches and needs a separate integration review. No merge,
+existing-data migration or production replacement occurred. Live provider evidence
+covers GitHub, not every connector or a load benchmark. WorkOS remains required.
