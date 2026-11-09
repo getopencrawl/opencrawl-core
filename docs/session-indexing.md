@@ -55,6 +55,27 @@ Sessions use the same dedicated Temporal service, staging/production namespaces 
 
 ## Migration, recovery and operation
 
+### Compaction projection repair (0.2.54)
+
+Indexing keeps explicit compaction summaries (`message` for Codex, `summary` or
+`content` for Claude), without traversing replacement history, retained context,
+guardian history or bookkeeping. Hook payloads and Codex `user_message`
+notifications echo the native transcript and are not indexed. The immutable raw
+batches retain all captured evidence, IDs, attachment references and receipts.
+`sessionEventData` from `sessions/indexer` exposes this same projection for metering.
+
+Deploy the updated indexing workers before repairing existing documents. Run
+`migrateSessionProjection` from `sessions/projection-migration` per tenant, first
+with `dryRun: true`, using the canonical capture store/prefix. The operation
+validates every affected document against its scoped raw batch, rewrites summary
+text, and removes copied higher chunks and echoes. It preserves document IDs and
+current privacy; updates do not resurrect a concurrently deleted document.
+Missing or mismatched sources fail without changing that page. Supply a durable
+`backup` callback and persist `onPage` checkpoints; re-running an interrupted page
+is idempotent. `restoreSessionProjection` replays saved pages in reverse. Drain
+workers and pause owner visibility/deletion changes before an exact restoration,
+then reapply current resource controls before resuming. Raw storage is never deleted.
+
 Existing S3 objects, attachment references and document IDs are unchanged. Successful receipts under `<prefix>/_index/<target-hash>/<scope-hash>/batches/` are reused, avoiding unnecessary reindexing. Legacy `index-pending` objects and S3 retry/cursor state are ignored and never written by the new receiver/worker. They may be retired later under the deployment's retention policy; this migration does not delete them.
 
 For releases that already enforce immutable event IDs, deploy the worker before
