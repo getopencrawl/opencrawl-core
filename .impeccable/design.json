@@ -93,27 +93,24 @@
       },
       "headerGap": "32px",
       "widths": {
-        "wide": "1200px",
-        "narrow": "800px"
+        "page": "1200px",
+        "form": "640px"
       },
-      "alignment": "One common left edge for headers and bodies. Narrow bodies do not center independently.",
+      "alignment": "All sidebar destinations share one full-width page grid. Prose and individual form rows carry their own readable measure.",
       "insets": {
         "desktop": "48px 32px 64px",
         "compact": "32px 16px 40px"
       },
-      "destinations": {
-        "wide": [
-          "Usage",
-          "Sessions",
-          "Memories",
-          "Diagnostics"
-        ],
-        "narrow": [
-          "Integrations",
-          "Team",
-          "Billing"
-        ]
-      }
+      "destinations": [
+        "Usage",
+        "Sessions",
+        "Memories",
+        "Integrations",
+        "Diagnostics",
+        "Team",
+        "Billing",
+        "Self-hosted Settings"
+      ]
     }
   },
   "components": [
@@ -220,7 +217,7 @@
       },
       {
         "name": "The Workspace Page Rule",
-        "body": "Workspace routes compose Page and PageHeader: stable title position, 8px description gap, 32px header-to-body gap, and explicit left-aligned 1200px wide or 800px narrow body.",
+        "body": "Workspace routes compose Page and PageHeader on one 1200px full-width grid, with stable title position, 8px description gap and 32px body gap. Bound form rows to 640px with oc-form-measure.",
         "section": "layout"
       }
     ],

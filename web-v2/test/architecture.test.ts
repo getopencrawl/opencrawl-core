@@ -13,6 +13,11 @@ test('workspace titles use the shared page header while focused onboarding keeps
   assert.deepEqual(inspectSource('src/onboarding/shell.tsx', '<h1>Connect your agent</h1>'), []);
 });
 
+test('feature pages keep one grid and put form measures inside it', () => {
+  assert.ok(inspectSource('src/team.tsx', '<Page title="Team" bodyWidth="narrow"/>').some(item => item.rule === 'single-page-grid'));
+  assert.deepEqual(inspectSource('src/team.tsx', '<Page title="Team"><form className="oc-form-measure"/></Page>'), []);
+});
+
 test('features cannot fork controls, navigation, inline styling or internal browser links', () => {
   const errors = inspectSource('src/pages/drift.tsx', `export const View=()=> <nav><button style={{color:'red'}}>Save</button><a href="/team">Team</a></nav>;`);
   assert.deepEqual(new Set(errors.map(error => error.rule)), new Set(['single-navigation', 'shared-controls', 'design-tokens', 'spa-navigation']));

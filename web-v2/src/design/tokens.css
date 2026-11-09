@@ -10,6 +10,7 @@
   --console-heading-compact: 1.75rem;
   --console-page-width: var(--page-width);
   --console-task-width: var(--chat-width);
+  --console-form-width: 40rem;
   --console-page-inset: var(--pane-inset);
   --console-page-top: var(--space-12);
   --console-page-bottom: var(--space-16);

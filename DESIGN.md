@@ -311,19 +311,22 @@ a separate row at 600px and below. Contextual actions stay with their section.
 Use H2 for sections and H3 within them; use the shared 24px section padding and
 48px report-section separation. Tabs and filters start the body, before results.
 
-| Destinations | Body variant | Maximum |
-| --- | --- | --- |
-| Usage, Sessions, Memories, Diagnostics | `wide` (default) | 1200px |
-| Integrations, Team, Billing | `narrow` | 800px |
-| Self-hosted Overview, Agents, Diagnostics and libraries | `wide` | 1200px |
-| Self-hosted Settings | `narrow` | 800px |
+All sidebar destinations use the same full-width page grid, bounded to 1200px.
+This includes Usage, Sessions, Memories, Integrations, Diagnostics, Team, Billing
+and the self-hosted Settings page. The page header, section frames, tables and
+lists share both edges. A route change must not create a narrower content column.
 
-Narrow bodies align left within the same frame; changing pages never moves the
-header to a new column. Width responds to available pane space. Keep prose at
-75ch and table overflow inside its own scroll region. Do not stretch forms to
-fill a report width. Use `bodyClassName` for existing body patterns:
+Readable measure belongs inside the grid: prose stays within 75ch, and individual
+form rows use `oc-form-measure`, bounded to 640px and the space available. Keep
+form labels, fields and submit actions together. Source cards, member rosters and
+billing sections span the page; their inputs do not need to stretch with them.
+Tables retain their own horizontal overflow region. Use `bodyClassName` for
+existing body patterns and the default Page body for every sidebar destination:
 
-`<Page title="Team" description="People and access for your workspace." bodyWidth="narrow">…</Page>`
+`<Page title="Team" description="People and access for your workspace."><form className="oc-form-measure">…</form></Page>`
+
+The legacy `bodyWidth="narrow"` prop remains compatible for earlier consumers,
+but feature-page architecture checks reject it. New sidebar pages use one grid.
 
 Loading, empty, failed and current states retain this same frame. Keep the page
 heading focus target for SPA navigation and exactly one H1 per destination.
@@ -525,8 +528,8 @@ inside their own container at narrow widths.
 
 ## Integrations restoration
 
-Integrations uses the shared page header and an 800px task body aligned to the
-page grid, with one catalog-ordered stack of source cards. Cards use the shared
+Integrations uses the shared full-width page grid, with one catalog-ordered stack
+of source cards. Cards use the shared
 Night surface, 24px padding, 12px corners, inherited provider icons, and quiet
 disconnect controls. Connection status, genuine import progress and per-stream
 counts remain visible inside each card. Imported stream counts describe ingest
@@ -539,7 +542,8 @@ recovery distinct from sync and deletion retries. `/sources` and its
 
 ## Team management
 
-Team uses the same shared page header and left-aligned 800px task body as Integrations.
+Team uses the same full-width page grid as every sidebar destination. Form rows
+use the shared 640px measure inside it.
 The member roster is the primary content: initials, a name and email grouped as
 one identity, with the role aligned at the right. Display the actual member
 count beside the section heading, distinguishing active members from pending

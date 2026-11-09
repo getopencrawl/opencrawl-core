@@ -62,6 +62,7 @@ export function inspectSource(file: string, text: string): ArchitectureViolation
       for (const attribute of node.attributes.properties) {
         if (!ts.isJsxAttribute(attribute)) continue;
         const name = attribute.name.getText(source);
+        if (tag === 'Page' && name === 'bodyWidth' && staticValues(attribute.initializer).includes('narrow') && !isDesignFile(file)) report(attribute, 'single-page-grid', 'Sidebar pages share the full-width Page grid. Bound form rows with oc-form-measure instead.');
         if (name === 'style') report(attribute, 'design-tokens', 'Do not add inline style; use a shared design-system pattern.');
         if (name === 'dangerouslySetInnerHTML') report(attribute, 'react-rendering', 'Render typed React content rather than HTML strings.');
         if (name === 'role' && /^[a-z]/.test(tag)) {
