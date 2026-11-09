@@ -44,4 +44,6 @@ test('the docked footer puts the person before their workspace in one account co
   const standalone = render({name: 'Self-hosted workspace'});
   assert.match(standalone, /oc-account-context/);
   assert.doesNotMatch(standalone, /oc-account-trigger|Your account/);
+  assert.doesNotMatch(render({name: 'Example workspace', userName: 'Alex'}), /oc-account-trigger/);
+  assert.doesNotMatch(render({name: 'Example workspace', email: 'alex@example.test'}), /oc-account-trigger/);
 });

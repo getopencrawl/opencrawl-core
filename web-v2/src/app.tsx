@@ -26,7 +26,7 @@ function WorkspaceShell({workspace, routes, children, footer}: AppShellProps) {
   const accountToggle = useRef<HTMLButtonElement>(null);
   const accountPanel = useRef<HTMLDivElement>(null);
   const accountName = workspace.userName?.trim() || workspace.email?.trim() || '';
-  const hasAccountDetails = Boolean(accountName || workspace.role || footer);
+  const hasAccountDetails = Boolean((workspace.userName?.trim() && workspace.email?.trim()) || workspace.role?.trim() || footer);
   const [compact, setCompact] = useState(() => typeof matchMedia !== 'undefined' && matchMedia('(max-width: 800px)').matches);
   const navigationPanel = useRef<HTMLElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
