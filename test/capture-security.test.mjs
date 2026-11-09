@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {createSessionIngest, sessionScope, digest, MAX_ATTACHMENT_BYTES, MAX_BATCH_BYTES} from '../dist/src/sessions/ingest.mjs';
+import {createSessionIngest, createCaptureHandler, sessionScope, digest, MAX_ATTACHMENT_BYTES, MAX_BATCH_BYTES} from '../dist/src/sessions/ingest.mjs';
+import {createControls} from '../dist/src/sessions/controls.mjs';
 import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
@@ -9,6 +10,52 @@ import {memorySessionStore} from './session-store-fixture.mjs';
 const owner = {tenantId: 'team-a', userId: 'author'};
 const batch = attachments => ({schemaVersion: 1, owner, installationId: 'device', sessionId: 'session',
   harness: 'codex', origin: 'cli', events: [{id: 'event', kind: 'message', data: 'fixture'}], attachments});
+
+test('raw capture HTTP reads enforce private visibility and deletion even with a valid receipt', async t => {
+  const store = memorySessionStore(), prefix = 'capture-v1';
+  const ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
+  const {batchId} = await ingest.putBatch(owner, batch([]));
+  const reader = {...owner, userId: 'teammate'};
+  const handler = createCaptureHandler({ingest, authenticate: async req => req.headers.authorization === 'Bearer owner' ? owner : reader});
+  const server = createServer(handler);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const query = new URLSearchParams({harness: 'codex', installationId: 'device', sessionId: 'session', batchId, userId: owner.userId});
+  const url = 'http://127.0.0.1:' + server.address().port + '/api/sessions/batches?' + query;
+  const read = (who = 'teammate') => fetch(url, {headers: {authorization: 'Bearer ' + who}});
+  assert.equal((await read()).status, 200);
+  await controls.update(owner, 'sessions', 'codex', 'session', () => ({visibility: 'private', deletedAt: null}));
+  assert.equal((await read()).status, 404);
+  assert.equal((await (await read('owner')).json()).data.events[0].data, 'fixture');
+  await controls.update(owner, 'sessions', 'codex', 'session', () => ({visibility: 'team', deletedAt: null}));
+  assert.equal((await read()).status, 200);
+  await controls.update(owner, 'sessions', 'codex', 'session', () => ({visibility: 'team', deletedAt: new Date().toISOString()}));
+  assert.equal((await read()).status, 404);
+  assert.equal((await read('owner')).status, 404);
+});
+
+test('raw batch reads recheck controls after storage and fail closed on unreadable controls', async () => {
+  const store = memorySessionStore(), prefix = 'capture-v1';
+  const controls = createControls({store, prefix}), ingest = createSessionIngest({store, prefix});
+  const {batchId} = await ingest.putBatch(owner, batch([]));
+  const receipt = {harness: 'codex', installationId: 'device', sessionId: 'session', batchId, userId: owner.userId};
+  const reader = {...owner, userId: 'teammate'};
+  const get = store.get;
+  let bodyReads = 0;
+  store.get = async (...args) => {
+    bodyReads++;
+    const value = await get(...args);
+    await controls.update(owner, 'sessions', 'codex', 'session', () => ({visibility: 'private', deletedAt: null}));
+    return value;
+  };
+  assert.equal(await ingest.getBatch(reader, receipt), null);
+  assert.equal(bodyReads, 1);
+  assert.equal(await ingest.getBatch(reader, receipt), null);
+  assert.equal(bodyReads, 1, 'private content must not be downloaded for an unauthorized reader');
+  store.readVersion = async () => {throw new Error('controls unavailable');};
+  await assert.rejects(ingest.getBatch(owner, receipt), /controls unavailable/);
+  assert.equal(bodyReads, 1);
+});
 
 test('batch validation rejects malformed or oversized input before reading any stored objects', async () => {
   const ingest = createSessionIngest({store: {get: async () => assert.fail('must validate before storage access'), put: async () => assert.fail()}});
