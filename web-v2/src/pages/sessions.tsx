@@ -4,7 +4,8 @@ import {Icon} from '../design/icons.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
 import type {Harness, LibraryAdapter, LibraryScope, SessionRef, SessionSummary, TranscriptEntry, TranscriptEvent, Visibility} from './library-types.js';
 import {MetaList, OwnerControls, VisibilityBadge, When, authorName, byDay, harnessName} from './library-controls.js';
-import {failureMessage, useResource} from './use-resource.js';
+import {failureMessage, useLibraryMutation, useResource} from './use-resource.js';
+import {consoleResourceKey, useConsoleModel} from '../data.tsx';
 
 const PAGE = 50, MAX = 500;
 const harnessOf = (value: string | null): Harness | null => value === 'claude-code' || value === 'codex' ? value : null;
@@ -24,10 +25,13 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
   const [params, setParams] = useSearchParams();
   const scope: LibraryScope = params.get('scope') === 'mine' ? 'mine' : 'all';
   const query = params.get('q')?.trim().slice(0, 500) ?? '', key = scope + '\n' + query;
-  const [draft, setDraft] = useState(query), [page, setPage] = useState({key, limit: PAGE});
+  const model = useConsoleModel(consoleResourceKey(adapter, 'session-draft'), () => ({query, draft:query}));
+  const [draft, setDraftValue] = useState(model.query === query ? model.draft : query), [page, setPage] = useState({key, limit: PAGE});
+  const setDraft = (value: string) => {model.draft = value;setDraftValue(value);};
   const limit = page.key === key ? page.limit : PAGE;
-  useEffect(() => setDraft(query), [query]);
-  const {data, error, loading, retry, replace} = useResource(key, limit, signal => adapter('sessions/list', {scope, query, limit}, signal), 'Sessions could not load. Try again.');
+  useEffect(() => {if(model.query !== query){model.query = query;model.draft = query;setDraftValue(query);}}, [model, query]);
+  const {data, error, loading, retry, replace} = useResource(adapter, 'sessions/list', key, limit, signal => adapter('sessions/list', {scope, query, limit}, signal), 'Sessions could not load. Try again.');
+  const mutate = useLibraryMutation(adapter);
   const [removing, setRemoving] = useState<SessionSummary | null>(null), [removal, setRemoval] = useState({busy: false, error: '', done: ''});
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => controller.current?.abort(), []);
@@ -35,7 +39,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     controller.current?.abort(); const current = new AbortController(); controller.current = current;
     setRemoval({busy: true, error: '', done: ''});
     try {
-      await adapter('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, current.signal);
+      await mutate('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, current.signal);
       if (current.signal.aborted) return;
       replace(value => value && {...value, sessions: value.sessions.filter(item => sessionPath(item) !== sessionPath(session))});
       setRemoving(null); setRemoval({busy: false, error: '', done: session.title});
@@ -121,7 +125,8 @@ function TranscriptBlock({block, turn}: {block: Block; turn: boolean}) {
 
 function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference: SessionRef}) {
   const navigate = useNavigate();
-  const {data, error, loading, retry} = useResource(sessionPath(reference), 0, signal => adapter('sessions/read', reference, signal), 'This session could not load. Try again.');
+  const {data, error, loading, retry} = useResource(adapter, 'sessions/read', sessionPath(reference), 0, signal => adapter('sessions/read', reference, signal), 'This session could not load. Try again.');
+  const mutate = useLibraryMutation(adapter);
   const [more, setMore] = useState<{events: TranscriptEvent[]; next: string | null} | null>(null);
   const [moreState, setMoreState] = useState({busy: false, error: ''}), [visibility, setVisibility] = useState<Visibility | null>(null);
   const controller = useRef<AbortController | null>(null);
@@ -146,8 +151,8 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
   return <div className="oc-library oc-library-viewer">
     {back}
     <PageHeader title={title} actions={session.mine ? <OwnerControls noun="session" visibility={current}
-      onVisibility={async (value, signal) => {await adapter('sessions/visibility', {harness: session.harness, sessionId: session.sessionId, visibility: value}, signal); setVisibility(value);}}
-      onDelete={async signal => {await adapter('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, signal); navigate('/sessions?deleted=1', {replace: true});}}
+      onVisibility={async (value, signal) => {await mutate('sessions/visibility', {harness: session.harness, sessionId: session.sessionId, visibility: value}, signal); setVisibility(value);}}
+      onDelete={async signal => {await mutate('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, signal); navigate('/sessions?deleted=1', {replace: true});}}
       deleteDescription="OpenCrawl permanently removes this transcript and its search results for everyone in the workspace. If the session is still running, its new activity is discarded."/> : undefined}/>
     <MetaList items={[{label: 'Status', value: current === 'private' ? <VisibilityBadge value/> : null}, {label: 'Captured by', value: authorName(session.userId, session.mine, data.authors)}, {label: 'Agent', value: harnessName(session.harness)},
       {label: 'Origin', value: session.origin}, {label: 'Events', value: data.total.toLocaleString('en-US')}, {label: 'Session ID', value: <code>{session.sessionId}</code>}]}/>

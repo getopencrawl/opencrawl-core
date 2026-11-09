@@ -5,7 +5,8 @@ import {Link, useNavigate, useSearchParams} from '../router.js';
 import type {Harness, LibraryAdapter, LibraryScope, MemoryRef, Visibility} from './library-types.js';
 import {MetaList, OwnerControls, VisibilityBadge, When, authorName, harnessName} from './library-controls.js';
 import {sessionPath} from './sessions.js';
-import {useResource} from './use-resource.js';
+import {useLibraryMutation, useResource} from './use-resource.js';
+import {consoleResourceKey, useConsoleModel} from '../data.tsx';
 
 const harnessOf = (value: string | null): Harness | null => value === 'claude-code' || value === 'codex' ? value : null;
 export function memoryPath({userId, harness, path}: MemoryRef) {
@@ -23,8 +24,10 @@ export function MemoriesPage({adapter}: {adapter: LibraryAdapter}) {
 function MemoryList({adapter}: {adapter: LibraryAdapter}) {
   const [params, setParams] = useSearchParams();
   const scope: LibraryScope = params.get('scope') === 'mine' ? 'mine' : 'all';
-  const [filter, setFilter] = useState('');
-  const {data, error, loading, retry} = useResource(scope, 0, signal => adapter('memories/list', {scope}, signal), 'Memories could not load. Try again.');
+  const model = useConsoleModel(consoleResourceKey(adapter, 'memory-filter'), () => ({filter:''}));
+  const [filter, setFilterValue] = useState(model.filter);
+  const setFilter = (value: string) => {model.filter = value;setFilterValue(value);};
+  const {data, error, loading, retry} = useResource(adapter, 'memories/list', scope, 0, signal => adapter('memories/list', {scope}, signal), 'Memories could not load. Try again.');
   const words = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const shown = data?.memories.filter(memory => words.every(word => [memory.path, memory.description, memory.project].some(value => value.toLowerCase().includes(word)))) ?? [];
   return <div className="oc-library">
@@ -48,7 +51,8 @@ function MemoryList({adapter}: {adapter: LibraryAdapter}) {
 
 function MemoryViewer({adapter, reference}: {adapter: LibraryAdapter; reference: MemoryRef}) {
   const navigate = useNavigate();
-  const {data, error, loading, retry} = useResource(memoryPath(reference), 0, signal => adapter('memories/read', reference, signal), 'This memory could not load. Try again.');
+  const {data, error, loading, retry} = useResource(adapter, 'memories/read', memoryPath(reference), 0, signal => adapter('memories/read', reference, signal), 'This memory could not load. Try again.');
+  const mutate = useLibraryMutation(adapter);
   const [visibility, setVisibility] = useState<Visibility | null>(null);
   const back = <Link to="/memories" className="oc-library-back"><Icon name="arrow-left"/>All memories</Link>;
   if (!data) return <div className="oc-library">{back}<PageHeader title="Memory"/>{loading ? <LoadingState label="Loading memory"/> : <>
@@ -57,8 +61,8 @@ function MemoryViewer({adapter, reference}: {adapter: LibraryAdapter; reference:
   return <div className="oc-library oc-library-viewer">
     {back}
     <PageHeader title={memory.path.split('/').at(-1) || memory.path} actions={memory.mine ? <OwnerControls noun="memory" visibility={current}
-      onVisibility={async (value, signal) => {await adapter('memories/visibility', {harness: memory.harness, path: memory.path, visibility: value}, signal); setVisibility(value);}}
-      onDelete={async signal => {await adapter('memories/delete', {harness: memory.harness, path: memory.path}, signal); navigate('/memories?deleted=1', {replace: true});}}
+      onVisibility={async (value, signal) => {await mutate('memories/visibility', {harness: memory.harness, path: memory.path, visibility: value}, signal); setVisibility(value);}}
+      onDelete={async signal => {await mutate('memories/delete', {harness: memory.harness, path: memory.path}, signal); navigate('/memories?deleted=1', {replace: true});}}
       deleteDescription="OpenCrawl removes this memory from search for everyone and ignores this version in future captures. The file on your machine is not changed; if the agent rewrites it, the new version is captured."/> : undefined}/>
     <MetaList items={[{label: 'Status', value: current === 'private' ? <VisibilityBadge value/> : null}, {label: 'File', value: <code>{memory.path}</code>}, {label: 'Project', value: memory.project}, {label: 'Captured by', value: authorName(memory.userId, memory.mine, data.authors)},
       {label: 'Agent', value: harnessName(memory.harness)}, {label: 'Updated', value: <When value={memory.modifiedAt}/>},
