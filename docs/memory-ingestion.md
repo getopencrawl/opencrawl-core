@@ -58,8 +58,9 @@ do not increment session counts or appear as synthetic chats.
 CLI, HTTP, MCP and the workspace's shared search include memories. `source=memories`
 narrows a query. Fetch returns the original indexed passage and provenance,
 including a source session ID where the file supplies one. Reads are team-wide
-inside the authorized tenant, just like captured sessions; uploader identity is
-attribution and write ownership. Current scope is checked on every search/fetch.
+inside the authorized tenant, just like captured sessions, unless the uploader
+marks a memory private (`docs/sessions-and-memories.md`). Current scope and
+visibility are checked on every search/fetch.
 
 Release the tested core package before updating the hosted package/lock/Git pin.
 Publish CLI 0.4.19 before the hosted rollout exposes its pinned cloud setup script;

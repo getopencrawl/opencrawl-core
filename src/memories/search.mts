@@ -3,6 +3,8 @@ import type {StoredMemorySnapshot} from './types.mjs';
 import type {RealmOptions, SearchInput, DocumentItem, Passage} from '../search/types.mjs';
 import {createRealmResolver,realmField} from '../search/realm.mjs';
 import {digest,sessionScope} from '../sessions/event-identity.mjs';
+import {visibleTo} from '../sessions/controls.mjs';
+import type {ResourceControl} from '../sessions/controls.mjs';
 
 const f=(field: string)=>realmField('memory',field);
 function fail(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
@@ -16,7 +18,7 @@ export function createMemorySearch(options: RealmOptions) {
     return result.hits.hits.map(h=>h._source.snapshotId);
   }
   return {
-    async putSnapshot(snapshot: StoredMemorySnapshot,principal: Principal,sourceKey: string) {
+    async putSnapshot(snapshot: StoredMemorySnapshot,principal: Principal,sourceKey: string,{controls=new Map()}: {controls?: Map<string, ResourceControl>}={}) {
       sessionScope(principal);
       if(snapshot.owner.tenantId!==principal.tenantId||snapshot.owner.userId!==principal.userId)fail(403,'Memory scope mismatch');
       const realm=resolve(principal);await realm.ensureIndex();
@@ -25,11 +27,14 @@ export function createMemorySearch(options: RealmOptions) {
         host:snapshot.host,generation:snapshot.generation,snapshotId:snapshot.snapshotId,receivedAt:snapshot.receivedAt,sourceKey};
       let batch: DocumentItem[]=[],bytes=0,count=0;
       for(const file of snapshot.files) {
+        // A deleted memory stays deleted until the agent writes a newer version.
+        const control=controls.get(digest(file.path));
+        if(control?.deletedAt&&!(Date.parse(file.modifiedAt)>Date.parse(control.deletedAt)))continue;
         const chunks=file.text.match(/[\s\S]{1,16000}/gu)||[''];
         const sourceSessionId=/^(?:thread_id|originSessionId):\s*["']?([A-Za-z0-9_-]+)/m.exec(file.text)?.[1]??null;
         for(let chunk=0;chunk<chunks.length;chunk++) {
           const item={id:digest(JSON.stringify([sessionScope(principal),snapshot.snapshotId,file.path,chunk])),document:{...common,kind:'passage',
-            path:file.path,project:file.project,modifiedAt:file.modifiedAt,sourceSessionId,chunk,title:`${snapshot.harness} memory: ${file.path}`,text:chunks[chunk]}};
+            path:file.path,project:file.project,modifiedAt:file.modifiedAt,sourceSessionId,chunk,title:`${snapshot.harness} memory: ${file.path}`,text:chunks[chunk],private:control?.visibility==='private'}};
           const size=Buffer.byteLength(JSON.stringify(item));
           if(bytes+size>3*1024*1024){await collection.bulk(principal,batch);batch=[];bytes=0;}
           batch.push(item);bytes+=size;count++;
@@ -52,7 +57,7 @@ export function createMemorySearch(options: RealmOptions) {
       const active=await heads(principal);
       if(!active.length)return {total:0,hits:[],truncated:false};
       const result=await resolve(principal).collection('memory').search(principal,{size:limit,track_total_hits:true,
-        query:{bool:{filter:[{term:{[f('kind')]:'passage'}},{terms:{[f('snapshotId')]:active}},...(id?[{term:{id}}]:[])],
+        query:{bool:{filter:[{term:{[f('kind')]:'passage'}},{terms:{[f('snapshotId')]:active}},visibleTo('memory',principal),...(id?[{term:{id}}]:[])],
           must:query?[match==='phrase'?{match_phrase:{text:query}}:{match:{text:{query,operator:match==='all'?'and':'or'}}}]:[{match_all:{}}]}},
         sort:query?['_score',{[f('receivedAt')]:'desc'},{id:'asc'}]:[{[f('receivedAt')]:'desc'},{id:'asc'}]});
       return {total:result.hits.total.value,truncated:result.hits.total.value>result.hits.hits.length,
