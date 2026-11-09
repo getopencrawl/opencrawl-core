@@ -1,5 +1,5 @@
 import {consoleResourceKey, useConsoleResource} from '../data.tsx';
-import {ActivityChart, BarList, Button, EmptyState, LoadingState, MetricGrid, Notice, PageHeader, Section, StatusBadge, Table} from '../design/components.js';
+import {ActivityChart, BarList, Button, EmptyState, LoadingState, MetricGrid, Notice, Page, Section, StatusBadge, Table} from '../design/components.js';
 import {Link} from '../router.js';
 import type {ConsoleDataAdapter, UsageReport} from './types.js';
 import {ago, compact, count, harnessName, memberName, measured, originName, plural, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
@@ -203,11 +203,10 @@ export function UsagePage({adapter}: {adapter: ConsoleDataAdapter}) {
   const now = Date.now();
   const scope = data ? [data.workspace, data.days ? `last ${data.days} days` : '', `updated ${ago(data.generatedAt, now)}`].filter(Boolean).join(', ') : 'Workspace usage';
   return (
-    <div className="usage-report">
-      <PageHeader variant="report" title="Usage" description={scope}/>
+    <Page title="Usage" description={scope} bodyClassName="usage-report">
       {error && <Notice tone={data ? 'warning' : 'danger'}>{data ? 'Usage couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}{!data && <Button onClick={refresh} disabled={loading}>Try again</Button>}</Notice>}
       {loading && <LoadingState label="Loading usage"/>}
       {data && <UsageReportView data={data} now={now}/>}
-    </div>
+    </Page>
   );
 }

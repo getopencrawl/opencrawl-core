@@ -1,5 +1,5 @@
 import {useState} from 'react';
-import {Button, EmptyState, Field, Input, LoadingState, Notice, PageHeader, Tabs} from '../design/components.js';
+import {Button, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, Tabs} from '../design/components.js';
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
 import type {Harness, LibraryAdapter, LibraryScope, MemoryRef, Visibility} from './library-types.js';
@@ -30,8 +30,7 @@ function MemoryList({adapter}: {adapter: LibraryAdapter}) {
   const {data, error, loading, retry} = useResource(adapter, 'memories/list', scope, 0, signal => adapter('memories/list', {scope}, signal), 'Memories could not load. Try again.');
   const words = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const shown = data?.memories.filter(memory => words.every(word => [memory.path, memory.description, memory.project].some(value => value.toLowerCase().includes(word)))) ?? [];
-  return <div className="oc-library">
-    <PageHeader title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them. Private memories are visible only to the person who captured them."/>
+  return <Page title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them. Private memories are visible only to the person who captured them." bodyClassName="oc-library">
     {params.get('deleted') === '1' && <Notice tone="success">Memory deleted. If the agent rewrites the file later, the new version is captured again.</Notice>}
     <Tabs label="Memories shown" value={scope} onChange={value => setParams(value === 'mine' ? {scope: 'mine'} : {})} items={[{value: 'all', label: 'All memories'}, {value: 'mine', label: 'My memories'}]}/>
     {data && data.memories.length > 0 && <div className="query-form"><Field label="Filter memories"><Input type="search" value={filter} maxLength={200} onChange={event => setFilter(event.target.value)} placeholder="Path, project or description"/></Field></div>}
@@ -46,7 +45,7 @@ function MemoryList({adapter}: {adapter: LibraryAdapter}) {
       <span className="oc-row-end"><When value={memory.modifiedAt}/></span>
     </Link></li>)}</ul> : <EmptyState title={words.length ? 'No matching memories' : scope === 'mine' ? 'You have no captured memories yet' : 'No captured memories yet'}
       description={words.length ? 'Try a different filter.' : 'Memories appear after an agent with OpenCrawl capture writes to its memory files.'}/>)}
-  </div>;
+  </Page>;
 }
 
 function MemoryViewer({adapter, reference}: {adapter: LibraryAdapter; reference: MemoryRef}) {

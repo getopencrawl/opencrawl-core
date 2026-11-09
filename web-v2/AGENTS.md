@@ -19,6 +19,13 @@ DTOs and runtime adapters; WorkOS, billing and managed connector code stay outsi
   native button, field, dialog or table implementation in a feature page. Add a
   shared primitive when an actual feature needs one. Native details/summary and
   semantic lists remain available for content.
+- Every sidebar destination uses Page with one shared PageHeader. Keep the 32px
+  desktop / 28px mobile title, 8px description gap and 32px header-to-body gap.
+  Use the default wide body for reports/libraries/diagnostics and bodyWidth="narrow"
+  for Integrations, Team, Billing and Settings. Narrow bodies share the frame's
+  left edge; never recenter a page or add local title, width or top-inset rules.
+  Loading, empty and error states retain the same Page frame. Library details
+  and focused onboarding keep their documented presentation.
 - web/tokens.css owns the approved Night palette and typography. The v2 token
   extension owns console dimensions. Feature pages compose shared layout classes;
   add reusable patterns to src/design/styles.css, never local palette overrides,
