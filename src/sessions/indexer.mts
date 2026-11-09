@@ -34,6 +34,13 @@ function collect(value: unknown,text: string[],attachments: Attachment[],names: 
 export function sessionDocumentId({scope,harness,sessionId,eventId,chunk}: {scope: string; harness: string; sessionId: string; eventId: string; chunk: number}) {
   return digest(JSON.stringify([scope,harness,sessionId,eventId,chunk]));
 }
+/** Shared searchable/meterable content; null denotes a transcript echo. */
+export function sessionEventData(harness: string,event: {kind?: string; data?: unknown}): unknown {
+  if(event.kind==='hook'||harness==='codex'&&event.kind==='user_message')return null;
+  if(event.kind!=='compaction')return event.data;
+  const data=event.data&&typeof event.data==='object'?event.data as Record<string,unknown>:{};
+  return Object.fromEntries((harness==='codex'?['message']:['summary','content']).flatMap(key=>typeof data[key]==='string'?[[key,data[key]]]:[]));
+}
 export function batchDocuments({prefix,key,batch,principal,visibility='team'}: {prefix: string; key: string; batch: SessionBatch; principal: Principal; visibility?: 'team' | 'private'}): DocumentItem[] {
   const scope=sessionScope(principal),identity=sourceBatchIdentity(prefix,key);
   if(!identity||identity.tenantHash!==digest(principal.tenantId)||identity.userHash!==digest(principal.userId)||
@@ -43,7 +50,14 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team'}: {
   const documents=[];
   for(const event of batch.events){
     if(!event||typeof event.id!=='string'||!event.id||typeof event.kind!=='string')throw Object.assign(new Error('Malformed stored event'),{permanent:true});
-    const texts: string[]=[],attachments: Attachment[]=[],names=new Set<string>();collect(event.data,texts,attachments,names);
+    // Hooks and Codex user_message notifications echo the native transcript.
+    // Keep their immutable capture evidence, without indexing a second copy.
+    const data=sessionEventData(batch.harness,event);
+    if(data===null)continue;
+    // Compaction is a context snapshot, not a new transcript. In particular,
+    // replacement_history/retained_context also contain repeated system and
+    // developer prompts. Only the explicit human-readable summary is evidence.
+    const texts: string[]=[],attachments: Attachment[]=[],names=new Set<string>();collect(data,texts,attachments,names);
     const text=texts.join('\n');
     const chunks=text.match(/[\s\S]{1,16000}/gu)||[''];
     for(let chunk=0;chunk<chunks.length;chunk++){
