@@ -29,7 +29,7 @@ export function sessionMessage(event: SessionEvent) {
   // Codex stores injected context and agent notifications in user-role records.
   // They are not human prompts and must not become a chat's title or last ask.
   const own = role === 'user' ? promptText(text) : text;
-  return own?.trim() ? {role, text: own} : null;
+  return own?.trim() ? {role, text: role === 'user' && own === text.trim() ? text : own} : null;
 }
 
 /** Read the current tenant's ten newest indexed sessions, then verify and read
