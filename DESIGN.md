@@ -43,13 +43,13 @@ typography:
     letterSpacing: "-.04em"
   console-heading:
     fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
-    fontSize: "1.75rem"
+    fontSize: "2rem"
     fontWeight: 600
     lineHeight: 1.25
     letterSpacing: "-.025em"
   console-heading-compact:
     fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
-    fontSize: "1.5rem"
+    fontSize: "1.75rem"
     fontWeight: 600
     lineHeight: 1.25
     letterSpacing: "-.025em"
@@ -247,8 +247,9 @@ reusable visual value belongs in the core design system, never a page-local pale
 Geist supplies headings, UI and prose; Geist Mono supplies identifiers, commands
 and technical content. Keep the self-hosted font assets and their fallbacks.
 
-The console heading uses `console-heading`, reducing to `console-heading-compact`
-on mobile. Section headings use `heading`; smaller content headings use `title`.
+Every sidebar destination uses one 32px, 600-weight H1 with 1.25 line height and
+-.025em tracking (`console-heading`), reducing to 28px (`console-heading-compact`)
+at 800px and below. Section headings use `heading`; smaller content headings use `title`.
 The interface uses `ui`, descriptions use `body`, labels use `label`, and metadata
 uses `metadata`. Technical text uses `mono`. Metrics and tables use tabular numerals;
 metric values use the `metric` role. Prose is bounded to 75 characters where possible.
@@ -290,6 +291,46 @@ Source rows and search forms stack at 600px. Tables retain their columns inside
 a horizontal scroll region, with a scroll hint when they overflow. Section
 boundaries and vertical rhythm organize content without wrapping every group in
 a card. Page headers reserve a consistent description and action area.
+
+### Workspace page contract
+
+Use `Page` for every sidebar destination. `AppShell` owns the centered 1200px
+content frame, 32px horizontal insets, 48px top inset and 64px bottom inset.
+At 800px and below these insets become 16px horizontally, 32px above and 40px below.
+The document reserves its scrollbar gutter so short and long pages do not shift.
+Feature wrappers add no width, centering, top padding or page-title typography.
+
+`Page` owns one `PageHeader` followed by its body. Every H1 starts on the same
+left edge and top baseline. Descriptions use 15px body text, 1.5 line height,
+muted text, a 75ch maximum and an 8px gap below the title. The header ends 32px
+before the body. Let descriptions wrap naturally; do not force equal heights
+or add empty description placeholders. Page-level actions belong in the header,
+aligned at the top on desktop, wrapping below when space runs out and occupying
+a separate row at 600px and below. Contextual actions stay with their section.
+Use H2 for sections and H3 within them; use the shared 24px section padding and
+48px report-section separation. Tabs and filters start the body, before results.
+
+| Destinations | Body variant | Maximum |
+| --- | --- | --- |
+| Usage, Sessions, Memories, Diagnostics | `wide` (default) | 1200px |
+| Integrations, Team, Billing | `narrow` | 800px |
+| Self-hosted Overview, Agents, Diagnostics and libraries | `wide` | 1200px |
+| Self-hosted Settings | `narrow` | 800px |
+
+Narrow bodies align left within the same frame; changing pages never moves the
+header to a new column. Width responds to available pane space. Keep prose at
+75ch and table overflow inside its own scroll region. Do not stretch forms to
+fill a report width. Use `bodyClassName` for existing body patterns:
+
+`<Page title="Team" description="People and access for your workspace." bodyWidth="narrow">…</Page>`
+
+Loading, empty, failed and current states retain this same frame. Keep the page
+heading focus target for SPA navigation and exactly one H1 per destination.
+Library detail views may use compact document titles beneath their back link;
+focused onboarding retains its approved independent presentation. The legacy
+`PageHeader` report prop is accepted for compatibility but no longer changes
+its appearance. Raw feature-page H1s are rejected by the architecture guard;
+browser regressions measure every sidebar destination across the responsive range.
 
 Guided onboarding stays outside `AppShell`, inside the same router. `FocusedFrame`
 provides the bounded header and `OnboardingShell` provides the centered flow.
@@ -474,17 +515,17 @@ to it. Old tab queries no longer hide sections. The same AppShell left sidebar i
 across every workspace route. Keep the remaining screen contents unchanged until
 their individual review.
 
-Shared report patterns include PageHeader's report variant, dotted StatusBadge
+Shared report patterns include Page, PageHeader, dotted StatusBadge
 pills, MetricGrid, ActivityChart and report sections. Nested report headings use
 Section's level-three variant. Report panels use 24px padding and 12px corners;
-metrics use 20px padding, 12px gaps and 32px figures. The display heading is 40px.
+metrics use 20px padding, 12px gaps and 32px figures. The page title follows the shared console heading.
 Unavailable measurements stay distinct from measured zero, and tables scroll
 inside their own container at narrow widths.
 
 ## Integrations restoration
 
-Keep the original Integrations directory composition: a centered 800px column,
-40px heading, and one catalog-ordered stack of source cards. Cards use the shared
+Integrations uses the shared page header and an 800px task body aligned to the
+page grid, with one catalog-ordered stack of source cards. Cards use the shared
 Night surface, 24px padding, 12px corners, inherited provider icons, and quiet
 disconnect controls. Connection status, genuine import progress and per-stream
 counts remain visible inside each card. Imported stream counts describe ingest
@@ -497,7 +538,7 @@ recovery distinct from sync and deletion retries. `/sources` and its
 
 ## Team management
 
-Team uses the same centered 800px column and display heading as Integrations.
+Team uses the same shared page header and left-aligned 800px task body as Integrations.
 The member roster is the primary content: initials, a name and email grouped as
 one identity, with the role aligned at the right. Display the actual member
 count beside the section heading, distinguishing active members from pending

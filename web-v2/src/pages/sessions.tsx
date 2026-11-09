@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
-import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, PageHeader, Tabs} from '../design/components.js';
+import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, Tabs} from '../design/components.js';
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
 import type {Harness, LibraryAdapter, LibraryScope, SessionRef, SessionSummary, TranscriptEntry, TranscriptEvent, Visibility} from './library-types.js';
@@ -50,8 +50,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     for (const [name, value] of Object.entries(changes)) if (value) next.set(name, value); else next.delete(name);
     setParams(next);
   };
-  return <div className="oc-library">
-    <PageHeader title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them."/>
+  return <Page title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them." bodyClassName="oc-library">
     {(params.get('deleted') === '1' || removal.done) && <Notice tone="success">Session deleted. It no longer appears in search for anyone.</Notice>}
     <Tabs label="Sessions shown" value={scope} onChange={value => update({scope: value === 'mine' ? 'mine' : ''})} items={[{value: 'all', label: 'All sessions'}, {value: 'mine', label: 'My sessions'}]}/>
     <form className="query-form" role="search" onSubmit={event => {event.preventDefault(); update({q: draft.trim()});}}>
@@ -77,7 +76,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
       {removal.error ? <Notice tone="danger">{removal.error}</Notice> : <p className="oc-row-dialog-title">{removing?.title}</p>}
     </Dialog>
     {data && data.sessions.length >= limit && limit < MAX && <div className="actions"><Button busy={loading} onClick={() => setPage({key, limit: limit + PAGE})}>Show more sessions</Button></div>}
-  </div>;
+  </Page>;
 }
 
 type Activity = Exclude<TranscriptEntry, {type: 'message'}>;

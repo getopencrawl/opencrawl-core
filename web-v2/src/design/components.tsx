@@ -37,8 +37,20 @@ export function Field({label, hint, error, children, className = ''}: {label: Re
   const child = isValidElement<Record<string, unknown>>(children) ? cloneElement(children, {id: children.props.id ?? id, 'aria-describedby': [children.props['aria-describedby'], hint || error ? descriptionId : undefined].filter(Boolean).join(' ') || undefined, 'aria-invalid': error ? true : children.props['aria-invalid']}) : children;
   return <div className={`oc-field ${className}`}><label htmlFor={isValidElement<Record<string, unknown>>(children) ? String(children.props.id ?? id) : id}>{label}</label>{child}{(hint || error) && <div className={error ? 'oc-field-error' : 'oc-field-hint'} id={descriptionId} role={error ? 'alert' : undefined}>{error || hint}</div>}</div>;
 }
-export function PageHeader({title, description, actions, variant = 'default'}: {title: string; description?: ReactNode; actions?: ReactNode; variant?: 'default' | 'report'}) {
-  return <div className={`oc-page-header${variant === 'report' ? ' oc-report-header' : ''}`}><div><h1 tabIndex={-1} data-page-heading>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="actions">{actions}</div>}</div>;
+export interface PageHeaderProps {
+  title: string;
+  description?: ReactNode;
+  actions?: ReactNode;
+  /** @deprecated Workspace page headers share one visual hierarchy. */
+  variant?: 'default' | 'report';
+}
+export function PageHeader({title, description, actions}: PageHeaderProps) {
+  return <header className="oc-page-header"><div className="oc-page-introduction"><h1 tabIndex={-1} data-page-heading>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="actions">{actions}</div>}</header>;
+}
+/** Narrow task bodies keep the same header and left edge as wide workspace pages. */
+export type PageProps = Omit<SurfaceProps, 'title'> & Omit<PageHeaderProps, 'variant'> & {bodyWidth?: 'wide' | 'narrow'; bodyClassName?: string};
+export function Page({title, description, actions, bodyWidth = 'wide', bodyClassName = '', className = '', children, ...props}: PageProps) {
+  return <div {...props} className={`oc-page ${className}`}><PageHeader title={title} description={description} actions={actions}/><div className={`oc-page-body oc-page-body-${bodyWidth} ${bodyClassName}`}>{children}</div></div>;
 }
 export function Section({title, description, actions, children, className = '', headingLevel = 2, ...props}: Omit<SurfaceProps, 'title'> & {title?: ReactNode; description?: ReactNode; actions?: ReactNode; headingLevel?: 2 | 3}) {
   const id = useId();
