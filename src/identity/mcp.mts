@@ -3,7 +3,7 @@ import type {Workos} from './types.mjs';
 import type {IdentitySettings} from './types.mjs';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 import type {JWTVerifyGetKey} from 'jose';
-import {userPrincipal} from './principal.mjs';
+import {userPrincipal, singleOrganizationPrincipal} from './principal.mjs';
 import {createRemoteJWKSet, jwtVerify} from 'jose';
 
 export function mcpMetadata(settings: Pick<IdentitySettings, 'url' | 'authOrigin'>) {
@@ -12,7 +12,8 @@ export function mcpMetadata(settings: Pick<IdentitySettings, 'url' | 'authOrigin
     resource_name: 'OpenCrawl'};
 }
 
-export function mcpIdentity(settings: Pick<IdentitySettings, 'url' | 'authOrigin'>, workos: Workos, keyResolver?: JWTVerifyGetKey) {
+export function mcpIdentity(settings: Pick<IdentitySettings, 'url' | 'authOrigin' | 'organizationId'>, workos: Workos, keyResolver?: JWTVerifyGetKey) {
+  const fixedPrincipal = settings.organizationId ? singleOrganizationPrincipal(workos, settings.organizationId) : null;
   const keys = keyResolver || createRemoteJWKSet(new URL(settings.authOrigin + '/oauth2/jwks'), {timeoutDuration: 5000});
   return async (req: IncomingMessage, res: ServerResponse) => {
     const reject = (status: number, error?: string) => {
@@ -38,7 +39,7 @@ export function mcpIdentity(settings: Pick<IdentitySettings, 'url' | 'authOrigin
       if (user.id !== payload.sub || !user.emailVerified) {
         res.writeHead(403, {'Content-Type': 'application/json'});res.end(JSON.stringify({error: 'verified_account_required'}));return null;
       }
-      const principal = await userPrincipal(workos, user, payload.org_id);
+      const principal = await (fixedPrincipal ? fixedPrincipal(user, payload.org_id) : userPrincipal(workos, user, payload.org_id));
       if (!principal) return reject(403, 'insufficient_scope');
       return principal;
     } catch (error) {

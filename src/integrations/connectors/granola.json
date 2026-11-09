@@ -1,0 +1,948 @@
+{
+  "version": "7.28.2",
+  "type": "DeclarativeSource",
+  "description": "Granola meeting notes and transcripts shared with the whole workspace, read with a Granola workspace API key. Composio has no Granola REST toolkit, so this connector calls Granola directly. Hosted OpenCrawl only.",
+  "check": {
+    "type": "CheckStream",
+    "stream_names": [
+      "note_list"
+    ]
+  },
+  "concurrency_level": {
+    "type": "ConcurrencyLevel",
+    "default_concurrency": "{{ config.get('num_workers', 2) }}",
+    "max_concurrency": 4
+  },
+  "definitions": {
+    "granola_requester": {
+      "type": "HttpRequester",
+      "url_base": "{{ config.get('base_url', 'https://public-api.granola.ai') }}",
+      "http_method": "GET",
+      "authenticator": {
+        "type": "BearerAuthenticator",
+        "api_token": "{{ config['api_key'] }}"
+      }
+    },
+    "note_list": {
+      "type": "DeclarativeStream",
+      "name": "note_list",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "owner": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true,
+              "properties": {
+                "name": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "email": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                }
+              }
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "updated_at": {
+              "type": "string"
+            },
+            "deleted_at": {
+              "type": [
+                "null",
+                "string"
+              ]
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/granola_requester",
+          "path": "/v1/notes",
+          "error_handler": {
+            "type": "DefaultErrorHandler",
+            "max_retries": 8,
+            "backoff_strategies": [
+              {
+                "type": "WaitTimeFromHeader",
+                "header": "Retry-After"
+              },
+              {
+                "type": "ExponentialBackoffStrategy",
+                "factor": 5
+              }
+            ],
+            "response_filters": [
+              {
+                "type": "HttpResponseFilter",
+                "action": "RETRY",
+                "http_codes": [
+                  429,
+                  500,
+                  502,
+                  503,
+                  504
+                ],
+                "error_message": "Granola is rate limiting or unavailable; retrying."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "config_error",
+                "http_codes": [
+                  401
+                ],
+                "error_message": "Granola rejected the workspace API key. A Granola admin needs to reconnect Granola with a new workspace API key."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "system_error",
+                "predicate": "{{ response.status_code >= 400 }}",
+                "error_message": "Granola returned an unexpected error."
+              }
+            ]
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "notes"
+            ]
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('deleted_at') is none }}"
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "page_token_option": {
+            "type": "RequestOption",
+            "inject_into": "request_parameter",
+            "field_name": "cursor"
+          },
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "page_size": 30,
+            "cursor_value": "{{ response.get('cursor') }}",
+            "stop_condition": "{{ not response.get('hasMore') or not response.get('cursor') }}"
+          },
+          "page_size_option": {
+            "type": "RequestOption",
+            "inject_into": "request_parameter",
+            "field_name": "page_size"
+          }
+        }
+      },
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "updated_at",
+        "datetime_format": "%Y-%m-%dT%H:%M:%SZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ",
+          "%Y-%m-%dT%H:%M:%S.%f%z",
+          "%Y-%m-%dT%H:%M:%S%z"
+        ],
+        "lookback_window": "PT1H",
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config['start_date'] }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        },
+        "start_time_option": {
+          "type": "RequestOption",
+          "inject_into": "request_parameter",
+          "field_name": "updated_after"
+        }
+      }
+    }
+  },
+  "streams": [
+    {
+      "$ref": "#/definitions/note_list"
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "notes",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "object": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "owner": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true,
+              "properties": {
+                "name": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "email": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                }
+              }
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "updated_at": {
+              "type": "string"
+            },
+            "web_url": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "calendar_event": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "attendees": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "email": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  }
+                }
+              }
+            },
+            "folder_membership": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "space_membership": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "attachments": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "summary_text": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "summary_markdown": {
+              "type": [
+                "null",
+                "string"
+              ]
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/granola_requester",
+          "path": "/v1/notes/{{ stream_partition.note_id }}",
+          "error_handler": {
+            "type": "DefaultErrorHandler",
+            "max_retries": 8,
+            "backoff_strategies": [
+              {
+                "type": "WaitTimeFromHeader",
+                "header": "Retry-After"
+              },
+              {
+                "type": "ExponentialBackoffStrategy",
+                "factor": 5
+              }
+            ],
+            "response_filters": [
+              {
+                "type": "HttpResponseFilter",
+                "action": "IGNORE",
+                "http_codes": [
+                  404
+                ],
+                "error_message": "Granola note was deleted, or is still being processed; skipped."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "RETRY",
+                "http_codes": [
+                  429,
+                  500,
+                  502,
+                  503,
+                  504
+                ],
+                "error_message": "Granola is rate limiting or unavailable; retrying."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "config_error",
+                "http_codes": [
+                  401
+                ],
+                "error_message": "Granola rejected the workspace API key. A Granola admin needs to reconnect Granola with a new workspace API key."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "system_error",
+                "predicate": "{{ response.status_code >= 400 }}",
+                "error_message": "Granola returned an unexpected error."
+              }
+            ]
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": []
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('id') and ((record.get('space_membership') or []) | length > 0 or (record.get('folder_membership') or []) | length > 0) }}"
+          }
+        },
+        "partition_router": {
+          "type": "SubstreamPartitionRouter",
+          "parent_stream_configs": [
+            {
+              "type": "ParentStreamConfig",
+              "stream": {
+                "$ref": "#/definitions/note_list"
+              },
+              "parent_key": "id",
+              "partition_field": "note_id",
+              "incremental_dependency": true
+            }
+          ]
+        }
+      },
+      "transformations": [
+        {
+          "type": "RemoveFields",
+          "field_pointers": [
+            [
+              "private_notes_text"
+            ],
+            [
+              "private_notes_markdown"
+            ],
+            [
+              "transcript"
+            ]
+          ]
+        }
+      ],
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "updated_at",
+        "datetime_format": "%Y-%m-%dT%H:%M:%SZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ",
+          "%Y-%m-%dT%H:%M:%S.%f%z",
+          "%Y-%m-%dT%H:%M:%S%z"
+        ],
+        "global_substream_cursor": true,
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config['start_date'] }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        }
+      }
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "transcripts",
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "note_id": {
+              "type": "string"
+            },
+            "note_updated_at": {
+              "type": "string"
+            },
+            "speaker": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "text": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "start_time": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "end_time": {
+              "type": [
+                "null",
+                "string"
+              ]
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/granola_requester",
+          "path": "/v1/notes/{{ stream_partition.note_id }}/transcript",
+          "error_handler": {
+            "type": "DefaultErrorHandler",
+            "max_retries": 8,
+            "backoff_strategies": [
+              {
+                "type": "WaitTimeFromHeader",
+                "header": "Retry-After"
+              },
+              {
+                "type": "ExponentialBackoffStrategy",
+                "factor": 5
+              }
+            ],
+            "response_filters": [
+              {
+                "type": "HttpResponseFilter",
+                "action": "IGNORE",
+                "http_codes": [
+                  404
+                ],
+                "error_message": "Granola note was deleted, or is still being processed; skipped."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "IGNORE",
+                "http_codes": [
+                  403
+                ],
+                "error_message": "A Granola admin turned off transcript access over the API; transcript skipped."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "RETRY",
+                "http_codes": [
+                  429,
+                  500,
+                  502,
+                  503,
+                  504
+                ],
+                "error_message": "Granola is rate limiting or unavailable; retrying."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "config_error",
+                "http_codes": [
+                  401
+                ],
+                "error_message": "Granola rejected the workspace API key. A Granola admin needs to reconnect Granola with a new workspace API key."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "system_error",
+                "predicate": "{{ response.status_code >= 400 }}",
+                "error_message": "Granola returned an unexpected error."
+              }
+            ]
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "transcript"
+            ]
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "page_token_option": {
+            "type": "RequestOption",
+            "inject_into": "request_parameter",
+            "field_name": "cursor"
+          },
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "page_size": 100,
+            "cursor_value": "{{ response.get('cursor') }}",
+            "stop_condition": "{{ not response.get('hasMore') or not response.get('cursor') }}"
+          },
+          "page_size_option": {
+            "type": "RequestOption",
+            "inject_into": "request_parameter",
+            "field_name": "page_size"
+          }
+        },
+        "partition_router": {
+          "type": "SubstreamPartitionRouter",
+          "parent_stream_configs": [
+            {
+              "type": "ParentStreamConfig",
+              "stream": {
+                "type": "DeclarativeStream",
+                "name": "notes",
+                "primary_key": [
+                  "id"
+                ],
+                "schema_loader": {
+                  "type": "InlineSchemaLoader",
+                  "schema": {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "object": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "title": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "owner": {
+                        "type": [
+                          "null",
+                          "object"
+                        ],
+                        "additionalProperties": true,
+                        "properties": {
+                          "name": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "email": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "created_at": {
+                        "type": "string"
+                      },
+                      "updated_at": {
+                        "type": "string"
+                      },
+                      "web_url": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "calendar_event": {
+                        "type": [
+                          "null",
+                          "object"
+                        ],
+                        "additionalProperties": true
+                      },
+                      "attendees": {
+                        "type": [
+                          "null",
+                          "array"
+                        ],
+                        "items": {
+                          "type": [
+                            "null",
+                            "object"
+                          ],
+                          "additionalProperties": true,
+                          "properties": {
+                            "name": {
+                              "type": [
+                                "null",
+                                "string"
+                              ]
+                            },
+                            "email": {
+                              "type": [
+                                "null",
+                                "string"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "folder_membership": {
+                        "type": [
+                          "null",
+                          "array"
+                        ],
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": true
+                        }
+                      },
+                      "space_membership": {
+                        "type": [
+                          "null",
+                          "array"
+                        ],
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": true
+                        }
+                      },
+                      "attachments": {
+                        "type": [
+                          "null",
+                          "array"
+                        ],
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": true
+                        }
+                      },
+                      "summary_text": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "summary_markdown": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "retriever": {
+                  "type": "SimpleRetriever",
+                  "requester": {
+                    "$ref": "#/definitions/granola_requester",
+                    "path": "/v1/notes/{{ stream_partition.note_id }}",
+                    "error_handler": {
+                      "type": "DefaultErrorHandler",
+                      "max_retries": 8,
+                      "backoff_strategies": [
+                        {
+                          "type": "WaitTimeFromHeader",
+                          "header": "Retry-After"
+                        },
+                        {
+                          "type": "ExponentialBackoffStrategy",
+                          "factor": 5
+                        }
+                      ],
+                      "response_filters": [
+                        {
+                          "type": "HttpResponseFilter",
+                          "action": "IGNORE",
+                          "http_codes": [
+                            404
+                          ],
+                          "error_message": "Granola note was deleted, or is still being processed; skipped."
+                        },
+                        {
+                          "type": "HttpResponseFilter",
+                          "action": "RETRY",
+                          "http_codes": [
+                            429,
+                            500,
+                            502,
+                            503,
+                            504
+                          ],
+                          "error_message": "Granola is rate limiting or unavailable; retrying."
+                        },
+                        {
+                          "type": "HttpResponseFilter",
+                          "action": "FAIL",
+                          "failure_type": "config_error",
+                          "http_codes": [
+                            401
+                          ],
+                          "error_message": "Granola rejected the workspace API key. A Granola admin needs to reconnect Granola with a new workspace API key."
+                        },
+                        {
+                          "type": "HttpResponseFilter",
+                          "action": "FAIL",
+                          "failure_type": "system_error",
+                          "predicate": "{{ response.status_code >= 400 }}",
+                          "error_message": "Granola returned an unexpected error."
+                        }
+                      ]
+                    }
+                  },
+                  "record_selector": {
+                    "type": "RecordSelector",
+                    "extractor": {
+                      "type": "DpathExtractor",
+                      "field_path": []
+                    },
+                    "record_filter": {
+                      "type": "RecordFilter",
+                      "condition": "{{ record.get('id') and ((record.get('space_membership') or []) | length > 0 or (record.get('folder_membership') or []) | length > 0) }}"
+                    }
+                  },
+                  "partition_router": {
+                    "type": "SubstreamPartitionRouter",
+                    "parent_stream_configs": [
+                      {
+                        "type": "ParentStreamConfig",
+                        "stream": {
+                          "$ref": "#/definitions/note_list"
+                        },
+                        "parent_key": "id",
+                        "partition_field": "note_id",
+                        "incremental_dependency": true
+                      }
+                    ]
+                  }
+                },
+                "transformations": [
+                  {
+                    "type": "RemoveFields",
+                    "field_pointers": [
+                      [
+                        "private_notes_text"
+                      ],
+                      [
+                        "private_notes_markdown"
+                      ],
+                      [
+                        "transcript"
+                      ]
+                    ]
+                  }
+                ],
+                "incremental_sync": {
+                  "type": "DatetimeBasedCursor",
+                  "cursor_field": "updated_at",
+                  "datetime_format": "%Y-%m-%dT%H:%M:%SZ",
+                  "cursor_datetime_formats": [
+                    "%Y-%m-%dT%H:%M:%S.%fZ",
+                    "%Y-%m-%dT%H:%M:%SZ",
+                    "%Y-%m-%dT%H:%M:%S.%f%z",
+                    "%Y-%m-%dT%H:%M:%S%z"
+                  ],
+                  "global_substream_cursor": true,
+                  "start_datetime": {
+                    "type": "MinMaxDatetime",
+                    "datetime": "{{ config['start_date'] }}",
+                    "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+                  }
+                }
+              },
+              "parent_key": "id",
+              "partition_field": "note_id",
+              "incremental_dependency": true,
+              "extra_fields": [
+                [
+                  "updated_at"
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      "transformations": [
+        {
+          "type": "AddFields",
+          "fields": [
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "note_id"
+              ],
+              "value": "{{ stream_slice.note_id }}"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "note_updated_at"
+              ],
+              "value": "{{ stream_slice.extra_fields['updated_at'] }}"
+            }
+          ]
+        }
+      ],
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "note_updated_at",
+        "datetime_format": "%Y-%m-%dT%H:%M:%SZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ",
+          "%Y-%m-%dT%H:%M:%S.%f%z",
+          "%Y-%m-%dT%H:%M:%S%z"
+        ],
+        "global_substream_cursor": true,
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config['start_date'] }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        }
+      }
+    }
+  ],
+  "spec": {
+    "type": "Spec",
+    "connection_specification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Granola workspace",
+      "type": "object",
+      "required": [
+        "api_key",
+        "start_date"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "api_key": {
+          "type": "string",
+          "title": "Granola workspace API key",
+          "airbyte_secret": true,
+          "order": 0
+        },
+        "start_date": {
+          "type": "string",
+          "title": "Backfill start (UTC)",
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "order": 1
+        },
+        "num_workers": {
+          "type": "integer",
+          "title": "Concurrent requests",
+          "minimum": 1,
+          "maximum": 4,
+          "default": 2,
+          "order": 2
+        },
+        "base_url": {
+          "type": "string",
+          "title": "Granola API base URL",
+          "default": "https://public-api.granola.ai",
+          "order": 3
+        }
+      }
+    }
+  }
+}

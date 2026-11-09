@@ -64,7 +64,27 @@
     "./integrations/counts": "./dist/src/integrations/counts.mjs",
     "./integrations/github": "./dist/src/integrations/github.mjs",
     "./integrations/service": "./dist/src/integrations/service.mjs",
-    "./application/source-model": "./dist/src/application/source-model.mjs"
+    "./application/source-model": "./dist/src/application/source-model.mjs",
+    "./integrations/local-registry": "./dist/src/integrations/local-registry.mjs",
+    "./identity/single-organization": "./dist/src/identity/single-organization.mjs",
+    "./application/onboarding": "./dist/src/application/onboarding.mjs",
+    "./application/usage": "./dist/src/application/usage.mjs",
+    "./application/usage-inventory": "./dist/src/application/usage-inventory.mjs",
+    "./integrations/resolver": "./dist/src/integrations/resolver.mjs",
+    "./application/onboarding-observer": "./dist/src/application/onboarding-observer.mjs",
+    "./application/integration-callback": "./dist/src/application/integration-callback.mjs",
+    "./application/http": "./dist/src/application/http.mjs",
+    "./application/diagnostics": "./dist/src/application/diagnostics.mjs",
+    "./application/routes": "./dist/src/application/routes.mjs",
+    "./application/integration-http": "./dist/src/application/integration-http.mjs",
+    "./application/board": "./dist/src/application/board.mjs",
+    "./application/presentation": "./dist/src/application/presentation.mjs",
+    "./application/request-lifecycle": "./dist/src/application/request-lifecycle.mjs",
+    "./integrations/providers": "./dist/src/integrations/providers.mjs",
+    "./integrations/manifests": "./dist/src/integrations/manifests.mjs",
+    "./integrations/github-source/*": "./connectors/github/*",
+    "./integrations/destination": "./dist/src/integrations/destination.mjs",
+    "./integrations/single-organization-storage": "./dist/src/integrations/single-organization-storage.mjs"
   },
   "files": [
     "dist/src",
@@ -76,7 +96,8 @@
     "web-v2/package.json",
     "web-v2/package-lock.json",
     "web-v2/tsconfig.json",
-    "web-v2/README.md"
+    "web-v2/README.md",
+    "connectors/github"
   ],
   "repository": {
     "type": "git",

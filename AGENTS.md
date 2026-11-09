@@ -76,3 +76,5 @@ provisioning, billing, fleet operation and internal administration belong in
 shell. Source SDK names do not determine ownership. Core requires no account
 or service operated by OpenCrawl. This contract supersedes earlier hosted-only
 classification of reusable identity, integrations and product UI.
+
+The standalone Airbyte GitHub source under `connectors/github/` is a Python container moved from shell; preserve its source and behavior tests. This is the only Python exception. Application runtime and repository tooling remain TypeScript/Node.

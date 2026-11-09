@@ -1,0 +1,739 @@
+{
+  "version": "7.28.2",
+  "type": "DeclarativeSource",
+  "description": "Circleback meetings shared with the whole workspace (its Workspace folder): notes, action items, insights, attendees and transcripts, never private notes or recordings, through the credential proxy proxy. credential proxy holds the user's Circleback OAuth grant and refreshes it; this connector only pulls. Requires the configured operator credential proxy.",
+  "check": {
+    "type": "CheckStream",
+    "stream_names": [
+      "meetings"
+    ]
+  },
+  "concurrency_level": {
+    "type": "ConcurrencyLevel",
+    "default_concurrency": "{{ config.get('num_workers', 2) }}",
+    "max_concurrency": 4
+  },
+  "definitions": {},
+  "streams": [
+    {
+      "type": "DeclarativeStream",
+      "name": "meetings",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "duration": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "url": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "icalUid": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "notes": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "linkAccess": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "tags": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "attendees": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "actionItems": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "insights": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "calendarEvent": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "sharedWith": {
+              "type": [
+                "null",
+                "array",
+                "object"
+              ]
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "type": "HttpRequester",
+          "url_base": "{{ config.get('credential_proxy_base_url', 'https://credential-proxy.invalid') }}",
+          "path": "/api/connector-proxy",
+          "http_method": "POST",
+          "authenticator": {
+            "type": "ApiKeyAuthenticator",
+            "api_token": "{{ config['credential_proxy_api_key'] }}",
+            "inject_into": {
+              "type": "RequestOption",
+              "inject_into": "header",
+              "field_name": "x-api-key"
+            }
+          },
+          "error_handler": {
+            "type": "CompositeErrorHandler",
+            "error_handlers": [
+              {
+                "type": "DefaultErrorHandler",
+                "max_retries": 8,
+                "backoff_strategies": [
+                  {
+                    "type": "ExponentialBackoffStrategy",
+                    "factor": 5
+                  }
+                ],
+                "response_filters": [
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "RETRY",
+                    "predicate": "{{ response.get('status') == 429 or (response.get('status') or 0) >= 500 }}",
+                    "error_message": "Circleback is rate limiting or unavailable; retrying."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "config_error",
+                    "predicate": "{{ response.get('status') in [401, 403] }}",
+                    "error_message": "Circleback rejected the connection. The user needs to reconnect Circleback."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "system_error",
+                    "predicate": "{{ (response.get('status') or 0) >= 400 }}",
+                    "error_message": "Circleback returned an unexpected error through the credential proxy proxy."
+                  }
+                ]
+              }
+            ]
+          },
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://circleback.ai/api/meetings",
+              "parameters": "{{ [{'name': 'ownership', 'value': 'All', 'type': 'query'}, {'name': 'folderId', 'value': config['folder_id'], 'type': 'query'}] + ([{'name': 'cursor', 'value': next_page_token.next_page_token, 'type': 'query'}] if next_page_token else []) }}"
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data"
+            ]
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('id') is not none }}"
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ ((response.get('headers') or {}).get('link') or (response.get('headers') or {}).get('Link') or '') | regex_search('[?&]cursor=([^&>]+)[^>]*>;\\\\s*rel=\"?next') }}",
+            "stop_condition": "{{ not (((response.get('headers') or {}).get('link') or (response.get('headers') or {}).get('Link') or '') | regex_search('[?&]cursor=([^&>]+)[^>]*>;\\\\s*rel=\"?next')) }}"
+          }
+        }
+      },
+      "transformations": [
+        {
+          "type": "RemoveFields",
+          "field_pointers": [
+            [
+              "privateNotes"
+            ],
+            [
+              "recordingUrl"
+            ]
+          ]
+        }
+      ],
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "updatedAt",
+        "datetime_format": "%Y-%m-%dT%H:%M:%S.%fZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ",
+          "%Y-%m-%dT%H:%M:%S.%f%z",
+          "%Y-%m-%dT%H:%M:%S%z"
+        ],
+        "is_client_side_incremental": true,
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config['start_date'] }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        }
+      }
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "transcripts",
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "meeting_id": {
+              "type": "string"
+            },
+            "meeting_updated_at": {
+              "type": "string"
+            },
+            "speaker": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "text": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "timestamp": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "type": "HttpRequester",
+          "url_base": "{{ config.get('credential_proxy_base_url', 'https://credential-proxy.invalid') }}",
+          "path": "/api/connector-proxy",
+          "http_method": "POST",
+          "authenticator": {
+            "type": "ApiKeyAuthenticator",
+            "api_token": "{{ config['credential_proxy_api_key'] }}",
+            "inject_into": {
+              "type": "RequestOption",
+              "inject_into": "header",
+              "field_name": "x-api-key"
+            }
+          },
+          "error_handler": {
+            "type": "CompositeErrorHandler",
+            "error_handlers": [
+              {
+                "type": "DefaultErrorHandler",
+                "max_retries": 8,
+                "backoff_strategies": [
+                  {
+                    "type": "ExponentialBackoffStrategy",
+                    "factor": 5
+                  }
+                ],
+                "response_filters": [
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "IGNORE",
+                    "predicate": "{{ response.get('status') == 404 }}",
+                    "error_message": "Circleback meeting was deleted or has no transcript; skipped."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "RETRY",
+                    "predicate": "{{ response.get('status') == 429 or (response.get('status') or 0) >= 500 }}",
+                    "error_message": "Circleback is rate limiting or unavailable; retrying."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "config_error",
+                    "predicate": "{{ response.get('status') in [401, 403] }}",
+                    "error_message": "Circleback rejected the connection. The user needs to reconnect Circleback."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "system_error",
+                    "predicate": "{{ (response.get('status') or 0) >= 400 }}",
+                    "error_message": "Circleback returned an unexpected error through the credential proxy proxy."
+                  }
+                ]
+              }
+            ]
+          },
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://circleback.ai/api/meeting/{{ stream_partition.meeting_id }}/transcript",
+              "parameters": "[]"
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data"
+            ]
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('text') is not none }}"
+          }
+        },
+        "partition_router": {
+          "type": "SubstreamPartitionRouter",
+          "parent_stream_configs": [
+            {
+              "type": "ParentStreamConfig",
+              "stream": {
+                "type": "DeclarativeStream",
+                "name": "meetings",
+                "primary_key": [
+                  "id"
+                ],
+                "schema_loader": {
+                  "type": "InlineSchemaLoader",
+                  "schema": {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                      "id": {
+                        "type": [
+                          "string",
+                          "integer"
+                        ]
+                      },
+                      "name": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "type": "string"
+                      },
+                      "duration": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      },
+                      "url": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "icalUid": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "notes": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "linkAccess": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "tags": {
+                        "type": [
+                          "null",
+                          "array"
+                        ],
+                        "items": {
+                          "type": [
+                            "null",
+                            "object"
+                          ],
+                          "additionalProperties": true
+                        }
+                      },
+                      "attendees": {
+                        "type": [
+                          "null",
+                          "array"
+                        ],
+                        "items": {
+                          "type": [
+                            "null",
+                            "object"
+                          ],
+                          "additionalProperties": true
+                        }
+                      },
+                      "actionItems": {
+                        "type": [
+                          "null",
+                          "array"
+                        ],
+                        "items": {
+                          "type": [
+                            "null",
+                            "object"
+                          ],
+                          "additionalProperties": true
+                        }
+                      },
+                      "insights": {
+                        "type": [
+                          "null",
+                          "object"
+                        ],
+                        "additionalProperties": true
+                      },
+                      "calendarEvent": {
+                        "type": [
+                          "null",
+                          "object"
+                        ],
+                        "additionalProperties": true
+                      },
+                      "sharedWith": {
+                        "type": [
+                          "null",
+                          "array",
+                          "object"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "retriever": {
+                  "type": "SimpleRetriever",
+                  "requester": {
+                    "type": "HttpRequester",
+                    "url_base": "{{ config.get('credential_proxy_base_url', 'https://credential-proxy.invalid') }}",
+                    "path": "/api/connector-proxy",
+                    "http_method": "POST",
+                    "authenticator": {
+                      "type": "ApiKeyAuthenticator",
+                      "api_token": "{{ config['credential_proxy_api_key'] }}",
+                      "inject_into": {
+                        "type": "RequestOption",
+                        "inject_into": "header",
+                        "field_name": "x-api-key"
+                      }
+                    },
+                    "error_handler": {
+                      "type": "CompositeErrorHandler",
+                      "error_handlers": [
+                        {
+                          "type": "DefaultErrorHandler",
+                          "max_retries": 8,
+                          "backoff_strategies": [
+                            {
+                              "type": "ExponentialBackoffStrategy",
+                              "factor": 5
+                            }
+                          ],
+                          "response_filters": [
+                            {
+                              "type": "HttpResponseFilter",
+                              "action": "RETRY",
+                              "predicate": "{{ response.get('status') == 429 or (response.get('status') or 0) >= 500 }}",
+                              "error_message": "Circleback is rate limiting or unavailable; retrying."
+                            },
+                            {
+                              "type": "HttpResponseFilter",
+                              "action": "FAIL",
+                              "failure_type": "config_error",
+                              "predicate": "{{ response.get('status') in [401, 403] }}",
+                              "error_message": "Circleback rejected the connection. The user needs to reconnect Circleback."
+                            },
+                            {
+                              "type": "HttpResponseFilter",
+                              "action": "FAIL",
+                              "failure_type": "system_error",
+                              "predicate": "{{ (response.get('status') or 0) >= 400 }}",
+                              "error_message": "Circleback returned an unexpected error through the credential proxy proxy."
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "request_body": {
+                      "type": "RequestBodyJsonObject",
+                      "value": {
+                        "connected_account_id": "{{ config['connected_account_id'] }}",
+                        "user_id": "{{ config['user_id'] }}",
+                        "method": "GET",
+                        "endpoint": "https://circleback.ai/api/meetings",
+                        "parameters": "{{ [{'name': 'ownership', 'value': 'All', 'type': 'query'}, {'name': 'folderId', 'value': config['folder_id'], 'type': 'query'}] + ([{'name': 'cursor', 'value': next_page_token.next_page_token, 'type': 'query'}] if next_page_token else []) }}"
+                      }
+                    }
+                  },
+                  "record_selector": {
+                    "type": "RecordSelector",
+                    "extractor": {
+                      "type": "DpathExtractor",
+                      "field_path": [
+                        "data"
+                      ]
+                    },
+                    "record_filter": {
+                      "type": "RecordFilter",
+                      "condition": "{{ record.get('id') is not none }}"
+                    }
+                  },
+                  "paginator": {
+                    "type": "DefaultPaginator",
+                    "pagination_strategy": {
+                      "type": "CursorPagination",
+                      "cursor_value": "{{ ((response.get('headers') or {}).get('link') or (response.get('headers') or {}).get('Link') or '') | regex_search('[?&]cursor=([^&>]+)[^>]*>;\\\\s*rel=\"?next') }}",
+                      "stop_condition": "{{ not (((response.get('headers') or {}).get('link') or (response.get('headers') or {}).get('Link') or '') | regex_search('[?&]cursor=([^&>]+)[^>]*>;\\\\s*rel=\"?next')) }}"
+                    }
+                  }
+                },
+                "transformations": [
+                  {
+                    "type": "RemoveFields",
+                    "field_pointers": [
+                      [
+                        "privateNotes"
+                      ],
+                      [
+                        "recordingUrl"
+                      ]
+                    ]
+                  }
+                ],
+                "incremental_sync": {
+                  "type": "DatetimeBasedCursor",
+                  "cursor_field": "updatedAt",
+                  "datetime_format": "%Y-%m-%dT%H:%M:%S.%fZ",
+                  "cursor_datetime_formats": [
+                    "%Y-%m-%dT%H:%M:%S.%fZ",
+                    "%Y-%m-%dT%H:%M:%SZ",
+                    "%Y-%m-%dT%H:%M:%S.%f%z",
+                    "%Y-%m-%dT%H:%M:%S%z"
+                  ],
+                  "is_client_side_incremental": true,
+                  "start_datetime": {
+                    "type": "MinMaxDatetime",
+                    "datetime": "{{ config['start_date'] }}",
+                    "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+                  }
+                }
+              },
+              "parent_key": "id",
+              "partition_field": "meeting_id",
+              "extra_fields": [
+                [
+                  "updatedAt"
+                ]
+              ],
+              "incremental_dependency": true
+            }
+          ]
+        }
+      },
+      "transformations": [
+        {
+          "type": "AddFields",
+          "fields": [
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "meeting_id"
+              ],
+              "value": "{{ stream_slice.meeting_id | string }}"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "meeting_updated_at"
+              ],
+              "value": "{{ stream_slice.extra_fields['updatedAt'] }}"
+            }
+          ]
+        }
+      ],
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "meeting_updated_at",
+        "datetime_format": "%Y-%m-%dT%H:%M:%S.%fZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ",
+          "%Y-%m-%dT%H:%M:%S.%f%z",
+          "%Y-%m-%dT%H:%M:%S%z"
+        ],
+        "global_substream_cursor": true,
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config['start_date'] }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        }
+      }
+    }
+  ],
+  "spec": {
+    "type": "Spec",
+    "connection_specification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Circleback via credential proxy",
+      "type": "object",
+      "required": [
+        "credential_proxy_api_key",
+        "connected_account_id",
+        "user_id",
+        "start_date",
+        "folder_id"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "credential_proxy_api_key": {
+          "type": "string",
+          "title": "credential proxy project API key",
+          "airbyte_secret": true,
+          "order": 0
+        },
+        "connected_account_id": {
+          "type": "string",
+          "title": "credential proxy connected account",
+          "pattern": "^ca_[A-Za-z0-9_-]+$",
+          "order": 1
+        },
+        "user_id": {
+          "type": "string",
+          "title": "credential proxy user ID",
+          "order": 2
+        },
+        "start_date": {
+          "type": "string",
+          "title": "Backfill start (UTC)",
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "order": 3
+        },
+        "folder_id": {
+          "type": "string",
+          "title": "Circleback Workspace folder ID",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "order": 4
+        },
+        "num_workers": {
+          "type": "integer",
+          "title": "Concurrent requests",
+          "minimum": 1,
+          "maximum": 4,
+          "default": 2,
+          "order": 5
+        },
+        "credential_proxy_base_url": {
+          "type": "string",
+          "title": "credential proxy API base URL",
+          "default": "https://credential-proxy.invalid",
+          "order": 6
+        }
+      }
+    }
+  }
+}

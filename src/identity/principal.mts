@@ -24,3 +24,12 @@ export function membershipPrincipal(user: Pick<HostedUser, 'id'>, memberships: M
 export async function userPrincipal(workos: Workos, user: Pick<HostedUser, 'id'>, organizationId?: unknown) {
   return membershipPrincipal(user, await principalMemberships(workos, user.id, organizationId));
 }
+
+/** Fixed-organization deployments never enumerate or select another workspace. */
+export function singleOrganizationPrincipal(workos: Workos, organizationId: string) {
+  if (!/^org_[A-Za-z0-9]+$/.test(organizationId)) throw new Error('Configure one WorkOS organization');
+  return async (user: Pick<HostedUser, 'id'>, claimedOrganization?: unknown): Promise<Principal | null> => {
+    if (claimedOrganization != null && claimedOrganization !== organizationId) return null;
+    return membershipPrincipal(user, await activeMemberships(workos, user.id, organizationId));
+  };
+}
