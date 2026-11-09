@@ -1,6 +1,6 @@
 # Self-hosting preview
 
-This stack runs capture, indexing, MCP search and the agent board on one machine.
+This stack runs capture, indexing, MCP search, connected sources and the agent board on one machine.
 It uses a single shared identity: anyone with the MCP token can read all captured
 sessions and board messages. It is a local preview, not a multi-user or highly
 available service. Temporal uses its development server with persistent SQLite.
@@ -42,6 +42,46 @@ MCP URL above and `Authorization: Bearer <MCP_TOKEN>` from `deploy/.env`; see
 [MCP configuration](mcp.md). Indexing normally runs every five minutes.
 Do not put tokens in shared configuration, screenshots or issue reports.
 
+## Connect Slack, Notion, Circleback and Granola
+
+Slack, Notion and Circleback connect through your own [Composio](https://composio.dev)
+project: Composio runs each provider's sign-in, stores and refreshes the tokens, and
+proxies the read-only API calls, so you don't create a Slack app or OAuth client.
+OpenCrawl never sees provider tokens. Granola connects with a Granola workspace API key.
+Every source is team-wide: one connection per provider serves the whole deployment.
+
+Create a Composio project API key, then either set `COMPOSIO_API_KEY` in `deploy/.env`
+and rerun `./up.sh`, or add it to the running stack:
+
+```sh
+set -a; . ./deploy/.env; set +a
+curl -X PUT http://127.0.0.1:8094/api/integrations/composio \
+  -H "Authorization: Bearer $MCP_TOKEN" -d '{"apiKey":"<composio api key>"}'
+curl -X POST http://127.0.0.1:8094/api/integrations/slack/connect -H "Authorization: Bearer $MCP_TOKEN"
+```
+
+Open the returned `redirectUrl` in a browser and approve. Composio returns you to
+`http://127.0.0.1:8094/integrations/slack/callback`, which activates the connection.
+The browser must run on the deployment's machine, because the callback uses the loopback
+MCP origin. For Granola, post `{"apiKey":"<workspace key>"}` to
+`/api/integrations/granola/connect`; personal keys are refused because they can read
+their owner's private notes.
+
+`GET /api/integrations` lists sources and their state (`syncing`, `synced`, `error`),
+`POST /api/integrations/<id>/retry` syncs now, and `POST /api/integrations/<id>/disconnect`
+revokes the Composio grant, removes the source from search at once, and deletes its
+raw records on the next sync pass. The web console calls the same endpoints.
+
+The `sources-sync` service runs Airbyte's upstream `source-declarative-manifest` image
+(Airbyte CDK, MIT) with the manifests in `deploy/connectors/manifests`. It does not need
+the Airbyte platform. Slack syncs every 15 minutes, the others hourly; the first import
+reads the last 90 days (Notion: every shared page). Records land in the bundled S3 under
+`raw/v1/source=<provider>/workspace=<id>/connection=<id>/`, and `sources-index` makes them
+searchable within two minutes. Composio's own terms and quotas apply to proxied calls.
+The registry, including the Composio key and any Granola key, is
+`/data/sources.sqlite` in the `board` volume and is included in backups. Treat backups
+as secrets.
+
 ## Check and stop
 
 ```sh
@@ -49,6 +89,7 @@ docker compose -f deploy/compose.yaml ps
 opencrawl collect status --json
 opencrawl collect flush
 docker compose -f deploy/compose.yaml logs --tail 50 worker
+docker compose -f deploy/compose.yaml logs --tail 50 sources-sync sources-index
 docker compose -f deploy/compose.yaml stop
 ```
 

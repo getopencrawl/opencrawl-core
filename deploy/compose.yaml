@@ -61,10 +61,37 @@ services:
       MCP_TOKEN: ${MCP_TOKEN:?run ./up.sh or set it in .env}
       OPENCRAWL_SEARCH_CONFIG: /run/opencrawl/search.json
       OPENCRAWL_BOARD_PATH: /data/board.sqlite
+      # Connected sources (Slack, Notion, Circleback via Composio; Granola by key).
+      OPENCRAWL_SOURCES_PATH: /data/sources.sqlite
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
     configs: [{source: search, target: /run/opencrawl/search.json}]
     volumes: ["board:/data"]
     ports: ["127.0.0.1:${OPENCRAWL_MCP_PORT:-8094}:8094"]
     depends_on: {opensearch: {condition: service_healthy}}
+
+  sources-sync:
+    # Pulls connected sources with the declarative manifests in deploy/connectors, through the
+    # operator's Composio proxy, into the bundled S3. Shares the registry with the mcp service.
+    build: {context: .., dockerfile: deploy/connectors/Dockerfile}
+    image: opencrawl-sources-sync:local
+    restart: unless-stopped
+    environment:
+      <<: *env
+      OPENCRAWL_SOURCES_PATH: /data/sources.sqlite
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+    volumes: ["board:/data"]
+    depends_on: {s3: {condition: service_started}, mcp: {condition: service_started}}
+
+  sources-index:
+    <<: *runtime
+    # Indexes landed source records for search every two minutes.
+    command: ["node", "dist/src/integrations/indexer.mjs"]
+    environment:
+      <<: *env
+      OPENCRAWL_SOURCES_PATH: /data/sources.sqlite
+    volumes: ["board:/data"]
+    healthcheck: {disable: true}
+    depends_on: {s3: {condition: service_started}, opensearch: {condition: service_healthy}, mcp: {condition: service_started}}
 
   s3:
     # SeaweedFS (Apache-2.0): single-node S3 API.
@@ -117,7 +144,8 @@ configs:
   search:
     content: |
       {"principal": {"tenantId": "${OPENCRAWL_TENANT_ID:-self-hosted}", "userId": "${OPENCRAWL_USER_ID:-owner}"},
-       "sessions": {"endpoint": "http://opensearch:9200", "environment": "selfhost"}}
+       "sessions": {"endpoint": "http://opensearch:9200", "environment": "selfhost"},
+       "connectors": {"search": {"endpoint": "http://opensearch:9200", "environment": "selfhost"}}}
 
 volumes:
   s3:

@@ -14,8 +14,11 @@ import {createBoardHandler} from '../board/http.mjs';
 import {createLocalBoardStore} from '../board/local-store.mjs';
 import {createRecentSessions} from '../sessions/recent.mjs';
 import {standaloneStorage} from '../sessions/standalone.mjs';
+import {createRegistry} from '../integrations/registry.mjs';
+import {createSources, type Sources} from '../integrations/service.mjs';
+import {createSourcesHandler} from '../integrations/http.mjs';
 
-export function standaloneMcp({token, origin, revision, boardPath, boardSearch, recentSessions, search, principal={tenantId:'self-hosted',userId:'owner'}}: {token?: string; origin: string; revision?: string; boardPath?: string; boardSearch?: RealmOptions; recentSessions?: ReturnType<typeof createRecentSessions>; search?: McpOptions['search']; principal?: Principal}) {
+export function standaloneMcp({token, origin, revision, boardPath, boardSearch, recentSessions, search, sources, principal={tenantId:'self-hosted',userId:'owner'}}: {sources?: Sources; token?: string; origin: string; revision?: string; boardPath?: string; boardSearch?: RealmOptions; recentSessions?: ReturnType<typeof createRecentSessions>; search?: McpOptions['search']; principal?: Principal}) {
   if (typeof token !== 'string' || token.length < 32) throw new Error('Set MCP_TOKEN to a random secret of at least 32 characters');
   if(!principal?.tenantId||!principal?.userId)throw new Error('Explicit standalone scope required');
   const expected = Buffer.from('Bearer ' + token);
@@ -29,11 +32,16 @@ export function standaloneMcp({token, origin, revision, boardPath, boardSearch, 
   const query = createWorkspaceSearchHandler({search, authenticate});
   const read = createWorkspaceSearchHandler({search, authenticate, operation:'fetch'});
   const participation = createBoardHandler({board, authenticate});
+  const connections = sources ? createSourcesHandler({sources, authenticate, log: (event, data) => console.log(JSON.stringify({event, ...data}))}) : null;
   const server = createServer((req, res) => {
     if (req.headers.host !== new URL(origin).host) {res.writeHead(403); return res.end();}
     if (req.url === '/api/search') {query(req, res);return;}
     if (req.url === '/api/search/fetch') {read(req, res);return;}
     if (req.url?.startsWith('/api/board/')) {participation(req, res);return;}
+    if (connections && (req.url?.startsWith('/api/integrations') || req.url?.startsWith('/integrations/') || req.url === '/api/onboarding/sources')) {
+      connections(req, res).then(owned => {if (!owned && !res.headersSent) {res.writeHead(404); res.end();}}).catch(() => {if (!res.headersSent) res.writeHead(503); res.end();});
+      return;
+    }
     if (req.url !== '/mcp') {res.writeHead(404); return res.end();}
     mcp(req, res).catch(() => {if (!res.headersSent) res.writeHead(503);res.end();});
   });
@@ -45,11 +53,16 @@ export function standaloneMcp({token, origin, revision, boardPath, boardSearch, 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   // 8094 so it can run beside the session receiver's default 8093.
   const port = Number(process.env.PORT || 8094);
-  const workspace: Partial<Awaited<ReturnType<typeof configuredWorkspaceSearch>>> = process.env.OPENCRAWL_SEARCH_CONFIG ? await configuredWorkspaceSearch(process.env.OPENCRAWL_SEARCH_CONFIG) : {};
+  const tenantId = process.env.OPENCRAWL_TENANT_ID || 'self-hosted';
+  const origin = process.env.MCP_ORIGIN || `http://127.0.0.1:${port}`;
+  // Optional: sources connected through the operator's Composio project or pasted keys.
+  const sources = process.env.OPENCRAWL_SOURCES_PATH ? createSources({registry: createRegistry(process.env.OPENCRAWL_SOURCES_PATH), tenantId, origin,
+    composioApiKey: process.env.COMPOSIO_API_KEY || undefined, composioBaseUrl: process.env.COMPOSIO_BASE_URL || undefined}) : undefined;
+  const workspace: Partial<Awaited<ReturnType<typeof configuredWorkspaceSearch>>> = process.env.OPENCRAWL_SEARCH_CONFIG ? await configuredWorkspaceSearch(process.env.OPENCRAWL_SEARCH_CONFIG, {connectorBindings: sources?.bindings}) : {};
   const sessionSettings = process.env.OPENCRAWL_OPENSEARCH_URL ? {endpoint: process.env.OPENCRAWL_OPENSEARCH_URL, index: process.env.OPENCRAWL_OPENSEARCH_INDEX || undefined,
     username: process.env.OPENCRAWL_OPENSEARCH_USERNAME, password: process.env.OPENCRAWL_OPENSEARCH_PASSWORD, tenantId: workspace.principal?.tenantId || process.env.OPENCRAWL_TENANT_ID || 'self-hosted'} : null;
   const capture = sessionSettings && process.env.OPENCRAWL_LANDING_S3_BUCKET ? standaloneStorage(process.env) : null;
-  const server = standaloneMcp({principal:{tenantId:process.env.OPENCRAWL_TENANT_ID||'self-hosted',userId:process.env.OPENCRAWL_USER_ID||'owner'}, ...workspace, token: process.env.MCP_TOKEN, origin: process.env.MCP_ORIGIN || `http://127.0.0.1:${port}`, boardPath: process.env.OPENCRAWL_BOARD_PATH,
+  const server = standaloneMcp({principal:{tenantId,userId:process.env.OPENCRAWL_USER_ID||'owner'}, ...workspace, sources, token: process.env.MCP_TOKEN, origin, boardPath: process.env.OPENCRAWL_BOARD_PATH,
     recentSessions: capture && sessionSettings ? createRecentSessions({...sessionSettings, ...capture}) : undefined,
     boardSearch: sessionSettings || undefined});
   // HOST is for containers; MCP_ORIGIN still pins the Host header clients must send.

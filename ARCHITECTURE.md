@@ -26,9 +26,13 @@ in domain logic. No duplicated hosted version of a core operation.
 | Audit events and portable diagnostics | Compliance exports, managed monitoring and support access |
 | Optional customer-operated integrations and storage adapters | Hosted vendor accounts, shared credentials and commercial service operation |
 
-The hosted integrations page (Composio, managed Airbyte), hosted indexing glue,
-WorkOS auth and our infra stay in the shell on purpose. The supported self-host
-stack and its capture/indexing path are documented in `docs/self-host.md`.
+Self-host source connections live here (`src/integrations`, `deploy/connectors`):
+the operator brings their own Composio project API key (or a pasted provider key),
+and the upstream Airbyte CDK image runs the same declarative manifests as hosted
+OpenCrawl through that operator's Composio proxy. Our shared Composio project, the
+managed Airbyte fleet, per-organization buckets, hosted indexing glue, WorkOS auth
+and our infra stay in the shell on purpose. The supported self-host stack and its
+capture/indexing path are documented in `docs/self-host.md`.
 
 Classify by responsibility. A local HTTP server, self-host authentication adapter,
 Compose/Helm example, or optional S3-compatible client can live here. Keep these
