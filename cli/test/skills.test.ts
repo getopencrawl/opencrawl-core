@@ -79,7 +79,7 @@ test('automatic refresh updates only managed skills, preserves each API and leav
   saved.revision = 1; writeFileSync(manifest, JSON.stringify(saved));
   const customized = join(initial.results[1]!.directory, 'references/participation.md');
   writeFileSync(customized, 'My custom coordination rules');
-  const result = await agentSkills('refresh', 'https://app.getopencrawl.com', options);
+  const result = await agentSkills('refresh', 'https://app.getopencrawl.com', {home, env: {}, which: () => null});
   expect(result.results.map(row => row.status)).toEqual(['updated', 'conflict']);
   expect(readFileSync(skill, 'utf8')).toContain('http://127.0.0.1:8093');
   expect(readFileSync(skill, 'utf8')).not.toContain('https://app.getopencrawl.com');

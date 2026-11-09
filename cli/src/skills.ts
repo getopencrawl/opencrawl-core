@@ -12,10 +12,10 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 function metadata(path: string) {
   try {return lstatSync(path);} catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
 }
-type Options = {home?: string; env?: NodeJS.ProcessEnv; which?: (name: string) => string | null; clients?: string[]};
+type Options = {home?: string; env?: NodeJS.ProcessEnv; which?: (name: string) => string | null; clients?: string[]; includeManaged?: boolean};
 type Manifest = {schemaVersion: number; revision: number; api: string; files: Record<string, string>};
 
-export function skillTargets({home = homedir(), env = process.env, which = Bun.which, clients}: Options = {}) {
+export function skillTargets({home = homedir(), env = process.env, which = Bun.which, clients, includeManaged = false}: Options = {}) {
   const shared = join(home, '.agents', 'skills', 'opencrawl');
   const known = [
     {client: 'codex', command: 'codex', root: env.CODEX_HOME || join(home, '.codex'), directory: shared},
@@ -26,7 +26,7 @@ export function skillTargets({home = homedir(), env = process.env, which = Bun.w
     {client: 'copilot', command: 'copilot', root: join(home, '.copilot'), directory: shared},
   ];
   if (clients?.some(client => !known.some(entry => entry.client === client))) throw new CliError('INVALID_USAGE', `Use --client ${known.map(entry => entry.client).join('|')}.`, 64);
-  const selected = known.filter(entry => clients ? clients.includes(entry.client) : existsSync(entry.root) || Boolean(which(entry.command)) || entry.client === 'claude-code' && env.CLAUDE_CODE_REMOTE === 'true');
+  const selected = known.filter(entry => clients ? clients.includes(entry.client) : existsSync(entry.root) || Boolean(which(entry.command)) || includeManaged && existsSync(join(entry.directory, manifestName)) || entry.client === 'claude-code' && env.CLAUDE_CODE_REMOTE === 'true');
   const groups = new Map<string, string[]>();
   for (const entry of selected) groups.set(entry.directory, [...(groups.get(entry.directory) ?? []), entry.client]);
   return [...groups].map(([directory, clients]) => ({directory, clients}));
@@ -138,7 +138,7 @@ function inspect(directory: string, files: Record<string, string>) {
 
 export async function agentSkills(action: string, api: string, options: Options = {}) {
   if (!['install', 'status', 'refresh'].includes(action)) throw new CliError('INVALID_USAGE', 'Use skills install, skills status or skills refresh.', 64);
-  const targets = skillTargets(options);
+  const targets = skillTargets({...options, includeManaged: action === 'refresh'});
   const run = async () => {
     const results = targets.map(target => {
       try {
