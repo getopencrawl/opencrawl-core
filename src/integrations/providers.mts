@@ -354,7 +354,10 @@ const providers:ProviderCatalog = {
     ],
     units: ['commit', 'commits'],
     // All history, whatever its age: the installation already limits what is read.
-    sourceConfiguration: ({githubApp, record}) => ({...githubApp, installation_id: String(record!.installationId), start_date: '2000-01-01T00:00:00Z', num_workers: 4}),
+    sourceConfiguration: ({githubApp, record}) => {
+      if (!record?.githubRepositoryIds?.length) throw new Error('Reconnect GitHub to confirm repository access');
+      return {...githubApp, installation_id: String(record.installationId), repository_ids: record.githubRepositoryIds, start_date: '2000-01-01T00:00:00Z', num_workers: 4};
+    },
     /** The account the app was installed on, and how many repositories it was given. */
     account: (installation, repositories) => ({
       label: `${installation.account.login}, ${repositories.length} ${repositories.length === 1 ? 'repository' : 'repositories'}`,

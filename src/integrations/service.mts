@@ -7,7 +7,8 @@ import type {Airbyte} from './airbyte.mjs';
 import type {IntegrationRegistry as Registry} from './ports.mjs';
 import type {IntegrationStorage as TeamBuckets} from './ports.mjs';
 import type {GithubApp} from './github.mjs';
-import type {Provider, ProviderCatalog, KeyProvider, GithubProvider, IntegrationRecord, Proxy, ProxyRequest, ProviderData, AirbyteJob, AirbyteResource, ResourceName, ConnectorDefinition} from './types.mjs';
+import type {Provider, ProviderCatalog, KeyProvider, GithubProvider, GithubRepository, IntegrationRecord, Proxy, ProxyRequest, ProviderData, AirbyteJob, AirbyteResource, ResourceName, ConnectorDefinition} from './types.mjs';
+export interface IntegrationCompletion {ok: boolean; reason: string; actions?: Array<{label: string; url: string}>}
 export interface IntegrationOptions {
   environment: Environment; appUrl: string; buckets: TeamBuckets; legacyBucket: string; workspaceId: () => Promise<string>; destination: LandingDestination;
   backfillDays?: number; schedule?: string; oauth: ConnectorOAuth; airbyte: Airbyte; registry: Registry;
@@ -369,46 +370,61 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     return {connected: true};
   }
 
-  /**
-   * Completes a GitHub App install. The state names the integration and its nonce; the OAuth code
-   * proves who the GitHub user is, and the installation must be one that user can see, so a
-   * forged installation_id can't attach someone else's repositories.
-   */
-  async function completeGitHub(principal: Principal, provider: GithubProvider, query: URLSearchParams) {
-    const [id = '', nonce = ''] = (query.get('state') || '').split('.');
-    if (!INTEGRATION.test(id)) return {ok: false, reason: 'invalid'};
+  // Every continuation obtains a fresh GitHub user grant. Never persist the user token,
+  // and never infer repository authority merely from installation visibility.
+  async function completeGitHub(principal: Principal, provider: GithubProvider, query: URLSearchParams): Promise<IntegrationCompletion> {
+    const parts = (query.get('state') || '').split('.');
+    const [id = '', nonce = '', selectedId = ''] = parts;
+    const callbackId = query.get('installation_id') || '';
+    if (!INTEGRATION.test(id) || parts.length < 2 || parts.length > 3 ||
+      (parts.length === 3 && !/^[1-9]\d{0,19}$/.test(selectedId)) ||
+      (callbackId && !/^[1-9]\d{0,19}$/.test(callbackId)) ||
+      (selectedId && callbackId && selectedId !== callbackId)) return {ok: false, reason: 'invalid'};
     const record = await registry.get(principal.tenantId, principal.userId, id);
     if (!record || record.provider !== provider.id) return {ok: false, reason: 'invalid'};
-    if (record.status !== 'connecting') return {ok: ACTIVE.includes(record.status), reason: 'done'};
     const expected = Buffer.from(required(record.nonce, 'connection nonce')), given = Buffer.from(nonce);
     if (expected.length !== given.length || !timingSafeEqual(expected, given)) return {ok: false, reason: 'invalid'};
-    const installationId = query.get('installation_id') || '';
-    if (!query.get('code') || !/^\d{1,20}$/.test(installationId)) {
+    if (record.status !== 'connecting') return {ok: ACTIVE.includes(record.status), reason: 'done'};
+    if (!query.get('code')) {
       await registry.update(record, {status: 'abandoned'}, {whenStatus: ['connecting']});
       return {ok: false, reason: 'declined'};
     }
-    const userToken = await github!.userToken(query.get('code')!);
+    const state = `${id}.${nonce}`;
+    const callbackUrl = new URL('/integrations/github/callback', appUrl).href;
+    const userToken = await github!.userToken(query.get('code')!, callbackUrl);
     let installation;
-    try { installation = await github!.userInstallation(userToken, installationId); }
+    let repositories: GithubRepository[] = [];
+    try {
+      const installations = await github!.userInstallations(userToken);
+      if (installations.some(item => !/^[1-9]\d{0,19}$/.test(String(item.id)) || !item.account?.login)) throw new Error('Invalid GitHub installation response');
+      const installationId = selectedId || callbackId;
+      if (installationId) installation = installations.find(item => String(item.id) === installationId);
+      else if (installations.length === 1) installation = installations[0];
+      else return {ok: false, reason: 'choose', actions: [
+        ...installations.map(item => ({label: `Connect ${item.account.login}`, url: github!.authorizeUrl(`${state}.${item.id}`, callbackUrl)})),
+        {label: installations.length ? 'Install for another account' : 'Install GitHub App', url: github!.installUrl(state)},
+      ]};
+      if (installation) repositories = await github!.userRepositories(userToken, String(installation.id));
+    }
     finally { await github!.revokeUserToken(userToken); }
     if (!installation) return {ok: false, reason: 'invalid'};
+    if (!repositories.length) return {ok: false, reason: 'repositories'};
+    if (repositories.some(repo => !Number.isSafeInteger(repo.id) || repo.id <= 0)) throw new Error('Invalid GitHub repository response');
+    const installationId = String(installation.id);
+    const githubRepositoryIds = [...new Set(repositories.map(repo => repo.id))];
+    const {label, workspace} = provider.account(installation, repositories);
+    const s3Prefix = landingPrefix(provider, {...record, workspace});
     const taken = (await registry.listTenant(principal.tenantId)).some(r => r.integrationId !== record.integrationId && visible(principal, provider, r) && r.status !== 'connecting');
     if (taken) {
       await registry.update(record, {status: 'abandoned'}, {whenStatus: ['connecting']});
       return {ok: false, reason: 'taken'};
     }
     let claimed;
-    try { claimed = await registry.update(record, {status: 'provisioning', installationId}, {whenStatus: ['connecting']}); }
-    catch (error) { if (errorInfo(error).code === 'ConditionalCheckFailedException') return {ok: true, reason: 'done'}; throw error; }
-    try {
-      const {label, workspace} = provider.account(await github!.installation(installationId), await github!.repositories(installationId));
-      claimed = await registry.update(claimed, {account: label, workspace}, {whenStatus: ['provisioning']});
-      claimed = await registry.update(claimed, {s3Prefix: landingPrefix(provider, claimed)}, {whenStatus: ['provisioning']});
-    } catch (error) {
-      log('integration.account.failed', {integrationId: claimed.integrationId, message: errorInfo(error).message});
-      if (errorInfo(error).code === 'ConditionalCheckFailedException') return {ok: false, reason: 'done'};
-      await registry.update(claimed, {status: 'error', error: 'setup'}, {whenStatus: ['provisioning']});
-      return {ok: true, reason: 'connected'};
+    try { claimed = await registry.update(record, {status: 'provisioning', installationId, githubRepositoryIds, account: label, workspace, s3Prefix}, {whenStatus: ['connecting']}); }
+    catch (error) {
+      if (errorInfo(error).code !== 'ConditionalCheckFailedException') throw error;
+      const current = await registry.get(principal.tenantId, principal.userId, id);
+      return {ok: !!current && ['provisioning', 'active', 'error'].includes(current.status), reason: 'done'};
     }
     provision(claimed).catch(() => {});
     return {ok: true, reason: 'connected'};
@@ -420,9 +436,8 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if (record.error === 'reconnect' && !record.provisionIntent) throw Object.assign(new Error(`Disconnect ${provider.name}, then connect it again with your API key.`), {status: 400, expose: true});
     if (record.status === 'provisioning' || (record.status === 'error' && ['setup', 'recovery', 'reconnect'].includes(record.error || ''))) {
       if (!record.s3Prefix) {
-        const {label, workspace, settings} = provider.auth === 'github-app'
-          ? provider.account(await github!.installation(required(record.installationId, 'installation')), await github!.repositories(required(record.installationId, 'installation')))
-          : await provider.account(proxyFor(record), record);
+        if (provider.auth === 'github-app') throw Object.assign(new Error('Disconnect GitHub, then reconnect to confirm repository access.'), {status: 400, expose: true});
+        const {label, workspace, settings} = await provider.account(proxyFor(record), record);
         record = await registry.update(record, {account: label || null, workspace: workspace || null, ...(settings ? {settings} : {}), provisionVersion: randomBytes(16).toString('hex')},
           {whenStatus: ['error', 'provisioning'], whenFields: {provisionVersion: record.provisionVersion, provisionRun: record.provisionRun}});
         record = await registry.update(record, {s3Prefix: landingPrefix(provider, record), provisionVersion: randomBytes(16).toString('hex')},
@@ -478,9 +493,9 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       for (const mine of live.filter(r => r.userId === principal.userId)) await registry.update(mine, {status: 'abandoned'}, {whenStatus: ['connecting']}).catch(() => {});
       if (provider.auth === 'github-app') {
         if (!github) throw Object.assign(new Error('GitHub isn’t available yet.'), {status: 503, expose: true});
-        // GitHub returns this state to the callback after the install and sign-in.
+        // OAuth also returns when the app was already installed for this account.
         await registry.create({...record, updatedAt: record.createdAt});
-        return {redirectUrl: github.installUrl(`${record.integrationId}.${record.nonce}`)};
+        return {redirectUrl: github.authorizeUrl(`${record.integrationId}.${record.nonce}`, new URL('/integrations/github/callback', appUrl).href)};
       }
       const authConfigId = await oauth.authConfig({toolkit: provider.toolkit, ...provider.authConfig});
       const callback = new URL(`/integrations/${provider.id}/callback`, appUrl);
@@ -496,7 +511,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
      * to this signed-in user, the state must match, and the OAuth adapter must confirm the account is
      * the one we created for them and is active.
      */
-    async complete(principal: Principal, providerId: string, query: URLSearchParams) {
+    async complete(principal: Principal, providerId: string, query: URLSearchParams): Promise<IntegrationCompletion> {
       requireWritable();
       const provider = providerFor(providerId);
       if (provider.auth === 'github-app') return completeGitHub(principal, provider, query);

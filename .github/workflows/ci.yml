@@ -12,6 +12,8 @@ jobs:
           node-version: 24.22.2
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
+      - name: Verify the standalone GitHub connector
+        run: python3 -m unittest discover -s connectors/github/tests
       - run: npm ci --prefix web-v2 --ignore-scripts --no-audit --no-fund
       - run: npm run check --prefix web-v2
       - name: Install browser for UI regression coverage

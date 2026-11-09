@@ -59,11 +59,21 @@ Live membership revocation also rejected an existing OSS token immediately,
 without affecting its access to the separate cloud test organizations. Reactivation
 restored access. Changing the existing browser user's role to member denied an
 admin diagnostic request; restoring admin made the same session work again.
-These checks used one user and do not establish multi-user/private-resource proof.
+A second staging WorkOS user subsequently captured its own session, read a team-visible session, and lost search/fetch/raw-batch access when the owner made that session private. The owner retained access. This exposed and fixed a raw-batch privacy bypass in core `88b89b0`; the live raw read now returns 404. Private-memory acceptance remains open.
 
-Still open: live multi-user/private-resource proof, real connector
-import and retrieval through both UI and agent, connector deletion/restart/restore,
-and complete cloud two-tenant source retrieval and rollback. The WorkOS verifier
-consent and GitHub App setup currently require the operator's browser participation.
-Do not treat the task-created capture or synthetic isolation probes as real-source
-acceptance. Repository visibility and publication remain unchanged.
+Real GitHub imports now passed on both OSS and Cloud A: Airbyte jobs 1 and 2
+completed, Temporal indexed the fixture commit, and both the React UI and authenticated
+MCP search/fetch returned its source URL and content. OSS retained that result after
+upgrading to core `88b89b0` / `0.3.0-seam.1`. Cloud A uses that same core package
+through shell `4b4b363`. Cloud B could neither search nor fetch Cloud A's source.
+All task-only GitHub and MCP consent flows are complete.
+
+The Cloud B connection exposed an existing-installation GitHub callback problem.
+The next candidate starts with OAuth, supports explicit installation selection,
+and persists only the repository IDs visible to the connecting user. Its runtime
+and connector changes still require live acceptance.
+
+Still open: private-memory proof; GitHub reconnection and real-source deletion/restore;
+Cloud B real-source retrieval and bidirectional isolation; updated rollback; final
+placement review and independent handoff. Repository visibility and publication
+remain unchanged. See the shell's dated evidence checkpoint for the receipts.

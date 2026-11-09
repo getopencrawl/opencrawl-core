@@ -14,6 +14,7 @@ export interface IntegrationRecord {
   airbyte?: Partial<Record<ResourceName, string>>; airbyteWorkspaceId?: string;
   airbyteLandingMode?: string; airbyteMigration?: AirbyteMigration | null;
   connectedAccountId?: string; authConfigId?: string; installationId?: string; nonce?: string;
+  githubRepositoryIds?: number[];
   provisionIntent?: ProvisionIntent | null; provisionProtocol?: number; provisionRun?: string;
   provisionVersion?: string; resourceVersion?: string; error?: string | null;
   disconnectedAt?: string; dataDeletedAt?: string | null; deletedObjects?: number;

@@ -1,6 +1,6 @@
-"""OpenCrawl GitHub source for Airbyte. Hosted OpenCrawl only.
+"""OpenCrawl GitHub source for operator-owned Airbyte deployments.
 
-Reads every repository a GitHub App installation can see:
+Reads the authorized repository-ID set within a GitHub App installation:
   - git (one clone per repository per sync, no API quota): commits with their full diffs,
     files at the default branch's head with their contents, branches, tags;
   - GraphQL: pull requests with reviews, changed files and commits; discussions with comments;
@@ -40,6 +40,7 @@ SPEC = {
             'installation_id': {'type': 'string', 'title': 'Installation ID', 'order': 2},
             'access_token': {'type': 'string', 'title': 'Access token (testing only; instead of the app)', 'airbyte_secret': True, 'order': 3},
             'repositories': {'type': 'array', 'items': {'type': 'string'}, 'title': 'Repositories (owner/name); default: every repository the installation can see', 'order': 4},
+            'repository_ids': {'type': 'array', 'items': {'type': 'integer'}, 'minItems': 1, 'title': 'Authorized repository IDs'},
             'start_date': {'type': 'string', 'title': 'Read activity updated after', 'default': EPOCH, 'order': 5},
             'max_file_bytes': {'type': 'integer', 'title': 'Largest file whose content is imported', 'default': 1048576, 'order': 6},
             'max_patch_bytes': {'type': 'integer', 'title': 'Largest diff imported per commit', 'default': 4194304, 'order': 7},
@@ -575,14 +576,20 @@ class SourceOpenCrawlGitHub(Source):
     @staticmethod
     def repositories(github, config):
         wanted = {r.lower() for r in config.get('repositories') or []}
+        allowed = config.get('repository_ids')
+        if allowed is not None and (not isinstance(allowed, list) or not allowed or any(type(r) is not int or r <= 0 for r in allowed)):
+            raise ConfigError('Authorized repository IDs must be a nonempty list of positive integers. Reconnect GitHub.')
+        allowed = set(allowed) if allowed is not None else None
         if config.get('access_token') or not config.get('app_id'):
             if not wanted:
                 raise ConfigError('List repositories when testing with an access token.')
             for name in sorted(wanted):
-                yield github.get(f'/repos/{name}')
+                repo = github.get(f'/repos/{name}')
+                if allowed is None or repo['id'] in allowed:
+                    yield repo
             return
         for repo in github.pages('/installation/repositories', key='repositories'):
-            if not wanted or repo['full_name'].lower() in wanted:
+            if (allowed is None or repo['id'] in allowed) and (not wanted or repo['full_name'].lower() in wanted):
                 yield repo
 
     def read(self, logger, config, catalog, state):
