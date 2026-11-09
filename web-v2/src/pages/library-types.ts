@@ -15,7 +15,7 @@ export type TranscriptEntry =
   | {type: 'note'; label: string; text: string; truncated: boolean};
 export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[]}
 export interface SessionTranscript {
-  session: SessionRef & {mine: boolean; private: boolean; origin: string | null};
+  session: SessionRef & {title: string; mine: boolean; private: boolean; origin: string | null};
   events: TranscriptEvent[]; total: number; next: string | null;
 }
 export interface MemoryRef {userId: string; harness: Harness; path: string}

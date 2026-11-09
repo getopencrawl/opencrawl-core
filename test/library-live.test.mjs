@@ -1,4 +1,4 @@
-import {test} from 'node:test';
+import {test, before} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
@@ -12,6 +12,17 @@ import {createLibraryApi} from '../dist/src/sessions/library-http.mjs';
 import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
 import {createIndexTransport, realmIndex, realmMapping} from '../dist/src/search/realm.mjs';
 const endpoint = process.env.OPENCRAWL_TEST_OPENSEARCH_URL, s3 = process.env.OPENCRAWL_TEST_S3_ENDPOINT;
+
+before(async () => {
+  if (!endpoint || !s3) return;
+  // CI starts OpenSearch alongside the object store. These legacy-mapping
+  // fixtures create indexes directly, so they must wait for its HTTP listener.
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {if ((await fetch(endpoint)).ok) return;} catch { /* service is starting */ }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  throw new Error('Test OpenSearch did not become ready');
+});
 
 test('real session and memory library: viewer, private visibility, owner-only controls, deletion and tombstones', {skip: !endpoint || !s3}, async t => {
   const run = randomUUID(), environment = 'lib-' + run.slice(0, 8), tenantId = 'library-' + run;
@@ -43,20 +54,23 @@ test('real session and memory library: viewer, private visibility, owner-only co
     {id: 'a2', kind: 'message', timestamp: at(2), sequence: 2, data: {role: 'assistant', model: 'fixture', content: [{type: 'thinking', thinking: 'hidden'}, {type: 'text', text: 'Starting with the lighthouse inventory.'}, {type: 'tool_use', id: 't1', name: 'Bash', input: {command: 'ls lighthouse'}}]}},
     {id: 'a3', kind: 'message', timestamp: at(3), sequence: 3, data: {role: 'user', content: [{type: 'tool_result', tool_use_id: 't1', content: 'beacon.md'}]}},
     {id: 'a0', kind: 'token_count', timestamp: at(3), sequence: 4, data: {info: {total: 1}}},
+    {id: 'at', kind: 'session_title', timestamp: at(3), sequence: 5, data: {title: 'Lighthouse cutover'}},
   ]);
   await upload(alice, 'beta', 'codex', [
     {id: 'b1', kind: 'message', timestamp: at(4), sequence: 1, data: {type: 'message', role: 'user', content: [{type: 'input_text', text: '# AGENTS.md instructions for repo'}]}},
-    {id: 'b2', kind: 'user_message', timestamp: at(5), sequence: 2, data: {type: 'user_message', message: 'Rename the harbor module'}},
+    {id: 'b2', kind: 'message', timestamp: at(5), sequence: 2, data: {type: 'message', role: 'user', content: [{type: 'input_text', text: 'Rename the harbor module'}], channel: 'user.text', id: 'native-message-id'}},
   ]);
-  await upload(bob, 'gamma', 'codex', [{id: 'c1', kind: 'user_message', timestamp: at(6), sequence: 1, data: {type: 'user_message', message: 'Bob lighthouse question'}}]);
+  await upload(bob, 'gamma', 'codex', [{id: 'c1', kind: 'message', timestamp: at(6), sequence: 1, data: {role: 'user', content: 'Bob lighthouse question'}}]);
 
   const list = await api(bob, 'sessions/list', {});
   assert.deepEqual(list.sessions.map(s => [s.userId, s.sessionId, s.title, s.mine]), [
-    ['bob', 'gamma', 'Bob lighthouse question', true], ['alice', 'beta', 'Rename the harbor module', false], ['alice', 'alpha', 'Plan the lighthouse migration', false]]);
+    ['bob', 'gamma', 'Bob lighthouse question', true], ['alice', 'beta', 'Rename the harbor module', false], ['alice', 'alpha', 'Lighthouse cutover', false]]);
   assert.deepEqual((await api(bob, 'sessions/list', {scope: 'mine'})).sessions.map(s => s.sessionId), ['gamma']);
   assert.deepEqual((await api(bob, 'sessions/list', {query: 'harbor'})).sessions.map(s => s.sessionId), ['beta']);
+  assert.deepEqual((await api(bob, 'sessions/list', {query: 'cutover'})).sessions.map(s => s.sessionId), ['alpha']);
 
   const transcript = await api(bob, 'sessions/read', {userId: 'alice', harness: 'claude-code', sessionId: 'alpha'});
+  assert.equal(transcript.session.title, 'Lighthouse cutover');
   assert.deepEqual(transcript.events.flatMap(event => event.entries), [
     {type: 'message', role: 'user', text: 'Plan the lighthouse migration'},
     {type: 'message', role: 'assistant', text: 'Starting with the lighthouse inventory.'},
@@ -66,6 +80,7 @@ test('real session and memory library: viewer, private visibility, owner-only co
   const paged = await api(bob, 'sessions/read', {userId: 'alice', harness: 'claude-code', sessionId: 'alpha', limit: 2});
   assert.equal(paged.events.length, 2); assert.ok(paged.next);
   const rest = await api(bob, 'sessions/read', {userId: 'alice', harness: 'claude-code', sessionId: 'alpha', limit: 2, cursor: paged.next});
+  assert.equal(rest.session.title, transcript.session.title, 'pagination never changes the title');
   assert.deepEqual(rest.events.map(e => e.eventId), ['a3']);
 
   // Only the owner controls a session; another member is told it does not exist.

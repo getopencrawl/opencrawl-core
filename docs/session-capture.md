@@ -111,6 +111,15 @@ an accepting network endpoint, not a guarantee after permanent sandbox destructi
 Partial JSONL records remain in the source until complete. Existing content filtering,
 history consent and server authorization rules continue to apply.
 
+Session names come from Claude Code's native `custom-title`/`ai-title` records and
+Codex's `session_index.jsonl`, including renames. The library uses these names in
+both the list and viewer; absent a name, it falls back to original user message
+text, excluding injected context and transport fields. `opencrawl collect titles`
+refreshes names only for sessions with existing capture cursors. It keeps the
+enrolled destination and exclusions and does not import additional conversations
+or replay message events. A machine without the original name metadata retains
+the message fallback until the capturing client supplies a name.
+
 Cloud image setup prepares hooks with --defer-auth and --backfill skip without
 runtime secrets. Authentication and the per-runtime installation ID are established
 by the first harness-managed async hook before capture. The agent does not wait for authentication.
