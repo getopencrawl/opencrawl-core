@@ -13,6 +13,7 @@ import {gunzipSync} from 'node:zlib';
 test('snapshots extract only human and assistant text across both harness formats', () => {
   const message = (role, content) => ({kind: 'message', data: {role, content}});
   assert.deepEqual(sessionMessage(message('user', 'hello')), {role: 'user', text: 'hello'});
+  assert.deepEqual(sessionMessage(message('user', ' \nhello\n ')), {role: 'user', text: ' \nhello\n '});
   assert.deepEqual(sessionMessage(message('assistant', [
     {type: 'thinking', thinking: 'private reasoning'}, {type: 'tool_use', name: 'Bash', input: {command: 'secret'}},
     {type: 'text', text: 'Visible answer'}, {type: 'output_text', text: 'More text'},
