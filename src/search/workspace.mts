@@ -49,6 +49,7 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
     async search(principal: Principal, input: unknown) {
       sessionScope(principal);
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot search workspace data.');
+      if (principal.boardSession !== undefined) fail(403, 'Listener tokens cannot search workspace data.');
       const parsed = workspaceSearchSchema.safeParse(input);
       if (!parsed.success) fail(400, 'Invalid search request. Use query, source, match, sessionId, limit, dedupe and cursor only.');
       const {cursor, ...query} = parsed.data;
@@ -85,6 +86,7 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
     async fetch(principal: Principal, input: unknown) {
       sessionScope(principal);
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot read workspace data.');
+      if (principal.boardSession !== undefined) fail(403, 'Listener tokens cannot read workspace data.');
       const parsed = workspaceFetchSchema.safeParse(input);
       if (!parsed.success) fail(400, 'Invalid fetch request. Use id, offset, length and version only.');
       const {id, offset, length, version} = parsed.data, separator = id.indexOf(':');

@@ -12,6 +12,7 @@ import {createBoardSearch} from '../board/search.mjs';
 import {createBoard} from '../board/board.mjs';
 import {createBoardHandler} from '../board/http.mjs';
 import {createLocalBoardStore} from '../board/local-store.mjs';
+import {createBoardListeners} from '../board/listener.mjs';
 import {createRecentSessions} from '../sessions/recent.mjs';
 import {standaloneStorage} from '../sessions/standalone.mjs';
 
@@ -21,14 +22,15 @@ export function standaloneMcp({token, origin, revision, boardPath, boardSearch, 
   const expected = Buffer.from('Bearer ' + token);
   const store = boardPath ? createLocalBoardStore(boardPath) : null;
   const board = store ? createBoard({store, prefix: 'board/v1', search: boardSearch ? createBoardSearch(boardSearch) : undefined, recentSessions}) : undefined;
+  const listeners = store ? createBoardListeners({store, prefix: 'board/v1'}) : undefined;
   const authenticate = async (req: IncomingMessage) => {
     const actual = Buffer.from(req.headers.authorization || '');
     return actual.length === expected.length && timingSafeEqual(actual, expected) ? principal : null;
   };
-  const mcp = createOpenCrawlMcp({origin, revision, board, search, authenticate});
+  const mcp = createOpenCrawlMcp({origin, revision, board, search, authenticate, listeners});
   const query = createWorkspaceSearchHandler({search, authenticate});
   const read = createWorkspaceSearchHandler({search, authenticate, operation:'fetch'});
-  const participation = createBoardHandler({board, authenticate});
+  const participation = createBoardHandler({board, authenticate, listeners});
   const server = createServer((req, res) => {
     if (req.headers.host !== new URL(origin).host) {res.writeHead(403); return res.end();}
     if (req.url === '/api/search') {query(req, res);return;}

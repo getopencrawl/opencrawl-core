@@ -3,6 +3,7 @@ import type {Principal} from '../sessions/types.mjs';
 import {serviceError} from '../sessions/types.mjs';
 import type {createWorkspaceSearch} from '../search/workspace.mjs';
 import type {createBoard} from '../board/board.mjs';
+import type {BoardListeners} from '../board/listener.mjs';
 export interface McpExchange {method: string; tool: string | null}
 export interface McpClientInfo {name?: unknown; version?: unknown}
 interface RpcEnvelope {method?: string; params?: {name?: unknown; clientInfo?: McpClientInfo; _meta?: Record<string, McpClientInfo>}}
@@ -15,6 +16,7 @@ export interface McpOptions {
  onObservationError?: (event: McpExchange & {event: string; reason: string}) => unknown | Promise<unknown>;
  board?: ReturnType<typeof createBoard>;
  search?: ReturnType<typeof createWorkspaceSearch>;
+ listeners?: BoardListeners;
 }
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {readFile} from 'node:fs/promises';
@@ -24,13 +26,14 @@ import {z} from 'zod';
 import {workspaceSearchSchema, workspaceFetchSchema} from '../search/workspace.mjs';
 import {boardSearchSchema} from '../board/search.mjs';
 import {syncSchema, topicsSchema} from '../board/board.mjs';
+import {listenerTicketSchema} from '../board/listener.mjs';
 
 const overview = await readFile(new URL('./overview.md', import.meta.url), 'utf8');
 
 // Authentication belongs to the runtime adapter. No account or tenant data is
 // exposed by this initial surface; every MCP request still requires a principal.
 export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated, onConnectionTest,
-  observationTimeoutMs = 1000, onObservationError = event => console.error(JSON.stringify(event)), board, search}: McpOptions) {
+  observationTimeoutMs = 1000, onObservationError = event => console.error(JSON.stringify(event)), board, search, listeners}: McpOptions) {
   if (typeof authenticate !== 'function' || new URL(origin).origin !== origin) throw new Error('MCP requires authentication and a canonical origin');
   if (!Number.isInteger(observationTimeoutMs) || observationTimeoutMs < 1 || observationTimeoutMs > 10000) throw new Error('Invalid MCP observation timeout');
   const handler = createMcpHandler(() => {
@@ -103,6 +106,21 @@ export function createOpenCrawlMcp({authenticate, origin, revision = 'developmen
         }
       });
     }
+    if (board && listeners) server.registerTool('board_listener_ticket', {
+      title: 'Start a board listener',
+      description: 'Get a single-use ticket (valid one minute) that lets the OpenCrawl CLI start this session’s board listener without its own sign-in, e.g. in cloud sessions. It redeems for a token limited to board participation for this one session: no search, fetch or other sessions. Pass it once to opencrawl board register/watch --ticket. Request a new ticket only when restarting a listener whose token expired; never reuse or share one.',
+      inputSchema: listenerTicketSchema,
+      annotations: {readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false},
+    }, async input => {
+      try {
+        const result = await listeners.issue(context.getStore()!, input);
+        const next = `opencrawl board register --session ${JSON.stringify(result.session)} --ticket ${result.ticket} --name <harness:unique-name> --task "<short task>" --harness <claude-code|codex|other> --api ${origin} --json`;
+        return {content: [{type: 'text', text: JSON.stringify({...result, api: origin, next})}]};
+      } catch (failure) {
+        const error = serviceError(failure);
+        return {isError: true, content: [{type: 'text', text: error.status && error.status < 500 ? error.message : 'Listener ticket unavailable; continue with board_sync at work boundaries.'}]};
+      }
+    });
     return server;
   }, {maxRequestBodySize: 65536, maxSubscriptions: 0});
   const context = new AsyncLocalStorage<Principal>();

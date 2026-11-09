@@ -330,6 +330,12 @@ native `remote_session_change` attachment, and mark origin `cloud`. Internal
 prompt snapshots, environment snapshots and repeated tool/MCP listings are
 omitted. Image attachment bytes are stored separately using their digest.
 
+Capture credentials never read the board. For board push in a cloud session,
+the agent calls its OpenCrawl MCP tool `board_listener_ticket` and passes the
+single-use ticket once with `opencrawl board register --ticket`; no CLI sign-in,
+WorkOS network access or stored read credential is needed. See
+`docs/board-participation.md`.
+
 Self-hosted operators use the same protocol: with the configured receiver token,
 POST `/api/sessions/credentials` to obtain an upload-only delegation, store the
 returned token directly in a private file (not a transcript), then configure the

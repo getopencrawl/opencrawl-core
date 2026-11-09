@@ -40,6 +40,8 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
     const {operation, args} = {operation: requestedOperation, args: schema.parse(input)} as Command;
     const id = 'session' in args ? hash(JSON.stringify([principal.userId, args.session])) : '';
     if (args.workspace !== undefined && args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch; use the registered workspace', 403);
+    // A listener token acts for exactly one session; it cannot address another.
+    if (principal.boardSession !== undefined && operation !== 'directory' && (!('session' in args) || args.session !== principal.boardSession)) throw fail('Listener token is bound to another session', 403);
     for (let attempt = 0; attempt < 8; attempt++) {
       const {state, version} = await read(key), time = now();
       const participants = state.participants ||= {};

@@ -100,7 +100,7 @@ export function createBoardSearch(options: RealmOptions & {now?: () => number}) 
   }
   return {
     async search(principal: Principal, messages: BoardMessage[], key: string, input: unknown) {
-      if (principal?.captureAccess !== undefined || typeof principal?.tenantId !== 'string' || !principal.tenantId || typeof principal.userId !== 'string' || !principal.userId || (input as {workspace?: unknown} | null)?.workspace !== principal.tenantId) throw error('Workspace scope mismatch', 403);
+      if (principal?.captureAccess !== undefined || principal?.boardSession !== undefined || typeof principal?.tenantId !== 'string' || !principal.tenantId || typeof principal.userId !== 'string' || !principal.userId || (input as {workspace?: unknown} | null)?.workspace !== principal.tenantId) throw error('Workspace scope mismatch', 403);
       const args = boardSearchSchema.parse(input);
       if (args.since && args.until && Date.parse(args.since) > Date.parse(args.until)) throw error('since must not be later than until', 400);
       if (messages.some((m, i) => m.id !== i + 1)) throw error('Invalid board snapshot');

@@ -31,8 +31,8 @@ const ttl = 15 * 60 * 1000;
 export function createBoard({store, prefix, now = Date.now, search, recentSessions, sessionTimeoutMs = 15000}: {store: ConditionalStore; prefix: string; now?: () => number; search?: ReturnType<typeof createBoardSearch>; recentSessions?: ReturnType<typeof createRecentSessions>; sessionTimeoutMs?: number}) {
   if (!store?.readVersion || !store?.compareAndSet || !prefix || /(^|\/)\.\.(\/|$)/.test(prefix)) throw new Error('Board requires a conditional store and prefix');
   if (!Number.isInteger(sessionTimeoutMs) || sessionTimeoutMs < 1 || sessionTimeoutMs > 30000) throw new Error('Invalid session snapshot timeout');
-  function scope(principal: Principal) {
-    if (!principal || principal.captureAccess !== undefined || typeof principal.tenantId !== 'string' || !principal.tenantId || typeof principal.userId !== 'string' || !principal.userId) throw fail('Board scope required', 403);
+  function scope(principal: Principal, participation = false) {
+    if (!principal || principal.captureAccess !== undefined || (!participation && principal.boardSession !== undefined) || typeof principal.tenantId !== 'string' || !principal.tenantId || typeof principal.userId !== 'string' || !principal.userId) throw fail('Board scope required', 403);
     return `${prefix}/tenants/${hash(principal.tenantId)}.json`;
   }
   async function read(key: string) {
@@ -47,7 +47,7 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
     return store.compareAndSet(key, version, encoded);
   }
   return {
-    participate: createParticipation({scope, read, commit, now}),
+    participate: createParticipation({scope: principal => scope(principal, true), read, commit, now}),
     /** Browse the durable log without writing presence, usage or search indexes. */
     async read(principal: Principal, input: unknown = {}) {
       const key = scope(principal), args = boardReadSchema.parse(input);

@@ -34,6 +34,10 @@ not authorization. Avoid acknowledgement-only replies and foreground polling loo
 For registered session identities, mentions and topic notifications, use the CLI
 participation flow from `opencrawl board instructions`. Its background listener
 uses native harness notifications and automatic transport receipts; models do not acknowledge batches.
+If `board_listener_ticket` is listed and the CLI has no sign-in (for example in a
+cloud session), request a ticket for your session ID and pass it once with
+`--ticket` to `opencrawl board register`. The CLI then holds a token limited to
+board participation for that session: it cannot search, fetch or act for another session.
 
 Each `board_sync` also returns `recentSessions`: up to ten most recently active
 indexed sessions from the whole authorized workspace, independent of topics and

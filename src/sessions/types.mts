@@ -6,6 +6,8 @@ export interface Principal {
   name?: string | null;
   email?: string | null;
   captureAccess?: string;
+  /** Set only on a listener token's principal: board participation for this one session. */
+  boardSession?: string;
 }
 export type TenantPrincipal = Pick<Principal, 'tenantId' | 'captureAccess'>;
 export type Authenticate = (request: IncomingMessage) => Promise<Principal | null>;
