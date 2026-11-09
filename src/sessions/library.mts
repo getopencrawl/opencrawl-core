@@ -42,6 +42,7 @@ const CONVERSATION = ['message', 'user_message', 'agent_message'];
 const HIDDEN = ['token_count', 'hook', 'turn_metadata', ...TITLE_KINDS];
 // Rendered-text budget for reused batches (UTF-16 code units, about 64 MB).
 const CACHE_CHARS = 32 * 1024 * 1024, FETCH_CONCURRENCY = 12;
+const TITLE_FETCH_CONCURRENCY = 4;
 function checkKey({userId, harness, sessionId}: Partial<SessionKey>) {
   if (!identity(userId) || !HARNESSES.includes(harness ?? '') || !identity(sessionId)) fail(400, 'Invalid session');
   return {userId: userId!, harness: harness!, sessionId: sessionId!};
@@ -163,7 +164,7 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
       const record = (await pending).get(d.eventId);
       return record?.kind === d.kind ? record : null;
     }
-    for (let offset = 0; offset < buckets.length; offset += FETCH_CONCURRENCY) await Promise.all(buckets.slice(offset, offset + FETCH_CONCURRENCY).map(async bucket => {
+    for (let offset = 0; offset < buckets.length; offset += TITLE_FETCH_CONCURRENCY) await Promise.all(buckets.slice(offset, offset + TITLE_FETCH_CONCURRENCY).map(async bucket => {
       if (!Array.isArray(bucket.key) || bucket.key.length !== 3) throw new Error('Invalid session title response');
       const key = {userId: bucket.key[0]!, harness: bucket.key[1]!, sessionId: bucket.key[2]!}, encoded = keyOf(key);
       if (!allowed.has(encoded)) throw new Error('Invalid session title scope');
