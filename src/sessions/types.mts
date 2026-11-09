@@ -28,6 +28,7 @@ export interface ObjectStore extends ConditionalStore {
   put(key: string, bytes: Uint8Array, contentType?: string): Promise<void>;
   get(key: string, options?: ReadOptions): Promise<Buffer | null>;
   has?(key: string, options?: ReadOptions): Promise<boolean>;
+  delete?(key: string): Promise<void>;
   listPage(prefix: string, options?: ListOptions): Promise<StorePage>;
 }
 export interface Attachment {type?: string; status?: string; sha256?: string; size?: number; mimeType?: string; path?: string; objectKey?: string | null}
