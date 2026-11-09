@@ -213,6 +213,8 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
       const key = checkKey({userId: principal.userId, harness: input.harness as string, sessionId: input.sessionId as string});
       if (!['team', 'private'].includes(String(input.visibility))) fail(400, 'Choose team or private visibility');
       if (!await owned(principal, key)) fail(404, 'Only the person who captured a session can change it');
+      // Realms created before owner visibility gain the field before the first write.
+      await resolve(principal).ensureIndex();
       const control = await controls.update(principal, 'sessions', key.harness, key.sessionId, current => ({visibility: input.visibility as 'team' | 'private', deletedAt: current?.deletedAt ?? null}));
       if (control.deletedAt) fail(404, 'Session not found');
       await apply(principal, key, control);

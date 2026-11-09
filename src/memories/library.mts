@@ -91,6 +91,8 @@ export function createMemoryLibrary({store, prefix, ...options}: RealmOptions & 
       const key = checkKey({userId: principal.userId, harness: input.harness as string, path: input.path as string});
       if (!['team', 'private'].includes(String(input.visibility))) fail(400, 'Choose team or private visibility');
       if (!await owned(principal, key)) fail(404, 'Only the person who captured a memory can change it');
+      // Realms created before owner visibility gain the field before the first write.
+      await resolve(principal).ensureIndex();
       const control = await controls.update(principal, 'memories', key.harness, key.path, current => ({visibility: input.visibility as 'team' | 'private', deletedAt: current?.deletedAt ?? null}));
       await reader(principal).byQuery(principal, 'update', {bool: {filter: fileFilter(key)}}, {lang: 'painless', source: 'ctx._source.memory.private = params.value', params: {value: control.visibility === 'private'}});
       return {...key, visibility: control.visibility};
