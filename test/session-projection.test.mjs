@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {gunzipSync} from 'node:zlib';
+import {gunzipSync,gzipSync} from 'node:zlib';
 import {createSessionIngest,sessionScope,digest} from '../dist/src/sessions/ingest.mjs';
 import {batchDocuments,createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
 import {migrateSessionProjection,restoreSessionProjection} from '../dist/src/sessions/projection-migration.mjs';
@@ -114,4 +114,26 @@ test('real OpenSearch: projection repair removes copied chunks, preserves privac
  assert.equal((await migrateSessionProjection(options)).rewritten,0);
  await restoreSessionProjection({...options,steps});await search.refresh(owner);
  assert.equal((await search.search(owner,{query:'copied history'})).total,4);
+});
+
+test('repair overlaps at most eight scoped source reads and settles failed reads before any page mutation',async()=>{
+ const f=await fixture(),rows=[];
+ for(let i=0;i<17;i++) {
+  const source=await fixture();
+  const key=source.key.replace(digest('device'),digest('device-'+i));
+  const b={...source.batch,installationId:'device-'+i};
+  f.store.data.set(key,gzipSync(JSON.stringify(b)));
+  rows.push({_id:'row-'+i,_source:{...f.docs[0].document,installationId:b.installationId,sourceKey:key,eventId:'hook',kind:'hook'},sort:[i]});
+ }
+ let active=0,peak=0,reads=0,mutations=0,fail=false;
+ const get=f.store.get;
+ const store={get:async(...args)=>{active++;reads++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,1));active--;if(fail&&reads===8)throw new Error('source read failed');return get(...args);}};
+ const realm={tenantId:owner.tenantId,collection:()=>({field:x=>x,search:async(_,input)=>({hits:{hits:input.search_after?[]:rows},_shards:{failed:0}}),bulk:async()=>mutations++,delete:async()=>mutations++})};
+ const options={realm,store,prefix,principal:{tenantId:owner.tenantId},backup:async()=>mutations++};
+ const report=await migrateSessionProjection({...options,dryRun:true});assert.equal(report.removed,17);assert.equal(peak,8);assert.equal(reads,17);assert.equal(active,0);
+ reads=0;fail=true;await assert.rejects(migrateSessionProjection(options),/source read failed/);assert.equal(active,0);assert.equal(mutations,0);
+ // A source held from the prior page may recur after another source in the group.
+ let page=0;
+ const repeat={...realm,collection:()=>({...realm.collection(),search:async()=>({hits:{hits:page++===0?[rows[0]]:page===2?[{...rows[0],sort:[1]},{...rows[1],sort:[2]},{...rows[0],_id:'recur',sort:[3]}]:[]},_shards:{failed:0}})})};
+ fail=false;assert.equal((await migrateSessionProjection({...options,realm:repeat,dryRun:true})).removed,4);
 });
