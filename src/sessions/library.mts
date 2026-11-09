@@ -1,4 +1,4 @@
-import type {Principal, ObjectStore, SessionBatch, SessionEvent, JsonValue} from './types.mjs';
+import type {Principal, ObjectStore, SessionEvent, JsonValue} from './types.mjs';
 import type {RealmOptions, QueryBody, IndexHit} from '../search/types.mjs';
 import {createRealmResolver, realmField} from '../search/realm.mjs';
 import {createSessionIngest, sessionScope, digest} from './ingest.mjs';
@@ -28,6 +28,19 @@ function stringify(value: unknown) {if (typeof value === 'string') return value;
 function iso(value: unknown) {return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : typeof value === 'number' && Number.isFinite(value) ? new Date(value).toISOString() : null;}
 // Codex stores injected context and notifications as user-role records.
 const INJECTED = /^(?:# AGENTS\.md instructions\b|<(?:environment_context|external_codex_apps_\w+|subagent_notification|turn_aborted|user_instructions|system-reminder)\b)/;
+// Codex prefixes IDE context and attached files before the person's request.
+const CODEX_REQUEST = /^# (?:Context from my IDE setup|Files mentioned by the user):[\s\S]*?## My request for Codex:\s*/;
+/** The person's own words from a prompt, or null for injected context. */
+export function promptText(text: string) {
+  const trimmed = text.trimStart(), request = trimmed.replace(CODEX_REQUEST, '');
+  if (request !== trimmed) return request.trim() || null;
+  return INJECTED.test(trimmed) || /^# (?:Context from my IDE setup|Files mentioned by the user):/.test(trimmed) ? null : trimmed.trim() || null;
+}
+// Readable conversation kinds, and bookkeeping kinds that never render.
+const CONVERSATION = ['message', 'user_message', 'agent_message'];
+const HIDDEN = ['token_count', 'hook', 'turn_metadata', 'session_metadata'];
+// Rendered-text budget for reused batches (UTF-16 code units, about 64 MB).
+const CACHE_CHARS = 32 * 1024 * 1024, FETCH_CONCURRENCY = 12;
 function checkKey({userId, harness, sessionId}: Partial<SessionKey>) {
   if (!identity(userId) || !HARNESSES.includes(harness ?? '') || !identity(sessionId)) fail(400, 'Invalid session');
   return {userId: userId!, harness: harness!, sessionId: sessionId!};
@@ -45,7 +58,12 @@ export function transcriptEntries(event: SessionEvent): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   const message = (role: unknown, text: string) => {
     if (!text.trim() || !['user', 'assistant'].includes(String(role))) return;
-    if (role === 'user' && INJECTED.test(text.trimStart())) {entries.push({type: 'note', label: 'Injected context', ...clip(text)}); return;}
+    if (role === 'user') {
+      const own = promptText(text);
+      if (own === null) {entries.push({type: 'note', label: 'Injected context', ...clip(text)}); return;}
+      if (own !== text.trim()) entries.push({type: 'note', label: 'Attached context', ...clip(text.slice(0, text.length - own.length))});
+      entries.push({type: 'message', role: 'user', text: own}); return;
+    }
     entries.push({type: 'message', role: role as 'user' | 'assistant', text});
   };
   if (event.kind === 'message') {
@@ -106,11 +124,29 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
     return result.hits.total.value > 0;
   }
   const apply = (principal: Principal, key: SessionKey, control: ResourceControl) => applySessionControl(reader(principal), principal, key, control);
+  // Batches are immutable and content-addressed, so rendered events can be reused
+  // across pages and readers. Every read still authorizes through the index first.
+  const rendered = new Map<string, {value: Promise<Map<string, TranscriptEvent> | null>; size: number}>();
+  let cachedChars = 0;
+  const weigh = (events: Map<string, TranscriptEvent>) => [...events.values()].reduce((sum, event) => sum + 64 + event.entries.reduce((total, entry) => total + (entry.type === 'tool_call' ? entry.input.length + entry.name.length : entry.type === 'note' ? entry.text.length + entry.label.length : entry.text.length), 0), 0);
+  function renderedBatch(principal: Principal, key: SessionKey, sourceKey: string, installationId: string, batchId: string) {
+    const cached = rendered.get(sourceKey);
+    if (cached) {rendered.delete(sourceKey); rendered.set(sourceKey, cached); return cached.value;}
+    const entry = {value: ingest.getBatch(principal, {...key, installationId, batchId}).then(batch => batch && new Map(batch.events.map(event => [event.id, {eventId: event.id, kind: event.kind, timestamp: iso(event.timestamp), entries: transcriptEntries(event)}]))), size: 0};
+    rendered.set(sourceKey, entry);
+    entry.value.then(events => {
+      if (rendered.get(sourceKey) !== entry) return;
+      entry.size = events ? weigh(events) : 0; cachedChars += entry.size;
+      for (const [oldest, value] of rendered) {if (cachedChars <= CACHE_CHARS || oldest === sourceKey) break; rendered.delete(oldest); cachedChars -= value.size;}
+    }, () => {if (rendered.get(sourceKey) === entry) rendered.delete(sourceKey);});
+    return entry.value;
+  }
   return {
     async list(principal: Principal, {scope = 'all', query = '', limit = 50}: {scope?: unknown; query?: unknown; limit?: unknown} = {}) {
       const collection = reader(principal);
       if (!['all', 'mine'].includes(String(scope)) || typeof query !== 'string' || query.length > 500 || !Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 500) fail(400, 'Invalid session list');
-      const filter: QueryBody[] = [{term: {[f('chunk')]: 0}}, visibleTo('session', principal), ...(scope === 'mine' ? [{term: {[f('userId')]: principal.userId}}] : [])];
+      // Summarize from conversation records only: bookkeeping is most of the index.
+      const filter: QueryBody[] = [{term: {[f('chunk')]: 0}}, {terms: {[f('kind')]: CONVERSATION}}, visibleTo('session', principal), ...(scope === 'mine' ? [{term: {[f('userId')]: principal.userId}}] : [])];
       const fields = ['userId', 'harness', 'sessionId'].map(field => ({field: f(field)}));
       const order = [{lastActivity: 'desc'}, {_key: 'asc'}];
       if (query.trim()) {
@@ -126,7 +162,7 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
         lastActivity: {max: {field: 'timestamp'}}, firstActivity: {min: {field: 'timestamp'}},
         private: {filter: {term: {[f('private')]: true}}},
         origin: {terms: {field: f('origin'), size: 1}}, host: {terms: {field: f('host'), size: 1}},
-        prompts: {filter: userText, aggs: {first: {top_hits: {size: 5, sort: [{timestamp: 'asc'}, {[f('sequence')]: 'asc'}], _source: ['text']}}}},
+        prompts: {filter: userText, aggs: {first: {top_hits: {size: 8, sort: [{timestamp: 'asc'}, {[f('sequence')]: 'asc'}], _source: ['text']}}}},
       }}}});
       type Bucket = {key: string[]; doc_count: number; lastActivity: {value: number | null}; firstActivity: {value: number | null}; private: {doc_count: number};
         origin: {buckets: Array<{key: string}>}; host: {buckets: Array<{key: string}>}; prompts: {first: {hits: {hits: Array<{_source?: {text?: unknown}}>}}}};
@@ -135,7 +171,7 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
       const sessions: SessionSummary[] = buckets.map(bucket => {
         const [userId, harness, sessionId] = bucket.key;
         if (!identity(userId) || !HARNESSES.includes(harness ?? '') || !identity(sessionId)) throw new Error('Invalid session list response');
-        const prompt = bucket.prompts.first.hits.hits.map(hit => typeof hit._source?.text === 'string' ? hit._source.text.trim() : '').find(text => text && !INJECTED.test(text));
+        const prompt = bucket.prompts.first.hits.hits.map(hit => typeof hit._source?.text === 'string' ? promptText(hit._source.text) : null).find(Boolean);
         return {userId: userId!, harness: harness!, sessionId: sessionId!, title: prompt ? prompt.replace(/\s+/g, ' ').slice(0, 240) : `Session ${sessionId}`,
           private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, host: bucket.host.buckets[0]?.key ?? null,
           firstActivityAt: iso(bucket.firstActivity.value), lastActivityAt: iso(bucket.lastActivity.value), events: bucket.doc_count};
@@ -149,27 +185,24 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
       if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 200) fail(400, 'Invalid page size');
       const collection = reader(principal);
       const filter = [...sessionFilter(key), {term: {[f('chunk')]: 0}}, visibleTo('session', principal)];
-      const page = await collection.search(principal, {size: limit, track_total_hits: true, query: {bool: {filter}},
+      const page = await collection.search(principal, {size: limit, track_total_hits: true, query: {bool: {filter, must_not: [{terms: {[f('kind')]: HIDDEN}}]}},
         sort: [{timestamp: {order: 'asc', missing: '_first'}}, {[f('sequence')]: 'asc'}, {[f('eventId')]: 'asc'}, {[f('installationId')]: 'asc'}, {id: 'asc'}],
         ...(after ? {search_after: after} : {})});
       if (!after && !page.hits.hits.length) fail(404, 'Session not found');
-      const batches = new Map<string, SessionBatch>();
-      const events: TranscriptEvent[] = [];
-      for (const hit of page.hits.hits as IndexHit[]) {
+      const hits = (page.hits.hits as IndexHit[]).map(hit => {
         const d = hit._source;
         if (d?.tenantId !== principal.tenantId || d.userId !== key.userId || d.harness !== key.harness || d.sessionId !== key.sessionId || typeof d.eventId !== 'string' || typeof d.installationId !== 'string') throw new Error('Invalid session read response');
         const source = sourceBatchIdentity(prefix, d.sourceKey ?? '');
         if (!source || source.tenantHash !== digest(principal.tenantId) || source.userHash !== digest(key.userId) || source.harness !== key.harness || source.installationHash !== digest(d.installationId) || source.sessionHash !== digest(key.sessionId)) throw new Error('Invalid session source');
-        let batch = batches.get(d.sourceKey!);
-        if (!batch) {
-          batch = (await ingest.getBatch(principal, {...key, installationId: d.installationId, batchId: source.batchId})) ?? undefined;
-          if (!batch) continue; // Raw capture removed after indexing (for example, mid-delete).
-          if (batches.size >= 8) batches.delete(batches.keys().next().value!);
-          batches.set(d.sourceKey!, batch);
-        }
-        const event = batch.events.find(item => item.id === d.eventId);
-        if (!event) continue;
-        events.push({eventId: event.id, kind: event.kind, timestamp: iso(event.timestamp), entries: transcriptEntries(event)});
+        return {eventId: d.eventId, kind: d.kind, sourceKey: d.sourceKey!, installationId: d.installationId, batchId: source.batchId};
+      });
+      // Fetch every batch this page needs concurrently (bounded), not one at a time.
+      const needed = [...new Map(hits.map(hit => [hit.sourceKey, hit])).values()], loaded = new Map<string, Map<string, TranscriptEvent> | null>();
+      for (let index = 0; index < needed.length; index += FETCH_CONCURRENCY) await Promise.all(needed.slice(index, index + FETCH_CONCURRENCY).map(async hit => loaded.set(hit.sourceKey, await renderedBatch(principal, key, hit.sourceKey, hit.installationId, hit.batchId))));
+      const events: TranscriptEvent[] = [];
+      for (const hit of hits) {
+        const event = loaded.get(hit.sourceKey)?.get(hit.eventId); // Missing: raw capture removed after indexing (for example, mid-delete).
+        if (event && event.kind === hit.kind) events.push(event);
       }
       const first = page.hits.hits[0]?._source;
       return {session: {...key, mine: key.userId === principal.userId, private: page.hits.hits.some(hit => hit._source?.private === true), origin: typeof first?.origin === 'string' ? first.origin : null},

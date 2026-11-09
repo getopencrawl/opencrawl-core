@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {transcriptEntries} from '../dist/src/sessions/library.mjs';
+import {transcriptEntries, promptText} from '../dist/src/sessions/library.mjs';
 import {memoryDescription} from '../dist/src/memories/library.mjs';
 import {createLibraryApi, createLibraryHandler} from '../dist/src/sessions/library-http.mjs';
 import {visibleTo} from '../dist/src/sessions/controls.mjs';
@@ -42,4 +42,13 @@ test('library HTTP requires authentication, rejects browsers, unknown operations
   const ok = await post('sessions/list', {scope: 'mine'});
   assert.equal(ok.status, 200); assert.deepEqual((await ok.json()).data, {sessions: []});
   assert.deepEqual(calls, [{principal: {tenantId: 't', userId: 'u'}, input: {scope: 'mine', query: '', limit: 50}}]);
+});
+
+test('Codex IDE and attached-file headers never become the prompt or title', () => {
+  const wrapped = '# Files mentioned by the user:\n\n## shot.png: /tmp/shot.png\n\n## My request for Codex:\nMove the nav to a left sidebar\n';
+  assert.equal(promptText(wrapped), 'Move the nav to a left sidebar');
+  assert.equal(promptText('# Context from my IDE setup:\n\n## Open tabs:\n- a.ts'), null);
+  assert.equal(promptText('<environment_context>cwd</environment_context>'), null);
+  assert.equal(promptText('  plain ask '), 'plain ask');
+  assert.deepEqual(transcriptEntries({id: 'e', kind: 'user_message', data: {message: wrapped}}).map(entry => entry.type === 'message' ? entry.text : entry.label), ['Attached context', 'Move the nav to a left sidebar']);
 });

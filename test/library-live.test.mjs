@@ -42,6 +42,7 @@ test('real session and memory library: viewer, private visibility, owner-only co
     {id: 'a1', kind: 'message', timestamp: at(1), sequence: 1, data: {role: 'user', content: 'Plan the lighthouse migration'}},
     {id: 'a2', kind: 'message', timestamp: at(2), sequence: 2, data: {role: 'assistant', model: 'fixture', content: [{type: 'thinking', thinking: 'hidden'}, {type: 'text', text: 'Starting with the lighthouse inventory.'}, {type: 'tool_use', id: 't1', name: 'Bash', input: {command: 'ls lighthouse'}}]}},
     {id: 'a3', kind: 'message', timestamp: at(3), sequence: 3, data: {role: 'user', content: [{type: 'tool_result', tool_use_id: 't1', content: 'beacon.md'}]}},
+    {id: 'a0', kind: 'token_count', timestamp: at(3), sequence: 4, data: {info: {total: 1}}},
   ]);
   await upload(alice, 'beta', 'codex', [
     {id: 'b1', kind: 'message', timestamp: at(4), sequence: 1, data: {type: 'message', role: 'user', content: [{type: 'input_text', text: '# AGENTS.md instructions for repo'}]}},
@@ -61,6 +62,7 @@ test('real session and memory library: viewer, private visibility, owner-only co
     {type: 'message', role: 'assistant', text: 'Starting with the lighthouse inventory.'},
     {type: 'tool_call', name: 'Bash', input: JSON.stringify({command: 'ls lighthouse'}, null, 2), truncated: false},
     {type: 'tool_result', text: 'beacon.md', truncated: false}]);
+  assert.equal(transcript.total, 3, 'bookkeeping events are not part of the transcript');
   const paged = await api(bob, 'sessions/read', {userId: 'alice', harness: 'claude-code', sessionId: 'alpha', limit: 2});
   assert.equal(paged.events.length, 2); assert.ok(paged.next);
   const rest = await api(bob, 'sessions/read', {userId: 'alice', harness: 'claude-code', sessionId: 'alpha', limit: 2, cursor: paged.next});
