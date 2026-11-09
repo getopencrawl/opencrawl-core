@@ -54,8 +54,8 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
    writeFileSync(path,path.endsWith('.zst')?Bun.zstdCompressSync(text):text);utimesSync(path,1,1);
   }
   await installCapture(api,{background:false,home:dir,command:[process.execPath,'-e','']});
-  async function cli(args:string[]) {
-   const child=Bun.spawn([process.execPath,resolve(import.meta.dir,'../src/cli.ts'),'collect',...args,'--api',api,'--json'],{env:{...process.env,HOME:dir,USERPROFILE:dir},stdout:'pipe',stderr:'pipe'});
+  async function cli(args:string[],apiFlag:string|undefined=api,envApi?:string) {
+   const child=Bun.spawn([process.execPath,resolve(import.meta.dir,'../src/cli.ts'),'collect',...args,...(apiFlag?['--api',apiFlag]:[]),'--json'],{env:{...process.env,HOME:dir,USERPROFILE:dir,OPENCRAWL_API_URL:envApi},stdout:'pipe',stderr:'pipe'});
    const [stdout,stderr,exitCode]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
    expect(stderr).toBe('');const parsed=JSON.parse(stdout);
    if(args[0]==='install')expect(parsed.data.skills.results.every((r:any)=>r.directory.startsWith(dir))).toBe(true);
@@ -66,6 +66,13 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   expect((await cli(['backfill'])).data.status).toBe('decision_required');
   expect((await cli(['backfill','--harness','codex'])).error.code).toBe('BACKFILL_CONSENT_REQUIRED');
   expect((await cli(['backfill','--dry-run'])).data.status).toBe('preview');
+  const savedConfig=readCaptureConfig(),beforeDefault=requests;
+  expect((await cli(['backfill','--dry-run'],'')).data.status).toBe('preview');
+  expect((await cli(['backfill'],'')).data.status).toBe('decision_required');
+  expect((await cli(['backfill','--dry-run'],'','https://other.example')).error.code).toBe('CAPTURE_API_MISMATCH');
+  expect((await cli(['backfill','--dry-run'],'https://other.example',api)).error.code).toBe('CAPTURE_API_MISMATCH');
+  expect((await cli(['backfill','--dry-run'],api,'https://other.example')).data.status).toBe('preview');
+  expect(readCaptureConfig()).toEqual(savedConfig);expect(requests).toBe(beforeDefault);expect(batches).toHaveLength(0);
   const start=requests;
   const preview=backfillPreview(api);
   expect(preview.sources.map(s=>s.files)).toEqual([2,2]);expect(requests).toBe(start);expect(captureStatus().queued).toBe(0);
