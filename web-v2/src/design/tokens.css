@@ -2,14 +2,18 @@
 @import '../../../web/tokens.css';
 
 :root {
-  --report-heading: 2.5rem;
-  --report-heading-compact: 1.875rem;
   --report-metric: 2rem;
   --report-metric-compact: 1.625rem;
   --console-sidebar-width: 256px;
   --console-nav-leading: var(--space-8);
-  --console-heading: 1.75rem;
-  --console-heading-compact: 1.5rem;
+  --console-heading: 2rem;
+  --console-heading-compact: 1.75rem;
+  --console-page-width: var(--page-width);
+  --console-task-width: var(--chat-width);
+  --console-page-inset: var(--pane-inset);
+  --console-page-top: var(--space-12);
+  --console-page-bottom: var(--space-16);
+  --console-page-header-gap: var(--space-8);
   --console-metric: 1.5rem;
   --console-dialog-width: 520px;
   --console-focus-ring: 2px solid var(--accent);

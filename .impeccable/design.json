@@ -10,11 +10,11 @@
       },
       "console-heading": {
         "displayName": "Console heading",
-        "purpose": "The single page title in PageHeader."
+        "purpose": "One 32px page title for every sidebar destination."
       },
       "console-heading-compact": {
         "displayName": "Compact console heading",
-        "purpose": "Page heading at 800px and below."
+        "purpose": "The same page title at 28px on viewports 800px and below."
       },
       "mono": {
         "displayName": "Technical text",
@@ -77,7 +77,44 @@
         "name": "focused-and-stacked-content",
         "value": "600px"
       }
-    ]
+    ],
+    "pageLayout": {
+      "component": "Page",
+      "heading": {
+        "desktop": "32px",
+        "compact": "28px",
+        "weight": 600,
+        "lineHeight": 1.25
+      },
+      "description": {
+        "size": "15px",
+        "gap": "8px",
+        "measure": "75ch"
+      },
+      "headerGap": "32px",
+      "widths": {
+        "wide": "1200px",
+        "narrow": "800px"
+      },
+      "alignment": "One common left edge for headers and bodies. Narrow bodies do not center independently.",
+      "insets": {
+        "desktop": "48px 32px 64px",
+        "compact": "32px 16px 40px"
+      },
+      "destinations": {
+        "wide": [
+          "Usage",
+          "Sessions",
+          "Memories",
+          "Diagnostics"
+        ],
+        "narrow": [
+          "Integrations",
+          "Team",
+          "Billing"
+        ]
+      }
+    }
   },
   "components": [
     {
@@ -179,6 +216,11 @@
       {
         "name": "The One Shell Rule",
         "body": "Pages own their content; core owns workspace navigation,\nresponsive chrome and shared layout. Internal links use the router and preserve\nhistory without document reloads. Full navigation is for external authorization,\nauthentication and deployment boundaries.",
+        "section": "layout"
+      },
+      {
+        "name": "The Workspace Page Rule",
+        "body": "Workspace routes compose Page and PageHeader: stable title position, 8px description gap, 32px header-to-body gap, and explicit left-aligned 1200px wide or 800px narrow body.",
         "section": "layout"
       }
     ],

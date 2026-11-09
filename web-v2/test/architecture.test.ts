@@ -7,6 +7,12 @@ import {inspectAuthoredFiles, inspectSource, inspectUiText} from '../tools/archi
 const root = fileURLToPath(new URL('../', import.meta.url));
 async function files(path: string): Promise<string[]> {const entries = await readdir(path, {withFileTypes: true}); return (await Promise.all(entries.map(entry => entry.isDirectory() ? files(join(path, entry.name)) : [join(path, entry.name)]))).flat();}
 
+test('workspace titles use the shared page header while focused onboarding keeps its presentation', () => {
+  assert.ok(inspectSource('src/pages/custom.tsx', '<h1>Team</h1>').some(item => item.rule === 'shared-page-heading'));
+  assert.deepEqual(inspectSource('src/pages/custom.tsx', '<Page title="Team"><Section title="Members"/></Page>'), []);
+  assert.deepEqual(inspectSource('src/onboarding/shell.tsx', '<h1>Connect your agent</h1>'), []);
+});
+
 test('features cannot fork controls, navigation, inline styling or internal browser links', () => {
   const errors = inspectSource('src/pages/drift.tsx', `export const View=()=> <nav><button style={{color:'red'}}>Save</button><a href="/team">Team</a></nav>;`);
   assert.deepEqual(new Set(errors.map(error => error.rule)), new Set(['single-navigation', 'shared-controls', 'design-tokens', 'spa-navigation']));

@@ -56,6 +56,7 @@ export function inspectSource(file: string, text: string): ArchitectureViolation
     if (node.kind === ts.SyntaxKind.AnyKeyword) report(node, 'strict-types', 'Use a concrete type or narrow unknown; explicit any is forbidden.');
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tag = node.tagName.getText(source);
+      if (tag === 'h1' && !isDesignFile(file) && !file.startsWith('src/onboarding/')) report(node, 'shared-page-heading', 'Use Page or PageHeader for workspace titles. Onboarding retains its focused presentation.');
       if (rawControls.has(tag) && !isDesignFile(file)) report(node, 'shared-controls', `Use the design-system ${tag} wrapper.`);
       if (tag === 'nav' && !isNavigationOwner(file)) report(node, 'single-navigation', 'Workspace navigation belongs to AppShell; onboarding step navigation belongs to its shell.');
       for (const attribute of node.attributes.properties) {
