@@ -53,7 +53,9 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
       let mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       // The only in-place schema upgrade is an additive normalization revision.
       // Validate ownership and every existing field before making any change.
-      const withoutVisibility=(value: Mapping)=>{delete value.properties!.session.properties!.private;if(value.properties!.memory)delete value.properties!.memory.properties!.private;return value;};
+      // Revisions apply in order; each earlier check ignores fields added by later revisions.
+      const withoutStemming=(value: Mapping)=>{delete value.properties!.text.fields;return value;};
+      const withoutVisibility=(value: Mapping)=>{withoutStemming(value);delete value.properties!.session.properties!.private;if(value.properties!.memory)delete value.properties!.memory.properties!.private;return value;};
       const previous: Mapping=withoutVisibility(structuredClone(realmMapping));
       delete previous.properties!.connector.properties!.normalizerVersion;
       if(!mapping?.properties?.memory)delete previous.properties!.memory;
@@ -71,6 +73,15 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
       if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&(!mapping.properties?.session?.properties?.private||!mapping.properties?.memory?.properties?.private)&&
         compatible(mapping,withoutVisibility(structuredClone(realmMapping)))) {
         await request('/_mapping',{properties:{session:{properties:{private:{type:'boolean'}}},memory:{properties:{private:{type:'boolean'}}}}},'PUT');
+        mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
+      }
+      // Stemmed text is the third additive revision: a `text.english` subfield. Existing
+      // documents are re-indexed in place by a background update-by-query; until it finishes
+      // they still match through `text`. Concurrent newer writes win (conflicts=proceed).
+      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&!mapping.properties?.text?.fields?.english&&
+        compatible(mapping,withoutStemming(structuredClone(realmMapping)))) {
+        await request('/_mapping',{properties:{text:realmMapping.properties.text}},'PUT');
+        await request('/_update_by_query?conflicts=proceed&wait_for_completion=false&slices=auto',{query:{match_all:{}}},'POST');
         mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
       if(mapping?._meta?.tenantId!==tenantId||mapping?._meta?.schema!==1||!compatible(mapping,realmMapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');
