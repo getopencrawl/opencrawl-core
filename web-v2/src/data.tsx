@@ -37,7 +37,7 @@ function ScopedCache({children, onAccessFailure}: {children: ReactNode; onAccess
   const deny = useCallback((error: unknown) => {setDenied(message(error)); handler.current?.(error);}, []);
   const [client] = useState(() => createConsoleQueryClient(deny));
   useEffect(() => {
-    const focus = () => {if (document.visibilityState === 'visible') void client.refetchQueries({type:'active',predicate:shouldRefresh});};
+    const focus = () => {if (document.visibilityState === 'visible') void client.refetchQueries({type:'active',predicate:shouldRefresh},{cancelRefetch:false});};
     const visibility = () => {if (document.visibilityState === 'hidden') void client.cancelQueries();else focus();};
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('focus',focus);
