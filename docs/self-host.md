@@ -106,6 +106,12 @@ deletes its landed objects. Search denies the disconnected binding immediately.
 The worker deletes indexed documents and repeats the purge after in-flight
 writes have settled. Session and memory deletion use the shared core lifecycle.
 
+Pause this installation's connections in your Airbyte instance and wait until
+their current jobs finish before taking an offline backup. Airbyte runs outside
+this Compose stack; stopping OpenCrawl does not stop an external sync. Keep those
+connections paused throughout a restore rehearsal, then resume them only after
+choosing which copy will continue operating.
+
 Create an offline backup with:
 
 ```sh

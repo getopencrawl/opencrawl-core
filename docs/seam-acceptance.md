@@ -7,15 +7,15 @@ has evidence. Moving code alone does not satisfy the self-host promise.
 - [x] A clean server can build and start the complete OSS app with Docker Compose
   using only this repository and operator-owned dependencies/credentials, with
   OpenCrawl-operated services blocked.
-- [ ] Multiple WorkOS users in one configured organization can use the app;
+- [x] Multiple WorkOS users in one configured organization can use the app;
   current membership, roles, revocation and private resources are enforced by
   the server. Foreign organization claims and caller-selected scopes fail closed.
 - [ ] OSS imports a real source through the operator's Airbyte and OpenSearch,
   retrieves it through the UI and an agent, and passes restart, deletion and
   backup/restore checks.
-- [ ] OSS and the cloud candidate execute the same core-owned noncommercial
+- [x] OSS and the cloud candidate execute the same core-owned noncommercial
   UI and product operations through explicit adapters.
-- [ ] Shell contains hosted tenant provisioning/selection/routing, commercial
+- [x] Shell contains hosted tenant provisioning/selection/routing, commercial
   policy, fleet operations and internal administration. Reusable product
   behavior has a working OSS implementation.
 - [ ] The isolated cloud candidate passes real source-to-retrieval and tenant
@@ -59,7 +59,7 @@ Live membership revocation also rejected an existing OSS token immediately,
 without affecting its access to the separate cloud test organizations. Reactivation
 restored access. Changing the existing browser user's role to member denied an
 admin diagnostic request; restoring admin made the same session work again.
-A second staging WorkOS user subsequently captured its own session, read a team-visible session, and lost search/fetch/raw-batch access when the owner made that session private. The owner retained access. This exposed and fixed a raw-batch privacy bypass in core `88b89b0`; the live raw read now returns 404. Private-memory acceptance remains open.
+A second staging WorkOS user subsequently captured its own session, read a team-visible session, and lost search/fetch/raw-batch access when the owner made that session private. The owner retained access. This exposed and fixed a raw-batch privacy bypass in core `88b89b0`; the live raw read now returns 404. The same second user also read a shared memory, then lost search and saved-passage fetch access when its owner made it private. The owner retained both accesses.
 
 Real GitHub imports now passed on both OSS and Cloud A: Airbyte jobs 1 and 2
 completed, Temporal indexed the fixture commit, and both the React UI and authenticated
@@ -69,11 +69,26 @@ through shell `4b4b363`. Cloud B could neither search nor fetch Cloud A's source
 All task-only GitHub and MCP consent flows are complete.
 
 The Cloud B connection exposed an existing-installation GitHub callback problem.
-The next candidate starts with OAuth, supports explicit installation selection,
-and persists only the repository IDs visible to the connecting user. Its runtime
-and connector changes still require live acceptance.
+Core `eb0b1dd` / `0.3.0-seam.2` fixed it with OAuth-first connection, explicit
+installation selection, and a fixed set of user-visible repository IDs. Cloud B
+then imported the real fixture and retrieved it through the UI and MCP. Both cloud
+organizations retrieved their own copy and rejected the other's saved passage ID.
+Cloud B disconnect removed its eight landed objects, indexing schedule and indexed
+documents; search and saved fetch remained denied after a worker restart. Reconnect
+reused the existing GitHub installation without changing its permissions.
 
-Still open: private-memory proof; GitHub reconnection and real-source deletion/restore;
-Cloud B real-source retrieval and bidirectional isolation; updated rollback; final
-placement review and independent handoff. Repository visibility and publication
-remain unchanged. See the shell's dated evidence checkpoint for the receipts.
+Core `48c7d09` / `0.3.0-seam.3` limits startup recovery to unfinished connections
+and continues recovering other records after a failure. Local tests passed 304
+checks (24 optional skips); core and self-host CI passed. The OSS preview runs this
+revision and retained its real-source retrieval after replacement.
+
+The final placement review found shared product authentication, team operations,
+UI, integration lifecycle, provider definitions, Airbyte client, indexing and
+retrieval in core. Shell imports those implementations and supplies tenant routing,
+managed credentials/storage, fleet discovery, billing and workspace UI extensions.
+The source guard and browser/adapter tests complement the live paths above.
+
+Still open: OSS real-source deletion/reconnect and backup/restore; Cloud B replacement
+import retrieval; updated rollback; final evidence and independent handoff.
+Repository visibility and publication remain unchanged. See the shell's dated
+evidence checkpoint for the receipts.
