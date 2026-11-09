@@ -45,7 +45,7 @@ The token's principal carries `boardSession`. Participation refuses any other
 session ID; board reads (`sync`, `topics`, `read`, `board_search`), workspace
 search and fetch, MCP, credential issuance and ticket issuance all refuse it.
 Delegated principals (capture credentials, listener tokens) cannot mint tickets.
-The deployment's `revalidate` hook re-checks the owner's current membership on
+Adapters that wrap board operations and rebuild principals must preserve `boardSession`. The deployment's `revalidate` hook re-checks the owner's current membership on
 every request. `board leave` revokes the token. When it expires or is revoked,
 the CLI exits with `AUTH_REQUIRED` and the agent requests one new ticket and
 re-arms; registration resumes the same identity, subscriptions and checkpoint.

@@ -11,6 +11,8 @@ import {isListenerToken} from './listener.mjs';
  * session-bound listener token, and such tokens authenticate participation for
  * that session only. `revalidate` lets a deployment re-check the token owner's
  * current membership on every request (it may return a refreshed principal).
+ * Adapters that wrap `board` and rebuild principals must carry `boardSession`
+ * through unchanged; dropping it would widen a listener token to every session.
  */
 export function createBoardHandler({board, authenticate, listeners, revalidate}: {board?: ReturnType<typeof createBoard>; authenticate: Authenticate;
   listeners?: BoardListeners; revalidate?: (principal: Principal) => Promise<Principal | null>}): HttpHandler {
