@@ -8,6 +8,7 @@ test('memory titles use existing names and headings instead of rollout metadata'
   assert.equal(memoryTitle('feedback.md', '---\nname: No unnecessary cd in hooks\ndescription: A much longer explanation\n---\nBody'), 'No unnecessary cd in hooks');
   assert.equal(memoryTitle('feedback.md', '\uFEFF---\r\ntitle: "Keep small PRs"\r\nname: Fallback\r\n---\r\n# Other heading'), 'Keep small PRs');
   assert.equal(memoryTitle('feedback.md', '---\nname: user\ndescription: Alice prefers small PRs\n---\nBody'), 'Alice prefers small PRs');
+  assert.equal(memoryTitle('feedback.md', '---\nname:\ndescription: Alice prefers small PRs\n---\nBody'), 'Alice prefers small PRs');
   assert.equal(memoryTitle('file.md', '---\nname: inference-split-query-vs-operator\n---\nBody'), 'Inference split query vs operator');
   assert.equal(memoryTitle('file.md', '---\nname: inference_split\n---\nBody'), 'inference split');
 });

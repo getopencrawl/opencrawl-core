@@ -20,7 +20,7 @@ export function memoryTitle(path: string, text: string) {
   const opening = text.slice(0, 16000).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(opening);
   const scalar = (key: string) => {
-    const raw = new RegExp('^' + key + ':\\s*(.+)$', 'm').exec(frontmatter?.[1] ?? '')?.[1]?.trim() ?? '';
+    const raw = new RegExp('^' + key + ':[\\t ]*(.*)$', 'm').exec(frontmatter?.[1] ?? '')?.[1]?.trim() ?? '';
     if (/^[|>](?:[-+\d]*)$/.test(raw)) return '';
     return label(raw.replace(/^(["'])([\s\S]*)\1$/, '$2'));
   };
