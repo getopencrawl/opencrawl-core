@@ -9,6 +9,8 @@ import {z} from 'zod';
 import {boardSearchSchema} from './search.mjs';
 import {createParticipation, resolveMentions, mentionWarning} from './participation.mjs';
 import {boardIdentity, ownBoardMessage} from './identity.mjs';
+import {boardFetchSchema, preview, textPage} from './disclosure.mjs';
+export {boardFetchSchema} from './disclosure.mjs';
 
 const short = (max: number) => z.string().trim().min(1).max(max);
 const topic = short(80);
@@ -79,6 +81,34 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
       const {state} = await read(key);
       return search.search(principal, state.messages, key, args);
     }} : {}),
+    async fetch(principal: Principal, input: unknown) {
+      const key = scope(principal), args = boardFetchSchema.parse(input);
+      if (args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
+      if (args.id.startsWith('message:')) {
+        if (!/^message:[1-9]\d{0,15}$/.test(args.id)) throw fail('Invalid message reference');
+        const {state} = await read(key), source = state.messages[Number(args.id.slice(8)) - 1];
+        if (!source) throw fail('Message not found', 404);
+        const {requestId, publication, text, ...message} = source;
+        return textPage(text, args, {id: args.id, kind: 'message', message});
+      }
+      if (!args.id.startsWith('session:')) throw fail('Invalid board reference');
+      if (!recentSessions) throw fail('Session discovery not configured', 503);
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const session = await Promise.race([recentSessions.fetch(principal, args.id, {signal: controller.signal}),
+          new Promise<never>((_, reject) => {timer = setTimeout(() => {controller.abort(); reject(fail('Session fetch timed out', 503));}, sessionTimeoutMs);})]);
+        const fields = ['firstUserMessage', 'lastUserMessage', 'latestAssistantMessage'] as const;
+        const selected = fields.filter(field => args.field === 'context' || args.field === field);
+        const text = args.field === 'context'
+          ? selected.map(field => session[field] ? `${field}\n${session[field]!.text}` : `${field}\n[No captured text]`).join('\n\n')
+          : session[args.field]?.text ?? '';
+        const {firstUserMessage, lastUserMessage, latestAssistantMessage, ...metadata} = session;
+        const messages = Object.fromEntries(selected.map(field => {const message = session[field]; return [field, message ? {eventId: message.eventId, timestamp: message.timestamp, receivedAt: message.receivedAt} : null];}));
+        return textPage(text, args, {id: args.id, kind: 'session', session: {...metadata, title: preview(metadata.title, 120)}, field: args.field, messages},
+          {id: args.id, field: args.field, messages});
+      } finally {clearTimeout(timer);}
+    },
     async topics(principal: Principal, input: unknown = {}) {
       const {after, workspace} = topicsSchema.parse(input);
       scope(principal);
@@ -105,10 +135,10 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
       if (args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
       const agentId = boardIdentity(principal.userId, args.agent);
       const requestBytes = Buffer.byteLength(JSON.stringify(input));
-      let sessions: Awaited<ReturnType<ReturnType<typeof createRecentSessions>['read']>> = [], sessionState = recentSessions ? 'ready' : 'not_configured';
+      let sessions: Awaited<ReturnType<ReturnType<typeof createRecentSessions>['list']>> = [], sessionState = recentSessions ? 'ready' : 'not_configured';
       if (recentSessions) {
         const controller = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
-        try { sessions = await Promise.race([recentSessions.read(principal, {signal: controller.signal}),
+        try { sessions = await Promise.race([recentSessions.list(principal, {signal: controller.signal}),
           new Promise<never>((_, reject) => {timer = setTimeout(() => {controller.abort(); reject(new Error('Session snapshot timeout'));}, sessionTimeoutMs);})]); }
         catch(caught){const error=serviceError(caught);
           if (error.status === 403 || error.status === 401) throw error;
@@ -146,10 +176,10 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
           if (mentions.length) message.mentions = mentions;
           state.messages.push(message); accepted.push(message.id);
         }
-        const messages: VisibleMessage[] = []; let cursor = start, bytes = 0;
+        const messages: Array<{id: number; ref: string; timestamp: number; name: string; topic: string; preview: string}> = []; let cursor = start, bytes = 0;
         for (const m of state.messages.slice(start)) {
           if (args.topics.includes(m.topic) && !ownBoardMessage(m, principal.userId, agentId, args.agent, state)) {
-            const {requestId, publication, ...message} = m;
+            const message = {id: m.id, ref: 'message:' + m.id, timestamp: m.timestamp, name: m.name, topic: m.topic, preview: preview(m.text, 160)};
             const size = Buffer.byteLength(JSON.stringify(message));
             if (messages.length >= 5 || bytes + size > 4096) break;
             messages.push(message); bytes += size;

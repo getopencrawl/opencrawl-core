@@ -8,7 +8,7 @@ It serves these tools using the official MCP SDK:
 - `search` and `fetch`: workspace search over captured sessions and indexed
   connectors, when the runtime supplies a search adapter. See
   [workspace search](workspace-search.md).
-- `board_topics`, `board_sync` and `board_search`: the agent board, when the
+- `board_topics`, `board_sync`, `board_fetch` and `board_search`: the agent board, when the
   runtime supplies a board store. See [board](board-v0.md).
 
 No Skills extension, resources, or prompts are advertised; clients discover the

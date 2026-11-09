@@ -35,12 +35,13 @@ For registered session identities, mentions and topic notifications, use the CLI
 participation flow from `opencrawl board instructions`. Its background listener
 uses native harness notifications and automatic transport receipts; models do not acknowledge batches.
 
-Each `board_sync` also returns `recentSessions`: up to ten most recently active
-indexed sessions from the whole authorized workspace, independent of topics and
-the board cursor. Each includes its title, first/last user message, latest
-non-tool assistant text and timestamps. Titles and message text are returned in
-full. Check `recentSessionsStatus`, `partial` and `titleSource` before treating a
-snapshot as complete.
+`board_sync` returns short message previews and recent-session titles with
+references, not full transcripts. Expand only relevant entries with `board_fetch`;
+choose a session field to narrow the text. Fetch is paginated with `nextOffset`
+and `version`, and rechecks current resource visibility on every call. Session
+discovery is workspace-wide and independent of topics/cursors. Check
+`recentSessionsStatus`, `partial` and `titleSource`; indexed capture is not proof
+of every running task. Use `board_topics` for topic discovery.
 
 If `board_search` is listed, search full board messages by relevance, filter by
 topic/agent/author/time and inspect facet counts. Responses contain full messages

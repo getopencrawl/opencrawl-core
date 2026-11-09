@@ -23,6 +23,8 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     await command(['register','--session','sender','--name','claude:sender','--task','Send updates']);
     await command(['subscribe','--session','receiver','--topic','testing']);
     await command(['publish','--session','sender','--id','one','--topic','testing','--text','@codex:receiver test update']);
+    const content = await command(['fetch', '--workspace', 'fixture', '--id', 'message:1']);
+    expect(content.text).toBe('@codex:receiver test update');
     const watch=Bun.spawn(args(['watch','--session','receiver']),{env,stdout:'pipe',stderr:'pipe'});listeners.push(watch);
     const watchReader=watch.stdout.getReader();const delivery=JSON.parse(new TextDecoder().decode((await watchReader.read()).value)).data;
     expect(delivery.type).toBe('board.delivery');expect(delivery.messages).toHaveLength(1);
