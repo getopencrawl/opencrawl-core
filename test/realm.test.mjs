@@ -73,3 +73,32 @@ test('realm mapping verification rejects changed indexing and keyword limits', a
     await assert.rejects(realm.ensureIndex(), /mapping or tenant mismatch/);
   }
 });
+
+test('stemmed text upgrade is additive, backfills in the background once and stays tenant-bound',async()=>{
+ for(const mode of ['valid','foreign']) {
+  const mapping=structuredClone(realmMapping);delete mapping.properties.text.fields;
+  mapping._meta={schema:1,tenantId:mode==='foreign'?'org-b':'org-a'};
+  const writes=[];
+  const realm=createRealm({endpoint:'http://search.test',tenantId:'org-a',index:'test',fetch:async(url,options)=>{
+   if(url.pathname.endsWith('_mapping')) {
+    if(options.method==='PUT') {
+     writes.push('mapping');
+     assert.deepEqual(JSON.parse(options.body),{properties:{text:{type:'text',fields:{english:{type:'text',analyzer:'english'}}}}});
+     mapping.properties.text.fields={english:{type:'text',analyzer:'english'}};
+     return Response.json({acknowledged:true});
+    }
+    return Response.json({test:{mappings:mapping}});
+   }
+   if(url.pathname.endsWith('_update_by_query')) {
+    writes.push('backfill');
+    assert.equal(options.method,'POST');
+    assert.equal(url.searchParams.get('wait_for_completion'),'false');
+    assert.equal(url.searchParams.get('conflicts'),'proceed');
+    return Response.json({task:'node:1'});
+   }
+   return Response.json({error:{type:'resource_already_exists_exception'}},{status:400});
+  }});
+  if(mode==='valid'){await realm.ensureIndex();await realm.ensureIndex();assert.deepEqual(writes,['mapping','backfill']);}
+  else {await assert.rejects(realm.ensureIndex(),/mismatch/);assert.deepEqual(writes,[]);}
+ }
+});

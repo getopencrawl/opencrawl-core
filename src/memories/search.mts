@@ -5,6 +5,7 @@ import {createRealmResolver,realmField} from '../search/realm.mjs';
 import {digest,sessionScope} from '../sessions/event-identity.mjs';
 import {visibleTo} from '../sessions/controls.mjs';
 import type {ResourceControl} from '../sessions/controls.mjs';
+import {textQuery} from '../search/text-query.mjs';
 
 const f=(field: string)=>realmField('memory',field);
 function fail(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
@@ -58,7 +59,7 @@ export function createMemorySearch(options: RealmOptions) {
       if(!active.length)return {total:0,hits:[],truncated:false};
       const result=await resolve(principal).collection('memory').search(principal,{size:limit,track_total_hits:true,
         query:{bool:{filter:[{term:{[f('kind')]:'passage'}},{terms:{[f('snapshotId')]:active}},visibleTo('memory',principal),...(id?[{term:{id}}]:[])],
-          must:query?[match==='phrase'?{match_phrase:{text:query}}:{match:{text:{query,operator:match==='all'?'and':'or'}}}]:[{match_all:{}}]}},
+          must:query?[textQuery(query,match)]:[{match_all:{}}]}},
         sort:query?['_score',{[f('receivedAt')]:'desc'},{id:'asc'}]:[{[f('receivedAt')]:'desc'},{id:'asc'}]});
       return {total:result.hits.total.value,truncated:result.hits.total.value>result.hits.hits.length,
         hits:result.hits.hits.map(h=>({id:h._id,score:h._score,...h._source} as Passage))};
