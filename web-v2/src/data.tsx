@@ -1,5 +1,5 @@
 import {createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode} from 'react';
-import {QueryCache, QueryClient, QueryClientProvider, useQuery} from '@tanstack/react-query';
+import {QueryCache, QueryClient, QueryClientProvider, useQuery, type Query} from '@tanstack/react-query';
 import {Notice} from './design/components.tsx';
 
 export function responseStatus(error: unknown): number | undefined {
@@ -19,10 +19,12 @@ const DenialContext = createContext<((error: unknown) => void) | null>(null);
 export const useConsoleQueryClient = () => useContext(CacheContext);
 export const useConsoleAccessFailure = () => useContext(DenialContext);
 export const useHasConsoleCache = () => useContext(CacheContext) !== null;
+const shouldRefresh = (query: Query) => query.isStaleByTime(typeof query.meta?.staleMilliseconds === 'number' ? query.meta.staleMilliseconds : 30_000)
+  && (!query.state.error || Date.now() - query.state.errorUpdatedAt >= 10_000);
 
 export function createConsoleQueryClient(onAccessFailure?: (error: unknown) => void) {
   return new QueryClient({queryCache: new QueryCache({onError: error => {if (accessFailure(error)) onAccessFailure?.(error);}}),
-    defaultOptions: {queries: {staleTime: 30_000, gcTime: typeof window === 'undefined' ? Infinity : 10 * 60_000, retry: false, refetchOnWindowFocus: true, refetchOnReconnect: true}, mutations: {retry: false}}});
+    defaultOptions: {queries: {staleTime: 30_000, gcTime: typeof window === 'undefined' ? Infinity : 10 * 60_000, retry: false, refetchOnWindowFocus: shouldRefresh, refetchOnReconnect: shouldRefresh}, mutations: {retry: false}}});
 }
 
 /** One memory-only cache per trusted runtime scope. Replace the provider on identity changes. */
@@ -35,8 +37,8 @@ function ScopedCache({children, onAccessFailure}: {children: ReactNode; onAccess
   const deny = useCallback((error: unknown) => {setDenied(message(error)); handler.current?.(error);}, []);
   const [client] = useState(() => createConsoleQueryClient(deny));
   useEffect(() => {
-    const visibility = () => {if (document.visibilityState === 'hidden') void client.cancelQueries();};
-    const focus = () => {if (document.visibilityState === 'visible') void client.refetchQueries({type:'active',predicate:query=>query.isStaleByTime(typeof query.meta?.staleMilliseconds==='number'?query.meta.staleMilliseconds:30_000)});};
+    const focus = () => {if (document.visibilityState === 'visible') void client.refetchQueries({type:'active',predicate:shouldRefresh});};
+    const visibility = () => {if (document.visibilityState === 'hidden') void client.cancelQueries();else focus();};
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('focus',focus);
     return () => {document.removeEventListener('visibilitychange', visibility);window.removeEventListener('focus',focus);client.clear();};
