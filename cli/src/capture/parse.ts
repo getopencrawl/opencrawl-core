@@ -40,6 +40,11 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
   let kind: string|undefined, data: any;
   if (harness === 'claude-code') {
     if (['user','assistant'].includes(record.type)) {kind='message';data=record.message;}
+    else if (['custom-title','ai-title'].includes(record.type)) {
+      const title=record.type==='custom-title'?record.customTitle:record.aiTitle;
+      if(typeof title!=='string'||!title.trim())return null;
+      kind='session_title';data={title:title.trim(),titleType:record.type==='custom-title'?'custom':'auto'};
+    }
     else if (record.type === 'attachment') {
       const attachment=record.attachment;
       if(['prompt_snapshot','mcp_instructions_delta','credential_org','environment','date','model','agent_listing_delta','deferred_tools_delta','skill_listing','auto_mode','session_context','task_reminder','silent_turn_reminder'].includes(attachment?.type))return null;
@@ -60,7 +65,7 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
     else if (record.type === 'compacted') {kind='compaction';data=r;}
     // Raw tool execution evidence, attachments and subagent relationships not always represented as response items.
     else if (record.type === 'event_msg' && /exec_command_end|mcp_tool_call_end|collab_|view_image|user_message|token_count/.test(r.type ?? '')) {kind=r.type;data=r;}
-    else if (record.type === 'session_meta') {kind='session_metadata';data={id:r.id,source:r.source,originator:r.originator,cli_version:r.cli_version,cwd:r.cwd,git:r.git,forked_from_id:r.forked_from_id};}
+    else if (record.type === 'session_meta') {kind='session_metadata';data={id:r.id,source:r.source,originator:r.originator,cli_version:r.cli_version,cwd:r.cwd,git:r.git,forked_from_id:r.forked_from_id,...(typeof r.title==='string'?{title:r.title}:{})};}
   }
   if (!kind) return null;
   return {id:hash(harness+':'+offset+':'+JSON.stringify(record)), kind, sequence:offset, timestamp:record.timestamp ?? null,

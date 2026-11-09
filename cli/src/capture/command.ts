@@ -1,6 +1,6 @@
 import {CliError} from '../oauth.ts';
 import {installCapture,uninstallCapture,upgradeCaptureHooks} from './install.ts';
-import {captureHook,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,recordError} from './runtime.ts';
+import {captureHook,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError} from './runtime.ts';
 import {backfill,backfillPreview,selection,setupBackfill} from './backfill.ts';
 import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
 import {captureNotice} from './policy.ts';
@@ -32,6 +32,7 @@ export async function collectCommand(action:string,api:string,values:any) {
     case 'uninstall': return uninstallCapture();
     case 'status': return captureStatus();
     case 'sync': try{return await syncCaptures();}catch(e){recordError(e);throw e;}
+    case 'titles': try{return await refreshCapturedTitles();}catch(e){recordError(e);throw e;}
     case 'flush': try{return await flushCaptureWork();}catch(e){recordError(e);throw e;}
     case 'worker': {try{await ownedCaptureWorker();}catch(e){try{recordError(e);}catch{}}return null;}
     case 'hook': {
@@ -46,6 +47,6 @@ export async function collectCommand(action:string,api:string,values:any) {
       }catch(e){try{recordError(e);}catch{}}
       return null;
     }
-    default: throw new CliError('INVALID_USAGE','Use collect install, backfill, status, sync, flush, exclude, uninstall, or purge.',64);
+    default: throw new CliError('INVALID_USAGE','Use collect install, backfill, status, sync, titles, flush, exclude, uninstall, or purge.',64);
   }
 }

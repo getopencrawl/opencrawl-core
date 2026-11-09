@@ -7,11 +7,13 @@ import {homedir, hostname} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {setImmediate as yieldToOwner} from 'node:timers/promises';
 import {setTimeout as pause} from 'node:timers/promises';
+import {createInterface} from 'node:readline';
 import {configDir, atomicFile, atomicJson, accessToken, withSessionLock, syncDirectory} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, type Harness} from './parse.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
+import {codexTitle, codexTitleSignature} from './titles.ts';
 
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
@@ -151,7 +153,11 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
     const compressed=path.endsWith('.jsonl.zst');
     let readPath=path;
     if(compressed) {
-      if(old.archiveSize===source.size && old.archiveMtime===source.mtimeMs && old.ino===source.ino && (!reconcileHistory || old.parserVersion===2))return old.meta;
+      if(old.archiveSize===source.size && old.archiveMtime===source.mtimeMs && old.ino===source.ino && (!reconcileHistory || old.parserVersion===2)) {
+        captureCodexTitle(config, old.meta);
+        atomicJson(stateFile, old);
+        return old.meta;
+      }
       readPath=stateFile+'.expanded.tmp';
       // The transcript lock makes an abandoned expansion safe to replace after a crash.
       try{unlinkSync(readPath);}catch(e:any){if(e.code!=='ENOENT')throw e;}
@@ -230,8 +236,14 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
             if(!desktopAudit||auditMessage)metadata(record);
             if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd))enqueue(config,{...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));
             const parsed=auditMessage?parseRecord(harness,record,position):null;
+            if(parsed?.kind==='session_title') {
+              if(parsed.data.titleType==='custom')meta.customTitle=parsed.data.title;
+              // A later automatic suggestion must not overwrite a manual rename.
+              if(meta.customTitle)parsed.data={title:meta.customTitle,titleType:'custom'};
+            }
             if(parsed&&desktopAudit){parsed.timestamp=record._audit_timestamp??record.timestamp??null;parsed.parentId=record.parent_tool_use_id??null;}
             if(parsed && !captureExcluded(readCaptureConfig()??config,meta)) {
+              if(parsed.kind==='session_title')meta.capturedTitle=parsed.data.title;
               // Only native attachment blocks may cause file reads. A tool argument/result can
               // contain arbitrary JSON that resembles an attachment but was never opened.
               const localFiles=new Set<any>();
@@ -255,9 +267,67 @@ export async function captureTranscript(config:CaptureConfig,harness:Harness,fil
         offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
       }
     } finally{closeSync(fd);if(compressed)try{unlinkSync(readPath);}catch{}}
+    if(harness==='codex' && captureCodexTitle(config,meta))atomicJson(stateFile,{...read(stateFile,old),meta});
     return meta;
   });
   },Infinity);
+}
+
+function captureCodexTitle(config:CaptureConfig,meta:any) {
+  if(!meta?.sessionId || meta.harness!=='codex' || captureExcluded(readCaptureConfig()??config,meta))return false;
+  const native=codexTitle(config.roots.codex,meta.sessionId);
+  if(!native || meta.capturedTitle===native.title)return false;
+  enqueue(config,{...meta,captureMode:'history'},[{id:hash('codex-title:'+meta.sessionId+':'+native.timestamp+':'+native.title),kind:'session_title',sequence:0,timestamp:native.timestamp,data:{title:native.title}}],[]);
+  meta.capturedTitle=native.title;
+  return true;
+}
+
+/** Repair names for already captured sessions without replaying conversation
+ * records or enrolling any new session. Uses the existing destination/policy. */
+export async function refreshCapturedTitles() {
+  const config=readCaptureConfig();
+  if(!config||config.disabled)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
+  ensureDirectories();
+  await refreshCaptureIdentity(config);
+  let updated=0;
+  await withSessionLock('capture:spool',async()=>{
+    for(const name of readdirSync(join(captureDir(),'state')).filter(n=>n.endsWith('.json'))) {
+      await yieldToOwner();
+      const stateFile=join(captureDir(),'state',name);
+      await withSessionLock('capture:'+stateFile,async()=>{
+        const state=read(stateFile),meta=state?.meta;
+        if(!meta?.sessionId || !meta.sourcePath || !state.offset || !['codex','claude-code'].includes(meta.harness) || captureExcluded(readCaptureConfig()??config,meta))return;
+        if(meta.harness==='codex') {
+          if(captureCodexTitle(config,meta)){atomicJson(stateFile,{...state,meta});updated++;}
+          return;
+        }
+        // Only inspect previously captured bytes of a native transcript. Ignore
+        // message/tool bodies and title-shaped strings nested inside them.
+        let path:string;try{path=transcriptAllowed(meta.sourcePath,config,'claude-code');}catch{return;}
+        const st=statSync(path);
+        if(state.ino!==st.ino || st.size<state.offset)return;
+        let title:string|undefined,custom:string|undefined;
+        const stream=createReadStream(path,{end:state.offset-1}),lines=createInterface({input:stream,crlfDelay:Infinity});
+        try {
+          for await(const line of lines) {
+            if(!/"type"\s*:\s*"(?:custom-title|ai-title)"/.test(line))continue;
+            let record:any;try{record=JSON.parse(line);}catch{continue;}
+            if(record.sessionId!==meta.sessionId)continue;
+            const parsed=parseRecord('claude-code',record,0);
+            if(parsed?.kind==='session_title'){
+              if(parsed.data.titleType==='custom')custom=parsed.data.title;
+              title=custom??parsed.data.title;
+            }
+          }
+        } finally {lines.close();stream.destroy();}
+        if(!title||title===meta.capturedTitle)return;
+        enqueue(config,{...meta,captureMode:'history'},[{id:hash('claude-title:'+meta.sessionId+':'+st.mtimeMs+':'+title),kind:'session_title',sequence:0,timestamp:st.mtime.toISOString(),data:{title,titleType:custom?'custom':'auto'}}],[]);
+        meta.capturedTitle=title;if(custom)meta.customTitle=custom;
+        atomicJson(stateFile,{...state,meta});updated++;
+      },Infinity);
+    }
+  },Infinity);
+  return {updated,...await flushCaptures()};
 }
 /** Hook work is only a durable local handoff. Never scan, parse or upload here. */
 export async function captureHook(harness:Harness,event:any) {
@@ -317,7 +387,7 @@ async function reconcileSources(config:CaptureConfig,seen:Map<string,string>) {
     const path=source.path || findTranscript(config,source.harness,source.sessionId);
     if(!path || !existsSync(path))continue;
     if(!source.path){source.path=path;atomicJson(sourceFile,source);}
-    const st=statSync(path),signature=JSON.stringify([st.dev,st.ino,st.size,st.mtimeMs]);
+    const st=statSync(path),signature=JSON.stringify([st.dev,st.ino,st.size,st.mtimeMs,source.harness==='codex'?codexTitleSignature(config.roots.codex):'']);
     if(seen.get(path)===signature)continue;
     await captureTranscript(config,source.harness,path,{session_id:source.sessionId});
     seen.set(path,signature);changed=true;

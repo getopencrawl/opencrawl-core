@@ -37,6 +37,7 @@ Options:
 
 Capture controls:
   collect install [--yes]              Review recording scope before enabling
+  collect titles                      Refresh names of already captured sessions
   collect exclude --project /path     Block a project and its subdirectories
   collect exclude --session-id ID     Block a session and its subagents
   collect uninstall                   Stop collection; preserve pending data

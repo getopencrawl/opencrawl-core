@@ -55,7 +55,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     {(params.get('deleted') === '1' || removal.done) && <Notice tone="success">Session deleted. It no longer appears in search for anyone.</Notice>}
     <Tabs label="Sessions shown" value={scope} onChange={value => update({scope: value === 'mine' ? 'mine' : ''})} items={[{value: 'all', label: 'All sessions'}, {value: 'mine', label: 'My sessions'}]}/>
     <form className="query-form" role="search" onSubmit={event => {event.preventDefault(); update({q: draft.trim()});}}>
-      <Field label="Search sessions"><Input type="search" value={draft} maxLength={500} onChange={event => setDraft(event.target.value)} placeholder="Words from the conversation"/></Field>
+      <Field label="Search sessions"><Input type="search" value={draft} maxLength={500} onChange={event => setDraft(event.target.value)} placeholder="Search sessions…"/></Field>
       <div className="actions"><Button type="submit" variant="primary">Search</Button>{query && <Button variant="quiet" onClick={() => update({q: ''})}>Clear</Button>}</div>
     </form>
     {error && <Notice tone="danger">{error}</Notice>}
@@ -145,12 +145,10 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
   if (!data) return <div className="oc-library">{back}<PageHeader title="Session"/>{loading ? <LoadingState label="Loading session"/> : <>
     <Notice tone="danger">{error}</Notice><div className="actions"><Button onClick={retry}>Try again</Button></div></>}</div>;
   const {session} = data, current: Visibility = visibility ?? (session.private ? 'private' : 'team');
-  const prompt = events.flatMap(event => event.entries).find(entry => entry.type === 'message' && entry.role === 'user');
-  const title = prompt?.type === 'message' ? prompt.text.replace(/\s+/g, ' ').trim().slice(0, 140) : `Session ${session.sessionId}`;
   const blocks = transcriptBlocks(events);
   return <div className="oc-library oc-library-viewer">
     {back}
-    <PageHeader title={title} actions={session.mine ? <OwnerControls noun="session" visibility={current}
+    <PageHeader title={session.title} actions={session.mine ? <OwnerControls noun="session" visibility={current}
       onVisibility={async (value, signal) => {await mutate('sessions/visibility', {harness: session.harness, sessionId: session.sessionId, visibility: value}, signal); setVisibility(value);}}
       onDelete={async signal => {await mutate('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, signal); navigate('/sessions?deleted=1', {replace: true});}}
       deleteDescription="OpenCrawl permanently removes this transcript and its search results for everyone in the workspace. If the session is still running, its new activity is discarded."/> : undefined}/>

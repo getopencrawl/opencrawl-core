@@ -5,6 +5,7 @@ import {createSessionIngest, sessionScope, digest} from './ingest.mjs';
 import {sourceBatchIdentity} from './event-identity.mjs';
 import {createControls, visibleTo} from './controls.mjs';
 import type {ResourceControl} from './controls.mjs';
+import {capturedTitle, TITLE_KINDS} from './titles.mjs';
 
 export interface SessionKey {userId: string; harness: string; sessionId: string}
 export interface SessionSummary extends SessionKey {
@@ -38,7 +39,7 @@ export function promptText(text: string) {
 }
 // Readable conversation kinds, and bookkeeping kinds that never render.
 const CONVERSATION = ['message', 'user_message', 'agent_message'];
-const HIDDEN = ['token_count', 'hook', 'turn_metadata', 'session_metadata'];
+const HIDDEN = ['token_count', 'hook', 'turn_metadata', ...TITLE_KINDS];
 // Rendered-text budget for reused batches (UTF-16 code units, about 64 MB).
 const CACHE_CHARS = 32 * 1024 * 1024, FETCH_CONCURRENCY = 12;
 function checkKey({userId, harness, sessionId}: Partial<SessionKey>) {
@@ -119,6 +120,56 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
     return resolve(principal).collection('session');
   };
   const sessionFilter = (key: SessionKey) => [{term: {[f('userId')]: key.userId}}, {term: {[f('harness')]: key.harness}}, {term: {[f('sessionId')]: key.sessionId}}];
+  const userText = {bool: {minimum_should_match: 1, should: [{term: {[f('kind')]: 'user_message'}}, {bool: {filter: [{term: {[f('kind')]: 'message'}}, {term: {[f('role')]: 'user'}}]}}]}};
+  /** One scoped query for all displayed titles. Read the originals, since indexed
+   * text also contains native IDs, channels and tool-result strings. */
+  async function titles(principal: Principal, keys: SessionKey[]) {
+    const values = new Map<string, string>(), keyOf = (key: SessionKey) => JSON.stringify([key.userId, key.harness, key.sessionId]);
+    if (!keys.length) return values;
+    const allowed = new Set(keys.map(keyOf));
+    const result = await reader(principal).search(principal, {size: 0, query: {bool: {filter: [
+      {term: {[f('chunk')]: 0}}, visibleTo('session', principal),
+      {bool: {minimum_should_match: 1, should: keys.map(key => ({bool: {filter: sessionFilter(key)}}))}},
+      {bool: {minimum_should_match: 1, should: [userText, {terms: {[f('kind')]: TITLE_KINDS}}]}},
+    ]}}, aggs: {titles: {multi_terms: {terms: ['userId', 'harness', 'sessionId'].map(field => ({field: f(field)})), size: keys.length}, aggs: {
+      metadata: {filter: {terms: {[f('kind')]: TITLE_KINDS}}, aggs: {records: {top_hits: {size: 20, sort: [{timestamp: 'desc'}, {[f('sequence')]: 'desc'}, {id: 'desc'}]}}}},
+      prompts: {filter: userText, aggs: {records: {top_hits: {size: 20, sort: [{timestamp: 'asc'}, {[f('sequence')]: 'asc'}, {id: 'asc'}]}}}},
+    }}}});
+    type Records = {records: {hits: {hits: IndexHit[]}}};
+    const buckets = result.aggregations?.titles?.buckets as unknown as Array<{key: string[]; metadata: Records; prompts: Records}>;
+    if (!Array.isArray(buckets)) throw new Error('Invalid session title response');
+    const batches = new Map<string, ReturnType<typeof ingest.getBatch>>();
+    async function original(hit: IndexHit, key: SessionKey) {
+      // top_hits inside aggregations retain the realm envelope.
+      const envelope = hit._source, d = envelope?.session as IndexHit['_source'] | undefined;
+      if (envelope?.schema !== 1 || envelope.tenantId !== principal.tenantId || envelope.corpus !== 'session' || hit._id !== `session:${envelope.id}` ||
+        !d || d.userId !== key.userId || d.harness !== key.harness || d.sessionId !== key.sessionId || typeof d.eventId !== 'string' || typeof d.installationId !== 'string' ||
+        d.private === true && key.userId !== principal.userId) throw new Error('Invalid session title scope');
+      const sourceKey = envelope.sourceKey, source = typeof sourceKey === 'string' ? sourceBatchIdentity(prefix, sourceKey) : null;
+      if (!source || source.tenantHash !== digest(principal.tenantId) || source.userHash !== digest(key.userId) || source.harness !== key.harness ||
+        source.installationHash !== digest(d.installationId) || source.sessionHash !== digest(key.sessionId)) throw new Error('Invalid session title source');
+      let pending = batches.get(sourceKey!);
+      if (!pending) {pending = ingest.getBatch(principal, {...key, installationId: d.installationId, batchId: source.batchId}); batches.set(sourceKey!, pending);}
+      const batch = await pending, event = batch?.events.find(event => event.id === d.eventId);
+      if (!event || event.kind !== d.kind) return null;
+      return {event, batch: batch!};
+    }
+    for (let offset = 0; offset < buckets.length; offset += FETCH_CONCURRENCY) await Promise.all(buckets.slice(offset, offset + FETCH_CONCURRENCY).map(async bucket => {
+      if (!Array.isArray(bucket.key) || bucket.key.length !== 3) throw new Error('Invalid session title response');
+      const key = {userId: bucket.key[0]!, harness: bucket.key[1]!, sessionId: bucket.key[2]!}, encoded = keyOf(key);
+      if (!allowed.has(encoded)) throw new Error('Invalid session title scope');
+      for (const hit of bucket.metadata.records.hits.hits) {
+        const record = await original(hit, key), title = record && capturedTitle(record.event, record.batch);
+        if (title) {values.set(encoded, title); return;}
+      }
+      for (const hit of bucket.prompts.records.hits.hits) {
+        const record = await original(hit, key);
+        const prompt = record && transcriptEntries(record.event).find(entry => entry.type === 'message' && entry.role === 'user');
+        if (prompt?.type === 'message') {values.set(encoded, prompt.text.replace(/\s+/g, ' ').trim().slice(0, 240)); return;}
+      }
+    }));
+    return values;
+  }
   async function owned(principal: Principal, key: SessionKey) {
     const result = await reader(principal).search(principal, {size: 0, track_total_hits: 1, query: {bool: {filter: sessionFilter(key)}}});
     return result.hits.total.value > 0;
@@ -151,31 +202,31 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
       const order = [{lastActivity: 'desc'}, {_key: 'asc'}];
       if (query.trim()) {
         // Select sessions containing the words, then summarize each whole session.
-        const matched = await collection.search(principal, {size: 0, query: {bool: {filter, must: [{match: {text: {query: query.trim(), operator: 'and'}}}]}},
+        const matchFilter = filter.map((value, index) => index === 1 ? {terms: {[f('kind')]: [...CONVERSATION, ...TITLE_KINDS]}} : value);
+        const matched = await collection.search(principal, {size: 0, query: {bool: {filter: matchFilter, must: [{match: {text: {query: query.trim(), operator: 'and'}}}]}},
           aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {lastActivity: {max: {field: 'timestamp'}}}}}});
         const keys = (matched.aggregations?.sessions?.buckets ?? []) as unknown as Array<{key: string[]}>;
         if (!keys.length) return {sessions: [], limit};
         filter.push({bool: {minimum_should_match: 1, should: keys.map(bucket => ({bool: {filter: sessionFilter({userId: bucket.key[0]!, harness: bucket.key[1]!, sessionId: bucket.key[2]!})}}))}});
       }
-      const userText = {bool: {minimum_should_match: 1, should: [{term: {[f('kind')]: 'user_message'}}, {bool: {filter: [{term: {[f('kind')]: 'message'}}, {term: {[f('role')]: 'user'}}]}}]}};
       const result = await collection.search(principal, {size: 0, query: {bool: {filter}}, aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {
         lastActivity: {max: {field: 'timestamp'}}, firstActivity: {min: {field: 'timestamp'}},
         private: {filter: {term: {[f('private')]: true}}},
         origin: {terms: {field: f('origin'), size: 1}}, host: {terms: {field: f('host'), size: 1}},
-        prompts: {filter: userText, aggs: {first: {top_hits: {size: 8, sort: [{timestamp: 'asc'}, {[f('sequence')]: 'asc'}], _source: ['text']}}}},
       }}}});
       type Bucket = {key: string[]; doc_count: number; lastActivity: {value: number | null}; firstActivity: {value: number | null}; private: {doc_count: number};
-        origin: {buckets: Array<{key: string}>}; host: {buckets: Array<{key: string}>}; prompts: {first: {hits: {hits: Array<{_source?: {text?: unknown}}>}}}};
+        origin: {buckets: Array<{key: string}>}; host: {buckets: Array<{key: string}>}};
       const buckets = result.aggregations?.sessions?.buckets as unknown as Bucket[] | undefined;
       if (!Array.isArray(buckets)) throw new Error('Invalid session list response');
       const sessions: SessionSummary[] = buckets.map(bucket => {
         const [userId, harness, sessionId] = bucket.key;
         if (!identity(userId) || !HARNESSES.includes(harness ?? '') || !identity(sessionId)) throw new Error('Invalid session list response');
-        const prompt = bucket.prompts.first.hits.hits.map(hit => typeof hit._source?.text === 'string' ? promptText(hit._source.text) : null).find(Boolean);
-        return {userId: userId!, harness: harness!, sessionId: sessionId!, title: prompt ? prompt.replace(/\s+/g, ' ').slice(0, 240) : `Session ${sessionId}`,
+        return {userId: userId!, harness: harness!, sessionId: sessionId!, title: `Session ${sessionId}`,
           private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, host: bucket.host.buckets[0]?.key ?? null,
           firstActivityAt: iso(bucket.firstActivity.value), lastActivityAt: iso(bucket.lastActivity.value), events: bucket.doc_count};
       });
+      const names = await titles(principal, sessions);
+      for (const session of sessions) session.title = names.get(JSON.stringify([session.userId, session.harness, session.sessionId])) ?? session.title;
       return {sessions, limit};
     },
 
@@ -205,7 +256,8 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
         if (event && event.kind === hit.kind) events.push(event);
       }
       const first = page.hits.hits[0]?._source;
-      return {session: {...key, mine: key.userId === principal.userId, private: page.hits.hits.some(hit => hit._source?.private === true), origin: typeof first?.origin === 'string' ? first.origin : null},
+      const names = await titles(principal, [key]);
+      return {session: {...key, title: names.get(JSON.stringify([key.userId, key.harness, key.sessionId])) ?? `Session ${key.sessionId}`, mine: key.userId === principal.userId, private: page.hits.hits.some(hit => hit._source?.private === true), origin: typeof first?.origin === 'string' ? first.origin : null},
         events, total: page.hits.total.value, next: page.hits.hits.length === limit ? encodeCursor(page.hits.hits.at(-1)!.sort) : null};
     },
 
