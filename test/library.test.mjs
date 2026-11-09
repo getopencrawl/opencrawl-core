@@ -1,7 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {transcriptEntries, promptText} from '../dist/src/sessions/library.mjs';
+import {transcriptEntries, promptText, createSessionLibrary} from '../dist/src/sessions/library.mjs';
+import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
+import {batchDocuments} from '../dist/src/sessions/indexer.mjs';
+import {realmDocument} from '../dist/src/search/realm.mjs';
+import {memorySessionStore} from './session-store-fixture.mjs';
+import {gunzipSync} from 'node:zlib';
 import {memoryDescription} from '../dist/src/memories/library.mjs';
 import {createLibraryApi, createLibraryHandler} from '../dist/src/sessions/library-http.mjs';
 import {visibleTo} from '../dist/src/sessions/controls.mjs';
@@ -51,4 +56,34 @@ test('Codex IDE and attached-file headers never become the prompt or title', () 
   assert.equal(promptText('<environment_context>cwd</environment_context>'), null);
   assert.equal(promptText('  plain ask '), 'plain ask');
   assert.deepEqual(transcriptEntries({id: 'e', kind: 'user_message', data: {message: wrapped}}).map(entry => entry.type === 'message' ? entry.text : entry.label), ['Attached context', 'Move the nav to a left sidebar']);
+});
+
+test('library titles prefer verified native names, use original prompt text, and reject forged title scope', async () => {
+  const principal={tenantId:'team',userId:'alice'}, store=memorySessionStore(), prefix='sessions/titles';
+  const ingest=createSessionIngest({store,prefix}), at='2026-11-09T10:00:00Z';
+  const batch={schemaVersion:1,owner:principal,installationId:'device',harness:'codex',sessionId:'session',origin:'desktop',attachments:[],events:[
+    {id:'prompt',kind:'message',timestamp:at,sequence:1,data:{role:'user',channel:'user.text',id:'NATIVE-ID',content:[{type:'input_text',text:'Actual request'}]}},
+    {id:'title',kind:'session_title',timestamp:at,sequence:2,data:{title:'A saved chat name'}},
+  ]};
+  await ingest.putBatch(principal,batch);
+  const sourceKey=[...store.data.keys()].find(key=>key.endsWith('.json.gz'));
+  const stored=JSON.parse(gunzipSync(store.data.get(sourceKey)));
+  const hits=batchDocuments({prefix,key:sourceKey,batch:stored,principal}).map(({id,document})=>({_id:'session:'+id,_source:realmDocument('session',id,document)}));
+  const records=values=>({records:{hits:{hits:values}}}), empty={hits:{total:{value:0,relation:'eq'},hits:[]},timed_out:false,_shards:{failed:0}};
+  let mode='native', reads=0;
+  const library=createSessionLibrary({store,prefix,endpoint:'http://localhost:9200',fetch:async(_url,request)=>{
+    const body=JSON.parse(request.body);reads++;
+    if(body.aggs.titles) {
+      const title=structuredClone(hits[1]);
+      if(mode==='forged')title._source.session.userId='bob';
+      if(mode==='source')title._source.sourceKey=title._source.sourceKey.replace('/codex/','/claude-code/');
+      return Response.json({...empty,aggregations:{titles:{buckets:[{key:['alice','codex','session'],metadata:records(mode==='fallback'?[]:[title]),prompts:records([hits[0]])}]}}});
+    }
+    return Response.json({...empty,aggregations:{sessions:{buckets:[{key:['alice','codex','session'],doc_count:1,lastActivity:{value:Date.parse(at)},firstActivity:{value:Date.parse(at)},private:{doc_count:0},origin:{buckets:[]},host:{buckets:[]}}]}}});
+  }});
+  assert.equal((await library.list(principal)).sessions[0].title,'A saved chat name');
+  mode='fallback';assert.equal((await library.list(principal)).sessions[0].title,'Actual request');
+  mode='forged';await assert.rejects(library.list(principal),/title scope/);
+  mode='source';await assert.rejects(library.list(principal),/title source/);
+  const before=reads;await assert.rejects(library.list({...principal,captureAccess:'write'}),{status:403});assert.equal(reads,before);
 });

@@ -5,6 +5,8 @@ import {createRealmResolver, realmField} from '../search/realm.mjs';
 import {createSessionIngest, sessionScope, digest} from './ingest.mjs';
 import {sourceBatchIdentity} from './event-identity.mjs';
 import {visibleTo} from './controls.mjs';
+import {capturedTitle, TITLE_KINDS} from './titles.mjs';
+import {promptText} from './library.mjs';
 
 const identityFields = ['userId', 'harness', 'installationId', 'sessionId'];
 const f = (key: string) => realmField('session', key);
@@ -26,8 +28,8 @@ export function sessionMessage(event: SessionEvent) {
     .map(block => block.text).join('\n') : '';
   // Codex stores injected context and agent notifications in user-role records.
   // They are not human prompts and must not become a chat's title or last ask.
-  if (role === 'user' && /^(?:# AGENTS\.md instructions\b|<(?:environment_context|external_codex_apps_open_page|subagent_notification|turn_aborted)\b)/.test(text.trimStart())) return null;
-  return text.trim() ? {role, text} : null;
+  const own = role === 'user' ? promptText(text) : text;
+  return own?.trim() ? {role, text: role === 'user' && own === text.trim() ? text : own} : null;
 }
 
 /** Read the current tenant's ten newest indexed sessions, then verify and read
@@ -102,10 +104,10 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
       const latestAssistantMessage = await select('assistant', 'desc');
       let title = null, titleTimestamp = null;
       const metadata = await query({size: 20, query: {bool: {filter: [...filter,
-        {terms: {[f('kind')]: ['session_metadata', 'session_title', 'title']}}]}}, sort: [{timestamp: 'desc'}, {[f('sequence')]: 'desc'}, {id: 'desc'}]});
+        {terms: {[f('kind')]: TITLE_KINDS}}]}}, sort: [{timestamp: 'desc'}, {[f('sequence')]: 'desc'}, {id: 'desc'}]});
       for (const hit of metadata.hits.hits) {
         const {event, batch} = await original(hit);
-        const candidate = event.data?.title ?? event.data?.customTitle ?? batch.title;
+        const candidate = capturedTitle(event, batch);
         if (typeof candidate === 'string' && candidate.trim()) {title = candidate; titleTimestamp = iso(event.timestamp); break;}
       }
       const titleSource = title ? 'captured' : firstUserMessage ? 'first_user_message' : 'session_id';

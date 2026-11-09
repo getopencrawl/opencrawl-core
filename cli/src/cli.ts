@@ -37,6 +37,7 @@ Options:
 
 Capture controls:
   collect install [--yes]              Review recording scope before enabling
+  collect titles                      Refresh names of already captured sessions
   collect exclude --project /path     Block a project and its subdirectories
   collect exclude --session-id ID     Block a session and its subagents
   collect uninstall                   Stop collection; preserve pending data
@@ -130,7 +131,10 @@ export async function main(args = process.argv.slice(2)) {
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
     const localHook=command==='collect'&&parsed.positionals[1]==='hook'&&!parsed.values.managed;
-    if(command!=='skills'&&command!=='logout'&&!(command==='collect'&&parsed.positionals[1]==='uninstall')&&!parsed.values['dry-run']&&!localHook)memoryJob=scheduleMemoryRefresh();
+    // Metadata-only recovery and a history preview must not start an unrelated
+    // memory upload while the foreground operation is inspecting local state.
+    const localCollect=command==='collect'&&(['uninstall','titles'].includes(parsed.positionals[1]??'')||parsed.positionals[1]==='backfill'&&!parsed.values.yes);
+    if(command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob=scheduleMemoryRefresh();
     if (parsed.positionals.length > (['collect','search','fetch','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
