@@ -50,15 +50,15 @@ export function createMemorySearch(options: RealmOptions) {
       await collection.bulk(principal,[{id:headId,document:{...common,kind:'snapshot'},script:HEAD}],{refresh:true});
       return count;
     },
-    async search(principal: Principal,{query='',limit=20,match='all',id,after,before}: SearchInput={}) {
+    async search(principal: Principal,{query='',limit=20,match='all',id,sessionId,after,before}: SearchInput={}) {
       sessionScope(principal);
       if(principal.captureAccess!==undefined)fail(403,'Capture credentials cannot read memories');
       if(typeof query!=='string'||query.length>4000||!Number.isInteger(limit)||limit<1||limit>100||!['all','any','phrase'].includes(match)||
-        id!==undefined&&(typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id)))fail(400,'Invalid memory search');
+        id!==undefined&&(typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id))||sessionId!==undefined&&(typeof sessionId!=='string'||!sessionId||sessionId.length>200))fail(400,'Invalid memory search');
       const active=await heads(principal);
       if(!active.length)return {total:0,hits:[],truncated:false};
       const result=await resolve(principal).collection('memory').search(principal,{size:limit,track_total_hits:true,
-        query:{bool:{filter:[{term:{[f('kind')]:'passage'}},{terms:{[f('snapshotId')]:active}},visibleTo('memory',principal),...(id?[{term:{id}}]:[]),...timeRange(after,before)],
+        query:{bool:{filter:[{term:{[f('kind')]:'passage'}},{terms:{[f('snapshotId')]:active}},visibleTo('memory',principal),...(id?[{term:{id}}]:[]),...(sessionId?[{term:{[f('sourceSessionId')]:sessionId}}]:[]),...timeRange(after,before)],
           must:query?[textQuery(query,match,resolve(principal).semantic)]:[{match_all:{}}]}},
         sort:query?['_score',{[f('receivedAt')]:'desc'},{id:'asc'}]:[{[f('receivedAt')]:'desc'},{id:'asc'}]});
       return {total:result.hits.total.value,truncated:result.hits.total.value>result.hits.hits.length,

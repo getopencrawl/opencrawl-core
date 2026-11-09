@@ -138,3 +138,10 @@ test('semantic retrieval installs its model pipeline, encodes only this tenant a
   assert.throws(()=>createIndexTransport({endpoint:'http://search.test',index:'other',cluster:true}),/Invalid index transport/);
   assert.equal(createRealm({endpoint:'http://search.test',tenantId:'org-a',index:'test'}).semantic,false);
 });
+
+test('memory passages are dated by the file modification time, sessions by event time', () => {
+  const memory = realmDocument('memory', 'm1', {tenantId: 'org-a', userId: 'u', modifiedAt: '2024-03-15T12:00:00Z', receivedAt: '2026-11-09T00:00:00Z', text: 'note'});
+  assert.equal(memory.timestamp, '2024-03-15T12:00:00.000Z');
+  const session = realmDocument('session', 's1', {tenantId: 'org-a', userId: 'u', timestamp: '2024-03-16T12:00:00Z', receivedAt: '2026-11-09T00:00:00Z', text: 't'});
+  assert.equal(session.timestamp, '2024-03-16T12:00:00.000Z');
+});

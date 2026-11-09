@@ -25,7 +25,7 @@ test('unified ranks, scoped live pages, cursor binding/expiry, validation, and e
   now += 300001;await assert.rejects(service.search(principal,{...input,cursor:first.next}), /cursor/);
   await assert.rejects(service.search(null,input), /Authentication/);
   await assert.rejects(service.search({...principal,captureAccess:'write'},input), /credentials/);
-  for (const invalid of [{query:''},{query:'x',tenantId:'b'},{query:'x',raw:true},{query:'x',sessionId:'s'},{query:'x',limit:41}]) await assert.rejects(service.search(principal,invalid), /Invalid search/);
+  for (const invalid of [{query:''},{query:'x',tenantId:'b'},{query:'x',raw:true},{query:'x',source:'connectors',sessionId:'s'},{query:'x',limit:41}]) await assert.rejects(service.search(principal,invalid), /Invalid search/);
   const partial = await createWorkspaceSearch({sessions:{search:async()=>({total:1,hits:[hit('s')]})},connectors:{search:async()=>{throw new Error('PRIVATE_SECRET');}}}).search(principal,input);
   assert.equal(partial.partial,true);assert.equal(partial.coverage[1].state,'unavailable');assert.doesNotMatch(JSON.stringify(partial),/PRIVATE_SECRET/);
   const bad = createWorkspaceSearch({sessions:{search:async()=>({total:1,hits:[hit('leak',{tenantId:'team-b'})]})}});
@@ -87,4 +87,19 @@ test('time bounds are validated, passed to every source and keep cursors bound t
     await assert.rejects(service.search(principal, {query: 'x', ...invalid}), /Invalid search/);
   seen.length = 0;await service.search(principal, {query: 'x'});
   assert.deepEqual(seen, [['sessions', undefined, undefined], ['connectors', undefined, undefined]]);
+});
+
+test('a session filter scopes sessions and the memories written from it, never connectors', async () => {
+  const seen = [];
+  const service = createWorkspaceSearch({
+    sessions: {search: async (p, q) => {seen.push(['sessions', q.sessionId]);return {total: 1, hits: [hit('s1')]};},
+      memories: {search: async (p, q) => {seen.push(['memories', q.sessionId]);return {total: 1, hits: [hit('m1', {path: 'notes.md'})], truncated: false};}}},
+    connectors: {search: async (p, q) => {seen.push(['connectors', q.sessionId]);return {hits: [], truncated: false};}},
+  });
+  const result = await service.search(principal, {query: 'x', sessionId: 'past'});
+  assert.deepEqual(seen, [['sessions', 'past'], ['memories', 'past']]);
+  assert.deepEqual(result.results.map(r => r.id).sort(), ['memories:m1', 'sessions:s1']);
+  seen.length = 0;await service.search(principal, {query: 'x', source: 'memories', sessionId: 'past'});
+  assert.deepEqual(seen, [['memories', 'past']]);
+  await assert.rejects(service.search(principal, {query: 'x', source: 'connectors', sessionId: 'past'}), /Invalid search/);
 });
