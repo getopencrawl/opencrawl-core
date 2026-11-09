@@ -35,5 +35,6 @@ export const realmMapping = {dynamic:'strict', properties:{
   schema:{type:'integer'}, tenantId:{type:'keyword'}, corpus:{type:'keyword'}, id:{type:'keyword'},
   source:{type:'keyword'}, kind:{type:'keyword'}, timestamp:{type:'date'}, author:{type:'keyword'},
   text:{type:'text',fields:{english:{type:'text',analyzer:'english'}}}, title:{type:'text'}, sourceKey:{type:'keyword',index:false,doc_values:false},
+  textSparse:{type:'rank_features'}, semantic:{type:'keyword'},
   connector:metadata(connectorMapping), session:metadata(sessionIndexMapping), board:metadata(boardIndexMapping),memory:{type:'object',...memoryMapping},
 }};

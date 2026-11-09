@@ -26,7 +26,7 @@ export function createSessionSearch(options: RealmOptions) {
       if(!['all','any','phrase'].includes(match)||(sessionId!==undefined&&(typeof sessionId!=='string'||!sessionId||sessionId.length>200)))fail(400,'Invalid search filters');
       if(typeof query!=='string'||query.length>4000||!Number.isInteger(limit)||limit<1||limit>100)fail(400,'Invalid search query or limit');
       const result=await resolve(principal).collection('session').search(principal,{size:limit,track_total_hits:true,
-        query:{bool:{filter:[{term:{tenantId:principal.tenantId}},visibleTo('session',principal),...(sessionId?[{term:{[f('sessionId')]:sessionId}}]:[]),...(id?[{term:{id}}]:[]),...timeRange(after,before)],must:query?[textQuery(query,match)]:[{match_all:{}}]}},
+        query:{bool:{filter:[{term:{tenantId:principal.tenantId}},visibleTo('session',principal),...(sessionId?[{term:{[f('sessionId')]:sessionId}}]:[]),...(id?[{term:{id}}]:[]),...timeRange(after,before)],must:query?[textQuery(query,match,resolve(principal).semantic)]:[{match_all:{}}]}},
         sort:query?['_score',...['receivedAt','sessionId','eventId','chunk','userId','installationId'].map(key=>({[f(key)]:key==='receivedAt'?'desc':'asc'}))]:[{[f('receivedAt')]:'desc'},{[f('sequence')]:'asc'}]});
       const hits=result?.hits?.hits;
       if(!Array.isArray(hits)||hits.some(hit=>hit._source?.tenantId!==principal.tenantId||typeof hit._source?.userId!=='string'||!hit._source.userId))throw new Error('Search returned an invalid ownership scope');
@@ -93,5 +93,5 @@ export function createSessionSearch(options: RealmOptions) {
 export function searchSettings(env=process.env) {
   if(!env.OPENCRAWL_OPENSEARCH_URL)return null;
   return {endpoint:env.OPENCRAWL_OPENSEARCH_URL,index:env.OPENCRAWL_OPENSEARCH_INDEX||undefined,environment:env.OPENCRAWL_SEARCH_ENVIRONMENT||'selfhost',
-    username:env.OPENCRAWL_OPENSEARCH_USERNAME,password:env.OPENCRAWL_OPENSEARCH_PASSWORD};
+    username:env.OPENCRAWL_OPENSEARCH_USERNAME,password:env.OPENCRAWL_OPENSEARCH_PASSWORD,semanticModel:env.OPENCRAWL_SEMANTIC_MODEL||undefined};
 }

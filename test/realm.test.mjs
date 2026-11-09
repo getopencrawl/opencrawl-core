@@ -102,3 +102,39 @@ test('stemmed text upgrade is additive, backfills in the background once and sta
   else {await assert.rejects(realm.ensureIndex(),/mismatch/);assert.deepEqual(writes,[]);}
  }
 });
+
+test('semantic retrieval installs its model pipeline, encodes only this tenant and limits the cluster transport',async()=>{
+  const {semanticPipeline,createIndexTransport}=await import('../dist/src/search/realm.mjs');
+  const mapping=structuredClone(realmMapping);delete mapping.properties.textSparse;delete mapping.properties.semantic;
+  mapping._meta={schema:1,tenantId:'org-a'};
+  const calls=[];
+  const realm=createRealm({endpoint:'http://search.test',tenantId:'org-a',index:'test',semanticModel:'model_1',fetch:async(url,options)=>{
+   calls.push([options.method,url.pathname+url.search]);
+   if(url.pathname==='/test/_mapping') {
+    if(options.method==='PUT'){assert.deepEqual(JSON.parse(options.body),{properties:{textSparse:{type:'rank_features'},semantic:{type:'keyword'}}});Object.assign(mapping.properties,JSON.parse(options.body).properties);return Response.json({acknowledged:true});}
+    return Response.json({test:{mappings:mapping}});
+   }
+   if(url.pathname.startsWith('/_ingest/pipeline/')) {
+    assert.equal(url.pathname,'/_ingest/pipeline/'+semanticPipeline('model_1'));
+    const {processors}=JSON.parse(options.body);
+    assert.deepEqual(processors[0].sparse_encoding.field_map,{text:'textSparse'});assert.deepEqual(processors[1].set,{field:'semantic',value:'model_1'});
+    return Response.json({acknowledged:true});
+   }
+   if(url.pathname==='/test/_update_by_query') {
+    assert.equal(url.searchParams.get('pipeline'),semanticPipeline('model_1'));assert.equal(url.searchParams.get('wait_for_completion'),'false');
+    assert.deepEqual(JSON.parse(options.body).query.bool,{filter:[{term:{tenantId:'org-a'}}],must_not:[{term:{semantic:'model_1'}}]});
+    return Response.json({task:'n:1'});
+   }
+   return Response.json({error:{type:'resource_already_exists_exception'}},{status:400});
+  }});
+  assert.equal(realm.semantic,true);
+  await realm.ensureIndex();await new Promise(r=>setTimeout(r,20));
+  assert.deepEqual(calls.filter(([m,p])=>m!=='GET'&&!p.startsWith('/test?')&&p!=='/test').map(([m,p])=>m+' '+p.split('?')[0]),
+   ['PUT /test/_mapping','PUT /_ingest/pipeline/'+semanticPipeline('model_1'),'POST /test/_update_by_query']);
+  assert.throws(()=>createRealm({endpoint:'http://search.test',tenantId:'org-a',index:'test',semanticModel:'bad model/../x'}),/Invalid semantic model/);
+  const cluster=createIndexTransport({endpoint:'http://search.test',index:'_ingest',cluster:true,fetch:async()=>Response.json({})});
+  await assert.rejects(cluster('/pipeline/other','{}','PUT'),/limited/);
+  await assert.rejects(cluster('/pipeline/'+semanticPipeline('m'),undefined,'DELETE'),/limited/);
+  assert.throws(()=>createIndexTransport({endpoint:'http://search.test',index:'other',cluster:true}),/Invalid index transport/);
+  assert.equal(createRealm({endpoint:'http://search.test',tenantId:'org-a',index:'test'}).semantic,false);
+});
