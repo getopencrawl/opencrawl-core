@@ -6,7 +6,11 @@ attachments to the selected deployment. These can contain credentials, private
 source code and personal information. There is no automatic secret redaction.
 Repeated system/developer prompts are omitted; this is not a secret filter.
 
-Every member of a hosted team can read its captured sessions. In the self-hosted
+Every member of a hosted team can read its captured sessions and memories unless
+the person who captured one marks it private in the Sessions or Memories page. A
+private session or memory is hidden from teammates, their agents and search. The
+owner can also delete a session (raw capture, search results and any later uploads
+of it) or a memory; see `docs/sessions-and-memories.md`. In the self-hosted
 preview, everyone with the MCP/read token can read the deployment's sessions.
 Active conversations are read from their beginning on first encounter, even if
 they started before installation. Inactive history requires separate consent.

@@ -10,6 +10,7 @@ import {serviceError} from './types.mjs';
 import {gzipSync, gunzipSync} from 'node:zlib';
 import {digest,sessionScope,reserveSessionEvents} from './event-identity.mjs';
 import {createMemoryIngest,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
+import {createControls} from './controls.mjs';
 export {digest,sessionScope,auditSessionEventIdentities,auditSessionEventSource} from './event-identity.mjs';
 
 const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
@@ -23,6 +24,7 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
   const scope = (principal: Principal) => `${prefix}/${sessionScope(principal)}`;
   // Existence checks must not download attachment bodies on every batch retry.
   const exists = (key: string, maxBytes: number) => store.has ? store.has(key, {maxBytes}) : store.get(key, {maxBytes}).then(Boolean);
+  const controls = createControls({store, prefix});
   return {
     async putMemorySnapshot(principal: Principal,snapshot: MemorySnapshot) {
       const receipt=await createMemoryIngest({store,prefix}).putSnapshot(principal,snapshot);
@@ -61,6 +63,9 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
           attachments.add(attachment.sha256!);
         } else if (!['missing', 'too_large', 'remote_reference'].includes(attachment.status ?? '')) fail(400, 'Invalid attachment status');
       }
+      // The owner deleted this session. Accept the retry so clients stop sending
+      // it, but never store or index it again.
+      if ((await controls.read(principal, 'sessions', batch.harness, batch.sessionId))?.deletedAt) return {batchId: digest(serialized), eventCount: batch.events.length, stored: true, discarded: 'session_deleted'};
       for (const hash of attachments) {
         if (!await exists(`${keyPrefix}/attachments/${hash}`, MAX_ATTACHMENT_BYTES)) fail(409, 'Attachment not uploaded');
       }

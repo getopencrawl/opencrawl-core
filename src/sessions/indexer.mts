@@ -8,6 +8,8 @@ import {gunzipSync} from 'node:zlib';
 import {digest,sessionScope,MAX_BATCH_BYTES} from './ingest.mjs';
 import {sourceBatchIdentity,reserveSessionEvents} from './event-identity.mjs';
 import {memorySourceIdentity,verifyStoredMemory,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
+import {createControls} from './controls.mjs';
+import {memoryControls} from '../memories/library.mjs';
 export {sourceBatchIdentity} from './event-identity.mjs';
 export {memorySourceIdentity} from '../memories/snapshot.mjs';
 
@@ -32,7 +34,7 @@ function collect(value: unknown,text: string[],attachments: Attachment[],names: 
 export function sessionDocumentId({scope,harness,sessionId,eventId,chunk}: {scope: string; harness: string; sessionId: string; eventId: string; chunk: number}) {
   return digest(JSON.stringify([scope,harness,sessionId,eventId,chunk]));
 }
-export function batchDocuments({prefix,key,batch,principal}: {prefix: string; key: string; batch: SessionBatch; principal: Principal}): DocumentItem[] {
+export function batchDocuments({prefix,key,batch,principal,visibility='team'}: {prefix: string; key: string; batch: SessionBatch; principal: Principal; visibility?: 'team' | 'private'}): DocumentItem[] {
   const scope=sessionScope(principal),identity=sourceBatchIdentity(prefix,key);
   if(!identity||identity.tenantHash!==digest(principal.tenantId)||identity.userHash!==digest(principal.userId)||
     batch?.owner?.tenantId!==principal.tenantId||batch?.owner?.userId!==principal.userId||batch.schemaVersion!==1||
@@ -52,7 +54,7 @@ export function batchDocuments({prefix,key,batch,principal}: {prefix: string; ke
         nativeId:typeof event.nativeId==='string'?event.nativeId:null,parentId:event.parentId??null,turnId:event.turnId??null,
         toolCallId:event.data?.call_id??event.data?.tool_use_id??null,toolNames:[...names],host:batch.host??null,
         attachments:attachments.map(a=>({sha256:a.sha256,size:a.size,mimeType:a.mimeType,path:a.path,
-          objectKey:/^[a-f0-9]{64}$/.test(a.sha256??'')?`${prefix}/${scope}/attachments/${a.sha256}`:null}))};
+          objectKey:/^[a-f0-9]{64}$/.test(a.sha256??'')?`${prefix}/${scope}/attachments/${a.sha256}`:null})),private:visibility==='private'};
       documents.push({id:sessionDocumentId({scope,harness:batch.harness,sessionId:batch.sessionId,eventId:event.id,chunk}),document});
     }
   }
@@ -75,6 +77,7 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
     if(typeof key!=='string'||!key.startsWith(sourcePrefix)||!(sourceBatchIdentity(prefix,key)||memorySourceIdentity(prefix,key)))throw Object.assign(new Error('Session object outside authorized source'),{permanent:true});
   }
   const receiptKey=(key: string)=>statePrefix+'/batches/'+digest(key)+'.json';
+  const controls=createControls({store,prefix});
   async function indexed(key: string) {
     const receipt=await store.get(receiptKey(key));
     return Boolean(receipt&&parseJson<{status: string}>(receipt).status==='indexed');
@@ -104,16 +107,28 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
         verifyStoredMemory({prefix,key,snapshot:batch as unknown as StoredMemorySnapshot,principal:scope});
         await checkActive();
         if(!search.memories)throw new Error('Memory indexing is not configured');
-        const count=await search.memories.putSnapshot(batch as unknown as StoredMemorySnapshot,scope,key);
+        const snapshot=batch as unknown as StoredMemorySnapshot;
+        const count=await search.memories.putSnapshot(snapshot,scope,key,{controls:await memoryControls(controls,scope,snapshot)});
         await checkActive();
         await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:count,indexedAt:new Date().toISOString()})),'application/json');
         return {records:count,skipped:false};
       }
-      const docs=batchDocuments({prefix,key,batch,principal:scope});
+      // Owner controls apply before any write: deleted sessions are never indexed
+      // again, and private sessions are written private.
+      const control=await controls.read(scope,'sessions',batch.harness,batch.sessionId);
+      if(control?.deletedAt) {
+        await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:0,deleted:true,indexedAt:new Date().toISOString()})),'application/json');
+        return {records:0,skipped:true};
+      }
+      const docs=batchDocuments({prefix,key,batch,principal:scope,visibility:control?.visibility});
       // Check the whole event before any chunk write. Receipt order, shorter
       // payloads and concurrent activities must never assemble mixed revisions.
       await checkActive();await reserveSessionEvents({store,prefix,principal:scope,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
       await checkActive();await search.ensureIndex(scope);await search.putDocuments(docs,scope);
+      // A visibility change or delete that landed while this batch was indexing
+      // must still apply to the documents just written.
+      const after=await controls.read(scope,'sessions',batch.harness,batch.sessionId);
+      if(after?.deletedAt||(after?.visibility??'team')!==(control?.visibility??'team'))await search.applySessionControl(scope,{harness:batch.harness,sessionId:batch.sessionId},after!);
       await checkActive();
       await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:docs.length,indexedAt:new Date().toISOString()})),'application/json');
       return {records:docs.length,skipped:false};

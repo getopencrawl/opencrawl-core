@@ -8,6 +8,8 @@ const paths: Record<IconName, string> = {
   settings: 'M4 7h16 M4 17h16 M8 4v6 M16 14v6',
   team: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0',
   billing: 'M3 5h18v14H3z M3 10h18 M7 15h3',
+  sessions: 'M4 4h16v12H8l-4 4Z M8 9h8 M8 12h5',
+  memories: 'M6 3h9l3 3v15H6Z M14 3v4h4 M9 12h6 M9 16h4',
   data: 'M4 5c0-4 16-4 16 0s-16 4-16 0 M4 5v14c0 4 16 4 16 0V5 M4 12c0 4 16 4 16 0',
   check: 'm8 12 3 3 5-6',
   'chevron-right': 'm9 5 7 7-7 7',
