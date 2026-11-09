@@ -1,3 +1,4 @@
+import {singleOrganizationDevice} from '../identity/single-organization-device.mjs';
 import type {createSlackOAuth} from '../integrations/slack-oauth.mjs';
 import {connectorProxyHandler} from '../integrations/proxy-http.mjs';
 import type {IncomingMessage,ServerResponse} from 'node:http';
@@ -56,6 +57,7 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
 }:SelfhostApplicationOptions) {
   const workos=sdk||createWorkos(settings);
+  const deviceTokens=singleOrganizationDevice(settings,workos);
   const credentialProxy=oauth?connectorProxyHandler(oauth):null;
   const admit=singleOrganizationIdentity(workos,settings.organizationId),resolve=singleOrganizationPrincipal(workos,settings.organizationId);
   const identifyCli=cliIdentity(settings,workos),organizations=teamService(workos,roleWriteGuard(store,prefix));
@@ -118,9 +120,10 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
     try {
       const url=new URL(req.url||'/',settings.url);
       if(req.method==='GET'&&url.pathname==='/health')return json(200,{ok:true,mode:'selfhost',revision:settings.revision||'development'});
-      if(url.pathname==='/.well-known/opencrawl-cli')return req.method==='GET'?json(200,cliConfiguration(settings)):respond(405,'Method not allowed');
+      if(url.pathname==='/.well-known/opencrawl-cli')return req.method==='GET'?json(200,{...cliConfiguration(settings),auth:{...cliConfiguration(settings).auth,tokenEndpoint:settings.url+'/api/cli/token'}}):respond(405,'Method not allowed');
       if(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'].includes(url.pathname)){res.setHeader('Access-Control-Allow-Origin','*');return req.method==='GET'?json(200,mcpMetadata(settings)):respond(405,'Method not allowed');}
       if(url.pathname==='/api/connector-proxy')return credentialProxy?await credentialProxy(req,res):respond(503,'Connector proxy unavailable');
+      if(url.pathname==='/api/cli/token')return await deviceTokens(req,res);
       if(url.pathname==='/mcp')return await mcp(req,res);
       if(url.pathname.startsWith('/api/sessions/'))return await capture(req,res);
       if(url.pathname==='/api/search')return await query(req,res);
@@ -130,7 +133,7 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
         if(req.method!=='GET')return respond(405,'Method not allowed');
         if(req.headers.origin)return respond(403,'Browser request denied');
         const result=await identifyCli(req.headers.authorization,{capture:true});
-        if(result.status!==200)return json(result.status,{schemaVersion:1,error:{code:'AUTH_REQUIRED'}});
+        if(result.status!==200)return json(result.status,{schemaVersion:1,error:{code:result.status===403?(result.code||'ACCESS_DENIED'):'AUTH_REQUIRED'}});
         await observe.cli(result.principal);return json(200,{schemaVersion:1,data:{user:result.user,index:{available:false}}});
       }
       if(req.method==='GET'&&url.pathname==='/setup-prompt.txt'){res.setHeader('Access-Control-Allow-Origin','*');return respond(200,captureSetupPrompt(settings.url));}
