@@ -36,7 +36,7 @@ function ScopedCache({children, onAccessFailure}: {children: ReactNode; onAccess
   const [client] = useState(() => createConsoleQueryClient(deny));
   useEffect(() => {
     const visibility = () => {if (document.visibilityState === 'hidden') void client.cancelQueries();};
-    const focus = () => {if (document.visibilityState === 'visible') void client.refetchQueries({type:'active',stale:true});};
+    const focus = () => {if (document.visibilityState === 'visible') void client.refetchQueries({type:'active',predicate:query=>query.isStaleByTime(typeof query.meta?.staleMilliseconds==='number'?query.meta.staleMilliseconds:30_000)});};
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('focus',focus);
     return () => {document.removeEventListener('visibilitychange', visibility);window.removeEventListener('focus',focus);client.clear();};
@@ -54,16 +54,16 @@ export function useConsoleModel<T>(key: readonly unknown[], create: () => T): T 
   }, [client, JSON.stringify(key)]);
 }
 
-interface ResourceOptions {autoRefreshMilliseconds?: number; paused?: boolean; enabled?: boolean; staleMilliseconds?: number}
+interface ResourceOptions<T> {autoRefreshMilliseconds?: number; paused?: boolean; enabled?: boolean; staleMilliseconds?: number; initial?: T}
 /** Serve cached data immediately; only the first read blocks, and server failures retain it. */
-export function useConsoleResource<T>(key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>, {autoRefreshMilliseconds, paused = false, enabled = true, staleMilliseconds = 30_000}: ResourceOptions = {}) {
+export function useConsoleResource<T>(key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>, {autoRefreshMilliseconds, paused = false, enabled = true, staleMilliseconds = 30_000, initial}: ResourceOptions<T> = {}) {
   const stableKey = useMemo(() => key, [JSON.stringify(key)]);
   const scoped = useContext(CacheContext);
   const [local] = useState(() => createConsoleQueryClient());
   const client = scoped ?? local;
   const [invalidated, setInvalidated] = useState('');
   const query = useQuery({queryKey: stableKey, queryFn: ({signal}) => read(signal), enabled: enabled && !paused,
-    staleTime: staleMilliseconds, refetchInterval: autoRefreshMilliseconds || false, refetchIntervalInBackground: false}, client);
+    meta:{staleMilliseconds},initialData:initial, staleTime: staleMilliseconds, refetchInterval: autoRefreshMilliseconds || false, refetchIntervalInBackground: false}, client);
   useEffect(() => {if (paused) void client.cancelQueries({queryKey: stableKey, exact: true});}, [client, paused, stableKey]);
   // Query cancellation is shared: a prefetch and mounted page never duplicate a read.
   const reload = useCallback(async () => {setInvalidated(''); await query.refetch({cancelRefetch: false});}, [query.refetch]);
@@ -71,14 +71,15 @@ export function useConsoleResource<T>(key: readonly unknown[], read: (signal: Ab
     setInvalidated(reason); void client.cancelQueries({queryKey: stableKey, exact: true}); client.removeQueries({queryKey: stableKey, exact: true});
   }, [client, stableKey]);
   const updateData = useCallback((change: (current: T) => T) => {client.setQueryData<T>(stableKey, current => current === undefined ? undefined : change(current));}, [client, stableKey]);
+  const replaceData = useCallback((value: T) => {setInvalidated('');client.setQueryData<T>(stableKey,value);}, [client,stableKey]);
   const data = invalidated || query.error && !transient(query.error) ? null : query.data ?? null;
-  return {data, error: invalidated || (query.error ? message(query.error) : ''), loading: data === null && query.isLoading, refreshing: query.isFetching && data !== null, reload, invalidate, updateData};
+  return {data, error: invalidated || (query.error ? message(query.error) : ''), loading: data === null && query.isLoading, refreshing: query.isFetching && data !== null, reload, invalidate, updateData, replaceData};
 }
 
 export function useConsolePrefetch(reads: ReadonlyArray<{key: readonly unknown[]; read: (signal: AbortSignal) => Promise<unknown>; staleMilliseconds?: number}>, enabled = true) {
   const client = useContext(CacheContext);
   useEffect(() => {
     if (!client || !enabled) return;
-    for (const resource of reads) void client.prefetchQuery({queryKey: resource.key, queryFn: ({signal}) => resource.read(signal), staleTime: resource.staleMilliseconds ?? 30_000});
+    for (const resource of reads) void client.prefetchQuery({queryKey: resource.key, queryFn: ({signal}) => resource.read(signal), staleTime: resource.staleMilliseconds ?? 30_000,meta:{staleMilliseconds:resource.staleMilliseconds??30_000}});
   }, [client, reads, enabled]);
 }

@@ -1,3 +1,4 @@
+import {consoleResourceKey} from '../data.tsx';
 import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {Button, Dialog, Field, Input} from '../design/components.tsx';
 import {Icon} from '../design/icons.tsx';
@@ -14,7 +15,7 @@ export interface SourcesOnboardingProps {
 }
 
 export function SourcesOnboarding({adapter, initialSources, authorize = url => window.location.assign(url)}: SourcesOnboardingProps) {
-  const resource = useOnboardingResource(signal => adapter.sources(signal), {initial: initialSources ? {items: initialSources} : undefined});
+  const resource = useOnboardingResource(signal => adapter.sources(signal), {key:consoleResourceKey(adapter,'onboarding-sources'), initial: initialSources ? {items: initialSources} : undefined});
   const items = resource.data?.items ?? [];
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());

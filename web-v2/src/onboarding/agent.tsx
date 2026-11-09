@@ -1,3 +1,4 @@
+import {consoleResourceKey} from '../data.tsx';
 import {useEffect, useRef, useState, type ReactNode} from 'react';
 import {Button, Textarea} from '../design/components.tsx';
 import {Icon} from '../design/icons.tsx';
@@ -53,7 +54,7 @@ export interface AgentOnboardingProps {
 }
 
 export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus}: AgentOnboardingProps) {
-  const progress = useOnboardingResource(signal => adapter.status(signal), {interval: 5000, initial: initialStatus});
+  const progress = useOnboardingResource(signal => adapter.status(signal), {key:consoleResourceKey(adapter,'onboarding-status'), interval: 5000, initial: initialStatus});
   const status = progress.data ?? {};
   const derived = deriveOnboarding(status);
   const promptStep = derived.complete ? 'connect' : derived.step === 'ready' ? 'connect' : derived.step;
