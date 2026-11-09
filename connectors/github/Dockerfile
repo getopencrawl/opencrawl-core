@@ -1,5 +1,5 @@
-# OpenCrawl GitHub source for Airbyte. Built on the Airbyte host and loaded straight into its
-# cluster by `python3 app/infra/integrations.py github-connector`; never pushed to a registry.
+# OpenCrawl GitHub source for Airbyte. Build this directory with Docker and make
+# the image available to your Airbyte workers; see docs/self-host.md.
 # The base is the declarative runtime we already pin, for its Python and airbyte-cdk.
 FROM airbyte/source-declarative-manifest:7.45.1@sha256:f98cd95b4263c30c76b23c67b9c43e817e4f6b000663081e91778748b50d32e1
 USER root

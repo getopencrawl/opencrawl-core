@@ -12,7 +12,7 @@ export interface IntegrationOptions {
   environment: Environment; appUrl: string; buckets: TeamBuckets; legacyBucket: string; workspaceId: () => Promise<string>; destination: LandingDestination;
   backfillDays?: number; schedule?: string; oauth: ConnectorOAuth; airbyte: Airbyte; registry: Registry;
   providers: ProviderCatalog; github?: GithubApp | null; direct?: typeof directApi; now?: () => number;
-  log?: Log; maintenance?: boolean;
+  log?: Log; maintenance?: boolean; revokeInstallation?: (installationId: string) => Promise<void>;
 }
 interface Secrets {apiKey?: string}
 type PendingSignInState = 'pending' | 'expired' | 'unavailable';
@@ -66,7 +66,7 @@ export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
   };
 }
 
-export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false}: IntegrationOptions) {
+export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation}: IntegrationOptions) {
   const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>}>();
   const jobCache = new Map<string, {at: number; jobs: AirbyteJob[]}>();
   const provisioning = new Map<string, Promise<IntegrationRecord>>();
@@ -260,8 +260,9 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     let deletedObjects = 0;
     if (record.s3Prefix) deletedObjects = await buckets.deletePrefix(record.s3Bucket || legacyBucket, `${record.s3Prefix}/`);
     if (record.connectedAccountId) await oauth.remove(required(record.connectedAccountId, 'connected account')).catch(gone);
-    // Keep failed grant revocation retryable, just like failed Airbyte teardown.
-    if (record.installationId && github) await github.uninstall(record.installationId).catch(gone);
+    // A GitHub installation can serve other applications or deployments. Only a
+    // runtime that owns the entire managed grant may revoke it on disconnect.
+    if (record.installationId && revokeInstallation) await revokeInstallation(record.installationId).catch(gone);
     try {
       await registry.update(record, {status: 'disconnected', disconnectedAt: new Date(now()).toISOString(), dataDeletedAt: new Date(now()).toISOString(), deletedObjects},
         {whenStatus: ['disconnecting'], whenFields: {resourceVersion: record.resourceVersion}});
