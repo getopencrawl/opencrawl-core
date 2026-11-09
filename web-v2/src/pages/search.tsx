@@ -5,6 +5,7 @@ import type {ConsoleDataAdapter, DiagnosticHit, DiagnosticSearch} from './types.
 import {excerpt, highlightedText, searchGroups, searchHit} from './search-model.js';
 import type {SearchSource} from './search-model.js';
 import {SearchReader} from './search-reader.js';
+import {accessFailure, consoleResourceKey, useConsoleAccessFailure, useConsoleModel} from '../data.tsx';
 
 export function JsonDisclosure({label, value}: {label: string; value: unknown}) {
   const [open, setOpen] = useState(false);
@@ -76,12 +77,16 @@ export function SearchResults({result, query}: {result: DiagnosticSearch; query:
   );
 }
 export function SearchInspector({adapter}: {adapter: Pick<ConsoleDataAdapter, 'search'>}) {
-  const [query, setQuery] = useState('');
+  const deny=useConsoleAccessFailure();
+  const model=useConsoleModel(consoleResourceKey(adapter,'search'),()=>({draft:'',reader:new SearchReader({search:async(query,signal)=>{try{return await adapter.search(query,signal);}catch(error){if(accessFailure(error))deny?.(error);throw error;}}})}));
+  const [draft,setDraft]=useState({model,value:model.draft});
+  const query=draft.model===model?draft.value:model.draft;
+  const setQuery=(value:string)=>{model.draft=value;setDraft({model,value});};
   const input = useRef<HTMLInputElement>(null);
-  const reader = useMemo(() => new SearchReader(adapter), [adapter]);
+  const reader = model.reader;
   const snapshot = useSyncExternalStore(reader.subscribe, reader.snapshot, reader.snapshot);
   const busy = snapshot.state === 'loading';
-  useEffect(() => () => reader.cancel(), [reader]);
+  useEffect(() => () => reader.suspend(), [reader]);
   return (
     <Section className="oc-search-inspector" aria-label="Inspect search">
       <p className="oc-search-intro">Run a diagnostic query to inspect the indexed text and source metadata available to your agents.</p>

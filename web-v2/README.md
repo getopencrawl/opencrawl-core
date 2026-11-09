@@ -46,3 +46,22 @@ loopback. Never expose HTTP Basic credentials on an unencrypted public endpoint.
 Keep the upstream token scoped to the intended single-tenant runtime. Replacing
 server configuration requires restart; source content and indexes remain owned
 by the existing core services. The adapter adds no database or persisted secrets.
+
+## Scoped stale-while-revalidate data
+
+Wrap a multitenant console in `ConsoleDataProvider scopeKey={trustedScopeKey}`.
+The runtime supplies a stable opaque key bound to its authenticated workspace,
+user, session and role. A changed key replaces the memory-only cache and aborts
+old reads. Never use a browser-selected workspace as authority. The single-tenant
+AppShell supplies its own default provider. Consumers install the optional
+`@tanstack/react-query` peer at the pinned web-v2 version.
+
+`useConsoleResource` serves cached data on route return and revalidates stale
+queries in the background. Initial reads retain loading/error/retry states; only
+explicit server failures retain older data. Access errors clear the scoped
+workspace. Reads are single-flight, hidden reads cancel, and mutations pause
+polling and invalidate related queries. Usage keeps its one-minute cadence.
+`useConsolePrefetch` warms likely routes in the same scope without keeping hidden
+page components or polling mounted. Diagnostics readers and drafts use scoped
+model entries; unfinished reads cancel on navigation, while completed results
+and confirmed board history remain available.

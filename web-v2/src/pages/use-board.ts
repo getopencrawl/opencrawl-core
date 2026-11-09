@@ -1,9 +1,12 @@
-import {useEffect, useMemo, useSyncExternalStore} from 'react';
+import {useEffect, useSyncExternalStore} from 'react';
+import {accessFailure, consoleResourceKey, useConsoleAccessFailure, useConsoleModel} from '../data.tsx';
 import type {ConsoleDataAdapter} from './types.js';
 import {BoardReader} from './board-reader.js';
 
 export function useBoard(adapter: Pick<ConsoleDataAdapter, 'board'>, topic: string, topics: boolean, beforeCommit: () => void) {
-  const reader = useMemo(() => new BoardReader(adapter, topic, topics, beforeCommit), [adapter, topic, topics, beforeCommit]);
+  const deny=useConsoleAccessFailure();
+  const reader = useConsoleModel(consoleResourceKey(adapter, 'board:'+JSON.stringify([topic,topics])), () => new BoardReader({board:async(input,signal)=>{try{return await adapter.board(input,signal);}catch(error){if(accessFailure(error))deny?.(error);throw error;}}}, topic, topics));
+  reader.setBeforeCommit(beforeCommit);
   const state = useSyncExternalStore(reader.subscribe, reader.snapshot, reader.snapshot);
   useEffect(() => {
     const refresh = () => {if (document.visibilityState === 'visible') void reader.refresh();};

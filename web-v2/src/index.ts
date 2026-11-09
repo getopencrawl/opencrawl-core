@@ -14,3 +14,4 @@ export * from './pages/library-types.ts';
 export {SessionsPage, sessionPath} from './pages/sessions.tsx';
 export {MemoriesPage, memoryPath} from './pages/memories.tsx';
 export {ForumPanel, ForumPost} from './design/forum.tsx';
+export * from './data.tsx';

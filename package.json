@@ -44,7 +44,8 @@
     "./onboarding/state": "./dist/src/onboarding-state.mjs",
     "./web-v2": "./web-v2/src/index.ts",
     "./web-v2/styles.css": "./web-v2/src/styles.css",
-    "./web-v2/architecture": "./web-v2/tools/architecture.ts"
+    "./web-v2/architecture": "./web-v2/tools/architecture.ts",
+    "./web-v2/types": "./web-v2/src/types.ts"
   },
   "files": [
     "dist/src",
@@ -102,7 +103,8 @@
     "@temporalio/client": "1.25.0",
     "@temporalio/common": "1.25.0",
     "@temporalio/worker": "1.25.0",
-    "@temporalio/workflow": "1.25.0"
+    "@temporalio/workflow": "1.25.0",
+    "@tanstack/react-query": "5.107.1"
   },
   "peerDependenciesMeta": {
     "@temporalio/client": {
@@ -118,6 +120,9 @@
       "optional": true
     },
     "@temporalio/workflow": {
+      "optional": true
+    },
+    "@tanstack/react-query": {
       "optional": true
     }
   }
