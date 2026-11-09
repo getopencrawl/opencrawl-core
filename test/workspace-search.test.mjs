@@ -72,3 +72,19 @@ test('partial OpenSearch shard responses cannot masquerade as complete searches'
     assert.equal(result.partial,true);assert.equal(result.coverage[0].state,'unavailable');
   }
 });
+
+test('time bounds are validated, passed to every source and keep cursors bound to them', async () => {
+  const seen = [];
+  const service = createWorkspaceSearch({
+    sessions: {search: async (p, q) => {seen.push(['sessions', q.after, q.before]);return {total: 2, hits: [hit('s1'), hit('s2')]};}},
+    connectors: {search: async (p, q) => {seen.push(['connectors', q.after, q.before]);return {hits: [], truncated: false};}},
+  });
+  const input = {query: 'deadline', limit: 1, after: '2024-03-01T00:00:00Z', before: '2024-03-27T12:00:00.000005Z'};
+  const first = await service.search(principal, input);
+  assert.deepEqual(seen, [['sessions', input.after, input.before], ['connectors', input.after, input.before]]);
+  await assert.rejects(service.search(principal, {...input, before: '2024-04-01T00:00:00Z', cursor: first.next}), /cursor/);
+  for (const invalid of [{before: 'yesterday'}, {after: '2024-03-02T00:00:00Z', before: '2024-03-01T00:00:00Z'}])
+    await assert.rejects(service.search(principal, {query: 'x', ...invalid}), /Invalid search/);
+  seen.length = 0;await service.search(principal, {query: 'x'});
+  assert.deepEqual(seen, [['sessions', undefined, undefined], ['connectors', undefined, undefined]]);
+});
