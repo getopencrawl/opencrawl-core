@@ -138,7 +138,9 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
     type Records = {records: {hits: {hits: IndexHit[]}}};
     const buckets = result.aggregations?.titles?.buckets as unknown as Array<{key: string[]; metadata: Records; prompts: Records}>;
     if (!Array.isArray(buckets)) throw new Error('Invalid session title response');
-    const batches = new Map<string, ReturnType<typeof ingest.getBatch>>();
+    type Name = {kind: string; title: string | null; prompt: string | null};
+    // Retain only compact names, never an entire page's raw conversation batches.
+    const batches = new Map<string, Promise<Map<string, Name>>>();
     async function original(hit: IndexHit, key: SessionKey) {
       // top_hits inside aggregations retain the realm envelope.
       const envelope = hit._source, d = envelope?.session as IndexHit['_source'] | undefined;
@@ -149,23 +151,29 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
       if (!source || source.tenantHash !== digest(principal.tenantId) || source.userHash !== digest(key.userId) || source.harness !== key.harness ||
         source.installationHash !== digest(d.installationId) || source.sessionHash !== digest(key.sessionId)) throw new Error('Invalid session title source');
       let pending = batches.get(sourceKey!);
-      if (!pending) {pending = ingest.getBatch(principal, {...key, installationId: d.installationId, batchId: source.batchId}); batches.set(sourceKey!, pending);}
-      const batch = await pending, event = batch?.events.find(event => event.id === d.eventId);
-      if (!event || event.kind !== d.kind) return null;
-      return {event, batch: batch!};
+      if (!pending) {
+        pending = ingest.getBatch(principal, {...key, installationId: d.installationId, batchId: source.batchId}).then(batch => new Map(batch?.events.map(event => {
+          const prompt = (event.kind === 'user_message' || event.kind === 'message' && event.data?.role === 'user')
+            ? transcriptEntries(event).find(entry => entry.type === 'message' && entry.role === 'user') : undefined;
+          return [event.id, {kind: event.kind, title: capturedTitle(event, batch), prompt: prompt?.type === 'message' ? prompt.text.replace(/\s+/g, ' ').trim().slice(0, 240) : null}];
+        })));
+        if (batches.size >= 64) batches.delete(batches.keys().next().value!);
+        batches.set(sourceKey!, pending);
+      }
+      const record = (await pending).get(d.eventId);
+      return record?.kind === d.kind ? record : null;
     }
     for (let offset = 0; offset < buckets.length; offset += FETCH_CONCURRENCY) await Promise.all(buckets.slice(offset, offset + FETCH_CONCURRENCY).map(async bucket => {
       if (!Array.isArray(bucket.key) || bucket.key.length !== 3) throw new Error('Invalid session title response');
       const key = {userId: bucket.key[0]!, harness: bucket.key[1]!, sessionId: bucket.key[2]!}, encoded = keyOf(key);
       if (!allowed.has(encoded)) throw new Error('Invalid session title scope');
       for (const hit of bucket.metadata.records.hits.hits) {
-        const record = await original(hit, key), title = record && capturedTitle(record.event, record.batch);
+        const record = await original(hit, key), title = record?.title;
         if (title) {values.set(encoded, title); return;}
       }
       for (const hit of bucket.prompts.records.hits.hits) {
         const record = await original(hit, key);
-        const prompt = record && transcriptEntries(record.event).find(entry => entry.type === 'message' && entry.role === 'user');
-        if (prompt?.type === 'message') {values.set(encoded, prompt.text.replace(/\s+/g, ' ').trim().slice(0, 240)); return;}
+        if (record?.prompt) {values.set(encoded, record.prompt); return;}
       }
     }));
     return values;
