@@ -47,8 +47,12 @@ export interface PageHeaderProps {
 export function PageHeader({title, description, actions}: PageHeaderProps) {
   return <header className="oc-page-header"><div className="oc-page-introduction"><h1 tabIndex={-1} data-page-heading>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="actions">{actions}</div>}</header>;
 }
-/** Narrow task bodies keep the same header and left edge as wide workspace pages. */
-export type PageProps = Omit<SurfaceProps, 'title'> & Omit<PageHeaderProps, 'variant'> & {bodyWidth?: 'wide' | 'narrow'; bodyClassName?: string};
+/** Sidebar destinations share one frame; form and prose measures belong inside it. */
+export type PageProps = Omit<SurfaceProps, 'title'> & Omit<PageHeaderProps, 'variant'> & {
+  /** @deprecated Sidebar destinations always use the default full-width grid. */
+  bodyWidth?: 'wide' | 'narrow';
+  bodyClassName?: string;
+};
 export function Page({title, description, actions, bodyWidth = 'wide', bodyClassName = '', className = '', children, ...props}: PageProps) {
   return <div {...props} className={`oc-page ${className}`}><PageHeader title={title} description={description} actions={actions}/><div className={`oc-page-body oc-page-body-${bodyWidth} ${bodyClassName}`}>{children}</div></div>;
 }

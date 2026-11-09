@@ -21,9 +21,10 @@ DTOs and runtime adapters; WorkOS, billing and managed connector code stay outsi
   semantic lists remain available for content.
 - Every sidebar destination uses Page with one shared PageHeader. Keep the 32px
   desktop / 28px mobile title, 8px description gap and 32px header-to-body gap.
-  Use the default wide body for reports/libraries/diagnostics and bodyWidth="narrow"
-  for Integrations, Team, Billing and Settings. Narrow bodies share the frame's
-  left edge; never recenter a page or add local title, width or top-inset rules.
+  Every sidebar page uses the default full-width body, including Integrations,
+  Team, Billing and Settings. Bound individual form rows with oc-form-measure
+  and prose with its shared measure; never narrow or recenter the whole page,
+  or add local title, width or top-inset rules.
   Loading, empty and error states retain the same Page frame. Library details
   and focused onboarding keep their documented presentation.
 - web/tokens.css owns the approved Night palette and typography. The v2 token
