@@ -122,7 +122,8 @@ img { max-width: 100%; }
 .oc-field-error { color: var(--danger); }
 .oc-input, .oc-select, .oc-textarea { width: 100%; min-width: 0; min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
 .oc-input[aria-invalid="true"], .oc-select[aria-invalid="true"], .oc-textarea[aria-invalid="true"] { border-color: var(--danger); }
-.oc-input:disabled, .oc-select:disabled, .oc-textarea:disabled { background: var(--surface-subtle); color: var(--quiet); cursor: not-allowed; }
+.oc-input:disabled, .oc-select:disabled, .oc-textarea:disabled { background-color: var(--surface-subtle); color: var(--quiet); cursor: not-allowed; }
+.oc-select { appearance: none; padding-right: calc(var(--space-3) * 2 + 12px); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23b9b4c0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right var(--space-3) center; background-size: 12px; }
 .oc-input[type="checkbox"], .oc-input[type="radio"] { width: auto; min-height: auto; accent-color: var(--primary); }
 .oc-textarea { resize: vertical; line-height: var(--leading-prose); }
 .oc-copy-field { display: flex; align-items: end; gap: var(--space-2); }
