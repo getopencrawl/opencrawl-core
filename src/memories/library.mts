@@ -4,10 +4,11 @@ import type {StoredMemorySnapshot} from './types.mjs';
 import {createRealmResolver, realmField} from '../search/realm.mjs';
 import {sessionScope} from '../sessions/event-identity.mjs';
 import {createControls, visibleTo} from '../sessions/controls.mjs';
+import {memoryTitle} from './titles.mjs';
 
 export interface MemoryKey {userId: string; harness: string; path: string}
 export interface MemorySummary extends MemoryKey {
-  project: string; description: string; modifiedAt: string | null; private: boolean; mine: boolean; host: string | null; sourceSessionId: string | null;
+  title: string; project: string; description: string; modifiedAt: string | null; private: boolean; mine: boolean; host: string | null; sourceSessionId: string | null;
 }
 const HARNESSES = ['claude-code', 'codex'];
 const f = (field: string) => realmField('memory', field);
@@ -65,7 +66,7 @@ export function createMemoryLibrary({store, prefix, ...options}: RealmOptions & 
         if (d.tenantId !== principal.tenantId || !identity(d.userId) || !HARNESSES.includes(String(d.harness)) || !validPath(d.path)) throw new Error('Invalid memory list response');
         const key = JSON.stringify([d.userId, d.harness, d.path]);
         if (newest.has(key)) continue; // Same file captured from another machine; sorted newest first.
-        newest.set(key, {userId: d.userId!, harness: d.harness!, path: d.path, project: typeof d.project === 'string' ? d.project : '', description: memoryDescription(typeof d.text === 'string' ? d.text : ''),
+        newest.set(key, {userId: d.userId!, harness: d.harness!, path: d.path, title: memoryTitle(d.path, typeof d.text === 'string' ? d.text : ''), project: typeof d.project === 'string' ? d.project : '', description: memoryDescription(typeof d.text === 'string' ? d.text : ''),
           modifiedAt: typeof d.modifiedAt === 'string' ? d.modifiedAt : null, private: d.private === true, mine: d.userId === principal.userId,
           host: typeof d.host === 'string' ? d.host : null, sourceSessionId: typeof d.sourceSessionId === 'string' ? d.sourceSessionId : null});
       }
@@ -82,7 +83,7 @@ export function createMemoryLibrary({store, prefix, ...options}: RealmOptions & 
       const snapshotId = hits[0]!._source.snapshotId, chunks = hits.filter(hit => hit._source.snapshotId === snapshotId);
       if (chunks.some((hit, index) => hit._source.chunk !== index)) throw new Error('Memory read is incomplete');
       const first = chunks[0]!._source;
-      return {memory: {...key, project: typeof first.project === 'string' ? first.project : '', modifiedAt: typeof first.modifiedAt === 'string' ? first.modifiedAt : null,
+      return {memory: {...key, title: memoryTitle(key.path, typeof first.text === 'string' ? first.text : ''), project: typeof first.project === 'string' ? first.project : '', modifiedAt: typeof first.modifiedAt === 'string' ? first.modifiedAt : null,
         private: first.private === true, mine: key.userId === principal.userId, host: typeof first.host === 'string' ? first.host : null,
         sourceSessionId: typeof first.sourceSessionId === 'string' ? first.sourceSessionId : null}, text: chunks.map(hit => hit._source.text ?? '').join('')};
     },
