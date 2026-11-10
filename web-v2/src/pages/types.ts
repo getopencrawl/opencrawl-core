@@ -2,19 +2,20 @@ export interface NamedCount {name: string; count: number}
 /** Per-million-token list prices for one model, as of a stated date. */
 export interface ModelPrice {model: string; input: number; cacheRead: number; cacheWrite: number; output: number; asOf: string}
 /**
- * Measured value of OpenCrawl for one workspace (schema 2), produced from work captured
- * live since the workspace installed OpenCrawl, never estimated by the UI. `savings`
- * replays search as agents use it today over that work; `observed` counts effects seen
- * in captured transcripts over the same window.
+ * What OpenCrawl has done for one workspace (schema 3), measured from work captured live
+ * since it installed OpenCrawl and never estimated by the UI. Savings count only real uses:
+ * a search whose result the agent then used, or a fix or decision reused from the board.
+ * Each use is valued at what finding the same thing by digging costs in this workspace's
+ * own sessions (the median), minus what the search itself cost.
  */
 export interface ValueReport {
-  schema: 2;
+  schema: 3;
   measuredAt: string;
   /** From the first live capture to the last day measured. */
   window: {from: string; to: string; days: number};
   /** The model the workspace's agents use most, priced at its list price. */
   model: ModelPrice & {share: number};
-  savings: {sessions: number; tasks: number; tokenPercent: number; turns: number; turnsPerTask: number; turnPercent: number;
+  savings: {sessions: number; tasks: number; uses: number; digTokens: number; digTurns: number; tokenPercent: number; turns: number; turnPercent: number;
     tokens: {input: number; cacheRead: number; cacheWrite: number; output: number}};
   observed: {conflictsAvoided: number; duplicatesAvoided: number; knowledgeReused: number;
     searches: number; searchesUseful: number; searchesUsed: number};

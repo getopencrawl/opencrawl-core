@@ -69,10 +69,14 @@ function ValueReportSection({value}: {value: ValueReport}) {
   return (
     <Section className="report-section" title="Agent savings" description={`What OpenCrawl saved your team since ${value.window.from}, across ${plural(savings.sessions, 'session')} and ${plural(savings.tasks, 'task')}.`}>
       <MetricGrid items={[
-        {label: `Saved vs ${model.model}`, value: dollars(usd), note: `${savings.tokenPercent.toLocaleString('en-US')}% fewer tokens, ${compact(savedTokens(savings.tokens))} saved`, title: `${count(savedTokens(savings.tokens))} tokens at ${model.model} list prices as of ${model.asOf}`},
-        {label: 'Turns saved', value: compact(savings.turns), note: `${savings.turnPercent.toLocaleString('en-US')}% fewer turns, ${savings.turnsPerTask.toLocaleString('en-US')} per task`, title: count(savings.turns)},
-        {label: 'Conflicts avoided', value: count(observed.conflictsAvoided), note: observed.duplicatesAvoided ? `plus ${plural(observed.duplicatesAvoided, 'duplicate task')} skipped` : 'times agents waited on each other'},
-        {label: 'Searches used', value: count(observed.searchesUsed), note: observed.searches ? `of ${plural(observed.searches, 'search', 'searches')} by your agents` : 'your agents haven’t searched yet'},
+        {label: `Saved vs ${model.model}`, value: dollars(usd), note: `${savings.tokenPercent.toLocaleString('en-US')}% fewer tokens, ${compact(savedTokens(savings.tokens))} saved`, title: `${count(savedTokens(savings.tokens))} tokens at ${model.model} list prices as of ${model.asOf}`,
+          help: `Your agents used an OpenCrawl search result, or another agent’s fix from the board, ${plural(savings.uses, 'time')}. Without OpenCrawl each one is a dig that costs a median ${compact(savings.digTokens)} tokens in your own sessions; we subtract what the search itself cost and price the rest at ${model.model} list prices.`},
+        {label: 'Turns saved', value: compact(savings.turns), note: `${savings.turnPercent.toLocaleString('en-US')}% fewer turns, across ${plural(savings.uses, 'use')}`, title: count(savings.turns),
+          help: `Each of those ${plural(savings.uses, 'use')} replaced a dig that takes a median ${plural(savings.digTurns, 'turn')} in your own sessions. We subtract the two turns a search and reading its result take.`},
+        {label: 'Conflicts avoided', value: count(observed.conflictsAvoided), note: observed.duplicatesAvoided ? `plus ${plural(observed.duplicatesAvoided, 'duplicate task')} skipped` : 'times agents waited on each other',
+          help: 'Times a board message from one agent reached another agent, which then changed its plan, such as waiting on a release or dropping work already done. Counted only when the agent’s next actions show the change, and repeats within 30 minutes count once.'},
+        {label: 'Searches used', value: count(observed.searchesUsed), note: observed.searches ? `of ${plural(observed.searches, 'search', 'searches')} by your agents` : 'your agents haven’t searched yet',
+          help: `${plural(observed.searches, 'search', 'searches')} is every OpenCrawl search your agents ran for real work, not counting tests of OpenCrawl. ${count(observed.searchesUsed)} is how many times the agent’s next message used what came back.`},
       ]}/>
     </Section>
   );
