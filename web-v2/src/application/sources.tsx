@@ -114,6 +114,7 @@ export function SourcesPage({adapter}: {adapter: SourcesAdapter}) {
 
 export function SourceRow({source, pending, active, connect, retry, disconnect}: {source: SourceCard; pending: boolean; active: boolean; connect: () => void; retry: () => void; disconnect: () => void}) {
   const [helpOpen, setHelpOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
   const status = sourceStatus(source);
   const restartSignIn = source.recoveryAction === 'connect';
   const progress = source.initial !== false && source.total ? Math.min(source.synced ?? 0, source.total) : undefined;
@@ -140,6 +141,8 @@ export function SourceRow({source, pending, active, connect, retry, disconnect}:
       </li>;
     })}</ul>}
     {hasAction && <div className="oc-connection-actions">{(['disconnected', 'connecting'].includes(source.state) || restartSignIn) && <Button variant={source.state === 'disconnected' || restartSignIn ? 'primary' : 'secondary'} disabled={pending} onClick={connect}>{active ? 'Connecting…' : source.state === 'connecting' || restartSignIn ? 'Restart sign-in' : `Connect ${source.name}`}</Button>}{source.state === 'error' && !source.reconnect && !restartSignIn && <Button disabled={pending} onClick={retry}>{active ? 'Retrying…' : source.recoveryAction === 'disconnect' ? 'Retry removal' : 'Retry sync'}</Button>}</div>}
+    {source.state==='setup-required'&&source.setup&&<div className="oc-connection-actions"><Button onClick={()=>setSetupOpen(true)}>Set up {source.name}</Button></div>}
+    {source.setup&&<Dialog open={setupOpen} onClose={()=>setSetupOpen(false)} title={source.setup.title}><p>{source.setup.body}</p></Dialog>}
     {source.help && <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} title={`About ${source.name}`}><p>{source.help}</p></Dialog>}
   </article>;
 }

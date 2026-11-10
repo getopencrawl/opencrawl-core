@@ -25,8 +25,7 @@ cd opencrawl-core
 ```
 
 From an existing checkout of this branch, just run `./dev/up`. The script installs
-its tools, starts all dependencies, creates a local account, and verifies sample
-data through Airbyte, storage, indexing, and search. No service credentials,
+its tools, starts all dependencies, and creates a local account. No service credentials,
 OAuth application, Node installation, or `.env` editing is required. Sudo may
 ask for your system password. The first run downloads and builds images and can
 take tens of minutes.
@@ -34,12 +33,18 @@ take tens of minutes.
 1. Open **http://localhost:8092**.
 2. Sign in with the email and password printed when startup finishes. They are
    also saved in `.opencrawl-dev/login.txt`.
-3. Open **Diagnostics → Search inspector** and search for **`lunar otter`** to
-   retrieve the synthetic sample records.
+3. Follow onboarding to connect your coding agent, choose integrations, and
+   invite teammates. Integrations that need operator credentials show setup
+   instructions instead of disappearing.
+
+To try sample data instead, run `./dev/up demo`. This explicitly completes
+onboarding and imports synthetic records; search for **`lunar otter`** in
+**Diagnostics → Search inspector** afterward.
 
 Airbyte is available at **http://localhost:8000**. Ports bind to loopback; for a
 remote machine, use an SSH/SSM tunnel. This setup is for development. Connecting
 real sources still requires your own connector credentials or OAuth application.
+See the [integration setup guide](docs/self-host.md#connect-sources).
 
 ```sh
 ./dev/up status       # Show service status

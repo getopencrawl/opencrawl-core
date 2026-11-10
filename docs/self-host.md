@@ -67,6 +67,22 @@ connection options.
 
 ## Connect sources
 
+The UI shows Google Drive, Slack, Notion, Circleback, Granola, and GitHub. A
+connection without operator credentials shows **Setup required** with guidance;
+it cannot start authorization until configured.
+
+Google Drive, Notion, Circleback, and optionally Slack use your own Composio
+project. Set `COMPOSIO_API_KEY` in the server environment and restart the app.
+Composio is optional: Granola, GitHub, and the direct Slack adapter work without
+it. The broker stores and refreshes provider grants, and its project key is
+provided to your Airbyte source jobs. Use a project dedicated to this instance.
+No OpenCrawl-managed project or credentials are required.
+
+For the development installer, put these settings in
+`.opencrawl-dev/connectors.env` and rerun `./dev/up`. For operator-managed Compose,
+use `deploy/.env`. OAuth providers may require a reachable HTTPS callback URL;
+configure your origin and reverse proxy before connecting real accounts.
+
 Slack uses your own Slack app. Configure user scopes `channels:read`,
 `channels:history`, `search:read`, `users:read`, `team:read`, and `emoji:read`; set
 its redirect to `https://YOUR-APP/oauth/connectors/slack/callback`. Put its client
@@ -96,9 +112,8 @@ that user. Adding repositories to the GitHub App does not silently add them to
 the import; reconnect to confirm a changed selection. Rebuild and update the
 registered Airbyte source image when upgrading this connector's source.
 
-Other shared
-provider definitions are available to runtime adapters; this standalone
-composition currently offers Slack, Granola, and GitHub.
+When both a direct Slack app and Composio are configured, new Slack connections
+use the direct app. Existing grants continue through their original adapter.
 
 Sign in, follow onboarding to connect the CLI/MCP client and capture a real
 session, then connect a source. Setup completion uses recorded receipts and

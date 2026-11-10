@@ -14,11 +14,13 @@ export function sourceStatus(source: SourceCard): {label: string; tone: 'neutral
     case 'connecting': return {label: 'Awaiting sign-in', tone: 'warning'};
     case 'error': return {label: 'Needs attention', tone: 'danger'};
     case 'unavailable': return {label: 'Unavailable', tone: 'neutral'};
+    case 'setup-required': return {label: 'Setup required', tone: 'neutral'};
     case 'disconnected': return {label: 'Not connected', tone: 'neutral'};
   }
 }
 
 export function sourceProgress(source: SourceCard): string {
+  if(source.state==='setup-required')return 'Your instance administrator needs to configure this connection.';
   const count = Math.max(0, source.synced ?? 0);
   const units = source.units ?? ['item', 'items'];
   const countText = `${count.toLocaleString()} ${count === 1 ? units[0] : units[1]}`;

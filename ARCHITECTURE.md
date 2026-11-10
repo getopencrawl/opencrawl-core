@@ -21,6 +21,9 @@ team operations, capture, board, sessions, memories, connector lifecycle,
 Airbyte clients, indexing, search, resource permissions and data lifecycle.
 Self-hosters operate local Better Auth accounts and supply Airbyte,
 OpenSearch, connector credentials and documented supporting storage/jobs.
+The optional Composio adapter uses an operator-owned project for connector OAuth;
+it is not an OpenCrawl account or control-plane dependency. Missing connector
+configuration remains visible in the product catalog with setup guidance.
 
 The proprietary shell owns hosted tenant selection and provisioning, billing
 and commercial policy, fleet scheduling, internal support and administration,

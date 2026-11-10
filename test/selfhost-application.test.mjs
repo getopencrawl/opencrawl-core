@@ -52,6 +52,7 @@ test('OSS first run creates one admin from the setup link; nobody else can sign 
   await f.admin();
   const boot=await (await f.request('/api/console/bootstrap','admin')).json();
   assert.equal(boot.workspace.name,'Self-hosted team');
+  assert.deepEqual(boot.onboarding,{completed:false,next:'/onboarding'});
   // Setup is single-use and Better Auth's own sign-up endpoint is not reachable.
   assert.equal((await f.post('/auth/signup','mallory',{setup,workspace:'x',name:'M',email:'m@example.com',password:'long enough password'})).status,403);
   assert.equal((await f.request('/api/auth/sign-up/email',null,{method:'POST',headers:{'content-type':'application/json',origin:f.origin},body:JSON.stringify({email:'m@example.com',password:'long enough password',name:'M'})})).status,404);

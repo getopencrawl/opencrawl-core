@@ -4,6 +4,7 @@ import {createServer} from 'node:net';
 import {chmodSync,existsSync,lstatSync,mkdirSync,readFileSync,realpathSync,renameSync,rmSync,statfsSync,writeFileSync} from 'node:fs';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {parseEnv} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
 
 type Pin={url:string;sha256:string;member?:string;version?:string};
@@ -13,13 +14,13 @@ interface State {
   organization:string;email:string;password:string;authSecret:string;setupToken:string;connectorKey:string;
   s3Key:string;s3Secret:string;temporalPassword:string;airbytePassword:string;airbyteClientId:string;
   airbyteClientSecret:string;airbyteDbPassword:string;airbyteStorageSecret:string;
-  workspaceId?:string;airbyteInstalled?:boolean;airbyteConfigHash?:string;verifiedAt?:string;
+  workspaceId?:string;airbyteInstalled?:boolean;airbyteConfigHash?:string;verifiedAt?:string;startedAt?:string;
 }
 const root=realpathSync(resolve(dirname(fileURLToPath(import.meta.url)),'..'));
 const stateDir=join(root,'.opencrawl-dev'),stateFile=join(stateDir,'state.json'),bin=join(stateDir,'bin');
 const pins=JSON.parse(readFileSync(join(root,'dev/pins.json'),'utf8')) as Pins;
 const action=process.argv[2]||'up';
-if(!['up','status','stop','reset'].includes(action)||process.argv.slice(3).some(x=>x!=='--yes'))throw new Error('Use ./dev/up [up|status|stop|reset --yes]');
+if(!['up','demo','status','stop','reset'].includes(action)||process.argv.slice(3).some(x=>x!=='--yes'))throw new Error('Use ./dev/up [up|demo|status|stop|reset --yes]');
 process.umask(0o077);
 mkdirSync(stateDir,{recursive:true,mode:0o700});
 if(lstatSync(stateDir).isSymbolicLink())throw new Error('Refusing symlinked state');
@@ -55,7 +56,7 @@ if(existsSync(stateFile)){
   if(state.format!==1||state.root!==root||!/^ocdev-[a-f0-9]{12}$/.test(state.project)||!/^org_[a-f0-9]{24}$/.test(state.organization))throw new Error('Development state belongs to another clone or has an unsupported format');
   if(state.port!==port(String(state.port),8092)||state.airbytePort!==port(String(state.airbytePort),8000))throw new Error('Invalid saved ports');
 }else{
-  if(action!=='up')throw new Error('No development installation exists in this clone');
+  if(!['up','demo'].includes(action))throw new Error('No development installation exists in this clone');
   const p=port(process.env.OPENCRAWL_DEV_PORT,8092),ap=port(process.env.OPENCRAWL_DEV_AIRBYTE_PORT,8000);
   if(p===ap)throw new Error('Application and Airbyte ports must differ');
   const origin=process.env.OPENCRAWL_DEV_ORIGIN||`http://localhost:${p}`,u=new URL(origin);
@@ -78,7 +79,7 @@ function ownedNode(){
 }
 function composeExists(){return existsSync(envFile)&&existsSync(override);}
 function summary(){
-  console.log(`\nOpenCrawl development workspace: ${state.origin}\nAirbyte: http://localhost:${state.airbytePort}\nPrivate login details: ${join(stateDir,'login.txt')}\nLast successful ingestion check: ${state.verifiedAt||'not yet verified'}\nStop without deleting data: ./dev/up stop\nDelete this development installation: ./dev/up reset --yes`);
+  console.log(`\nOpenCrawl development workspace: ${state.origin}\nAirbyte: http://localhost:${state.airbytePort}\nPrivate login details: ${join(stateDir,'login.txt')}\nLast startup check: ${state.startedAt||state.verifiedAt||'not yet started'}\nOptional demo ingestion check: ${state.verifiedAt||'not run (./dev/up demo)'}\nStop without deleting data: ./dev/up stop\nDelete this development installation: ./dev/up reset --yes`);
 }
 if(action==='status'){
   if(composeExists())compose(['ps']);
@@ -89,6 +90,13 @@ if(action==='status'){
   if(!process.argv.includes('--yes'))throw new Error('reset --yes permanently deletes this clone’s development accounts, imported data and Airbyte cluster');
   if(ownedNode())run(join(bin,'kind'),['delete','cluster','--name',state.project,'--kubeconfig',kubeconfig]);
   if(composeExists())compose(['down','--volumes']);
+  // Airbyte's database owns files as container UIDs. Delete only this clone's
+  // bind-mounted data using a short-lived container, before removing ownership state.
+  const dataDir=join(stateDir,'airbyte-data');
+  if(existsSync(dataDir)){
+    if(lstatSync(dataDir).isSymbolicLink())throw new Error('Refusing symlinked Airbyte data');
+    run('docker',['run','--rm','--network','none','--user','0:0','--entrypoint','node','--mount',`type=bind,source=${dataDir},target=/owned-data`,'node:24.22.2-bookworm-slim','-e',"const fs=require('node:fs');for(const entry of fs.readdirSync('/owned-data'))fs.rmSync('/owned-data/'+entry,{recursive:true,force:true});"]);
+  }
   cleanup();rmSync(stateDir,{recursive:true});console.log('Deleted only this clone’s development installation.');
 }else{
   await up();
@@ -122,11 +130,16 @@ function ip(service:string){
   if(!address||!/^\d+\.\d+\.\d+\.\d+$/.test(address))throw new Error(`Missing ${service} address`);return address;
 }
 function writeCompose(airbyteAddress='127.0.0.1',s3Address='s3',workspaceId=state.workspaceId||'00000000-0000-0000-0000-000000000000'){
+  const connectorFile=join(stateDir,'connectors.env');
+  if(!existsSync(connectorFile))privateFile(connectorFile,'# Optional credentials for real integrations. Restart with ./dev/up after editing.\n# COMPOSIO_API_KEY=\n# SLACK_CLIENT_ID=\n# SLACK_CLIENT_SECRET=\n# GITHUB_APP=\n');
+  if(lstatSync(connectorFile).isSymbolicLink())throw new Error('Refusing symlinked connector configuration');
+  const supplied=parseEnv(readFileSync(connectorFile,'utf8'));
+  const connectorEnv=Object.fromEntries(['COMPOSIO_API_KEY','SLACK_CLIENT_ID','SLACK_CLIENT_SECRET','GITHUB_APP','AIRBYTE_GITHUB_REPOSITORY','AIRBYTE_GITHUB_TAG','OPENCRAWL_AIRBYTE_APP_URL'].filter(key=>supplied[key]).map(key=>[key,supplied[key]!]));
   const env={COMPOSE_PROJECT_NAME:state.project,OPENCRAWL_IMAGE_TAG:state.project,OPENCRAWL_URL:state.origin,OPENCRAWL_ORGANIZATION_ID:state.organization,
     OPENCRAWL_AUTH_SECRET:state.authSecret,OPENCRAWL_SETUP_TOKEN:state.setupToken,OPENCRAWL_CONNECTOR_KEY:state.connectorKey,
     OPENCRAWL_S3_ACCESS_KEY_ID:state.s3Key,OPENCRAWL_S3_SECRET_ACCESS_KEY:state.s3Secret,OPENCRAWL_TEMPORAL_PASSWORD:state.temporalPassword,
     OPENCRAWL_AIRBYTE_S3_ENDPOINT:`http://${s3Address}:8333`,OPENCRAWL_APP_PORT:String(state.port),OPENCRAWL_APP_BIND:'127.0.0.1',OPENCRAWL_S3_BIND:'127.0.0.1',OPENCRAWL_S3_PORT:'0',
-    AIRBYTE_URL:`http://${airbyteAddress}:30080`,AIRBYTE_CLIENT_ID:state.airbyteClientId,AIRBYTE_CLIENT_SECRET:state.airbyteClientSecret,AIRBYTE_WORKSPACE_ID:workspaceId};
+    AIRBYTE_URL:`http://${airbyteAddress}:30080`,AIRBYTE_CLIENT_ID:state.airbyteClientId,AIRBYTE_CLIENT_SECRET:state.airbyteClientSecret,AIRBYTE_WORKSPACE_ID:workspaceId,...connectorEnv};
   privateFile(envFile,Object.entries(env).map(([k,v])=>`${k}=${JSON.stringify(v)}`).join('\n')+'\n');
   // Only additive dev composition. The normal images, env contract, data volumes,
   // workers and production behavior come from deploy/compose.yaml unchanged.
@@ -138,7 +151,7 @@ function writeCompose(airbyteAddress='127.0.0.1',s3Address='s3',workspaceId=stat
 async function up(){
   const docker=JSON.parse(run('docker',['info','--format','{{json .}}'],{capture:true})) as {MemTotal:number;NCPU:number};
   if(docker.MemTotal<12*1024**3||docker.NCPU<4)throw new Error('Allocate at least 4 CPUs and 16 GiB RAM to Docker for the full dev stack');
-  const disk=statfsSync(root);if(!state.verifiedAt&&disk.bavail*disk.bsize<40*1024**3)throw new Error('At least 40 GiB free disk is required for the initial images and build');
+  const disk=statfsSync(root);if(!state.startedAt&&!state.verifiedAt&&disk.bavail*disk.bsize<40*1024**3)throw new Error('At least 40 GiB free disk is required for the initial images and build');
   await download('kind',pins.kind);await download('kubectl',pins.kubectl);await download('helm',pins.helm);
   const chart=await download('airbyte.tgz',pins.airbyte);
   const existing=ownedNode();
@@ -204,10 +217,13 @@ async function up(){
   const credentials={format:1,project:state.project,origin:state.origin,connectOrigin:'http://app:8092',organization:state.organization,email:state.email,password:state.password,setupToken:state.setupToken,fixtureUrl:`http://${ip('fixture')}:8080`};
   const seedDir=join(stateDir,'seed');mkdirSync(seedDir,{recursive:true,mode:0o700});
   privateFile(join(seedDir,'seed-input.json'),credentials);
-  console.log('Verifying first login and real Airbyte → S3 → Temporal → OpenSearch ingestion...');
-  compose(['run','--rm','--no-deps','--user','root','--volume',`${join(root,'dev')}:/opencrawl/dev:ro`,'--volume',`${seedDir}:/dev-state`,'app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
-  privateFile(join(stateDir,'verification.json'),JSON.parse(readFileSync(join(seedDir,'verification.json'),'utf8')));
-  state.verifiedAt=new Date().toISOString();save();
+  console.log(action==='demo'?'Loading demo data and verifying real Airbyte → S3 → Temporal → OpenSearch ingestion...':'Creating the local account and preserving first-run onboarding...');
+  compose(['run','--rm','--no-deps','--user','root','--volume',`${join(root,'dev')}:/opencrawl/dev:ro`,'--volume',`${seedDir}:/dev-state`,'app','node','--disable-warning=ExperimentalWarning',action==='demo'?'dev/seed.mts':'dev/bootstrap.mts']);
+  if(action==='demo'){
+    privateFile(join(stateDir,'verification.json'),JSON.parse(readFileSync(join(seedDir,'verification.json'),'utf8')));
+    state.verifiedAt=new Date().toISOString();
+  }
+  state.startedAt=new Date().toISOString();save();
   privateFile(join(stateDir,'login.txt'),`Development only\nURL: ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\nAirbyte URL: http://localhost:${state.airbytePort}\nAirbyte password: ${state.airbytePassword}\n`);
   summary();
   console.log(`\nSign in to ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\n\nThese local development credentials are also saved in .opencrawl-dev/login.txt.`);

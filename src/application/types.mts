@@ -7,7 +7,8 @@ export interface SourceCard {
   description?: string;
   units?: [string, string];
   account?: string | null;
-  state: 'disconnected' | 'connecting' | 'syncing' | 'synced' | 'connected' | 'error' | 'unavailable';
+  state: 'disconnected' | 'connecting' | 'syncing' | 'synced' | 'connected' | 'error' | 'unavailable' | 'setup-required';
+  setup?: {title:string;body:string};
   scope?: 'team' | 'user';
   auth: 'oauth' | 'api-key';
   help?: string;

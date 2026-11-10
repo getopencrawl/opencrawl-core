@@ -87,7 +87,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/sources',label:'Integrations',icon:'sources',element:<SourcesPage adapter={api}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
     {path:'/diagnostics',label:'Diagnostics',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title="Diagnostics" description="See what your agents can retrieve and how they coordinate work.">{feedback}</PendingPage>},
-    {path:'/settings',label:'Agent setup',navigation:false,element:<Navigate to="/onboarding" replace/>},
+    {path:'/settings',label:'Agent setup',icon:'settings',element:<Navigate to="/onboarding" replace/>},
     {path:'/team',label:'Team',icon:'team',group:'manage',element:<TeamPage adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={name => setData(current => current ? {...current, workspace: {...current.workspace, name}} : current)}/>,pending:feedback => <TeamLoadingPage>{feedback}</TeamLoadingPage>},
     ...(extensions?.routes?.({data, activated}) ?? []),
     {path:'/integrations',label:'Integrations',navigation:false,element:<Navigate to="/sources" replace/>},

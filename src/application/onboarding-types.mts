@@ -17,6 +17,7 @@ export interface OnboardingSource {
   name: string;
   icon?: string;
   state: string;
+  setup?: {title:string;body:string};
   auth?: string;
   keyHelp?: {title?: string; body?: string; label?: string; placeholder?: string};
 }

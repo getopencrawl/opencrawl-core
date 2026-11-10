@@ -5,6 +5,10 @@ Run `./dev/up` from a clean clone of `codex/core-shell-seam`. See
 ports and lifecycle commands. This acceptance covers the development distribution;
 it does not replace the production self-host checklist.
 
+Normal `./dev/up` now preserves first-run onboarding. `./dev/up demo` explicitly
+runs the synthetic ingestion and onboarding exercise described below. Historical
+receipts below were collected when that demo ran automatically at startup.
+
 ## Verified behavior
 
 - A clean Ubuntu 24.04 x86_64 EC2 machine, 4 CPUs and 16 GiB RAM, starts without

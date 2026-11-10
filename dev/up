@@ -4,12 +4,13 @@ umask 077
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
   cat <<'HELP'
-Usage: ./dev/up [up|status|stop|reset --yes]
+Usage: ./dev/up [up|demo|status|stop|reset --yes]
 
 Development only. Ubuntu 24.04 x86_64, 4 CPUs, 16 GiB RAM, 40 GiB free disk.
 The first run installs Docker if absent (using sudo), downloads pinned tools,
 starts a private Airbyte kind cluster and the normal OpenCrawl Compose stack,
-generates a local login, and verifies a sample ingestion end to end.
+generates a local login, and leaves first-run onboarding ready for you.
+Use ./dev/up demo to load synthetic data and automatically complete onboarding.
 No service credentials or .env editing. Internet is needed to download images.
 
 OPENCRAWL_DEV_PORT=8092 and OPENCRAWL_DEV_AIRBYTE_PORT=8000 select loopback ports

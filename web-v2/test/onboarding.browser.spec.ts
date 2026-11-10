@@ -7,6 +7,21 @@ const connected = [{id: 'slack', name: 'Slack', icon: '/assets/connectors/slack.
 
 test.beforeEach(async ({request}) => {await request.post('/__test/reset', {data: {}});});
 
+test('unconfigured OSS connectors remain visible and explain setup without starting OAuth',async({page,request})=>{
+  await request.post('/__test/state',{data:{status:complete,sources:[
+    {id:'googledrive',name:'Google Drive',state:'setup-required',setup:{title:'Set up Google Drive',body:'Ask your administrator to configure COMPOSIO_API_KEY.'}},
+    {id:'granola',name:'Granola',state:'disconnected',auth:'api-key'},
+  ]}});
+  let connections=0;page.on('request',r=>{if(r.url().includes('/api/integrations/'))connections++;});
+  await page.goto('/onboarding/sources');
+  await page.getByRole('button',{name:'Set up Google Drive',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Set up Google Drive'})).toBeVisible();
+  await expect(page.getByText('Ask your administrator to configure COMPOSIO_API_KEY.')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button',{name:'Connect Granola',exact:true})).toBeVisible();
+  expect(connections).toBe(0);
+});
+
 async function refresh(page: Page) {await page.evaluate(() => window.dispatchEvent(new Event('online')));}
 
 test('GitHub account choice preserves keyboard access, narrow layout and the selected OAuth state',async({page})=>{

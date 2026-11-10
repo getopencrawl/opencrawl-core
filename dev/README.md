@@ -17,27 +17,43 @@ Provide 4 CPUs, 16 GiB RAM and at least 40 GiB free disk. The first run download
 images and builds the shared React console and backend, so it requires internet
 access and can take tens of minutes. Subsequent runs reuse tools, images and data.
 
-After verification succeeds, the command prints the application URL, email, and
+After startup succeeds, the command prints the application URL, email, and
 password directly in the terminal. It also saves them in a private login file.
 By default the application is at `http://localhost:8092` and Airbyte is at
 `http://localhost:8000`. A generated local Better Auth account is ready to use.
-The installer exercises a real device grant, refresh, MCP call and synthetic
-capture so the development account has completed normal onboarding.
+Your first sign-in opens the normal onboarding flow. Startup does not connect an
+agent, invent capture receipts, complete onboarding, or import demo records.
 To find the credentials later, read `.opencrawl-dev/login.txt` (use
 `sudo cat .opencrawl-dev/login.txt` if sudo created the installation).
 
-It creates two **synthetic meeting records**, explicitly labeled as development
+## Optional demo data
+
+Run `./dev/up demo` to complete onboarding automatically and load sample data.
+This optional command exercises a real device grant, refresh, MCP call and
+synthetic capture, then creates two **synthetic meeting records**, explicitly labeled as development
 samples. A private fixture HTTP service is read by an Airbyte declarative source.
 Airbyte's real S3 destination writes gzip JSONL to SeaweedFS; the normal OpenCrawl
-Temporal worker indexes it into OpenSearch. Startup succeeds only when
+Temporal worker indexes it into OpenSearch. The demo succeeds only when
 authenticated MCP and browser search retrieve `lunar otter`. The sample uses the
 existing meeting schema and appears under Granola with a synthetic-account label;
 no Granola service or personal data is accessed. A synthetic agent session is
 also clearly labeled.
 
 Real external sources still require their owner's connector credentials or OAuth
-application. The zero-input preview uses only local synthetic data; it does not
+application. The demo uses only local synthetic data; it does not
 connect to your Google, GitHub, Slack or other accounts automatically.
+
+All six integration cards remain visible. Connections that need operator setup
+explain what is missing. Add optional connector settings to the private
+`.opencrawl-dev/connectors.env` file, then rerun `./dev/up`. The accepted settings
+are `COMPOSIO_API_KEY`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `GITHUB_APP`,
+`AIRBYTE_GITHUB_REPOSITORY`, `AIRBYTE_GITHUB_TAG`, and `OPENCRAWL_AIRBYTE_APP_URL`.
+See [source setup](../docs/self-host.md#connect-sources) for credential ownership
+and callback requirements. No provider credential is required to start the app.
+
+An existing installation keeps its accounts, data, and onboarding state. The
+installer never resets a completed user's setup. Use **Agent setup** in the
+sidebar to revisit onboarding.
 
 ## Development boundaries
 
@@ -70,6 +86,7 @@ this compatibility step to an external Airbyte installation.
 
 ```sh
 ./dev/up              # Resume and verify the same installation
+./dev/up demo         # Explicitly finish onboarding and import synthetic data
 ./dev/up status       # Show owned services and last verification time
 ./dev/up stop         # Stop owned services; retain accounts, grants and data
 ./dev/up reset --yes  # Permanently delete only this clone's development stack
