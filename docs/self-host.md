@@ -1,5 +1,10 @@
 # Self-host OpenCrawl
 
+For a disposable development preview with all services installed automatically,
+use [`./dev/up`](../dev/README.md). It generates local credentials and verifies a
+sample import. The configuration below remains the independent operator-managed
+deployment path.
+
 The default Docker Compose deployment runs the full application for one local
 organization with multiple users. Better Auth stores accounts, password hashes,
 sessions and OAuth grants in your installation’s SQLite database. You operate
