@@ -74,9 +74,13 @@ it cannot start authorization until configured.
 Google Drive, Notion, Circleback, and optionally Slack use your own Composio
 project. Set `COMPOSIO_API_KEY` in the server environment and restart the app.
 Composio is optional: Granola, GitHub, and the direct Slack adapter work without
-it. The broker stores and refreshes provider grants, and its project key is
-provided to your Airbyte source jobs. Use a project dedicated to this instance.
-No OpenCrawl-managed project or credentials are required.
+it. The broker stores and refreshes provider grants. Its project key stays in
+the app: each Airbyte source job receives a separate revocable capability for its
+own connection and reads through the app's credential proxy, limited to the
+endpoints its connector uses. Those jobs must therefore reach the app at
+`OPENCRAWL_AIRBYTE_APP_URL`. Use a project dedicated to this instance. No
+OpenCrawl-managed project or credentials are required. `COMPOSIO_BASE_URL` selects
+a Composio deployment other than its public cloud.
 
 For the development installer, put these settings in
 `.opencrawl-dev/connectors.env` and rerun `./dev/up`. For operator-managed Compose,

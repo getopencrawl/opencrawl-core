@@ -1,5 +1,5 @@
 import type {createSlackOAuth} from '../integrations/slack-oauth.mjs';
-import {connectorProxyHandler} from '../integrations/proxy-http.mjs';
+import {connectorProxyHandler,type SourceCredentialProxy} from '../integrations/proxy-http.mjs';
 import type {IncomingMessage,ServerResponse} from 'node:http';
 import type {Principal} from '../identity/types.mjs';
 import type {SelfhostSettings} from './settings.mjs';
@@ -48,15 +48,15 @@ type Store=ReturnType<typeof createObjectStore>;
 export interface SelfhostApplicationOptions {
   settings:SelfhostSettings;store:Store;prefix:string;identity:LocalIdentity;
   integrations?:Integrations;providers?:ProviderCatalog;connectors?:ReturnType<typeof createConnectorResolver>;
-  oauth?:ReturnType<typeof createSlackOAuth>;
+  oauth?:ReturnType<typeof createSlackOAuth>;sourceCredentials?:SourceCredentialProxy;
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,prefix,identity,integrations,providers={},connectors,oauth,
+export function selfhostApplication({settings,store,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
 }:SelfhostApplicationOptions) {
   const directory=identity.directory;
-  const credentialProxy=oauth?connectorProxyHandler(oauth):null;
+  const credentialProxy=sourceCredentials?connectorProxyHandler(sourceCredentials):null;
   const admit=singleOrganizationIdentity(directory,settings.organizationId),resolve=singleOrganizationPrincipal(directory,settings.organizationId);
   const accounts=localAuth({identity,url:settings.url,organizationId:settings.organizationId,setupToken:settings.setupToken,member:async browser=>(await admit(browser)).status===200});
   const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(store,prefix));

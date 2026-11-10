@@ -46,7 +46,7 @@ connect to your Google, GitHub, Slack or other accounts automatically.
 All six integration cards remain visible. Connections that need operator setup
 explain what is missing. Add optional connector settings to the private
 `.opencrawl-dev/connectors.env` file, then rerun `./dev/up`. The accepted settings
-are `COMPOSIO_API_KEY`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `GITHUB_APP`,
+are `COMPOSIO_API_KEY`, `COMPOSIO_BASE_URL`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `GITHUB_APP`,
 `AIRBYTE_GITHUB_REPOSITORY`, `AIRBYTE_GITHUB_TAG`, and `OPENCRAWL_AIRBYTE_APP_URL`.
 See [source setup](../docs/self-host.md#connect-sources) for credential ownership
 and callback requirements. No provider credential is required to start the app.

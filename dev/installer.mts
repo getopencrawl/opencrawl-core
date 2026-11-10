@@ -134,7 +134,7 @@ function writeCompose(airbyteAddress='127.0.0.1',s3Address='s3',workspaceId=stat
   if(!existsSync(connectorFile))privateFile(connectorFile,'# Optional credentials for real integrations. Restart with ./dev/up after editing.\n# COMPOSIO_API_KEY=\n# SLACK_CLIENT_ID=\n# SLACK_CLIENT_SECRET=\n# GITHUB_APP=\n');
   if(lstatSync(connectorFile).isSymbolicLink())throw new Error('Refusing symlinked connector configuration');
   const supplied=parseEnv(readFileSync(connectorFile,'utf8'));
-  const connectorEnv=Object.fromEntries(['COMPOSIO_API_KEY','SLACK_CLIENT_ID','SLACK_CLIENT_SECRET','GITHUB_APP','AIRBYTE_GITHUB_REPOSITORY','AIRBYTE_GITHUB_TAG','OPENCRAWL_AIRBYTE_APP_URL'].filter(key=>supplied[key]).map(key=>[key,supplied[key]!]));
+  const connectorEnv=Object.fromEntries(['COMPOSIO_API_KEY','COMPOSIO_BASE_URL','SLACK_CLIENT_ID','SLACK_CLIENT_SECRET','GITHUB_APP','AIRBYTE_GITHUB_REPOSITORY','AIRBYTE_GITHUB_TAG','OPENCRAWL_AIRBYTE_APP_URL'].filter(key=>supplied[key]).map(key=>[key,supplied[key]!]));
   const env={COMPOSE_PROJECT_NAME:state.project,OPENCRAWL_IMAGE_TAG:state.project,OPENCRAWL_URL:state.origin,OPENCRAWL_ORGANIZATION_ID:state.organization,
     OPENCRAWL_AUTH_SECRET:state.authSecret,OPENCRAWL_SETUP_TOKEN:state.setupToken,OPENCRAWL_CONNECTOR_KEY:state.connectorKey,
     OPENCRAWL_S3_ACCESS_KEY_ID:state.s3Key,OPENCRAWL_S3_SECRET_ACCESS_KEY:state.s3Secret,OPENCRAWL_TEMPORAL_PASSWORD:state.temporalPassword,

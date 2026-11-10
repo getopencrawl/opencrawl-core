@@ -3,6 +3,7 @@ import type {ConnectorOAuth,IntegrationRegistry} from './ports.mjs';
 import type {ProxyRequest,ProxyResponse,ProviderData} from './types.mjs';
 import type {Principal} from '../identity/types.mjs';
 import type {credentialVault,ConnectorGrant} from './credential-vault.mjs';
+import {slackPublicRead} from './slack-proxy-policy.mjs';
 const SCOPES=['channels:read','channels:history','search:read','users:read','team:read','emoji:read'];
 const equal=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
 const fail=(status:number,message='Connector authorization unavailable'):never=>{throw Object.assign(new Error(message),{status});};
@@ -43,41 +44,15 @@ export function createSlackOAuth({organizationId,url,proxyUrl,clientId,clientSec
     if(!record||record.provider!=='slack'||record.connectedAccountId!==g.id||!['connecting','provisioning','active','error'].includes(record.status))fail(403);
     return record;
   }
-  const proxy=async<T=ProviderData,>({connectedAccountId,userId,endpoint,method='GET',query={},headers={},body}:ProxyRequest&{connectedAccountId:string;userId:string}):Promise<ProxyResponse<T>>=>{
+  const proxy=async<T=ProviderData,>({connectedAccountId,userId,...request}:ProxyRequest&{connectedAccountId:string;userId:string}):Promise<ProxyResponse<T>>=>{
     const g=await active(connectedAccountId);if(userId!==userKey(g.userId))fail(403);await binding(g);
-    const target=new URL(endpoint),methodName=target.pathname.slice('/api/'.length);
-    const allowed=new Set(['auth.test','conversations.list','users.list','users.info','team.info','emoji.list','search.messages']);
-    if(target.origin!=='https://slack.com'||!target.pathname.startsWith('/api/')||!allowed.has(methodName)||target.username||target.password||target.hash||target.search||method!=='GET'||body!==undefined||Object.keys(headers).length)fail(403);
-    if(methodName==='conversations.list'&&query.types!=='public_channel')fail(403);
-    // The source sends only channel terms and date/thread filters. A scoped proxy
-    // credential must never become arbitrary search across the installer's DMs.
-    let publicChannels:Map<string,string>|undefined;
-    if(methodName==='search.messages'){
-      if(typeof query.query!=='string'||!/^in:#[a-z0-9_-]+(?: in:#[a-z0-9_-]+)* after:\d{4}-\d{2}-\d{2}(?: before:\d{4}-\d{2}-\d{2})?(?: is:thread)?$/.test(query.query))fail(403);
-      publicChannels=new Map();let cursor='';const seen=new Set<string>();
-      for(let page=0;;page++){
-        if(page===1000)fail(503);
-        const list=new URL('https://slack.com/api/conversations.list');list.search=new URLSearchParams({types:'public_channel',exclude_archived:'false',limit:'200',...(cursor?{cursor}:{})}).toString();
-        const r=await send(list,{headers:{Authorization:'Bearer '+g.accessToken},redirect:'error',signal:AbortSignal.timeout(30000)});
-        const data=await r.json() as {ok?:boolean;channels?:Array<{id:string;name:string;is_private?:boolean;is_im?:boolean;is_mpim?:boolean}>;response_metadata?:{next_cursor?:string}};
-        if(!r.ok||!data.ok||!Array.isArray(data.channels))fail(503);
-        for(const c of data.channels!)if(c.is_private===false&&!c.is_im&&!c.is_mpim)publicChannels.set(c.id,c.name);
-        cursor=data.response_metadata?.next_cursor||'';if(!cursor)break;if(seen.has(cursor))fail(503);seen.add(cursor);
-      }
-      const names=new Set(publicChannels.values());
-      if((query.query as string).split(' ').filter(p=>p.startsWith('in:#')).some(p=>!names.has(p.slice(4))))fail(403);
-    }
-    for(const [key,value]of Object.entries(query))if(value!==undefined){if(['token','authorization'].includes(key.toLowerCase()))fail(403);target.searchParams.set(key,String(value));}
-    const response=await send(target,{headers:{Authorization:'Bearer '+g.accessToken},redirect:'error',signal:AbortSignal.timeout(30000)});
-    const data=await response.json() as T;
-    if(publicChannels&&data&&typeof data==='object'&&'messages' in data){
-      const messages=data.messages;
-      if(messages&&typeof messages==='object'&&'matches' in messages&&Array.isArray(messages.matches)){
-        messages.matches=messages.matches.filter((hit:unknown)=>hit&&typeof hit==='object'&&'channel'in hit&&hit.channel&&typeof hit.channel==='object'&&'id'in hit.channel&&typeof hit.channel.id==='string'&&publicChannels!.has(hit.channel.id));
-      }
-    }
+    const result=await slackPublicRead<T>(request,async target=>{
+      const response=await send(target,{headers:{Authorization:'Bearer '+g.accessToken},redirect:'error',signal:AbortSignal.timeout(30000)});
+      const retry=response.headers.get('retry-after'),replyHeaders:Record<string,string>=retry===null?{}:{'retry-after':retry};
+      return {ok:response.ok,status:response.status,data:await response.json(),headers:replyHeaders};
+    });
     const current=await load(g.id);if(current.record.status!=='ACTIVE')fail(403);await binding(current.record);
-    return {status:response.status,data,headers:response.headers.has('retry-after')?{'retry-after':response.headers.get('retry-after')!}:{}};
+    return result;
   };
   const service:ConnectorOAuth={
     async authConfig({toolkit}){if(toolkit!=='slack')fail(404);return 'slack';},

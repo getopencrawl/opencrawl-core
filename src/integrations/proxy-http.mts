@@ -1,9 +1,11 @@
 import type {IncomingMessage,ServerResponse} from 'node:http';
-import type {createSlackOAuth} from './slack-oauth.mjs';
+import type {ProxyRequest} from './types.mjs';
 import {smallJson} from '../application/http.mjs';
 import {errorInfo} from '../errors.mjs';
+/** Each credential adapter decides which provider reads its own source capability allows. */
+export interface SourceCredentialProxy {proxyCredential(id:string,secret:string,userId:string,input:ProxyRequest):Promise<unknown>}
 /** Airbyte has one revocable source capability, never an OAuth client or workspace-wide proxy key. */
-export function connectorProxyHandler(oauth:Pick<ReturnType<typeof createSlackOAuth>,'proxyCredential'>){
+export function connectorProxyHandler(oauth:SourceCredentialProxy){
   return async(req:IncomingMessage,res:ServerResponse)=>{
     res.setHeader('Cache-Control','no-store');
     const reply=(status:number,value:unknown)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
@@ -12,7 +14,7 @@ export function connectorProxyHandler(oauth:Pick<ReturnType<typeof createSlackOA
     try{
       const secret=req.headers['x-api-key'];if(typeof secret!=='string'||secret.length>256)return reply(401,{error:'SOURCE_CREDENTIAL_REQUIRED'});
       const input=await smallJson(req,65536);
-      if(Object.keys(input).some(k=>!['connected_account_id','user_id','method','endpoint','parameters','body'].includes(k))||typeof input.connected_account_id!=='string'||typeof input.user_id!=='string'||typeof input.endpoint!=='string'||input.method!==undefined&&input.method!=='GET'||input.parameters!==undefined&&!Array.isArray(input.parameters))return reply(400,{error:'INVALID_REQUEST'});
+      if(Object.keys(input).some(k=>!['connected_account_id','user_id','method','endpoint','parameters','body'].includes(k))||typeof input.connected_account_id!=='string'||typeof input.user_id!=='string'||typeof input.endpoint!=='string'||input.method!==undefined&&input.method!=='GET'&&input.method!=='POST'||input.parameters!==undefined&&!Array.isArray(input.parameters))return reply(400,{error:'INVALID_REQUEST'});
       const query:Record<string,string>={},headers:Record<string,string>={};
       for(const item of (input.parameters||[]) as unknown[]){
         if(!item||typeof item!=='object'||!('name'in item)||typeof item.name!=='string'||!('value'in item)||!['string','number','boolean'].includes(typeof item.value)||!('type'in item)||!['query','header'].includes(String(item.type)))return reply(400,{error:'INVALID_PARAMETER'});

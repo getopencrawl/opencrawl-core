@@ -1,7 +1,8 @@
 import type {SelfhostSettings} from './settings.mjs';
 import type {createObjectStore} from '../sessions/s3-store.mjs';
 import type {ConnectorOAuth} from '../integrations/ports.mjs';
-import type {ConnectorDefinition} from '../integrations/types.mjs';
+import type {ConnectorDefinition,ProxyRequest} from '../integrations/types.mjs';
+import type {SourceCredentialProxy} from '../integrations/proxy-http.mjs';
 import {createSingleOrganizationRegistry} from '../integrations/local-registry.mjs';
 import {createIntegrations} from '../integrations/service.mjs';
 import {createAirbyte} from '../integrations/airbyte.mjs';
@@ -25,15 +26,17 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   const definitions:Record<string,ConnectorDefinition>=Object.fromEntries(['slack','googledrive','notion','circleback','granola'].map(id=>[id,{name:`OpenCrawl ${id} (operator-owned)`,manifest:connectorManifest(id)}]));
   const githubConfig=githubAppSettings(env.GITHUB_APP||null),github=githubConfig?createGitHubApp(githubConfig):null;
   definitions.github={name:'OpenCrawl GitHub (app)',docker:{repository:env.AIRBYTE_GITHUB_REPOSITORY||'opencrawl/source-github',tag:env.AIRBYTE_GITHUB_TAG||'local'}};
+  // Source jobs reach the app here; it is rarely the browser origin.
+  const proxyUrl=env.OPENCRAWL_AIRBYTE_APP_URL||settings.url;
+  const connectorKey=()=>{const encoded=required('OPENCRAWL_CONNECTOR_KEY'),key=Buffer.from(encoded,'base64');if(key.length!==32||key.toString('base64')!==encoded)throw new Error('OPENCRAWL_CONNECTOR_KEY must be a base64-encoded 32-byte key');return key;};
   let oauth:ReturnType<typeof createSlackOAuth>|undefined;
   if(env.SLACK_CLIENT_ID||env.SLACK_CLIENT_SECRET){
-    const encoded=required('OPENCRAWL_CONNECTOR_KEY'),key=Buffer.from(encoded,'base64');if(key.length!==32||key.toString('base64')!==encoded)throw new Error('OPENCRAWL_CONNECTOR_KEY must be a base64-encoded 32-byte key');
-    oauth=createSlackOAuth({organizationId:settings.organizationId,url:settings.url,proxyUrl:env.OPENCRAWL_AIRBYTE_APP_URL||settings.url,clientId:required('SLACK_CLIENT_ID'),clientSecret:required('SLACK_CLIENT_SECRET'),vault:credentialVault({store,prefix:'connector-credentials/v1',organizationId:settings.organizationId,key}),registry});
+    oauth=createSlackOAuth({organizationId:settings.organizationId,url:settings.url,proxyUrl,clientId:required('SLACK_CLIENT_ID'),clientSecret:required('SLACK_CLIENT_SECRET'),vault:credentialVault({store,prefix:'connector-credentials/v1',organizationId:settings.organizationId,key:connectorKey()}),registry});
     definitions.slack={name:'OpenCrawl Slack (operator OAuth)',manifest:connectorManifest('slack')};
   }
   const disabled=async():Promise<never>=>{throw new Error('Configure operator-owned connector OAuth');};
   const unavailable:ConnectorOAuth={authConfig:disabled,link:disabled,account:disabled,remove:disabled,proxy:disabled,sourceConfiguration:disabled};
-  const broker=env.COMPOSIO_API_KEY?createComposioOAuth({apiKey:env.COMPOSIO_API_KEY,organizationId:settings.organizationId}):undefined;
+  const broker=env.COMPOSIO_API_KEY?createComposioOAuth({apiKey:env.COMPOSIO_API_KEY,organizationId:settings.organizationId,proxyUrl,proxyKey:connectorKey(),registry,baseUrl:env.COMPOSIO_BASE_URL||undefined}):undefined;
   // Existing grants retain their original adapter even if another is configured.
   const byGrant=(id:string)=>/^grant_[a-f0-9]{48}$/.test(id)?oauth||unavailable:broker||unavailable;
   const authorization:ConnectorOAuth={
@@ -62,5 +65,9 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
     }
     if(failures.length)throw new AggregateError(failures,'Some connections still require recovery');
   }
-  return {registry,integrations,providers,connectors,oauth,recover,close:registry.close};
+  // One proxy route serves every adapter; a capability is only valid at the adapter that issued it.
+  const denied=async():Promise<never>=>{throw Object.assign(new Error('Connector authorization unavailable'),{status:403});};
+  const sourceCredentials:SourceCredentialProxy|undefined=oauth||broker?{proxyCredential:(id:string,secret:string,userId:string,input:ProxyRequest)=>
+    (/^grant_[a-f0-9]{48}$/.test(id)?oauth?.proxyCredential(id,secret,userId,input):broker?.proxyCredential(id,secret,userId,input))??denied()}:undefined;
+  return {registry,integrations,providers,connectors,oauth,sourceCredentials,recover,close:registry.close};
 }

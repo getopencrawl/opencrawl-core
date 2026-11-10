@@ -3,13 +3,18 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {createServer} from 'node:http';
 import {selfhostServices} from '../dist/src/selfhost/services.mjs';
 import {createComposioOAuth} from '../dist/src/integrations/composio.mjs';
+import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-registry.mjs';
+import {createProviderCatalog} from '../dist/src/integrations/providers.mjs';
+import {connectorManifest} from '../dist/src/integrations/manifests.mjs';
+import {connectorProxyHandler} from '../dist/src/integrations/proxy-http.mjs';
 
 async function fixture(t,extra={}){
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-source-catalog-'));
   const services=selfhostServices({organizationId:'org_team',url:'https://self.example',registryPath:join(dir,'registry.sqlite'),search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},{bucket:'owned'},
-    {AIRBYTE_WORKSPACE_ID:'00000000-0000-0000-0000-000000000001',AIRBYTE_URL:'http://127.0.0.1:1',AIRBYTE_CLIENT_ID:'test',AIRBYTE_CLIENT_SECRET:'test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test',...extra});
+    {AIRBYTE_WORKSPACE_ID:'00000000-0000-0000-0000-000000000001',AIRBYTE_URL:'http://127.0.0.1:1',AIRBYTE_CLIENT_ID:'test',AIRBYTE_CLIENT_SECRET:'test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test',OPENCRAWL_CONNECTOR_KEY:Buffer.alloc(32,7).toString('base64'),...extra});
   t.after(async()=>{services.close();await rm(dir,{recursive:true,force:true});});return services;
 }
 const principal={tenantId:'org_team',userId:'user_a'};
@@ -34,7 +39,7 @@ test('operator broker enables OAuth connectors without exposing its key in the c
 
 test('operator OAuth binds requests and source configuration to its single organization',async()=>{
   const calls=[];
-  const oauth=createComposioOAuth({apiKey:'private-key',organizationId:'org_team',fetch:async(url,options)=>{
+  const oauth=createComposioOAuth({apiKey:'private-key',organizationId:'org_team',proxyUrl:'https://self.example',proxyKey:Buffer.alloc(32,7),registry:{list:async()=>[]},fetch:async(url,options)=>{
     calls.push({url,options});
     if(url.includes('/auth_configs?'))return Response.json({items:[]});
     if(url.endsWith('/auth_configs'))return Response.json({auth_config:{id:'ac_owned'}});
@@ -52,4 +57,120 @@ test('operator OAuth binds requests and source configuration to its single organ
   await assert.rejects(oauth.account('ca_owned'),/scope/);
   const before=calls.length;await assert.rejects(oauth.remove('ca_owned'),/scope/);assert.equal(calls.length,before+1);assert.equal(calls.at(-1).options.method,'GET');
   await assert.rejects(oauth.sourceConfiguration({tenantId:'org_foreign',environment:'selfhost'},{}),/scope/);
+});
+
+const OPERATOR_KEY='operator-private-key',APP_FOR_AIRBYTE='http://app.internal:8092';
+const brokered=['googledrive','notion','circleback','slack'];
+/** The operator broker with a real registry and a recorded stand-in for the Composio API. */
+async function broker(t,respond=()=>({status:200,data:{ok:true},headers:{}})){
+  const dir=await mkdtemp(join(tmpdir(),'opencrawl-broker-'));
+  const registry=createSingleOrganizationRegistry({path:join(dir,'registry.sqlite'),organizationId:'org_team'});
+  t.after(async()=>{registry.close();await rm(dir,{recursive:true,force:true});});
+  const calls=[];
+  const oauth=createComposioOAuth({apiKey:OPERATOR_KEY,organizationId:'org_team',proxyUrl:APP_FOR_AIRBYTE,proxyKey:Buffer.alloc(32,7),registry,fetch:async(url,options)=>{
+    const body=options.body?JSON.parse(options.body):undefined;calls.push({url,options,body});
+    if(url.endsWith('/tools/execute/proxy'))return Response.json(respond(body));
+    throw new Error('Unexpected request');
+  }});
+  const providers=createProviderCatalog({...Object.fromEntries([...brokered,'granola'].map(id=>[id,{name:id,manifest:connectorManifest(id)}])),github:{name:'github',docker:{repository:'r',tag:'t'}}});
+  let n=0;
+  const connect=(provider,connectedAccountId,userId='user_a')=>registry.create({tenantId:'org_team',userId,integrationId:'int_'+String(++n).padStart(26,'0'),provider,environment:'selfhost',scope:'team',status:'active',
+    createdAt:new Date().toISOString(),startDate:'2026-01-01T00:00:00Z',connectedAccountId,settings:{folderId:'folder_1'}});
+  return {registry,oauth,calls,providers,connect};
+}
+
+test('every brokered connector receives the configuration its manifest requires, without the operator key',async t=>{
+  const f=await broker(t);
+  for(const id of brokered){
+    const record=await f.connect(id,'ca_'+id),config=await f.oauth.sourceConfiguration(record,f.providers[id]);
+    const spec=connectorManifest(id).spec.connection_specification;
+    for(const key of spec.required)assert.ok(config[key]!==undefined&&config[key]!=='',`${id} manifest requires ${key}`);
+    for(const key of Object.keys(config))assert.ok(Object.hasOwn(spec.properties,key),`${id} manifest does not declare ${key}`);
+    assert.equal(config.credential_proxy_base_url,APP_FOR_AIRBYTE);
+    assert.equal(config.connected_account_id,'ca_'+id);assert.equal(config.user_id,'selfhost:org_team:user_a');
+    assert.ok(!JSON.stringify(config).includes(OPERATOR_KEY));
+  }
+  // A capability is specific to one connection and one owner.
+  const drive=await f.oauth.sourceConfiguration((await f.registry.list('org_team','user_a'))[0],f.providers.googledrive);
+  const other=await f.oauth.sourceConfiguration(await f.connect('googledrive','ca_second','user_b'),f.providers.googledrive);
+  assert.notEqual(drive.credential_proxy_api_key,other.credential_proxy_api_key);
+  assert.equal(f.calls.length,0);
+});
+
+test('a brokered source capability reads only its own provider’s listed endpoints while connected',async t=>{
+  const f=await broker(t);
+  const drive=await f.connect('googledrive','ca_drive'),config=await f.oauth.sourceConfiguration(drive,f.providers.googledrive);
+  const call=(input,{secret=config.credential_proxy_api_key,id='ca_drive',user=config.user_id}={})=>f.oauth.proxyCredential(id,secret,user,input);
+  const files={endpoint:'https://www.googleapis.com/drive/v3/files',query:{pageSize:'100'}};
+  assert.equal((await call(files)).status,200);
+  const sent=f.calls.at(-1);
+  assert.equal(sent.url,'https://backend.composio.dev/api/v3.1/tools/execute/proxy');assert.equal(sent.options.headers['x-api-key'],OPERATOR_KEY);
+  assert.deepEqual(sent.body,{connected_account_id:'ca_drive',user_id:'selfhost:org_team:user_a',endpoint:files.endpoint,method:'GET',parameters:[{name:'pageSize',value:'100',type:'query'}]});
+  assert.equal((await call({endpoint:'https://www.googleapis.com/drive/v3/files/file_1-x/export',query:{mimeType:'text/markdown'}})).status,200);
+  const upstream=f.calls.length;
+  await assert.rejects(call(files,{secret:'wrong'}),{status:403});
+  await assert.rejects(call(files,{secret:''}),{status:403});
+  await assert.rejects(call(files,{user:'selfhost:org_team:user_b'}),{status:403});
+  await assert.rejects(call(files,{user:'selfhost:org_foreign:user_a'}),{status:403});
+  await assert.rejects(call(files,{id:'ca_other'}),{status:403});
+  for(const denied of [
+    {endpoint:'https://www.googleapis.com/upload/drive/v3/files',method:'POST',body:{}},
+    {endpoint:'https://www.googleapis.com/drive/v3/files',method:'POST',body:{name:'new'}},
+    {endpoint:'https://www.googleapis.com/drive/v3/files/file_1',method:'DELETE'},
+    {endpoint:'https://www.googleapis.com/drive/v3/files/file_1/permissions'},
+    {endpoint:'https://www.googleapis.com/drive/v3/files?corpora=user'},
+    {endpoint:'https://www.googleapis.com/drive/v3/files#x'},
+    {endpoint:'https://user:pass@www.googleapis.com/drive/v3/files'},
+    {endpoint:'https://www.googleapis.com.evil.example/drive/v3/files'},
+    {endpoint:'https://api.notion.com/v1/users'},
+    {endpoint:'not a url'},
+    {...files,body:{}},
+    {...files,headers:{Authorization:'Bearer stolen'}},
+  ])await assert.rejects(call(denied),{status:403},JSON.stringify(denied));
+  assert.equal(f.calls.length,upstream);
+
+  const notion=await f.connect('notion','ca_notion'),notionConfig=await f.oauth.sourceConfiguration(notion,f.providers.notion);
+  const read=input=>f.oauth.proxyCredential('ca_notion',notionConfig.credential_proxy_api_key,notionConfig.user_id,input);
+  await read({endpoint:'https://api.notion.com/v1/search',method:'POST',headers:{'Notion-Version':'2026-03-11'},body:{page_size:100}});
+  assert.deepEqual(f.calls.at(-1).body,{connected_account_id:'ca_notion',user_id:'selfhost:org_team:user_a',endpoint:'https://api.notion.com/v1/search',method:'POST',body:{page_size:100},parameters:[{name:'Notion-Version',value:'2026-03-11',type:'header'}]});
+  await assert.rejects(read({endpoint:'https://api.notion.com/v1/pages',method:'POST',body:{}}),{status:403});
+  await assert.rejects(read(files),{status:403});
+  // The drive capability does not open another connection's account.
+  await assert.rejects(call({endpoint:'https://api.notion.com/v1/users'},{id:'ca_notion'}),{status:403});
+
+  await f.registry.update(drive,{status:'disconnecting'});
+  const before=f.calls.length;await assert.rejects(call(files),{status:403});assert.equal(f.calls.length,before);
+});
+
+test('brokered Slack keeps the public-channel policy of the direct adapter',async t=>{
+  const f=await broker(t,body=>{
+    const method=new URL(body.endpoint).pathname.slice('/api/'.length);
+    if(method==='conversations.list')return {status:200,data:{ok:true,channels:[{id:'C_PUBLIC',name:'general',is_private:false},{id:'C_PRIVATE',name:'private',is_private:true}]},headers:{}};
+    if(method==='search.messages')return {status:200,data:{ok:true,messages:{matches:[{text:'public',channel:{id:'C_PUBLIC'}},{text:'private',channel:{id:'C_PRIVATE'}}]}},headers:{'retry-after':'3'}};
+    return {status:200,data:{ok:true},headers:{}};
+  });
+  const config=await f.oauth.sourceConfiguration(await f.connect('slack','ca_slack'),f.providers.slack);
+  const call=input=>f.oauth.proxyCredential('ca_slack',config.credential_proxy_api_key,config.user_id,input);
+  await assert.rejects(call({endpoint:'https://slack.com/api/chat.postMessage',method:'POST'}),{status:403});
+  await assert.rejects(call({endpoint:'https://slack.com/api/conversations.list',query:{types:'private_channel'}}),{status:403});
+  await assert.rejects(call({endpoint:'https://slack.com/api/search.messages',query:{query:'secret'}}),{status:403});
+  await assert.rejects(call({endpoint:'https://slack.com/api/search.messages',query:{query:'in:#private after:2026-01-01'}}),{status:403});
+  const result=await call({endpoint:'https://slack.com/api/search.messages',query:{query:'in:#general after:2026-01-01'}});
+  assert.deepEqual(result.data.messages.matches.map(hit=>hit.text),['public']);assert.equal(result.headers['retry-after'],'3');
+  assert.deepEqual(f.calls.at(-1).body.parameters,[{name:'query',value:'in:#general after:2026-01-01',type:'query'}]);
+  assert.ok(f.calls.every(c=>c.body.method==='GET'&&c.body.user_id==='selfhost:org_team:user_a'&&c.body.connected_account_id==='ca_slack'));
+});
+
+test('the connector proxy route carries brokered reads, including a request body, and refuses browsers',async t=>{
+  const f=await broker(t,()=>({status:200,data:{results:[{id:'page_1'}]},headers:{}}));
+  const config=await f.oauth.sourceConfiguration(await f.connect('notion','ca_notion'),f.providers.notion);
+  const server=createServer(connectorProxyHandler(f.oauth));await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
+  const post=(body,headers={})=>fetch(`http://127.0.0.1:${server.address().port}/api/connector-proxy`,{method:'POST',headers:{'content-type':'application/json','x-api-key':config.credential_proxy_api_key,...headers},body:JSON.stringify(body)});
+  const search={connected_account_id:'ca_notion',user_id:config.user_id,endpoint:'https://api.notion.com/v1/search',method:'POST',parameters:[{name:'Notion-Version',value:'2026-03-11',type:'header'}],body:{page_size:100}};
+  const ok=await post(search);assert.equal(ok.status,200);assert.deepEqual(await ok.json(),{status:200,data:{results:[{id:'page_1'}]},headers:{}});
+  assert.equal((await post(search,{'x-api-key':'wrong'})).status,403);
+  assert.equal((await post(search,{origin:'https://self.example'})).status,403);
+  assert.equal((await post({...search,method:'DELETE'})).status,400);
+  assert.equal((await post({...search,endpoint:'https://api.notion.com/v1/pages'})).status,403);
+  assert.equal(f.calls.length,1);
 });
