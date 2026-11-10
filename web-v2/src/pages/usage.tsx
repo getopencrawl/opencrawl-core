@@ -1,8 +1,8 @@
 import {consoleResourceKey, useConsoleResource} from '../data.tsx';
 import {ActivityChart, BarList, Button, EmptyState, LoadingState, MetricGrid, Notice, Page, Section, StatusBadge, Table} from '../design/components.js';
 import {Link} from '../router.js';
-import type {ConsoleDataAdapter, UsageReport} from './types.js';
-import {ago, compact, count, harnessName, memberName, measured, originName, plural, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
+import type {ConsoleDataAdapter, UsageReport, ValueReport} from './types.js';
+import {ago, compact, count, dollars, harnessName, memberName, originName, plural, pricedSavings, savedTokens, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
 import type {UsageMember, UsageSource} from './usage-model.ts';
 
 export {count} from './usage-model.ts';
@@ -62,6 +62,22 @@ function SourceCard({source, now}: {source: UsageSource; now: number}) {
   );
 }
 
+/** What OpenCrawl saved this workspace: the first thing on Usage, four cards in the Agent sessions pattern. */
+function ValueReportSection({value}: {value: ValueReport}) {
+  const {savings, observed, model} = value;
+  const usd = pricedSavings(savings.tokens, model);
+  return (
+    <Section className="report-section" title="Agent savings" description={`What OpenCrawl saved your team over the last ${value.window.days} days.`}>
+      <MetricGrid items={[
+        {label: `Saved vs ${model.model}`, value: dollars(usd), note: `${compact(savedTokens(savings.tokens))} tokens your agents didn’t spend`, title: `${count(savedTokens(savings.tokens))} tokens at ${model.model} list prices as of ${model.asOf}`},
+        {label: 'Turns saved', value: compact(savings.turns), note: `${savings.turnsPerTask.toLocaleString('en-US')} per task, ${savings.turnPercent.toLocaleString('en-US')}% fewer turns`, title: count(savings.turns)},
+        {label: 'Conflicts avoided', value: count(observed.conflictsAvoided), note: observed.duplicatesAvoided ? `plus ${plural(observed.duplicatesAvoided, 'duplicate task')} skipped` : 'times agents waited on each other'},
+        {label: 'Searches used', value: count(observed.searchesUsed), note: observed.searches ? `of ${plural(observed.searches, 'search', 'searches')} by your agents` : 'your agents haven’t searched yet'},
+      ]}/>
+    </Section>
+  );
+}
+
 function DataSourcesReport({report, now}: {report: UsageReport; now: number}) {
   const data = report.ingestion;
   return (
@@ -89,11 +105,13 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
         <MetricGrid items={[
           {label: 'Sessions', value: compact(data.sessions), note: `${activeDays} active ${activeDays === 1 ? 'day' : 'days'}${subagents ? `, plus ${plural(subagents, 'subagent session')}` : ''}`, title: count(data.sessions)},
           {label: 'Messages', value: compact(data.messages), note: 'prompts and replies captured', title: count(data.messages)},
-          {label: 'Tool calls', value: compact(data.toolCalls), note: 'tools used across captured sessions', title: count(data.toolCalls)},
-          {label: 'Machines', value: count(data.machines), note: people != null ? `${plural(people, 'person', 'people')} capturing` : 'capturing agent sessions'},
+          report.capture
+            ? {label: 'Tokens captured', value: compact(report.capture.tokens), note: `since ${report.capture.since.slice(0, 10)}, from agent sessions`, title: count(report.capture.tokens)}
+            : {label: 'Tool calls', value: compact(data.toolCalls), note: 'tools used across captured sessions', title: count(data.toolCalls)},
+          {label: 'OpenCrawl calls', value: compact(data.opencrawlCalls), note: `searches and board reads${people != null ? ` by ${plural(people, 'person', 'people')}` : ''}`, title: count(data.opencrawlCalls)},
         ]}/>
         <p className="report-note">
-          OpenCrawl tool calls: <strong>{count(data.opencrawlCalls)}</strong>. Last capture: <strong>{data.lastAt ? ago(data.lastAt, now) : 'Not yet'}</strong>
+          Machines capturing: <strong>{count(data.machines)}</strong>. Last capture: <strong>{data.lastAt ? ago(data.lastAt, now) : 'Not yet'}</strong>
           {data.firstAt && <>. Capturing since {data.firstAt.slice(0, 10)}</>}
         </p>
         {data.events === 0 ? (
@@ -170,28 +188,9 @@ function TeamReport({report, now}: {report: UsageReport; now: number}) {
   );
 }
 
-function UsageSummary({report}: {report: UsageReport}) {
-  const data = report.ingestion;
-  if (!data) return <p className="report-summary">Source reporting is unavailable.</p>;
-  if (!data.sources.length) return <p className="report-summary">No sources are connected yet. Connect your team’s tools and their content shows up here.</p>;
-  const imported = data.sources.reduce((sum, source) => sum + source.records, 0);
-  const records = data.sources.every(source => measured(source.records)) && measured(imported) ? imported : null;
-  const index = data.index;
-  const total = index && measured(index.sessionEvents) && measured(index.connectorDocuments) ? index.sessionEvents + index.connectorDocuments : null;
-  const indexed = measured(total) ? total : null;
-  const searchMs = index && measured(index.searchMs) ? index.searchMs : null;
-  return <p className="report-summary">
-    {records === null ? <>OpenCrawl is connected to {plural(data.sources.length, 'source')}</> : <>OpenCrawl has brought in <strong>{plural(records, 'record')}</strong> from {plural(data.sources.length, 'source')}</>}
-    {indexed !== null && <>, with <strong>{plural(indexed, 'document')} indexed</strong></>}.
-    {indexed === null && <> Indexed total is unavailable.</>}
-    {records === null && <> Imported record counts are unavailable.</>}
-    {searchMs !== null && <> Recent index queries took a median <strong>{count(searchMs)} ms</strong>.</>}
-  </p>;
-}
-
 export function UsageReportView({data, now = Date.now()}: {data: UsageReport; now?: number}) {
   return <>
-    <UsageSummary report={data}/>
+    {data.value && <ValueReportSection value={data.value}/>}
     <AgentReport report={data} now={now}/>
     <DataSourcesReport report={data} now={now}/>
     <TeamReport report={data} now={now}/>

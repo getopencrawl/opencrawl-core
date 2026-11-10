@@ -5,7 +5,8 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {MemoryRouter} from '../src/router.tsx';
 import {SourcesSummary, UsagePage, UsageReportView} from '../src/pages/usage.tsx';
 import type {ConsoleDataAdapter, UsageReport} from '../src/pages/types.ts';
-import {ago, compact, count, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
+import {ago, compact, count, pricedSavings, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
+import type {ValueReport} from '../src/pages/types.ts';
 
 const now = Date.parse('2026-11-07T20:00:00Z');
 
@@ -66,35 +67,10 @@ test('one Usage page contains Agent sessions, Data sources and Team in order wit
   assert.doesNotMatch(page, /role="tablist"|role="tab"/);
 });
 
-test('the restored top-level narrative uses measured imports, index totals and query speed before the report sections', () => {
+test('Usage opens on its sections, without a summary sentence about imports or index speed', () => {
   const html = render();
-  const summary = html.match(/<p class="report-summary">(.*?)<\/p>/)?.[1];
-  assert.ok(summary);
-  assert.equal(summary.replace(/<[^>]*>/g, ''), 'OpenCrawl has brought in 13,144 records from 3 sources, with 1,357,516 documents indexed. Recent index queries took a median 28 ms.');
-  assert.deepEqual([...summary.matchAll(/<strong>(.*?)<\/strong>/g)].map(match => match[1]), ['13,144 records', '1,357,516 documents indexed', '28 ms']);
-  assert.ok(html.indexOf('report-summary') < html.indexOf('>Agent sessions</h2>'));
-});
-
-test('the summary distinguishes measured zero from missing or incomplete reporting', () => {
-  const data = report();
-  assert.ok(data.ingestion?.index);
-  data.ingestion.sources = [{name: 'Example source', icon: '/source.svg', state: 'synced', records: 0, indexed: 0, lastSyncedAt: null}];
-  Object.assign(data.ingestion.index, {sessionEvents: 0, connectorDocuments: 0, searchMs: 0});
-  let summary = render(data).match(/<p class="report-summary">(.*?)<\/p>/)?.[1] ?? '';
-  assert.match(summary, /<strong>0 records<\/strong> from 1 source, with <strong>0 documents indexed<\/strong>/);
-  assert.match(summary, /median <strong>0 ms<\/strong>/);
-  data.ingestion.sources[0]!.records = Number.NaN;
-  data.ingestion.index.connectorDocuments = Number.NaN;
-  data.ingestion.index.searchMs = null;
-  summary = render(data).match(/<p class="report-summary">(.*?)<\/p>/)?.[1] ?? '';
-  assert.match(summary, /OpenCrawl is connected to 1 source/);
-  assert.match(summary, /Imported record counts are unavailable/);
-  assert.doesNotMatch(summary, /brought in|documents indexed|median|NaN|<strong>0/);
-  data.ingestion.sources = [];
-  assert.match(render(data), /No sources are connected yet\. Connect your team’s tools/);
-  data.ingestion = null;
-  summary = render(data).match(/<p class="report-summary">(.*?)<\/p>/)?.[1] ?? '';
-  assert.equal(summary, 'Source reporting is unavailable.');
+  assert.doesNotMatch(html, /report-summary|brought in|documents indexed|Recent index queries/);
+  assert.ok(html.indexOf('>Agent sessions</h2>') < html.indexOf('>Data sources</h2>'));
 });
 
 test('source tiles show only content-type counts without import details or technical labels', () => {
@@ -121,11 +97,7 @@ test('a partial index inventory marks only its aggregate unavailable and keeps m
     const data = report();
     assert.ok(data.ingestion?.index);
     data.ingestion.index[missing] = null;
-    const html = render(data), summary = html.match(/<p class="report-summary">(.*?)<\/p>/)?.[1] ?? '';
-    assert.match(summary, /13,144 records/);
-    assert.match(summary, /Indexed total is unavailable/);
-    assert.match(summary, /median <strong>28 ms<\/strong>/);
-    assert.doesNotMatch(summary, /documents indexed/);
+    const html = render(data);
     assert.match(sourceCard(html,'Slack'), /<span>Messages<\/span><span>3,550<\/span>/);
     assert.doesNotMatch(sourceCard(html,'Slack'), /Imported channel records/);
     assert.match(html, /Daily agent sessions/);
@@ -159,10 +131,10 @@ test('missing species remain unavailable even with an indexed total; empty and m
 test('Agent sessions retains measured activity, breakdowns and contextual facts without treating messages as turns', () => {
   const html = render();
   const agents = html.slice(0, html.indexOf('>Data sources</h2>'));
-  for (const label of ['Sessions', 'Messages', 'Tool calls', 'Machines']) {
+  for (const label of ['Sessions', 'Messages', 'Tool calls', 'OpenCrawl calls']) {
     assert.equal((agents.match(new RegExp(`<dt>${label}</dt>`, 'g')) || []).length, 1, label);
   }
-  for (const text of ['Busiest day: 2026-11-07 with 5 sessions', 'Where agents run', 'Claude Code', 'Terminal', 'opencrawl: search', 'OpenCrawl tool calls:', '5 minutes ago', '2026-11-01']) {
+  for (const text of ['Busiest day: 2026-11-07 with 5 sessions', 'Where agents run', 'Claude Code', 'Terminal', 'opencrawl: search', 'Machines capturing:', '5 minutes ago', '2026-11-01']) {
     assert.ok(agents.includes(text), text);
   }
   assert.match(agents, /Agent sessions per day/);
@@ -238,4 +210,53 @@ test('date formatting and compact source-summary exports remain usable by existi
   assert.match(html, /<table/);
   assert.match(html, /Connected source status/);
   assert.doesNotMatch(html, /report-source-grid|report-indexed-species/);
+});
+
+function value(): ValueReport {
+  return {
+    schema: 1, measuredAt: '2026-11-09', window: {from: '2026-10-10', to: '2026-11-08', days: 30},
+    model: {model: 'GPT-6 Astra', input: 10, cacheRead: 1, cacheWrite: 12.5, output: 50, asOf: '2026-11-09', share: 63},
+    savings: {tasks: 1198, heldOutTasks: 391, turns: 10027, turnsPerTask: 8.4, turnPercent: 12.7,
+      tokens: {input: 10_000_000, cacheRead: 1_000_000_000, cacheWrite: 0, output: 2_000_000}},
+    observed: {from: '2026-11-06', to: '2026-11-08', conflictsAvoided: 37, duplicatesAvoided: 10, knowledgeReused: 52, searches: 245, searchesUseful: 206, searchesUsed: 171},
+  };
+}
+
+function cards(html: string, heading: string) {
+  const start = html.indexOf(`>${heading}</h2>`);
+  const section = html.slice(start, html.indexOf('</section>', start));
+  return [...section.matchAll(/<dt>(.*?)<\/dt><dd><span class="report-metric-value"[^>]*>(.*?)<\/span>(?:<span class="report-metric-note">(.*?)<\/span>)?/g)].map(match => match.slice(1, 4));
+}
+
+test('Agent savings is the first section: four cards priced at the main model, with no explanatory note', () => {
+  const html = render({...report(), value: value()});
+  assert.deepEqual([...html.matchAll(/<h2\b[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]), ['Agent savings', 'Agent sessions', 'Data sources', 'Team']);
+  assert.ok(html.indexOf('>Agent savings</h2>') < html.indexOf('report-metrics'));
+  // 10M input at $10 + 1B cache reads at $1 + 2M output at $50 = $1,200.
+  assert.equal(pricedSavings(value().savings.tokens, value().model), 1200);
+  assert.deepEqual(cards(html, 'Agent savings'), [
+    ['Saved vs GPT-6 Astra', '$1,200', '1B tokens your agents didn’t spend'],
+    ['Turns saved', '10k', '8.4 per task, 12.7% fewer turns'],
+    ['Conflicts avoided', '37', 'plus 10 duplicate tasks skipped'],
+    ['Searches used', '171', 'of 245 searches by your agents'],
+  ]);
+  const text = html.replace(/<[^>]*>/g, '');
+  assert.doesNotMatch(text, /OpenCrawl cost|of OpenCrawl usage|×/);
+  const section = text.slice(text.indexOf('Agent savings'), text.indexOf('Agent sessions'));
+  assert.doesNotMatch(section, /Measured|replaying|held-out|skills install/);
+});
+
+test('without a measurement there is no Agent savings section; no searches yet says so on the card', () => {
+  assert.doesNotMatch(render(), /Agent savings/);
+  assert.doesNotMatch(render({...report(), value: null}), /Agent savings/);
+  const html = render({...report(), value: {...value(), observed: {...value().observed, searches: 0, searchesUseful: 0, searchesUsed: 0}}});
+  assert.deepEqual(cards(html, 'Agent savings')[3], ['Searches used', '0', 'your agents haven’t searched yet']);
+});
+
+test('Agent sessions shows tokens captured when metered and OpenCrawl calls instead of machines', () => {
+  assert.deepEqual(cards(render({...report(), capture: {tokens: 142_500_000, since: '2026-11-01T00:00:00.000Z'}}), 'Agent sessions').map(card => card[0]),
+    ['Sessions', 'Messages', 'Tokens captured', 'OpenCrawl calls']);
+  assert.deepEqual(cards(render({...report(), capture: {tokens: 142_500_000, since: '2026-11-01T00:00:00.000Z'}}), 'Agent sessions')[2], ['Tokens captured', '143M', 'since 2026-11-01, from agent sessions']);
+  assert.deepEqual(cards(render(), 'Agent sessions').map(card => card[0]), ['Sessions', 'Messages', 'Tool calls', 'OpenCrawl calls']);
+  assert.match(render().replace(/<[^>]*>/g, ''), /Machines capturing: 2\. Last capture/);
 });
