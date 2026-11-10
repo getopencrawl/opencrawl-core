@@ -1,4 +1,22 @@
 export interface NamedCount {name: string; count: number}
+/** Per-million-token list prices for one model, as of a stated date. */
+export interface ModelPrice {model: string; input: number; cacheRead: number; cacheWrite: number; output: number; asOf: string}
+/**
+ * Measured value of OpenCrawl for one workspace (schema 1), produced by replaying the
+ * workspace's own captured work, never estimated by the UI. `savings` covers the window's
+ * work tasks; `observed` counts effects seen in captured transcripts.
+ */
+export interface ValueReport {
+  schema: 1;
+  measuredAt: string;
+  window: {from: string; to: string; days: number};
+  /** The model the workspace's agents use most, priced at its list price. */
+  model: ModelPrice & {share: number};
+  savings: {tasks: number; heldOutTasks: number; turns: number; turnsPerTask: number; turnPercent: number;
+    tokens: {input: number; cacheRead: number; cacheWrite: number; output: number}};
+  observed: {from: string | null; to: string | null; conflictsAvoided: number; duplicatesAvoided: number; knowledgeReused: number;
+    searches: number; searchesUseful: number; searchesUsed: number};
+}
 export interface UsageReport {
   workspace: string | null;
   team?: boolean;
@@ -15,6 +33,10 @@ export interface UsageReport {
     firstAt: string | null; lastAt: string | null;
     daily: Array<{date: string; events: number; sessions: number}>;
   };
+  /** Measured value; absent until the workspace has been measured. */
+  value?: ValueReport | null;
+  /** Agent-session tokens captured this billing period, when the deployment meters them. */
+  capture?: {tokens: number; since: string} | null;
   members: Array<{name: string | null; email: string; you: boolean; sources: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
 }
 export interface DiagnosticHit {_id?: string; _score?: number; _source?: Record<string, unknown>}
