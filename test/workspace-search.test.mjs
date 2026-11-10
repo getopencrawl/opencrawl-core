@@ -130,3 +130,18 @@ test('a role filter reaches the session source only and is rejected for other so
   for (const invalid of [{role: 'user'}, {source: 'connectors', role: 'user'}, {source: 'memories', role: 'user'}, {source: 'sessions', role: 'root'}])
     await assert.rejects(service.search(principal, {query: 'x', ...invalid}), /Invalid search/);
 });
+
+test('an empty query browses sessions or memories by time and is rejected everywhere else', async () => {
+  const seen = [];
+  const service = createWorkspaceSearch({
+    sessions: {search: async (p, q) => {seen.push(['sessions', q.query, q.order, q.role]);return {total: 2, hits: [hit('s2'), hit('s1')]};},
+      memories: {search: async (p, q) => {seen.push(['memories', q.query, q.order]);return {total: 0, hits: [], truncated: false};}}},
+    connectors: {search: async () => {throw new Error('connectors cannot browse');}},
+  });
+  const latest = await service.search(principal, {query: '', source: 'sessions', sessionId: 'past', role: 'user', order: 'newest', limit: 2});
+  assert.deepEqual(seen, [['sessions', '', 'newest', 'user']]);assert.deepEqual(latest.results.map(r => r.id), ['sessions:s2', 'sessions:s1']);
+  seen.length = 0;await service.search(principal, {query: '  ', source: 'memories', order: 'oldest'});
+  assert.deepEqual(seen, [['memories', '', 'oldest']]);
+  for (const invalid of [{query: ''}, {query: '', source: 'sessions'}, {query: '', order: 'newest'}, {query: '', source: 'connectors', order: 'newest'}])
+    await assert.rejects(service.search(principal, invalid), /Invalid search/);
+});
