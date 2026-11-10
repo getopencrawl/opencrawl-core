@@ -23,7 +23,8 @@
     "react-markdown": "10.1.0",
     "react-router": "8.5.1",
     "remark-frontmatter": "5.0.0",
-    "remark-gfm": "4.0.1"
+    "remark-gfm": "4.0.1",
+    "@trpc/client": "11.25.2"
   },
   "devDependencies": {
     "@playwright/test": "1.65.0",

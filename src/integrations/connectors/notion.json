@@ -1,0 +1,1030 @@
+{
+  "version": "7.28.2",
+  "type": "DeclarativeSource",
+  "description": "Notion pages, databases, page content (as Notion-flavoured markdown), comments and members through the credential proxy proxy. Requires the configured operator credential proxy.",
+  "check": {
+    "type": "CheckStream",
+    "stream_names": [
+      "users"
+    ]
+  },
+  "concurrency_level": {
+    "type": "ConcurrencyLevel",
+    "default_concurrency": "{{ config.get('num_workers', 3) }}",
+    "max_concurrency": 10
+  },
+  "api_budget": {
+    "type": "HTTPAPIBudget",
+    "policies": [
+      {
+        "type": "MovingWindowCallRatePolicy",
+        "rates": [
+          {
+            "limit": "{{ config.get('requests_per_minute', 170) }}",
+            "interval": "PT1M"
+          }
+        ],
+        "matchers": [
+          {
+            "method": "POST",
+            "url_path_pattern": "/api/connector-proxy"
+          }
+        ]
+      }
+    ]
+  },
+  "definitions": {
+    "credential_proxy_requester": {
+      "type": "HttpRequester",
+      "url_base": "{{ config.get('credential_proxy_base_url', 'https://credential-proxy.invalid') }}",
+      "path": "/api/connector-proxy",
+      "http_method": "POST",
+      "authenticator": {
+        "type": "ApiKeyAuthenticator",
+        "api_token": "{{ config['credential_proxy_api_key'] }}",
+        "inject_into": {
+          "type": "RequestOption",
+          "inject_into": "header",
+          "field_name": "x-api-key"
+        }
+      },
+      "error_handler": {
+        "type": "CompositeErrorHandler",
+        "error_handlers": [
+          {
+            "type": "DefaultErrorHandler",
+            "max_retries": 10,
+            "backoff_strategies": [
+              {
+                "type": "WaitTimeFromResponse",
+                "wait_time_in_seconds": "{{ ((response.get('headers') or {}).get('retry-after') or (response.get('headers') or {}).get('Retry-After') or ((response.get('data') or {}).get('additional_data') or {}).get('retry_after') or 0) | int + 1 }}",
+                "max_waiting_time_in_seconds": 600
+              },
+              {
+                "type": "ExponentialBackoffStrategy",
+                "factor": 5
+              }
+            ],
+            "response_filters": [
+              {
+                "type": "HttpResponseFilter",
+                "action": "RETRY",
+                "predicate": "{{ response.get('status') in [429, 529, 500, 502, 503, 504] and ((response.get('data') or {}).get('additional_data') or {}).get('rate_limit_reason') != 'public_api_request_blocked' }}",
+                "error_message": "Notion is rate limiting or unavailable; retrying."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "config_error",
+                "predicate": "{{ response.get('status') == 401 or (response.get('data') or {}).get('code') in ['unauthorized', 'restricted_resource'] and response.get('status') != 403 }}",
+                "error_message": "Notion rejected the connection. Reconnect Notion."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "system_error",
+                "predicate": "{{ (response.get('status') or 0) >= 400 }}",
+                "error_message": "Notion returned an unexpected error through the credential proxy proxy."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "pages": {
+      "type": "DeclarativeStream",
+      "name": "pages",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "object": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "created_time": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "last_edited_time": {
+              "type": "string"
+            },
+            "created_by": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "last_edited_by": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "parent": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "properties": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "url": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "public_url": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "in_trash": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_archived": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "icon": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "cover": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "POST",
+              "endpoint": "https://api.notion.com/v1/search",
+              "parameters": "{{ [{'name': 'Notion-Version', 'value': config.get('notion_version', '2026-03-11'), 'type': 'header'}] + [] }}",
+              "body": {
+                "filter": {
+                  "property": "object",
+                  "value": "page"
+                },
+                "sort": {
+                  "timestamp": "last_edited_time",
+                  "direction": "ascending"
+                },
+                "page_size": 100,
+                "start_cursor": "{{ next_page_token.next_page_token if next_page_token else None }}"
+              }
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "results"
+            ]
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('object') == 'page' and ((record.get('last_edited_time') or '') >= (stream_interval.start_time if stream_interval and stream_interval.get('start_time') else '') or ((record.get('id') or '0')[-4:] | int(0, 16)) % 672 == (now_utc().weekday() * 96 + now_utc().hour * 4 + now_utc().minute // 15)) }}"
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ (response.get('data') or {}).get('next_cursor') }}",
+            "stop_condition": "{{ not (response.get('data') or {}).get('has_more') or not (response.get('data') or {}).get('next_cursor') }}"
+          }
+        }
+      },
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "last_edited_time",
+        "datetime_format": "%Y-%m-%dT%H:%M:%S.%fZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ"
+        ],
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config.get('start_date', '2000-01-01T00:00:00Z') }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        },
+        "lookback_window": "{{ config.get('lookback', 'PT30M') }}"
+      }
+    }
+  },
+  "streams": [
+    {
+      "$ref": "#/definitions/pages"
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "data_sources",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "object": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "title": {
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "description": {
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "created_time": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "last_edited_time": {
+              "type": "string"
+            },
+            "parent": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "database_parent": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "properties": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "url": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "in_trash": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_inline": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "POST",
+              "endpoint": "https://api.notion.com/v1/search",
+              "parameters": "{{ [{'name': 'Notion-Version', 'value': config.get('notion_version', '2026-03-11'), 'type': 'header'}] + [] }}",
+              "body": {
+                "filter": {
+                  "property": "object",
+                  "value": "data_source"
+                },
+                "sort": {
+                  "timestamp": "last_edited_time",
+                  "direction": "ascending"
+                },
+                "page_size": 100,
+                "start_cursor": "{{ next_page_token.next_page_token if next_page_token else None }}"
+              }
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "results"
+            ]
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('object') == 'data_source' and ((record.get('last_edited_time') or '') >= (stream_interval.start_time if stream_interval and stream_interval.get('start_time') else '') or ((record.get('id') or '0')[-4:] | int(0, 16)) % 672 == (now_utc().weekday() * 96 + now_utc().hour * 4 + now_utc().minute // 15)) }}"
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ (response.get('data') or {}).get('next_cursor') }}",
+            "stop_condition": "{{ not (response.get('data') or {}).get('has_more') or not (response.get('data') or {}).get('next_cursor') }}"
+          }
+        }
+      },
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "last_edited_time",
+        "datetime_format": "%Y-%m-%dT%H:%M:%S.%fZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ"
+        ],
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config.get('start_date', '2000-01-01T00:00:00Z') }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        },
+        "lookback_window": "{{ config.get('lookback', 'PT30M') }}"
+      }
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "page_markdown",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "markdown": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "truncated": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "unknown_block_ids": {
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "page_last_edited_time": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://api.notion.com/v1/pages/{{ stream_partition.page_id }}/markdown",
+              "parameters": "{{ [{'name': 'Notion-Version', 'value': config.get('notion_version', '2026-03-11'), 'type': 'header'}] + [{'name': 'markdown_version', 'value': config.get('markdown_version', 'v2'), 'type': 'query'}, {'name': 'include_transcript', 'value': 'true', 'type': 'query'}] }}"
+            }
+          },
+          "error_handler": {
+            "type": "CompositeErrorHandler",
+            "error_handlers": [
+              {
+                "type": "DefaultErrorHandler",
+                "max_retries": 10,
+                "backoff_strategies": [
+                  {
+                    "type": "WaitTimeFromResponse",
+                    "wait_time_in_seconds": "{{ ((response.get('headers') or {}).get('retry-after') or (response.get('headers') or {}).get('Retry-After') or ((response.get('data') or {}).get('additional_data') or {}).get('retry_after') or 0) | int + 1 }}",
+                    "max_waiting_time_in_seconds": 600
+                  },
+                  {
+                    "type": "ExponentialBackoffStrategy",
+                    "factor": 5
+                  }
+                ],
+                "response_filters": [
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "RETRY",
+                    "predicate": "{{ response.get('status') in [429, 529, 500, 502, 503, 504] and ((response.get('data') or {}).get('additional_data') or {}).get('rate_limit_reason') != 'public_api_request_blocked' }}",
+                    "error_message": "Notion is rate limiting or unavailable; retrying."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "IGNORE",
+                    "predicate": "{{ response.get('status') == 404 or (response.get('data') or {}).get('code') == 'object_not_found' }}",
+                    "error_message": "Notion object is no longer shared with OpenCrawl or was deleted; skipped."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "config_error",
+                    "predicate": "{{ response.get('status') == 401 or (response.get('data') or {}).get('code') in ['unauthorized', 'restricted_resource'] and response.get('status') != 403 }}",
+                    "error_message": "Notion rejected the connection. Reconnect Notion."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "system_error",
+                    "predicate": "{{ (response.get('status') or 0) >= 400 }}",
+                    "error_message": "Notion returned an unexpected error through the credential proxy proxy."
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data"
+            ]
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('object') == 'page_markdown' }}"
+          }
+        },
+        "partition_router": {
+          "type": "SubstreamPartitionRouter",
+          "parent_stream_configs": [
+            {
+              "type": "ParentStreamConfig",
+              "stream": {
+                "$ref": "#/definitions/pages"
+              },
+              "parent_key": "id",
+              "partition_field": "page_id",
+              "incremental_dependency": true,
+              "extra_fields": [
+                [
+                  "last_edited_time"
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      "transformations": [
+        {
+          "type": "AddFields",
+          "fields": [
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "page_last_edited_time"
+              ],
+              "value": "{{ stream_partition.extra_fields.last_edited_time }}"
+            }
+          ]
+        }
+      ],
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "page_last_edited_time",
+        "datetime_format": "%Y-%m-%dT%H:%M:%S.%fZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ"
+        ],
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config.get('start_date', '2000-01-01T00:00:00Z') }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        },
+        "is_client_side_incremental": false
+      }
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "comments",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "object": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "parent": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "discussion_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "created_time": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "last_edited_time": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "created_by": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "rich_text": {
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "attachments": {
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "display_name": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "page_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "page_last_edited_time": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://api.notion.com/v1/comments",
+              "parameters": "{{ [{'name': 'Notion-Version', 'value': config.get('notion_version', '2026-03-11'), 'type': 'header'}] + [{'name': 'block_id', 'value': stream_partition.page_id, 'type': 'query'}, {'name': 'page_size', 'value': '100', 'type': 'query'}] + ([{'name': 'start_cursor', 'value': next_page_token.next_page_token, 'type': 'query'}] if next_page_token else []) }}"
+            }
+          },
+          "error_handler": {
+            "type": "CompositeErrorHandler",
+            "error_handlers": [
+              {
+                "type": "DefaultErrorHandler",
+                "max_retries": 10,
+                "backoff_strategies": [
+                  {
+                    "type": "WaitTimeFromResponse",
+                    "wait_time_in_seconds": "{{ ((response.get('headers') or {}).get('retry-after') or (response.get('headers') or {}).get('Retry-After') or ((response.get('data') or {}).get('additional_data') or {}).get('retry_after') or 0) | int + 1 }}",
+                    "max_waiting_time_in_seconds": 600
+                  },
+                  {
+                    "type": "ExponentialBackoffStrategy",
+                    "factor": 5
+                  }
+                ],
+                "response_filters": [
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "RETRY",
+                    "predicate": "{{ response.get('status') in [429, 529, 500, 502, 503, 504] and ((response.get('data') or {}).get('additional_data') or {}).get('rate_limit_reason') != 'public_api_request_blocked' }}",
+                    "error_message": "Notion is rate limiting or unavailable; retrying."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "IGNORE",
+                    "predicate": "{{ response.get('status') == 404 or (response.get('data') or {}).get('code') == 'object_not_found' }}",
+                    "error_message": "Notion object is no longer shared with OpenCrawl or was deleted; skipped."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "IGNORE",
+                    "predicate": "{{ response.get('status') == 403 }}",
+                    "error_message": "This Notion connection can't read comments; skipped."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "config_error",
+                    "predicate": "{{ response.get('status') == 401 or (response.get('data') or {}).get('code') in ['unauthorized', 'restricted_resource'] and response.get('status') != 403 }}",
+                    "error_message": "Notion rejected the connection. Reconnect Notion."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "system_error",
+                    "predicate": "{{ (response.get('status') or 0) >= 400 }}",
+                    "error_message": "Notion returned an unexpected error through the credential proxy proxy."
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "results"
+            ]
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ (response.get('data') or {}).get('next_cursor') }}",
+            "stop_condition": "{{ not (response.get('data') or {}).get('has_more') or not (response.get('data') or {}).get('next_cursor') }}"
+          }
+        },
+        "partition_router": {
+          "type": "SubstreamPartitionRouter",
+          "parent_stream_configs": [
+            {
+              "type": "ParentStreamConfig",
+              "stream": {
+                "$ref": "#/definitions/pages"
+              },
+              "parent_key": "id",
+              "partition_field": "page_id",
+              "incremental_dependency": true,
+              "extra_fields": [
+                [
+                  "last_edited_time"
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      "transformations": [
+        {
+          "type": "AddFields",
+          "fields": [
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "page_id"
+              ],
+              "value": "{{ stream_partition.page_id }}"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "page_last_edited_time"
+              ],
+              "value": "{{ stream_partition.extra_fields.last_edited_time }}"
+            }
+          ]
+        }
+      ],
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "page_last_edited_time",
+        "datetime_format": "%Y-%m-%dT%H:%M:%S.%fZ",
+        "cursor_datetime_formats": [
+          "%Y-%m-%dT%H:%M:%S.%fZ",
+          "%Y-%m-%dT%H:%M:%SZ"
+        ],
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config.get('start_date', '2000-01-01T00:00:00Z') }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        }
+      }
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "users",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "object": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "type": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "avatar_url": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "person": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "bot": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://api.notion.com/v1/users",
+              "parameters": "{{ [{'name': 'Notion-Version', 'value': config.get('notion_version', '2026-03-11'), 'type': 'header'}] + [{'name': 'page_size', 'value': '100', 'type': 'query'}] + ([{'name': 'start_cursor', 'value': next_page_token.next_page_token, 'type': 'query'}] if next_page_token else []) }}"
+            }
+          },
+          "error_handler": {
+            "type": "CompositeErrorHandler",
+            "error_handlers": [
+              {
+                "type": "DefaultErrorHandler",
+                "max_retries": 10,
+                "backoff_strategies": [
+                  {
+                    "type": "WaitTimeFromResponse",
+                    "wait_time_in_seconds": "{{ ((response.get('headers') or {}).get('retry-after') or (response.get('headers') or {}).get('Retry-After') or ((response.get('data') or {}).get('additional_data') or {}).get('retry_after') or 0) | int + 1 }}",
+                    "max_waiting_time_in_seconds": 600
+                  },
+                  {
+                    "type": "ExponentialBackoffStrategy",
+                    "factor": 5
+                  }
+                ],
+                "response_filters": [
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "RETRY",
+                    "predicate": "{{ response.get('status') in [429, 529, 500, 502, 503, 504] and ((response.get('data') or {}).get('additional_data') or {}).get('rate_limit_reason') != 'public_api_request_blocked' }}",
+                    "error_message": "Notion is rate limiting or unavailable; retrying."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "IGNORE",
+                    "predicate": "{{ response.get('status') == 403 }}",
+                    "error_message": "This Notion connection can't list members; skipped."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "config_error",
+                    "predicate": "{{ response.get('status') == 401 or (response.get('data') or {}).get('code') in ['unauthorized', 'restricted_resource'] and response.get('status') != 403 }}",
+                    "error_message": "Notion rejected the connection. Reconnect Notion."
+                  },
+                  {
+                    "type": "HttpResponseFilter",
+                    "action": "FAIL",
+                    "failure_type": "system_error",
+                    "predicate": "{{ (response.get('status') or 0) >= 400 }}",
+                    "error_message": "Notion returned an unexpected error through the credential proxy proxy."
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "results"
+            ]
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ (response.get('data') or {}).get('next_cursor') }}",
+            "stop_condition": "{{ not (response.get('data') or {}).get('has_more') or not (response.get('data') or {}).get('next_cursor') }}"
+          }
+        }
+      }
+    }
+  ],
+  "spec": {
+    "type": "Spec",
+    "connection_specification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "required": [
+        "credential_proxy_api_key",
+        "connected_account_id",
+        "user_id",
+        "start_date"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "credential_proxy_api_key": {
+          "type": "string",
+          "title": "credential proxy API key",
+          "airbyte_secret": true,
+          "order": 0
+        },
+        "connected_account_id": {
+          "type": "string",
+          "title": "credential proxy connected account ID",
+          "order": 1
+        },
+        "user_id": {
+          "type": "string",
+          "title": "credential proxy user ID",
+          "order": 2
+        },
+        "start_date": {
+          "type": "string",
+          "title": "Start date",
+          "description": "Pages edited before this are skipped. Hosted OpenCrawl imports everything (2000-01-01).",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "order": 3
+        },
+        "credential_proxy_base_url": {
+          "type": "string",
+          "title": "credential proxy base URL",
+          "default": "https://credential-proxy.invalid",
+          "order": 4
+        },
+        "notion_version": {
+          "type": "string",
+          "title": "Notion-Version",
+          "default": "2026-03-11",
+          "order": 5
+        },
+        "markdown_version": {
+          "type": "string",
+          "title": "Markdown version",
+          "default": "v2",
+          "order": 6
+        },
+        "requests_per_minute": {
+          "type": "integer",
+          "title": "Requests per minute",
+          "default": 170,
+          "minimum": 1,
+          "maximum": 600,
+          "order": 7
+        },
+        "lookback": {
+          "type": "string",
+          "title": "Lookback",
+          "default": "PT30M",
+          "order": 8
+        },
+        "num_workers": {
+          "type": "integer",
+          "title": "Concurrent requests",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "order": 9
+        }
+      }
+    }
+  }
+}

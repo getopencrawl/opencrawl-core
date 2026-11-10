@@ -12,11 +12,15 @@ jobs:
           node-version: 24.22.2
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
+      - name: Verify the standalone GitHub connector
+        run: python3 -m unittest discover -s connectors/github/tests
       - run: npm ci --prefix web-v2 --ignore-scripts --no-audit --no-fund
       - run: npm run check --prefix web-v2
       - name: Install browser for UI regression coverage
         run: npx --prefix web-v2 playwright install --with-deps chromium
       - run: npm run test:browser --prefix web-v2
+      - name: Verify every connector manifest on the pinned declarative runtime
+        run: OPENCRAWL_TEST_CONNECTOR_RUNTIME=1 node --test test/connector-runtime.test.mjs
       - name: Verify real Temporal scheduling, retries and replay
         run: OPENCRAWL_TEST_TEMPORAL=1 node --test test/session-temporal.test.mjs test/slack-source-temporal.test.mjs test/connector-pagination-temporal.test.mjs
       - name: Verify capture against S3-compatible storage

@@ -10,6 +10,7 @@ import {setTimeout as pause} from 'node:timers/promises';
 import {createInterface} from 'node:readline';
 import {configDir, atomicFile, atomicJson, accessToken, readSession, withSessionLock, syncDirectory} from '../session.ts';
 import {CliError} from '../oauth.ts';
+import {environmentToken} from '../environment-token.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
@@ -51,7 +52,7 @@ export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,
 }
 function staticCaptureToken(api:string) {
   const saved=read(join(captureDir(),'receiver-token.json'));
-  return process.env.OPENCRAWL_SESSIONS_TOKEN || (saved?.api===api?saved.token:null);
+  return environmentToken('OPENCRAWL_SESSIONS_TOKEN',api) || (saved?.api===api?saved.token:null);
 }
 export async function request(api:string,path:string,init:RequestInit={},tokenOverride?:string,renew?:(rejected:string)=>Promise<string>) {
   const staticToken=tokenOverride || staticCaptureToken(api);

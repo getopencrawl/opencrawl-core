@@ -8,6 +8,7 @@ import {HARNESSES, readsTranscript, type Harness} from './parse.ts';
 import {GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
 import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
+import {environmentToken} from '../environment-token.ts';
 import {captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, HOOK_MODE, type CaptureConfig} from './runtime.ts';
 import {captureNotice, grokBotNotice} from './policy.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
@@ -136,6 +137,7 @@ export async function upgradeCaptureHooks() {
   },0);}catch(error:any){if(error?.code!=='SESSION_BUSY')throw error;}
 }
 export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
+  const receiverToken=environmentToken('OPENCRAWL_SESSIONS_TOKEN',api);
   if(!harnesses.length||harnesses.some(h=>!HARNESSES.includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code, codex or grok-bot',64);
   // Image preparation cannot access runtime secrets. First worker authenticates
   // before parsing/spooling; hooks only persist notices even on first launch.
@@ -171,7 +173,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   const originals=new Map(affected.map(path=>[path,existsSync(path)?readFileSync(path):null]));
   try {
   atomicJson(join(captureDir(),'config.json'),config);
-  if(process.env.OPENCRAWL_SESSIONS_TOKEN)atomicJson(join(captureDir(),'receiver-token.json'),{api,token:process.env.OPENCRAWL_SESSIONS_TOKEN});
+  if(receiverToken)atomicJson(join(captureDir(),'receiver-token.json'),{api,token:receiverToken});
   configureHooks(config,enrolled);
   if(harnesses.includes('codex'))enableCodex(config.roots.codex);
   } catch(error) {
@@ -190,7 +192,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
     // An agent that ran the plain command on a Bot's computer reads this and corrects itself.
     ...(absent&&!deferAuth&&!enrolled.includes('grok-bot')&&process.env.CLAUDE_CODE_REMOTE!=='true'?['Neither Claude Code nor Codex was found on this machine. If it is a Grok Bot cloud computer, capture it with opencrawl collect install --yes --harness grok-bot.']:[]),
     ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${hookFile(config,'grok-bot')}. Bots that are already running may keep the hooks they loaded earlier: from a newly created Bot, run a command, then check collect status for a stored receipt.`]:[])];
-  return {notice:enrolled.includes('grok-bot')?captureNotice+' '+grokBotNotice:captureNotice,exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
+  return {notice:enrolled.includes('grok-bot')?captureNotice(api)+' '+grokBotNotice:captureNotice(api),exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
     nextStep:steps.join(' ')};
   });
 }

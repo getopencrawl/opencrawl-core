@@ -1,6 +1,6 @@
 import {consoleResourceKey} from '../data.tsx';
 import {useEffect, useRef, useState, type FormEvent} from 'react';
-import {Button, Input} from '../design/components.tsx';
+import {Button, CopyField, Input} from '../design/components.tsx';
 import {Icon} from '../design/icons.tsx';
 import {useNavigate} from '../router.tsx';
 import {normalizeInvitationEmail, safeWorkspacePath} from './model.ts';
@@ -42,7 +42,7 @@ export function InviteOnboarding({adapter, canInvite, initialInvitations, onComp
     try {
       const result = await adapter.invite(normalized, controller.signal);
       if (!mounted.current) return;
-      invitations.replace(result); setEmail(''); setFeedback(result.addedCount === 0 ? 'This teammate is already on the list.' : 'Invitation sent.');
+      invitations.replace(result); setEmail(''); setFeedback(result.addedCount === 0 ? 'This teammate is already on the list.' : result.items.some(item=>item.email===normalized&&item.inviteUrl) ? 'Share the private invitation link with your teammate.' : 'Invitation sent.');
     } catch (failure) {
       if (mounted.current) setError(failure instanceof Error ? failure.message : 'The invitation could not be sent. Try again.');
     } finally {
@@ -74,7 +74,7 @@ export function InviteOnboarding({adapter, canInvite, initialInvitations, onComp
     <section aria-labelledby="invite-title"><h1 id="invite-title" tabIndex={-1}>Invite your teammates</h1><p className="focus-description">Share this workspace with your team. You can also invite them later.</p>
       {canInvite ? <>
         <div className="invite-editor">
-          {items.length > 0 && <ul className="invitation-list" aria-label="Invitations">{items.map(invitation => <li key={invitation.email}><Icon name="check" className="signal-mark" /><span className="invitation-email">{invitation.email}</span></li>)}</ul>}
+          {items.length > 0 && <ul className="invitation-list" aria-label="Invitations">{items.map(invitation => <li key={invitation.email}><Icon name="check" className="signal-mark" /><div className="invitation-email">{invitation.email}{invitation.inviteUrl && <CopyField label="Private invitation link" value={invitation.inviteUrl}/>}</div></li>)}</ul>}
           <form className="invite-form" noValidate onSubmit={event => void invite(event)}><label htmlFor="invite-emails" className="sr-only">Email address</label><div className="invite-entry"><Input ref={field} id="invite-emails" type="email" inputMode="email" autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={254} placeholder="teammate@company.com" aria-describedby={error ? 'invite-error' : undefined} aria-invalid={error ? true : undefined} value={email} onChange={event => {setEmail(event.target.value); setError(null); setFeedback(null);}} required disabled={busy || finishing} /><Button variant="primary" type="submit" disabled={busy || finishing || !email.trim()}>{busy ? 'Inviting…' : 'Invite'}</Button></div>{error && <p id="invite-error" className="invite-error" role="alert">{error}</p>}</form>
           {feedback && <p className={`invite-feedback${feedback === 'Invitation sent.' ? ' sr-only' : ''}`} role="status">{feedback}</p>}
         </div>

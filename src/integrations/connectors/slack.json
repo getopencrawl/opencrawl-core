@@ -1,0 +1,1883 @@
+{
+  "version": "7.28.2",
+  "type": "DeclarativeSource",
+  "description": "Slack public channels through the credential proxy proxy. Messages and thread replies come from search.messages (Tier 2): one query per sync window names every public channel (in:#a in:#b … is an OR), so a sync costs a few calls however many channels there are. Requires the configured operator credential proxy.",
+  "check": {
+    "type": "CheckStream",
+    "stream_names": [
+      "channels"
+    ]
+  },
+  "concurrency_level": {
+    "type": "ConcurrencyLevel",
+    "default_concurrency": "{{ config.get('num_workers', 1) }}",
+    "max_concurrency": 8
+  },
+  "definitions": {
+    "credential_proxy_requester": {
+      "type": "HttpRequester",
+      "url_base": "{{ config.get('credential_proxy_base_url', 'https://credential-proxy.invalid') }}",
+      "path": "/api/connector-proxy",
+      "http_method": "POST",
+      "authenticator": {
+        "type": "ApiKeyAuthenticator",
+        "api_token": "{{ config['credential_proxy_api_key'] }}",
+        "inject_into": {
+          "type": "RequestOption",
+          "inject_into": "header",
+          "field_name": "x-api-key"
+        }
+      },
+      "error_handler": {
+        "type": "CompositeErrorHandler",
+        "error_handlers": [
+          {
+            "type": "DefaultErrorHandler",
+            "max_retries": 8,
+            "backoff_strategies": [
+              {
+                "type": "WaitTimeFromHeader",
+                "header": "Retry-After"
+              },
+              {
+                "type": "ExponentialBackoffStrategy",
+                "factor": 5
+              }
+            ],
+            "response_filters": [
+              {
+                "type": "HttpResponseFilter",
+                "action": "RETRY",
+                "predicate": "{{ response.get('status') == 429 or (response.get('data') or {}).get('error') == 'ratelimited' or (response.get('status') or 0) >= 500 }}",
+                "error_message": "Slack is rate limiting or unavailable; retrying."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "IGNORE",
+                "predicate": "{{ (response.get('data') or {}).get('error') in ['not_in_channel', 'channel_not_found', 'is_archived'] }}",
+                "error_message": "Channel not readable; skipped."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "config_error",
+                "predicate": "{{ response.get('status') in [401, 403] or (response.get('data') or {}).get('error') in ['invalid_auth', 'not_authed', 'token_revoked', 'token_expired', 'account_inactive', 'missing_scope'] }}",
+                "error_message": "Slack rejected the connection. The user needs to reconnect Slack."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "system_error",
+                "predicate": "{{ (response.get('status') or 0) >= 400 or (response.get('data') or {}).get('ok') == false }}",
+                "error_message": "Slack returned an unexpected error through the credential proxy proxy."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "channels": {
+      "type": "DeclarativeStream",
+      "name": "channels",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "name_normalized": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "is_channel": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_group": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_im": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_mpim": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_private": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "created": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "creator": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "is_archived": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_general": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "unlinked": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "is_shared": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_org_shared": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_ext_shared": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_pending_ext_shared": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "pending_shared": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "pending_connected_team_ids": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "shared_team_ids": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "context_team_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "conversation_host_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "internal_team_ids": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "updated": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "parent_conversation": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "is_member": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "topic": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "purpose": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "properties": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "previous_names": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "num_members": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "enterprise_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://slack.com/api/conversations.list",
+              "parameters": "{{ [{'name': 'types', 'value': 'public_channel', 'type': 'query'}, {'name': 'exclude_archived', 'value': 'false', 'type': 'query'}, {'name': 'limit', 'value': '200', 'type': 'query'}] + ([{'name': 'cursor', 'value': next_page_token.next_page_token, 'type': 'query'}] if next_page_token else []) }}"
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "channels"
+            ]
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ ((response.get('data') or {}).get('response_metadata') or {}).get('next_cursor') }}",
+            "stop_condition": "{{ not ((response.get('data') or {}).get('response_metadata') or {}).get('next_cursor') }}"
+          }
+        }
+      }
+    },
+    "emoji_requester": {
+      "type": "HttpRequester",
+      "url_base": "{{ config.get('credential_proxy_base_url', 'https://credential-proxy.invalid') }}",
+      "path": "/api/connector-proxy",
+      "http_method": "POST",
+      "authenticator": {
+        "type": "ApiKeyAuthenticator",
+        "api_token": "{{ config['credential_proxy_api_key'] }}",
+        "inject_into": {
+          "type": "RequestOption",
+          "inject_into": "header",
+          "field_name": "x-api-key"
+        }
+      },
+      "error_handler": {
+        "type": "CompositeErrorHandler",
+        "error_handlers": [
+          {
+            "type": "DefaultErrorHandler",
+            "max_retries": 8,
+            "backoff_strategies": [
+              {
+                "type": "WaitTimeFromHeader",
+                "header": "Retry-After"
+              },
+              {
+                "type": "ExponentialBackoffStrategy",
+                "factor": 5
+              }
+            ],
+            "response_filters": [
+              {
+                "type": "HttpResponseFilter",
+                "action": "IGNORE",
+                "predicate": "{{ (response.get('data') or {}).get('error') == 'missing_scope' }}",
+                "error_message": "No emoji:read scope on this connection; custom emoji skipped."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "RETRY",
+                "predicate": "{{ response.get('status') == 429 or (response.get('data') or {}).get('error') == 'ratelimited' or (response.get('status') or 0) >= 500 }}",
+                "error_message": "Slack is rate limiting or unavailable; retrying."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "IGNORE",
+                "predicate": "{{ (response.get('data') or {}).get('error') in ['not_in_channel', 'channel_not_found', 'is_archived'] }}",
+                "error_message": "Channel not readable; skipped."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "config_error",
+                "predicate": "{{ response.get('status') in [401, 403] or (response.get('data') or {}).get('error') in ['invalid_auth', 'not_authed', 'token_revoked', 'token_expired', 'account_inactive', 'missing_scope'] }}",
+                "error_message": "Slack rejected the connection. The user needs to reconnect Slack."
+              },
+              {
+                "type": "HttpResponseFilter",
+                "action": "FAIL",
+                "failure_type": "system_error",
+                "predicate": "{{ (response.get('status') or 0) >= 400 or (response.get('data') or {}).get('ok') == false }}",
+                "error_message": "Slack returned an unexpected error through the credential proxy proxy."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "streams": [
+    {
+      "$ref": "#/definitions/channels"
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "users",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "team_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "deleted": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "color": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "real_name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "tz": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "tz_label": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "tz_offset": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "profile": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "is_admin": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_owner": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_primary_owner": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_restricted": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_ultra_restricted": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_bot": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_app_user": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_workflow_bot": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_email_confirmed": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "updated": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "who_can_share_contact_card": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "enterprise_user": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "has_2fa": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "locale": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "is_invited_user": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_connector_bot": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://slack.com/api/users.list",
+              "parameters": "{{ [{'name': 'limit', 'value': '200', 'type': 'query'}] + ([{'name': 'cursor', 'value': next_page_token.next_page_token, 'type': 'query'}] if next_page_token else []) }}"
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "members"
+            ]
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ ((response.get('data') or {}).get('response_metadata') or {}).get('next_cursor') }}",
+            "stop_condition": "{{ not ((response.get('data') or {}).get('response_metadata') or {}).get('next_cursor') }}"
+          }
+        }
+      }
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "messages",
+      "primary_key": [
+        "channel_id",
+        "ts"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "channel_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "ts": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "type": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "subtype": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "user": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "bot_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "bot_profile": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "app_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "username": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "team": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "user_team": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "source_team": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "user_profile": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "text": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "blocks": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "attachments": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "files": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "upload": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "display_as_bot": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "reactions": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "edited": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "thread_ts": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "parent_user_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "reply_count": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "reply_users_count": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "reply_users": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "latest_reply": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "subscribed": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "last_read": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "is_locked": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_starred": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "pinned_to": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "client_msg_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "icons": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "metadata": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "hidden": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "inviter": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "x_files": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "root": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "permalink": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "purpose": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "topic": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "old_name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "channel": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "item_type": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "comment": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "room": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "no_notifications": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_thread_broadcast": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_intro": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "files_shared": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "iid": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "score": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "previous": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "previous_2": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "next": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "next_2": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://slack.com/api/search.messages",
+              "parameters": "{{ [{'name': 'query', 'value': 'in:#' ~ (stream_slice.extra_fields['name'] | join(' in:#')) ~ ' after:' ~ format_datetime(str_to_datetime(stream_interval.start_time) - duration('P1D'), '%Y-%m-%d') ~ ' before:' ~ format_datetime(str_to_datetime(stream_interval.end_time) + duration('P1D'), '%Y-%m-%d'), 'type': 'query'}, {'name': 'count', 'value': '100', 'type': 'query'}, {'name': 'sort', 'value': 'timestamp', 'type': 'query'}, {'name': 'sort_dir', 'value': 'asc', 'type': 'query'}, {'name': 'highlight', 'value': 'false', 'type': 'query'}, {'name': 'page', 'value': '%d' % (next_page_token.next_page_token if next_page_token else 1), 'type': 'query'}] }}"
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "messages",
+              "matches"
+            ]
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('ts') is not none and not (record.get('channel') or {}).get('is_private') and not (record.get('channel') or {}).get('is_im') and not (record.get('channel') or {}).get('is_mpim') and not ('thread_ts=' in (record.get('permalink') or '') and ('thread_ts=' ~ record.ts) not in record.permalink) }}"
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ ((response.get('data') or {}).get('messages') or {}).get('paging', {}).get('page', 0) + 1 }}",
+            "stop_condition": "{{ ((response.get('data') or {}).get('messages') or {}).get('paging', {}).get('page', 0) >= [((response.get('data') or {}).get('messages') or {}).get('paging', {}).get('pages', 0), 100] | min }}"
+          }
+        },
+        "partition_router": {
+          "type": "GroupingPartitionRouter",
+          "group_size": 30,
+          "deduplicate": true,
+          "underlying_partition_router": {
+            "type": "SubstreamPartitionRouter",
+            "parent_stream_configs": [
+              {
+                "type": "ParentStreamConfig",
+                "stream": {
+                  "$ref": "#/definitions/channels"
+                },
+                "parent_key": "id",
+                "partition_field": "channel_id",
+                "extra_fields": [
+                  [
+                    "name"
+                  ]
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "transformations": [
+        {
+          "type": "AddFields",
+          "fields": [
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "channel_id"
+              ],
+              "value": "{{ (record.get('channel') or {}).get('id') }}",
+              "value_type": "string"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "thread_ts"
+              ],
+              "value": "{{ record.permalink.split('thread_ts=')[1].split('&')[0] if record.get('permalink') and 'thread_ts=' in record.permalink else (record.get('thread_ts') or '') }}",
+              "value_type": "string"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "text"
+              ],
+              "value": "{%- if record.get('text') -%}{{ record.text }}{%- else -%}{%- for b in record.get('blocks') or [] -%}{%- if b.get('text') is mapping and b.text.get('text') -%}{{ b.text.text }}\n{%- endif -%}{%- for f in b.get('fields') or [] -%}{%- if f.get('text') -%}{{ f.text }}\n{%- endif -%}{%- endfor -%}{%- for e in b.get('elements') or [] -%}{%- if e.get('text') is string -%}{{ e.text }}{%- elif e.get('text') is mapping -%}{{ e.text.get('text', '') }}{%- endif -%}{%- for e2 in e.get('elements') or [] -%}{%- if e2.get('text') is string -%}{{ e2.text }}{%- elif e2.get('url') -%}{{ e2.url }}{%- endif -%}{%- for e3 in e2.get('elements') or [] -%}{%- if e3.get('text') is string -%}{{ e3.text }}{%- endif -%}{%- endfor -%}{%- endfor -%}{%- endfor -%}\n{%- endfor -%}{%- for a in record.get('attachments') or [] -%}{{ a.get('title') or '' }} {{ a.get('text') or a.get('fallback') or '' }}\n{%- endfor -%}{%- for f in record.get('files') or [] -%}{{ f.get('title') or f.get('name') or '' }}\n{%- endfor -%}{%- endif -%}",
+              "value_type": "string"
+            }
+          ]
+        },
+        {
+          "type": "RemoveFields",
+          "condition": "{{ property == '' }}",
+          "field_pointers": [
+            [
+              "thread_ts"
+            ]
+          ]
+        }
+      ],
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "ts",
+        "datetime_format": "%Y-%m-%d",
+        "cursor_datetime_formats": [
+          "%s_as_float"
+        ],
+        "step": "P1D",
+        "cursor_granularity": "P1D",
+        "lookback_window": "{{ config.get('search_lookback', 'P1D') }}",
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config['start_date'] }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        },
+        "global_substream_cursor": true,
+        "end_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ (now_utc() + duration('P1D')).strftime('%Y-%m-%dT%H:%M:%SZ') }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        }
+      }
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "threads",
+      "primary_key": [
+        "channel_id",
+        "ts"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "channel_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "ts": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "type": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "subtype": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "user": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "bot_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "bot_profile": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "app_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "username": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "team": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "user_team": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "source_team": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "user_profile": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "text": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "blocks": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "attachments": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "files": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "upload": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "display_as_bot": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "reactions": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "edited": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "thread_ts": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "parent_user_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "reply_count": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "reply_users_count": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "reply_users": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "latest_reply": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "subscribed": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "last_read": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "is_locked": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_starred": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "pinned_to": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "client_msg_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "icons": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "metadata": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "hidden": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "inviter": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "x_files": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "root": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "permalink": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "purpose": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "topic": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "old_name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "channel": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "item_type": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "comment": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "room": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "no_notifications": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_thread_broadcast": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "is_intro": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "files_shared": {
+              "type": [
+                "null",
+                "boolean"
+              ]
+            },
+            "iid": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "score": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "previous": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "previous_2": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "next": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            },
+            "next_2": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/credential_proxy_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://slack.com/api/search.messages",
+              "parameters": "{{ [{'name': 'query', 'value': 'in:#' ~ (stream_slice.extra_fields['name'] | join(' in:#')) ~ ' after:' ~ format_datetime(str_to_datetime(stream_interval.start_time) - duration('P1D'), '%Y-%m-%d') ~ ' before:' ~ format_datetime(str_to_datetime(stream_interval.end_time) + duration('P1D'), '%Y-%m-%d') ~ ' is:thread', 'type': 'query'}, {'name': 'count', 'value': '100', 'type': 'query'}, {'name': 'sort', 'value': 'timestamp', 'type': 'query'}, {'name': 'sort_dir', 'value': 'asc', 'type': 'query'}, {'name': 'highlight', 'value': 'false', 'type': 'query'}, {'name': 'page', 'value': '%d' % (next_page_token.next_page_token if next_page_token else 1), 'type': 'query'}] }}"
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "messages",
+              "matches"
+            ]
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('ts') is not none and not (record.get('channel') or {}).get('is_private') and not (record.get('channel') or {}).get('is_im') and not (record.get('channel') or {}).get('is_mpim') and ('thread_ts=' in (record.get('permalink') or '') and ('thread_ts=' ~ record.ts) not in record.permalink) }}"
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ ((response.get('data') or {}).get('messages') or {}).get('paging', {}).get('page', 0) + 1 }}",
+            "stop_condition": "{{ ((response.get('data') or {}).get('messages') or {}).get('paging', {}).get('page', 0) >= [((response.get('data') or {}).get('messages') or {}).get('paging', {}).get('pages', 0), 100] | min }}"
+          }
+        },
+        "partition_router": {
+          "type": "GroupingPartitionRouter",
+          "group_size": 30,
+          "deduplicate": true,
+          "underlying_partition_router": {
+            "type": "SubstreamPartitionRouter",
+            "parent_stream_configs": [
+              {
+                "type": "ParentStreamConfig",
+                "stream": {
+                  "$ref": "#/definitions/channels"
+                },
+                "parent_key": "id",
+                "partition_field": "channel_id",
+                "extra_fields": [
+                  [
+                    "name"
+                  ]
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "transformations": [
+        {
+          "type": "AddFields",
+          "fields": [
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "channel_id"
+              ],
+              "value": "{{ (record.get('channel') or {}).get('id') }}",
+              "value_type": "string"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "thread_ts"
+              ],
+              "value": "{{ record.permalink.split('thread_ts=')[1].split('&')[0] if record.get('permalink') and 'thread_ts=' in record.permalink else (record.get('thread_ts') or '') }}",
+              "value_type": "string"
+            },
+            {
+              "type": "AddedFieldDefinition",
+              "path": [
+                "text"
+              ],
+              "value": "{%- if record.get('text') -%}{{ record.text }}{%- else -%}{%- for b in record.get('blocks') or [] -%}{%- if b.get('text') is mapping and b.text.get('text') -%}{{ b.text.text }}\n{%- endif -%}{%- for f in b.get('fields') or [] -%}{%- if f.get('text') -%}{{ f.text }}\n{%- endif -%}{%- endfor -%}{%- for e in b.get('elements') or [] -%}{%- if e.get('text') is string -%}{{ e.text }}{%- elif e.get('text') is mapping -%}{{ e.text.get('text', '') }}{%- endif -%}{%- for e2 in e.get('elements') or [] -%}{%- if e2.get('text') is string -%}{{ e2.text }}{%- elif e2.get('url') -%}{{ e2.url }}{%- endif -%}{%- for e3 in e2.get('elements') or [] -%}{%- if e3.get('text') is string -%}{{ e3.text }}{%- endif -%}{%- endfor -%}{%- endfor -%}{%- endfor -%}\n{%- endfor -%}{%- for a in record.get('attachments') or [] -%}{{ a.get('title') or '' }} {{ a.get('text') or a.get('fallback') or '' }}\n{%- endfor -%}{%- for f in record.get('files') or [] -%}{{ f.get('title') or f.get('name') or '' }}\n{%- endfor -%}{%- endif -%}",
+              "value_type": "string"
+            }
+          ]
+        },
+        {
+          "type": "RemoveFields",
+          "condition": "{{ property == '' }}",
+          "field_pointers": [
+            [
+              "thread_ts"
+            ]
+          ]
+        }
+      ],
+      "incremental_sync": {
+        "type": "DatetimeBasedCursor",
+        "cursor_field": "ts",
+        "datetime_format": "%Y-%m-%d",
+        "cursor_datetime_formats": [
+          "%s_as_float"
+        ],
+        "step": "P1D",
+        "cursor_granularity": "P1D",
+        "lookback_window": "{{ config.get('search_lookback', 'P1D') }}",
+        "start_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ config['start_date'] }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        },
+        "global_substream_cursor": true,
+        "end_datetime": {
+          "type": "MinMaxDatetime",
+          "datetime": "{{ (now_utc() + duration('P1D')).strftime('%Y-%m-%dT%H:%M:%SZ') }}",
+          "datetime_format": "%Y-%m-%dT%H:%M:%SZ"
+        }
+      }
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "emoji",
+      "primary_key": [],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "emoji": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "cache_ts": {
+              "type": [
+                "null",
+                "string"
+              ]
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "$ref": "#/definitions/emoji_requester",
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "https://slack.com/api/emoji.list",
+              "parameters": []
+            }
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data"
+            ]
+          },
+          "record_filter": {
+            "type": "RecordFilter",
+            "condition": "{{ record.get('ok') == true }}"
+          }
+        }
+      },
+      "transformations": [
+        {
+          "type": "RemoveFields",
+          "field_pointers": [
+            [
+              "ok"
+            ],
+            [
+              "response_metadata"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "spec": {
+    "type": "Spec",
+    "connection_specification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Slack via credential proxy",
+      "type": "object",
+      "required": [
+        "credential_proxy_api_key",
+        "connected_account_id",
+        "user_id",
+        "start_date"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "credential_proxy_api_key": {
+          "type": "string",
+          "title": "credential proxy project API key",
+          "airbyte_secret": true,
+          "order": 0
+        },
+        "connected_account_id": {
+          "type": "string",
+          "title": "credential proxy connected account",
+          "pattern": "^ca_[A-Za-z0-9_-]+$",
+          "order": 1
+        },
+        "user_id": {
+          "type": "string",
+          "title": "credential proxy user ID",
+          "order": 2
+        },
+        "start_date": {
+          "type": "string",
+          "title": "Backfill start (UTC)",
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "order": 3
+        },
+        "num_workers": {
+          "type": "integer",
+          "title": "Concurrent requests",
+          "minimum": 1,
+          "maximum": 8,
+          "default": 1,
+          "order": 4
+        },
+        "page_size": {
+          "type": "integer",
+          "title": "Messages per request",
+          "minimum": 1,
+          "maximum": 999,
+          "default": 200,
+          "order": 5
+        },
+        "credential_proxy_base_url": {
+          "type": "string",
+          "title": "credential proxy API base URL",
+          "default": "https://credential-proxy.invalid",
+          "order": 6
+        },
+        "search_window": {
+          "type": "string",
+          "title": "Search window per request (ISO 8601)",
+          "default": "P30D",
+          "order": 7
+        },
+        "search_lookback": {
+          "type": "string",
+          "title": "Re-query window each sync (ISO 8601)",
+          "default": "P1D",
+          "order": 8
+        }
+      }
+    }
+  }
+}

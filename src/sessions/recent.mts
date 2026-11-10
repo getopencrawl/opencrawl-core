@@ -88,6 +88,9 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
         let batch = batches.get(d.sourceKey ?? '');
         if (!batch) {
           batch = (await ingest.getBatch(principal, {...identity, batchId: source.batchId})) ?? undefined;
+          // The raw read also refuses a session made private or deleted while it was being read.
+          // That is a visibility change: the recheck after source reads drops this session.
+          if (!batch && !await authorize()) return null;
           if (!batch) throw new Error('Recent session source unavailable');
           if (batches.size >= 4) batches.delete(batches.keys().next().value!);
           batches.set(d.sourceKey!, batch);
@@ -109,7 +112,9 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
             sort: [{timestamp: direction}, {[f('sequence')]: direction}, {[f('eventId')]: direction}, {id: direction}],
             ...(after ? {search_after: after} : {})});
           for (const hit of found.hits.hits) {
-            const {event, batch} = await original(hit), message = sessionMessage(event);
+            const source = await original(hit);
+            if (!source) return null;
+            const {event, batch} = source, message = sessionMessage(event);
             if (message?.role === role) return {text: message.text, timestamp: iso(event.timestamp), receivedAt: iso(batch.receivedAt), eventId: event.id};
           }
           if (found.hits.hits.length < 20) return null;
@@ -123,7 +128,9 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
       const metadata = await query({size: 20, query: {bool: {filter: [...filter,
         {terms: {[f('kind')]: TITLE_KINDS}}]}}, sort: [{timestamp: 'desc'}, {[f('sequence')]: 'desc'}, {id: 'desc'}]});
       for (const hit of metadata.hits.hits) {
-        const {event, batch} = await original(hit);
+        const source = await original(hit);
+        if (!source) break;
+        const {event, batch} = source;
         const candidate = capturedTitle(event, batch);
         if (typeof candidate === 'string' && candidate.trim()) {title = candidate; titleTimestamp = iso(event.timestamp); break;}
       }

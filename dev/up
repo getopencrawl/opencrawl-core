@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
+if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
+  cat <<'HELP'
+Usage: ./dev/up [up|demo|status|stop|reset --yes]
+
+Development only. Ubuntu 24.04 x86_64, 4 CPUs, 16 GiB RAM, 40 GiB free disk.
+The first run installs Docker if absent (using sudo), downloads pinned tools,
+starts a private Airbyte kind cluster and the normal OpenCrawl Compose stack,
+generates a local login, and leaves first-run onboarding ready for you.
+Use ./dev/up demo to load synthetic data and automatically complete onboarding.
+No service credentials or .env editing. Internet is needed to download images.
+
+OPENCRAWL_DEV_PORT=8092 and OPENCRAWL_DEV_AIRBYTE_PORT=8000 select loopback ports
+on first run. OPENCRAWL_DEV_ORIGIN optionally selects an HTTPS reverse proxy URL.
+Reruns preserve accounts and data. stop preserves volumes. reset --yes destroys
+only this clone's development installation. Production deploy/ is independent.
+HELP
+  exit 0
+fi
+[[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || {
+  echo 'This installer currently supports Linux x86_64; use a disposable Ubuntu 24.04 VM.' >&2; exit 1;
+}
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  if [[ $EUID -ne 0 ]]; then
+    echo 'Docker installation/access needs administrator privileges; requesting sudo.'
+    exec sudo -- env "OPENCRAWL_DEV_PORT=${OPENCRAWL_DEV_PORT:-8092}" \
+      "OPENCRAWL_DEV_AIRBYTE_PORT=${OPENCRAWL_DEV_AIRBYTE_PORT:-8000}" \
+      "OPENCRAWL_DEV_ORIGIN=${OPENCRAWL_DEV_ORIGIN:-}" bash "$ROOT/dev/up" "$@"
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    # Use the OS package signature chain; never pipe a downloaded script to root.
+    source /etc/os-release
+    [[ "$ID" == ubuntu && "$VERSION_ID" == 24.04 ]] || {
+      echo 'Automatic Docker installation supports Ubuntu 24.04. Install Docker and Compose first on other Linux distributions.' >&2; exit 1;
+    }
+    [[ $(df -Pk "$ROOT" | awk 'NR==2 {print $4}') -ge 41943040 ]] || { echo 'At least 40 GiB free disk is required.' >&2; exit 1; }
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y docker.io docker-compose-v2 curl ca-certificates xz-utils
+    systemctl enable --now docker
+  else
+    echo 'Docker is installed but unavailable. Start its daemon and retry.' >&2; exit 1
+  fi
+fi
+docker compose version >/dev/null || { echo 'Install the Docker Compose v2 plugin, then retry.' >&2; exit 1; }
+STATE="$ROOT/.opencrawl-dev"
+[[ ! -L "$STATE" ]] || { echo 'Refusing a symlinked development state directory.' >&2; exit 1; }
+mkdir -p "$STATE/bin"
+chmod 700 "$STATE"
+NODE="$STATE/bin/node"
+if [[ ! -x "$NODE" ]]; then
+  echo 'Downloading the pinned Node.js runtime for development tooling.'
+  curl --fail --silent --show-error --location --retry 3 \
+    https://nodejs.org/dist/v24.22.2/node-v24.22.2-linux-x64.tar.xz -o "$STATE/node.tar.xz"
+  echo '48cc0e21e048790e54c0cf5749c2725005313d652651c40b7a21feb9697aaf75'"  $STATE/node.tar.xz" | sha256sum --check --status
+  tar -xJf "$STATE/node.tar.xz" -C "$STATE" node-v24.22.2-linux-x64/bin/node
+  mv "$STATE/node-v24.22.2-linux-x64/bin/node" "$NODE"
+  rmdir "$STATE/node-v24.22.2-linux-x64/bin" "$STATE/node-v24.22.2-linux-x64"
+  rm "$STATE/node.tar.xz"
+fi
+exec "$NODE" --disable-warning=ExperimentalWarning "$ROOT/dev/installer.mts" "$@"

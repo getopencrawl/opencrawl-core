@@ -88,11 +88,20 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot read batches');
       if (!id(userId)) fail(400, 'Invalid author');
       if (!isSessionHarness(harness) || !id(installationId) || !id(sessionId) || !/^[a-f0-9]{64}$/.test(batchId ?? '')) fail(400, 'Invalid receipt');
-      const data = await store.get(`${scope({...principal,userId})}/${harness}/${digest(installationId)}/${digest(sessionId)}/${batchId}.json.gz`, {maxBytes: MAX_STORED_BATCH_BYTES});
+      const owner = {...principal, userId};
+      const readable = async () => {
+        const control = await controls.read(owner, 'sessions', harness!, sessionId);
+        return !control?.deletedAt && (control?.visibility !== 'private' || userId === principal.userId);
+      };
+      if (!await readable()) return null;
+      const data = await store.get(`${scope(owner)}/${harness}/${digest(installationId)}/${digest(sessionId)}/${batchId}.json.gz`, {maxBytes: MAX_STORED_BATCH_BYTES});
       if (!data) return null;
       const batch = parseJson<SessionBatch>(gunzipSync(data,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}));
       if (batch.owner?.tenantId!==principal.tenantId || batch.owner?.userId!==userId ||
           batch.harness!==harness || batch.installationId!==installationId || batch.sessionId!==sessionId) throw new Error('Stored batch does not match its authorized scope');
+      // A receipt locates content; it cannot override a visibility change or
+      // tombstone, including one committed while the object was being read.
+      if (!await readable()) return null;
       return batch;
     }
   };

@@ -33,7 +33,7 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   handler(req,res);
  });
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
- const api='http://127.0.0.1:'+(server.address() as any).port;
+ const api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=api;
  try {
   Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),OPENCRAWL_SESSIONS_TOKEN:token,CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex')});
   const paths:string[]=[];
@@ -199,7 +199,7 @@ test('Claude Desktop mirrors preserve unmatched audit messages, session boundari
   handler(req,res);
  });
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
- const api='http://127.0.0.1:'+(server.address() as any).port;
+ const api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=api;
  try {
   Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),OPENCRAWL_SESSIONS_TOKEN:token,CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex'),CLAUDE_DESKTOP_CONFIG_DIR:join(dir,'desktop')});
   await installCapture(api,{background:false,home:dir,command:[]});

@@ -1,73 +1,69 @@
-# Single-tenant self-hosted OpenCrawl: capture, indexing and search for agent sessions.
-# Start with ./up.sh (creates .env with fresh secrets). Every host port binds to loopback.
-name: opencrawl
-
+# One organization, multiple users. Local Better Auth accounts; bring your own Airbyte workspace.
+# Choose a fresh COMPOSE_PROJECT_NAME for each independent installation.
+name: ${COMPOSE_PROJECT_NAME:-opencrawl}
 x-runtime: &runtime
   build: {context: .., dockerfile: deploy/Dockerfile}
-  image: opencrawl-core:local
+  image: opencrawl-core:${OPENCRAWL_IMAGE_TAG:-local}
   restart: unless-stopped
+  stop_grace_period: 45s
+  volumes: ["application:/data"]
   environment: &env
-    OPENCRAWL_TENANT_ID: ${OPENCRAWL_TENANT_ID:-self-hosted}
-    OPENCRAWL_USER_ID: ${OPENCRAWL_USER_ID:-owner}
-    OPENCRAWL_USER_NAME: ${OPENCRAWL_USER_NAME:-Owner}
+    OPENCRAWL_URL: ${OPENCRAWL_URL:?Set the HTTPS application origin}
+    OPENCRAWL_ORGANIZATION_ID: ${OPENCRAWL_ORGANIZATION_ID:?Run ./up.sh}
+    OPENCRAWL_AUTH_SECRET: ${OPENCRAWL_AUTH_SECRET:?Run ./up.sh}
+    OPENCRAWL_SETUP_TOKEN: ${OPENCRAWL_SETUP_TOKEN:?Run ./up.sh}
+    OPENCRAWL_IDENTITY_PATH: /data/identity.sqlite
+    OPENCRAWL_REGISTRY_PATH: /data/integrations.sqlite
     OPENCRAWL_LANDING_S3_BUCKET: opencrawl
     OPENCRAWL_LANDING_S3_REGION: us-east-1
     OPENCRAWL_LANDING_S3_ENDPOINT: http://s3:8333
-    OPENCRAWL_LANDING_S3_ACCESS_KEY_ID: ${OPENCRAWL_S3_ACCESS_KEY_ID:?run ./up.sh or set it in .env}
-    OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY: ${OPENCRAWL_S3_SECRET_ACCESS_KEY:?run ./up.sh or set it in .env}
+    OPENCRAWL_LANDING_S3_ACCESS_KEY_ID: ${OPENCRAWL_S3_ACCESS_KEY_ID:?Run ./up.sh}
+    OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY: ${OPENCRAWL_S3_SECRET_ACCESS_KEY:?Run ./up.sh}
+    OPENCRAWL_AIRBYTE_S3_ENDPOINT: ${OPENCRAWL_AIRBYTE_S3_ENDPOINT:?Set the S3 endpoint reachable from your Airbyte jobs}
+    OPENCRAWL_AIRBYTE_APP_URL: ${OPENCRAWL_AIRBYTE_APP_URL:-}
+    OPENCRAWL_CONNECTOR_KEY: ${OPENCRAWL_CONNECTOR_KEY:?Run ./up.sh}
+    AIRBYTE_URL: ${AIRBYTE_URL:?Set your Airbyte API origin}
+    AIRBYTE_CLIENT_ID: ${AIRBYTE_CLIENT_ID:?Set your Airbyte API client}
+    AIRBYTE_CLIENT_SECRET: ${AIRBYTE_CLIENT_SECRET:?Set your Airbyte API secret}
+    AIRBYTE_WORKSPACE_ID: ${AIRBYTE_WORKSPACE_ID:?Set your existing Airbyte workspace}
+    AIRBYTE_S3_DESTINATION_DEFINITION_ID: ${AIRBYTE_S3_DESTINATION_DEFINITION_ID:-}
+    SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-}
+    SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
+    COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+    COMPOSIO_BASE_URL: ${COMPOSIO_BASE_URL:-}
+    GITHUB_APP: ${GITHUB_APP:-}
+    AIRBYTE_GITHUB_REPOSITORY: ${AIRBYTE_GITHUB_REPOSITORY:-opencrawl/source-github}
+    AIRBYTE_GITHUB_TAG: ${AIRBYTE_GITHUB_TAG:-local}
     OPENCRAWL_OPENSEARCH_URL: http://opensearch:9200
     TEMPORAL_ADDRESS: temporal:7233
     TEMPORAL_NAMESPACE: default
-  healthcheck: &tcp
-    test: ["CMD", "node", "-e", "require('net').connect(process.env.PORT,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
-    interval: 5s
-    retries: 30
+    TEMPORAL_CONNECTOR_TASK_QUEUE: connector-indexing-v1
+    TEMPORAL_SESSION_TASK_QUEUE: session-indexing-v1
 
 services:
-  receiver:
+  app:
     <<: *runtime
-    command: ["node", "dist/src/sessions/standalone.mjs"]
-    environment:
-      <<: *env
-      HOST: 0.0.0.0
-      PORT: "8093"
-      OPENCRAWL_SESSIONS_TOKEN: ${OPENCRAWL_SESSIONS_TOKEN:?run ./up.sh or set it in .env}
-    ports: ["127.0.0.1:${OPENCRAWL_SESSIONS_PORT:-8093}:8093"]
+    command: ["node", "dist/src/selfhost/server.mjs"]
+    environment: {<<: *env, HOST: 0.0.0.0, PORT: "8092"}
+    ports: ["${OPENCRAWL_APP_BIND:-127.0.0.1}:${OPENCRAWL_APP_PORT:-8092}:8092"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8092/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
     depends_on: {s3: {condition: service_started}, opensearch: {condition: service_healthy}}
 
   worker:
     <<: *runtime
-    # Bundles the workflow code once per start, then indexes captured sessions every five minutes.
-    command: ["sh", "-c", "node dist/src/sessions/temporal/standalone.mjs /tmp/session-bundle.cjs --build && exec node dist/src/sessions/temporal/standalone.mjs /tmp/session-bundle.cjs"]
-    environment:
-      <<: *env
-      TEMPORAL_SESSION_TASK_QUEUE: session-indexing-v1
+    command: ["node", "dist/src/selfhost/worker.mjs"]
     healthcheck:
-      test: ["CMD", "node", "deploy/worker-health.mjs"]
+      test: ["CMD", "node", "-e", "const s=JSON.parse(require('fs').readFileSync('/tmp/opencrawl-worker-ready.json'));process.exit(Date.now()-Date.parse(s.checkedAt)<65000?0:1)"]
       interval: 15s
-      timeout: 10s
-      retries: 20
-    depends_on: {s3: {condition: service_started}, opensearch: {condition: service_healthy}, temporal: {condition: service_healthy}}
-
-  mcp:
-    <<: *runtime
-    command: ["node", "dist/src/mcp/standalone.mjs"]
-    environment:
-      <<: *env
-      HOST: 0.0.0.0
-      PORT: "8094"
-      # Clients must send this exact Host header: use 127.0.0.1, not localhost.
-      MCP_ORIGIN: http://127.0.0.1:${OPENCRAWL_MCP_PORT:-8094}
-      MCP_TOKEN: ${MCP_TOKEN:?run ./up.sh or set it in .env}
-      OPENCRAWL_SEARCH_CONFIG: /run/opencrawl/search.json
-      OPENCRAWL_BOARD_PATH: /data/board.sqlite
-    configs: [{source: search, target: /run/opencrawl/search.json}]
-    volumes: ["board:/data"]
-    ports: ["127.0.0.1:${OPENCRAWL_MCP_PORT:-8094}:8094"]
-    depends_on: {opensearch: {condition: service_healthy}}
+      timeout: 5s
+      retries: 30
+    depends_on: {app: {condition: service_healthy}, temporal: {condition: service_healthy}}
 
   s3:
-    # SeaweedFS (Apache-2.0): single-node S3 API.
     image: chrislusf/seaweedfs:4.52
     restart: unless-stopped
     command: >-
@@ -77,15 +73,17 @@ services:
       AWS_ACCESS_KEY_ID: ${OPENCRAWL_S3_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${OPENCRAWL_S3_SECRET_ACCESS_KEY}
     volumes: ["s3:/data"]
+    # Airbyte jobs must reach this endpoint. Keep loopback unless configuring a private interface.
+    ports: ["${OPENCRAWL_S3_BIND:-127.0.0.1}:${OPENCRAWL_S3_PORT:-18333}:8333"]
 
   opensearch:
-    # Security plugin off: reachable only on this compose network, never published.
     image: opensearchproject/opensearch:3.9.0@sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e
     restart: unless-stopped
     environment:
       discovery.type: single-node
       DISABLE_SECURITY_PLUGIN: "true"
       DISABLE_INSTALL_DEMO_CONFIG: "true"
+      node.store.allow_mmap: "false"
       OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
     volumes: ["opensearch:/usr/share/opensearch/data"]
     healthcheck:
@@ -93,34 +91,42 @@ services:
       interval: 5s
       retries: 60
 
-  temporal:
-    # Preview-only Temporal development server with SQLite persistence; no HA guarantee.
-    image: temporalio/temporal:1.10.0
+  temporal-db:
+    image: postgres:16.6-bookworm
     restart: unless-stopped
-    command: ["server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/data/temporal.db"]
-    user: root
-    volumes: ["temporal:/data"]
-    ports: ["127.0.0.1:8233:8233"]
+    environment: {POSTGRES_USER: temporal, POSTGRES_PASSWORD: "${OPENCRAWL_TEMPORAL_PASSWORD:?Run ./up.sh}"}
+    volumes: ["temporal-db:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
       interval: 5s
+      retries: 30
+
+  temporal:
+    image: temporalio/auto-setup:1.29.1
+    restart: unless-stopped
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${OPENCRAWL_TEMPORAL_PASSWORD}
+      POSTGRES_SEEDS: temporal-db
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CLI_ADDRESS: temporal:7233
+    depends_on: {temporal-db: {condition: service_healthy}}
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "temporal:7233"]
+      interval: 10s
       retries: 60
 
   backup:
     profiles: [maintenance]
-    image: opencrawl-core:local
+    image: opencrawl-core:${OPENCRAWL_IMAGE_TAG:-local}
     user: root
     entrypoint: []
-    volumes: ["s3:/data/s3", "opensearch:/data/opensearch", "temporal:/data/temporal", "board:/data/board"]
-
-configs:
-  search:
-    content: |
-      {"principal": {"tenantId": "${OPENCRAWL_TENANT_ID:-self-hosted}", "userId": "${OPENCRAWL_USER_ID:-owner}"},
-       "sessions": {"endpoint": "http://opensearch:9200", "environment": "selfhost"}}
+    volumes: ["s3:/data/s3", "opensearch:/data/opensearch", "temporal-db:/data/temporal-db", "application:/data/application"]
 
 volumes:
   s3:
   opensearch:
-  temporal:
-  board:
+  temporal-db:
+  application:

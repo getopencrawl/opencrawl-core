@@ -1,0 +1,11 @@
+{
+  "mode": "first",
+  "ok": true,
+  "checkedAt": "2026-11-10T15:46:08.392Z",
+  "onboarding": {
+    "completed": false,
+    "next": "/onboarding"
+  },
+  "sources": [],
+  "pageErrors": []
+}

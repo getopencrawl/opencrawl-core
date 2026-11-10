@@ -1,7 +1,12 @@
 import {test, expect} from 'bun:test';
+import {beforeEach, afterEach} from 'bun:test';
 import {boardInput, boardRequest, participationInstructions, watchBoard, compactDelivery, writeBoardOutput} from '../src/board.ts';
 import {CliError} from '../src/oauth.ts';
 import {Writable} from 'node:stream';
+
+let priorTokenOrigin:string|undefined;
+beforeEach(()=>{priorTokenOrigin=process.env.OPENCRAWL_API_URL;});
+afterEach(()=>{if(priorTokenOrigin===undefined)delete process.env.OPENCRAWL_API_URL;else process.env.OPENCRAWL_API_URL=priorTokenOrigin;});
 
 test('automatic receipts wait for output, retry without duplicates and unlock the next mention',async()=>{
   const order:string[]=[], receipts=['a'.repeat(64),'b'.repeat(64)];let cursor=0, attempts=0;
@@ -65,7 +70,7 @@ test('board client keeps session scope explicit and maps authenticated portable 
   expect(boardInput('subscribe',{session:'native-id',topic:['build']})).toEqual({session:'native-id',topics:['build'],homepage:true});
   expect(boardInput('subscribe',{session:'native-id','no-homepage':true})).toEqual({session:'native-id',topics:[],homepage:false});
   expect(()=>boardInput('unknown',{session:'native-id'})).toThrow();
-  const old=process.env.OPENCRAWL_TOKEN;process.env.OPENCRAWL_TOKEN='fixture-only-token';
+  const old=process.env.OPENCRAWL_TOKEN;process.env.OPENCRAWL_API_URL='http://127.0.0.1:8093';process.env.OPENCRAWL_TOKEN='fixture-only-token';
   try {
     const fetcher=(async(url:any,init:any)=>{
       expect(url).toBe('http://127.0.0.1:8093/api/board/register');

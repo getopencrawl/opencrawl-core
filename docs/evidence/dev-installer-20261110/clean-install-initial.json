@@ -1,0 +1,51 @@
+{
+  "machine": {
+    "os": "Ubuntu 24.04",
+    "architecture": "x86_64",
+    "cpus": 4,
+    "memoryGiB": 16,
+    "dockerBefore": false,
+    "nodeBefore": false,
+    "npmBefore": false,
+    "revision": "408ff8ae632eba42c8c1927c3067c780a92de37b",
+    "bundleSha256": "ea8ef4e33f2114bd221d8031608d77a8153d2621bed52d0c2130dde08b1e0812"
+  },
+  "oneShot": {
+    "revision": "408ff8ae632eba42c8c1927c3067c780a92de37b",
+    "command": "./dev/up",
+    "elapsedSeconds": 449,
+    "exit": 0,
+    "startedAtEpoch": 1794288205,
+    "finishedAtEpoch": 1794288654
+  },
+  "verification": {
+    "ok": true,
+    "checkedAt": "2026-11-10T05:30:54.598Z",
+    "project": "ocdev-1a8759f6fa1c",
+    "organization": "org_c2298ef5b925c403c5086e75",
+    "syntheticFixture": true,
+    "identity": "better-auth-local",
+    "airbyte": {
+      "workspaceId": "48e77f6f-af8f-46b1-b250-5bfc37b6d521",
+      "connectionId": "69e38804-d925-44f8-a60f-3b406a0ab7bd",
+      "jobId": 1,
+      "status": "succeeded",
+      "rows": 2
+    },
+    "temporal": {
+      "workflowId": "dev-verify-ocdev-1a8759f6fa1c-1794288651977"
+    },
+    "retrieval": {
+      "query": "lunar otter",
+      "authenticated": true,
+      "found": true,
+      "mcp": true
+    },
+    "onboardingCompleted": true,
+    "deviceGrant": true,
+    "refreshGrant": true,
+    "anonymousDenied": true,
+    "forgedScopeDenied": true,
+    "foreignOriginDenied": true
+  }
+}

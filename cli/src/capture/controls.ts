@@ -4,9 +4,9 @@ import {createInterface} from 'node:readline/promises';
 import {atomicJson, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {captureDir, readCaptureConfig} from './runtime.ts';
-import {captureNotice, projectPath} from './policy.ts';
+import {projectPath} from './policy.ts';
 
-export async function approveCapture(approved:boolean, json=false, notice=captureNotice) {
+export async function approveCapture(approved:boolean, json:boolean, notice:string) {
   if(approved)return true;
   if(json || !process.stdin.isTTY || !process.stderr.isTTY)return false;
   process.stderr.write(notice+'\n');
