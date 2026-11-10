@@ -10,8 +10,9 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
   provisioning/routing, billing, entitlements,
   managed infrastructure, fleet operations and compliance exports.
 - Dependencies point into core. Never import the shell or require an OpenCrawl hosted account, license server,
-  or hosted control plane to use core. WorkOS is the supported identity provider
-  for now; self-hosters use their own WorkOS account and one organization.
+  or hosted control plane to use core. Self-host identity is Better Auth with local
+  accounts (`identity/better-auth.mts`); the hosted shell supplies WorkOS through
+  the same `IdentityDirectory` contract. Self-host needs no external account.
   Keep provider objects and managed credentials out of domain contracts.
 - Reusable authentication and team operations belong here; hosted tenant selection
   belongs to shell. Core enforces
@@ -68,10 +69,12 @@ Backend source under `src/` uses strict TypeScript (`.mts`, or `.cts` for Tempor
 
 ## Shared application seam
 
-The single-tenant product supports multiple users through the operator’s own
-WorkOS account. WorkOS is the supported identity adapter for this iteration;
-reusable authentication, membership, role controls, UI, Airbyte and connector
-lifecycle implementations belong in core. Hosted multi-tenant selection and
+The single-tenant product supports multiple users with local Better Auth accounts,
+and runs Airbyte connector images directly through the bundled connector runtime
+(`integrations/local-airbyte.mts`) instead of an Airbyte platform. The hosted shell
+keeps WorkOS and managed Airbyte through the same identity directory and `Airbyte`
+contracts. Reusable authentication, membership, role controls, UI, Airbyte and
+connector lifecycle implementations belong in core. Hosted multi-tenant selection and
 provisioning, billing, fleet operation and internal administration belong in
 shell. Source SDK names do not determine ownership. Core requires no account
 or service operated by OpenCrawl. This contract supersedes earlier hosted-only

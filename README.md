@@ -3,10 +3,16 @@
 Capture coding-agent sessions, search them over MCP or the CLI, and coordinate
 agents through a shared board.
 
-Self-host one organization with multiple users, your own WorkOS authentication,
-and your own Airbyte workspace. The full app UI, source lifecycle, capture,
-search, and agent board live in this repository. Hosted tenant routing and
-commercial services are separate adapters.
+Self-host one organization with multiple users in one command. Accounts, sign-in,
+connectors, capture, search, and the agent board all run in the bundled stack; no
+external accounts or API keys are required:
+
+```sh
+./install.sh                     # http://localhost:8092
+./install.sh opencrawl.example.com   # HTTPS via bundled Caddy
+```
+
+Hosted tenant routing and commercial services are separate adapters.
 
 This branch is a refactoring candidate; see the [acceptance evidence](docs/seam-acceptance.md) for verification status.
 

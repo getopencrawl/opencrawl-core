@@ -1,4 +1,4 @@
-# One organization, multiple users. Bring your own WorkOS and Airbyte workspace.
+# One organization, multiple users. Accounts, sign-in and connectors run inside this stack.
 # Choose a fresh COMPOSE_PROJECT_NAME for each independent installation.
 name: ${COMPOSE_PROJECT_NAME:-opencrawl}
 x-runtime: &runtime
@@ -8,26 +8,19 @@ x-runtime: &runtime
   stop_grace_period: 45s
   volumes: ["application:/data"]
   environment: &env
-    OPENCRAWL_URL: ${OPENCRAWL_URL:?Set the HTTPS application origin}
-    WORKOS_AUTH_ORIGIN: ${WORKOS_AUTH_ORIGIN:?Set your WorkOS AuthKit origin}
-    WORKOS_CLIENT_ID: ${WORKOS_CLIENT_ID:?Set your WorkOS client ID}
-    WORKOS_API_KEY: ${WORKOS_API_KEY:?Set your WorkOS API key}
-    WORKOS_ORGANIZATION_ID: ${WORKOS_ORGANIZATION_ID:?Set your single WorkOS organization}
-    WORKOS_COOKIE_PASSWORD: ${WORKOS_COOKIE_PASSWORD:?Run ./up.sh to generate secrets}
+    OPENCRAWL_URL: ${OPENCRAWL_URL:?Run ./install.sh}
+    OPENCRAWL_ORGANIZATION_ID: ${OPENCRAWL_ORGANIZATION_ID:?Run ./install.sh}
+    OPENCRAWL_AUTH_SECRET: ${OPENCRAWL_AUTH_SECRET:?Run ./install.sh}
+    OPENCRAWL_SETUP_TOKEN: ${OPENCRAWL_SETUP_TOKEN:-}
+    OPENCRAWL_IDENTITY_PATH: /data/identity.sqlite
     OPENCRAWL_REGISTRY_PATH: /data/integrations.sqlite
+    OPENCRAWL_CONNECTOR_STATE_PATH: /data/connectors.sqlite
     OPENCRAWL_LANDING_S3_BUCKET: opencrawl
     OPENCRAWL_LANDING_S3_REGION: us-east-1
     OPENCRAWL_LANDING_S3_ENDPOINT: http://s3:8333
-    OPENCRAWL_LANDING_S3_ACCESS_KEY_ID: ${OPENCRAWL_S3_ACCESS_KEY_ID:?Run ./up.sh}
-    OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY: ${OPENCRAWL_S3_SECRET_ACCESS_KEY:?Run ./up.sh}
-    OPENCRAWL_AIRBYTE_S3_ENDPOINT: ${OPENCRAWL_AIRBYTE_S3_ENDPOINT:?Set the S3 endpoint reachable from your Airbyte jobs}
-    OPENCRAWL_AIRBYTE_APP_URL: ${OPENCRAWL_AIRBYTE_APP_URL:-}
-    OPENCRAWL_CONNECTOR_KEY: ${OPENCRAWL_CONNECTOR_KEY:?Run ./up.sh}
-    AIRBYTE_URL: ${AIRBYTE_URL:?Set your Airbyte API origin}
-    AIRBYTE_CLIENT_ID: ${AIRBYTE_CLIENT_ID:?Set your Airbyte API client}
-    AIRBYTE_CLIENT_SECRET: ${AIRBYTE_CLIENT_SECRET:?Set your Airbyte API secret}
-    AIRBYTE_WORKSPACE_ID: ${AIRBYTE_WORKSPACE_ID:?Set your existing Airbyte workspace}
-    AIRBYTE_S3_DESTINATION_DEFINITION_ID: ${AIRBYTE_S3_DESTINATION_DEFINITION_ID:-}
+    OPENCRAWL_LANDING_S3_ACCESS_KEY_ID: ${OPENCRAWL_S3_ACCESS_KEY_ID:?Run ./install.sh}
+    OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY: ${OPENCRAWL_S3_SECRET_ACCESS_KEY:?Run ./install.sh}
+    OPENCRAWL_CONNECTOR_KEY: ${OPENCRAWL_CONNECTOR_KEY:?Run ./install.sh}
     SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-}
     SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
     GITHUB_APP: ${GITHUB_APP:-}
@@ -55,6 +48,11 @@ services:
   worker:
     <<: *runtime
     command: ["node", "dist/src/selfhost/worker.mjs"]
+    # Connector sources run as sibling containers. Docker socket access is root-equivalent
+    # on this host; the worker exposes no network listener.
+    volumes: ["application:/data", "${OPENCRAWL_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock"]
+    group_add: ["${OPENCRAWL_DOCKER_GID:-0}"]
+    environment: {<<: *env, OPENCRAWL_CONNECTOR_NETWORK: "${COMPOSE_PROJECT_NAME:-opencrawl}_default"}
     healthcheck:
       test: ["CMD", "node", "-e", "const s=JSON.parse(require('fs').readFileSync('/tmp/opencrawl-worker-ready.json'));process.exit(Date.now()-Date.parse(s.checkedAt)<65000?0:1)"]
       interval: 15s
@@ -72,8 +70,6 @@ services:
       AWS_ACCESS_KEY_ID: ${OPENCRAWL_S3_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${OPENCRAWL_S3_SECRET_ACCESS_KEY}
     volumes: ["s3:/data"]
-    # Airbyte jobs must reach this endpoint. Keep loopback unless configuring a private interface.
-    ports: ["${OPENCRAWL_S3_BIND:-127.0.0.1}:${OPENCRAWL_S3_PORT:-18333}:8333"]
 
   opensearch:
     image: opensearchproject/opensearch:3.9.0@sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e
@@ -117,6 +113,22 @@ services:
       interval: 10s
       retries: 60
 
+  # HTTPS for a public domain (COMPOSE_PROFILES=https). Caddy obtains and renews the certificate.
+  caddy:
+    profiles: [https]
+    image: caddy:2.10.2
+    restart: unless-stopped
+    command: ["caddy", "reverse-proxy", "--from", "${OPENCRAWL_DOMAIN:-localhost}", "--to", "app:8092"]
+    ports: ["80:80", "443:443"]
+    volumes: ["caddy:/data"]
+    depends_on: {app: {condition: service_healthy}}
+
+  # Built locally when GITHUB_APP is configured; the worker runs it per sync.
+  source-github:
+    profiles: [build]
+    build: {context: ../connectors/github}
+    image: ${AIRBYTE_GITHUB_REPOSITORY:-opencrawl/source-github}:${AIRBYTE_GITHUB_TAG:-local}
+
   backup:
     profiles: [maintenance]
     image: opencrawl-core:${OPENCRAWL_IMAGE_TAG:-local}
@@ -125,6 +137,7 @@ services:
     volumes: ["s3:/data/s3", "opensearch:/data/opensearch", "temporal-db:/data/temporal-db", "application:/data/application"]
 
 volumes:
+  caddy:
   s3:
   opensearch:
   temporal-db:
