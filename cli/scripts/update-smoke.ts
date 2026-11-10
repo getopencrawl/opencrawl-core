@@ -116,13 +116,16 @@ try {
     if (JSON.parse(readFileSync(manifestFile, 'utf8')).api !== undefined) throw new Error('Skill retained a duplicate deployment URL');
     const skillReceipt = JSON.parse(readFileSync(join(env.XDG_CACHE_HOME, 'opencrawl/skills-update.json'), 'utf8'));
     if (skillReceipt.version !== version || skillReceipt.result.updated !== 2 || skillReceipt.result.conflicts !== 0) throw new Error('Upgrade did not report managed skill outcomes');
+    // The ordinary version command also performs the existing legacy hook migration.
+    const upgradedConfig = readFileSync(join(capture, 'config.json'), 'utf8');
+    if (JSON.stringify(JSON.parse(upgradedConfig)) !== JSON.stringify({...config, hookMode: 'managed-v2'})) throw new Error('Upgrade changed capture configuration beyond the expected hook migration');
     const selectedApi = (...args: string[]) => JSON.parse(sync(['node', launcher, 'skills', 'status', '--client', 'claude-code', '--json', ...args])).data.api;
     delete env.OPENCRAWL_API_URL;
     if (selectedApi() !== api) throw new Error('CLI ignored saved server configuration');
     Object.assign(env, {OPENCRAWL_API_URL: 'https://environment.example'});
     if (selectedApi() !== 'https://environment.example' || selectedApi('--api', 'https://flag.example') !== 'https://flag.example') throw new Error('CLI server precedence is incorrect');
     delete env.OPENCRAWL_API_URL;
-    if (readFileSync(join(capture, 'config.json'), 'utf8') !== JSON.stringify(config)) throw new Error('Skill update changed capture configuration');
+    if (readFileSync(join(capture, 'config.json'), 'utf8') !== upgradedConfig) throw new Error('Skill update changed capture configuration');
     const rejected=Bun.spawn(['node',launcher,'collect','flush','--json'],{env,stdout:'pipe',stderr:'pipe'});
     const [rejection,diagnostic,exitCode]=await Promise.all([new Response(rejected.stdout).text(),new Response(rejected.stderr).text(),rejected.exited]);
     if(!exitCode||diagnostic||JSON.parse(rejection).error?.code!=='CAPTURE_DESTINATION_CHANGED')throw new Error('Updated collector redirected the queue');
