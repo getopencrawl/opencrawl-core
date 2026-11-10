@@ -23,8 +23,10 @@ when a historical batch is accepted; this does not claim the entire import has
 finished. The CLI's own final report describes full-import completion.
 
 Step one never advances automatically. Its Next action opens Sources only after
-the required receipts exist. Sources requires at least one authorized connection;
-indexing may continue in the background. Starting OAuth is not a connection.
+the required receipts exist. Sources are optional: until a connection is
+authorized the step offers a quiet Skip for now, and a confirmed connection turns
+it into Next. Indexing may continue in the background. Starting OAuth is not a
+connection. If the catalog fails to load, Try again and Skip for now both remain.
 The provider callback returns to Sources without advancing the onboarding step.
 The catalog comes from the current hosted service, not a copied provider list.
 Search appears only for catalogs of at least fifteen connectors.
@@ -35,11 +37,12 @@ invitation delivery and the existing hosted service always assigns member access
 The browser receives email-only invitation DTOs, never tokens or membership roles.
 
 Both Skip for now and Open workspace POST to the authenticated finish endpoint.
-The adapter rechecks the agent and source gates before saving a durable completed
-receipt. It then opens `/`, the actual workspace home backed by authorized search.
-Completion is idempotent and scoped. Disconnecting sources later does not relock
-an already completed workspace. Existing receipts are retained; absent new
-milestones are shown rather than inferred from clicks or stored browser state.
+The adapter rechecks the agent gate before saving a durable completed receipt;
+finishing never requires a connected source. It then opens `/`, the actual
+workspace home backed by authorized search. Completion is idempotent and scoped.
+Disconnecting sources later does not relock an already completed workspace.
+Existing receipts are retained; absent new milestones are shown rather than
+inferred from clicks or stored browser state.
 
 ## Presentation and recovery
 

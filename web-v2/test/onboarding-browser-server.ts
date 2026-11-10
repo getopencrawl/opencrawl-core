@@ -3,7 +3,7 @@ import {createServer, type IncomingMessage, type ServerResponse} from 'node:http
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {build} from 'esbuild';
-import {deriveOnboarding, isSourceConnected} from '../src/onboarding/model.ts';
+import {deriveOnboarding} from '../src/onboarding/model.ts';
 import type {OnboardingSource, OnboardingStatus} from '../src/onboarding/types.ts';
 
 interface FixtureState {
@@ -12,6 +12,8 @@ interface FixtureState {
   invitations: {email: string}[];
   delayStatus: number;
   finishError: boolean;
+  /** Fails the connector catalog read so the Sources step shows its retry state. */
+  sourcesError?: boolean;
   requests: {status: number; finish: number; invite: number; connect: number; aborted: number};
 }
 const fresh = (): FixtureState => ({status: {}, sources: [{id: 'slack', name: 'Slack', icon: '/assets/connectors/slack.svg', state: 'disconnected', auth: 'oauth'}, {id: 'granola', name: 'Granola', icon: '/assets/connectors/granola.svg', state: 'disconnected', auth: 'api-key'}], invitations: [], delayStatus: 0, finishError: false, requests: {status: 0, finish: 0, invite: 0, connect: 0, aborted: 0}});
@@ -44,7 +46,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (res.destroyed) return;
     return json(res, snapshot);
   }
-  if (url.pathname === '/api/onboarding/sources') return json(res, {items: state.sources});
+  if (url.pathname === '/api/onboarding/sources') return state.sourcesError ? json(res, {error: 'Connectors are unavailable.'}, 503) : json(res, {items: state.sources});
   if (url.pathname === '/api/onboarding/invites') {
     if (req.method === 'POST') {
       const input = await body(req);
@@ -58,7 +60,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   }
   if (url.pathname === '/api/onboarding/finish') {
     state.requests.finish++;
-    if (state.finishError || !deriveOnboarding(state.status).complete || !state.sources.some(isSourceConnected)) return json(res, {error: 'Complete the required setup checks first.'}, 409);
+    // Sources are optional; only agent setup gates completion.
+    if (state.finishError || !deriveOnboarding(state.status).complete) return json(res, {error: 'Complete the required setup checks first.'}, 409);
     return json(res, {workspaceUrl: '/'});
   }
   const connect = /^\/api\/integrations\/([^/]+)\/connect$/.exec(url.pathname);
