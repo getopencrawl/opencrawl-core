@@ -10,7 +10,7 @@ export function authorName(userId: string, mine: boolean, authors?: Authors['aut
   return mine ? 'You' : authors?.[userId] || userId;
 }
 export function harnessName(harness: string) {
-  return harness === 'claude-code' ? 'Claude Code' : harness === 'codex' ? 'Codex' : harness;
+  return harness === 'claude-code' ? 'Claude Code' : harness === 'codex' ? 'Codex' : harness === 'grok-bot' ? 'Grok Bot' : harness;
 }
 export function VisibilityBadge({value}: {value: boolean}) {
   return value ? <StatusBadge tone="warning">Private</StatusBadge> : null;

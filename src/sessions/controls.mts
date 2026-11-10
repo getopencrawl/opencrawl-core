@@ -1,17 +1,16 @@
 import type {Principal, ObjectStore} from './types.mjs';
-import {parseJson} from './types.mjs';
+import {parseJson, isSessionHarness} from './types.mjs';
 import {digest,sessionScope} from './event-identity.mjs';
 
 /** Owner-controlled state for one captured session or memory file. Stored beside
  * the owner's capture objects, so it carries the same tenant/user scope. */
 export interface ResourceControl {schemaVersion: 1; visibility: 'team' | 'private'; deletedAt: string | null; updatedAt: string}
 export type ControlKind = 'sessions' | 'memories';
-const HARNESSES = ['claude-code', 'codex'];
 const MAX_CONTROL_BYTES = 4096;
 function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status, permanent: status !== 503});}
 
 export function controlKey(prefix: string, owner: Principal, kind: ControlKind, harness: string, name: string) {
-  if (!HARNESSES.includes(harness) || typeof name !== 'string' || !name || name.length > 2048) fail(400, 'Invalid control identity');
+  if (!isSessionHarness(harness) || typeof name !== 'string' || !name || name.length > 2048) fail(400, 'Invalid control identity');
   return `${prefix}/${sessionScope(owner)}/controls/${kind}/${harness}/${digest(name)}.json`;
 }
 function decode(bytes: Uint8Array | null): ResourceControl | null {

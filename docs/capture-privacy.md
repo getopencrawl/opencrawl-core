@@ -15,6 +15,13 @@ preview, everyone with the MCP/read token can read the deployment's sessions.
 Active conversations are read from their beginning on first encounter, even if
 they started before installation. Inactive history requires separate consent.
 
+Grok Bot capture has a wider scope than one conversation: its hooks file serves
+the whole cloud computer, so every Bot the person runs there is recorded,
+including Bots created later and other people's chats with a Bot hosted on that
+computer. All of it is attributed to the person who installed capture. Recording
+starts when a Bot loads the hooks; earlier conversations are not read. Install
+it only on your own Bot computer. See [Grok Bot capture](session-capture.md#grok-bot).
+
 `opencrawl collect install` asks before enabling capture. Noninteractive installs
 return `consent_required` without installing hooks; use `--yes` only after the
 person approves the recording scope and destination. `--yes` does not approve

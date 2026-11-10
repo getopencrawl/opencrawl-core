@@ -11,7 +11,9 @@ billing admission and routing. It never copies the core product UI.
 user and tenant scope. Step one requires CLI authentication, a successful native
 MCP `test_connection`, and an accepted batch containing a recorded message.
 MCP initialization is not a connection-test receipt. Hook-only batches cannot
-complete recording. New CLI batches mark `captureMode` as `live` or `history`;
+complete recording. For Grok Bot, whose sessions are built from hook payloads
+and whose runtime may report only tool hooks, a recorded tool call counts as
+well as a message; its lifecycle hooks alone do not. New CLI batches mark `captureMode` as `live` or `history`;
 history updates a separate optional receipt and cannot unlock recording. Legacy
 batches remain supported. Their original capture mode cannot be reconstructed.
 

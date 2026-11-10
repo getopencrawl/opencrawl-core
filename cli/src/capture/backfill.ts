@@ -3,11 +3,11 @@ import {join, sep} from 'node:path';
 import {createInterface} from 'node:readline/promises';
 import {CliError} from '../oauth.ts';
 import {captureTranscript, captureDir, flushCaptures, readCaptureConfig, refreshCaptureIdentity, recordError, type CaptureConfig} from './runtime.ts';
-import type {Harness} from './parse.ts';
+import type {TranscriptHarness} from './parse.ts';
 import {claudeDesktopHistories} from './desktop-history.ts';
 
 export const backfillNotice = 'Import local Claude Code and Codex history, including desktop coding sessions and host-mirrored Claude Desktop transcripts. Messages, tool arguments/results and available attachments will be shared with your signed-in OpenCrawl team and attributed to you. Cloud-only chats and VM-only records are not included.';
-type Selection = 'all'|Harness;
+type Selection = 'all'|TranscriptHarness;
 export function selection(value = 'all'): Selection {
   if (!['all','claude-code','codex'].includes(value)) throw new CliError('INVALID_USAGE','Choose all, claude-code, or codex.',64);
   return value as Selection;
@@ -20,9 +20,9 @@ function configFor(api:string) {
 }
 /** File metadata only: preview never reads transcript contents, spools data, or contacts the server. */
 export function inventory(config:CaptureConfig, selected:Selection) {
-  const files:{harness:Harness,path:string,bytes:number}[]=[];
-  const sources:{harness:Harness,files:number,bytes:number}[]=[];
-  for(const harness of ['claude-code','codex'] as Harness[]) {
+  const files:{harness:TranscriptHarness,path:string,bytes:number}[]=[];
+  const sources:{harness:TranscriptHarness,files:number,bytes:number}[]=[];
+  for(const harness of ['claude-code','codex'] as TranscriptHarness[]) {
     if(selected!=='all' && selected!==harness)continue;
     const source={harness,files:0,bytes:0};sources.push(source);
     let root:string|undefined;
