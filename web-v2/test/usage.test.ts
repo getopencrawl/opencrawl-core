@@ -219,9 +219,9 @@ test('date formatting and compact source-summary exports remain usable by existi
 
 function value(): ValueReport {
   return {
-    schema: 2, measuredAt: '2026-11-10', window: {from: '2026-11-05', to: '2026-11-08', days: 4},
+    schema: 3, measuredAt: '2026-11-10', window: {from: '2026-11-05', to: '2026-11-10', days: 6},
     model: {model: 'GPT-6 Astra', input: 10, cacheRead: 1, cacheWrite: 12.5, output: 50, asOf: '2026-11-09', share: 63},
-    savings: {sessions: 42, tasks: 212, tokenPercent: 4.6, turns: 784, turnsPerTask: 3.7, turnPercent: 4.8,
+    savings: {sessions: 69, tasks: 368, uses: 290, digTokens: 812809, digTurns: 5, tokenPercent: 3.7, turns: 1008, turnPercent: 4.1,
       tokens: {input: 10_000_000, cacheRead: 1_000_000_000, cacheWrite: 0, output: 2_000_000}},
     observed: {conflictsAvoided: 37, duplicatesAvoided: 10, knowledgeReused: 52, searches: 245, searchesUseful: 206, searchesUsed: 171},
   };
@@ -230,7 +230,7 @@ function value(): ValueReport {
 function cards(html: string, heading: string) {
   const start = html.indexOf(`>${heading}</h2>`);
   const section = html.slice(start, html.indexOf('</section>', start));
-  return [...section.matchAll(/<dt>(.*?)<\/dt><dd><span class="report-metric-value"[^>]*>(.*?)<\/span>(?:<span class="report-metric-note">(.*?)<\/span>)?/g)].map(match => match.slice(1, 4));
+  return [...section.matchAll(/<dt>([^<]*)(?:<span class="report-help">.*?<\/span><\/span>)?<\/dt><dd><span class="report-metric-value"[^>]*>(.*?)<\/span>(?:<span class="report-metric-note">(.*?)<\/span>)?/g)].map(match => match.slice(1, 4));
 }
 
 test('Agent savings is the first section: four cards priced at the main model, with no explanatory note', () => {
@@ -240,16 +240,23 @@ test('Agent savings is the first section: four cards priced at the main model, w
   // 10M input at $10 + 1B cache reads at $1 + 2M output at $50 = $1,200.
   assert.equal(pricedSavings(value().savings.tokens, value().model), 1200);
   assert.deepEqual(cards(html, 'Agent savings'), [
-    ['Saved vs GPT-6 Astra', '$1,200', '4.6% fewer tokens, 1B saved'],
-    ['Turns saved', '784', '4.8% fewer turns, 3.7 per task'],
+    ['Saved vs GPT-6 Astra', '$1,200', '3.7% fewer tokens, 1B saved'],
+    ['Turns saved', '1,008', '4.1% fewer turns, across 290 uses'],
     ['Conflicts avoided', '37', 'plus 10 duplicate tasks skipped'],
     ['Searches used', '171', 'of 245 searches by your agents'],
   ]);
   const text = html.replace(/<[^>]*>/g, '');
   assert.doesNotMatch(text, /OpenCrawl cost|of OpenCrawl usage|×/);
-  assert.match(text, /What OpenCrawl saved your team since 2026-11-05, across 42 sessions and 212 tasks\./);
+  assert.match(text, /What OpenCrawl saved your team since 2026-11-05, across 69 sessions and 368 tasks\./);
   const section = text.slice(text.indexOf('Agent savings'), text.indexOf('Agent sessions'));
-  assert.doesNotMatch(section, /Measured|replaying|held-out|skills install/);
+  assert.doesNotMatch(section.replace(/How [^?]*\?/g, ''), /Measured|replaying|held-out|skills install|could|would have saved/);
+  const help = [...html.matchAll(/<button type="button" class="report-help-button" aria-label="([^"]+)" aria-describedby="([^"]+)">\?<\/button><span class="report-help-text" role="tooltip" id="([^"]+)">(.*?)<\/span>/g)];
+  assert.deepEqual(help.map(match => match[1]), ['How Saved vs GPT-6 Astra is calculated', 'How Turns saved is calculated', 'How Conflicts avoided is calculated', 'How Searches used is calculated']);
+  assert.ok(help.every(match => match[2] === match[3]));
+  assert.equal(help[0]![4], 'Your agents used an OpenCrawl search result, or another agent’s fix from the board, 290 times. Without OpenCrawl each one is a dig that costs a median 813k tokens in your own sessions; we subtract what the search itself cost and price the rest at GPT-6 Astra list prices.');
+  assert.equal(help[1]![4], 'Each of those 290 uses replaced a dig that takes a median 5 turns in your own sessions. We subtract the two turns a search and reading its result take.');
+  assert.match(help[3]![4]!, /^245 searches is every OpenCrawl search your agents ran for real work, not counting tests of OpenCrawl\. 171 is how many times/);
+  assert.doesNotMatch(cards(render(), 'Agent sessions').join(' ') + render(), /report-help/);
 });
 
 test('without a measurement there is no Agent savings section; no searches yet says so on the card', () => {
