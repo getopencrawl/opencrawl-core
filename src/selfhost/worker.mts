@@ -11,8 +11,12 @@ import {connectorClient,ensureConnectorSchedule} from '../connectors/temporal/cl
 import {createConnectionPurger} from '../integrations/purge.mjs';
 import {eligible} from '../integrations/resolver.mjs';
 import {createRealm} from '../search/realm.mjs';
+import {dockerRunner} from '../integrations/connector-runner.mjs';
 export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
-  const settings=selfhostSettings(env),{store,prefix}=standaloneStorage(env),services=selfhostServices(settings,store,env);
+  // Connector sources run as sibling containers through the host's Docker Engine.
+  const runner=dockerRunner({socketPath:env.OPENCRAWL_DOCKER_SOCKET||'/var/run/docker.sock',network:env.OPENCRAWL_CONNECTOR_NETWORK});
+  const settings=selfhostSettings(env),{store,prefix}=standaloneStorage(env),services=selfhostServices(settings,store,env,{runner});
+  await runner.cleanup().catch(()=>console.error(JSON.stringify({event:'selfhost.connectors.docker_unavailable'})));
   const address=env.TEMPORAL_ADDRESS,namespace=env.TEMPORAL_NAMESPACE;
   if(!address||!namespace)throw new Error('Configure Temporal address and namespace');
   const config={address,namespace},taskQueue=env.TEMPORAL_CONNECTOR_TASK_QUEUE||'connector-indexing-v1',sessionQueue=env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1';
@@ -44,7 +48,7 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   await unlink(readiness).catch(()=>{});const timer=setInterval(tick,30000);
   const stop=()=>{stopping=true;clearInterval(timer);for(const x of [connectors,sessions])if(x.worker.getState()==='RUNNING')x.worker.shutdown();};
   process.once('SIGTERM',stop);process.once('SIGINT',stop);
-  const runs=[connectors.worker.run(),sessions.worker.run()];tick();
-  try{await Promise.all(runs);}finally{stop();await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await scheduling.connection.close();await connectors.connection.close();await sessions.connection.close();services.close();}
+  const runs=[connectors.worker.run(),sessions.worker.run()];tick();services.airbyte.start();
+  try{await Promise.all(runs);}finally{stop();await services.airbyte.stop();await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await scheduling.connection.close();await connectors.connection.close();await sessions.connection.close();services.close();}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await runSelfhostWorker();

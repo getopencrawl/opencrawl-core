@@ -37,7 +37,7 @@ test('startup recovery skips active, pending consent, removed and nonrecoverable
 test('OSS continues recovery after one interrupted connection fails',async t=>{
  const dir=await mkdtemp(join(tmpdir(),'opencrawl-recovery-'));t.after(()=>rm(dir,{recursive:true,force:true}));
  const services=selfhostServices({organizationId:'org_team',url:'https://self.example',registryPath:join(dir,'registry.sqlite'),search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},{bucket:'owned'},
-  {AIRBYTE_WORKSPACE_ID:'00000000-0000-0000-0000-000000000001',AIRBYTE_URL:'http://127.0.0.1:1',AIRBYTE_CLIENT_ID:'test',AIRBYTE_CLIENT_SECRET:'test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test'});
+  {OPENCRAWL_CONNECTOR_KEY:Buffer.alloc(32,7).toString('base64'),OPENCRAWL_CONNECTOR_STATE_PATH:join(dir,'connectors.sqlite')});
  t.after(()=>services.close());
  const base={tenantId:'org_team',userId:'user_a',environment:'selfhost',provider:'granola',scope:'team',createdAt:new Date().toISOString()};
  // The first record has an incomplete landing destination and cannot recover.
