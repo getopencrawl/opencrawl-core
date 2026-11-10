@@ -271,7 +271,9 @@ conversation ID for life, so a session is one Bot's work on one UTC day.
 Grok Bot waits for each hook, so these hooks only answer, save the payload and
 return. None of them can deny an action, and none is a permission hook. Uploads
 happen inside a hook at a turn boundary or every 20 seconds, and the process ends
-at five seconds whatever the network does. `collect status` reports pending
+at five seconds whatever the receiver does; only a sign-in renewal already in
+flight is allowed to finish, so the sign-in is never lost. With `--defer-auth`
+nothing is recorded until someone signs in. `collect status` reports pending
 hooks and queued batches; `collect flush` uploads them on demand. See
 [Grok Bot capture](../docs/session-capture.md#grok-bot) for the event mapping,
 limits and the Team Setup manifest.

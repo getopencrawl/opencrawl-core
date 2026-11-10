@@ -1,32 +1,50 @@
 import {CliError} from '../oauth.ts';
 import {installCapture,uninstallCapture,upgradeCaptureHooks} from './install.ts';
-import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush} from './runtime.ts';
+import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush,bindHookIdentity} from './runtime.ts';
+import {credentialRotation} from '../session.ts';
 import {grokBotResponse} from './grok-bot.ts';
 import {backfill,backfillPreview,selection,setupBackfill} from './backfill.ts';
 import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
 import {captureNoticeFor} from './policy.ts';
 import {agentSkills} from '../skills.ts';
-async function hookInput() {
+/** With eager set, return as soon as a whole document has arrived: a runtime
+ * may keep the pipe open after writing the payload. */
+async function hookInput(eager=false) {
   let size=0;const chunks:Buffer[]=[];
-  for await(const chunk of process.stdin){size+=chunk.length;if(size>48*1024*1024)throw new Error('Hook too large');chunks.push(Buffer.from(chunk));}
+  for await(const chunk of process.stdin){
+    size+=chunk.length;if(size>48*1024*1024)throw new Error('Hook too large');chunks.push(Buffer.from(chunk));
+    // Only a chunk ending in a closing brace can complete a JSON object.
+    if(eager&&/\}\s*$/.test(chunk.subarray(-16).toString('latin1'))){try{return JSON.parse(Buffer.concat(chunks).toString());}catch{}}
+  }
   return JSON.parse(Buffer.concat(chunks).toString());
 }
-/** Grok Bot waits for this process on every hook. Answer first, then record and
- * take at most one upload pass. Nothing here may deny or long delay an action:
- * an outer deadline cannot interrupt a held lock or a request in flight, so the
- * process ends at five seconds, inside the installed ten-second hook timeout. */
+/** Grok Bot waits for this process on every hook. Answer as soon as the payload
+ * is read, then record and take at most one upload pass. Nothing here may deny
+ * or long delay an action. An outer deadline cannot interrupt a held lock or a
+ * request in flight, so the process ends at five seconds, well inside the
+ * installed hook timeout. The one thing it waits for is a sign-in renewal
+ * already in flight: abandoning that would lose the sign-in. */
 async function grokBotHook() {
-  let event:any=null,invalid:unknown;
-  try{event=await hookInput();}catch(error){invalid=error;}
-  process.stdout.write(JSON.stringify(grokBotResponse(event))+'\n');
-  const deadline=setTimeout(()=>process.exit(0),5000);
+  let answered=false;
+  const answer=(event:any)=>{if(!answered){answered=true;process.stdout.write(JSON.stringify(grokBotResponse(event))+'\n');}};
+  const finish=()=>{const renewing=credentialRotation();if(renewing)void renewing.finally(()=>process.exit(0));else process.exit(0);};
+  const deadline=setTimeout(()=>{
+    answer(null);
+    try{recordError(new CliError('CAPTURE_HOOK_DEADLINE','A capture hook reached its five-second limit. Queued data is retained; run opencrawl collect flush.'));}catch{}
+    finish();
+  },5000);
   try {
-    if(invalid)throw invalid;
+    const event=await hookInput(true);
+    answer(event);
+    await bindHookIdentity(event);
     await captureHook('grok-bot',event);
     await upgradeCaptureHooks();
     await hookFlush(event);
-  }catch(e){try{recordError(e);}catch{}}
-  finally{clearTimeout(deadline);}
+  }catch(e){answer(null);try{recordError(e);}catch{}}
+  clearTimeout(deadline);
+  // The pipe may still be open, which would keep this process alive.
+  await new Promise<void>(resolve=>process.stdout.write('',()=>resolve()));
+  finish();
   return null;
 }
 export async function collectCommand(action:string,api:string,values:any) {

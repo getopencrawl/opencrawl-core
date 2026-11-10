@@ -11,8 +11,8 @@ import {hash} from './parse.ts';
 export const GROK_BOT_HOOK_EVENTS = ['sessionStart','sessionEnd','beforeSubmitPrompt','afterAgentResponse','afterAgentThought','postToolUse','postToolUseFailure','preCompact','stop'] as const;
 /** A turn or session ended: the cheapest moment to upload. */
 export const GROK_BOT_BOUNDARIES = ['stop','sessionStart','sessionEnd'];
-/** One hook payload becomes at most two events, each under the 16 MiB batch limit. */
-export const GROK_BOT_MAX_HOOK_BYTES = 15 * 1024 * 1024;
+/** One hook payload becomes at most two events, well under the 16 MiB batch limit. */
+export const GROK_BOT_MAX_HOOK_BYTES = 8 * 1024 * 1024;
 const PERMISSION_HOOKS = ['preToolUse','subagentStart','beforeShellExecution','beforeMCPExecution','beforeReadFile','beforeTabFileRead'];
 const text = (value: unknown) => typeof value === 'string' && value.trim() ? value : null;
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
@@ -46,17 +46,20 @@ export function grokBotSession(event: any, at: string) {
     title: `Grok Bot activity in ${basename(workspace) || 'an unknown workspace'} on ${day}`, day};
 }
 
+const deeper = (value: unknown, limit: number): boolean => value !== null && typeof value === 'object' && (limit === 0 || Object.values(value).some(child => deeper(child, limit - 1)));
 /** Tool payloads arrive JSON-stringified. Restore the structure so inline
- * images become attachments instead of megabytes of indexed base64 text. */
+ * images become attachments instead of megabytes of indexed base64 text.
+ * Events nest at most 128 levels, so deeper JSON stays the text it arrived as. */
 function structured(value: unknown) {
   if (typeof value !== 'string' || !/^\s*[[{]/.test(value)) return value;
-  try {return JSON.parse(value);} catch {return value;}
+  try {const parsed = JSON.parse(value); return deeper(parsed, 96) ? value : parsed;} catch {return value;}
 }
 
-/** Keep a payload that cannot be uploaded as evidence that it happened. */
-export function grokBotOversized(event: any, bytes: number) {
+/** A payload that can never be uploaded is kept as evidence that it happened,
+ * so it cannot hold back the events around it. */
+export function grokBotUnsupported(event: any, captureStatus: 'too_large' | 'unsupported', bytes: number) {
   const kept = ['hook_event_name','conversation_id','session_id','generation_id','workspace_roots','cwd','cursor_version','tool_name','tool_use_id','duration'];
-  return {...Object.fromEntries(kept.filter(key => event?.[key] !== undefined).map(key => [key, event[key]])), captureStatus: 'too_large', bytes};
+  return {...Object.fromEntries(kept.filter(key => event?.[key] !== undefined).map(key => [key, event[key]])), captureStatus, bytes};
 }
 
 type Notice = {id: string; at: string; sequence?: number; event: any};
@@ -68,7 +71,7 @@ export function grokBotEvents(notice: Notice) {
   const make = (suffix: string, kind: string, data: any, nativeId: string | null = null, order = 0) =>
     ({id: notice.id + suffix, kind, sequence: sequence + order, timestamp: notice.at, nativeId, parentId: null, turnId: text(event.generation_id), agentId: null, data});
   const evidence = () => [make('', 'hook', event)];
-  if (event.captureStatus === 'too_large') return evidence();
+  if (event.captureStatus) return evidence();
   if (name === 'beforeSubmitPrompt') {
     const prompt = text(event.prompt);
     if (!prompt) return evidence();

@@ -1,5 +1,5 @@
 import {test,expect} from 'bun:test';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,existsSync,statSync,chmodSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,existsSync,statSync,chmodSync,utimesSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
@@ -10,7 +10,8 @@ import {transcriptEntries} from '../../dist/src/sessions/library.mjs';
 import {batchDocuments} from '../../dist/src/sessions/indexer.mjs';
 import {createOnboardingStatus} from '../../dist/src/onboarding-status.mjs';
 import {installCapture,uninstallCapture} from '../src/capture/install.ts';
-import {captureHook,captureDir,captureStatus,readCaptureConfig,drainCaptureNotices,hookFlush,syncCaptures} from '../src/capture/runtime.ts';
+import {captureHook,captureDir,captureStatus,readCaptureConfig,drainCaptureNotices,hookFlush,bindHookIdentity,syncCaptures} from '../src/capture/runtime.ts';
+import {saveSession,readSession,withSessionLock} from '../src/session.ts';
 import {excludeCapture} from '../src/capture/controls.ts';
 import {grokBotEvents,grokBotSession,grokBotResponse,GROK_BOT_HOOK_EVENTS} from '../src/capture/grok-bot.ts';
 import {hash} from '../src/capture/parse.ts';
@@ -115,7 +116,7 @@ test('install adds passive Cursor-format hooks beside existing ones; repeat, rol
   expect(Object.keys(installed.hooks).sort()).toEqual([...GROK_BOT_HOOK_EVENTS,'preToolUse'].sort());
   expect(installed.hooks.preToolUse).toEqual([other]);expect(installed.hooks.postToolUse[0]).toEqual(other);
   const ours=installed.hooks.postToolUse[1];
-  expect(Object.keys(ours).sort()).toEqual(['command','timeout']);expect(ours.timeout).toBe(10);
+  expect(Object.keys(ours).sort()).toEqual(['command','timeout']);expect(ours.timeout).toBe(30);
   // No shell syntax on a Bot's Linux computer: the command must also work when
   // split on spaces. Windows paths need quoting and are not a Grok Bot target.
   if(process.platform!=='win32')expect(ours.command).toBe([Bun.which('node'),join(captureDir(),'runner.cjs'),'collect','hook','--harness','grok-bot'].join(' '));
@@ -129,6 +130,7 @@ test('install adds passive Cursor-format hooks beside existing ones; repeat, rol
   const unsupported=JSON.stringify({version:2,hooks:{}});writeFileSync(f.hooksFile,unsupported);
   await expect(f.install()).rejects.toThrow('version 1');
   expect(readFileSync(f.hooksFile,'utf8')).toBe(unsupported);
+  if(process.platform!=='win32'){expect(statSync(join(f.dir,'.cursor')).mode&0o777).toBe(0o755);expect(statSync(f.hooksFile).mode&0o777).toBe(0o644);}
   writeFileSync(f.hooksFile,JSON.stringify(installed));
   expect((await uninstallCapture(f.dir)).installed).toBe(false);
   expect(JSON.parse(readFileSync(f.hooksFile,'utf8'))).toEqual({version:1,hooks:{postToolUse:[other],preToolUse:[other]}});
@@ -227,9 +229,74 @@ test('uploads from hooks are bounded: a cadence mid-turn, a pass at each boundar
   expect(JSON.parse(readFileSync(join(captureDir(),'hook-flush.json'),'utf8')).ok).toBe(false);
   clock+=59_000;await captureHook('grok-bot',stop);await hookFlush(stop,{now});
   expect(f.uploads).toBe(failures);expect(captureStatus().queued).toBeGreaterThan(0);
+  // A second failure doubles the wait, so a receiver that stays down costs less and less.
+  clock+=1_000;await expect(hookFlush(stop,{now})).rejects.toThrow('Capture request failed (500)');
+  const again=f.uploads;expect(again).toBeGreaterThan(failures);
+  clock+=119_000;await hookFlush(stop,{now});expect(f.uploads).toBe(again);
   f.fail=false;clock+=1_000;await hookFlush(stop,{now});
   expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0});
-  expect(JSON.parse(readFileSync(join(captureDir(),'hook-flush.json'),'utf8')).ok).toBe(true);
+  expect(JSON.parse(readFileSync(join(captureDir(),'hook-flush.json'),'utf8'))).toEqual({at:new Date(clock).toISOString(),ok:true});
+}));
+
+test('batches stay small enough for one pass, and a payload that cannot be spooled does not strand its neighbours',async()=>fixture(async f=>{
+  await f.install();
+  // A screenshot-heavy turn: twenty tool results, each with its own inline image.
+  for(let n=0;n<20;n++)await captureHook('grok-bot',hook('postToolUse',{tool_name:'Computer',tool_input:{action:'screenshot',n},tool_use_id:'shot-'+n,
+    tool_output:JSON.stringify({content:[{type:'image',source:{type:'base64',media_type:'image/png',data:Buffer.from('screenshot '+n).toString('base64')}}]})}));
+  // JSON nested deeper than an event may be: once as an object, once as the usual string.
+  let deep:any='leaf';for(let level=0;level<200;level++)deep={next:deep};
+  await captureHook('grok-bot',hook('beforeSubmitPrompt',{prompt:'before the deep payload'}));
+  await captureHook('grok-bot',hook('postToolUse',{tool_name:'Parse',tool_input:deep,tool_output:'{}',tool_use_id:'deep-object'}));
+  await captureHook('grok-bot',hook('postToolUse',{tool_name:'Parse',tool_input:{file:'a.json'},tool_output:JSON.stringify(deep),tool_use_id:'deep-string'}));
+  await captureHook('grok-bot',hook('afterAgentResponse',{text:'after the deep payload'}));
+  expect(await drainCaptureNotices()).toBe(24);expect(captureStatus().pendingHooks).toBe(0);
+  const queued=readdirSync(join(captureDir(),'queue')).map(name=>JSON.parse(readFileSync(join(captureDir(),'queue',name),'utf8')));
+  expect(queued.length).toBeGreaterThanOrEqual(3);
+  for(const batch of queued)expect(batch.attachments.length).toBeLessThanOrEqual(8);
+  expect(queued.flatMap(batch=>batch.attachments)).toHaveLength(20);
+  const events=queued.flatMap(batch=>batch.events);
+  // The object that nests too deep is kept as evidence; the same JSON as text is an ordinary result.
+  expect(events.find((event:any)=>event.kind==='hook')?.data).toMatchObject({captureStatus:'unsupported',tool_name:'Parse',tool_use_id:'deep-object'});
+  expect(typeof events.find((event:any)=>event.kind==='tool_result'&&event.nativeId==='deep-string')?.data.output).toBe('string');
+  expect(events.filter((event:any)=>event.kind==='message').map((event:any)=>event.data.content[0].text).sort()).toEqual(['after the deep payload','before the deep payload']);
+  const stop=hook('stop');await captureHook('grok-bot',stop);await hookFlush(stop);
+  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,lastError:null});
+}));
+
+test('a computer prepared without sign-in records nothing until an identity is bound',async()=>fixture(async f=>{
+  const token=process.env.OPENCRAWL_SESSIONS_TOKEN!;delete process.env.OPENCRAWL_SESSIONS_TOKEN;
+  await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e',''],harnesses:['grok-bot'],deferAuth:true});
+  expect(captureStatus()).toMatchObject({authenticationPending:true,owner:null});
+  let clock=Date.parse('2026-11-10T12:00:00Z');const now=()=>clock;
+  const prompt=hook('beforeSubmitPrompt',{prompt:'said before anyone signed in'});
+  // The same order as the hook command: bind, record, upload.
+  await expect(bindHookIdentity(prompt,{now})).rejects.toMatchObject({code:'AUTH_REQUIRED'});
+  await captureHook('grok-bot',prompt);await hookFlush(prompt,{now});
+  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,authenticationPending:true});
+  expect(existsSync(join(captureDir(),'notices'))&&readdirSync(join(captureDir(),'notices')).length>0).toBe(false);
+  // The owner signs in (here: an upload credential appears). The next due hook binds and records.
+  process.env.OPENCRAWL_SESSIONS_TOKEN=token;clock+=60_000;
+  const later=hook('beforeSubmitPrompt',{prompt:'said after signing in'}),stop=hook('stop');
+  await bindHookIdentity(later,{now});
+  expect(captureStatus()).toMatchObject({authenticationPending:false,owner:{userId:f.principal.userId}});
+  await captureHook('grok-bot',later);await captureHook('grok-bot',stop);await hookFlush(stop,{now});
+  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0});
+  const texts=f.batches.flatMap((batch:any)=>batch.events).filter((event:any)=>event.kind==='message').map((event:any)=>event.data.content[0].text);
+  expect(texts).toEqual(['said after signing in']);
+  expect(f.batches.every((batch:any)=>batch.owner.userId===f.principal.userId&&batch.installationId!=='pending')).toBe(true);
+}));
+
+test('an uploader lock that is merely busy is quiet; one that leaves old notices waiting is reported',async()=>fixture(async f=>{
+  await f.install();
+  const stop=hook('stop');await captureHook('grok-bot',stop);
+  let release!:()=>void;const held=withSessionLock('capture:worker',()=>new Promise<void>(resolve=>{release=resolve;}));
+  try {
+    await hookFlush(stop);expect(captureStatus().pendingHooks).toBe(1);
+    const notice=join(captureDir(),'notices',readdirSync(join(captureDir(),'notices'))[0]),old=new Date(Date.now()-11*60_000);
+    utimesSync(notice,old,old);
+    await expect(hookFlush(stop)).rejects.toMatchObject({code:'CAPTURE_UPLOADER_BUSY'});
+  } finally {release();await held;}
+  await hookFlush(stop);expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0});
 }));
 
 test('excluded workspaces and oversized payloads never leave the computer',async()=>fixture(async f=>{
@@ -299,6 +366,54 @@ test('Claude Code and Codex hooks stand aside when a Cursor-format runtime runs 
   expect(await run(['--harness','claude-code'],{session_id:'claude-session',hook_event_name:'PostToolUse'})).toMatchObject({exit:0});
   expect(captureStatus().pendingHooks).toBe(1);
 }),30_000);
+
+test('the hook answers as soon as the payload arrives, even if the runtime keeps the pipe open',async()=>fixture(async f=>{
+  await f.install();
+  const started=Date.now(),child=Bun.spawn(['bun',resolve(import.meta.dir,'../src/cli.ts'),'collect','hook','--harness','grok-bot'],{stdin:'pipe',stdout:'pipe',stderr:'pipe',env:{...process.env}});
+  child.stdin.write(JSON.stringify(hook('beforeSubmitPrompt',{prompt:'pipe stays open'})));child.stdin.flush();
+  const [exit,stdout]=await Promise.all([child.exited,new Response(child.stdout).text()]);
+  expect({exit,stdout}).toEqual({exit:0,stdout:'{"continue":true}\n'});expect(Date.now()-started).toBeLessThan(4000);
+  expect(f.batches.flatMap((batch:any)=>batch.events).map((event:any)=>event.kind)).toEqual(['message']);
+}),30_000);
+
+test('a sign-in renewal in flight at the deadline is saved before the hook exits',async()=>{
+  // A refresh token is single-use: exiting after the server rotated it would lose the sign-in.
+  const dir=mkdtempSync(join(tmpdir(),'opencrawl-grok-bot-renew-')),saved={...process.env},owner={tenantId:'team',userId:'owner'};
+  let refreshes=0,delay=0,uploaded=0;
+  const server=createServer(async(req,res)=>{
+    res.setHeader('content-type','application/json');
+    if(req.url==='/token'){refreshes++;const issued=refreshes;await new Promise(resolve=>setTimeout(resolve,delay));res.end(JSON.stringify({access_token:'access-'+issued,refresh_token:'refresh-'+issued,expires_in:3600}));return;}
+    if(req.url==='/api/sessions/identity'){res.end(JSON.stringify({data:{principal:owner}}));return;}
+    const chunks=[];for await(const chunk of req)chunks.push(chunk);
+    if(req.url==='/api/sessions/batches'){uploaded++;res.end(JSON.stringify({data:{stored:true,batchId:hash(Buffer.concat(chunks).toString())}}));return;}
+    res.statusCode=404;res.end('{}');
+  });
+  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+  const api='http://127.0.0.1:'+(server.address() as any).port;
+  try {
+    for(const key of ['OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_TOKEN','CLAUDE_CODE_REMOTE'])delete process.env[key];
+    Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex'),OPENCRAWL_NO_UPDATE:'1'});
+    const auth={clientId:'public',deviceAuthorizationEndpoint:api+'/device',tokenEndpoint:api+'/token'};
+    await saveSession(api,{auth,accessToken:'access-0',refreshToken:'refresh-0',expiresAt:Date.now()+3600_000} as any);
+    await installCapture(api,{home:dir,command:[process.execPath,'-e',''],harnesses:['grok-bot']});
+    // The access token has expired and the token endpoint is slower than the hook's five seconds.
+    await saveSession(api,{...readSession(api)!,expiresAt:Date.now()-1000});delay=6000;
+    const started=Date.now(),child=Bun.spawn(['bun',resolve(import.meta.dir,'../src/cli.ts'),'collect','hook','--harness','grok-bot'],{stdin:Buffer.from(JSON.stringify(hook('stop'))),stdout:'pipe',stderr:'pipe',env:{...process.env}});
+    const [exit,stdout]=await Promise.all([child.exited,new Response(child.stdout).text()]);
+    expect({exit,stdout}).toEqual({exit:0,stdout:'{}\n'});
+    expect(Date.now()-started).toBeGreaterThanOrEqual(6000);expect(refreshes).toBe(1);
+    expect(readSession(api)).toMatchObject({accessToken:'access-1',refreshToken:'refresh-1'});
+    // The pass itself was cut off and says so; the next due pass uploads with the saved sign-in.
+    expect(captureStatus().lastError?.code).toBe('CAPTURE_HOOK_DEADLINE');expect(uploaded).toBe(0);
+    delay=0;rmSync(join(captureDir(),'hook-flush.json'));
+    const next=Bun.spawn(['bun',resolve(import.meta.dir,'../src/cli.ts'),'collect','hook','--harness','grok-bot'],{stdin:Buffer.from(JSON.stringify(hook('stop'))),stdout:'pipe',stderr:'pipe',env:{...process.env}});
+    expect(await next.exited).toBe(0);
+    expect(refreshes).toBe(1);expect(uploaded).toBeGreaterThan(0);expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,lastError:null});
+  } finally {
+    server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));
+    for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);rmSync(dir,{recursive:true,force:true});
+  }
+},30_000);
 
 test('a receiver that never answers costs the Bot five seconds once, then a minute of local-only hooks',async()=>fixture(async f=>{
   const cli=resolve(import.meta.dir,'../src/cli.ts');

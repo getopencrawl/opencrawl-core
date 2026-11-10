@@ -47,12 +47,17 @@ function modifyGrokBotHooks(file:string,command:string|null) {
     hooks[event]=entries.filter(entry=>!grokBotOwned(entry));
     if(!hooks[event].length)delete hooks[event];
   }
-  // Every hook is passive, so a failure or the timeout never blocks the Bot.
-  if(command)for(const event of GROK_BOT_HOOK_EVENTS)(hooks[event]??=[]).push({command,timeout:10});
-  backup(file);
-  // The directory belongs to Grok Bot: replace the file, keep its permissions.
+  // Every hook is passive, so a failure or the timeout never blocks the Bot. The
+  // hook ends itself at five seconds; the timeout leaves room for a sign-in
+  // renewal that must not be abandoned.
+  if(command)for(const event of GROK_BOT_HOOK_EVENTS)(hooks[event]??=[]).push({command,timeout:30});
+  backup(file);replaceFile(file,JSON.stringify({...config,version:1,hooks},null,2)+'\n');
+}
+/** For a file in another program's directory: new contents, same permissions,
+ * and the directory left as it is. */
+function replaceFile(file:string,bytes:string|Buffer) {
   const temp=file+'.opencrawl-tmp',mode=existsSync(file)?statSync(file).mode&0o777:0o600;
-  writeFileSync(temp,JSON.stringify({...config,version:1,hooks},null,2)+'\n',{mode:0o600});
+  writeFileSync(temp,bytes,{mode:0o600});
   chmodSync(temp,mode); // the creation mode is narrowed by the umask
   renameSync(temp,file);
 }
@@ -123,6 +128,7 @@ export async function upgradeCaptureHooks() {
     } catch(error) {
       for(const [file,bytes] of originals) {
         if(bytes===null){try{unlinkSync(file);}catch{}}
+        else if(harnesses.includes('grok-bot')&&file===hookFile(current,'grok-bot'))replaceFile(file,bytes);
         else atomicFile(file,bytes);
       }
       throw error;
@@ -169,6 +175,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   } catch(error) {
     for(const [path,bytes] of originals) {
       if(bytes===null){try{unlinkSync(path);}catch{}}
+      else if(enrolled.includes('grok-bot')&&path===hookFile(config,'grok-bot'))replaceFile(path,bytes);
       else {const temp=path+'.rollback-'+randomUUID();writeFileSync(temp,bytes,{mode:0o600});renameSync(temp,path);}
     }
     throw error;

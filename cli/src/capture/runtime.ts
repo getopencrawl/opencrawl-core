@@ -11,7 +11,7 @@ import {createInterface} from 'node:readline';
 import {configDir, atomicFile, atomicJson, accessToken, withSessionLock, syncDirectory} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
-import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotOversized, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
+import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
@@ -344,13 +344,16 @@ export async function captureHook(harness:Harness,event:any) {
   const id=randomUUID(),at=new Date().toISOString();
   if(harness==='grok-bot') {
     if(!event||typeof event!=='object'||Array.isArray(event))throw new CliError('CAPTURE_EVENT_INVALID','Hook payload is not an object');
+    // Prepared with --defer-auth and nobody has signed in: a computer whose
+    // owner never opts in must not accumulate what their Bots do.
+    if(config.authPending)return;
     const session=grokBotSession(event,at);
     if(captureExcluded(config,{sessionId:session.sessionId,cwd:session.cwd??undefined}))return;
     // Hook payloads carry no time or order. Microseconds since the epoch keep
     // events from separate hook processes in the order they were recorded.
     const sequence=Math.round((performance.timeOrigin+performance.now())*1000);
     const bytes=Buffer.byteLength(JSON.stringify(event));
-    atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,sequence,harness,event:bytes>GROK_BOT_MAX_HOOK_BYTES?grokBotOversized(event,bytes):event});
+    atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,sequence,harness,event:bytes>GROK_BOT_MAX_HOOK_BYTES?grokBotUnsupported(event,'too_large',bytes):event});
     return;
   }
   const sessionId=event?.session_id;
@@ -363,23 +366,68 @@ export async function captureHook(harness:Harness,event:any) {
 
 // The original event is kept only until its immutable batch is spooled. Its ID
 // and timestamp survive a crash between enqueue and notice removal.
-export async function drainCaptureNotices(config=readCaptureConfig()!) {
+export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Infinity}:{until?:number}={}) {
   ensureDirectories();
   return withSessionLock('capture:notices',async()=>{
   let processed=0,firstError:any;
   // Grok Bot notices are the conversation itself, not pointers to a transcript.
-  const grokBot=new Map<string,{meta:any,title:any,notices:{path:string,notice:any}[]}>();
-  for(const name of readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json'))) {
-    await yieldToOwner();
-    const path=join(captureDir(),'notices',name),notice=read(path);
-    if(!notice)continue;
-    if(notice.harness==='grok-bot') {
-      const session=grokBotSession(notice.event,notice.at),key=JSON.stringify([session.sessionId,session.cwd]);
-      const group=grokBot.get(key)??{meta:{harness:'grok-bot',sessionId:session.sessionId,origin:'cloud',
+  // They are spooled in bounded rounds: a backlog never has to fit in memory,
+  // and a hook can stop between rounds with its progress kept.
+  type GrokBotNotice={path:string,notice:any};
+  let round:GrokBotNotice[]=[],roundBytes=0;
+  const spoolRound=async()=>{
+    const groups=new Map<string,{meta:any,title:any,notices:GrokBotNotice[]}>();
+    for(const item of round) {
+      const session=grokBotSession(item.notice.event,item.notice.at),key=JSON.stringify([session.sessionId,session.cwd]);
+      const group=groups.get(key)??{meta:{harness:'grok-bot',sessionId:session.sessionId,origin:'cloud',
         originEvidence:session.identified?'Grok Bot cloud computer hook':'Grok Bot hook without a conversation ID; grouped by workspace and UTC day',
         parentSessionId:null,...(session.conversationId?{conversationId:session.conversationId}:{}),...(session.cwd?{cwd:session.cwd}:{}),...(session.version?{harnessVersion:session.version}:{}),captureMode:'live'},
         title:session.title?grokBotTitleEvent(session.sessionId,session.title,session.day):null,notices:[]};
-      group.notices.push({path,notice});grokBot.set(key,group);
+      group.notices.push(item);groups.set(key,group);
+    }
+    round=[];roundBytes=0;
+    for(const group of groups.values()) {
+      group.notices.sort((a,b)=>(a.notice.sequence??0)-(b.notice.sequence??0));
+      // Batches stay small enough to upload within one hook pass, so a pass
+      // that is cut off still delivered the batches before it.
+      type Chunk={events:any[],attachments:any[],paths:string[]};
+      const chunks:Chunk[]=[];let chunk:Chunk={events:[],attachments:[],paths:[]},bytes=0;
+      for(const {path,notice} of group.notices) {
+        let extracted:any[]=[],next:any[],size=0;
+        try {
+          next=grokBotEvents(notice).map(event=>attachmentTransform(event,extracted,group.meta.cwd??homedir()));
+          // Reject here what the receiver or the batch format never accepts.
+          next.forEach(finalizeEventIdentity);size=Buffer.byteLength(JSON.stringify(next));
+          if(extracted.length>500||size>12*1024*1024)throw new CliError('CAPTURE_EVENT_INVALID','Hook payload exceeds what one batch can carry');
+        } catch(error:any) {
+          // A filesystem or other passing failure: leave the notice for a later pass.
+          if(!['CAPTURE_EVENT_TOO_DEEP','CAPTURE_EVENT_INVALID'].includes(error?.code)){firstError??=error;continue;}
+          extracted=[];next=grokBotEvents({...notice,event:grokBotUnsupported(notice.event,'unsupported',statSync(path).size)});
+          size=Buffer.byteLength(JSON.stringify(next));
+        }
+        if(chunk.paths.length&&(chunk.paths.length>=100||bytes+size>1024*1024||chunk.attachments.length+extracted.length>8)){chunks.push(chunk);chunk={events:[],attachments:[],paths:[]};bytes=0;}
+        chunk.events.push(...next);chunk.attachments.push(...extracted);chunk.paths.push(path);bytes+=size;
+      }
+      if(chunk.paths.length)chunks.push(chunk);
+      for(const {events,attachments,paths} of chunks) {
+        await yieldToOwner();
+        try {
+          // A notice is retired only after its batch is durably spooled.
+          enqueue(config,group.meta,group.title?[group.title,...events]:events,attachments);
+          for(const path of paths){unlinkSync(path);processed++;}
+          syncDirectory(join(captureDir(),'notices'));
+        }catch(error){firstError??=error;}
+      }
+    }
+  };
+  for(const name of readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json'))) {
+    await yieldToOwner();
+    if(Date.now()>=until)break;
+    const path=join(captureDir(),'notices',name),notice=read(path);
+    if(!notice)continue;
+    if(notice.harness==='grok-bot') {
+      round.push({path,notice});roundBytes+=statSync(path).size;
+      if(round.length>=200||roundBytes>=16*1024*1024)await spoolRound();
       continue;
     }
     try {
@@ -404,30 +452,7 @@ export async function drainCaptureNotices(config=readCaptureConfig()!) {
     unlinkSync(path);syncDirectory(dirname(path));processed++;
     }catch(error){firstError??=error;}
   }
-  for(const group of grokBot.values()) {
-    await yieldToOwner();
-    group.notices.sort((a,b)=>(a.notice.sequence??0)-(b.notice.sequence??0));
-    // One batch per session and drain, split so a single large payload cannot
-    // hold back the rest. A notice is retired only after its batch is spooled.
-    type Chunk={events:any[],attachments:any[],paths:string[]};
-    const chunks:Chunk[]=[];let chunk:Chunk={events:[],attachments:[],paths:[]},bytes=0;
-    for(const {path,notice} of group.notices) {
-      const extracted:any[]=[];let next:any[];
-      try{next=grokBotEvents(notice).map(event=>attachmentTransform(event,extracted,group.meta.cwd??homedir()));}
-      catch(error){firstError??=error;continue;}
-      const size=Buffer.byteLength(JSON.stringify(next));
-      if(chunk.paths.length&&(chunk.paths.length>=100||bytes+size>8*1024*1024)){chunks.push(chunk);chunk={events:[],attachments:[],paths:[]};bytes=0;}
-      chunk.events.push(...next);chunk.attachments.push(...extracted);chunk.paths.push(path);bytes+=size;
-    }
-    if(chunk.paths.length)chunks.push(chunk);
-    for(const {events,attachments,paths} of chunks) {
-      try {
-        enqueue(config,group.meta,group.title?[group.title,...events]:events,attachments);
-        for(const path of paths){unlinkSync(path);processed++;}
-        syncDirectory(join(captureDir(),'notices'));
-      }catch(error){firstError??=error;}
-    }
-  }
+  await spoolRound();
   if(firstError)throw firstError;
   return processed;
   },Infinity);
@@ -522,26 +547,40 @@ export async function flushCaptureWork() {
 /** Cursor-format hooks block the agent while they run, so they cannot host the
  * 90-second uploader. A turn boundary, or 20 seconds since the last pass, earns
  * one pass in the hook's own process, which the hook command cuts off at its
- * deadline. A failed or cut-off pass backs off for a minute. Unsent notices
- * and batches stay queued for the next pass. */
-export async function hookFlush(event:any,{now=Date.now}={}) {
+ * deadline. A failed or cut-off pass backs off: one minute, doubling to fifteen.
+ * Unsent notices and batches stay queued for the next pass. */
+async function hookPass(event:any,now:()=>number,work:(config:CaptureConfig)=>Promise<void>) {
   const config=readCaptureConfig();if(!config||config.disabled)return;
   ensureDirectories();
-  const marker=join(captureDir(),'hook-flush.json'),last=read(marker);
-  const gap=last?.ok===false?60_000:GROK_BOT_BOUNDARIES.includes(event?.hook_event_name)?0:20_000;
+  const marker=join(captureDir(),'hook-flush.json'),last=read(marker),failures=last?.ok===false?last.failures??1:0;
+  const gap=failures?Math.min(60_000*2**(failures-1),900_000):GROK_BOT_BOUNDARIES.includes(event?.hook_event_name)?0:20_000;
   if(last?.at&&now()-Date.parse(last.at)<gap)return;
   try {
     await withSessionLock('capture:worker',async()=>{
       // Marked failed first, so a pass that is cut off also backs off.
-      atomicJson(marker,{at:new Date(now()).toISOString(),ok:false});
-      let failure:any;
-      try{if(config.authPending)await refreshCaptureIdentity(config);await drainCaptureNotices(config);}catch(error){failure=error;}
-      try{if(queuedNames().length)await flushCaptures({wait:false});}catch(error){failure??=error;}
-      if(failure)throw failure;
+      atomicJson(marker,{at:new Date(now()).toISOString(),ok:false,failures:failures+1});
+      await work(config);
       atomicJson(marker,{at:new Date(now()).toISOString(),ok:true});
     },0);
-  } catch(error:any) {if(error?.code!=='SESSION_BUSY')throw error;}
+  } catch(error:any) {
+    if(error?.code!=='SESSION_BUSY')throw error;
+    // Another uploader normally holds this lock for seconds. Notices that have
+    // waited ten minutes mean nothing is draining them: say so in status.
+    const stale=noticeNames().some(name=>{try{return now()-statSync(join(captureDir(),'notices',name)).mtimeMs>600_000;}catch{return false;}});
+    if(stale)throw new CliError('CAPTURE_UPLOADER_BUSY','Another capture uploader has held its lock for over ten minutes. Run opencrawl collect flush.');
+  }
 }
+/** With --defer-auth nothing is recorded until an identity is bound. Each due
+ * pass tries once, so signing in later starts capture without reinstalling. */
+export const bindHookIdentity=(event:any,{now=Date.now}={})=>readCaptureConfig()?.authPending
+  ?hookPass(event,now,async config=>{await refreshCaptureIdentity(config);}):Promise.resolve();
+export const hookFlush=(event:any,{now=Date.now}={})=>readCaptureConfig()?.authPending?Promise.resolve():hookPass(event,now,async config=>{
+  let failure:any;
+  // Leave half the hook's five seconds for the uploads themselves.
+  try{await drainCaptureNotices(config,{until:Date.now()+2500});}catch(error){failure=error;}
+  try{if(queuedNames().length)await flushCaptures({wait:false});}catch(error){failure??=error;}
+  if(failure)throw failure;
+});
 
 export async function syncCaptures() {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');

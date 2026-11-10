@@ -38,15 +38,22 @@ payloads, in the event shapes used for Claude Code and Codex:
 What differs from transcript capture:
 
 - **The hooks cannot block or deny.** Grok Bot waits for each hook, so the hook
-  answers first, saves its payload locally and returns. No permission hook
-  (`preToolUse`, `subagentStart`, the `before*` hooks) is registered, because an
-  invalid answer to one blocks the action; `postToolUse` already carries the tool
-  input. The process never exits with the blocking code 2.
+  answers as soon as the payload has arrived (without waiting for the pipe to
+  close), saves it locally and returns. No permission hook (`preToolUse`,
+  `subagentStart`, the `before*` hooks) is registered, because an invalid answer
+  to one blocks the action; `postToolUse` already carries the tool input. The
+  process never exits with the blocking code 2.
 - **Uploads are bounded.** A hook uploads at a turn boundary (`stop`,
   `sessionStart`, `sessionEnd`) or when 20 seconds have passed since the last
-  pass, and the process ends at five seconds regardless, inside its ten-second
-  hook timeout. A failed or cut-off pass backs off for one minute. Unsent work
-  stays in the local spool; `collect flush` drains it on demand.
+  pass, and the process ends at five seconds. The one exception is a sign-in
+  renewal already in flight, which is allowed to finish and be saved, because
+  abandoning it would lose the sign-in; the installed hook timeout is thirty
+  seconds to leave room for that. A failed or cut-off pass backs off for one
+  minute, doubling to fifteen, and a cut-off shows in `collect status` as
+  `CAPTURE_HOOK_DEADLINE`. Batches are kept to about a megabyte and eight
+  attachments so that a pass which is cut off has still delivered the batches
+  before it. Unsent work stays in the local spool; `collect flush` drains it on
+  demand.
 - **Capture starts when a Bot loads the hooks.** Nothing earlier is read and
   there is no history import. Bots that are already running may keep the hook
   configuration they loaded; verify from a newly created Bot.
@@ -58,8 +65,10 @@ What differs from transcript capture:
   `{"redacted": true}` in place of an HTTP MCP tool's result, so expect only the
   call's arguments. Shell, file and computer tools carry their results; inline
   base64 images in them are stored as attachments.
-- **Payloads over 15 MiB are recorded as a size-only marker**, so one oversized
-  tool result cannot hold back the rest of the session.
+- **A payload that cannot be uploaded is recorded as a marker.** Hook payloads
+  over 8 MiB, and ones that nest deeper than an event may, keep only their
+  identifying fields and size, so one tool result cannot hold back the rest of
+  the session.
 - **Origin is `cloud`.** Memory files, native session names, subagent linkage
   and the board listener are not available for Grok Bot.
 - **Other harness hooks stand aside.** Cursor-format runtimes also load Claude
@@ -101,12 +110,11 @@ that carries no credential:
 
 Team Setup reruns the script when a computer starts and about daily, which also
 keeps the CLI current; installation is idempotent and keeps an identity that is
-already bound. `--defer-auth` installs the hooks without identifying anyone.
-Each member then signs in on their own computer (`opencrawl login
---no-browser`), and the next hook binds that identity before anything is
-uploaded. The hooks spool locally from the moment the manifest runs, so that
-sign-in also uploads what a member's Bots did since then: tell members before
-rolling it out. Do not distribute one `OPENCRAWL_SESSIONS_TOKEN` as a Team
+already bound. `--defer-auth` installs the hooks without identifying anyone,
+and until someone signs in on a computer its hooks record nothing at all. A
+member opts in by signing in on their own computer (`opencrawl login
+--no-browser`); the next hook binds that identity and recording starts from
+there. Do not distribute one `OPENCRAWL_SESSIONS_TOKEN` as a Team
 Secret: an upload credential belongs to one person, so every member's sessions
 would be attributed to its owner. This manifest follows xAI's documented format
 and has not been run by OpenCrawl on an Enterprise team.
