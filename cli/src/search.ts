@@ -1,8 +1,9 @@
 import {CliError, jsonRequest} from './oauth.ts';
 import {accessToken} from './session.ts';
+import {environmentToken} from './environment-token.ts';
 
 async function workspaceRequest(api: string, operation: 'search' | 'fetch', input: Record<string, unknown>, fetcher = fetch) {
-  const configuredToken = process.env.OPENCRAWL_TOKEN;
+  const configuredToken = environmentToken('OPENCRAWL_TOKEN', api);
   let token = configuredToken || await accessToken(api, undefined, fetcher);
   const request = () => jsonRequest(`${api}/api/search${operation === 'fetch' ? '/fetch' : ''}`, {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'}, body: JSON.stringify(input), signal: AbortSignal.timeout(70_000)}, fetcher);
   let result = await request();

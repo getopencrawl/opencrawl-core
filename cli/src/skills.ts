@@ -145,6 +145,8 @@ export async function agentSkills(action: string, api: string, options: Options 
     const results = targets.map(target => {
       try {
         const existed = metadata(target.directory) !== null;
+        // Background refresh updates an existing installation; first install is explicit.
+        if (action === 'refresh' && !existed) return {...target, status: 'skipped'};
         const current = currentTree(target.directory, files);
         if (action === 'status') return {...target, status: current ? 'current' : existed ? 'outdated' : 'missing'};
         if (current) return {...target, status: 'unchanged'};

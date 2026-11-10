@@ -1,5 +1,10 @@
 import {test, expect} from 'bun:test';
+import {beforeEach, afterEach} from 'bun:test';
 import {searchInput, searchWorkspace, formatSearch, fetchInput, fetchWorkspace, formatFetch} from '../src/search.ts';
+
+let priorTokenOrigin:string|undefined;
+beforeEach(()=>{priorTokenOrigin=process.env.OPENCRAWL_API_URL;});
+afterEach(()=>{if(priorTokenOrigin===undefined)delete process.env.OPENCRAWL_API_URL;else process.env.OPENCRAWL_API_URL=priorTokenOrigin;});
 
 test('search command validates filters before sending and never accepts a scope or DSL', () => {
   expect(searchInput(' incident filters ', {})).toEqual({query:'incident filters',source:'all',match:'any',limit:10});
@@ -9,7 +14,7 @@ test('fetch command validates paging and uses the authenticated fetch endpoint',
   expect(fetchInput('sessions:abc',{})).toEqual({id:'sessions:abc',offset:0,length:6000});
   expect(searchInput('x',{'no-dedupe':true})).toMatchObject({dedupe:false});
   for (const [id,options] of [['../../bad',{}],['sessions:x',{offset:-1}],['sessions:x',{length:16001}],['sessions:x',{'content-version':'bad'}]] as const) expect(()=>fetchInput(id,options)).toThrow();
-  const saved=process.env.OPENCRAWL_TOKEN;process.env.OPENCRAWL_TOKEN='local-only-secret';
+  const saved=process.env.OPENCRAWL_TOKEN;process.env.OPENCRAWL_API_URL='http://127.0.0.1:8093';process.env.OPENCRAWL_TOKEN='local-only-secret';
   try {
     const data={id:'sessions:abc',title:'Session',text:'source',provenance:{sessionId:'s'},offset:0,totalChars:20,nextOffset:6,version:'a'.repeat(64)};
     const fetcher=(async(url:any,init:any)=>{expect(url).toBe('http://127.0.0.1:8093/api/search/fetch');expect(init.headers.authorization).toBe('Bearer local-only-secret');return Response.json({schemaVersion:1,data});}) as typeof fetch;
@@ -19,7 +24,7 @@ test('fetch command validates paging and uses the authenticated fetch endpoint',
   } finally {if(saved===undefined)delete process.env.OPENCRAWL_TOKEN;else process.env.OPENCRAWL_TOKEN=saved;}
 });
 test('self-host query returns versioned evidence, reports incomplete coverage and sanitizes failures', async () => {
-  const saved=process.env.OPENCRAWL_TOKEN;process.env.OPENCRAWL_TOKEN='local-only-secret';
+  const saved=process.env.OPENCRAWL_TOKEN;process.env.OPENCRAWL_API_URL='http://127.0.0.1:8093';process.env.OPENCRAWL_TOKEN='local-only-secret';
   try {
     const data={results:[{id:'sessions:x',title:'Session s',text:'evidence',provenance:{sessionId:'s'}}],coverage:[{source:'sessions',state:'ready'},{source:'connectors',state:'unavailable'}],partial:true,next:null};
     const fetcher=(async(url:any,init:any)=>{expect(url).toBe('http://127.0.0.1:8093/api/search');expect(init.redirect).toBe('error');expect(init.headers.authorization).toBe('Bearer local-only-secret');expect(JSON.parse(init.body)).toEqual({query:'evidence'});return Response.json({schemaVersion:1,data});}) as typeof fetch;

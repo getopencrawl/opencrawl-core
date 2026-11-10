@@ -34,3 +34,16 @@ test('identity distinguishes organization setup, email verification and denied a
     await expect(identity('https://capture.example.com',fetcher,'fixture-token')).rejects.toThrow(message);
   }
 });
+
+test('CLI refuses an environment token with only the hosted default or saved destination',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'opencrawl-token-cli-'));
+  try{
+    const env:NodeJS.ProcessEnv={...process.env,OPENCRAWL_CONFIG_HOME:directory,OPENCRAWL_TOKEN:'fixture-only-secret'};
+    delete env.OPENCRAWL_API_URL;
+    const result=Bun.spawnSync(['bun',resolve(import.meta.dir,'../src/cli.ts'),'search','fixture','--json'],{env,stdout:'pipe',stderr:'pipe'});
+    expect(result.exitCode).toBe(64);
+    const output=result.stdout.toString();
+    expect(JSON.parse(output)).toMatchObject({error:{code:'TOKEN_DESTINATION_REQUIRED'}});
+    expect(output).not.toContain('fixture-only-secret');
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});

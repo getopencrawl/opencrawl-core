@@ -88,7 +88,7 @@ async function fixture(run:(f:any)=>Promise<void>) {
     handler(req,res);
   });
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
-  const api='http://127.0.0.1:'+(server.address() as any).port;
+  const api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=api;
   try {
     Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),OPENCRAWL_SESSIONS_TOKEN:token,CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex'),OPENCRAWL_NO_UPDATE:'1'});
     delete process.env.CLAUDE_CODE_REMOTE;
@@ -412,7 +412,7 @@ test('a sign-in renewal in flight at the deadline is saved before the hook exits
     res.statusCode=404;res.end('{}');
   });
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
-  const api='http://127.0.0.1:'+(server.address() as any).port;
+  const api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=api;
   try {
     for(const key of ['OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_TOKEN','CLAUDE_CODE_REMOTE'])delete process.env[key];
     Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex'),OPENCRAWL_NO_UPDATE:'1'});

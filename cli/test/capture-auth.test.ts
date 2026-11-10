@@ -33,7 +33,7 @@ test('capture pins queued data to its original team and human before any attachm
   return handler(req,res);
  });
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
- const api='http://127.0.0.1:'+(server.address() as any).port;
+ const api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=api;
  try{
   Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),OPENCRAWL_SESSIONS_TOKEN:token,CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex')});
   const options={background:false,home:dir,command:[process.execPath,'-e','']};
