@@ -18,7 +18,7 @@ const next = original.version.split('.').map(Number); next[2]++;
 const version = next.join('.');
 const platform = `${process.platform}-${process.arch}`;
 const scratch = mkdtempSync(join(tmpdir(), 'opencrawl-upgrade-'));
-const env = {...process.env, HOME: scratch, USERPROFILE: scratch, CLAUDE_CONFIG_DIR: join(scratch, 'claude'), CODEX_HOME: join(scratch, 'codex'), OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config'), XDG_CACHE_HOME: join(scratch, 'cache')};
+const env: NodeJS.ProcessEnv & {XDG_CACHE_HOME: string; OPENCRAWL_CONFIG_HOME: string} = {...process.env, HOME: scratch, USERPROFILE: scratch, CLAUDE_CONFIG_DIR: join(scratch, 'claude'), CODEX_HOME: join(scratch, 'codex'), OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config'), XDG_CACHE_HOME: join(scratch, 'cache')};
 let captureServer: ReturnType<typeof createServer> | undefined;
 const packages = new Map<string, Map<string, {pkg: any; bytes: Buffer}>>();
 function sync(command: string[], cwd?: string) {
@@ -72,15 +72,18 @@ try {
     const installedRoot = join(install, 'node_modules/@getopencrawl/cli');
     const launcher = join(installedRoot, 'bin/opencrawl.cjs');
     if (sync(['node', launcher, '--version']) !== original.version) throw new Error('Initial installation mismatch');
-    // Seed an older managed skill and a separate user-edited installation.
+    // Seed edits and stale files in both CLI-owned skills, plus another named skill.
     sync(['node', launcher, 'skills', 'install', '--client', 'claude-code', '--client', 'codex', '--api', 'http://127.0.0.1:8093', '--json']);
     const skillRoot = join(scratch, 'claude/skills/opencrawl'), skillFile = join(skillRoot, 'SKILL.md');
     const manifestFile = join(skillRoot, '.opencrawl-skill.json');
+    const canonicalSkill = readFileSync(skillFile, 'utf8');
     const manifest = JSON.parse(readFileSync(manifestFile, 'utf8')), oldSkill = 'Previous managed skill';
     writeFileSync(skillFile, oldSkill); manifest.files['SKILL.md'] = createHash('sha256').update(oldSkill).digest('hex');
     writeFileSync(manifestFile, JSON.stringify(manifest));
     const customized = join(scratch, '.agents/skills/opencrawl/SKILL.md');
     writeFileSync(customized, 'User-customized skill');
+    const stale = join(skillRoot, 'stale.md'); writeFileSync(stale, 'old');
+    const other = join(scratch, '.agents/skills/opencrawl-custom'); mkdirSync(other); writeFileSync(join(other, 'SKILL.md'), 'keep');
     // Preserve an existing personal-scope installation and offline queue through
     // the real npm update. A changed destination must not redirect that queue.
     const principal={tenantId:'org_team',userId:'human',name:'Human'};
@@ -108,10 +111,21 @@ try {
     env.OPENCRAWL_NO_UPDATE = '0';
     if (sync(['node', launcher, '--version']) !== version) throw new Error('Original launcher did not adopt the updated launcher and binary');
     env.OPENCRAWL_NO_UPDATE = '1';
-    if (!readFileSync(skillFile, 'utf8').includes('http://127.0.0.1:8093') || readFileSync(skillFile, 'utf8') === oldSkill) throw new Error('Upgrade did not refresh the managed skill with its saved deployment');
-    if (readFileSync(customized, 'utf8') !== 'User-customized skill') throw new Error('Upgrade overwrote a customized skill');
+    if (readFileSync(skillFile, 'utf8') !== canonicalSkill || readFileSync(customized, 'utf8') !== canonicalSkill || existsSync(stale)) throw new Error('Upgrade did not regenerate CLI-owned skills');
+    if (readFileSync(join(other, 'SKILL.md'), 'utf8') !== 'keep') throw new Error('Upgrade changed another named skill');
+    if (JSON.parse(readFileSync(manifestFile, 'utf8')).api !== undefined) throw new Error('Skill retained a duplicate deployment URL');
     const skillReceipt = JSON.parse(readFileSync(join(env.XDG_CACHE_HOME, 'opencrawl/skills-update.json'), 'utf8'));
-    if (skillReceipt.version !== version || skillReceipt.result.updated !== 1 || skillReceipt.result.conflicts !== 1) throw new Error('Upgrade did not report managed skill outcomes');
+    if (skillReceipt.version !== version || skillReceipt.result.updated !== 2 || skillReceipt.result.conflicts !== 0) throw new Error('Upgrade did not report managed skill outcomes');
+    // The ordinary version command also performs the existing legacy hook migration.
+    const upgradedConfig = readFileSync(join(capture, 'config.json'), 'utf8');
+    if (JSON.stringify(JSON.parse(upgradedConfig)) !== JSON.stringify({...config, hookMode: 'managed-v2'})) throw new Error('Upgrade changed capture configuration beyond the expected hook migration');
+    const selectedApi = (...args: string[]) => JSON.parse(sync(['node', launcher, 'skills', 'status', '--client', 'claude-code', '--json', ...args])).data.api;
+    delete env.OPENCRAWL_API_URL;
+    if (selectedApi() !== api) throw new Error('CLI ignored saved server configuration');
+    Object.assign(env, {OPENCRAWL_API_URL: 'https://environment.example'});
+    if (selectedApi() !== 'https://environment.example' || selectedApi('--api', 'https://flag.example') !== 'https://flag.example') throw new Error('CLI server precedence is incorrect');
+    delete env.OPENCRAWL_API_URL;
+    if (readFileSync(join(capture, 'config.json'), 'utf8') !== upgradedConfig) throw new Error('Skill update changed capture configuration');
     const rejected=Bun.spawn(['node',launcher,'collect','flush','--json'],{env,stdout:'pipe',stderr:'pipe'});
     const [rejection,diagnostic,exitCode]=await Promise.all([new Response(rejected.stdout).text(),new Response(rejected.stderr).text(),rejected.exited]);
     if(!exitCode||diagnostic||JSON.parse(rejection).error?.code!=='CAPTURE_DESTINATION_CHANGED')throw new Error('Updated collector redirected the queue');
@@ -126,7 +140,7 @@ try {
     if(readFileSync(join(capture,'state','cursor.json'),'utf8')!=='{"offset":42}')throw new Error('Upgrade changed capture cursor');
     const stored=await createSessionIngest({store}).getBatch(principal,{...batch,batchId:status.lastUpload.batchId});
     if(stored?.owner.userId!==principal.userId||stored?.owner.tenantId!==principal.tenantId||stored?.events[0].data?.content!=='synthetic upgrade fixture')throw new Error('Upgrade lost attribution or queued content');
-    console.log(`Real npm upgrade ${original.version} → ${version}, automatic managed-skill refresh with saved deployment/conflict preservation, original-command reuse and queued capture recovery verified.`);
+    console.log(`Real npm upgrade ${original.version} → ${version}, CLI-owned skill replacement, configuration precedence, original-command reuse and queued capture recovery verified.`);
   } finally { server.stop(true); }
  } finally {
   if(captureServer){captureServer.closeAllConnections();await new Promise<void>(r=>captureServer!.close(()=>r()));}

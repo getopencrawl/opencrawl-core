@@ -51,7 +51,7 @@ try {
     const skills = JSON.parse(run([...command, 'skills', 'install', '--client', 'claude-code', '--api', 'http://127.0.0.1:8093', '--json'], undefined, skillEnv));
     if (skills.data.results.length !== 1 || skills.data.results[0].status !== 'installed') throw new Error('Packaged skill installation failed');
     const skillRoot = join(scratch, 'claude/skills/opencrawl');
-    if (!readFileSync(join(skillRoot, 'SKILL.md'), 'utf8').startsWith('---\nname: opencrawl\n') || !readFileSync(join(skillRoot, 'references/participation.md'), 'utf8').includes('http://127.0.0.1:8093')) throw new Error('Packaged skill documents missing or wrong deployment');
+    if (!readFileSync(join(skillRoot, 'SKILL.md'), 'utf8').startsWith('---\nname: opencrawl\n') || readFileSync(join(skillRoot, 'references/participation.md'), 'utf8').includes('--api')) throw new Error('Packaged skill documents missing or contain a fixed deployment');
     const skillStatus = JSON.parse(run(['bun', join(install, 'node_modules/@getopencrawl/cli/runtime/opencrawl.js'), 'skills', 'status', '--client', 'claude-code', '--api', 'http://127.0.0.1:8093', '--json'], undefined, skillEnv));
     if (skillStatus.data.results[0].status !== 'current') throw new Error('Replaceable runtime could not read the installed skill');
     const fail = Bun.spawnSync([...command, 'whoami', '--json'], {env: {...process.env, OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config')}, stdout: 'pipe', stderr: 'pipe'});

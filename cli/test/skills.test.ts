@@ -2,8 +2,7 @@ import {test, expect} from 'bun:test';
 import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
-import {agentSkills, skillTargets} from '../src/skills.ts';
-import {createHash} from 'node:crypto';
+import {agentSkills, skillTargets, skillFiles} from '../src/skills.ts';
 
 async function fixture(run: (home: string) => Promise<void>) {
   const home = mkdtempSync(join(tmpdir(), 'opencrawl-skills-')), saved = {...process.env};
@@ -25,38 +24,52 @@ test('detects only available clients, honors custom roots and deduplicates share
   } finally {rmSync(home, {recursive: true, force: true});}
 });
 
-test('offline self-host install is idempotent; managed updates preserve user edits and unrelated files', () => fixture(async home => {
+test('CLI owns the reserved skill, replaces edits and stale files, and leaves other named skills alone', () => fixture(async home => {
   const options = {home, env: {}, which: () => null, clients: ['codex', 'claude-code']};
   const first = await agentSkills('install', 'http://127.0.0.1:8093', options);
   expect(first.results.map(r => r.status)).toEqual(['installed','installed']);
-  const file = join(first.results[0]!.directory, 'SKILL.md');
-  expect(readFileSync(file, 'utf8')).toContain('http://127.0.0.1:8093');
+  const directory = first.results[0]!.directory, file = join(directory, 'SKILL.md');
+  expect(readFileSync(file, 'utf8')).toBe(skillFiles()['SKILL.md']);
   const before = statSync(file).mtimeMs;
-  expect((await agentSkills('install', 'http://127.0.0.1:8093', options)).results.map(r => r.status)).toEqual(['unchanged','unchanged']);
+  expect((await agentSkills('install', 'https://different.example', options)).results.map(r => r.status)).toEqual(['unchanged','unchanged']);
   expect(statSync(file).mtimeMs).toBe(before);
-  const extra = join(first.results[0]!.directory, 'my-notes.md'); writeFileSync(extra, 'keep');
-  expect((await agentSkills('install', 'https://self-host.example', options)).results.map(r => r.status)).toEqual(['updated','updated']);
-  expect(readFileSync(extra, 'utf8')).toBe('keep');
-  const ref = join(first.results[0]!.directory, 'references/participation.md');
-  writeFileSync(ref, 'User-customized listener guidance');
-  const original = readFileSync(file, 'utf8');
-  expect((await agentSkills('install', 'https://new.example', options)).results.map(r => r.status)).toEqual(['conflict','updated']);
-  expect(readFileSync(ref, 'utf8')).toBe('User-customized listener guidance');
-  expect(readFileSync(file, 'utf8')).toBe(original);
+  const other = join(directory, '../opencrawl-custom'); mkdirSync(other); writeFileSync(join(other, 'SKILL.md'), 'keep');
+  writeFileSync(file, 'local edit');
+  writeFileSync(join(directory, 'my-notes.md'), 'stale');
+  writeFileSync(join(directory, 'references/participation.md'), 'custom rules');
+  expect((await agentSkills('refresh', 'https://new.example', options)).results.map(r => r.status)).toEqual(['updated','unchanged']);
+  for (const [name, content] of Object.entries(skillFiles())) expect(readFileSync(join(directory, name), 'utf8')).toBe(content);
+  expect(existsSync(join(directory, 'my-notes.md'))).toBe(false);
+  expect(readFileSync(join(other, 'SKILL.md'), 'utf8')).toBe('keep');
+  const manifest = JSON.parse(readFileSync(join(directory, '.opencrawl-skill.json'), 'utf8'));
+  expect(manifest.schemaVersion).toBe(2); expect(manifest.revision).toBe(4); expect(manifest.api).toBeUndefined();
+  expect(JSON.stringify(skillFiles())).not.toContain('https://new.example');
 }));
 
-test('unmanaged skills and dangling skill-directory links are never overwritten', () => fixture(async home => {
+test('adopts any skill with the reserved name and repairs links without changing their targets', () => fixture(async home => {
   const options = {home, env: {}, which: () => null, clients: ['claude-code']};
   const directory = skillTargets(options)[0]!.directory;
-  mkdirSync(directory, {recursive: true}); writeFileSync(join(directory, 'SKILL.md'), 'My own OpenCrawl skill');
-  expect((await agentSkills('install', 'https://self-host.example', options)).results[0]!.status).toBe('conflict');
-  expect(readFileSync(join(directory, 'SKILL.md'), 'utf8')).toBe('My own OpenCrawl skill');
+  mkdirSync(directory, {recursive: true}); writeFileSync(join(directory, 'SKILL.md'), 'Unmanaged OpenCrawl skill');
+  expect((await agentSkills('install', 'https://self-host.example', options)).results[0]!.status).toBe('updated');
+  expect(readFileSync(join(directory, 'SKILL.md'), 'utf8')).toBe(skillFiles()['SKILL.md']);
   if (process.platform !== 'win32') {
-    rmSync(directory, {recursive: true});
-    const outside = join(home, 'missing-target'); symlinkSync(outside, directory);
-    expect((await agentSkills('install', 'https://self-host.example', options)).results[0]!.status).toBe('conflict');
-    expect(existsSync(outside)).toBe(false);
+    const outside = join(home, 'outside'); mkdirSync(outside); writeFileSync(join(outside, 'keep'), 'untouched');
+    rmSync(directory, {recursive: true}); symlinkSync(outside, directory);
+    expect((await agentSkills('refresh', 'https://self-host.example', options)).results[0]!.status).toBe('updated');
+    expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('untouched');
+    expect(existsSync(join(outside, 'SKILL.md'))).toBe(false);
+    rmSync(join(directory, 'references'), {recursive: true}); symlinkSync(outside, join(directory, 'references'));
+    expect((await agentSkills('refresh', 'https://self-host.example', options)).results[0]!.status).toBe('updated');
+    expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('untouched');
+    expect(existsSync(join(outside, 'participation.md'))).toBe(false);
+    rmSync(directory, {recursive: true}); symlinkSync(join(home, 'missing'), directory);
+    expect((await agentSkills('refresh', 'https://self-host.example', options)).results[0]!.status).toBe('updated');
+    expect(existsSync(join(home, 'missing'))).toBe(false);
   }
+  // A directory in place of an expected file must not count as current.
+  rmSync(join(directory, 'SKILL.md')); mkdirSync(join(directory, 'SKILL.md'));
+  expect((await agentSkills('refresh', 'https://self-host.example', options)).results[0]!.status).toBe('updated');
+  expect(readFileSync(join(directory, 'SKILL.md'), 'utf8')).toBe(skillFiles()['SKILL.md']);
 }));
 
 test('CLI skill status is read-only and does not require login or capture enrollment', () => fixture(async home => {
@@ -69,25 +82,33 @@ test('CLI skill status is read-only and does not require login or capture enroll
   expect(existsSync(join(home, 'config/opencrawl/capture/config.json'))).toBe(false);
 }));
 
-test('automatic refresh updates only managed skills, preserves each API and leaves edited files intact', () => fixture(async home => {
-  const options = {home, env: {}, which: () => null, clients: ['codex', 'claude-code']};
-  const initial = await agentSkills('install', 'http://127.0.0.1:8093', options);
-  const directory = initial.results[0]!.directory, skill = join(directory, 'SKILL.md'), manifest = join(directory, '.opencrawl-skill.json');
-  const old = 'Previous managed skill'; writeFileSync(skill, old);
-  const saved = JSON.parse(readFileSync(manifest, 'utf8'));
-  saved.files['SKILL.md'] = createHash('sha256').update(old).digest('hex');
-  saved.revision = 1; writeFileSync(manifest, JSON.stringify(saved));
-  const customized = join(initial.results[1]!.directory, 'references/participation.md');
-  writeFileSync(customized, 'My custom coordination rules');
-  const result = await agentSkills('refresh', 'https://app.getopencrawl.com', {home, env: {}, which: () => null});
-  expect(result.results.map(row => row.status)).toEqual(['updated', 'conflict']);
-  expect(readFileSync(skill, 'utf8')).toContain('http://127.0.0.1:8093');
-  expect(readFileSync(skill, 'utf8')).not.toContain('https://app.getopencrawl.com');
-  expect(JSON.parse(readFileSync(manifest, 'utf8')).api).toBe('http://127.0.0.1:8093');
-  expect(readFileSync(customized, 'utf8')).toBe('My custom coordination rules');
-  rmSync(directory, {recursive: true});
-  expect((await agentSkills('refresh', 'https://app.getopencrawl.com', options)).results[0]!.status).toBe('skipped');
-  expect(existsSync(directory)).toBe(false);
+test('refresh repairs existing reserved skills without a manifest and installs for detected clients', () => fixture(async home => {
+  const options = {home, env: {}, which: () => null};
+  const directory = join(home, '.agents/skills/opencrawl');
+  mkdirSync(directory, {recursive: true}); writeFileSync(join(directory, 'SKILL.md'), 'old');
+  const result = await agentSkills('refresh', 'https://app.getopencrawl.com', options);
+  expect(result.results.map(row => row.status)).toEqual(['updated']);
+  expect(readFileSync(join(directory, 'SKILL.md'), 'utf8')).toBe(skillFiles()['SKILL.md']);
+  rmSync(directory, {recursive: true}); mkdirSync(join(home, '.codex'));
+  expect((await agentSkills('refresh', 'https://app.getopencrawl.com', options)).results[0]!.status).toBe('installed');
+}));
+
+test('CLI server precedence is flag, environment, saved config, hosted default without changing config', () => fixture(async home => {
+  const env: NodeJS.ProcessEnv = {...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: join(home, 'claude')};
+  delete env.OPENCRAWL_API_URL;
+  const run = (args: string[] = [], variables = env) => {
+    const child = Bun.spawnSync(['bun', resolve(import.meta.dir, '../src/cli.ts'), 'skills', 'status', '--client', 'claude-code', '--json', ...args], {env: variables, stdout: 'pipe', stderr: 'pipe'});
+    expect(child.exitCode).toBe(0); return JSON.parse(child.stdout.toString()).data.api;
+  };
+  expect(run()).toBe('https://app.getopencrawl.com');
+  const directory = join(home, 'config/opencrawl/capture'); mkdirSync(directory, {recursive: true});
+  const config = JSON.stringify({schemaVersion: 1, api: 'https://saved.example', installationId: 'existing', owner: {tenantId: 'local', userId: 'human'}});
+  writeFileSync(join(directory, 'config.json'), config);
+  expect(run()).toBe('https://saved.example');
+  const overridden = {...env, OPENCRAWL_API_URL: 'https://environment.example'};
+  expect(run([], overridden)).toBe('https://environment.example');
+  expect(run(['--api', 'https://flag.example'], overridden)).toBe('https://flag.example');
+  expect(readFileSync(join(directory, 'config.json'), 'utf8')).toBe(config);
 }));
 
 test('approved capture setup installs skills without replacing existing hooks or requiring runtime credentials', () => fixture(async home => {
@@ -103,7 +124,7 @@ test('approved capture setup installs skills without replacing existing hooks or
   const result = JSON.parse(child.stdout.toString()).data;
   expect(result.skills.results.every((r: any) => r.directory.startsWith(home))).toBe(true);
   expect(result.skills.results.some((r: any) => r.clients.includes('claude-code') && r.status === 'installed')).toBe(true);
-  expect(readFileSync(join(home, 'claude/skills/opencrawl/SKILL.md'), 'utf8')).toContain('http://127.0.0.1:8093');
+  expect(readFileSync(join(home, 'claude/skills/opencrawl/SKILL.md'), 'utf8')).toBe(skillFiles()['SKILL.md']);
   expect(JSON.parse(readFileSync(settings, 'utf8')).hooks.Stop[0].hooks[0].command).toBe('echo existing');
   expect(result.backfill.status).toBe('skipped');
 }));

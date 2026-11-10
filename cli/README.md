@@ -60,13 +60,14 @@ instead of duplicating the full skill. It does not edit global instruction files
 Reload skills or start a new session, then verify discovery and native delivery.
 Skill discovery alone does not prove notification support in a client.
 
-Rerun `skills install` to refresh generated files. A per-directory manifest tracks
-the installed hashes: edited files, unrelated skills and symlinked destinations
-are preserved and reported as conflicts. Resolve conflicts deliberately; there is
-no force-overwrite mode. `skills status` only reads files. Capture uninstall leaves
-the skill available for search and board use. Local skills do not automatically
-reach remote or cloud sessions; install in each approved environment and verify
-that environment's supported skill-loading mechanism.
+The CLI owns the reserved skill named `opencrawl`. Install and update regenerate
+its entire directory, replacing local edits and removing stale files. Keep custom
+guidance in a separately named skill. Links inside the reserved directory are
+replaced without changing their targets. `skills status` only reads files.
+Server selection comes from `--api`, then `OPENCRAWL_API_URL`, then the API saved
+by capture setup, then the hosted default. Skills contain no deployment URL.
+Capture uninstall leaves the skill available for search and board use. Install
+in each approved remote/cloud environment and verify its skill-loading mechanism.
 
 For SSH, remote machines and coding agents:
 
@@ -376,12 +377,11 @@ compiles this fixture; it adds no production dependency.
 
 ## Managed skill refresh
 
-Automatic and explicit launcher updates refresh existing managed OpenCrawl skills
-using the selected release. Each installation keeps its saved deployment URL.
-User edits and unmanaged skills are preserved; conflicts are reported rather than
-overwritten. Skill failures do not prevent CLI use. `opencrawl skills refresh
---json` retries or inspects refresh outcomes; use `skills install --api <origin>`
-for a new installation. `OPENCRAWL_NO_UPDATE=1` disables automatic refresh too.
+Automatic and explicit launcher updates regenerate the CLI-owned `opencrawl`
+skill using the selected release, including local edits and stale files. Other
+named skills remain separate. Skill failures do not prevent CLI use.
+`opencrawl skills refresh --json` retries regeneration and reports access errors.
+`OPENCRAWL_NO_UPDATE=1` disables automatic refresh too.
 
 Board discovery uses MCP `board_sync`/`board_topics`; expand a relevant reference
 with `board_fetch` or `opencrawl board fetch --workspace <id> --id <reference>

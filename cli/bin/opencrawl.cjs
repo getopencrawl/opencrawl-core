@@ -142,7 +142,7 @@ function refreshSkills(root, {force = false, run = spawnSync} = {}) {
   let result = {status: 'unavailable', updated: 0, conflicts: 0, errors: 1};
   try {
     // Run the selected release's native installer, never this bootstrap's old
-    // skill text. Refresh preserves each managed destination's saved API.
+    // skill text. The CLI owns the skill; server configuration is separate.
     const child = run(binary(root), ['skills', 'refresh', '--json'], {
       encoding: 'utf8', stdio: 'pipe', windowsHide: true, timeout: 15_000,
       env: {...process.env, OPENCRAWL_NO_UPDATE: '1'},
@@ -152,11 +152,11 @@ function refreshSkills(root, {force = false, run = spawnSync} = {}) {
       const rows = output.data.results;
       const conflicts = rows.filter(row => row.status === 'conflict').length;
       const errors = rows.filter(row => row.status === 'error').length;
-      if ([0, 1].includes(child.status) && rows.every(row => ['updated', 'unchanged', 'skipped', 'conflict', 'error'].includes(row.status))) {
-        result = {status: conflicts || errors ? 'attention_required' : 'current', updated: rows.filter(row => row.status === 'updated').length, conflicts, errors};
+      if ([0, 1].includes(child.status) && rows.every(row => ['installed', 'updated', 'unchanged', 'skipped', 'conflict', 'error'].includes(row.status))) {
+        result = {status: conflicts || errors ? 'attention_required' : 'current', updated: rows.filter(row => ['installed', 'updated'].includes(row.status)).length, conflicts, errors};
       }
     }
-  } catch {} // A skill conflict, denied directory or old binary cannot break CLI use.
+  } catch {} // A denied directory or old binary cannot break CLI use.
   try {write(stateFile, {version, checkedAt: Date.now(), complete: result.status === 'current' || result.conflicts > 0 && !result.errors, result});} catch {}
   return {...result, checked: true};
 }
@@ -191,7 +191,7 @@ async function main(args = process.argv.slice(2)) {
   const root = activeRoot();
   if (process.env.OPENCRAWL_NO_UPDATE !== '1' && !(args[0] === 'collect' && ['hook', 'worker'].includes(args[1]))) {
     const skills = refreshSkills(root);
-    if (skills.checked && skills.status !== 'current') process.stderr.write('opencrawl: Managed skill refresh needs attention; run opencrawl skills refresh --json to inspect preserved conflicts or directory access.\n');
+    if (skills.checked && skills.status !== 'current') process.stderr.write('opencrawl: Managed skill refresh needs attention; run opencrawl skills refresh --json to inspect directory access or refresh errors.\n');
   }
   const result = spawnSync(binary(root), args, {stdio: 'inherit', windowsHide: true, env: {...process.env, OPENCRAWL_LAUNCHER: process.env.OPENCRAWL_LAUNCHER || __filename, OPENCRAWL_NODE: process.execPath}});
   if (result.error) throw new Error('Could not start the OpenCrawl binary. Reinstall @getopencrawl/cli.');
