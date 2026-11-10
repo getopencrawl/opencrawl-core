@@ -67,10 +67,10 @@ function ValueReportSection({value}: {value: ValueReport}) {
   const {savings, observed, model} = value;
   const usd = pricedSavings(savings.tokens, model);
   return (
-    <Section className="report-section" title="Agent savings" description={`What OpenCrawl saved your team over the last ${value.window.days} days.`}>
+    <Section className="report-section" title="Agent savings" description={`What OpenCrawl saved your team since ${value.window.from}, across ${plural(savings.sessions, 'session')} and ${plural(savings.tasks, 'task')}.`}>
       <MetricGrid items={[
-        {label: `Saved vs ${model.model}`, value: dollars(usd), note: `${compact(savedTokens(savings.tokens))} tokens your agents didn’t spend`, title: `${count(savedTokens(savings.tokens))} tokens at ${model.model} list prices as of ${model.asOf}`},
-        {label: 'Turns saved', value: compact(savings.turns), note: `${savings.turnsPerTask.toLocaleString('en-US')} per task, ${savings.turnPercent.toLocaleString('en-US')}% fewer turns`, title: count(savings.turns)},
+        {label: `Saved vs ${model.model}`, value: dollars(usd), note: `${savings.tokenPercent.toLocaleString('en-US')}% fewer tokens, ${compact(savedTokens(savings.tokens))} saved`, title: `${count(savedTokens(savings.tokens))} tokens at ${model.model} list prices as of ${model.asOf}`},
+        {label: 'Turns saved', value: compact(savings.turns), note: `${savings.turnPercent.toLocaleString('en-US')}% fewer turns, ${savings.turnsPerTask.toLocaleString('en-US')} per task`, title: count(savings.turns)},
         {label: 'Conflicts avoided', value: count(observed.conflictsAvoided), note: observed.duplicatesAvoided ? `plus ${plural(observed.duplicatesAvoided, 'duplicate task')} skipped` : 'times agents waited on each other'},
         {label: 'Searches used', value: count(observed.searchesUsed), note: observed.searches ? `of ${plural(observed.searches, 'search', 'searches')} by your agents` : 'your agents haven’t searched yet'},
       ]}/>
