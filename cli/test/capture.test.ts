@@ -84,7 +84,7 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     expect(captureStatus().attention).toContain('/hooks');
     const codexHome=process.env.CODEX_HOME!,codexToml=join(codexHome,'config.toml'),tomlBefore=readFileSync(codexToml,'utf8');
     const snake=(e:string)=>e.replace(/([a-z0-9])([A-Z])/g,'$1_$2').toLowerCase();
-    writeFileSync(codexToml,tomlBefore+codexEvents.map(([e])=>`\n[hooks.state."${join(codexHome,'hooks.json')}:${snake(e)}:0:0"]\ntrusted_hash = "sha256:test"\n`).join(''));
+    writeFileSync(codexToml,tomlBefore+codexEvents.map(([e])=>`\n[hooks.state.${JSON.stringify(`${join(codexHome,'hooks.json')}:${snake(e)}:0:0`)}]\ntrusted_hash = "sha256:test"\n`).join(''));
     expect(captureStatus().codexHooksAwaitingReview).toBe(0);
     expect(captureStatus().attention).toBeNull();
     writeFileSync(codexToml,tomlBefore);
