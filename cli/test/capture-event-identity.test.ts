@@ -1,4 +1,5 @@
 import {test,expect} from 'bun:test';
+import {beforeEach, afterEach} from 'bun:test';
 import {mkdtempSync,mkdirSync,readFileSync,readdirSync,writeFileSync,renameSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -7,6 +8,10 @@ import {finalizeEventIdentity,hash} from '../src/capture/parse.ts';
 import {captureDir,captureTranscript,drainCaptureNotices,flushCaptures,type CaptureConfig} from '../src/capture/runtime.ts';
 import {createSessionIngest,auditSessionEventIdentities} from '../../dist/src/sessions/ingest.mjs';
 import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
+
+let priorTokenOrigin:string|undefined;
+beforeEach(()=>{priorTokenOrigin=process.env.OPENCRAWL_API_URL;});
+afterEach(()=>{if(priorTokenOrigin===undefined)delete process.env.OPENCRAWL_API_URL;else process.env.OPENCRAWL_API_URL=priorTokenOrigin;});
 
 async function fixture(run:(directory:string,config:CaptureConfig)=>Promise<void>) {
  const directory=mkdtempSync(join(tmpdir(),'capture-wire-identity-')),saved=process.env.OPENCRAWL_CONFIG_HOME;
@@ -74,7 +79,7 @@ test('upgrade leaves legacy queued bytes and IDs intact, including lost-acknowle
   if(payloads.length===1){res.writeHead(502);res.end(JSON.stringify({error:{code:'LOST_ACKNOWLEDGEMENT'}}));return;}
   res.end(JSON.stringify({data:receipt}));
  });
- await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));config.api='http://127.0.0.1:'+(server.address() as any).port;writeFileSync(join(captureDir(),'config.json'),JSON.stringify(config));
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));config.api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=config.api;writeFileSync(join(captureDir(),'config.json'),JSON.stringify(config));
  try {
   const batch={schemaVersion:1,owner:config.owner,installationId:config.installationId,sessionId:'legacy',harness:'codex',origin:'cli',events:[{id:'legacy-native-record',kind:'message',data:'unchanged queued content'}],attachments:[]};
   const serialized=JSON.stringify(batch);writeFileSync(join(captureDir(),'queue',hash(serialized)+'.json'),serialized+'\n');

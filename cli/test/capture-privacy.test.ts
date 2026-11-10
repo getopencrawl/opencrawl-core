@@ -1,4 +1,5 @@
 import {test,expect} from 'bun:test';
+import {beforeEach, afterEach} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,existsSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -9,9 +10,14 @@ import {excludeCapture,purgeLocalCapture} from '../src/capture/controls.ts';
 import {collectCommand} from '../src/capture/command.ts';
 import {captureExcluded,projectPath} from '../src/capture/policy.ts';
 
+let priorTokenOrigin:string|undefined;
+beforeEach(()=>{priorTokenOrigin=process.env.OPENCRAWL_API_URL;});
+afterEach(()=>{if(priorTokenOrigin===undefined)delete process.env.OPENCRAWL_API_URL;else process.env.OPENCRAWL_API_URL=priorTokenOrigin;});
+
 test('install requires informed consent before changing files or contacting an endpoint',async()=>{
   const result:any=await collectCommand('install','https://unreachable.example',{json:true});
   expect(result.status).toBe('consent_required');expect(result.notice).toContain('not automatically redacted');
+  expect(result.notice).toContain('Destination: https://unreachable.example.');
 });
 
 test('project and session exclusions block new bytes and queued uploads; purge is explicit and local',async()=>{
@@ -26,7 +32,7 @@ test('project and session exclusions block new bytes and queued uploads; purge i
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
   try {
     process.env.OPENCRAWL_CONFIG_HOME=join(dir,'config');process.env.OPENCRAWL_SESSIONS_TOKEN=token;
-    const api='http://127.0.0.1:'+(server.address() as any).port;
+    const api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=api;
     const config:CaptureConfig={schemaVersion:1,api,owner,installationId:'device',installedAt:new Date().toISOString(),roots:{codex:join(dir,'codex'),'claude-code':join(dir,'claude')},command:[]};
     mkdirSync(captureDir(),{recursive:true});atomicJson(join(captureDir(),'config.json'),config);
     const transcript=join(config.roots.codex,'sessions','session.jsonl');mkdirSync(join(config.roots.codex,'sessions'),{recursive:true});

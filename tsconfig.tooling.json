@@ -5,6 +5,7 @@
     "allowImportingTsExtensions": true
   },
   "include": [
+    "dev/**/*.mts",
     "cli/scripts/**/*.mts",
     "plugins/scripts/**/*.mts"
   ]

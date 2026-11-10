@@ -22,7 +22,7 @@ async function fixture(run:(f:any)=>Promise<void>){
   try{if(handle)await handle(raw,res);if(!res.writableEnded)res.end(JSON.stringify({data:{stored:true,batchId:hash(raw)}}));}
   finally{active--;}
  });
- await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const api='http://127.0.0.1:'+(server.address() as any).port;
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=api;
  try{
   Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),OPENCRAWL_SESSIONS_TOKEN:'synthetic',CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex')});
   await installCapture(api,{background:false,home:dir,command:[]});

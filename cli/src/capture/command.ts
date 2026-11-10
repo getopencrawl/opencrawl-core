@@ -55,7 +55,7 @@ export async function collectCommand(action:string,api:string,values:any) {
       // Grok Bot keeps no local history to import.
       const mode=values.backfill??(process.env.CLAUDE_CODE_REMOTE==='true'||values.harness==='grok-bot'?'skip':'ask');
       if(!['ask','skip','all','claude-code','codex'].includes(mode))throw new CliError('INVALID_USAGE','Use --backfill ask, skip, all, claude-code, or codex.',64);
-      const notice=captureNoticeFor(values.harness);
+      const notice=captureNoticeFor(api,values.harness);
       if(!await approveCapture(values.yes===true,values.json,notice))return {status:'consent_required',notice,nextStep:'Confirm the destination and recording scope with the user, then run collect install --yes. This does not approve history import.'};
       const installed=await installCapture(api,{deferAuth:values['defer-auth']===true,...(values.harness?{harnesses:[values.harness]}:{})});
       // Skill setup must not undo working capture or hide its installed state.

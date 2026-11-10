@@ -5,9 +5,10 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import type {Writable} from 'node:stream';
+import {environmentToken} from './environment-token.ts';
 
 export async function boardRequest(api: string, operation: string, input: Record<string, unknown>, fetcher = fetch) {
-  const configured = process.env.OPENCRAWL_TOKEN;
+  const configured = environmentToken('OPENCRAWL_TOKEN', api);
   let token = configured || await accessToken(api, undefined, fetcher);
   const request = () => jsonRequest(`${api}/api/board/${operation}`, {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'},
     body: JSON.stringify(input), signal: AbortSignal.timeout(30_000)}, fetcher);

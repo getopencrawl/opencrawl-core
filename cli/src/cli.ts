@@ -10,6 +10,7 @@ import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest} fro
 import {readSession, saveSession, accessToken, logout} from './session.ts';
 import {filesystemError} from './filesystem.ts';
 import {agentSkills} from './skills.ts';
+import {withEnvironmentTokenOrigin} from './environment-token.ts';
 
 declare const OPENCRAWL_VERSION: string;
 const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.2.0-dev';
@@ -65,7 +66,8 @@ Search: opencrawl search "words" --json
 Search returns compact verbatim excerpts. Expand with opencrawl fetch <result-id>.
   --offset N --length 1..16000       Read a passage in parts (default length: 6000)
   --content-version VERSION         Detect changes between fetch pages
-Use OPENCRAWL_TOKEN for a self-hosted bearer token; otherwise uses saved login.
+Use OPENCRAWL_TOKEN with an explicit --api or OPENCRAWL_API_URL for a self-hosted
+bearer token; otherwise uses saved login. Environment tokens never use a default server.
 Updates run automatically before ordinary commands, at most once per day.
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
 
@@ -127,7 +129,7 @@ export async function identity(api: string, fetcher = fetch, initialToken?: stri
 export async function main(args = process.argv.slice(2)) {
   // Process-owned work overlaps commands and async hooks. It is cancelled when
   // the command ends, so quick commands never wait and no orphan worker exists.
-  let memoryJob:ReturnType<typeof scheduleMemoryRefresh>|undefined=undefined;
+  const memoryJob:{current?:ReturnType<typeof scheduleMemoryRefresh>}={};
   let json = args.includes('--json');
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
@@ -140,7 +142,6 @@ export async function main(args = process.argv.slice(2)) {
     // Metadata-only recovery and a history preview must not start an unrelated
     // memory upload while the foreground operation is inspecting local state.
     const localCollect=command==='collect'&&(['uninstall','titles'].includes(parsed.positionals[1]??'')||parsed.positionals[1]==='backfill'&&!parsed.values.yes);
-    if(command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob=scheduleMemoryRefresh();
     if (parsed.positionals.length > (['collect','search','fetch','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
@@ -155,6 +156,8 @@ export async function main(args = process.argv.slice(2)) {
       emit(data, JSON.stringify(data, null, 2));
       return data.results.some(result => ['conflict', 'error'].includes(result.status)) ? 1 : 0;
     }
+    return await withEnvironmentTokenOrigin((parsed.values.api as string|undefined) ?? process.env.OPENCRAWL_API_URL, async () => {
+    if(command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob.current=scheduleMemoryRefresh();
     if (command === 'board') {
       await boardCommand(parsed.positionals[1] ?? 'directory', api, parsed.values, data => writeBoardOutput(data, json));
       return 0;
@@ -195,6 +198,7 @@ export async function main(args = process.argv.slice(2)) {
     const user = await identity(api);
     emit({api, version, authenticated: true, user, ...(command === 'status' ? {index: {available: null}} : {})}, command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
     return 0;
+    });
   } catch (error) {
     const failure = filesystemError(error);
     const known = failure instanceof CliError;
@@ -206,7 +210,7 @@ export async function main(args = process.argv.slice(2)) {
     // Harnesses read a hook's exit code 2 as "block this action".
     return exit === 2 && args[0] === 'collect' && args[1] === 'hook' ? 1 : exit;
   } finally {
-    memoryJob?.stop();
+    memoryJob.current?.stop();
     // Upgrade only our hook settings locally; never launch an unowned process.
     if(args[0]!=='collect' && args[0]!=='logout' && args[0]!=='skills')try{await upgradeCaptureHooks();}catch{}
   }

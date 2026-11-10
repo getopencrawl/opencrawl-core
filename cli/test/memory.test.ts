@@ -1,4 +1,5 @@
 import {test,expect} from 'bun:test';
+import {beforeEach, afterEach} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,symlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -7,6 +8,10 @@ import {createHash} from 'node:crypto';
 import {discoverMemories,refreshMemories,memoryDue,MEMORY_INTERVAL_MS} from '../src/capture/memory.ts';
 import {captureDir,type CaptureConfig} from '../src/capture/runtime.ts';
 import {withSessionLock} from '../src/session.ts';
+
+let priorTokenOrigin:string|undefined;
+beforeEach(()=>{priorTokenOrigin=process.env.OPENCRAWL_API_URL;});
+afterEach(()=>{if(priorTokenOrigin===undefined)delete process.env.OPENCRAWL_API_URL;else process.env.OPENCRAWL_API_URL=priorTokenOrigin;});
 
 function fixture() {
   const dir=mkdtempSync(join(tmpdir(),'opencrawl-memory-test-'));
@@ -41,7 +46,7 @@ test('six-hour refresh uploads both harnesses once, skips unchanged files, detec
     res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({data}));
   });await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
   try {
-    f.config.api='http://127.0.0.1:'+(server.address() as any).port;f.put(join(captureDir(),'config.json'),JSON.stringify(f.config));
+    f.config.api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=f.config.api;f.put(join(captureDir(),'config.json'),JSON.stringify(f.config));
     f.put(join(f.config.roots.codex,'memories/MEMORY.md'),'codex initial');f.put(join(f.config.roots['claude-code'],'projects/repo/memory/MEMORY.md'),'Claude initial');
     let now=Date.now();await refreshMemories({now:()=>now});expect(uploads).toHaveLength(2);
     await refreshMemories({now:()=>now+100});expect(uploads).toHaveLength(2);
@@ -58,7 +63,7 @@ test('a cancelled invocation never blocks on authentication or marks an incomple
   const f=fixture(),oldToken=process.env.OPENCRAWL_SESSIONS_TOKEN;process.env.OPENCRAWL_SESSIONS_TOKEN='fixture';
   const server=createServer(()=>{});await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
   try {
-    f.config.api='http://127.0.0.1:'+(server.address() as any).port;f.put(join(captureDir(),'config.json'),JSON.stringify(f.config));
+    f.config.api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=f.config.api;f.put(join(captureDir(),'config.json'),JSON.stringify(f.config));
     const controller=new AbortController(),start=Date.now();setTimeout(()=>controller.abort(),30);
     await refreshMemories({signal:controller.signal});expect(Date.now()-start).toBeLessThan(1000);
     expect(memoryDue({})).toBe(true);
@@ -73,7 +78,7 @@ test('memory waits asynchronously for a session upload and cancellation leaves t
   });await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
   let release:()=>void=()=>{};let owner:Promise<unknown>|undefined;
   try{
-    f.config.api='http://127.0.0.1:'+(server.address() as any).port;f.put(join(captureDir(),'config.json'),JSON.stringify(f.config));
+    f.config.api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=f.config.api;f.put(join(captureDir(),'config.json'),JSON.stringify(f.config));
     f.put(join(f.config.roots.codex,'memories/MEMORY.md'),'codex');f.put(join(f.config.roots['claude-code'],'projects/repo/memory/MEMORY.md'),'Claude');
     owner=withSessionLock('capture:flush',()=>new Promise<void>(r=>{release=r;}));
     const pending=refreshMemories();await new Promise(r=>setTimeout(r,120));expect(uploads).toHaveLength(0);
@@ -106,7 +111,7 @@ test('ordinary CLI invocation refreshes opportunistically; help returns immediat
     res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({schemaVersion:1,data}));
   });await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
   try {
-    f.config.api='http://127.0.0.1:'+(server.address() as any).port;f.put(join(captureDir(),'config.json'),JSON.stringify(f.config));
+    f.config.api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=f.config.api;f.put(join(captureDir(),'config.json'),JSON.stringify(f.config));
     f.put(join(f.config.roots.codex,'memories/MEMORY.md'),'native codex');f.put(join(f.config.roots['claude-code'],'projects/repo/memory/MEMORY.md'),'native Claude');
     const {sessionFile}=await import('../src/session.ts');
     f.put(sessionFile(f.config.api),JSON.stringify({auth:{clientId:'fixture',tokenEndpoint:f.config.api+'/token'},accessToken:'fixture',refreshToken:'fixture',expiresAt:Date.now()+3600000}));

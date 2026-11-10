@@ -197,9 +197,10 @@ presentation. The frontmatter records their approved values; update the owning
 CSS and this document together. Color aliases are resolved here without changing
 the source color format. The sidecar carries motion, depth and component previews.
 
-The shared `web/frame.css` and `web/controls.css` style hosted authentication,
-organization selection, provider handoffs and cloud-capture setup. React onboarding
-preserves its approved presentation in `web-v2/src/onboarding/onboarding.css`.
+Authentication outcomes, organization selection, provider handoffs and capture
+setup use React's shared focused frame, Page and controls. Servers send inert
+page data into the same application bundle; they never render feature HTML.
+React onboarding preserves its approved presentation in `web-v2/src/onboarding/onboarding.css`.
 Use the existing self-hosted fonts, OC marks, provider logos and shared SVG icons.
 The font license remains at `web/assets/Geist-OFL.txt`.
 
@@ -399,7 +400,7 @@ spinner, expose busy state and prevent repeated submission.
 Use 40px minimum desktop controls and 44px mobile/coarse-pointer targets. Icon-only
 controls retain accessible names. Keyboard focus uses a 2px accent outline with
 a 3px offset. LinkButton shares button presentation while preserving link semantics.
-The earlier `web/controls.css` secondary remains muted indigo; it is not the
+The secondary button remains part of the shared React design system. It is not the
 React console secondary variant.
 
 ### Fields and copy controls
@@ -610,34 +611,14 @@ and sync metadata. Omit Imported/Indexed labels, import breakdowns and aggregate
 totals so each card presents one content breakdown.
 
 
-## Legacy HTML control ownership
+## React document ownership
 
-`web/controls.css` owns visual presentation for server-rendered controls used on
-authentication, organization selection, provider handoff and cloud-capture pages.
-Use its existing primary/quiet button treatments and `button-link primary` for
-primary anchors. Shared field and choice presentation uses `text-input`,
-`code-input` and `choice-button`. Keep canonical disabled states and touch targets.
-React controls and the preserved React onboarding stylesheet remain separate;
-do not import this legacy stylesheet into the React workspace.
-
-Deployment page styles may arrange controls but may not redefine their visual
-properties. For example, `.org-form > button { justify-self:start }` is placement
-and belongs in hosted layout. Colors, backgrounds, borders, fonts, padding,
-outlines, shadows, disabled appearance and control sizing belong here, including
-state and responsive rules. A rule such as `.org-form input { border:1px solid
-var(--line); padding:12px; font:inherit }` is a control implementation and must not
-be added to hosted `shell.css`, even when it uses approved tokens.
-
-Enforcement coverage is deliberately explicit: the architecture tests reject
-authored JavaScript, duplicate React controls/navigation, React inline styles,
-hosted React stylesheets and prohibited separator text. Hosted's CSS Tree check
-separately enforces presentation ownership for native/canonical control subjects
-in `shell.css`, including functional selectors and media rules. Only margins,
-self-alignment, order and grid placement are allowed there. It rejects syntax it
-cannot inspect. Arbitrary class aliases and inherited ancestor styling still
-need review, and rendered states still need browser validation. Do not claim the
-React AST checker alone enforces legacy CSS ownership or that a parser proves
-visual behavior.
+All browser screens are client-rendered React, including focused authentication,
+organization selection, provider handoffs, privacy and capture setup. The server
+owns authorization, redirects and HTTP status; it emits the shared empty app
+mount and escaped inert JSON only. Use the same controls and tokens as the console.
+Hosted organization provisioning/selection and hosted legal content stay in shell;
+reusable callbacks, authentication outcomes and capture setup stay in core.
 
 ## Memory documents
 

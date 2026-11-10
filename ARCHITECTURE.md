@@ -3,9 +3,9 @@
 ## Contract
 
 OpenCrawl core must provide a useful single-tenant product on infrastructure a
-customer controls, without access to the proprietary shell, WorkOS, an OpenCrawl
+customer controls, without access to the proprietary shell, an OpenCrawl
 account, or our control plane. One tenant is one customer/security boundary;
-it may eventually contain multiple users. Basic security is part of core's
+it supports multiple users in one local organization. Basic security is part of core's
 self-hosted distribution, not a proprietary add-on.
 
 The hosted shell adds managed multitenancy and operation around the same product
@@ -16,19 +16,19 @@ in domain logic. No duplicated hosted version of a core operation.
 
 ## Placement
 
-| Core repository | Proprietary hosted shell |
-| --- | --- |
-| Capture/ingestion, parsing, indexing, retrieval, context assembly and product formats | Hosted tenant provisioning, organization membership, routing/switching and lifecycle |
-| Product UI, shared assets, CLI/protocol clients | WorkOS SDK/AuthKit, provider sessions, enterprise identity integration |
-| Domain validation, resource ownership/permission enforcement, deletion semantics and migrations | Identity-to-principal mapping, hosted admission, billing and entitlements |
-| Storage/job/auth contracts with working single-tenant reference adapters | Tenant-scoped managed storage/jobs, fleet scheduling, quotas and isolation infrastructure |
-| Self-host HTTP/API runtime, identity integration, startup, backup/restore and upgrades | Our AWS account/IAM/SSM/edge configuration, deployment/rollback and operations |
-| Audit events and portable diagnostics | Compliance exports, managed monitoring and support access |
-| Optional customer-operated integrations and storage adapters | Hosted vendor accounts, shared credentials and commercial service operation |
+Core owns the complete noncommercial UI, reusable identity adapters and
+team operations, capture, board, sessions, memories, connector lifecycle,
+Airbyte clients, indexing, search, resource permissions and data lifecycle.
+Self-hosters operate local Better Auth accounts and supply Airbyte,
+OpenSearch, connector credentials and documented supporting storage/jobs.
+The optional Composio adapter uses an operator-owned project for connector OAuth;
+it is not an OpenCrawl account or control-plane dependency. Missing connector
+configuration remains visible in the product catalog with setup guidance.
 
-The hosted integrations page (Composio, managed Airbyte), hosted indexing glue,
-WorkOS auth and our infra stay in the shell on purpose. The supported self-host
-stack and its capture/indexing path are documented in `docs/self-host.md`.
+The proprietary shell owns hosted tenant selection and provisioning, billing
+and commercial policy, fleet scheduling, internal support and administration,
+and account-specific managed infrastructure. It consumes core-owned product
+interfaces and adds UI extensions. SDK/vendor names do not determine ownership.
 
 Classify by responsibility. A local HTTP server, self-host authentication adapter,
 Compose/Helm example, or optional S3-compatible client can live here. Keep these
@@ -96,8 +96,9 @@ object-store bucket (AWS S3 or a compatible service); filesystem storage is only
 an internal test helper. Downstream ingestion must share the S3 object contract
 across deployments. The CLI's local spool is a retry buffer, not a separate
 server-side source. The shared OpenSearch worker enforces explicit scope; the
-standalone runtime fixes one tenant/user while the hosted adapter supplies its
-authorized scope resolver. See `docs/session-indexing.md`.
+supported application runtime must fix one organization and verify every user;
+the older capture-only entrypoint fixes one tenant/user. The hosted adapter supplies
+its authorized scope resolver. See `docs/session-indexing.md`.
 
 Publish tested immutable core runtime versions. The hosted consumer advances its
 package version, integrity lock and Git source pin together; it verifies embedded
@@ -110,3 +111,29 @@ organization realm per environment. Core owns its common envelope, typed metadat
 index naming, transport, scope checks and migration primitives. Source adapters
 retain resource visibility checks. The shell supplies verified identity, managed
 routing and safe migration/cutover; it must not introduce per-feature index layouts.
+
+## Shared application seam
+
+The single-tenant product uses Better Auth with local accounts in an operator-owned
+SQLite database. Cloud continues to use WorkOS. Both adapters expose core-owned
+identity directory facts; provider sessions and tokens stay at their runtime boundary.
+Reusable authentication, membership, role controls, UI, Airbyte and connector
+lifecycle implementations belong in core. Hosted multi-tenant selection and
+provisioning, billing, fleet operation and internal administration belong in
+shell. Source SDK names do not determine ownership. Core requires no account
+or service operated by OpenCrawl. This contract supersedes earlier hosted-only
+classification of reusable identity, integrations and product UI.
+
+## React document seam
+
+All feature UI is rendered by the shared React application. Core owns auth
+outcomes, provider callbacks and capture setup; shell supplies hosted organization
+selection/provisioning and its service-specific legal page through the document
+extension. Servers retain authorization, cookies, redirects and HTTP status, and
+supply only an empty app mount plus escaped inert JSON. No alternate HTML renderer
+or feature stylesheet is retained. The same core Page, controls and tokens serve
+focused documents and the workspace console.
+
+Shared integration changes require a verified active admin membership bound to
+the principal and organization. Runtime adapters pass plain membership facts to
+core; UI controls reflect these permissions but never grant them.

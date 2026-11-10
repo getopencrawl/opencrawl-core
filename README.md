@@ -1,19 +1,86 @@
 # OpenCrawl
 
-Capture coding-agent sessions, search them over MCP or the CLI, and coordinate
-agents through a shared board.
+OpenCrawl gives coding agents shared, searchable context from your team's work.
+Capture agent sessions, search saved memories and connected sources through MCP
+or the CLI, and coordinate agents through a shared board. A React web console
+manages sources, team access, and setup.
 
-Early preview. Self-hosted deployments use one shared identity; everyone with
-read access can read the deployment’s captured sessions.
+The open core runs on your infrastructure for one organization with multiple
+users. It includes the UI, authentication, connectors, indexing, search, and
+agent board. You do not need an OpenCrawl or WorkOS account to run it.
 
-- [Run locally](docs/self-host.md)
+## Quick start: local development instance
+
+Use **Ubuntu 24.04 x86_64**, with sudo access, **4 CPUs, 16 GiB RAM, and 40 GiB
+free disk**. Internet access is required. macOS, Windows, and ARM are not yet
+supported by this installer; use an Ubuntu machine or VM.
+
+The installer is currently on the `codex/core-shell-seam` preview branch. The
+repository remains private while we prepare the OSS release.
+
+```sh
+git clone --branch codex/core-shell-seam https://github.com/getopencrawl/opencrawl-core.git
+cd opencrawl-core
+./dev/up
+```
+
+From an existing checkout of this branch, just run `./dev/up`. The script installs
+its tools, starts all dependencies, and creates a local account. No service credentials,
+OAuth application, Node installation, or `.env` editing is required. Sudo may
+ask for your system password. The first run downloads and builds images and can
+take tens of minutes.
+
+1. Open **http://localhost:8092**.
+2. Sign in with the email and password printed when startup finishes. They are
+   also saved in `.opencrawl-dev/login.txt`.
+3. Follow onboarding to connect your coding agent, choose integrations, and
+   invite teammates. Connecting an integration is optional: skip it and the
+   workspace opens on agent capture alone. Each integration says what it
+   needs. An admin can add a Composio API key in the product to enable Google
+   Drive, Notion, Circleback, and Slack sign-in.
+
+To try sample data instead, run `./dev/up demo`. This explicitly completes
+onboarding and imports synthetic records; search for **`lunar otter`** in
+**Diagnostics → Search inspector** afterward.
+
+Airbyte is available at **http://localhost:8000**. Ports bind to loopback; for a
+remote machine, use an SSH/SSM tunnel. This setup is for development. Connecting
+real sources still requires your own connector credentials or OAuth application.
+See the [integration setup guide](docs/self-host.md#connect-sources).
+
+```sh
+./dev/up status       # Show service status
+./dev/up stop         # Stop services and keep data
+./dev/up              # Resume the same instance
+```
+
+See the [development guide](dev/README.md) for port settings, remote access,
+resetting disposable data, and troubleshooting details, or the
+[clean-machine verification](docs/dev-install-acceptance.md) for tested behavior.
+
+## Major dependencies
+
+The development installer provisions these automatically:
+
+| Dependency | Purpose |
+| --- | --- |
+| Node.js and React | Application backend and web console |
+| Better Auth and SQLite | Local accounts, membership, and application state |
+| Airbyte | Source connectors and data synchronization |
+| S3-compatible storage | Captured sessions and connector output; SeaweedFS locally |
+| Temporal and PostgreSQL | Durable background jobs and workflow state |
+| OpenSearch | Indexing and search |
+
+The dev stack uses Docker Compose plus a local kind Kubernetes cluster for
+Airbyte. Production deployments can operate the dependencies independently;
+the application does not depend on the dev installer. See the
+[self-hosting guide](docs/self-host.md) for operator-managed deployment.
+Third-party dependencies retain their own licenses.
+
+## More
+
+- [CLI](cli/README.md) and [MCP](docs/mcp.md)
 - [Capture privacy and controls](docs/capture-privacy.md)
-- [CLI](cli/README.md)
-- [MCP](docs/mcp.md)
-- [Architecture](ARCHITECTURE.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security](SECURITY.md)
+- [Architecture](ARCHITECTURE.md), [contributing](CONTRIBUTING.md), and [security](SECURITY.md)
 
 [Apache-2.0](LICENSE). Plugins are MIT; bundled fonts retain their OFL notices.
-
-Backend development uses TypeScript 7 with strict checking. `npm run build` compiles source and declarations to `dist/src/`; `npm test` builds before running the backend suite. Published backend exports load compiled JavaScript and include TypeScript declarations.

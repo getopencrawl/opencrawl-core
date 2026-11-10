@@ -1,0 +1,52 @@
+{
+  "revision": "8bb0bf35db8741d9715975312b9a19f2ac627ff6",
+  "machine": {
+    "os": "Ubuntu 24.04",
+    "architecture": "x86_64",
+    "instanceType": "m6i.xlarge",
+    "cpus": 4,
+    "memoryGiB": 16,
+    "initialTools": {
+      "docker": false,
+      "node": false,
+      "npm": false
+    }
+  },
+  "normalStartup": {
+    "seconds": 291,
+    "exitCode": 0,
+    "onboardingCompleted": false
+  },
+  "demo": {
+    "exitCode": 0,
+    "syntheticFixture": true,
+    "realAirbyteS3TemporalOpenSearch": true,
+    "authenticatedMcpAndProductRetrieval": true
+  },
+  "browser": {
+    "executionCommandId": "be271018-b582-4679-90db-5c13028e6d8b",
+    "status": "Success",
+    "allSixCards": true,
+    "operatorSetupDialog": true,
+    "agentSetupNavigation": true,
+    "onboardingSources": true,
+    "desktopAndMobile": true,
+    "pageErrors": []
+  },
+  "preview": {
+    "activationCommandId": "b9a3a532-ddbc-4604-b214-f295bf9596d4",
+    "status": "Success",
+    "cloudUnchanged": true
+  },
+  "lifecycle": {
+    "executionCommandId": "c3992573-46b4-4493-8560-86b4ffb78978",
+    "status": "Success",
+    "rootOwnedReset": true,
+    "nonrootDemoSeconds": 345,
+    "seedFilesOwnedByUser": true,
+    "stopResumePreservedIdentityAndConnections": true,
+    "nonrootResetSeconds": 13,
+    "ownedStateClusterComposeVolumesRemoved": true,
+    "unrelatedContainerNetworkVolumeAndSentinelPreserved": true
+  }
+}

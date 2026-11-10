@@ -170,7 +170,10 @@ body[data-onboarding] .brand img{width:32px;height:auto}
 .connector-search:has(input:disabled){opacity:.6}
 .connector-catalog{margin-top:var(--space-4);min-height:216px}
 .connector-search[hidden]+.connector-catalog{margin-top:var(--space-6)}
-#connector-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3);list-style:none;padding:0;margin:0}
+.connector-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3);list-style:none;padding:0;margin:0}
+.connector-groups>section+section{margin-top:var(--space-6)}
+.connector-group-title{margin:0 0 var(--space-3);color:var(--muted);font-size:var(--text-sm);font-weight:550;line-height:1.5}
+.connector-group-note{margin:calc(-1*var(--space-2)) 0 var(--space-3);color:var(--quiet);font-size:var(--text-xs);line-height:1.5}
 .connector-cell{min-width:0}
 .connector-tile{display:grid;grid-template-columns:32px minmax(0,1fr) 20px;align-items:center;gap:var(--space-3);width:100%;height:64px;padding:var(--space-2) var(--space-3);border-color:var(--line-strong);background:var(--surface-subtle);white-space:normal;text-align:left}
 .connector-tile:hover:not([aria-disabled="true"]){border-color:var(--accent);background:var(--surface-raised)}
@@ -189,12 +192,13 @@ body[data-onboarding] .brand img{width:32px;height:auto}
 .connector-tile[aria-busy="true"]{cursor:wait}
 .connector-tile[data-error]{border-color:var(--danger)}
 .connector-tile-error{margin:var(--space-2) 0 0;color:var(--danger);font-size:var(--text-xs);line-height:1.5}
+.connector-tile-note{margin:var(--space-2) 0 0;color:var(--muted);font-size:var(--text-xs);line-height:1.5}
 .connector-message{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:var(--space-3);min-height:216px;color:var(--muted);font-size:var(--text-ui)}
 #sources-loading{flex-direction:row;align-items:center;justify-content:flex-start}
 .connector-spinner{width:18px;height:18px;border:1.5px solid var(--accent);border-right-color:transparent;border-radius:50%}
 #clear-connector-search{padding-inline:0;color:var(--accent)}
 @media(max-width:600px){
- #connector-list{grid-template-columns:minmax(0,1fr);gap:var(--space-2)}
+ .connector-grid{grid-template-columns:minmax(0,1fr);gap:var(--space-2)}
  .connector-tile{height:56px}
  .connector-catalog,.connector-message{min-height:376px}
  .connector-search{margin-top:var(--space-6)}

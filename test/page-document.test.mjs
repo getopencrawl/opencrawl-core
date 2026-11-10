@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {document} from '../dist/src/application/presentation.mjs';
+
+test('page data cannot escape its inert JSON element, even with closing tags and Unicode separators',()=>{
+  const hostile='</script><script>globalThis.compromised=true</script>&\u2028\u2029';
+  const page={kind:'message',heading:hostile,detail:'Private text',href:'/auth/login',action:'Sign in'};
+  const html=document(page);
+  assert.equal((html.match(/<script\b/g)||[]).length,2);
+  assert.doesNotMatch(html, /<h1|<main|<form|<script>globalThis|&\u2028/);
+  const payload=/<script id="opencrawl-page" type="application\/json">(.*?)<\/script>/.exec(html)[1];
+  assert.deepEqual(JSON.parse(payload),{page,signedIn:false});
+});
+
+test('server presentation paths do not compose browser feature markup',async()=>{
+  for(const file of ['application/presentation.mts','application/integration-callback.mts','application/integration-http.mts','selfhost/application.mts','sessions/cloud-setup.mts']) {
+    const source=await readFile(new URL('../src/'+file,import.meta.url),'utf8');
+    assert.doesNotMatch(source,/<(?:main|nav|h1|form|button|input|textarea|section)\b|renderTo(?:String|StaticMarkup)/,file);
+  }
+});

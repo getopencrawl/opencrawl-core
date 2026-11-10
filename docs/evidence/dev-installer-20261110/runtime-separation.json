@@ -1,0 +1,6 @@
+{
+  "ok": true,
+  "devAbsentFromRuntimeImage": true,
+  "privateStateAbsentFromRuntimeImage": true,
+  "devAbsentFromPackage": true
+}

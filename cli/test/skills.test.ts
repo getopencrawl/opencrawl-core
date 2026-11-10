@@ -82,7 +82,7 @@ test('CLI skill status is read-only and does not require login or capture enroll
   expect(existsSync(join(home, 'config/opencrawl/capture/config.json'))).toBe(false);
 }));
 
-test('refresh repairs existing reserved skills without a manifest and installs for detected clients', () => fixture(async home => {
+test('refresh repairs existing skills but never creates a first installation', () => fixture(async home => {
   const options = {home, env: {}, which: () => null};
   const directory = join(home, '.agents/skills/opencrawl');
   mkdirSync(directory, {recursive: true}); writeFileSync(join(directory, 'SKILL.md'), 'old');
@@ -90,7 +90,9 @@ test('refresh repairs existing reserved skills without a manifest and installs f
   expect(result.results.map(row => row.status)).toEqual(['updated']);
   expect(readFileSync(join(directory, 'SKILL.md'), 'utf8')).toBe(skillFiles()['SKILL.md']);
   rmSync(directory, {recursive: true}); mkdirSync(join(home, '.codex'));
-  expect((await agentSkills('refresh', 'https://app.getopencrawl.com', options)).results[0]!.status).toBe('installed');
+  expect((await agentSkills('refresh', 'https://app.getopencrawl.com', options)).results[0]!.status).toBe('skipped');
+  expect(existsSync(directory)).toBe(false);
+  expect((await agentSkills('install', 'https://app.getopencrawl.com', options)).results[0]!.status).toBe('installed');
 }));
 
 test('CLI server precedence is flag, environment, saved config, hosted default without changing config', () => fixture(async home => {

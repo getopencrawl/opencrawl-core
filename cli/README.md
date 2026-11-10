@@ -26,7 +26,7 @@ opencrawl collect install --harness grok-bot   # on a Grok Bot cloud computer
 opencrawl search "release checklist"
 ```
 
-For a self-hosted deployment, skip `login` and pass tokens instead; see
+For a self-hosted deployment, sign in to its own origin; see
 [Self-hosted](#self-hosted).
 
 ## Agent skills
@@ -44,7 +44,8 @@ clients are Codex, Claude Code, Cursor, Gemini CLI, OpenCode and Copilot CLI.
 Use repeated `--client` options to select clients explicitly. Codex, Cursor,
 Gemini, OpenCode and Copilot share `~/.agents/skills/opencrawl`; Claude Code uses
 `$CLAUDE_CONFIG_DIR/skills/opencrawl` (default `~/.claude/skills/opencrawl`).
-Install once per shared directory. These paths follow the clients' documented
+Install once per shared directory. Automatic refresh only updates an existing
+installation; use `skills install` for a new client. These paths follow the clients' documented
 [Codex](https://learn.chatgpt.com/docs/build-skills),
 [Claude Code](https://code.claude.com/docs/en/skills),
 [Cursor](https://cursor.com/docs/skills),
@@ -177,21 +178,31 @@ Read [capture privacy and controls](../docs/capture-privacy.md). After signing i
 
 `opencrawl collect status --json` reports the last authenticated identity, queued uploads, last receipt and errors. `collect sync` reconciles active transcripts; `collect flush` processes pending hooks and known transcript tails, then waits for queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
 
-Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service determines the current team from login and validates human attribution. Capture enrollment and queued records stay pinned to their original team and author. A changed login blocks uploads before attachments are sent. Resolve pending data before explicitly reinstalling for a different destination. Self-hosted users supply tokens instead of signing in; see below and [capture architecture and limits](../docs/session-capture.md).
+Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service determines the current team from login and validates human attribution. Capture enrollment and queued records stay pinned to their original team and author. A changed login blocks uploads before attachments are sent. Resolve pending data before explicitly reinstalling for a different destination. Self-hosted users sign in to their own deployment; see below and [capture architecture and limits](../docs/session-capture.md).
 
 ### Self-hosted
 
-Start the stack with `./deploy/up.sh` from the repository root, then use the tokens
-it writes to `deploy/.env`:
+Start the development stack with `./dev/up` from the repository root.
+Use the local administrator email and password printed by the installer and its
+application origin (normally `http://localhost:8092`):
 
 ```sh
-OPENCRAWL_SESSIONS_TOKEN=... opencrawl collect install --api http://127.0.0.1:8093
-OPENCRAWL_TOKEN=... opencrawl search "release checklist" --api http://127.0.0.1:8094
+export OPENCRAWL_API_URL=http://localhost:8092
+opencrawl login
+opencrawl collect install
+opencrawl search "release checklist"
 ```
 
-`opencrawl login` needs a deployment that serves `/.well-known/opencrawl-cli`; the
-self-hosted stack does not include a login server yet. `status` reports
-`authenticated: false` against it even when token-based search works.
+The OSS application supports device login, browser approval, MCP consent and
+per-origin saved credentials through local Better Auth. It requires no hosted
+OpenCrawl or WorkOS account. Capture consent names the destination before setup.
+See [the self-host guide](../docs/self-host.md) for operator configuration.
+
+The separate capture-only receiver and search server can still use
+`OPENCRAWL_SESSIONS_TOKEN` and `OPENCRAWL_TOKEN`. Always pair either environment
+token with `--api` or `OPENCRAWL_API_URL`. A saved capture destination or the hosted
+default never selects where a newly supplied environment token is sent. Remove
+an environment token when switching deployments to use their saved logins.
 
 Newly spooled events receive a versioned ID after attachment extraction and all
 event normalization. The ID covers the source record/notice identity and every

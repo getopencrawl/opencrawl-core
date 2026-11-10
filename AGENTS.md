@@ -6,13 +6,15 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
 - This repository owns the product and its usable single-tenant self-hosted
   distribution: operations, formats, resource authorization, UI, CLI, contracts,
   reference adapters, and startup/upgrade tools.
-- The separate proprietary hosted shell owns WorkOS, hosted organizations and
-  membership resolution, tenant provisioning/routing, billing, entitlements,
+- The separate proprietary hosted shell owns hosted tenant selection,
+  provisioning/routing, billing, entitlements,
   managed infrastructure, fleet operations and compliance exports.
-- Dependencies point into core. Never import the shell or require WorkOS, an
-  OpenCrawl hosted account, license server, or hosted control plane to use core.
+- Dependencies point into core. Never import the shell or require an OpenCrawl hosted account, license server,
+  or hosted control plane to use core. Self-host uses Better Auth with one local organization; cloud continues on
+  WorkOS. Keep provider verification in explicit identity adapters.
   Keep provider objects and managed credentials out of domain contracts.
-- Authentication/tenant selection belong to runtime adapters. Core enforces
+- Reusable authentication and team operations belong here; hosted tenant selection
+  belongs to shell. Core enforces
   resource access within an explicit trusted scope. Single tenant does not mean
   unauthenticated; no implicit default scope for hosted calls.
 - Keep self-host HTTP/auth, storage, migrations, backup/restore and startup
@@ -58,8 +60,38 @@ navigation, form controls, icons, tokens, or CSS. Browser UI belongs in web-v2;
 do not retain parallel HTML renderers or superseded browser scripts.
 Run its strict typecheck, architecture tests, build, and browser regression suite
 alongside core checks. The hosted shell consumes the published source exports;
-its provider/account/billing pages must reuse the same design system.
+its commercial and hosted tenancy extensions must reuse the same design system.
 
 ## Backend TypeScript
 
 Backend source under `src/` uses strict TypeScript (`.mts`, or `.cts` for Temporal workflow bundles). Run `npm run build` before invoking compiled entrypoints under `dist/src/`; `npm test` builds first. Keep runtime import extensions `.mjs`/`.cjs`, preserve public package export names, and ship declarations with the compiled package. Do not weaken strict checks or add type-check suppression directives.
+
+## Shared application seam
+
+The single-tenant product uses Better Auth with local accounts in an operator-owned
+SQLite database. Cloud continues to use WorkOS. Both adapters expose core-owned
+identity directory facts; provider sessions and tokens stay at their runtime boundary.
+Reusable authentication, membership, role controls, UI, Airbyte and connector
+lifecycle implementations belong in core. Hosted multi-tenant selection and
+provisioning, billing, fleet operation and internal administration belong in
+shell. Source SDK names do not determine ownership. Core requires no account
+or service operated by OpenCrawl. This contract supersedes earlier hosted-only
+classification of reusable identity, integrations and product UI.
+
+Optional operator-owned connector OAuth, including Composio, belongs in core
+adapters. Core must work without our managed broker account. Keep unconfigured
+connectors visible with setup guidance; normal dev startup preserves onboarding.
+
+The standalone Airbyte GitHub source under `connectors/github/` is a Python container moved from shell; preserve its source and behavior tests. This is the only Python exception. Application runtime and repository tooling remain TypeScript/Node.
+
+## Browser rendering
+
+Every browser screen uses client-rendered React and shared core controls, including
+organization setup, auth outcomes, provider handoffs, capture setup and legal pages.
+Servers send an empty application mount plus escaped inert page data; never compose
+feature markup or return an alternate server-rendered UI. Authorization, cookies,
+HTTP status and identity-changing redirects remain server responsibilities.
+
+Shared integration changes require a verified active admin membership bound to
+the principal and organization. Runtime adapters pass plain membership facts to
+core; UI controls reflect these permissions but never grant them.

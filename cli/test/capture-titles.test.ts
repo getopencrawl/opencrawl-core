@@ -1,4 +1,5 @@
 import {test, expect} from 'bun:test';
+import {beforeEach, afterEach} from 'bun:test';
 import {mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -7,6 +8,10 @@ import {captureDir, captureTranscript, refreshCapturedTitles, type CaptureConfig
 import {parseRecord, hash} from '../src/capture/parse.ts';
 import {codexTitle} from '../src/capture/titles.ts';
 import {createServer} from 'node:http';
+
+let priorTokenOrigin:string|undefined;
+beforeEach(()=>{priorTokenOrigin=process.env.OPENCRAWL_API_URL;});
+afterEach(()=>{if(priorTokenOrigin===undefined)delete process.env.OPENCRAWL_API_URL;else process.env.OPENCRAWL_API_URL=priorTokenOrigin;});
 
 test('native title parsing preserves Claude auto/manual titles and Codex header titles only', () => {
   expect(parseRecord('claude-code', {type:'ai-title', aiTitle:'Automatic'}, 0)?.data.title).toBe('Automatic');
@@ -29,6 +34,7 @@ test('capture discovers Codex names and title-only renames without replaying mes
   try {
     process.env.OPENCRAWL_CONFIG_HOME=join(dir,'config');process.env.OPENCRAWL_SESSIONS_TOKEN='fixture-token';
     const config:CaptureConfig={schemaVersion:1,api:'http://127.0.0.1:'+(server.address() as any).port,owner,installationId:'device',installedAt:new Date().toISOString(),roots:{codex:join(dir,'codex'),'claude-code':join(dir,'claude')},command:[]};
+    process.env.OPENCRAWL_API_URL=config.api;
     mkdirSync(captureDir(),{recursive:true});atomicJson(join(captureDir(),'config.json'),config);
     mkdirSync(join(config.roots.codex,'sessions'),{recursive:true});
     const path=join(config.roots.codex,'sessions','session.jsonl'),index=join(config.roots.codex,'session_index.jsonl');

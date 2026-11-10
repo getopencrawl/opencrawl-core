@@ -126,6 +126,7 @@ try {
     if (selectedApi() !== 'https://environment.example' || selectedApi('--api', 'https://flag.example') !== 'https://flag.example') throw new Error('CLI server precedence is incorrect');
     delete env.OPENCRAWL_API_URL;
     if (readFileSync(join(capture, 'config.json'), 'utf8') !== upgradedConfig) throw new Error('Skill update changed capture configuration');
+    Object.assign(env,{OPENCRAWL_API_URL:api});
     const rejected=Bun.spawn(['node',launcher,'collect','flush','--json'],{env,stdout:'pipe',stderr:'pipe'});
     const [rejection,diagnostic,exitCode]=await Promise.all([new Response(rejected.stdout).text(),new Response(rejected.stderr).text(),rejected.exited]);
     if(!exitCode||diagnostic||JSON.parse(rejection).error?.code!=='CAPTURE_DESTINATION_CHANGED')throw new Error('Updated collector redirected the queue');

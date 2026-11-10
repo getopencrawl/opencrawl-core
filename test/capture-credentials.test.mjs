@@ -1,9 +1,10 @@
+import {document} from '../dist/src/application/presentation.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {standaloneCapture} from '../dist/src/sessions/standalone.mjs';
-import {cloudSetupScript,captureSetupPrompt,renderCloudCaptureSetup} from '../dist/src/sessions/cloud-setup.mjs';
+import {cloudSetupScript,captureSetupPrompt,cloudCapturePage} from '../dist/src/sessions/cloud-setup.mjs';
 import {memorySessionStore as memory} from './session-store-fixture.mjs';
 const owner={tenantId:'fixed',userId:'owner'};
 test('capture delegation is hashed, scoped, expiring and revocable',async()=>{
@@ -46,6 +47,6 @@ test('shared setup prompt covers consent, every environment, startup awareness a
  for(const text of ['collect backfill --dry-run','--harness <claude-code|codex|all> --yes','keep unanswered choices pending'])assert.ok(prompt.includes(text));
  assert.ok(!script.includes('login'));assert.ok(!script.includes('systemctl'));
  assert.throws(()=>cloudSetupScript('https://capture.example.com/path'));
- const page=renderCloudCaptureSetup({api,credential:{token:'<secret>',id:'abc',expiresAt:'2027-11-05'}});
- assert.ok(page.includes('&lt;secret&gt;'));assert.ok(!page.includes('<secret>'));
+ const page=document(cloudCapturePage({api,credential:{token:'<secret>',id:'abc',expiresAt:'2027-11-05'}}));
+ assert.ok(page.includes('\\u003csecret\\u003e'));assert.ok(!page.includes('<secret>'));assert.doesNotMatch(page, /<textarea|<form/);
 });

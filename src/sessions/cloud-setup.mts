@@ -1,4 +1,4 @@
-const escape=(value: unknown)=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'} as Record<string,string>)[c]);
+import type {CapturePage} from '../application/page-types.mjs';
 const quote=(value: string)=>"'"+value.replace(/'/g,"'\\''")+"'";
 export function cloudSetupScript(api: string) {
   const url=new URL(api);if(url.protocol!=='https:'||url.origin!==api)throw new Error('Cloud capture requires an HTTPS API origin');
@@ -11,16 +11,8 @@ OPENCRAWL_NO_UPDATE=1 "$HOME/.local/share/opencrawl-cloud/node_modules/.bin/open
 `;
 }
 
-export function renderCloudCaptureSetup({api,credential,revoked=false}: {api: string; credential?: {expiresAt: string; token: string; id: string} | null; revoked?: boolean}) {
-  return `<main class="cloud-capture"><h1>Capture Claude cloud sessions</h1><p>Use a personal Claude cloud environment. Every session using this credential is shared with your OpenCrawl team and attributed to you; do not put it in a shared environment.</p>
-${revoked?'<p role="status">Capture credential revoked.</p>':''}
-${credential?`<p>This upload-only credential expires ${escape(credential.expiresAt.slice(0,10))}. It cannot search or read sessions. Copy it into Claude’s environment variables; keep it out of chats and repositories.</p><label>Environment variable<textarea class="code-input" rows="3" readonly>${escape('OPENCRAWL_SESSIONS_TOKEN='+credential.token)}</textarea></label><p>Credential ID: <code>${escape(credential.id)}</code>. Save this ID to revoke access later.</p>`:'<form method="post" action="/capture/cloud"><button class="primary">Create upload-only credential</button></form>'}
-<ol><li>At claude.ai/code, open the environment selector and create or edit a personal environment.</li><li>Under Network access, keep Limited/Trusted access and add <code>${escape(new URL(api).hostname)}</code>. Keep npm/package registries allowed.</li><li>Under Environment variables, add the credential above. Values are readable by sessions in this environment.</li><li>Append this script to Setup script (preserve any existing setup), then save changes.</li><li>Start a new session with that environment selected. Ask it to run a shell command, read an attached image, and check <code>opencrawl collect status</code> using the installed path below. A stored receipt confirms upload; search appears after asynchronous indexing.</li></ol>
-<label>Setup script<textarea class="code-input" rows="10" readonly>${escape(cloudSetupScript(api))}</textarea></label>
-<p>CLI path: <code>$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl</code>. Your current setup session may need a restart; future sessions prepare capture in the setup script and authenticate in a supervised asynchronous hook when Claude starts. Capture includes messages, tool arguments/results and attachments. System prompt snapshots are omitted.</p>
-<h2>Capture Grok Bot sessions</h2><p>Your Bots share one cloud computer, so one installation there captures all of them, attributed to you. Use your own computer, never a shared Bot's.</p>
-<ol><li>Ask a Bot to run this on its computer: <code>${escape('npm i -g @getopencrawl/cli@next && opencrawl collect install --yes --harness grok-bot --defer-auth --api '+api)}</code></li><li>Sign in on that computer with <code>${escape('opencrawl login --no-browser --api '+api)}</code> and approve it in your browser. To keep the computer upload-only instead, create the credential above and enter it as <code>OPENCRAWL_SESSIONS_TOKEN</code> in the secure secret card the Bot shows you, never in the chat.</li><li>Bots that are already running may keep their earlier hooks. From a newly created Bot, run a command, then ask it for <code>opencrawl collect status</code>: a stored receipt confirms upload.</li></ol>
-<form method="post" action="/capture/cloud/revoke"><label>Credential ID to revoke<input class="code-input" name="id" pattern="[a-f0-9]{64}" required value="${escape(credential?.id??'')}"></label><button>Revoke credential</button></form></main>`;
+export function cloudCapturePage({api,credential,revoked=false}: {api:string;credential?:{expiresAt:string;token:string;id:string}|null;revoked?:boolean}): CapturePage {
+  return {kind:'capture',api,credential,revoked,script:cloudSetupScript(api)};
 }
 export function captureSetupPrompt(api: string) {
   return `Set up OpenCrawl across all coding agents and environments I use. Inspect existing setup, reuse valid configuration and authentication, and complete what's missing. Discover local terminal and desktop agents; ask once about additional machines, SSH hosts, and cloud agents. Make every approved setup available to future sessions using mechanisms appropriate to the environment.
