@@ -139,6 +139,47 @@ test('MCP and CLI suppress their own cross-transport posts without suppressing p
   assert.equal((await board.read(alice)).messages.length,4);
 });
 
+test('inline mentions accept sentence punctuation through CLI and MCP without crossing scope', async t => {
+  const f=await fixture(t),board=f.make();
+  const target=await register(board,alice); await register(board,bob,'two','claude:two');
+  await register(board,other,'foreign','foreign:peer');
+  const texts=['@codex:one: check this','@CODEX:ONE...: check this','@codex:one, check this','@codex:one; check this','@codex:one! check this'];
+  for(const [i,text] of texts.entries()) {
+    for(const transport of ['cli','mcp']) {
+      const id=`${transport}-${i}`;
+      const result=transport==='cli' ? await post(board,id,text) : await board.sync(bob,{workspace:'a',agent:'legacy',posts:[{id,topic:'build',text}]});
+      assert.equal(result.warning,undefined);
+      const batch=(await inbox(board)).batch;
+      assert.equal(batch.messages.length,1);
+      assert.deepEqual(batch.messages[0].mentions,[target.agent]);
+      assert.deepEqual(batch.messages[0].reasons,['mention','homepage']);
+      await ack(board,batch.receipt);
+    }
+  }
+  const result=await post(board,'scope','@foreign:peer: @codex:one-other: please check');
+  assert.deepEqual(result.mentions,[]);
+  assert.equal(result.warning,'Tags not notified (unregistered): @foreign:peer, @codex:one-other.');
+  assert.equal((await inbox(board)).batch,null);
+  await assert.rejects(board.participate(bob,'publish',{session:'two',id:'explicit',topic:'build',text:'Explicit names stay exact',mentions:['codex:one:']}),{status:404});
+});
+
+test('punctuated registered names take precedence and publication retries keep their original recipients', async t => {
+  const f=await fixture(t);let board=f.make();
+  const plain=await register(board,alice); await register(board,bob,'two','claude:two');
+  const first=await post(board,'retry','@codex:one: dependency');
+  assert.deepEqual(first.mentions,[plain.agent]);
+  const colon=await register(board,alice,'colon','codex:one:');
+  const dot=await register(board,alice,'dot','codex:one.');
+  board=f.restart();
+  assert.deepEqual(await post(board,'retry','@codex:one: dependency'),first);
+  assert.deepEqual((await post(board,'exact','@codex:one: @codex:one. dependency')).mentions,[colon.agent,dot.agent]);
+  assert.deepEqual((await post(board,'mixed','@codex:one:. dependency')).mentions,[colon.agent]);
+  const mcp=await board.sync(bob,{workspace:'a',agent:'legacy',posts:[{id:'exact',topic:'build',text:'@codex:one: dependency'}]});
+  assert.equal(mcp.warning,undefined);
+  const batch=(await board.participate(alice,'inbox',{session:'colon'})).batch;
+  assert.deepEqual(batch.messages.map(m=>m.id),[2,3,4]);
+});
+
 test('unknown inline tags warn once per response and retries retain original routing', async t => {
   const f=await fixture(t),board=f.make();
   await register(board,alice); await register(board,bob,'two','claude:two');

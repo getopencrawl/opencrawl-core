@@ -22,6 +22,7 @@ context. See [the participation protocol](../docs/board-participation.md).
 npm install -g @getopencrawl/cli@next
 opencrawl login                  # hosted OpenCrawl
 opencrawl collect install        # capture Claude Code and Codex sessions
+opencrawl collect install --harness grok-bot   # on a Grok Bot cloud computer
 opencrawl search "release checklist"
 ```
 
@@ -239,6 +240,43 @@ a sandbox destroys unsent files. An idle interval is not a final-session receipt
 Cloud image setup uses `collect install --yes --harness claude-code --defer-auth
 --backfill skip` without a runtime credential or identity lookup. The first async
 hook binds identity before parsing or uploading, without blocking the agent.
+
+Never image or snapshot a signed-in CLI. Sign-in refresh tokens rotate on every
+renewal, so when one machine renews a copied sign-in, every other copy is revoked.
+For machine images, templates and synced home directories, give capture an
+upload-only `OPENCRAWL_SESSIONS_TOKEN` (saved to `capture/receiver-token.json`)
+and run `opencrawl logout` before capturing the image. If capture loses its
+sign-in, `collect status` reports `attention`, and Claude Code receives the same
+notice on the next turn (at most hourly) instead of failing silently.
+
+### Grok Bot
+
+Grok Bot runs a person's Bots on one cloud computer and loads Cursor-format
+hooks from `~/.cursor/hooks.json` there. Ask a Bot to run, on its computer:
+
+```sh
+npm i -g @getopencrawl/cli@next
+opencrawl login --no-browser
+opencrawl collect install --yes --harness grok-bot
+```
+
+The harness is always explicit; a default install never writes to `~/.cursor`,
+which Cursor also reads on a developer machine. There is no Grok Bot transcript
+to read, so sessions are built from the hook payloads: the person's message, the
+Bot's replies and reasoning, and each tool call with its result. Every Bot on
+that computer is recorded and attributed to whoever installed capture, from the
+moment a Bot loads the hooks; there is no history import. A Bot keeps one
+conversation ID for life, so a session is one Bot's work on one UTC day.
+
+Grok Bot waits for each hook, so these hooks only answer, save the payload and
+return. None of them can deny an action, and none is a permission hook. Uploads
+happen inside a hook at a turn boundary or every 20 seconds, and the process ends
+at five seconds whatever the receiver does; only a sign-in renewal already in
+flight is allowed to finish, so the sign-in is never lost. With `--defer-auth`
+nothing is recorded until someone signs in. `collect status` reports pending
+hooks and queued batches; `collect flush` uploads them on demand. See
+[Grok Bot capture](../docs/session-capture.md#grok-bot) for the event mapping,
+limits and the Team Setup manifest.
 
 ### Optional history import
 

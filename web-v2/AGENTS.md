@@ -57,7 +57,7 @@ The approved original Usage screen is the visual specification for the report,
 including its nested source cards. Preserve its character;
 TypeScript and shared components are implementation improvements, not permission
 to replace approved visuals. AppShell owns the shared left sidebar on every route and one responsive navigation
-tree. Usage is one page ordered Agent savings, Agent sessions, Data sources, Team, with no summary sentence above them. Agent savings is four metric cards (money saved at the list price of the model the workspace mostly uses, turns saved, conflicts avoided, searches used) rendered only from a measured value report, never estimated in the UI, with no explanatory note and no comparison to OpenCrawl's own price. Show real
+tree. Usage is one page ordered Agent savings, Agent sessions, Data sources, Team, with no summary sentence above them. Agent savings is four metric cards (money saved at the list price of the model the workspace mostly uses, turns saved, conflicts avoided, searches used), each with its percentage where one applies, each with a question-mark hover saying in two sentences how it is calculated, rendered only from a measured value report of real OpenCrawl uses (searches the agent used and fixes reused from the board) in work captured live since install; never a projection of what agents could have saved, never estimated in the UI, with no explanatory note outside the hovers and no comparison to OpenCrawl's own price. Show real
 indexed document-type counts inside each source tile without Imported/Indexed
 labels or import breakdowns; never compare distinct corpora with relative-size bars. Approved screens
 remain the visual baseline; changes to them require their own explicit scope.

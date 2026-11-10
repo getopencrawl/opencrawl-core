@@ -5,7 +5,7 @@ import {homedir,hostname} from 'node:os';
 import {createHash} from 'node:crypto';
 import {atomicJson,withSessionLock} from '../session.ts';
 import {captureDir,readCaptureConfig,refreshCaptureIdentity,request,type CaptureConfig} from './runtime.ts';
-import type {Harness} from './parse.ts';
+import {readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
 
 export const MEMORY_INTERVAL_MS=6*60*60*1000;
 const RETRY_MS=15*60*1000,MAX_BYTES=32*1024*1024;
@@ -13,6 +13,8 @@ const hash=(v:string)=>createHash('sha256').update(v).digest('hex');
 type MemoryFile={path:string,project:string,modifiedAt:string,text:string};
 type Root={path:string,label:string,project:string};
 type MemoryState={successAt?:number,retryAt?:number,generation?:number,contentHash?:string,roots?:string[],missing?:string[],error?:string};
+/** Only harnesses with native memory files. Grok Bot keeps its memory in the service. */
+const memoryHarnesses=(config:CaptureConfig)=>(config.harnesses??['codex','claude-code'] as Harness[]).filter(readsTranscript);
 const statePath=(config:CaptureConfig,harness:Harness)=>join(captureDir(),'memories',hash(JSON.stringify([config.api,config.installationId,config.owner.tenantId,config.owner.userId,harness]))+'.json');
 function state(config:CaptureConfig,harness:Harness):MemoryState {try{return JSON.parse(readFileSync(statePath(config,harness),'utf8'));}catch(e:any){if(e.code==='ENOENT')return {};throw e;}}
 export const memoryDue=(s:MemoryState,now=Date.now())=>!(s.successAt&&now-s.successAt<MEMORY_INTERVAL_MS)&&!(s.retryAt&&now<s.retryAt);
@@ -24,7 +26,7 @@ const maybeStat=async(path:string)=>{try{return await lstat(path);}catch(e:any){
 
 /** Only native memory directories; never follow symlinks, links in Markdown,
  * repository-supplied custom paths, SQLite/Git state, or instruction files. */
-export async function discoverMemories(config:CaptureConfig,harness:Harness,previous:MemoryState={},signal?:AbortSignal) {
+export async function discoverMemories(config:CaptureConfig,harness:TranscriptHarness,previous:MemoryState={},signal?:AbortSignal) {
   const base=await realpath(config.roots[harness]);
   const roots:Root[]=[],files:MemoryFile[]=[],seen=new Set<string>(),versions:{path:string,ino:number,size:number,mtimeMs:number}[]=[];
   const add=async(path:string,label:string,project='')=>{
@@ -106,11 +108,11 @@ export async function discoverMemories(config:CaptureConfig,harness:Harness,prev
  * delays a foreground command; managed hooks give pending work a longer window. */
 export async function refreshMemories({signal,now=Date.now}: {signal?:AbortSignal,now?:()=>number}={}) {
   const config=readCaptureConfig();if(!config||config.disabled||config.authPending||excluded(config))return;
-  if(!(config.harnesses??['codex','claude-code']).some(h=>memoryDue(state(config,h),now())))return;
+  if(!memoryHarnesses(config).some(h=>memoryDue(state(config,h),now())))return;
   try {await withSessionLock('capture:memories',async()=>{
     check(signal);
     await refreshCaptureIdentity(config,undefined,signal);
-    for(const harness of config.harnesses??['codex','claude-code'] as Harness[]) {
+    for(const harness of memoryHarnesses(config)) {
       check(signal);let prior=state(config,harness);if(!memoryDue(prior,now()))continue;
       try {
         const inventory=await discoverMemories(config,harness,prior,signal);check(signal);
@@ -142,7 +144,7 @@ export async function refreshMemories({signal,now=Date.now}: {signal?:AbortSigna
       }
     }
   },0,signal);}catch(error:any){
-    if(error.code!=='SESSION_BUSY'&&!signal?.aborted)for(const harness of config.harnesses??['codex','claude-code'] as Harness[]) {
+    if(error.code!=='SESSION_BUSY'&&!signal?.aborted)for(const harness of memoryHarnesses(config)) {
       const prior=state(config,harness);if(memoryDue(prior,now()))atomicJson(statePath(config,harness),{...prior,retryAt:now()+RETRY_MS,error:'MEMORY_REFRESH_FAILED'});
     }
   }

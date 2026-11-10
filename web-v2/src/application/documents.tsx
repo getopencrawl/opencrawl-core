@@ -47,6 +47,13 @@ function CaptureDocument({page}: {page:CapturePage}) {
     </ol>
     <Field label="Setup script"><Textarea rows={10} readOnly value={page.script}/></Field>
     <p>CLI path: <code>$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl</code>. Your current setup session may need a restart; future sessions prepare capture in the setup script and authenticate in a supervised asynchronous hook when Claude starts. Capture includes messages, tool arguments/results and attachments. System prompt snapshots are omitted.</p>
+    <h2>Capture Grok Bot sessions</h2>
+    <p>Your Bots share one cloud computer, so one installation there captures all of them, attributed to you. Use your own computer, never a shared Bot’s.</p>
+    <ol className="oc-document-steps">
+      <li>Ask a Bot to run this on its computer: <code>{'npm i -g @getopencrawl/cli@next && opencrawl collect install --yes --harness grok-bot --defer-auth --api '+page.api}</code></li>
+      <li>Sign in on that computer with <code>{'opencrawl login --no-browser --api '+page.api}</code> and approve it in your browser. To keep the computer upload-only instead, create the credential above and enter it as <code>OPENCRAWL_SESSIONS_TOKEN</code> in the secure secret card the Bot shows you, never in the chat.</li>
+      <li>Bots that are already running may keep their earlier hooks. From a newly created Bot, run a command, then ask it for <code>opencrawl collect status</code>: a stored receipt confirms upload.</li>
+    </ol>
     <form method="post" action="/capture/cloud/revoke" className="stack"><Field label="Credential ID to revoke"><Input name="id" pattern="[a-f0-9]{64}" required defaultValue={page.credential?.id ?? ''}/></Field><div><Button type="submit">Revoke credential</Button></div></form>
   </Page>;
 }

@@ -1,14 +1,15 @@
-import {readFileSync, existsSync, mkdirSync, writeFileSync, copyFileSync, unlinkSync, readdirSync, renameSync} from 'node:fs';
+import {readFileSync, existsSync, mkdirSync, writeFileSync, copyFileSync, unlinkSync, readdirSync, renameSync, statSync, chmodSync} from 'node:fs';
 import {join, dirname} from 'node:path';
 import {homedir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {removeLegacyService} from './legacy-service.ts';
 import {randomUUID} from 'node:crypto';
-import {type Harness} from './parse.ts';
+import {HARNESSES, readsTranscript, type Harness} from './parse.ts';
+import {GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
 import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
-import {captureDir, readCaptureConfig, commandForSelf, request, HOOK_MODE, type CaptureConfig} from './runtime.ts';
-import {captureNotice} from './policy.ts';
+import {captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, HOOK_MODE, type CaptureConfig} from './runtime.ts';
+import {captureNotice, grokBotNotice} from './policy.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 const marker='OpenCrawl session capture';
 const quote=(s:string)=>process.platform==='win32'?'"'+s.replace(/"/g,'""')+'"':"'"+s.replace(/'/g,"'\\''")+"'";
@@ -30,6 +31,35 @@ function modifyHooks(file:string,events:string[],entry:((event:string)=>HookEntr
   }
   if(entry)for(const event of events)(hooks[event]??=[]).push({hooks:[{type:'command',...entry(event),statusMessage:marker}]});
   backup(file);atomicJson(file,{...config,hooks});
+}
+const hookFile=(config:CaptureConfig,harness:Harness)=>join(harnessRoot(config,harness),harness==='claude-code'?'settings.json':'hooks.json');
+// Cursor-format entries have no label field; the command itself marks ownership.
+const grokBotOwned=(entry:any)=>typeof entry?.command==='string'&&/[\\/]capture[\\/]runner\.cjs\b.* collect hook .*--harness grok-bot\b/.test(entry.command);
+/** Grok Bot loads ~/.cursor/hooks.json: {version:1,hooks:{event:[{command,timeout}]}}. */
+function modifyGrokBotHooks(file:string,command:string|null) {
+  if(!command&&!existsSync(file))return;
+  const config=readJson(file);
+  if(!config||typeof config!=='object'||Array.isArray(config)||config.version!==undefined&&config.version!==1||
+    config.hooks!==undefined&&(!config.hooks||typeof config.hooks!=='object'||Array.isArray(config.hooks)))throw new CliError('CAPTURE_INVALID_CONFIG','Existing Grok Bot hooks file is not a version 1 Cursor hooks file');
+  const hooks=config.hooks??{};
+  for(const [event,entries] of Object.entries(hooks)) {
+    if(!Array.isArray(entries))throw new CliError('CAPTURE_INVALID_CONFIG','Existing hook entries are invalid');
+    hooks[event]=entries.filter(entry=>!grokBotOwned(entry));
+    if(!hooks[event].length)delete hooks[event];
+  }
+  // Every hook is passive, so a failure or the timeout never blocks the Bot. The
+  // hook ends itself at five seconds; the timeout leaves room for a sign-in
+  // renewal that must not be abandoned.
+  if(command)for(const event of GROK_BOT_HOOK_EVENTS)(hooks[event]??=[]).push({command,timeout:30});
+  backup(file);replaceFile(file,JSON.stringify({...config,version:1,hooks},null,2)+'\n');
+}
+/** For a file in another program's directory: new contents, same permissions,
+ * and the directory left as it is. */
+function replaceFile(file:string,bytes:string|Buffer) {
+  const temp=file+'.opencrawl-tmp',mode=existsSync(file)?statSync(file).mode&0o777:0o600;
+  writeFileSync(temp,bytes,{mode:0o600});
+  chmodSync(temp,mode); // the creation mode is narrowed by the umask
+  renameSync(temp,file);
 }
 function enableCodex(root:string) {
   const file=join(root,'config.toml');
@@ -76,6 +106,10 @@ else {const r=require('node:child_process').spawnSync(file,args,{stdio:'inherit'
   if(harnesses.includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),
     ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SubagentStop','SessionEnd'],
     event=>event==='SessionEnd'?{command:hook('--harness','codex'),timeout:3}:managed('codex')());
+  // Cursor does not document a shell for hook commands. Quote only when needed
+  // so the command also survives being split on spaces.
+  const plain=(s:string)=>/^[\w@%+=:,./-]+$/.test(s)?s:quote(s);
+  if(harnesses.includes('grok-bot'))modifyGrokBotHooks(hookFile(config,'grok-bot'),[plain(node),plain(runner),'collect','hook','--harness','grok-bot'].join(' '));
 }
 /** Upgrade existing installations without authentication or changing their queue. */
 export async function upgradeCaptureHooks() {
@@ -83,10 +117,10 @@ export async function upgradeCaptureHooks() {
   try {await withSessionLock('capture:configuration',async()=>{
     const current=readCaptureConfig();if(!current||current.disabled||current.hookMode===HOOK_MODE)return;
     const harnesses=current.harnesses??['claude-code','codex'];
-    for(const harness of harnesses)mkdirSync(current.roots[harness],{recursive:true,mode:0o700});
+    for(const harness of harnesses)mkdirSync(harnessRoot(current,harness),{recursive:true,mode:0o700});
     mkdirSync(join(captureDir(),'backups'),{recursive:true,mode:0o700});
     const files=[join(captureDir(),'config.json'),join(captureDir(),'runner.cjs'),
-      ...harnesses.map(h=>join(current.roots[h],h==='codex'?'hooks.json':'settings.json'))];
+      ...harnesses.map(h=>hookFile(current,h))];
     const originals=new Map(files.map(file=>[file,existsSync(file)?readFileSync(file):null]));
     try {
       configureHooks(current,harnesses);
@@ -94,6 +128,7 @@ export async function upgradeCaptureHooks() {
     } catch(error) {
       for(const [file,bytes] of originals) {
         if(bytes===null){try{unlinkSync(file);}catch{}}
+        else if(harnesses.includes('grok-bot')&&file===hookFile(current,'grok-bot'))replaceFile(file,bytes);
         else atomicFile(file,bytes);
       }
       throw error;
@@ -101,7 +136,7 @@ export async function upgradeCaptureHooks() {
   },0);}catch(error:any){if(error?.code!=='SESSION_BUSY')throw error;}
 }
 export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
-  if(!harnesses.length||harnesses.some(h=>!['claude-code','codex'].includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code or codex',64);
+  if(!harnesses.length||harnesses.some(h=>!HARNESSES.includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code, codex or grok-bot',64);
   // Image preparation cannot access runtime secrets. First worker authenticates
   // before parsing/spooling; hooks only persist notices even on first launch.
   const {principal}=deferAuth?{principal:{tenantId:'pending',userId:'pending'}}:await request(api,'/api/sessions/identity');
@@ -118,16 +153,21 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   const config:CaptureConfig={schemaVersion:1,exclusions:previous?.exclusions,hookMode:HOOK_MODE,api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:preserveOwner?previous.owner:principal,...(authPending?{authPending:true}:{}),
     harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
       'claude-code':!harnesses.includes('claude-code')&&previous?.roots['claude-code']||process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),
-      codex:!harnesses.includes('codex')&&previous?.roots.codex||process.env.CODEX_HOME||join(home,'.codex')},
+      codex:!harnesses.includes('codex')&&previous?.roots.codex||process.env.CODEX_HOME||join(home,'.codex'),
+      'grok-bot':!harnesses.includes('grok-bot')&&previous?.roots['grok-bot']||join(home,'.cursor')},
     claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
   const enrolled=config.harnesses!;
-  for(const harness of enrolled)mkdirSync(config.roots[harness],{recursive:true,mode:0o700});
-  // Validate both existing configs before changing either one.
+  // Checked before the directories below are created.
+  const absent=harnesses.every(readsTranscript)&&!harnesses.some(harness=>existsSync(harnessRoot(config,harness))||Bun.which(harness==='codex'?'codex':'claude',{PATH:process.env.PATH}));
+  for(const harness of enrolled)mkdirSync(harnessRoot(config,harness),{recursive:true,mode:0o700});
+  // Validate every existing config before changing any of them.
   if(enrolled.includes('claude-code'))readJson(join(config.roots['claude-code'],'settings.json'));
   if(enrolled.includes('codex'))readJson(join(config.roots.codex,'hooks.json'));
+  if(enrolled.includes('grok-bot'))readJson(hookFile(config,'grok-bot'));
   const toml=join(config.roots.codex,'config.toml');if(harnesses.includes('codex')&&existsSync(toml))Bun.TOML.parse(readFileSync(toml,'utf8'));
   const affected=[join(captureDir(),'config.json'),join(captureDir(),'receiver-token.json'),join(captureDir(),'runner.cjs'),
-    join(config.roots['claude-code'],'settings.json'),join(config.roots.codex,'hooks.json'),toml];
+    join(config.roots['claude-code'],'settings.json'),join(config.roots.codex,'hooks.json'),toml,
+    ...(enrolled.includes('grok-bot')?[hookFile(config,'grok-bot')]:[])];
   const originals=new Map(affected.map(path=>[path,existsSync(path)?readFileSync(path):null]));
   try {
   atomicJson(join(captureDir(),'config.json'),config);
@@ -137,6 +177,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   } catch(error) {
     for(const [path,bytes] of originals) {
       if(bytes===null){try{unlinkSync(path);}catch{}}
+      else if(enrolled.includes('grok-bot')&&path===hookFile(config,'grok-bot'))replaceFile(path,bytes);
       else {const temp=path+'.rollback-'+randomUUID();writeFileSync(temp,bytes,{mode:0o600});renameSync(temp,path);}
     }
     throw error;
@@ -144,8 +185,13 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   // Retire only legacy OpenCrawl services. Collection itself needs no init system.
   removeLegacyService(home);
   const backgroundStatus='harness-managed';
-  return {notice:captureNotice,exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
-    nextStep:process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':'Review OpenCrawl hooks in Codex /hooks or desktop Settings > Hooks. Restart existing Claude sessions if hooks have not reloaded.'};
+  const steps=[
+    ...(harnesses.some(readsTranscript)?[process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':'Review OpenCrawl hooks in Codex /hooks or desktop Settings > Hooks. Restart existing Claude sessions if hooks have not reloaded.']:[]),
+    // An agent that ran the plain command on a Bot's computer reads this and corrects itself.
+    ...(absent&&!deferAuth&&!enrolled.includes('grok-bot')&&process.env.CLAUDE_CODE_REMOTE!=='true'?['Neither Claude Code nor Codex was found on this machine. If it is a Grok Bot cloud computer, capture it with opencrawl collect install --yes --harness grok-bot.']:[]),
+    ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${hookFile(config,'grok-bot')}. Bots that are already running may keep the hooks they loaded earlier: from a newly created Bot, run a command, then check collect status for a stored receipt.`]:[])];
+  return {notice:enrolled.includes('grok-bot')?captureNotice+' '+grokBotNotice:captureNotice,exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
+    nextStep:steps.join(' ')};
   });
 }
 export async function uninstallCapture(home=homedir()) {
@@ -156,6 +202,7 @@ export async function uninstallCapture(home=homedir()) {
   removeLegacyService(home);
   if((config.harnesses??['claude-code','codex']).includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),[],null);
   if((config.harnesses??['claude-code','codex']).includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),[],null);
+  if(config.harnesses?.includes('grok-bot'))modifyGrokBotHooks(hookFile(config,'grok-bot'),null);
   // Stopping collection preserves queued data for an authenticated retry.
   atomicJson(join(captureDir(),'config.json'),{...config,disabled:true});
   return {installed:false,queuedDataPreserved:true};

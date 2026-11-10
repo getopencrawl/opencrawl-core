@@ -2,7 +2,7 @@ import {consoleResourceKey, useConsoleResource} from '../data.tsx';
 import {ActivityChart, BarList, Button, EmptyState, LoadingState, MetricGrid, Notice, Page, Section, StatusBadge, Table} from '../design/components.js';
 import {Link} from '../router.js';
 import type {ConsoleDataAdapter, UsageReport, ValueReport} from './types.js';
-import {ago, compact, count, dollars, harnessName, memberName, originName, plural, pricedSavings, savedTokens, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
+import {ago, compact, count, dollars, harnessName, memberName, originName, plural, pricedSavings, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
 import type {UsageMember, UsageSource} from './usage-model.ts';
 
 export {count} from './usage-model.ts';
@@ -67,12 +67,16 @@ function ValueReportSection({value}: {value: ValueReport}) {
   const {savings, observed, model} = value;
   const usd = pricedSavings(savings.tokens, model);
   return (
-    <Section className="report-section" title="Agent savings" description={`What OpenCrawl saved your team over the last ${value.window.days} days.`}>
+    <Section className="report-section" title="Agent savings" description={`What OpenCrawl saved your team since ${value.window.from}, across ${plural(savings.sessions, 'session')} and ${plural(savings.tasks, 'task')}.`}>
       <MetricGrid items={[
-        {label: `Saved vs ${model.model}`, value: dollars(usd), note: `${compact(savedTokens(savings.tokens))} tokens your agents didn’t spend`, title: `${count(savedTokens(savings.tokens))} tokens at ${model.model} list prices as of ${model.asOf}`},
-        {label: 'Turns saved', value: compact(savings.turns), note: `${savings.turnsPerTask.toLocaleString('en-US')} per task, ${savings.turnPercent.toLocaleString('en-US')}% fewer turns`, title: count(savings.turns)},
-        {label: 'Conflicts avoided', value: count(observed.conflictsAvoided), note: observed.duplicatesAvoided ? `plus ${plural(observed.duplicatesAvoided, 'duplicate task')} skipped` : 'times agents waited on each other'},
-        {label: 'Searches used', value: count(observed.searchesUsed), note: observed.searches ? `of ${plural(observed.searches, 'search', 'searches')} by your agents` : 'your agents haven’t searched yet'},
+        {label: `Saved vs ${model.model}`, value: dollars(usd), note: `${savings.tokenPercent.toLocaleString('en-US')}% fewer tokens`,
+          help: `Your agents used an OpenCrawl search result, or another agent’s fix from the board, ${plural(savings.uses, 'time')}. Each is valued at what your agents spend finding that kind of answer themselves, a median ${compact(savings.digTokens)} tokens in your own sessions, less the cost of the search, at ${model.model} list prices.`},
+        {label: 'Turns saved', value: compact(savings.turns), note: `${savings.turnPercent.toLocaleString('en-US')}% fewer turns, across ${plural(savings.uses, 'use')}`, title: count(savings.turns),
+          help: `Each of those ${plural(savings.uses, 'use')} is valued at the median ${plural(savings.digTurns, 'turn')} your agents take to find that kind of answer themselves, in your own sessions. We subtract the two turns a search and reading its result take.`},
+        {label: 'Conflicts avoided', value: count(observed.conflictsAvoided), note: observed.duplicatesAvoided ? `plus ${plural(observed.duplicatesAvoided, 'duplicate task')} skipped` : 'times agents waited on each other',
+          help: 'Times a board message from one agent reached another agent, which then changed its plan, such as waiting on a release or dropping work already done. Counted only when the agent’s next actions show the change, and repeats within 30 minutes count once.'},
+        {label: 'Searches used', value: count(observed.searchesUsed), note: observed.searches ? `of ${plural(observed.searches, 'search', 'searches')} by your agents` : 'your agents haven’t searched yet',
+          help: `${plural(observed.searches, 'search', 'searches')} is every OpenCrawl search your agents ran for real work. ${count(observed.searchesUsed)} is how many times the agent’s next message used what came back.`},
       ]}/>
     </Section>
   );
@@ -115,7 +119,7 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
           {data.firstAt && <>. Capturing since {data.firstAt.slice(0, 10)}</>}
         </p>
         {data.events === 0 ? (
-          <EmptyState title="No agent sessions captured yet." description="Once teammates install the OpenCrawl CLI, their Claude Code and Codex sessions appear here."/>
+          <EmptyState title="No agent sessions captured yet." description="Once teammates install the OpenCrawl CLI, their Claude Code, Codex and Grok Bot sessions appear here."/>
         ) : <>
           <Section className="report-panel" headingLevel={3} title="Daily agent sessions" description={busiest && busiest.sessions > 0 ? `Busiest day: ${busiest.date} with ${plural(busiest.sessions, 'session')}.` : undefined}>
             <ActivityChart daily={data.daily}/>

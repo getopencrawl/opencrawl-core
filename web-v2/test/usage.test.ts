@@ -5,7 +5,8 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {MemoryRouter} from '../src/router.tsx';
 import {SourcesSummary, UsagePage, UsageReportView} from '../src/pages/usage.tsx';
 import type {ConsoleDataAdapter, UsageReport} from '../src/pages/types.ts';
-import {ago, compact, count, pricedSavings, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
+import {ago, compact, count, harnessName, pricedSavings, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
+import {harnessName as libraryHarnessName} from '../src/pages/library-controls.tsx';
 import type {ValueReport} from '../src/pages/types.ts';
 
 const now = Date.parse('2026-11-07T20:00:00Z');
@@ -138,6 +139,10 @@ test('Agent sessions retains measured activity, breakdowns and contextual facts 
     assert.ok(agents.includes(text), text);
   }
   assert.match(agents, /Agent sessions per day/);
+  // Every captured agent has a readable name on Usage and in the session library.
+  for (const [harness, name] of [['claude-code', 'Claude Code'], ['codex', 'Codex'], ['grok-bot', 'Grok Bot']] as const) {
+    assert.equal(harnessName(harness), name); assert.equal(libraryHarnessName(harness), name);
+  }
   assert.doesNotMatch(agents, /\bturns?\b|analytics come next/i);
 });
 
@@ -214,18 +219,18 @@ test('date formatting and compact source-summary exports remain usable by existi
 
 function value(): ValueReport {
   return {
-    schema: 1, measuredAt: '2026-11-09', window: {from: '2026-10-10', to: '2026-11-08', days: 30},
+    schema: 3, measuredAt: '2026-11-10', window: {from: '2026-11-05', to: '2026-11-10', days: 6},
     model: {model: 'GPT-6 Astra', input: 10, cacheRead: 1, cacheWrite: 12.5, output: 50, asOf: '2026-11-09', share: 63},
-    savings: {tasks: 1198, heldOutTasks: 391, turns: 10027, turnsPerTask: 8.4, turnPercent: 12.7,
+    savings: {sessions: 69, tasks: 368, uses: 290, digTokens: 812809, digTurns: 5, tokenPercent: 3.7, turns: 1008, turnPercent: 4.1,
       tokens: {input: 10_000_000, cacheRead: 1_000_000_000, cacheWrite: 0, output: 2_000_000}},
-    observed: {from: '2026-11-06', to: '2026-11-08', conflictsAvoided: 37, duplicatesAvoided: 10, knowledgeReused: 52, searches: 245, searchesUseful: 206, searchesUsed: 171},
+    observed: {conflictsAvoided: 37, duplicatesAvoided: 10, knowledgeReused: 52, searches: 245, searchesUseful: 206, searchesUsed: 171},
   };
 }
 
 function cards(html: string, heading: string) {
   const start = html.indexOf(`>${heading}</h2>`);
   const section = html.slice(start, html.indexOf('</section>', start));
-  return [...section.matchAll(/<dt>(.*?)<\/dt><dd><span class="report-metric-value"[^>]*>(.*?)<\/span>(?:<span class="report-metric-note">(.*?)<\/span>)?/g)].map(match => match.slice(1, 4));
+  return [...section.matchAll(/<dt>([^<]*)(?:<span class="report-help">.*?<\/span><\/span>)?<\/dt><dd><span class="report-metric-value"[^>]*>(.*?)<\/span>(?:<span class="report-metric-note">(.*?)<\/span>)?/g)].map(match => match.slice(1, 4));
 }
 
 test('Agent savings is the first section: four cards priced at the main model, with no explanatory note', () => {
@@ -235,15 +240,24 @@ test('Agent savings is the first section: four cards priced at the main model, w
   // 10M input at $10 + 1B cache reads at $1 + 2M output at $50 = $1,200.
   assert.equal(pricedSavings(value().savings.tokens, value().model), 1200);
   assert.deepEqual(cards(html, 'Agent savings'), [
-    ['Saved vs GPT-6 Astra', '$1,200', '1B tokens your agents didn’t spend'],
-    ['Turns saved', '10k', '8.4 per task, 12.7% fewer turns'],
+    ['Saved vs GPT-6 Astra', '$1,200', '3.7% fewer tokens'],
+    ['Turns saved', '1,008', '4.1% fewer turns, across 290 uses'],
     ['Conflicts avoided', '37', 'plus 10 duplicate tasks skipped'],
     ['Searches used', '171', 'of 245 searches by your agents'],
   ]);
   const text = html.replace(/<[^>]*>/g, '');
   assert.doesNotMatch(text, /OpenCrawl cost|of OpenCrawl usage|×/);
+  assert.match(text, /What OpenCrawl saved your team since 2026-11-05, across 69 sessions and 368 tasks\./);
   const section = text.slice(text.indexOf('Agent savings'), text.indexOf('Agent sessions'));
-  assert.doesNotMatch(section, /Measured|replaying|held-out|skills install/);
+  assert.doesNotMatch(section.replace(/How [^?]*\?/g, ''), /Measured|replaying|held-out|skills install|could|would have saved/);
+  const help = [...html.matchAll(/<button type="button" class="report-help-button" aria-label="([^"]+)" aria-describedby="([^"]+)">\?<\/button><span class="report-help-text" role="tooltip" id="([^"]+)">(.*?)<\/span>/g)];
+  assert.deepEqual(help.map(match => match[1]), ['How Saved vs GPT-6 Astra is calculated', 'How Turns saved is calculated', 'How Conflicts avoided is calculated', 'How Searches used is calculated']);
+  assert.ok(help.every(match => match[2] === match[3]));
+  assert.equal(help[0]![4], 'Your agents used an OpenCrawl search result, or another agent’s fix from the board, 290 times. Each is valued at what your agents spend finding that kind of answer themselves, a median 813k tokens in your own sessions, less the cost of the search, at GPT-6 Astra list prices.');
+  assert.equal(help[1]![4], 'Each of those 290 uses is valued at the median 5 turns your agents take to find that kind of answer themselves, in your own sessions. We subtract the two turns a search and reading its result take.');
+  assert.match(help[3]![4]!, /^245 searches is every OpenCrawl search your agents ran for real work\. 171 is how many times/);
+  assert.doesNotMatch(section, /tokens? saved|M saved|B saved|would have|Without OpenCrawl|tests of OpenCrawl/);
+  assert.doesNotMatch(cards(render(), 'Agent sessions').join(' ') + render(), /report-help/);
 });
 
 test('without a measurement there is no Agent savings section; no searches yet says so on the card', () => {

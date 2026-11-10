@@ -2,8 +2,10 @@
  * operation to the core library API; the server owns scope and permissions. */
 export type LibraryScope = 'all' | 'mine';
 export type Visibility = 'team' | 'private';
+/** Agents with native memory files. Sessions are captured from more agents. */
 export type Harness = 'claude-code' | 'codex';
-export interface SessionRef {userId: string; harness: Harness; sessionId: string}
+export type SessionHarness = Harness | 'grok-bot';
+export interface SessionRef {userId: string; harness: SessionHarness; sessionId: string}
 export interface SessionSummary extends SessionRef {
   title: string; private: boolean; mine: boolean; origin: string | null; host: string | null;
   firstActivityAt: string | null; lastActivityAt: string | null; events: number;
@@ -29,8 +31,8 @@ export interface Authors {authors?: Record<string, string>}
 export interface LibraryContract {
   'sessions/list': {input: {scope: LibraryScope; query?: string; limit?: number}; output: {sessions: SessionSummary[]; limit: number} & Authors};
   'sessions/read': {input: SessionRef & {cursor?: string | null; limit?: number}; output: SessionTranscript & Authors};
-  'sessions/visibility': {input: {harness: Harness; sessionId: string; visibility: Visibility}; output: {visibility: Visibility}};
-  'sessions/delete': {input: {harness: Harness; sessionId: string}; output: {deleted: true}};
+  'sessions/visibility': {input: {harness: SessionHarness; sessionId: string; visibility: Visibility}; output: {visibility: Visibility}};
+  'sessions/delete': {input: {harness: SessionHarness; sessionId: string}; output: {deleted: true}};
   'memories/list': {input: {scope: LibraryScope}; output: {memories: MemorySummary[]; truncated: boolean} & Authors};
   'memories/read': {input: MemoryRef; output: MemoryDocument & Authors};
   'memories/visibility': {input: {harness: Harness; path: string; visibility: Visibility}; output: {visibility: Visibility}};

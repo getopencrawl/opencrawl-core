@@ -99,9 +99,13 @@ export async function pollDevice(auth: AuthConfig, device: Device, options: {fet
   throw new CliError('AUTH_EXPIRED', 'The sign-in request expired. Run opencrawl login again.');
 }
 
+export const signInRevoked = 'The saved sign-in on this machine is no longer valid. Sign-ins expire after inactivity and are revoked when the same sign-in is copied to another machine (an image, snapshot or synced home directory) and renewed there. Run opencrawl login on this machine. For machine images, give capture an upload-only OPENCRAWL_SESSIONS_TOKEN instead of a copied sign-in.';
+
 export async function refresh(auth: AuthConfig, token: string, fetcher = fetch): Promise<Tokens> {
   const {response, body} = await form(auth.tokenEndpoint, {client_id: auth.clientId, grant_type: 'refresh_token', refresh_token: token}, fetcher);
-  if (response.status === 400 || response.status === 401) throw new CliError('AUTH_REQUIRED', 'Your session expired. Run opencrawl login again.', 2);
+  // Refresh tokens rotate on every use. A sign-in copied to another machine
+  // (image, snapshot, synced home) is revoked as soon as either copy renews.
+  if (response.status === 400 || response.status === 401) throw new CliError('AUTH_REQUIRED', signInRevoked, 2);
   if (!response.ok) throw new CliError('AUTH_UNAVAILABLE', 'Session refresh is temporarily unavailable. Retry later.');
   return tokens(body, Date.now());
 }

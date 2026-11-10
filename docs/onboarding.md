@@ -11,7 +11,9 @@ billing admission and routing. It never copies the core product UI.
 user and tenant scope. Step one requires CLI authentication, a successful native
 MCP `test_connection`, and an accepted batch containing a recorded message.
 MCP initialization is not a connection-test receipt. Hook-only batches cannot
-complete recording. New CLI batches mark `captureMode` as `live` or `history`;
+complete recording. For Grok Bot, whose sessions are built from hook payloads
+and whose runtime may report only tool hooks, a recorded tool call counts as
+well as a message; its lifecycle hooks alone do not. New CLI batches mark `captureMode` as `live` or `history`;
 history updates a separate optional receipt and cannot unlock recording. Legacy
 batches remain supported. Their original capture mode cannot be reconstructed.
 
@@ -21,12 +23,10 @@ when a historical batch is accepted; this does not claim the entire import has
 finished. The CLI's own final report describes full-import completion.
 
 Step one never advances automatically. Its Next action opens Sources only after
-the required receipts exist. Sources requires at least one authorized connection;
-indexing may continue in the background. Starting OAuth is not a connection.
-A runtime whose connectors first need operator setup sets `sourcesOptional`:
-Sources then offers Skip for now and finishing no longer requires a connection.
-The self-host application does this, so the workspace opens on agent capture
-alone; the hosted application keeps the gate.
+the required receipts exist. Sources are optional: until a connection is
+authorized the step offers a quiet Skip for now, and a confirmed connection turns
+it into Next. Indexing may continue in the background. Starting OAuth is not a
+connection. If the catalog fails to load, Try again and Skip for now both remain.
 The provider callback returns to Sources without advancing the onboarding step.
 The catalog comes from the current hosted service, not a copied provider list.
 Search appears only for catalogs of at least fifteen connectors.
@@ -37,11 +37,12 @@ invitation delivery and the existing hosted service always assigns member access
 The browser receives email-only invitation DTOs, never tokens or membership roles.
 
 Both Skip for now and Open workspace POST to the authenticated finish endpoint.
-The adapter rechecks the agent and source gates before saving a durable completed
-receipt. It then opens `/`, the actual workspace home backed by authorized search.
-Completion is idempotent and scoped. Disconnecting sources later does not relock
-an already completed workspace. Existing receipts are retained; absent new
-milestones are shown rather than inferred from clicks or stored browser state.
+The adapter rechecks the agent gate before saving a durable completed receipt;
+finishing never requires a connected source. It then opens `/`, the actual
+workspace home backed by authorized search. Completion is idempotent and scoped.
+Disconnecting sources later does not relock an already completed workspace.
+Existing receipts are retained; absent new milestones are shown rather than
+inferred from clicks or stored browser state.
 
 ## Presentation and recovery
 

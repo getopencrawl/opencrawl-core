@@ -49,29 +49,12 @@ for(const viewport of [{name:'desktop',width:1280,height:813},{name:'mobile',wid
   });
 }
 
-test('a runtime with optional sources offers Skip for now and finishes without a connection',async({page,request})=>{
-  await request.post('/__test/state',{data:{status:complete,sourcesOptional:true}});
-  await page.goto('/onboarding/sources');
-  await expect(page.getByText('Connect a source to give your agent more context. You can also add one later.')).toBeVisible();
-  await expect(page.getByRole('link',{name:'Next',exact:true})).toHaveCount(0);
-  await page.getByRole('link',{name:'Skip for now',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'Invite your teammates'})).toBeVisible();
-  await page.getByRole('button',{name:'Skip for now'}).click();
-  await expect(page.getByRole('heading',{name:'Workspace overview'})).toBeVisible();
-  expect(((await (await request.get('/__test/state')).json()) as {requests:{finish:number;connect:number}}).requests).toMatchObject({finish:1,connect:0});
-  // A confirmed connection restores the ordinary forward step.
-  await request.post('/__test/reset',{data:{status:complete,sourcesOptional:true,sources:connected}});
-  await page.goto('/onboarding/sources');
-  await expect(page.getByRole('link',{name:'Next',exact:true})).toBeVisible();
-  await expect(page.getByRole('link',{name:'Skip for now',exact:true})).toHaveCount(0);
-});
-
 const composio={id:'composio',name:'Composio',label:'Composio API key',url:'https://dashboard.composio.dev/~/project/settings/api-keys',help:'The key is stored encrypted on this instance.',unlocks:['Google Drive','Notion']};
 const waiting=(id:string,name:string)=>({id,name,state:'setup-required',auth:'oauth',setup:{title:`Set up ${name}`,body:`${name} signs in through Composio.`,requirement:'Needs a Composio key',credential:composio}});
 const locked=[waiting('googledrive','Google Drive'),{id:'granola',name:'Granola',state:'disconnected',auth:'api-key'},waiting('notion','Notion'),{id:'github',name:'GitHub',state:'setup-required',setup:{title:'Set up GitHub',body:'Configure a GitHub App on the server.',requirement:'Needs a GitHub App'}}];
 
 test('an admin adds the operator key from the Sources step and continues into sign-in',async({page,request})=>{
-  await request.post('/__test/state',{data:{status:complete,sourcesOptional:true,sources:locked}});
+  await request.post('/__test/state',{data:{status:complete,sources:locked}});
   await page.route('https://provider.example/authorize',route=>route.fulfill({contentType:'text/html',body:'<h1>Provider authorization fixture</h1>'}));
   await page.goto('/onboarding/sources');
   // Connectors that can start come first; the rest say what they are waiting for.
@@ -105,7 +88,7 @@ test('an admin adds the operator key from the Sources step and continues into si
 });
 
 test('a member is told to ask an admin instead of being shown the key form',async({page,request})=>{
-  await request.post('/__test/state',{data:{status:complete,sourcesOptional:true,sources:locked}});
+  await request.post('/__test/state',{data:{status:complete,sources:locked}});
   await page.goto('/onboarding/sources?role=member');
   await page.getByRole('button',{name:'Set up Notion',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'Set up Notion'});
@@ -179,6 +162,7 @@ test('receipts, manual copy, and the three-step flow preserve one browser docume
   await page.getByRole('link', {name: 'Next', exact: true}).click();
   await expect(page.getByRole('heading', {name: 'Connect your sources'})).toBeVisible();
   await expect(page.getByRole('link', {name: 'Next', exact: true})).toHaveCount(0);
+  await expect(page.getByRole('link', {name: 'Skip for now', exact: true})).toBeVisible();
   await page.goBack();
   await expect(page.getByRole('heading', {name: 'Connect your primary coding agent'})).toBeVisible();
   await page.getByRole('link', {name: 'Next', exact: true}).click();
@@ -189,6 +173,7 @@ test('receipts, manual copy, and the three-step flow preserve one browser docume
   await page.getByRole('dialog').getByRole('button', {name: 'Connect Granola', exact: true}).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(page.getByRole('button', {name: 'Connected to Granola'})).toBeVisible();
+  await expect(page.getByRole('link', {name: 'Skip for now', exact: true})).toHaveCount(0);
   await page.getByRole('link', {name: 'Next', exact: true}).click();
   await expect(page.getByRole('heading', {name: 'Invite your teammates'})).toBeVisible();
   await page.getByRole('textbox', {name: 'Email address'}).fill('teammate@example.com');
@@ -202,6 +187,32 @@ test('receipts, manual copy, and the three-step flow preserve one browser docume
   const state = await (await request.get('/__test/state')).json() as {requests: {finish: number; invite: number}};
   expect(state.requests.finish).toBe(1);
   expect(state.requests.invite).toBe(1);
+});
+
+test('sources are optional: Skip for now reaches teammates and finishes without a connection', async ({page, request}) => {
+  let documentLoads = 0;
+  page.on('request', request => {if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documentLoads++;});
+  await request.post('/__test/state', {data: {status: complete}});
+  await page.goto('/onboarding/sources');
+  await expect(page.getByText('Connect a source to give your agent more context. You can also add one later.')).toBeVisible();
+  const skip = page.getByRole('link', {name: 'Skip for now', exact: true});
+  await expect(skip).toHaveClass(/onboarding-skip/);
+  await expect(page.getByRole('link', {name: 'Next', exact: true})).toHaveCount(0);
+  await skip.click();
+  await expect(page.getByRole('heading', {name: 'Invite your teammates'})).toBeVisible();
+  await page.getByRole('button', {name: 'Skip for now'}).click();
+  await expect(page.getByRole('heading', {name: 'Workspace overview'})).toBeVisible();
+  expect(documentLoads).toBe(1);
+  const state = await (await request.get('/__test/state')).json() as {requests: {finish: number; connect: number}};
+  expect(state.requests).toMatchObject({finish: 1, connect: 0});
+});
+
+test('a catalog that fails to load still lets setup continue', async ({page, request}) => {
+  await request.post('/__test/state', {data: {status: complete, sourcesError: true}});
+  await page.goto('/onboarding/sources');
+  await expect(page.getByRole('alert')).toHaveText('We couldn’t load your connectors.');
+  await page.getByRole('link', {name: 'Skip for now', exact: true}).click();
+  await expect(page.getByRole('heading', {name: 'Invite your teammates'})).toBeVisible();
 });
 
 test('finish errors stay in the flow and do not infer completion from a button click', async ({page, request}) => {

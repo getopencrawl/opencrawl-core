@@ -141,6 +141,11 @@ export async function logout(api: string) {
   return withSessionLock(api, async () => { try { unlinkSync(sessionFile(api)); } catch (error: any) { if (error.code !== 'ENOENT') throw error; } });
 }
 
+let rotation: Promise<void> | null = null;
+/** A refresh token is single-use. Once the request has left, the process must
+ * live to save the reply, or the sign-in is lost. Deadlines wait on this. */
+export const credentialRotation = () => rotation;
+
 export async function accessToken(api: string, rejectedToken?: string, fetcher = fetch,signal?:AbortSignal): Promise<string> {
   signal?.throwIfAborted();
   const usable = (session: Session) => session.expiresAt > Date.now() + 60_000 && (!rejectedToken || rejectedToken !== session.accessToken);
@@ -155,8 +160,13 @@ export async function accessToken(api: string, rejectedToken?: string, fetcher =
     if (!session) throw new CliError('AUTH_REQUIRED', 'Run opencrawl login to sign in.', 2);
     if (usable(session)) return session.accessToken;
     const cancellable=signal?((input:any,init:any)=>fetcher(input,{...init,signal:init?.signal?AbortSignal.any([signal,init.signal]):signal})) as typeof fetch:fetcher;
-    const next = {...session, ...await refresh(session.auth, session.refreshToken, cancellable)};
-    atomicJson(sessionFile(api), next);
-    return next.accessToken;
+    const renewed = (async () => {
+      const next = {...session, ...await refresh(session.auth, session.refreshToken, cancellable)};
+      atomicJson(sessionFile(api), next);
+      return next.accessToken;
+    })();
+    const settled: Promise<void> = renewed.then(() => {}, () => {}).finally(() => {if (rotation === settled) rotation = null;});
+    rotation = settled;
+    return renewed;
   },20_000,signal);
 }

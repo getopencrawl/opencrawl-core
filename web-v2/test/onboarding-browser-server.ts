@@ -3,7 +3,7 @@ import {createServer, type IncomingMessage, type ServerResponse} from 'node:http
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {build} from 'esbuild';
-import {deriveOnboarding, isSourceConnected} from '../src/onboarding/model.ts';
+import {deriveOnboarding} from '../src/onboarding/model.ts';
 import type {OnboardingSource, OnboardingStatus} from '../src/onboarding/types.ts';
 
 interface FixtureState {
@@ -12,8 +12,8 @@ interface FixtureState {
   invitations: {email: string;inviteUrl?:string}[];
   delayStatus: number;
   finishError: boolean;
-  /** Mirrors a runtime that opens the workspace before any source is connected. */
-  sourcesOptional?: boolean;
+  /** Fails the connector catalog read so the Sources step shows its retry state. */
+  sourcesError?: boolean;
   /** The one operator credential value this fixture accepts. */
   acceptedCredential?: string;
   requests: {status: number; finish: number; invite: number; connect: number; aborted: number; credential: number};
@@ -48,7 +48,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (res.destroyed) return;
     return json(res, snapshot);
   }
-  if (url.pathname === '/api/onboarding/sources') return json(res, {items: state.sources, ...(state.sourcesOptional ? {optional: true} : {})});
+  if (url.pathname === '/api/onboarding/sources') return state.sourcesError ? json(res, {error: 'Connectors are unavailable.'}, 503) : json(res, {items: state.sources});
   if (url.pathname === '/api/onboarding/invites') {
     if (req.method === 'POST') {
       const input = await body(req);
@@ -62,7 +62,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   }
   if (url.pathname === '/api/onboarding/finish') {
     state.requests.finish++;
-    if (state.finishError || !deriveOnboarding(state.status).complete || !state.sourcesOptional && !state.sources.some(isSourceConnected)) return json(res, {error: 'Complete the required setup checks first.'}, 409);
+    // Sources are optional; only agent setup gates completion.
+    if (state.finishError || !deriveOnboarding(state.status).complete) return json(res, {error: 'Complete the required setup checks first.'}, 409);
     return json(res, {workspaceUrl: '/'});
   }
   if (url.pathname === '/api/console/sources') return json(res, {items: state.sources.map(source => ({provider: source.id, name: source.name, state: source.state, auth: source.auth === 'api-key' ? 'api-key' : 'oauth', setup: source.setup}))});
