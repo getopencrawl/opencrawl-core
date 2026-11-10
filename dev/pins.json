@@ -4,5 +4,5 @@
   "helm": {"url":"https://get.helm.sh/helm-v3.22.1-linux-amd64.tar.gz","sha256":"896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea","member":"linux-amd64/helm"},
   "airbyte": {"url":"https://airbytehq.github.io/charts/airbyte-2.4.0.tgz","sha256":"ec25fcddc952dbef05183f426149553f78db0f7e61642c9d13c77e32c93433a3","version":"2.4.0"},
   "kindNode": "kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d",
-  "declarative": {"version":"7.28.2","imageSha":"sha256:f30cf2745046c06dd1e903742d835d13faea085354690679d06cab083d5a63c7"}
+  "declarative": {"version":"7.45.1","imageSha":"sha256:f98cd95b4263c30c76b23c67b9c43e817e4f6b000663081e91778748b50d32e1"}
 }

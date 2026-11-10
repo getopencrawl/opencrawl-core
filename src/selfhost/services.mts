@@ -86,7 +86,9 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
     if(!github)setup.github={title:'Set up GitHub',requirement:'Needs a GitHub App',body:'Your instance administrator needs to configure a read-only GitHub App with GITHUB_APP and register the GitHub source image in Airbyte. The self-hosting guide in this repository lists the permissions and callback URL. Restart the app after configuring it, then return here to choose repositories.'};
     return setup;
   }
-  const product=createIntegrations({environment:'selfhost',appUrl:settings.url,registry,buckets,legacyBucket:store.bucket,workspaceId:async()=>workspaceId,destination,airbyte,oauth:authorization,providers,github});
+  // An operator has no other record of why Airbyte refused a connection.
+  const log=(event:string,data:Record<string,unknown>)=>console.error(JSON.stringify({event,...data,...(typeof data.message==='string'?{message:data.message.slice(0,2000)}:{})}));
+  const product=createIntegrations({environment:'selfhost',appUrl:settings.url,registry,buckets,legacyBucket:store.bucket,workspaceId:async()=>workspaceId,destination,airbyte,oauth:authorization,providers,github,log});
   const integrations:ReturnType<typeof createIntegrations>={...product,
     async list(principal){const setup=await pending();return (await product.list(principal)).map(card=>setup[card.provider]?{...card,state:'setup-required' as const,setup:setup[card.provider]}:card);},
     async connect(principal,id,input){const setup=(await pending())[id];if(setup)throw Object.assign(new Error(setup.body),{status:503,expose:true});return product.connect(principal,id,input);},

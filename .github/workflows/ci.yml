@@ -19,6 +19,8 @@ jobs:
       - name: Install browser for UI regression coverage
         run: npx --prefix web-v2 playwright install --with-deps chromium
       - run: npm run test:browser --prefix web-v2
+      - name: Verify every connector manifest on the pinned declarative runtime
+        run: OPENCRAWL_TEST_CONNECTOR_RUNTIME=1 node --test test/connector-runtime.test.mjs
       - name: Verify real Temporal scheduling, retries and replay
         run: OPENCRAWL_TEST_TEMPORAL=1 node --test test/session-temporal.test.mjs test/slack-source-temporal.test.mjs test/connector-pagination-temporal.test.mjs
       - name: Verify capture against S3-compatible storage

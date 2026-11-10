@@ -48,7 +48,10 @@ select a second organization here. See [identity boundary](identity-seam.md).
 Use an existing Airbyte workspace and API application. Set `AIRBYTE_URL`,
 `AIRBYTE_CLIENT_ID`, `AIRBYTE_CLIENT_SECRET`, and `AIRBYTE_WORKSPACE_ID`. The app
 creates source definitions, sources, destinations, and connections only inside
-that workspace. It does not install or provision Airbyte.
+that workspace. It does not install or provision Airbyte. The connectors are
+tested on Airbyte's declarative runtime 7.45.1; Notion and Google Drive do not
+load on 7.28.2, where Airbyte answers connection setup with an error. The app
+writes the reason for a failed setup to its log (`integration.provision.failed`).
 
 The stack includes SeaweedFS S3, OpenSearch, and PostgreSQL-backed Temporal. Set
 `OPENCRAWL_AIRBYTE_S3_ENDPOINT` to the S3 address reachable **from Airbyte connector

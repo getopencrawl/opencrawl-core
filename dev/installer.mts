@@ -205,11 +205,13 @@ async function up(){
   }
   // Airbyte 2.4's baked CDK catalog ends at major 4 (upstream issue #84928).
   // Bootstrap only our dedicated pinned cluster; never an operator's Airbyte.
+  // The pin is the runtime: an existing installation follows it, and so do the connectors it already
+  // registered, the way Airbyte's own updater moves declarative sources to a newer runtime.
   const cdk=pins.declarative;
   if(!/^7\.\d+\.\d+$/.test(cdk.version)||!/^sha256:[a-f0-9]{64}$/.test(cdk.imageSha))throw new Error('Invalid pinned declarative runtime');
   await until('Airbyte catalog database',async()=>kubectl(
     ['-n','airbyte','exec','-i','airbyte-db-0','--','psql','-U','airbyte','-d','db-airbyte','-v','ON_ERROR_STOP=1'],{capture:true,allowFailure:true,input:
-      `INSERT INTO declarative_manifest_image_version (major_version,image_version,created_at,updated_at,image_sha) VALUES (7,'${cdk.version}',now(),now(),'${cdk.imageSha}') ON CONFLICT (major_version) DO NOTHING; SELECT 'CDK_READY';\n`}).includes('CDK_READY'),5);
+      `INSERT INTO declarative_manifest_image_version (major_version,image_version,created_at,updated_at,image_sha) VALUES (7,'${cdk.version}',now(),now(),'${cdk.imageSha}') ON CONFLICT (major_version) DO UPDATE SET image_version=EXCLUDED.image_version,image_sha=EXCLUDED.image_sha,updated_at=now();\nUPDATE actor_definition_version v SET docker_image_tag='${cdk.version}',updated_at=now() WHERE v.docker_repository='airbyte/source-declarative-manifest' AND v.docker_image_tag LIKE '7.%' AND v.docker_image_tag<>'${cdk.version}' AND NOT EXISTS (SELECT 1 FROM actor_definition_version o WHERE o.actor_definition_id=v.actor_definition_id AND o.docker_image_tag='${cdk.version}'); SELECT 'CDK_READY';\n`}).includes('CDK_READY'),5);
   const airbyteUrl=`http://127.0.0.1:${state.airbytePort}`;
   const accessToken=await until('authenticated Airbyte API',async()=>{
     const r=await fetch(airbyteUrl+'/api/public/v1/applications/token',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client_id:state.airbyteClientId,client_secret:state.airbyteClientSecret,'grant-type':'client_credentials'}),signal:AbortSignal.timeout(10000)});
