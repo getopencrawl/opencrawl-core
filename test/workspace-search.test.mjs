@@ -116,3 +116,17 @@ test('time order is validated, passed to every source and only when not relevanc
   assert.deepEqual(seen, [['sessions', undefined], ['connectors', undefined]]);
   await assert.rejects(service.search(principal, {query: 'x', order: 'random'}), /Invalid search/);
 });
+
+test('a role filter reaches the session source only and is rejected for other sources', async () => {
+  const seen = [];
+  const service = createWorkspaceSearch({
+    sessions: {search: async (p, q) => {seen.push(['sessions', q.role]);return {total: 1, hits: [hit('s1', {role: 'user'})]};}},
+    connectors: {search: async (p, q) => {seen.push(['connectors', q.role]);return {hits: [], truncated: false};}},
+  });
+  const first = await service.search(principal, {query: 'budget', source: 'sessions', role: 'user', limit: 1});
+  assert.deepEqual(seen, [['sessions', 'user']]);assert.equal(first.results[0].provenance.role, 'user');
+  seen.length = 0;await service.search(principal, {query: 'budget', source: 'sessions'});
+  assert.deepEqual(seen, [['sessions', undefined]]);
+  for (const invalid of [{role: 'user'}, {source: 'connectors', role: 'user'}, {source: 'memories', role: 'user'}, {source: 'sessions', role: 'root'}])
+    await assert.rejects(service.search(principal, {query: 'x', ...invalid}), /Invalid search/);
+});
