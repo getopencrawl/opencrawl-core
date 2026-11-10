@@ -70,12 +70,15 @@ test('a tool receipt proves MCP sign-in but does not fabricate CLI or recording 
   assert.doesNotMatch(html, /id="next-step"/);
 });
 
-test('sources do not advance when OAuth has only started, and small catalogs hide search', () => {
+test('sources are optional: a started OAuth only offers Skip for now, a confirmed connection offers Next, and small catalogs hide search', () => {
   const pending = render(createElement(SourcesOnboarding, {adapter, initialSources: [{id: 'source', name: 'Source', state: 'connecting'}]}));
-  assert.doesNotMatch(pending, /id="next-step"/);
+  assert.match(pending, /id="next-step"[^>]*class="[^"]*onboarding-skip[^"]*"[^>]*href="\/onboarding\/invite"[^>]*><span>Skip for now<\/span>/);
+  assert.doesNotMatch(pending, />Next</);
+  assert.match(pending, /You can also add one later\./);
   assert.match(pending, /class="connector-search" hidden=""/);
   const connected = render(createElement(SourcesOnboarding, {adapter, initialSources: [{id: 'source', name: 'Source', state: 'syncing'}]}));
-  assert.match(connected, /href="\/onboarding\/invite"/);
+  assert.match(connected, /id="next-step"[^>]*href="\/onboarding\/invite"[^>]*><span>Next<\/span>/);
+  assert.doesNotMatch(connected, /onboarding-skip|Skip for now/);
   assert.match(connected, /aria-label="Connected to Source"/);
 });
 

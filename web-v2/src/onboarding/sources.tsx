@@ -77,10 +77,11 @@ export function SourcesOnboarding({adapter, initialSources, authorize = url => w
     closeSecret();
     void connect(item, key);
   }
-  return <OnboardingShell step="sources" backUrl="/onboarding" nextUrl="/onboarding/invite" nextVisible={!resource.loading && !resource.error && connected}>
+  // Sources are optional: a quiet Skip for now continues until a connection is confirmed, even if the catalog failed to load.
+  return <OnboardingShell step="sources" backUrl="/onboarding" nextUrl="/onboarding/invite" nextVisible={!resource.loading} nextLabel={connected ? 'Next' : 'Skip for now'} nextPrimary={connected}>
     <section aria-labelledby="sources-title">
       <h1 id="sources-title" tabIndex={-1}>Connect your sources</h1>
-      <p className="focus-description">Connect at least one source to give your agent more context.</p>
+      <p className="focus-description">Connect a source to give your agent more context. You can also add one later.</p>
       <div className="connector-search" hidden={!showSearch}><Icon name="search" /><label className="sr-only" htmlFor="connector-query">Search connectors</label><Input ref={queryField} id="connector-query" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${items.length} connectors…`} autoComplete="off" maxLength={100} aria-controls="connector-list" disabled={resource.loading} /></div>
       <div className="connector-catalog" aria-busy={resource.loading}>
         {resource.loading ? <p id="sources-loading" className="connector-message" role="status"><span className="signal-mark connector-spinner" aria-hidden="true" />Loading connectors…</p>
