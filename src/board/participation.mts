@@ -26,8 +26,14 @@ type Command = {[K in Operation]: {operation: K; args: z.output<typeof participa
 
 // Resolve names when posting, so future name reuse cannot redirect old mentions.
 export function resolveMentions(state: BoardState, body: string, explicit: string[] = []) {
-  const inline = [...body.matchAll(/(?:^|\s)@([a-zA-Z0-9][a-zA-Z0-9:_.-]*)/g)].map(m => m[1].replace(/[.]+$/, ''));
   const names = new Map(Object.entries(state.participants || {}).map(([id, p]) => [p.name.toLowerCase(), id]));
+  const inline = [...body.matchAll(/(?:^|\s)@([a-zA-Z0-9][a-zA-Z0-9:_.-]*)/g)].map(m => {
+    let candidate = m[1];
+    // Names may contain punctuation: prefer the exact registered name, then
+    // remove sentence punctuation one character at a time, never a name prefix.
+    while (!names.has(candidate.toLowerCase()) && /[.:]$/.test(candidate)) candidate = candidate.slice(0, -1);
+    return candidate;
+  });
   const missing = explicit.filter(value => !names.has(value.toLowerCase()));
   if (missing.length) throw fail(`Unknown agent: ${missing.join(', ')}`, 404);
   return {
