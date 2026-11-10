@@ -180,7 +180,7 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
           try{const {value}=await smallJson(request,8192);await connectorSettings.save(selected.provider||'',value,principal);return reply(200,JSON.stringify({ok:true}),'application/json');}
           catch(error){const info=errorInfo(error);return info.expose?refuse(info.status||400,'CREDENTIAL_NOT_SAVED',info.message):refuse(503,'INTEGRATION_UNAVAILABLE','We couldn’t save that. Please try again.');}
         }
-        if(selected.name.startsWith('integration-')||selected.name.startsWith('/api/integrations'))return integrationRequest(request,target,selected,{integrations,providers,principal,onboarding,guided,respond:reply,message,document});
+        if(selected.name.startsWith('integration-')||selected.name.startsWith('/api/integrations'))return integrationRequest(request,target,selected,{integrations,providers,principal,member,onboarding,guided,respond:reply,message,document});
         if(selected.name==='cloud-capture'||selected.name==='cloud-capture-revoke'){
           let credential,revoked=false;
           if(request.method==='POST'){

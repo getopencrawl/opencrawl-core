@@ -32,6 +32,7 @@ export interface SourceSetup {
 
 export interface OnboardingSource {
   id: string;
+  scope?: 'team' | 'user';
   name: string;
   icon?: string;
   state: string;

@@ -1,5 +1,6 @@
 import type {IncomingMessage} from 'node:http';
-import type {Principal} from '../identity/types.mjs';
+import type {Principal,DirectoryMembership} from '../identity/types.mjs';
+import {isAdmin} from '../identity/team.mjs';
 import type {Integrations} from '../integrations/service.mjs';
 import type {ProviderCatalog} from '../integrations/types.mjs';
 import type {createOnboardingStatus} from '../onboarding-status.mjs';
@@ -10,8 +11,8 @@ import {hasReceipt} from '../onboarding-state.mjs';
 import {callbackPage} from './integration-callback.mjs';
 import {smallJson} from './http.mjs';
 export async function integrationRequest(req: IncomingMessage,url: URL,route: Route, {
-  integrations,providers,principal,onboarding,guided,respond,message,document,track=()=>{},log=()=>{},
-}: {integrations?: Integrations | null; providers:ProviderCatalog;principal:Principal;
+  integrations,providers,principal,member,onboarding,guided,respond,message,document,track=()=>{},log=()=>{},
+}: {integrations?: Integrations | null; providers:ProviderCatalog;principal:Principal;member:DirectoryMembership;
   onboarding:ReturnType<typeof createOnboardingStatus>|null;guided:ReturnType<typeof createGuidedOnboarding>;
   respond(status:number,body:string,type?:string):void;
   message(status:number,heading:string,detail:string,href?:string,action?:string):void;
@@ -22,7 +23,14 @@ export async function integrationRequest(req: IncomingMessage,url: URL,route: Ro
         const json = (status: number, body: unknown) => respond(status, JSON.stringify(body), 'application/json');
         if (!integrations) return url.pathname.startsWith('/api/') ? json(503, {error: {code: 'INTEGRATIONS_NOT_CONFIGURED', message: 'Integrations aren’t available yet.'}}) : message(503, 'Integrations aren’t available yet', 'Check back soon.', '/', 'Open OpenCrawl');
         if (!principal) return message(403, 'This account doesn’t have access', 'Your organization membership could not be verified. Sign in again to continue.');
+        // Runtime adapters pass the current, verified membership. A role from a
+        // different user/workspace cannot authorize changes to shared sources.
+        const admin=member?.status==='active' && member.userId===principal.userId && member.organizationId===principal.tenantId && isAdmin(member);
+        const adminRequired=()=>url.pathname.startsWith('/api/')
+          ? json(403,{error:{code:'ADMIN_REQUIRED',message:'Only a workspace admin can change shared integrations.'}})
+          : message(403,'Workspace admin access required','Ask a workspace admin to connect or change this integration.','/sources','Open Integrations');
         if (route.name === '/api/integrations/disconnect-all') {
+          if(!admin)return adminRequired();
           try {
             const disconnected = await integrations.disconnectAll(principal);
             track('integrations_disconnected_all', principal, {count: Array.isArray(disconnected) ? disconnected.length : Number(disconnected) || 0});
@@ -35,6 +43,7 @@ export async function integrationRequest(req: IncomingMessage,url: URL,route: Ro
         }
         const provider = providers[route.provider || ''];
         if (!provider) return url.pathname.startsWith('/api/') ? json(404, {error: {code: 'UNKNOWN_INTEGRATION', message: 'Unknown integration.'}}) : message(404, 'Page not found', 'This page may have moved.', '/integrations', 'Open Integrations');
+        if(provider.scope!=='user'&&!admin)return adminRequired();
         if (route.name === 'integration-callback') {
           const result = await integrations.complete(principal, provider.id, url.searchParams);
           if (!result.actions?.length) track(result.ok ? 'integration_connected' : 'integration_connect_failed', principal, {provider: provider.id, reason: result.ok ? null : result.reason || null});

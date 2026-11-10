@@ -8,7 +8,7 @@ import {ConnectorSetupDialog} from './connector-setup.tsx';
 import {listPhrase} from '../onboarding/model.ts';
 
 
-export function SourcesPage({adapter, canConfigure = false}: {adapter: SourcesAdapter; /** Show admins the credential form a source's setup asks for. */ canConfigure?: boolean}) {
+export function SourcesPage({adapter, canConfigure = false}: {adapter: SourcesAdapter; /** Admin permission for shared integrations and operator credentials. */ canConfigure?: boolean}) {
   const [pending, setPending] = useState<string | null>(null);
   const {data, error, loading, reload, invalidate} = useResource(adapter.sources, {autoRefreshMilliseconds:30_000, paused:pending !== null});
   const [actionError, setActionError] = useState('');
@@ -124,9 +124,10 @@ export function SourcesPage({adapter, canConfigure = false}: {adapter: SourcesAd
     {error && <Notice tone="danger">{data ? 'Connection status couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}</Notice>}
     {actionError && !confirmation && !keySource && !setupSource && <Notice tone="danger">{actionError}</Notice>}
     {unlock && <Notice>{canConfigure && adapter.saveCredential ? `One ${unlock.name} key unlocks ${listPhrase(unlock.unlocks)}. Choose Set up on any of them to add it.` : `${listPhrase(unlock.unlocks)} need a ${unlock.name} key. Ask a workspace admin to add it.`}</Notice>}
+    {!canConfigure && data?.items.some(source => source.scope !== 'user') && <Notice>Workspace admins manage shared integrations.</Notice>}
     {success && <Notice tone="success">{success}</Notice>}
     {!data ? loading ? <LoadingState label="Loading integrations" /> : <EmptyState title="Integrations couldn’t load" description="Try again to see your connections." action={<Button onClick={() => void reload()}>Try again</Button>} /> : <div className="oc-connection-list">
-      {data.items.map(source => <SourceRow key={source.provider} source={source} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? `${source.name} removal completed and its imported data deleted.` : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
+      {data.items.map(source => <SourceRow key={source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? `${source.name} removal completed and its imported data deleted.` : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
       {!data.items.length && <EmptyState title="No integrations available" description="Available connections will appear here." />}
     </div>}
     <Dialog open={confirmation !== null} onClose={() => {if (!pending) setConfirmation(null);}} title={`Disconnect ${confirmation?.name ?? 'source'}?`} description={confirmation ? disconnectDescription(confirmation) : undefined} actions={<><Button disabled={pending !== null} onClick={() => setConfirmation(null)}>Cancel</Button><Button variant="danger" disabled={pending !== null} onClick={remove}>{pending ? 'Disconnecting…' : 'Disconnect and delete'}</Button></>}>
@@ -143,7 +144,7 @@ export function SourcesPage({adapter, canConfigure = false}: {adapter: SourcesAd
   </Page>;
 }
 
-export function SourceRow({source, pending, active, connect, retry, disconnect, setUp}: {source: SourceCard; pending: boolean; active: boolean; connect: () => void; retry: () => void; disconnect: () => void; /** Opens the page's setup dialog; without it the row explains setup on its own. */ setUp?: () => void}) {
+export function SourceRow({source, canManage = false, pending, active, connect, retry, disconnect, setUp}: {source: SourceCard; canManage?: boolean; pending: boolean; active: boolean; connect: () => void; retry: () => void; disconnect: () => void; /** Opens the page's setup dialog; without it the row explains setup on its own. */ setUp?: () => void}) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const status = sourceStatus(source);
@@ -156,7 +157,7 @@ export function SourceRow({source, pending, active, connect, retry, disconnect, 
     <header className="oc-connection-head">
       <img className="oc-connection-icon" src={`/assets/integrations/${encodeURIComponent(source.provider)}.svg`} width="44" height="44" alt="" />
       <div className="oc-connection-identity"><h2 className="oc-connection-title">{source.name}{source.help && <Button variant="quiet" className="oc-connection-help" aria-label={`About ${source.name}`} aria-haspopup="dialog" onClick={() => setHelpOpen(true)}>?</Button>}</h2>{account && <p className="oc-connection-account">{account}</p>}</div>
-      {sourceDeletable(source) && <Button variant="danger" aria-label={`Disconnect ${source.name}`} title={`Disconnect ${source.name}`} disabled={pending} onClick={disconnect}>Disconnect</Button>}
+      {canManage && sourceDeletable(source) && <Button variant="danger" aria-label={`Disconnect ${source.name}`} title={`Disconnect ${source.name}`} disabled={pending} onClick={disconnect}>Disconnect</Button>}
     </header>
     {source.state !== 'disconnected' && <p className="oc-connection-status" data-tone={status.tone}>
       {sourceBusy(source) ? <Icon name="loader" className="oc-connection-spinner oc-spin" size={14} /> : status.tone === 'success' ? <span className="oc-connection-dot" aria-hidden="true" /> : null}
@@ -171,7 +172,7 @@ export function SourceRow({source, pending, active, connect, retry, disconnect, 
         <span>{row.label}<span className="sr-only">: {done ? 'Up to date' : importing ? 'Importing' : 'Import incomplete'}</span></span><span className="oc-connection-count">{row.count.toLocaleString()}</span>
       </li>;
     })}</ul>}
-    {hasAction && <div className="oc-connection-actions">{(['disconnected', 'connecting'].includes(source.state) || restartSignIn) && <Button variant={source.state === 'disconnected' || restartSignIn ? 'primary' : 'secondary'} disabled={pending} onClick={connect}>{active ? 'Connecting…' : source.state === 'connecting' || restartSignIn ? 'Restart sign-in' : `Connect ${source.name}`}</Button>}{source.state === 'error' && !source.reconnect && !restartSignIn && <Button disabled={pending} onClick={retry}>{active ? 'Retrying…' : source.recoveryAction === 'disconnect' ? 'Retry removal' : 'Retry sync'}</Button>}</div>}
+    {canManage && hasAction && <div className="oc-connection-actions">{(['disconnected', 'connecting'].includes(source.state) || restartSignIn) && <Button variant={source.state === 'disconnected' || restartSignIn ? 'primary' : 'secondary'} disabled={pending} onClick={connect}>{active ? 'Connecting…' : source.state === 'connecting' || restartSignIn ? 'Restart sign-in' : `Connect ${source.name}`}</Button>}{source.state === 'error' && !source.reconnect && !restartSignIn && <Button disabled={pending} onClick={retry}>{active ? 'Retrying…' : source.recoveryAction === 'disconnect' ? 'Retry removal' : 'Retry sync'}</Button>}</div>}
     {source.state==='setup-required'&&source.setup&&<div className="oc-connection-actions"><Button disabled={pending} onClick={setUp ?? (()=>setSetupOpen(true))}>Set up {source.name}</Button></div>}
     {source.setup&&!setUp&&<Dialog open={setupOpen} onClose={()=>setSetupOpen(false)} title={source.setup.title}><p>{source.setup.body}</p></Dialog>}
     {source.help && <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} title={`About ${source.name}`}><p>{source.help}</p></Dialog>}

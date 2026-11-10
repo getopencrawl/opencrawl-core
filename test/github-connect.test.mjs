@@ -141,7 +141,7 @@ test('pending callback renders an escaped React handoff, returns 200, and does n
   assert.ok(!html.includes('<script>bad'));assert.ok(!html.includes('evil.example'));
   let response;
   await integrationRequest({},new URL('https://self.example/integrations/github/callback'),{name:'integration-callback',provider:'github'}, {
-    integrations:{complete:async()=>result},providers:{github:{id:'github',name:'GitHub'}},principal:owner,onboarding:null,guided:{},
+    integrations:{complete:async()=>result},providers:{github:{id:'github',name:'GitHub',scope:'team'}},principal:owner,member:{userId:owner.userId,organizationId:owner.tenantId,status:'active',role:{slug:'admin'}},onboarding:null,guided:{},
     respond:(status,body)=>{response={status,body};},message:()=>assert.fail(),document,track:()=>assert.fail('A pending choice is not a connection failure'),
   });
   assert.equal(response.status,200);assert.ok(response.body.includes('integration-callback'));

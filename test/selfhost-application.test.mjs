@@ -117,6 +117,25 @@ test('only an admin can store a connector credential, from this origin, before o
   failure=new Error('storage exploded: s3://private-bucket');
   const hidden=await send('admin',{value:'project-key'});assert.equal(hidden.status,503);assert.doesNotMatch(JSON.stringify(await hidden.json()),/private-bucket/);
 });
+test('self-host team integration actions reject members through both HTTP and tRPC',async t=>{
+  const calls=[];
+  const integrations={list:async()=>[],connect:async()=>{calls.push('connect');return {redirectUrl:'https://provider.example'};},retry:async()=>{calls.push('retry');},disconnect:async()=>{calls.push('disconnect');},disconnectAll:async()=>{calls.push('disconnect-all');return 0;}};
+  const f=await fixture(t,{integrations,providers:{notion:{id:'notion',name:'Notion',scope:'team',auth:'oauth'}}});
+  await f.admin();await f.join('bob','bob@example.com');
+  for(const action of ['connect','retry','disconnect']){
+    const path='/api/integrations/notion/'+action;
+    const options={method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'};
+    assert.equal((await f.request(path,'bob',options)).status,403);
+    const rpc={...options,body:JSON.stringify({provider:'notion'})};
+    assert.equal((await f.request('/api/trpc/integrations.'+action,'bob',rpc)).status,403);
+    assert.equal((await f.request(path,'admin',options)).status,200);
+  }
+  const all={method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'};
+  assert.equal((await f.request('/api/integrations/disconnect-all','bob',all)).status,403);
+  assert.equal((await f.request('/api/integrations/disconnect-all','admin',all)).status,200);
+  assert.deepEqual(calls,['connect','retry','disconnect','disconnect-all']);
+});
+
 test('OSS reads only its configured organization measured report from operator storage',async t=>{
   const f=await fixture(t);
   await f.admin();
@@ -176,6 +195,24 @@ test('CLI device sign-in requires a member’s approval and yields refreshable t
   assert.equal((await f.post('/auth/login','recovered',{email:'ada@example.com',password:'recovered long password'})).status,303);
 });
 
+test('password recovery revokes pre-approved device logins without revoking another member',async t=>{
+  const f=await fixture(t);await f.admin();await f.join('bob','bob@example.com');
+  const form=fields=>({method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(fields)});
+  const approve=async who=>{
+    const device=await (await f.request('/api/cli/device',null,form({client_id:'opencrawl-cli'}))).json();
+    assert.match(await (await f.post('/device',who,{user_code:device.user_code,decision:'approve'})).text(),/CLI connected/);
+    return ()=>f.request('/api/cli/token',null,form({client_id:'opencrawl-cli',grant_type:'urn:ietf:params:oauth:grant-type:device_code',device_code:device.device_code}));
+  };
+  const pollAdmin=await approve('admin'),pollMember=await approve('bob');
+  await f.identity.recoverPassword('ada@example.com','recovered long password');
+  // A post-recovery token would have a new iat and bypass the old-token cutoff.
+  await new Promise(resolve=>setTimeout(resolve,1100));
+  const denied=await pollAdmin();assert.equal(denied.status,400);assert.equal((await denied.json()).error,'invalid_grant');
+  const allowed=await pollMember();assert.equal(allowed.status,200);
+  const tokens=await allowed.json();assert.ok(tokens.access_token&&tokens.refresh_token);
+  assert.equal((await f.request('/api/cli/me',null,{headers:{authorization:'Bearer '+tokens.access_token}})).status,200);
+});
+
 test('MCP clients register, need a member’s consent, and receive tokens accepted by /mcp',async t=>{
   const f=await fixture(t);await f.admin();
   const resource=await (await f.request('/.well-known/oauth-protected-resource/mcp')).json();
@@ -207,6 +244,19 @@ test('MCP clients register, need a member’s consent, and receive tokens accept
   const mcp=await f.request('/mcp',null,{method:'POST',headers:{authorization:'Bearer '+token.access_token,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'test',version:'1'}}})});
   assert.equal(mcp.status,200);
   assert.equal((await f.request('/mcp',null,{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,401);
+  const {adapter}=await f.identity.auth.$context;
+  const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
+  assert.equal(await adapter.count({model:'oauthConsent',where:[{field:'userId',value:member.userId}]}),1);
+  const pending=await f.request(authorize,'oauth',{headers:{accept:'text/html','sec-fetch-mode':'navigate'}});
+  const pendingUrl=new URL(pending.headers.get('location')||(await pending.json()).url,f.origin);
+  assert.ok(pendingUrl.searchParams.get('code'));
+  await f.identity.recoverPassword('ada@example.com','recovered long password');
+  assert.equal(await adapter.count({model:'oauthConsent',where:[{field:'userId',value:member.userId}]}),0);
+  const stale=await f.request('/api/auth/oauth2/token',null,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code:pendingUrl.searchParams.get('code'),redirect_uri:callback,client_id:client.client_id,code_verifier:verifier,resource:f.origin+'/mcp'})});
+  assert.equal(stale.status,400);
+  assert.equal((await f.post('/auth/login','fresh',{email:'ada@example.com',password:'recovered long password'})).status,303);
+  const again=await f.request(authorize,'fresh',{headers:{accept:'text/html','sec-fetch-mode':'navigate'}});
+  assert.equal(new URL(again.headers.get('location')||(await again.json()).url,f.origin).pathname,'/auth/consent');
 });
 
 test('delegated capture works for the configured team, remains write-only, and obeys revocation',async t=>{

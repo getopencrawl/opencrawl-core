@@ -36,7 +36,7 @@ export function createGuidedOnboarding({onboarding,integrations,organizations,au
         return json(409,{error:'Complete agent setup first.',onboardingUrl:'/onboarding'});
       }
       if (route.name === '/api/onboarding/sources') {
-        const items = (await sourceCards(principal)).map(card => ({id:card.provider,name:card.name,icon:`/assets/connectors/${card.provider}.svg`,state:card.state,auth:card.auth,keyHelp:card.keyHelp,setup:card.setup}));
+        const items = (await sourceCards(principal)).map(card => ({id:card.provider,scope:card.scope,name:card.name,icon:`/assets/connectors/${card.provider}.svg`,state:card.state,auth:card.auth,keyHelp:card.keyHelp,setup:card.setup}));
         return json(200,{items});
       }
       if (route.name === '/api/workspace/search') {

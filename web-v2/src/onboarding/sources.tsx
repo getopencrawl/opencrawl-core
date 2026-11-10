@@ -13,7 +13,7 @@ export interface SourcesOnboardingProps {
   initialSources?: OnboardingSource[];
   /** Full navigation is reserved for an external authorization handshake. */
   authorize?: (httpsUrl: string) => void;
-  /** Show admins the credential form a source's setup asks for. The server still requires an admin. */
+  /** Admin permission for shared integrations and operator credentials. */
   canConfigure?: boolean;
 }
 
@@ -44,7 +44,7 @@ export function SourcesOnboarding({adapter, initialSources, authorize = url => w
   const connected = items.some(isSourceConnected);
   function closeSecret() {setSecretSource(null); setSecret('');}
   async function connect(item: OnboardingSource, apiKey?: string) {
-    if (isSourceConnected(item) || controllers.current.has(item.id)) return;
+    if (!(canConfigure || item.scope === 'user') || isSourceConnected(item) || controllers.current.has(item.id)) return;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 120_000);
     controllers.current.set(item.id, controller);
@@ -94,9 +94,10 @@ export function SourcesOnboarding({adapter, initialSources, authorize = url => w
       if (mounted.current) setSaving(false);
     }
   }
+  const canManage = (item: OnboardingSource) => canConfigure || item.scope === 'user';
   function choose(item: OnboardingSource) {
     if(item.setup){setSetupError('');setSetupSource(item);return;}
-    if (isSourceConnected(item) || pending.has(item.id)) return;
+    if (!canManage(item) || isSourceConnected(item) || pending.has(item.id)) return;
     if (item.auth === 'api-key') {setSecretSource(item); setSecret('');}
     else void connect(item);
   }
@@ -112,7 +113,7 @@ export function SourcesOnboarding({adapter, initialSources, authorize = url => w
     const done = isSourceConnected(item);
     const busy = pending.has(item.id);
     const error = errors.get(item.id);
-    return <li className="connector-cell" key={item.id}><Button variant="plain" className="connector-tile" aria-disabled={done || busy} aria-busy={busy || undefined} aria-label={`${item.setup?'Set up':done ? 'Connected to' : busy ? 'Connecting to' : 'Connect'} ${item.name}`} aria-describedby={error ? `connector-error-${item.id}` : undefined} data-connected={done ? '' : undefined} data-error={error ? '' : undefined} onClick={() => choose(item)}>
+    return <li className="connector-cell" key={item.id}><Button variant="plain" className="connector-tile" aria-disabled={done || busy || (!canManage(item) && !item.setup)} aria-busy={busy || undefined} aria-label={`${item.setup?'Set up':done ? 'Connected to' : busy ? 'Connecting to' : 'Connect'} ${item.name}`} aria-describedby={error ? `connector-error-${item.id}` : undefined} data-connected={done ? '' : undefined} data-error={error ? '' : undefined} onClick={() => choose(item)}>
       <span className="connector-logo-slot" aria-hidden="true">{item.icon && <img className="connector-logo" src={item.icon} alt="" width={32} height={32} />}</span><span className="connector-name">{item.name}</span><span className="connector-tile-status" aria-hidden="true"><Icon name={done || busy ? 'check' : 'plus'} className={done || busy ? 'signal-mark' : undefined} /></span>
     </Button>{item.setup&&<p className="connector-tile-note">{item.setup.requirement || 'Setup required'}</p>}{error && <p id={`connector-error-${item.id}`} className="connector-tile-error" role="alert">{error}</p>}</li>;
   };
@@ -125,6 +126,7 @@ export function SourcesOnboarding({adapter, initialSources, authorize = url => w
     <section aria-labelledby="sources-title">
       <h1 id="sources-title" tabIndex={-1}>Connect your sources</h1>
       <p className="focus-description">Connect a source to give your agent more context. You can also add one later.</p>
+      {!canConfigure && items.some(item => item.scope !== 'user') && <p className="connector-group-note">Workspace admins manage shared integrations. You can continue without connecting a source.</p>}
       <div className="connector-search" hidden={!showSearch}><Icon name="search" /><label className="sr-only" htmlFor="connector-query">Search connectors</label><Input ref={queryField} id="connector-query" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${items.length} connectors…`} autoComplete="off" maxLength={100} aria-controls="connector-list" disabled={resource.loading} /></div>
       <div className="connector-catalog" aria-busy={resource.loading}>
         {resource.loading ? <p id="sources-loading" className="connector-message" role="status"><span className="signal-mark connector-spinner" aria-hidden="true" />Loading connectors…</p>

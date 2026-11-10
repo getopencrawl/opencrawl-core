@@ -178,6 +178,14 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
       database.prepare('DELETE FROM session WHERE userId=?').run(userId);
       database.prepare('DELETE FROM oauthAccessToken WHERE userId=?').run(userId);
       database.prepare('DELETE FROM oauthRefreshToken WHERE userId=?').run(userId);
+      database.prepare('DELETE FROM deviceCode WHERE userId=?').run(userId);
+      database.prepare('DELETE FROM oauthConsent WHERE userId=?').run(userId);
+      // Authorization codes are JSON values in the pinned provider's generic
+      // verification table. Revoke only this account's codes, preserving other
+      // users and unrelated verification records.
+      database.prepare(`DELETE FROM verification WHERE CASE WHEN json_valid(value) THEN
+        json_extract(value,'$.type')='authorization_code'
+        AND json_extract(value,'$.userId')=? ELSE 0 END`).run(userId);
       database.prepare('INSERT INTO opencrawlAccountEpoch (userId,notBefore) VALUES (?,?) ON CONFLICT(userId) DO UPDATE SET notBefore=excluded.notBefore').run(userId,Math.floor(Date.now()/1000)+1);
       database.exec('COMMIT');
     }catch(error){database.exec('ROLLBACK');throw error;}
