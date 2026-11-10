@@ -16,6 +16,12 @@ export function authorizedBoard({authorize,...options}:Parameters<typeof createB
     async read(principal: Principal, input: unknown) {const scope=await resolve(principal);const result=await board.read(scope,input);await resolve(scope,scope.tenantId);return result;},
     ...(board.search ? {async search(principal: Principal, input: unknown) {const scope=await resolve(principal, requested(input));const result=await board.search!(scope,input);await resolve(scope,scope.tenantId);return result;}} : {}),
     async topics(principal: Principal, input: unknown) {const scope=await resolve(principal, requested(input));const result=await board.topics(scope,input);await resolve(scope,scope.tenantId);return result;},
+    async fetch(principal: Principal, input: unknown) {
+      const scope = await resolve(principal, requested(input));
+      const result = await board.fetch(scope, input);
+      await resolve(scope, scope.tenantId);
+      return result;
+    },
     async sync(principal: Principal, input: unknown) {
       const authorized = await resolve(principal, input && typeof input === 'object' && 'workspace' in input ? input.workspace : undefined);
       const result = await board.sync(authorized, input);

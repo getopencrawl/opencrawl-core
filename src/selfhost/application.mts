@@ -40,7 +40,7 @@ import {createSessionLibrary} from '../sessions/library.mjs';
 import {createMemoryLibrary} from '../memories/library.mjs';
 import {createLibraryApi,libraryFailure} from '../sessions/library-http.mjs';
 import {createWorkspaceSearch,createWorkspaceSearchHandler} from '../search/workspace.mjs';
-import {captureSetupPrompt,renderCloudCaptureSetup} from '../sessions/cloud-setup.mjs';
+import {captureSetupPrompt,cloudCapturePage} from '../sessions/cloud-setup.mjs';
 import {createCaptureCredentials,isCaptureCredential} from '../sessions/credentials.mjs';
 import {createSessionIngest,createCaptureHandler} from '../sessions/ingest.mjs';
 import {errorInfo} from '../errors.mjs';
@@ -105,8 +105,8 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
     return [...new Map(rows.filter(m=>m.organizationId===organizationId&&m.status==='active').map(m=>[m.userId,m])).values()];
   };
   const assets=new Map<string,[string,string]>([
-    ['/favicon.svg',['web/assets/opencrawl-mark.svg','image/svg+xml']],['/shell.css',['web/auth.css','text/css']],
-    ...['tokens.css','frame.css','controls.css','cloud-capture.css'].map((f):[string,[string,string]]=>['/'+f,['web/'+f,'text/css']]),
+    ['/favicon.svg',['web/assets/opencrawl-mark.svg','image/svg+xml']],
+    ...['tokens.css'].map((f):[string,[string,string]]=>['/'+f,['web/'+f,'text/css']]),
     ...['geist-sans.woff2','geist-mono.woff2','opencrawl-mark.svg'].map((f):[string,[string,string]]=>['/assets/'+f,['web/assets/'+f,f.endsWith('.svg')?'image/svg+xml':'font/woff2']]),
     ...['googledrive','slack','granola','circleback','notion','github'].flatMap(f=>['connectors','integrations'].map((kind):[string,[string,string]]=>[`/assets/${kind}/${f}.svg`,[`web/assets/connectors/${f}.svg`,'image/svg+xml']])),
   ]);
@@ -115,7 +115,7 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
     const respond=(status:number,body:string|Buffer,type='text/plain; charset=utf-8')=>{res.writeHead(status,{'Content-Type':type});res.end(body);};
     const json=(status:number,body:unknown)=>respond(status,JSON.stringify(body),'application/json');
     const redirect=(location:string)=>{res.writeHead(303,{Location:location});res.end();};
-    const message=(status:number,heading:string,detail:string,href='/auth/login',action='Sign in')=>respond(status,document(`<main><h1>${heading}</h1><p>${detail}</p><a class="button-link primary" href="${href}">${action}</a></main>`),'text/html; charset=utf-8');
+    const message=(status:number,heading:string,detail:string,href='/auth/login',action='Sign in')=>respond(status,document({kind:"message",heading,detail,href,action}),'text/html; charset=utf-8');
     const cookie=(name:string,value:string,age=604800)=>{const old=res.getHeader('Set-Cookie');res.setHeader('Set-Cookie',[...(Array.isArray(old)?old:old?[String(old)]:[]),`${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`]);};
     try {
       const url=new URL(req.url||'/',settings.url);
@@ -197,7 +197,7 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
             let size=0;const chunks:Buffer[]=[];for await(const chunk of request){size+=chunk.length;if(size>4096)return reply(413,'Request too large');chunks.push(chunk);}
             if(selected.name==='cloud-capture-revoke'){await credentials.revoke(principal,new URLSearchParams(Buffer.concat(chunks).toString()).get('id')||'');revoked=true;}else credential=await credentials.issue(principal);
           }
-          return reply(200,document(renderCloudCaptureSetup({api:settings.url,credential,revoked}),{signedIn:true,cloudCapture:true,title:'Claude cloud capture | OpenCrawl'}),'text/html; charset=utf-8');
+          return reply(200,document(cloudCapturePage({api:settings.url,credential,revoked}),{signedIn:true}),'text/html; charset=utf-8');
         }
         return reply(404,'Not found');
       };

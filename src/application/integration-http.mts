@@ -7,7 +7,7 @@ import type {createGuidedOnboarding} from './onboarding.mjs';
 import type {Route} from './routes.mjs';
 import {errorInfo} from '../errors.mjs';
 import {hasReceipt} from '../onboarding-state.mjs';
-import {renderCallback} from './integration-callback.mjs';
+import {callbackPage} from './integration-callback.mjs';
 import {smallJson} from './http.mjs';
 export async function integrationRequest(req: IncomingMessage,url: URL,route: Route, {
   integrations,providers,principal,onboarding,guided,respond,message,document,track=()=>{},log=()=>{},
@@ -15,7 +15,7 @@ export async function integrationRequest(req: IncomingMessage,url: URL,route: Ro
   onboarding:ReturnType<typeof createOnboardingStatus>|null;guided:ReturnType<typeof createGuidedOnboarding>;
   respond(status:number,body:string,type?:string):void;
   message(status:number,heading:string,detail:string,href?:string,action?:string):void;
-  document(content:string, options:{signedIn:boolean;title:string}):string;
+  document(page: ReturnType<typeof callbackPage>, options:{signedIn:boolean}):string;
   track?(name:string,principal:Principal,properties?:Record<string,unknown>):unknown;
   log?(event:string,detail:Record<string,unknown>):void}) {
       if (route.name.startsWith('/integrations') || route.name.startsWith('/api/integrations') || route.name.startsWith('integration-')) {
@@ -39,8 +39,8 @@ export async function integrationRequest(req: IncomingMessage,url: URL,route: Ro
           const result = await integrations.complete(principal, provider.id, url.searchParams);
           if (!result.actions?.length) track(result.ok ? 'integration_connected' : 'integration_connect_failed', principal, {provider: provider.id, reason: result.ok ? null : result.reason || null});
           const inOnboarding = Boolean(onboarding && !hasReceipt((await guided.progress(principal))?.completed));
-          const callback = renderCallback({...result,name:provider.name,returnTo:inOnboarding ? '/onboarding/sources' : '/sources'});
-          return respond(result.ok || result.actions?.length ? 200 : 400, document(callback,{signedIn:true,title:inOnboarding ? 'Set up your workspace | OpenCrawl' : `${provider.name} | OpenCrawl`}), 'text/html; charset=utf-8');
+          const callback = callbackPage({...result,name:provider.name,returnTo:inOnboarding ? '/onboarding/sources' : '/sources'});
+          return respond(result.ok || result.actions?.length ? 200 : 400, document(callback,{signedIn:true}), 'text/html; charset=utf-8');
         }
         try {
           if (route.action === 'connect') {

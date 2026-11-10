@@ -34,8 +34,10 @@ export function consoleRoute(method: string, path: string) {
   if (LIBRARY.test(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
   return null;
 }
-export function consoleDocument() {
-  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#000"><title>OpenCrawl</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="preload" href="/assets/geist-sans.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/console/assets/app.css"><script type="module" src="/console/assets/app.js"></script></head><body><div id="root"></div><noscript>OpenCrawl needs JavaScript to manage your workspace. Enable it and reload this page.</noscript></body></html>';
+export function consoleDocument(data?: {page: {kind:string}; signedIn:boolean}) {
+  // Only inert JSON crosses the server/browser boundary. All visible UI is React.
+  const bootstrap = data ? `<script id="opencrawl-page" type="application/json">${JSON.stringify(data).replace(/[<>&\u2028\u2029]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4,'0'))}</script>` : '';
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#000"><title>OpenCrawl</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="preload" href="/assets/geist-sans.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/console/assets/app.css"><script type="module" src="/console/assets/app.js"></script></head><body><div id="root"></div>' + bootstrap + '<noscript>OpenCrawl needs JavaScript to manage your workspace. Enable it and reload this page.</noscript></body></html>';
 }
 export const admin = (member: Membership) => [member.role,...member.roles || []].some(role => role?.slug === 'admin');
 export const consoleFailure = (status: number, message: string) => Object.assign(new Error(message), {status, expose:true});

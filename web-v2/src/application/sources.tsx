@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
-import {Button, Dialog, EmptyState, Field, Icon, Input, LoadingState, Notice, PageHeader, relativeTime} from '../index.ts';
+import {Button, Dialog, EmptyState, Field, Icon, Input, LoadingState, Notice, Page, relativeTime} from '../index.ts';
 import {ConsoleApiError, externalTarget, failureMessage} from './errors.ts';
 import type {SourceCard, SourcesAdapter} from './api.ts';
 import {useResource} from './resource';
@@ -91,8 +91,7 @@ export function SourcesPage({adapter}: {adapter: SourcesAdapter}) {
     });
   }
 
-  return <div className="oc-connections" id="data-controls">
-    <PageHeader variant="report" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents." />
+  return <Page bodyClassName="oc-connections" id="data-controls" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">
     {error && <Notice tone="danger">{data ? 'Connection status couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}</Notice>}
     {actionError && !confirmation && !keySource && <Notice tone="danger">{actionError}</Notice>}
     {success && <Notice tone="success">{success}</Notice>}
@@ -110,7 +109,7 @@ export function SourcesPage({adapter}: {adapter: SourcesAdapter}) {
         <div className="actions"><Button disabled={pending !== null} onClick={() => {setApiKey(''); setKeySource(null);}}>Cancel</Button><Button type="submit" variant="primary" disabled={pending !== null || !apiKey.trim()}>{pending ? 'Checking key…' : `Connect ${keySource?.name ?? 'source'}`}</Button></div>
       </form>
     </Dialog>
-  </div>;
+  </Page>;
 }
 
 export function SourceRow({source, pending, active, connect, retry, disconnect}: {source: SourceCard; pending: boolean; active: boolean; connect: () => void; retry: () => void; disconnect: () => void}) {

@@ -1,10 +1,11 @@
+import {document} from '../dist/src/application/presentation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateKeyPairSync} from 'node:crypto';
 import {createIntegrations} from '../dist/src/integrations/service.mjs';
 import {createGitHubApp} from '../dist/src/integrations/github.mjs';
 import {createProviderCatalog} from '../dist/src/integrations/providers.mjs';
-import {renderCallback} from '../dist/src/application/integration-callback.mjs';
+import {callbackPage} from '../dist/src/application/integration-callback.mjs';
 import {integrationRequest} from '../dist/src/application/integration-http.mjs';
 
 const owner = {tenantId: 'org_team', userId: 'user_owner'};
@@ -135,13 +136,13 @@ test('GitHub adapter pages user grants and rejects incomplete or malformed listi
 
 test('pending callback renders an escaped React handoff, returns 200, and does not report failure',async()=>{
   const result={ok:false,reason:'choose',actions:[{label:'</main><script>bad</script>',url:'https://github.com/login/oauth/authorize?state=bound'}]};
-  const html=renderCallback({...result,name:'GitHub',returnTo:'https://evil.example'});
-  assert.ok(html.includes('data-continuation='));assert.ok(html.includes('/console/assets/callback.css'));
+  const html=document(callbackPage({...result,name:'GitHub',returnTo:'https://evil.example'}));
+  assert.ok(html.includes('opencrawl-page'));assert.ok(html.includes('/console/assets/app.js'));assert.doesNotMatch(html, /<main|<form/);
   assert.ok(!html.includes('<script>bad'));assert.ok(!html.includes('evil.example'));
   let response;
   await integrationRequest({},new URL('https://self.example/integrations/github/callback'),{name:'integration-callback',provider:'github'}, {
     integrations:{complete:async()=>result},providers:{github:{id:'github',name:'GitHub'}},principal:owner,onboarding:null,guided:{},
-    respond:(status,body)=>{response={status,body};},message:()=>assert.fail(),document:content=>content,track:()=>assert.fail('A pending choice is not a connection failure'),
+    respond:(status,body)=>{response={status,body};},message:()=>assert.fail(),document,track:()=>assert.fail('A pending choice is not a connection failure'),
   });
-  assert.equal(response.status,200);assert.ok(response.body.includes('data-continuation='));
+  assert.equal(response.status,200);assert.ok(response.body.includes('integration-callback'));
 });

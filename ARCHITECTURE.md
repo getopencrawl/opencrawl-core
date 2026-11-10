@@ -119,3 +119,13 @@ provisioning, billing, fleet operation and internal administration belong in
 shell. Source SDK names do not determine ownership. Core requires no account
 or service operated by OpenCrawl. This contract supersedes earlier hosted-only
 classification of reusable identity, integrations and product UI.
+
+## React document seam
+
+All feature UI is rendered by the shared React application. Core owns auth
+outcomes, provider callbacks and capture setup; shell supplies hosted organization
+selection/provisioning and its service-specific legal page through the document
+extension. Servers retain authorization, cookies, redirects and HTTP status, and
+supply only an empty app mount plus escaped inert JSON. No alternate HTML renderer
+or feature stylesheet is retained. The same core Page, controls and tokens serve
+focused documents and the workspace console.

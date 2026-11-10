@@ -1,17 +1,19 @@
 import {Component, useCallback, useEffect, useRef, useState, useMemo} from 'react';
 import type {ErrorInfo, ReactNode} from 'react';
-import {ConsoleDataProvider, useConsolePrefetch, useConsoleQueryClient, consoleResourceKey, libraryResourceKey, AppRouter, AppShell, FocusedFrame, AgentOnboarding, SourcesOnboarding, InviteOnboarding, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, PageHeader, LinkButton, Navigate, Routes, Route, useLocation, useNavigate} from '../index.ts';
+import {ConsoleDataProvider, useConsolePrefetch, useConsoleQueryClient, consoleResourceKey, libraryResourceKey, AppRouter, AppShell, FocusedFrame, AgentOnboarding, SourcesOnboarding, InviteOnboarding, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, Page, LinkButton, Navigate, Routes, Route, useLocation, useNavigate} from '../index.ts';
 import type {ConsoleDataAdapter, NavigationItem, OnboardingAdapter} from '../index.ts';
 import type {Bootstrap, ProductApi} from './api.ts';
 import {SourcesPage} from './sources.tsx';
 import {TeamPage, TeamLoadingPage} from './team.tsx';
+import {DocumentFrame, ProductDocument, readBrowserDocument} from './documents.tsx';
 
 export interface ConsoleRoute extends NavigationItem {pending?: (feedback?: ReactNode) => ReactNode}
-export function PendingPage({title, description, className, report = false, children}: {title: string; description?: string; className?: string; report?: boolean; children?: ReactNode}) {
-  return <div className={className}><PageHeader title={title} description={description} variant={report ? 'report' : 'default'} />{children ?? <LoadingState label={`Loading ${title.toLowerCase()}`} />}</div>;
+export function PendingPage({title, description, className, bodyClassName, children}: {title: string; description?: string; className?: string; bodyClassName?: string; children?: ReactNode}) {
+  return <Page title={title} description={description} className={className} bodyClassName={bodyClassName}>{children ?? <LoadingState label={`Loading ${title.toLowerCase()}`} />}</Page>;
 }
 export interface ConsoleExtensionContext<B extends Bootstrap> {data: B | null; activated: (signal: AbortSignal) => Promise<void>}
 export interface ConsoleExtensions<B extends Bootstrap> {
+  document?: (page: unknown) => ReactNode | undefined;
   routes?: (context: ConsoleExtensionContext<B>) => ConsoleRoute[];
   decorateRoute?: (route: ConsoleRoute, data: B) => ConsoleRoute;
   teamFooter?: ReactNode;
@@ -79,12 +81,12 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   };
   const onboarding = location.pathname.startsWith('/onboarding');
   const routes: ConsoleRoute[] = [
-    {path:'/',label:'Usage',icon:'usage',element:<UsagePage adapter={dataAdapter}/>,pending:feedback => <PendingPage className="usage-report" title="Usage" description="Workspace usage" report>{feedback}</PendingPage>},
-    {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage className="oc-library" title="Sessions">{feedback}</PendingPage>},
-    {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage className="oc-library" title="Memories">{feedback}</PendingPage>},
-    {path:'/sources',label:'Integrations',icon:'sources',element:<SourcesPage adapter={api}/>,pending:feedback => <PendingPage className="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents." report>{feedback}</PendingPage>},
+    {path:'/',label:'Usage',icon:'usage',element:<UsagePage adapter={dataAdapter}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
+    {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
+    {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them. Private memories are visible only to the person who captured them.">{feedback}</PendingPage>},
+    {path:'/sources',label:'Integrations',icon:'sources',element:<SourcesPage adapter={api}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
-    {path:'/diagnostics',label:'Diagnostics',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title="Diagnostics" description="See what your agents can retrieve and how they coordinate work." report>{feedback}</PendingPage>},
+    {path:'/diagnostics',label:'Diagnostics',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title="Diagnostics" description="See what your agents can retrieve and how they coordinate work.">{feedback}</PendingPage>},
     {path:'/settings',label:'Agent setup',navigation:false,element:<Navigate to="/onboarding" replace/>},
     {path:'/team',label:'Team',icon:'team',group:'manage',element:<TeamPage adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={name => setData(current => current ? {...current, workspace: {...current.workspace, name}} : current)}/>,pending:feedback => <TeamLoadingPage>{feedback}</TeamLoadingPage>},
     ...(extensions?.routes?.({data, activated}) ?? []),
@@ -110,5 +112,9 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
 }
 /** One application composition for self-hosted and hosted deployments. */
 export function OpenCrawlApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>; extensions?: ConsoleExtensions<B>}) {
-  return <AppRouter><ErrorBoundary><ConsoleApp api={api} extensions={extensions}/></ErrorBoundary></AppRouter>;
+  return <AppRouter><ErrorBoundary><ApplicationContent api={api} extensions={extensions}/></ErrorBoundary></AppRouter>;
+}
+function ApplicationContent<B extends Bootstrap>({api,extensions}: {api:ProductApi<B>;extensions?:ConsoleExtensions<B>}) {
+  const [page] = useState(readBrowserDocument);
+  return page ? <DocumentFrame signedIn={page.signedIn}>{extensions?.document?.(page.page) ?? <ProductDocument page={page.page}/>}</DocumentFrame> : <ConsoleApp api={api} extensions={extensions}/>;
 }

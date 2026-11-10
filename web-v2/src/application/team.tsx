@@ -1,5 +1,5 @@
 import {useEffect, useId, useRef, useState, type FormEvent, type ReactNode} from 'react';
-import {Button, EmptyState, Input, LoadingState, Notice, PageHeader, Section, Select, StatusBadge} from '../index.ts';
+import {Button, EmptyState, Input, LoadingState, Notice, Page, Section, Select, StatusBadge} from '../index.ts';
 import {ConsoleApiError, failureMessage} from './errors.ts';
 import type {WorkspaceRole, TeamAdapter} from './api.ts';
 import {useResource} from './resource';
@@ -12,7 +12,7 @@ function initials(name: string | null, email: string): string {
 }
 
 function TeamFrame({organizationName, children}: {organizationName?: string; children: ReactNode}) {
-  return <div className="oc-management-page"><PageHeader variant="report" title="Team" description={organizationName ? `People and access for ${organizationName}.` : 'People and access for your workspace.'} />{children}</div>;
+  return <Page className="oc-management-page" title="Team" description={organizationName ? `People and access for ${organizationName}.` : 'People and access for your workspace.'}>{children}</Page>;
 }
 function TeamRosterLoading({children}: {children?: ReactNode}) {
   return <Section className="oc-management-panel" title="Members">{children ?? <LoadingState label="Loading team" />}</Section>;
@@ -194,14 +194,14 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
         {data.role === 'admin' ? <>
           <form className="oc-invite-form" onSubmit={event => void invite(event)}>
             <div><h3>Invite teammates</h3><p>Invited teammates join as members, without administrative access.</p></div>
-            <div className="field-inline"><div className="oc-field"><Input aria-label="Teammate’s email" ref={emailInput} type="email" name="email" autoComplete="off" maxLength={254} required disabled={pending !== null} value={email} onChange={event => setEmail(event.target.value)} placeholder="teammate@company.com" /></div><Button type="submit" variant="primary" busy={pending?.kind === 'invite'} disabled={pending !== null}>{pending?.kind === 'invite' ? 'Inviting…' : 'Invite'}</Button></div>
+            <div className="field-inline oc-form-measure"><div className="oc-field"><Input aria-label="Teammate’s email" ref={emailInput} type="email" name="email" autoComplete="off" maxLength={254} required disabled={pending !== null} value={email} onChange={event => setEmail(event.target.value)} placeholder="teammate@company.com" /></div><Button type="submit" variant="primary" busy={pending?.kind === 'invite'} disabled={pending !== null}>{pending?.kind === 'invite' ? 'Inviting…' : 'Invite'}</Button></div>
             {inviteError && <Notice tone="danger">{inviteError}</Notice>}
             {success && <Notice tone="success">{success}</Notice>}
           </form>
         </> : <Notice tone="info">Ask an admin to invite teammates.</Notice>}
       </Section>
       {data.role === 'admin' && <Section className="oc-management-footer" title="Organization name">
-        <form className="field-inline" onSubmit={event => void renameOrganization(event)}>
+        <form className="field-inline oc-form-measure" onSubmit={event => void renameOrganization(event)}>
           <div className="oc-field"><Input ref={organizationInput} aria-label="Organization name" aria-invalid={Boolean(organizationError) || undefined} aria-describedby={organizationError ? organizationErrorId : undefined} name="organizationName" autoComplete="organization" required maxLength={100} disabled={pending !== null} value={nameValue} onChange={event => {setOrganizationName(event.target.value); setOrganizationError(''); setOrganizationSuccess('');}} /></div>
           <Button type="submit" busy={pending?.kind === 'organization'} disabled={pending !== null || !nameValue.trim() || nameValue.trim() === data.organization.name}>{pending?.kind === 'organization' ? 'Saving…' : 'Save'}</Button>
         </form>

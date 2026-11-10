@@ -78,3 +78,11 @@ or service operated by OpenCrawl. This contract supersedes earlier hosted-only
 classification of reusable identity, integrations and product UI.
 
 The standalone Airbyte GitHub source under `connectors/github/` is a Python container moved from shell; preserve its source and behavior tests. This is the only Python exception. Application runtime and repository tooling remain TypeScript/Node.
+
+## Browser rendering
+
+Every browser screen uses client-rendered React and shared core controls, including
+organization setup, auth outcomes, provider handoffs, capture setup and legal pages.
+Servers send an empty application mount plus escaped inert page data; never compose
+feature markup or return an alternate server-rendered UI. Authorization, cookies,
+HTTP status and identity-changing redirects remain server responsibilities.
