@@ -62,8 +62,11 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     expect(settings.permissions).toEqual({allow:['Read']});expect(settings.hooks.Stop).toHaveLength(2);
     const settingsText=readFileSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8');
     expect(settingsText).toStartWith('{\n    "permissions"');expect(settingsText).toEndWith('}\n');
-    expect(statSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json')).mode&0o777).toBe(0o644);
-    expect(statSync(process.env.CLAUDE_CONFIG_DIR).mode&0o777).toBe(0o755);
+    // Windows has no POSIX modes; elsewhere install must keep the user's file and directory modes.
+    if(process.platform!=='win32'){
+      expect(statSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json')).mode&0o777).toBe(0o644);
+      expect(statSync(process.env.CLAUDE_CONFIG_DIR).mode&0o777).toBe(0o755);
+    }
     // A new hooks file uses the harness's conventional two-space format.
     expect(readFileSync(join(process.env.CODEX_HOME,'hooks.json'),'utf8')).toStartWith('{\n  "hooks"');
     expect((Bun.TOML.parse(readFileSync(join(process.env.CODEX_HOME,'config.toml'),'utf8')) as any).features).toEqual({hooks:true,other:true});
