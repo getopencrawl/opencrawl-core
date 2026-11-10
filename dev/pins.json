@@ -1,0 +1,7 @@
+{
+  "kind": {"url":"https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64","sha256":"aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d"},
+  "kubectl": {"url":"https://dl.k8s.io/release/v1.34.11/bin/linux/amd64/kubectl","sha256":"8efbb9435132a190920eb65a47a8c1ecf755ad85ab57a600c9bedbab460bb7a8"},
+  "helm": {"url":"https://get.helm.sh/helm-v3.22.1-linux-amd64.tar.gz","sha256":"896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea","member":"linux-amd64/helm"},
+  "airbyte": {"url":"https://airbytehq.github.io/charts/airbyte-2.4.0.tgz","sha256":"ec25fcddc952dbef05183f426149553f78db0f7e61642c9d13c77e32c93433a3","version":"2.4.0"},
+  "kindNode": "kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d"
+}

@@ -12,3 +12,6 @@ dist/
 connectors/github/**/__pycache__/
 
 !.env.capture.example
+
+# Private, disposable development installation state and downloaded tools.
+.opencrawl-dev/

@@ -4,6 +4,7 @@
 **/.env.*
 **/dist
 .runtime
+.opencrawl-dev
 *.tgz
 *.tar
 *.zip
