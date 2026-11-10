@@ -154,7 +154,9 @@ async function up(){
       extraPortMappings:[{containerPort:30080,hostPort:state.airbytePort,listenAddress:'127.0.0.1',protocol:'TCP'}]}]});
     run(join(bin,'kind'),['create','cluster','--name',state.project,'--kubeconfig',kubeconfig,'--config',join(stateDir,'kind.json'),'--wait','5m']);
   }else if(!existing.State.Running){run('docker',['start',node]);}
-  kubectl(['wait','--for=condition=Ready','node','--all','--timeout=180s']);
+  await until('private Kubernetes control plane',async()=>kubectl(
+    ['wait','--for=condition=Ready',`node/${node}`,'--timeout=10s','--request-timeout=15s'],
+    {capture:true,allowFailure:true}).includes('condition met'),5);
   if(!ownedNode()!.NetworkSettings.Networks[state.project+'_default'])run('docker',['network','connect',state.project+'_default',node]);
   const airbyteIp=ownedNode()!.NetworkSettings.Networks[state.project+'_default'].IPAddress;
   if(!/^\d+\.\d+\.\d+\.\d+$/.test(airbyteIp))throw new Error('Missing private Airbyte address');
