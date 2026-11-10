@@ -3,6 +3,7 @@ export interface OnboardingReceipt {observedAt: string; client?: string | null; 
 export type OnboardingKind = 'cli' | 'mcp' | 'mcpTest' | 'session' | 'history' | 'completed';
 export type OnboardingReceipts = Record<OnboardingKind, OnboardingReceipt | null>;
 import {sessionScope} from './sessions/ingest.mjs';
+import {isSessionHarness} from './sessions/types.mjs';
 
 /** Durable per-user setup milestones, not a claim that credentials remain valid forever. */
 export function createOnboardingStatus({store, prefix = 'capture-v1', now = () => new Date()}: {store: Pick<ObjectStore, 'put' | 'get'>; prefix?: string; now?: () => Date}) {
@@ -22,8 +23,10 @@ export function createOnboardingStatus({store, prefix = 'capture-v1', now = () =
     },
     mcpTest: (principal: Principal) => record(principal, 'mcpTest'),
     session: (principal: Principal, batch: SessionBatch) => {
-      if (!['claude-code', 'codex'].includes(batch.harness)) throw new Error('Unknown session harness');
-      if (!batch.events?.some(event => event.kind === 'message')) return;
+      if (!isSessionHarness(batch.harness)) throw new Error('Unknown session harness');
+      // Some Grok Bot runtimes emit only tool hooks; a recorded tool call is live activity too.
+      const recorded = batch.harness === 'grok-bot' ? ['message', 'tool_call'] : ['message'];
+      if (!batch.events?.some(event => recorded.includes(event.kind))) return;
       if (batch.captureMode === 'history') return record(principal, 'history', {state:'received', harness:batch.harness});
       return record(principal, 'session', {harness: batch.harness});
     },

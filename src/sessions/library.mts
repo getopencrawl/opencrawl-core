@@ -1,4 +1,5 @@
 import type {Principal, ObjectStore, SessionEvent, JsonValue} from './types.mjs';
+import {isSessionHarness} from './types.mjs';
 import type {RealmOptions, QueryBody, IndexHit} from '../search/types.mjs';
 import {createRealmResolver, realmField} from '../search/realm.mjs';
 import {createSessionIngest, sessionScope, digest} from './ingest.mjs';
@@ -19,7 +20,6 @@ export type TranscriptEntry =
   | {type: 'note'; label: string; text: string; truncated: boolean};
 export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[]}
 
-const HARNESSES = ['claude-code', 'codex'];
 const identity = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 const f = (field: string) => realmField('session', field);
 const MAX_TEXT = 20000;
@@ -44,7 +44,7 @@ const HIDDEN = ['token_count', 'hook', 'turn_metadata', ...TITLE_KINDS];
 const CACHE_CHARS = 32 * 1024 * 1024, FETCH_CONCURRENCY = 12;
 const TITLE_FETCH_CONCURRENCY = 4;
 function checkKey({userId, harness, sessionId}: Partial<SessionKey>) {
-  if (!identity(userId) || !HARNESSES.includes(harness ?? '') || !identity(sessionId)) fail(400, 'Invalid session');
+  if (!identity(userId) || !isSessionHarness(harness) || !identity(sessionId)) fail(400, 'Invalid session');
   return {userId: userId!, harness: harness!, sessionId: sessionId!};
 }
 function blockText(block: Record<string, unknown>) {
@@ -206,12 +206,15 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
       const collection = reader(principal);
       if (!['all', 'mine'].includes(String(scope)) || typeof query !== 'string' || query.length > 500 || !Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 500) fail(400, 'Invalid session list');
       // Summarize from conversation records only: bookkeeping is most of the index.
-      const filter: QueryBody[] = [{term: {[f('chunk')]: 0}}, {terms: {[f('kind')]: CONVERSATION}}, visibleTo('session', principal), ...(scope === 'mine' ? [{term: {[f('userId')]: principal.userId}}] : [])];
+      // A Grok Bot runtime that reports only tool hooks has no messages to list by.
+      const listed = (kinds: string[]): QueryBody => ({bool: {minimum_should_match: 1, should: [{terms: {[f('kind')]: kinds}},
+        {bool: {filter: [{term: {[f('harness')]: 'grok-bot'}}, {term: {[f('kind')]: 'tool_call'}}]}}]}});
+      const filter: QueryBody[] = [{term: {[f('chunk')]: 0}}, listed(CONVERSATION), visibleTo('session', principal), ...(scope === 'mine' ? [{term: {[f('userId')]: principal.userId}}] : [])];
       const fields = ['userId', 'harness', 'sessionId'].map(field => ({field: f(field)}));
       const order = [{lastActivity: 'desc'}, {_key: 'asc'}];
       if (query.trim()) {
         // Select sessions containing the words, then summarize each whole session.
-        const matchFilter = filter.map((value, index) => index === 1 ? {terms: {[f('kind')]: [...CONVERSATION, ...TITLE_KINDS]}} : value);
+        const matchFilter = filter.map((value, index) => index === 1 ? listed([...CONVERSATION, ...TITLE_KINDS]) : value);
         const matched = await collection.search(principal, {size: 0, query: {bool: {filter: matchFilter, must: [{match: {text: {query: query.trim(), operator: 'and'}}}]}},
           aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {lastActivity: {max: {field: 'timestamp'}}}}}});
         const keys = (matched.aggregations?.sessions?.buckets ?? []) as unknown as Array<{key: string[]}>;
@@ -229,7 +232,7 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
       if (!Array.isArray(buckets)) throw new Error('Invalid session list response');
       const sessions: SessionSummary[] = buckets.map(bucket => {
         const [userId, harness, sessionId] = bucket.key;
-        if (!identity(userId) || !HARNESSES.includes(harness ?? '') || !identity(sessionId)) throw new Error('Invalid session list response');
+        if (!identity(userId) || !isSessionHarness(harness) || !identity(sessionId)) throw new Error('Invalid session list response');
         return {userId: userId!, harness: harness!, sessionId: sessionId!, title: `Session ${sessionId}`,
           private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, host: bucket.host.buckets[0]?.key ?? null,
           firstActivityAt: iso(bucket.firstActivity.value), lastActivityAt: iso(bucket.lastActivity.value), events: bucket.doc_count};

@@ -23,7 +23,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
   fetch       Read the indexed passage behind a search result
-  collect     Install and manage Claude/Codex session capture
+  collect     Install and manage Claude Code, Codex and Grok Bot session capture
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
   update      Install the latest CLI for your next invocation
@@ -37,6 +37,7 @@ Options:
 
 Capture controls:
   collect install [--yes]              Review recording scope before enabling
+  collect install --harness grok-bot   Capture Grok Bot; run on the Bot's cloud computer
   collect titles                      Refresh names of already captured sessions
   collect exclude --project /path     Block a project and its subdirectories
   collect exclude --session-id ID     Block a session and its subagents
@@ -201,7 +202,9 @@ export async function main(args = process.argv.slice(2)) {
     const message = known ? failure.message : 'The command failed. Retry, or run opencrawl login to repair your session.';
     if (json) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code, message}}) + '\n');
     else process.stderr.write(`opencrawl: ${message}\n`);
-    return known ? failure.exitCode : 1;
+    const exit = known ? failure.exitCode : 1;
+    // Harnesses read a hook's exit code 2 as "block this action".
+    return exit === 2 && args[0] === 'collect' && args[1] === 'hook' ? 1 : exit;
   } finally {
     memoryJob?.stop();
     // Upgrade only our hook settings locally; never launch an unowned process.

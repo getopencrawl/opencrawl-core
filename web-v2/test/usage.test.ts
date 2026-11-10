@@ -5,7 +5,8 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {MemoryRouter} from '../src/router.tsx';
 import {SourcesSummary, UsagePage, UsageReportView} from '../src/pages/usage.tsx';
 import type {ConsoleDataAdapter, UsageReport} from '../src/pages/types.ts';
-import {ago, compact, count, pricedSavings, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
+import {ago, compact, count, harnessName, pricedSavings, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
+import {harnessName as libraryHarnessName} from '../src/pages/library-controls.tsx';
 import type {ValueReport} from '../src/pages/types.ts';
 
 const now = Date.parse('2026-11-07T20:00:00Z');
@@ -138,6 +139,10 @@ test('Agent sessions retains measured activity, breakdowns and contextual facts 
     assert.ok(agents.includes(text), text);
   }
   assert.match(agents, /Agent sessions per day/);
+  // Every captured agent has a readable name on Usage and in the session library.
+  for (const [harness, name] of [['claude-code', 'Claude Code'], ['codex', 'Codex'], ['grok-bot', 'Grok Bot']] as const) {
+    assert.equal(harnessName(harness), name); assert.equal(libraryHarnessName(harness), name);
+  }
   assert.doesNotMatch(agents, /\bturns?\b|analytics come next/i);
 });
 
