@@ -31,7 +31,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
 Options:
   --no-browser   Print the sign-in URL without opening a browser (SSH/agents)
   --json         Versioned JSON on stdout; instructions on stderr
-  --api <url>    Deployment (or OPENCRAWL_API_URL)
+  --api <url>    Server (overrides OPENCRAWL_API_URL and saved capture config)
   --version      Print the CLI version
   --help         Show this help
 
@@ -91,11 +91,11 @@ Listeners require a native harness monitor/notification bridge to reach context.
 
 Skills: skills install [--client NAME] [--json]
   skills status                 Inspect without changing skill files
-  skills refresh                Refresh managed skills using their saved deployments
+  skills refresh                Regenerate the CLI-owned opencrawl skill
   --client NAME                 Select explicitly; repeat for multiple clients
   Clients: codex, claude-code, cursor, gemini, opencode, copilot
 Default: detect installed clients and install once per shared skill directory.
-CLI updates refresh managed skills. User edits and unrelated skills are preserved.
+CLI updates regenerate opencrawl, replacing local edits and stale files. Other named skills are separate.
 No authentication is required.
 `;
 
@@ -147,7 +147,7 @@ export async function main(args = process.argv.slice(2)) {
     if (parsed.values.client && command !== 'skills') throw new CliError('INVALID_USAGE', 'Use --client with skills install or skills status.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL
-      ?? (command === 'collect' && parsed.positionals[1] === 'backfill' ? readCaptureConfig()?.api : undefined)
+      ?? readCaptureConfig()?.api
       ?? 'https://app.getopencrawl.com');
     if (command === 'skills') {
       const data = await agentSkills(parsed.positionals[1] ?? 'status', api, {clients: parsed.values.client as string[] | undefined});
