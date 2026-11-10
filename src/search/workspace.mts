@@ -11,7 +11,7 @@ import {sessionScope} from '../sessions/ingest.mjs';
 import {excerpt, groupDuplicates, workspaceHit} from './presentation.mjs';
 
 export const workspaceSearchSchema = z.strictObject({
-  query: z.string().trim().min(1).max(4000).describe('Words to find. Start with distinctive terms; broaden or reformulate if coverage is insufficient.'),
+  query: z.string().trim().max(4000).describe('Words to find. Start with distinctive terms; broaden or reformulate if coverage is insufficient. May be empty only when browsing sessions or memories by time (order=newest|oldest), e.g. the latest messages of a session.'),
   source: z.enum(['all', 'sessions', 'connectors','memories']).default('all'),
   match: z.enum(['any', 'all', 'phrase']).default('any').describe('any ranks passages matching any words; all requires every analyzed term; phrase requires the analyzed words in order.'),
   sessionId: z.string().min(1).max(200).optional().describe('Restrict to a known session and the agent memories written from it (memory frontmatter originSessionId); not with source=connectors.'),
@@ -24,6 +24,7 @@ export const workspaceSearchSchema = z.strictObject({
   cursor: z.string().max(2048).optional(),
 }).refine(v => !v.sessionId || v.source !== 'connectors', 'sessionId cannot filter connectors')
   .refine(v => !v.role || v.source === 'sessions', 'role requires source=sessions')
+  .refine(v => v.query.length > 0 || (v.order !== 'relevance' && (v.source === 'sessions' || v.source === 'memories')), 'a query is required unless browsing sessions or memories by time')
   .refine(v => !v.after || !v.before || Date.parse(v.after) <= Date.parse(v.before), 'after must not be later than before');
 export const workspaceFetchSchema = z.strictObject({
   id: z.string().regex(/^(sessions|connectors|memories):[A-Za-z0-9_:-]{1,256}$/).describe('An id returned by search. Access is checked again on every fetch.'),

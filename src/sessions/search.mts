@@ -30,7 +30,7 @@ export function createSessionSearch(options: RealmOptions) {
       if(typeof query!=='string'||query.length>4000||!Number.isInteger(limit)||limit<1||limit>100)fail(400,'Invalid search query or limit');
       const result=await resolve(principal).collection('session').search(principal,{size:limit,track_total_hits:true,
         query:{bool:{filter:[{term:{tenantId:principal.tenantId}},visibleTo('session',principal),...(sessionId?[{term:{[f('sessionId')]:sessionId}}]:[]),...(id?[{term:{id}}]:[]),...(role?[{term:{[f('role')]:role}}]:[]),...timeRange(after,before)],must:query?[textQuery(query,match,resolve(principal).semantic)]:[{match_all:{}}]}},
-        sort:query?[...(byTime?[byTime]:[]),'_score',...['receivedAt','sessionId','eventId','chunk','userId','installationId'].map(key=>({[f(key)]:key==='receivedAt'?'desc':'asc'}))]:[{[f('receivedAt')]:'desc'},{[f('sequence')]:'asc'}]});
+        sort:query?[...(byTime?[byTime]:[]),'_score',...['receivedAt','sessionId','eventId','chunk','userId','installationId'].map(key=>({[f(key)]:key==='receivedAt'?'desc':'asc'}))]:byTime?[byTime,{[f('sequence')]:order==='newest'?'desc':'asc'},{[f('chunk')]:'asc'},{id:'asc'}]:[{[f('receivedAt')]:'desc'},{[f('sequence')]:'asc'}]});
       const hits=result?.hits?.hits;
       if(!Array.isArray(hits)||hits.some(hit=>hit._source?.tenantId!==principal.tenantId||typeof hit._source?.userId!=='string'||!hit._source.userId))throw new Error('Search returned an invalid ownership scope');
       if(raw)return result;
