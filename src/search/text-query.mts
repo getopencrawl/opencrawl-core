@@ -28,6 +28,15 @@ export function textQuery(query: string, match: MatchMode | string = 'any', sema
     : {bool: {should: [...lexical, sparse], minimum_should_match: 1}};
 }
 
+/** Result order: relevance (default) or by the realm's common timestamp, newest or oldest first,
+ * e.g. "the latest note about X". Ties keep a stable relevance order. */
+export type ResultOrder = 'relevance' | 'newest' | 'oldest';
+export function timeOrder(order?: string) {
+  if (order === undefined || order === 'relevance') return null;
+  if (order !== 'newest' && order !== 'oldest') throw Object.assign(new Error('Invalid result order'), {status: 400});
+  return {timestamp: {order: order === 'newest' ? 'desc' : 'asc', missing: '_last'}};
+}
+
 /** Inclusive time bounds on the realm's common `timestamp` (session event time, memory file
  * modification time, connector item time). Invalid bounds are a client error. */
 export function timeRange(after?: string, before?: string) {

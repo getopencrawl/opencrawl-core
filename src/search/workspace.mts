@@ -19,6 +19,7 @@ export const workspaceSearchSchema = z.strictObject({
   dedupe: z.boolean().default(true).describe('Group whitespace-equivalent passages within the same session/resource. Set false to inspect every occurrence.'),
   after: z.string().datetime({offset: true}).optional().describe('Only passages at or after this time (ISO 8601). Session passages use the captured event time.'),
   before: z.string().datetime({offset: true}).optional().describe('Only passages at or before this time (ISO 8601), e.g. to see what was known as of a date.'),
+  order: z.enum(['relevance', 'newest', 'oldest']).default('relevance').describe('relevance ranks best matches first; newest/oldest orders matching passages by time, e.g. the latest note about something.'),
   cursor: z.string().max(2048).optional(),
 }).refine(v => !v.sessionId || v.source !== 'connectors', 'sessionId cannot filter connectors')
   .refine(v => !v.after || !v.before || Date.parse(v.after) <= Date.parse(v.before), 'after must not be later than before');
@@ -53,7 +54,7 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       sessionScope(principal);
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot search workspace data.');
       const parsed = workspaceSearchSchema.safeParse(input);
-      if (!parsed.success) fail(400, 'Invalid search request. Use query, source, match, sessionId, after, before, limit, dedupe and cursor only.');
+      if (!parsed.success) fail(400, 'Invalid search request. Use query, source, match, sessionId, after, before, order, limit, dedupe and cursor only.');
       const {cursor, ...query} = parsed.data;
       const fingerprint = hash([principal.tenantId, principal.userId, query]);
       const page = cursor ? decode(cursor, fingerprint) : {offset: 0, expires: now() + TTL};
@@ -63,7 +64,7 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
         const adapter = source === 'sessions' ? sessions : source==='memories'?memories:connectors;
         if (!adapter) return {source, state: 'not_configured', hits: [], truncated: false};
         let result;
-        try {result = await adapter.search(principal, {query: query.query, match: query.match, ...(query.sessionId ? {sessionId: query.sessionId} : {}), ...(query.after ? {after: query.after} : {}), ...(query.before ? {before: query.before} : {}), limit: WINDOW});}
+        try {result = await adapter.search(principal, {query: query.query, match: query.match, ...(query.sessionId ? {sessionId: query.sessionId} : {}), ...(query.after ? {after: query.after} : {}), ...(query.before ? {before: query.before} : {}), ...(query.order !== 'relevance' ? {order: query.order} : {}), limit: WINDOW});}
         catch(caught){const error=serviceError(caught);
           if ([401, 403].includes(error.status ?? 0)) throw error;
           return {source, state: error.status === 404 && error.type === 'index_not_found_exception' ? 'pending' : 'unavailable', hits: [], truncated: false};

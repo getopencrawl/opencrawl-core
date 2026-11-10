@@ -103,3 +103,16 @@ test('a session filter scopes sessions and the memories written from it, never c
   assert.deepEqual(seen, [['memories', 'past']]);
   await assert.rejects(service.search(principal, {query: 'x', source: 'connectors', sessionId: 'past'}), /Invalid search/);
 });
+
+test('time order is validated, passed to every source and only when not relevance', async () => {
+  const seen = [];
+  const service = createWorkspaceSearch({
+    sessions: {search: async (p, q) => {seen.push(['sessions', q.order]);return {total: 1, hits: [hit('s1')]};}},
+    connectors: {search: async (p, q) => {seen.push(['connectors', q.order]);return {hits: [], truncated: false};}},
+  });
+  await service.search(principal, {query: 'x', order: 'newest'});
+  assert.deepEqual(seen, [['sessions', 'newest'], ['connectors', 'newest']]);
+  seen.length = 0;await service.search(principal, {query: 'x'});
+  assert.deepEqual(seen, [['sessions', undefined], ['connectors', undefined]]);
+  await assert.rejects(service.search(principal, {query: 'x', order: 'random'}), /Invalid search/);
+});
