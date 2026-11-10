@@ -8,7 +8,7 @@ import {randomUUID} from 'node:crypto';
 import {setImmediate as yieldToOwner} from 'node:timers/promises';
 import {setTimeout as pause} from 'node:timers/promises';
 import {createInterface} from 'node:readline';
-import {configDir, atomicFile, atomicJson, accessToken, withSessionLock, syncDirectory} from '../session.ts';
+import {configDir, atomicFile, atomicJson, accessToken, readSession, withSessionLock, syncDirectory} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
@@ -570,10 +570,15 @@ async function hookPass(event:any,now:()=>number,work:(config:CaptureConfig)=>Pr
     if(stale)throw new CliError('CAPTURE_UPLOADER_BUSY','Another capture uploader has held its lock for over ten minutes. Run opencrawl collect flush.');
   }
 }
-/** With --defer-auth nothing is recorded until an identity is bound. Each due
- * pass tries once, so signing in later starts capture without reinstalling. */
-export const bindHookIdentity=(event:any,{now=Date.now}={})=>readCaptureConfig()?.authPending
-  ?hookPass(event,now,async config=>{await refreshCaptureIdentity(config);}):Promise.resolve();
+/** With --defer-auth nothing is recorded until an identity is bound. Signing in
+ * later starts capture on the next hook, without reinstalling. */
+export async function bindHookIdentity(event:any,{now=Date.now}={}) {
+  const config=readCaptureConfig();if(!config||config.disabled||!config.authPending)return;
+  // Nobody has signed in on this computer. That is a local fact, not a failing
+  // receiver: look again on every hook, quietly.
+  if(!staticCaptureToken(config.api)&&!readSession(config.api))return;
+  return hookPass(event,now,async pending=>{await refreshCaptureIdentity(pending);});
+}
 export const hookFlush=(event:any,{now=Date.now}={})=>readCaptureConfig()?.authPending?Promise.resolve():hookPass(event,now,async config=>{
   let failure:any;
   // Leave half the hook's five seconds for the uploads themselves.

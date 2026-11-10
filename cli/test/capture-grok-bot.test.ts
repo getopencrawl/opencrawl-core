@@ -269,13 +269,15 @@ test('a computer prepared without sign-in records nothing until an identity is b
   expect(captureStatus()).toMatchObject({authenticationPending:true,owner:null});
   let clock=Date.parse('2026-11-10T12:00:00Z');const now=()=>clock;
   const prompt=hook('beforeSubmitPrompt',{prompt:'said before anyone signed in'});
-  // The same order as the hook command: bind, record, upload.
-  await expect(bindHookIdentity(prompt,{now})).rejects.toMatchObject({code:'AUTH_REQUIRED'});
-  await captureHook('grok-bot',prompt);await hookFlush(prompt,{now});
-  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,authenticationPending:true});
+  // The same order as the hook command: bind, record, upload. With no sign-in
+  // on the computer this is quiet and local: no request, no error, no backoff.
+  const before=f.uploads;
+  for(let n=0;n<3;n++){await bindHookIdentity(prompt,{now});await captureHook('grok-bot',prompt);await hookFlush(prompt,{now});}
+  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,authenticationPending:true,lastError:null});
   expect(existsSync(join(captureDir(),'notices'))&&readdirSync(join(captureDir(),'notices')).length>0).toBe(false);
-  // The owner signs in (here: an upload credential appears). The next due hook binds and records.
-  process.env.OPENCRAWL_SESSIONS_TOKEN=token;clock+=60_000;
+  expect(existsSync(join(captureDir(),'hook-flush.json'))).toBe(false);expect(f.uploads).toBe(before);
+  // The owner signs in (here: an upload credential appears). The very next hook binds and records.
+  process.env.OPENCRAWL_SESSIONS_TOKEN=token;
   const later=hook('beforeSubmitPrompt',{prompt:'said after signing in'}),stop=hook('stop');
   await bindHookIdentity(later,{now});
   expect(captureStatus()).toMatchObject({authenticationPending:false,owner:{userId:f.principal.userId}});
