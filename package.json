@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.3.0-seam.4",
+  "version": "0.3.0-seam.5",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
@@ -85,7 +85,8 @@
     "./integrations/github-source/*": "./connectors/github/*",
     "./integrations/destination": "./dist/src/integrations/destination.mjs",
     "./integrations/single-organization-storage": "./dist/src/integrations/single-organization-storage.mjs",
-    "./integrations/purge": "./dist/src/integrations/purge.mjs"
+    "./integrations/purge": "./dist/src/integrations/purge.mjs",
+    "./application/value-report": "./dist/src/application/value-report.mjs"
   },
   "files": [
     "dist/src",

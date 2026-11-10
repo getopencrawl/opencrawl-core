@@ -5,11 +5,12 @@ import type {Integrations} from '../integrations/service.mjs';
 import type {createSessionSearch} from '../sessions/search.mjs';
 import type {createOnboardingStatus, OnboardingReceipts} from '../onboarding-status.mjs';
 import {indexedSourceInventory} from './usage-inventory.mjs';
+import type {ValueReports} from './value-report.mjs';
 type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage' | 'search'>;
 interface ConnectionCount {total: number; kinds: Record<string, number>}
 interface Connectors {count(principal: Principal): Promise<ConnectionCount & {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}>}
 type Usage = Awaited<ReturnType<Sessions['usage']>>;
-interface UsageOptions {principal: Principal; workos: Workos; integrations?: Pick<Integrations, 'list'> | null; search?: Sessions | null; connectors?: Connectors | null; onboarding?: ReturnType<typeof createOnboardingStatus> | null; tab?: string; days?: number; log?: Log}
+interface UsageOptions {principal: Principal; workos: Workos; integrations?: Pick<Integrations, 'list'> | null; search?: Sessions | null; connectors?: Connectors | null; onboarding?: ReturnType<typeof createOnboardingStatus> | null; values?: ValueReports | null; captured?: ((principal: Principal) => Promise<{tokens: number; since: string}>) | null; tab?: string; days?: number; log?: Log}
 interface IndexReport {sessionEvents: number | null; connectorDocuments: number | null; connectorKinds: Record<string, number>; sources: Array<{name: string; count: number}>; searchMs: number | null; probes: number[]}
 // Shared usage report: integrations, WorkOS members, and session activity.
 // Activity and setup receipts are scoped to the selected organization.
@@ -22,7 +23,7 @@ const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floo
  * principal must already be verified for its tenant. Every source is optional: a missing
  * service shows as unavailable rather than failing the page.
  */
-export async function usageReport({principal, workos, integrations, search, connectors, onboarding, tab, days = 30, log = () => {}}: UsageOptions) {
+export async function usageReport({principal, workos, integrations, search, connectors, onboarding, values, captured, tab, days = 30, log = () => {}}: UsageOptions) {
   const team = principal.tenantId.startsWith('org_');
   const memberScope = (userId: string) => ({tenantId: principal.tenantId, userId});
   function soft<T>(name: string, operation: () => Promise<T>): Promise<T | null>;
@@ -38,7 +39,7 @@ export async function usageReport({principal, workos, integrations, search, conn
 
   const emptyCounts: Awaited<ReturnType<Connectors['count']>> = {total:0,kinds:{},providers:{},connections:{}};
   // These reports are independent. Navigation waits for the slowest read, not their sum.
-  const [organization, users, cards, agents, probeResults, counted] = await Promise.all([
+  const [organization, users, cards, agents, probeResults, counted, value] = await Promise.all([
     team ? soft('organization', () => workos.organizations.getOrganization(principal.tenantId)) : null,
     team ? soft('members', async () => {
       const memberships = await workos.userManagement.listOrganizationMemberships({organizationId: principal.tenantId, statuses: ['active'], limit: 100});
@@ -50,8 +51,11 @@ export async function usageReport({principal, workos, integrations, search, conn
     search ? soft('sessions', () => search.usage(principal, {team: true, days}), empty()) : null,
     Promise.all(Array.from({length:search ? 3 : 0}, () => soft('probe', () => search!.search(principal, {query:PROBE,limit:10,raw:true})))),
     connectors ? soft('connectors', () => connectors.count(principal), emptyCounts) : null,
+    values ? soft('value', () => values.read(principal.tenantId)) : null,
   ]);
   const members = users || [];
+  // The adapter defines the measurement period; billing policy stays in the host.
+  const capture = organization && captured ? await soft('capture', () => captured(principal)) : null;
   const probes = probeResults.flatMap(result => result && 'took' in result && typeof result.took === 'number' && Number.isFinite(result.took) ? [result.took] : []);
   const connectionCounts = counted?.connections || null;
   const providerNames = new Map((cards || []).map(card => [card.provider, card.name]));
@@ -80,7 +84,7 @@ export async function usageReport({principal, workos, integrations, search, conn
   const report = {
     tab, team, days, generatedAt: new Date().toISOString(), integrationsUrl: '/integrations',
     workspace: organization?.name || (team ? null : 'Personal workspace'),
-    ingestion: cards ? {sources, index} : null, agents,
+    ingestion: cards ? {sources, index} : null, agents, value, capture: capture ? {tokens:capture.tokens,since:capture.since} : null,
     members: members.map((user, i) => {
       const a: Partial<Usage['people'][number]> = activity.get(user.id) || {};
       return {name: displayName(user, null), email: user.email, you: user.id === principal.userId,

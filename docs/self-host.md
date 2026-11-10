@@ -143,3 +143,12 @@ checks. It is separate from the multi-user application described here.
 Disconnecting GitHub deletes this deployment’s Airbyte connection and imported data.
 It leaves the GitHub App installation in place because other deployments may use it.
 An operator can uninstall the app directly in GitHub when nothing else needs it.
+
+Usage can also display an operator-supplied measured value report. Core exports
+`valueReportKey`, `parseValueReport` and `valueReports` from
+`@getopencrawl/opencrawl-core/application/value-report`; the standalone app reads
+that schema from its own object store under `OPENCRAWL_LANDING_S3_PATH` (default
+`sessions/self-hosted/v1`) for its configured organization. Reports are optional:
+absent or invalid measurements produce no Agent savings section. The app does
+not invent savings or require a hosted billing account. Cloud billing-period
+token totals enter through a separate host adapter.

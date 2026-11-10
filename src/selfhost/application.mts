@@ -27,6 +27,7 @@ import {createConsoleApi,consoleDocument,consolePages} from '../application/cons
 import {productRoute,type Route} from '../application/routes.mjs';
 import {productRouter,handleProductRpc,rpcError} from '../application/rpc.mjs';
 import {usageReport} from '../application/usage.mjs';
+import {valueReports} from '../application/value-report.mjs';
 import {diagnosticRequest} from '../application/diagnostics.mjs';
 import {integrationRequest} from '../application/integration-http.mjs';
 import {securityHeaders,document} from '../application/presentation.mjs';
@@ -62,6 +63,7 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
   const admit=singleOrganizationIdentity(workos,settings.organizationId),resolve=singleOrganizationPrincipal(workos,settings.organizationId);
   const identifyCli=cliIdentity(settings,workos),organizations=teamService(workos,roleWriteGuard(store,prefix));
   const onboarding=createOnboardingStatus({store,prefix}),observe=createOnboardingObserver(onboarding);
+  const values=valueReports({store,prefix});
   const search=createSessionSearch(settings.search);
   async function authorize(principal:Principal,requested?:unknown) {
     if(principal?.tenantId!==settings.organizationId || principal.captureAccess!==undefined || requested!=null&&requested!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
@@ -175,7 +177,7 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
       const sources=(p:Principal)=>integrations?integrations.list(p):Promise.resolve([]);
       const consoleApi=createConsoleApi({url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>workos.organizations.getOrganization(id),members,user:id=>workos.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
-        usage:p=>usageReport({principal:p,workos,integrations,search,connectors,onboarding}),progress:guided.progress,next:guided.next,library,libraryFailure});
+        usage:p=>usageReport({principal:p,workos,integrations,search,connectors,onboarding,values}),progress:guided.progress,next:guided.next,library,libraryFailure});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{
         if(selected.name.startsWith('/api/console/')){
           if(selected.name!=='/api/console/bootstrap'&&!hasReceipt((await guided.progress(principal))?.completed))return reply(409,JSON.stringify({error:'Complete onboarding before opening the workspace.',onboardingUrl:await guided.next(principal)}),'application/json');
