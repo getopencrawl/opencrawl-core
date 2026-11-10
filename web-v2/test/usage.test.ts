@@ -214,11 +214,11 @@ test('date formatting and compact source-summary exports remain usable by existi
 
 function value(): ValueReport {
   return {
-    schema: 1, measuredAt: '2026-11-09', window: {from: '2026-10-10', to: '2026-11-08', days: 30},
+    schema: 2, measuredAt: '2026-11-10', window: {from: '2026-11-05', to: '2026-11-08', days: 4},
     model: {model: 'GPT-6 Astra', input: 10, cacheRead: 1, cacheWrite: 12.5, output: 50, asOf: '2026-11-09', share: 63},
-    savings: {tasks: 1198, heldOutTasks: 391, turns: 10027, turnsPerTask: 8.4, turnPercent: 12.7,
+    savings: {sessions: 42, tasks: 212, tokenPercent: 4.6, turns: 784, turnsPerTask: 3.7, turnPercent: 4.8,
       tokens: {input: 10_000_000, cacheRead: 1_000_000_000, cacheWrite: 0, output: 2_000_000}},
-    observed: {from: '2026-11-06', to: '2026-11-08', conflictsAvoided: 37, duplicatesAvoided: 10, knowledgeReused: 52, searches: 245, searchesUseful: 206, searchesUsed: 171},
+    observed: {conflictsAvoided: 37, duplicatesAvoided: 10, knowledgeReused: 52, searches: 245, searchesUseful: 206, searchesUsed: 171},
   };
 }
 
@@ -235,13 +235,14 @@ test('Agent savings is the first section: four cards priced at the main model, w
   // 10M input at $10 + 1B cache reads at $1 + 2M output at $50 = $1,200.
   assert.equal(pricedSavings(value().savings.tokens, value().model), 1200);
   assert.deepEqual(cards(html, 'Agent savings'), [
-    ['Saved vs GPT-6 Astra', '$1,200', '1B tokens your agents didn’t spend'],
-    ['Turns saved', '10k', '8.4 per task, 12.7% fewer turns'],
+    ['Saved vs GPT-6 Astra', '$1,200', '4.6% fewer tokens, 1B saved'],
+    ['Turns saved', '784', '4.8% fewer turns, 3.7 per task'],
     ['Conflicts avoided', '37', 'plus 10 duplicate tasks skipped'],
     ['Searches used', '171', 'of 245 searches by your agents'],
   ]);
   const text = html.replace(/<[^>]*>/g, '');
   assert.doesNotMatch(text, /OpenCrawl cost|of OpenCrawl usage|×/);
+  assert.match(text, /What OpenCrawl saved your team since 2026-11-05, across 42 sessions and 212 tasks\./);
   const section = text.slice(text.indexOf('Agent savings'), text.indexOf('Agent sessions'));
   assert.doesNotMatch(section, /Measured|replaying|held-out|skills install/);
 });

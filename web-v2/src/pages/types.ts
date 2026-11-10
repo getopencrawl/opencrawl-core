@@ -2,19 +2,21 @@ export interface NamedCount {name: string; count: number}
 /** Per-million-token list prices for one model, as of a stated date. */
 export interface ModelPrice {model: string; input: number; cacheRead: number; cacheWrite: number; output: number; asOf: string}
 /**
- * Measured value of OpenCrawl for one workspace (schema 1), produced by replaying the
- * workspace's own captured work, never estimated by the UI. `savings` covers the window's
- * work tasks; `observed` counts effects seen in captured transcripts.
+ * Measured value of OpenCrawl for one workspace (schema 2), produced from work captured
+ * live since the workspace installed OpenCrawl, never estimated by the UI. `savings`
+ * replays search as agents use it today over that work; `observed` counts effects seen
+ * in captured transcripts over the same window.
  */
 export interface ValueReport {
-  schema: 1;
+  schema: 2;
   measuredAt: string;
+  /** From the first live capture to the last day measured. */
   window: {from: string; to: string; days: number};
   /** The model the workspace's agents use most, priced at its list price. */
   model: ModelPrice & {share: number};
-  savings: {tasks: number; heldOutTasks: number; turns: number; turnsPerTask: number; turnPercent: number;
+  savings: {sessions: number; tasks: number; tokenPercent: number; turns: number; turnsPerTask: number; turnPercent: number;
     tokens: {input: number; cacheRead: number; cacheWrite: number; output: number}};
-  observed: {from: string | null; to: string | null; conflictsAvoided: number; duplicatesAvoided: number; knowledgeReused: number;
+  observed: {conflictsAvoided: number; duplicatesAvoided: number; knowledgeReused: number;
     searches: number; searchesUseful: number; searchesUsed: number};
 }
 export interface UsageReport {
