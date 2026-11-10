@@ -17,6 +17,8 @@ function checkImports(source, file, root = sourceRoot) {
     assert.ok(!specifier.includes('\\'), `Escaped dependency needs review: ${specifier}`);
     if (specifier.startsWith('node:') || ['@modelcontextprotocol/server', '@modelcontextprotocol/node', 'zod'].includes(specifier)) continue;
     if (file.href.includes('/identity/') && ['@workos-inc/node', 'jose'].includes(specifier)) continue;
+    // Self-host identity: Better Auth is confined to its adapter and the self-host auth routes.
+    if ((file.href.endsWith('/identity/better-auth.mts') || file.href.endsWith('/selfhost/local-auth.mts')) && ['better-auth', 'better-auth/plugins', 'better-auth/db/migration', 'better-auth/node', '@better-auth/oauth-provider', 'jose'].includes(specifier)) continue;
     if (file.href.endsWith('/application/rpc.mts') && ['@trpc/server', '@trpc/server/adapters/fetch'].includes(specifier)) continue;
     if (file.href.endsWith('/integrations/github.mts') && specifier === 'jose') continue;
     // Document parsers run only in the bounded, credential-free extraction thread.
@@ -45,7 +47,8 @@ test('core runtime imports stay inside src, Node builtins, or reviewed portable 
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url)));
   // Reviewed portable MCP SDK/PDF.js (Apache-2.0), schema validation and parse5 (MIT).
   // PDF/HTML parsing is lazy and isolated; no hosted credentials or external fetches.
-  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@modelcontextprotocol/node', '@modelcontextprotocol/server', '@trpc/client', '@trpc/server', '@workos-inc/node', 'jose', 'parse5', 'pdfjs-dist', 'zod']);
+  // Better Auth (MIT) is the self-host identity provider; it stores accounts locally, telemetry off.
+  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@better-auth/oauth-provider', '@modelcontextprotocol/node', '@modelcontextprotocol/server', '@trpc/client', '@trpc/server', '@workos-inc/node', 'better-auth', 'jose', 'parse5', 'pdfjs-dist', 'zod']);
   assert.deepEqual(pkg.optionalDependencies || {}, {});
   const temporal = ['@temporalio/activity', '@temporalio/client', '@temporalio/common', '@temporalio/worker', '@temporalio/workflow'];
   assert.deepEqual(Object.keys(pkg.peerDependencies).sort(), ['@tanstack/react-query', ...temporal]);

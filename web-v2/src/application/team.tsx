@@ -186,7 +186,7 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
           </li>;
         })}{invitations.map(invitation => <li className="oc-member-row" key={`invitation:${invitation.email.trim().toLowerCase()}`} data-state="pending">
           <span className="oc-member-avatar" aria-hidden="true">{initials(null, invitation.email)}</span>
-          <div className="oc-member-identity"><span className="oc-member-name oc-invitation-email">{invitation.email}</span></div>
+          <div className="oc-member-identity"><span className="oc-member-name oc-invitation-email">{invitation.email}</span>{invitation.inviteUrl && <span className="oc-member-email">Share this link to join: <a href={invitation.inviteUrl}>{invitation.inviteUrl}</a></span>}</div>
           <StatusBadge className="oc-member-role" tone="neutral" variant="pill">Pending</StatusBadge>
         </li>)}</ul> : data.members && <p className="muted">No members are listed yet.</p>}
         {roleError && <div id={roleErrorId}><Notice tone="danger">{roleError.message}</Notice></div>}

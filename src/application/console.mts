@@ -13,7 +13,7 @@ export interface ConsoleServices {
   organization: (id: string) => Promise<Organization>;
   members: (id: string) => Promise<Membership[]>;
   user: (id: string) => Promise<User>;
-  invitations: (user: User, id: string, member: Membership) => Promise<Array<{email: string}>>;
+  invitations: (user: User, id: string, member: Membership) => Promise<Array<{email: string; inviteUrl?: string}>>;
   invite: (user: User, id: string, email: string) => Promise<unknown>;
   changeRole: (user: User, id: string, userId: string, role: 'admin' | 'member') => Promise<{ok:true; userId:string; role:'admin' | 'member'}>;
   renameOrganization: (user: User, id: string, name: string) => Promise<{ok:true;name:string}>;

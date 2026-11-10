@@ -1,5 +1,5 @@
 import {errorInfo} from '../errors.mjs';
-import type {Principal, Workos, HostedUser} from '../identity/types.mjs';
+import type {Principal, IdentityDirectory as Workos, HostedUser} from '../identity/types.mjs';
 import type {Log} from '../integrations/ports.mjs';
 import type {Integrations} from '../integrations/service.mjs';
 import type {createSessionSearch} from '../sessions/search.mjs';

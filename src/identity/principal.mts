@@ -1,4 +1,4 @@
-import type {Workos, HostedUser, Membership, Principal} from './types.mjs';
+import type {IdentityDirectory as Workos, HostedUser, DirectoryMembership as Membership, Principal} from './types.mjs';
 /** Current memberships, including all pages; never infer authority from email domains. */
 export async function activeMemberships(workos: Workos, userId: string, organizationId?: string) {
   const result = await workos.userManagement.listOrganizationMemberships({userId,

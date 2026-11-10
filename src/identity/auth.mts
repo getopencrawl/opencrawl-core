@@ -1,5 +1,5 @@
 import {errorInfo} from './types.mjs';
-import type {Workos, HostedUser} from './types.mjs';
+import type {IdentityDirectory as Workos, HostedUser} from './types.mjs';
 export interface LoginFlow {state: string; expiresAt: number; codeVerifier: string; returnTo?: string; invitationToken?: string; organizationId?: string}
 export type VerifiedResult = {status: 200; user: HostedUser} | {status: 401 | 403 | 503};
 export interface BrowserIdentity {authenticated: boolean; sessionId?: string; user?: HostedUser}

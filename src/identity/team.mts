@@ -1,4 +1,4 @@
-import type {HostedUser, Workos} from './types.mjs';
+import type {HostedUser, IdentityDirectory as Workos} from './types.mjs';
 import {errorInfo} from './types.mjs';
 import {activeMemberships} from './principal.mjs';
 import type {RoleWriteGuard, TeamRole} from './role-write.mjs';

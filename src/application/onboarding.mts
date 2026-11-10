@@ -1,6 +1,6 @@
 import {errorInfo} from '../errors.mjs';
 import type {IncomingMessage} from 'node:http';
-import type {Principal, HostedUser, Membership} from '../identity/types.mjs';
+import type {Principal, HostedUser, DirectoryMembership as Membership} from '../identity/types.mjs';
 import type {createOnboardingStatus} from '../onboarding-status.mjs';
 import type {createWorkspaceSearch} from '../search/workspace.mjs';
 import type {Integrations} from '../integrations/service.mjs';

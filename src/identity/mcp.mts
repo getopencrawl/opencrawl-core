@@ -1,5 +1,5 @@
 import {errorInfo} from './types.mjs';
-import type {Workos} from './types.mjs';
+import type {IdentityDirectory as Workos} from './types.mjs';
 import type {IdentitySettings} from './types.mjs';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 import type {JWTVerifyGetKey} from 'jose';

@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {currentBrowserUser, type BrowserIdentity} from './auth.mjs';
 import {activeMemberships} from './principal.mjs';
 import {isAdmin} from './team.mjs';
-import type {Workos, Principal, Membership, HostedUser} from './types.mjs';
+import type {IdentityDirectory as Workos, Principal, DirectoryMembership as Membership, HostedUser} from './types.mjs';
 export type OrganizationAdmission = {status: 200; user: HostedUser; member: Membership; principal: Principal; cacheScope: string} | {status: 401 | 403 | 503};
 /** Runtime identity boundary: one configured organization, many current members. */
 export function singleOrganizationIdentity(workos: Workos, organizationId: string) {
