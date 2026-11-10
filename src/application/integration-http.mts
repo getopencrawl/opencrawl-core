@@ -53,6 +53,8 @@ export async function integrationRequest(req: IncomingMessage,url: URL,route: Ro
           track(route.action === 'disconnect' ? 'integration_disconnected' : 'integration_sync_retried', principal, {provider: provider.id});
           return json(200, {ok: true});
         } catch (error) {
+          // Our own 409s explain themselves (storage not ready, setup still running); only a live connection is "already connected".
+          if (errorInfo(error).status === 409 && errorInfo(error).expose) return json(409, {error: {code: 'NOT_READY', message: errorInfo(error).message}});
           if (errorInfo(error).status === 409) return json(409, {error: {code: 'ALREADY_CONNECTED', message: `${provider.name} is already connected.`}});
           if (errorInfo(error).status === 404) return json(404, {error: {code: 'NOT_CONNECTED', message: `${provider.name} isn’t connected.`}});
           // Our own messages about the pasted key; never upstream text.

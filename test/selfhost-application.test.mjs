@@ -77,22 +77,26 @@ test('OSS invitations admit distinct members once; removing a membership denies 
   assert.equal((await f.request('/api/console/bootstrap','bob')).status,403);
   assert.equal((await f.request('/api/console/team/invite','admin',{method:'POST',headers:{origin:'https://foreign.example'}})).status,403);
 });
-test('OSS onboarding opens the workspace on agent capture alone; connecting a source stays optional',async t=>{
+test('OSS onboarding requires agent setup only; the Sources step can be skipped',async t=>{
   const f=await fixture(t);await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
   const onboarding=createOnboardingStatus({store:f.store,prefix:f.prefix}),principal={tenantId:org,userId:member.userId};
   const finish=()=>f.request('/api/onboarding/finish','admin',{method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'});
-  // Agent setup is still required before anything else.
+  // Skipping sources never skips agent setup.
   assert.equal((await finish()).status,409);
-  assert.equal((await f.request('/onboarding/invite','admin')).headers.get('location'),'/onboarding');
+  for(const path of ['/onboarding/sources','/onboarding/invite'])assert.equal((await f.request(path,'admin')).headers.get('location'),'/onboarding');
+  assert.equal((await f.request('/api/onboarding/invites','admin')).status,409);
   await onboarding.cli(principal);await onboarding.mcpTest(principal);await onboarding.session(principal,{harness:'codex',events:[{kind:'message'}]});
+  // With nothing connected, setup resumes at Sources, yet Invite opens and finishing needs no source.
   assert.deepEqual((await (await f.request('/api/console/bootstrap','admin')).json()).onboarding,{completed:false,next:'/onboarding/sources'});
-  assert.deepEqual(await (await f.request('/api/onboarding/sources','admin')).json(),{items:[],optional:true});
-  assert.equal((await f.request('/onboarding/invite','admin')).status,200);
+  for(const path of ['/onboarding/sources','/onboarding/invite'])assert.equal((await f.request(path,'admin')).status,200);
+  assert.equal((await f.request('/api/onboarding/invites','admin')).status,200);
   assert.equal((await f.request('/api/console/team','admin')).status,409);
   const done=await finish();assert.equal(done.status,200);assert.deepEqual(await done.json(),{workspaceUrl:'/'});
+  assert.ok((await onboarding.read(principal)).completed.observedAt);
   assert.equal((await f.request('/api/console/team','admin')).status,200);
   assert.equal((await (await f.request('/api/console/bootstrap','admin')).json()).onboarding.completed,true);
+  assert.equal((await finish()).status,200,'completion is idempotent');
 });
 test('only an admin can store a connector credential, from this origin, before or after onboarding',async t=>{
   const saved=[];let failure=null;

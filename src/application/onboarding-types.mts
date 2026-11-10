@@ -48,8 +48,7 @@ export interface InvitationList {
 /** Runtime adapters own authorization, persistence, invitation delivery, and OAuth. */
 export interface OnboardingAdapter {
   status(signal: AbortSignal): Promise<OnboardingStatus>;
-  /** optional: this runtime lets the workspace open before any source is connected. */
-  sources(signal: AbortSignal): Promise<{items: OnboardingSource[]; optional?: boolean}>;
+  sources(signal: AbortSignal): Promise<{items: OnboardingSource[]}>;
   connectSource(id: string, input: {apiKey?: string}, signal: AbortSignal): Promise<{redirectUrl?: string; ok?: boolean}>;
   /** Admin only: store an operator credential named by a source's setup. Absent where the runtime manages credentials itself. */
   saveCredential?(id: string, value: string, signal: AbortSignal): Promise<{ok: true}>;

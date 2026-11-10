@@ -9,24 +9,24 @@ import type {SourceCard} from './types.mjs';
 interface GuidedOptions {
   onboarding: ReturnType<typeof createOnboardingStatus> | null; integrations?: Pick<Integrations, 'list'>;
   organizations: ReturnType<typeof teamService>; authorizedSearch?: ReturnType<typeof createWorkspaceSearch>;
-  track?: (name: string, principal: Principal) => unknown; smallJson(req: IncomingMessage, limit?: number): Promise<Record<string, unknown>>;
-  /** A runtime whose connectors need operator setup may open the workspace on agent capture alone. */
-  sourcesOptional?: boolean;
+  track?: (name: string, principal: Principal, properties?: Record<string, unknown>) => unknown; smallJson(req: IncomingMessage, limit?: number): Promise<Record<string, unknown>>;
 }
 interface GuidedContext {route: {name: string}; principal: Principal; identity: {user: HostedUser}; member: Membership; respond(status: number, body: string, type?: string): void}
 import {deriveOnboarding,hasReceipt} from '../onboarding-state.mjs';
 
 /** Product onboarding uses persisted receipts; the runtime owns request admission. */
-export function createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,track = () => {},smallJson,sourcesOptional = false}: GuidedOptions) {
+export function createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,track = () => {},smallJson}: GuidedOptions) {
   const progress = async (principal: Principal) => onboarding ? onboarding.read(principal) : null;
   const sourceCards = async (principal: Principal) => integrations ? integrations.list(principal) : [];
-  const connectedSource = (cards: SourceCard[]) => cards.some(card => ['syncing','synced','connected'].includes(card.state));
+  const connected = (card: SourceCard) => ['syncing','synced','connected'].includes(card.state);
+  const connectedSource = (cards: SourceCard[]) => cards.some(connected);
+  /** Where an unfinished setup resumes. Only agent setup is required: Sources can be skipped, so this is a resume point, never a gate. */
   const requiredSetup = async (principal: Principal) => {
     const state = await progress(principal);
     if (!state || !deriveOnboarding(state).complete) return '/onboarding';
     return connectedSource(await sourceCards(principal)) ? '/onboarding/invite' : '/onboarding/sources';
   };
-  return {progress, next:requiredSetup, sourcesOptional,
+  return {progress, next:requiredSetup,
     handles: (name: string) => name.startsWith('/api/onboarding/') || name === '/api/workspace/search',
     async handle(req: IncomingMessage, {route,principal,identity,member,respond}: GuidedContext) {
       const json = (status: number,value: unknown) => respond(status,JSON.stringify(value),'application/json');
@@ -37,7 +37,7 @@ export function createGuidedOnboarding({onboarding,integrations,organizations,au
       }
       if (route.name === '/api/onboarding/sources') {
         const items = (await sourceCards(principal)).map(card => ({id:card.provider,name:card.name,icon:`/assets/connectors/${card.provider}.svg`,state:card.state,auth:card.auth,keyHelp:card.keyHelp,setup:card.setup}));
-        return json(200,{items,...(sourcesOptional?{optional:true}:{})});
+        return json(200,{items});
       }
       if (route.name === '/api/workspace/search') {
         if (!hasReceipt(state.completed)) return json(409,{error:'Finish setup to open your workspace.',onboardingUrl:await requiredSetup(principal)});
@@ -46,8 +46,13 @@ export function createGuidedOnboarding({onboarding,integrations,organizations,au
         catch(error) {return json([400,401,403].includes(errorInfo(error).status || 0)?errorInfo(error).status!:503,{error:errorInfo(error).status===400?'Enter a valid search query.':'We couldn’t search your workspace. Try again.'});}
       }
       if (route.name === '/api/onboarding/finish' && hasReceipt(state.completed)) return json(200,{workspaceUrl:'/'});
-      if (!sourcesOptional && !connectedSource(await sourceCards(principal))) return json(409,{error:'Connect at least one source.',onboardingUrl:'/onboarding/sources'});
-      if (route.name === '/api/onboarding/finish') {await onboarding.complete(principal);track('onboarding_completed',principal);return json(200,{workspaceUrl:'/'});}
+      if (route.name === '/api/onboarding/finish') {
+        await onboarding.complete(principal);
+        // Sources connected when setup finished: 0 means Sources was skipped, null that the count was unavailable. Never blocks finishing.
+        const sourcesConnected = await sourceCards(principal).then(cards => cards.filter(connected).length, () => null);
+        track('onboarding_completed',principal,{sources_connected:sourcesConnected});
+        return json(200,{workspaceUrl:'/'});
+      }
       if (route.name === '/api/onboarding/invites') {
         try {
           await organizations.requireAdmin(identity.user,principal.tenantId,member);

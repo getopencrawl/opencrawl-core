@@ -128,7 +128,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
   /** The bucket created at onboarding. Connecting never creates storage. */
   async function teamBucket(principal: Principal) {
     const bucket = await buckets.get(principal.tenantId);
-    if (!bucket) throw Object.assign(new Error('Your team’s storage isn’t ready yet. Sign out and sign in again, then connect.'), {status: 409, expose: true});
+    if (!bucket) throw Object.assign(new Error('Your team’s storage isn’t ready yet. Reload this page, then connect again.'), {status: 409, expose: true});
     return bucket;
   }
 
