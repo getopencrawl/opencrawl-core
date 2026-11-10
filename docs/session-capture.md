@@ -61,13 +61,23 @@ What differs from transcript capture:
   tool result cannot hold back the rest of the session.
 - **Origin is `cloud`.** Memory files, native session names, subagent linkage
   and the board listener are not available for Grok Bot.
+- **Other harness hooks stand aside.** Cursor-format runtimes also load Claude
+  Code hook files and wait on them. OpenCrawl's Claude Code and Codex hooks
+  recognise such a run by its `cursor_version` field and do nothing, so a
+  computer with several harnesses installed neither records a Bot twice nor
+  holds it while an uploader runs.
 
-A session is the hook's `conversation_id` (or `session_id`). Grok Bot is in beta,
-and some runtimes have been reported to emit only the tool hooks and leave those
-IDs blank. Capture then records tool activity only and groups it into one
-activity log per workspace and UTC day, named `Grok Bot activity in <workspace>
-on <date>`; this keeps the work searchable without presenting it as a
-conversation. `opencrawl collect status --json` on the Bot's computer shows what
+Grok Bot gives a Bot one conversation ID for its whole life, so a session is one
+Bot's work on one UTC day, with the ID `<conversation_id>:<date>`. That keeps a
+session readable and far below the per-session event limit an endless
+conversation would reach. `collect exclude --session-id <conversation_id>`
+excludes every day of that Bot.
+
+Grok Bot is in beta, and some runtimes have been reported to emit only the tool
+hooks and leave the IDs blank. Capture then records tool activity only and
+groups it into one activity log per workspace and UTC day, named `Grok Bot
+activity in <workspace> on <date>`; this keeps the work searchable without
+presenting it as a conversation. `opencrawl collect status --json` on the Bot's computer shows what
 actually arrives. The hook contract here follows Cursor's published hook
 reference; confirm it on your own Bot computer before relying on coverage.
 

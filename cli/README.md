@@ -265,7 +265,8 @@ which Cursor also reads on a developer machine. There is no Grok Bot transcript
 to read, so sessions are built from the hook payloads: the person's message, the
 Bot's replies and reasoning, and each tool call with its result. Every Bot on
 that computer is recorded and attributed to whoever installed capture, from the
-moment a Bot loads the hooks; there is no history import.
+moment a Bot loads the hooks; there is no history import. A Bot keeps one
+conversation ID for life, so a session is one Bot's work on one UTC day.
 
 Grok Bot waits for each hook, so these hooks only answer, save the payload and
 return. None of them can deny an action, and none is a permission hook. Uploads

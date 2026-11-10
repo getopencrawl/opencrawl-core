@@ -25,18 +25,25 @@ export function grokBotResponse(event: any) {
   return PERMISSION_HOOKS.includes(name) ? {permission: 'allow'} : {};
 }
 
-/** A conversation when the runtime identifies one. Some Grok Bot runtimes send
- * blank conversation IDs; their activity is grouped by workspace and UTC day,
- * which keeps it searchable without presenting it as one conversation. */
+/** Grok Bot gives a Bot one conversation ID for its whole life, so a session is
+ * that Bot's work on one UTC day: readable, and far below the per-session event
+ * limit that an endless conversation would eventually reach. Excluding the
+ * conversation ID excludes every day of it.
+ *
+ * Some runtimes send blank IDs. Their activity is grouped by workspace and day,
+ * which keeps it searchable without presenting it as a conversation. */
 export function grokBotSession(event: any, at: string) {
-  const native = text(event?.conversation_id) ?? text(event?.session_id);
+  const native = text(event?.conversation_id) ?? text(event?.session_id), day = at.slice(0, 10);
   const roots = Array.isArray(event?.workspace_roots) ? event.workspace_roots.filter((root: unknown) => typeof root === 'string' && root) : [];
   const cwd: string | null = text(event?.cwd) ?? roots[0] ?? null;
   const version = text(event?.cursor_version);
-  if (native) return {sessionId: /^[\w.:-]{1,200}$/.test(native) ? native : 'conversation-' + hash(native).slice(0, 32), identified: true, cwd, version, title: null};
-  const workspace: string = roots[0] ?? cwd ?? '', day = at.slice(0, 10);
-  return {sessionId: `activity-${hash(workspace).slice(0, 16)}-${day}`, identified: false, cwd, version,
-    title: `Grok Bot activity in ${basename(workspace) || 'an unknown workspace'} on ${day}`};
+  if (native) {
+    const bot = /^[\w.:-]{1,180}$/.test(native) ? native : 'conversation-' + hash(native).slice(0, 32);
+    return {sessionId: `${bot}:${day}`, identified: true, conversationId: native.length <= 200 ? native : null, cwd, version, title: null, day};
+  }
+  const workspace: string = roots[0] ?? cwd ?? '';
+  return {sessionId: `activity-${hash(workspace).slice(0, 16)}-${day}`, identified: false, conversationId: null, cwd, version,
+    title: `Grok Bot activity in ${basename(workspace) || 'an unknown workspace'} on ${day}`, day};
 }
 
 /** Tool payloads arrive JSON-stringified. Restore the structure so inline

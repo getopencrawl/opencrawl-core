@@ -67,6 +67,10 @@ export async function collectCommand(action:string,api:string,values:any) {
       try {
         if(!['claude-code','codex'].includes(values.harness))throw new Error('Invalid harness');
         const event=await hookInput();
+        // Cursor-format runtimes, Grok Bot included, also load Claude Code hook
+        // files and wait on every hook. That is not a Claude Code or Codex
+        // session: record nothing and never start the uploader there.
+        if(typeof event?.cursor_version==='string')return null;
         await captureHook(values.harness,event);
         // Async Claude Code hooks deliver this JSON on the next turn, so a
         // paused capture is visible to the person instead of failing silently.

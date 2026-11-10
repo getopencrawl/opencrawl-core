@@ -377,8 +377,8 @@ export async function drainCaptureNotices(config=readCaptureConfig()!) {
       const session=grokBotSession(notice.event,notice.at),key=JSON.stringify([session.sessionId,session.cwd]);
       const group=grokBot.get(key)??{meta:{harness:'grok-bot',sessionId:session.sessionId,origin:'cloud',
         originEvidence:session.identified?'Grok Bot cloud computer hook':'Grok Bot hook without a conversation ID; grouped by workspace and UTC day',
-        parentSessionId:null,...(session.cwd?{cwd:session.cwd}:{}),...(session.version?{harnessVersion:session.version}:{}),captureMode:'live'},
-        title:session.title?grokBotTitleEvent(session.sessionId,session.title,notice.at.slice(0,10)):null,notices:[]};
+        parentSessionId:null,...(session.conversationId?{conversationId:session.conversationId}:{}),...(session.cwd?{cwd:session.cwd}:{}),...(session.version?{harnessVersion:session.version}:{}),captureMode:'live'},
+        title:session.title?grokBotTitleEvent(session.sessionId,session.title,session.day):null,notices:[]};
       group.notices.push({path,notice});grokBot.set(key,group);
       continue;
     }

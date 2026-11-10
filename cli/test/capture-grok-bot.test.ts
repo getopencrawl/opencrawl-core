@@ -42,11 +42,15 @@ test('Grok Bot hook payloads become message, reasoning, tool and compaction even
   expect(transcriptEntries(failed)).toEqual([{type:'tool_result',text:'Command timed out after 30s',truncated:false}]);
 });
 
-test('Grok Bot sessions use the conversation ID, or a workspace and day when the runtime sends none',()=>{
+test('a Grok Bot session is one Bot on one UTC day, or a workspace and day when the runtime sends no ID',()=>{
   const at='2026-11-10T23:59:59.000Z';
-  expect(grokBotSession(hook('stop'),at)).toMatchObject({sessionId:base.conversation_id,identified:true,cwd:'/home/bot/expenses',version:'3.1.0',title:null});
-  expect(grokBotSession({session_id:'only-session',hook_event_name:'sessionStart'},at).sessionId).toBe('only-session');
-  expect(grokBotSession(hook('stop',{conversation_id:'has spaces / slashes'}),at).sessionId).toMatch(/^conversation-[a-f0-9]{32}$/);
+  // A Bot keeps one conversation ID for life; a day bounds the session.
+  expect(grokBotSession(hook('stop'),at)).toMatchObject({sessionId:base.conversation_id+':2026-11-10',conversationId:base.conversation_id,identified:true,cwd:'/home/bot/expenses',version:'3.1.0',title:null});
+  expect(grokBotSession(hook('stop'),'2026-11-11T00:00:00.000Z').sessionId).toBe(base.conversation_id+':2026-11-11');
+  expect(grokBotSession({session_id:'only-session',hook_event_name:'sessionStart'},at).sessionId).toBe('only-session:2026-11-10');
+  expect(grokBotSession(hook('stop',{conversation_id:'has spaces / slashes'}),at).sessionId).toMatch(/^conversation-[a-f0-9]{32}:2026-11-10$/);
+  const long=grokBotSession(hook('stop',{conversation_id:'x'.repeat(400)}),at);
+  expect(long.sessionId).toMatch(/^conversation-[a-f0-9]{32}:2026-11-10$/);expect(long.conversationId).toBeNull();
   const blank=hook('postToolUse',{conversation_id:'',session_id:'  ',cwd:'/home/bot/expenses/src'});
   const activity=grokBotSession(blank,at);
   expect(activity).toMatchObject({identified:false,cwd:'/home/bot/expenses/src',title:'Grok Bot activity in expenses on 2026-11-10'});
@@ -149,9 +153,11 @@ test('a Bot conversation is recorded from hooks alone, uploaded at the turn boun
   const stop=hook('stop',{status:'completed',loop_count:0});
   await captureHook('grok-bot',stop);await hookFlush(stop);
   expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,lastError:null});
-  expect(captureStatus().lastUpload).toMatchObject({harness:'grok-bot',sessionId:base.conversation_id,stored:true});
   expect(f.batches).toHaveLength(2);
-  for(const batch of f.batches as any[])expect(batch).toMatchObject({harness:'grok-bot',sessionId:base.conversation_id,origin:'cloud',captureMode:'live',harnessVersion:'3.1.0',cwd:'/home/bot/expenses',owner:f.principal});
+  const session=f.batches[0].sessionId;
+  expect(session).toMatch(new RegExp('^'+base.conversation_id+':\\d{4}-\\d{2}-\\d{2}$'));
+  expect(captureStatus().lastUpload).toMatchObject({harness:'grok-bot',sessionId:session,stored:true});
+  for(const batch of f.batches as any[])expect(batch).toMatchObject({harness:'grok-bot',sessionId:session,conversationId:base.conversation_id,origin:'cloud',captureMode:'live',harnessVersion:'3.1.0',cwd:'/home/bot/expenses',owner:f.principal});
   const events:any[]=f.batches.flatMap((batch:any)=>batch.events).sort((a:any,b:any)=>a.sequence-b.sequence);
   expect(events.map(event=>event.kind)).toEqual(['hook','message','reasoning_summary','tool_call','tool_result','tool_call','tool_result','tool_call','tool_result','message','hook']);
   expect(events.every(event=>/^wire1:[a-f0-9]{64}$/.test(event.id))).toBe(true);expect(new Set(events.map(event=>event.id)).size).toBe(events.length);
@@ -233,7 +239,14 @@ test('excluded workspaces and oversized payloads never leave the computer',async
   // With a project exclusion in place, an unknown working directory is excluded too.
   await captureHook('grok-bot',{hook_event_name:'beforeSubmitPrompt',conversation_id:'no-workspace',prompt:'unknown location'});
   expect(captureStatus().pendingHooks).toBe(0);
-  await captureHook('grok-bot',hook('postToolUse',{tool_name:'Shell',tool_input:{command:'cat big'},tool_output:'x'.repeat(15*1024*1024+1),tool_use_id:'big',duration:5}));
+  // Excluding a Bot's conversation ID excludes every day of that Bot.
+  await excludeCapture(undefined,base.conversation_id);
+  await captureHook('grok-bot',hook('beforeSubmitPrompt',{prompt:'excluded Bot'}));
+  expect(captureStatus().pendingHooks).toBe(0);
+  await captureHook('grok-bot',hook('beforeSubmitPrompt',{conversation_id:'another-bot',prompt:'still recorded'}));
+  expect(captureStatus().pendingHooks).toBe(1);await drainCaptureNotices();
+  rmSync(join(captureDir(),'queue'),{recursive:true});mkdirSync(join(captureDir(),'queue'));
+  await captureHook('grok-bot',hook('postToolUse',{conversation_id:'another-bot',tool_name:'Shell',tool_input:{command:'cat big'},tool_output:'x'.repeat(15*1024*1024+1),tool_use_id:'big',duration:5}));
   await drainCaptureNotices();
   const batch=JSON.parse(readFileSync(join(captureDir(),'queue',readdirSync(join(captureDir(),'queue'))[0]),'utf8'));
   expect(batch.events).toHaveLength(1);
@@ -267,6 +280,24 @@ test('the hook process always exits 0 with the answer Grok Bot expects, installe
   // Recorded and spooled locally; the batches wait for a sign-in.
   expect(captureStatus()).toMatchObject({pendingHooks:0,lastError:{code:'AUTH_REQUIRED'}});expect(captureStatus().queued).toBeGreaterThan(0);
   expect(Math.max(recorded.ms,signedOut.ms,unauthenticated.ms)).toBeLessThan(5000);
+}),30_000);
+
+test('Claude Code and Codex hooks stand aside when a Cursor-format runtime runs them',async()=>fixture(async f=>{
+  // Cursor, and so Grok Bot, also loads ~/.claude/settings.json hooks and waits on them.
+  await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e','']});
+  const cli=resolve(import.meta.dir,'../src/cli.ts');
+  const run=async(args:string[],event:any)=>{
+    const started=Date.now(),child=Bun.spawn(['bun',cli,'collect','hook',...args],{stdin:Buffer.from(JSON.stringify(event)),stdout:'pipe',stderr:'pipe',env:{...process.env}});
+    const [exit,stdout]=await Promise.all([child.exited,new Response(child.stdout).text()]);
+    return {exit,stdout,ms:Date.now()-started};
+  };
+  const cursor={...hook('postToolUse',{tool_name:'Shell',tool_input:{command:'ls'},tool_output:'{}',tool_use_id:'x'}),session_id:'cursor-session'};
+  // The managed hook would otherwise hold the Bot for as long as its uploader stays alive.
+  for(const harness of ['claude-code','codex'])expect(await run(['--managed','--harness',harness],cursor)).toMatchObject({exit:0,stdout:''});
+  expect(captureStatus().pendingHooks).toBe(0);
+  // The same hook still records a native session.
+  expect(await run(['--harness','claude-code'],{session_id:'claude-session',hook_event_name:'PostToolUse'})).toMatchObject({exit:0});
+  expect(captureStatus().pendingHooks).toBe(1);
 }),30_000);
 
 test('a receiver that never answers costs the Bot five seconds once, then a minute of local-only hooks',async()=>fixture(async f=>{
