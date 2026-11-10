@@ -215,3 +215,18 @@ test('public session indexer exposes the existing memory source identity validat
  assert.equal(memorySourceIdentity,existing);
  assert.equal(memorySourceIdentity('sessions/test/v1','outside/the/source.json.gz'),null);
 });
+
+test('search adapters derive neighbour passage ids from the same identity the indexer writes', async () => {
+  const {createSessionSearch} = await import('../dist/src/sessions/search.mjs');
+  const {sessionDocumentId} = await import('../dist/src/sessions/indexer.mjs');
+  const {sessionScope} = await import('../dist/src/sessions/ingest.mjs');
+  const search = createSessionSearch({endpoint:'http://search.test',tenantId:'org-a'});
+  const hit = {id:'x',tenantId:'org-a',userId:'user-a',harness:'codex',sessionId:'s1',eventId:'e1',chunk:0};
+  const scope = sessionScope({tenantId:'org-a',userId:'user-a'});
+  assert.equal(search.neighbour(hit,1),sessionDocumentId({scope,harness:'codex',sessionId:'s1',eventId:'e1',chunk:1}));
+  assert.equal(search.neighbour(hit,-1),null);assert.equal(search.neighbour({...hit,eventId:undefined},1),null);
+  const memory = {id:'m',tenantId:'org-a',userId:'user-a',snapshotId:'snap',path:'notes/a.md',chunk:0};
+  assert.match(search.memories.neighbour(memory,1),/^[a-f0-9]{64}$/);
+  assert.notEqual(search.memories.neighbour(memory,1),search.memories.neighbour(memory,2));
+  assert.equal(search.memories.neighbour({...memory,path:undefined},1),null);
+});

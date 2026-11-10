@@ -7,11 +7,11 @@ export interface SessionPipelineOptions extends SourceOptions {search: ReturnTyp
 import {gunzipSync} from 'node:zlib';
 import {passages} from '../search/passages.mjs';
 import {digest,sessionScope,MAX_BATCH_BYTES} from './ingest.mjs';
-import {sourceBatchIdentity,reserveSessionEvents} from './event-identity.mjs';
+import {sourceBatchIdentity,reserveSessionEvents,sessionDocumentId} from './event-identity.mjs';
 import {memorySourceIdentity,verifyStoredMemory,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
 import {createControls} from './controls.mjs';
 import {memoryControls} from '../memories/library.mjs';
-export {sourceBatchIdentity} from './event-identity.mjs';
+export {sourceBatchIdentity,sessionDocumentId} from './event-identity.mjs';
 export {memorySourceIdentity} from '../memories/snapshot.mjs';
 
 function collect(value: unknown,text: string[],attachments: Attachment[],names: Set<string>,depth=0): void {
@@ -28,12 +28,6 @@ function collect(value: unknown,text: string[],attachments: Attachment[],names: 
     if(['id','type','role','call_id','tool_use_id','encrypted_content','image_url'].includes(key))continue;
     collect(fields[key],text,attachments,names,depth+1);
   }
-}
-/** One document per captured event chunk, whichever installation uploaded it.
- * Event IDs are content-derived, so the same native record re-uploaded from a
- * cloned machine or a second install overwrites rather than duplicates. */
-export function sessionDocumentId({scope,harness,sessionId,eventId,chunk}: {scope: string; harness: string; sessionId: string; eventId: string; chunk: number}) {
-  return digest(JSON.stringify([scope,harness,sessionId,eventId,chunk]));
 }
 /** Shared searchable/meterable content; null denotes a transcript echo. */
 export function sessionEventData(harness: string,event: {kind?: string; data?: unknown}): unknown {

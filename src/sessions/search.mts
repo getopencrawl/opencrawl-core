@@ -5,6 +5,7 @@ interface SessionCount {count: {value: number}}
 interface ActivityAggregation {doc_count: number; sessions: SessionCount; subagentSessions: SessionCount; messages: {doc_count: number}; toolCalls: {value: number}; machines: {value: number}; opencrawl: {doc_count: number}; tools: TermsAggregation; harnesses: TermsAggregation; origins: TermsAggregation; first: {value_as_string?: string}; last: {value_as_string?: string}; daily: {buckets: Array<{key_as_string: string; doc_count: number; sessions: SessionCount}>}; people: {buckets: Array<{key: string; doc_count: number; sessions: SessionCount; subagentSessions: SessionCount; messages: {doc_count: number}; toolCalls: {value: number}; last: {value_as_string?: string}; week: {doc_count: number}}>}}
 import {createRealmResolver,realmField} from '../search/realm.mjs';
 import {sessionScope} from './ingest.mjs';
+import {sessionDocumentId} from './event-identity.mjs';
 import {createMemorySearch} from '../memories/search.mjs';
 import {visibleTo} from './controls.mjs';
 import type {ResourceControl} from './controls.mjs';
@@ -36,6 +37,10 @@ export function createSessionSearch(options: RealmOptions) {
     }
   return {
     memories:createMemorySearch(options),
+    neighbour(hit: Passage,chunk: number){
+      if(!Number.isInteger(chunk)||chunk<0||typeof hit.userId!=='string'||typeof hit.harness!=='string'||typeof hit.sessionId!=='string'||typeof hit.eventId!=='string')return null;
+      return sessionDocumentId({scope:sessionScope({tenantId:hit.tenantId,userId:hit.userId}),harness:hit.harness,sessionId:hit.sessionId,eventId:hit.eventId,chunk});
+    },
     identity:resolve.identity,
     ensureIndex:(principal: Principal)=>resolve(principal).ensureIndex(),
     async putDocuments(documents: DocumentItem[],principal: Principal){

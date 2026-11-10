@@ -91,3 +91,24 @@ test('connector fetch still requires public channel and current available parent
   publicChannel=true;currentVersion='v2';await assert.rejects(service.fetch(principal,{id:'connectors:'+id}),e=>e.status===404);
   currentVersion='v1';available=false;await assert.rejects(service.fetch(principal,{id:'connectors:'+id}),e=>e.status===404);
 });
+
+test('fetch names neighbouring passages of the same record and confirms the next one exists', async () => {
+  const principal = {tenantId:'team',userId:'reader'};
+  const passage = chunk => ({id:'p'+chunk,tenantId:'team',userId:'author',sessionId:'s',eventId:'e',harness:'codex',chunk,text:'part '+chunk});
+  const lookups = [];
+  const service = createWorkspaceSearch({sessions:{
+    search: async (p,q) => {lookups.push(q.id);const chunk = Number(String(q.id).slice(1));return {hits: chunk >= 0 && chunk <= 2 ? [passage(chunk)] : [], total: 1};},
+    neighbour: (hit,chunk) => chunk < 0 ? null : 'p'+chunk,
+  }});
+  const first = await service.fetch(principal,{id:'sessions:p0'});
+  assert.equal(first.previousId,null);assert.equal(first.nextId,'sessions:p1');
+  const middle = await service.fetch(principal,{id:first.nextId});
+  assert.equal(middle.previousId,'sessions:p0');assert.equal(middle.nextId,'sessions:p2');
+  const last = await service.fetch(principal,{id:middle.nextId});
+  assert.equal(last.previousId,'sessions:p1');assert.equal(last.nextId,null);
+  assert.deepEqual(lookups,['p0','p1','p1','p2','p2','p3']);
+  // Sources that do not split records, or hits without a passage number, name no neighbours.
+  const plain = createWorkspaceSearch({sessions:{search:async(p,q)=>({hits:[{id:q.id,tenantId:'team',userId:'author',sessionId:'s',text:'x'}],total:1})}});
+  const single = await plain.fetch(principal,{id:'sessions:a'});
+  assert.equal(single.previousId,null);assert.equal(single.nextId,null);
+});
