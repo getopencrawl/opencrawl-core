@@ -34,7 +34,7 @@ synthetic capture, then creates two **synthetic meeting records**, explicitly la
 samples. A private fixture HTTP service is read by an Airbyte declarative source.
 Airbyte's real S3 destination writes gzip JSONL to SeaweedFS; the normal OpenCrawl
 Temporal worker indexes it into OpenSearch. The demo succeeds only when
-authenticated MCP and browser search retrieve `lunar otter`. The sample uses the
+authenticated MCP and the product search API retrieve `lunar otter`. The sample uses the
 existing meeting schema and appears under Granola with a synthetic-account label;
 no Granola service or personal data is accessed. A synthetic agent session is
 also clearly labeled.
@@ -94,8 +94,9 @@ this compatibility step to an external Airbyte installation.
 
 An interrupted installation can be rerun. Previously created Airbyte resources
 are reconciled; uncertain creates fail visibly instead of creating duplicates.
-If you remove the sample source or change the generated account's password,
-verification fails rather than reversing your change. Reset is for disposable
+If you remove the sample source, the demo check fails rather than restoring it.
+If you change the generated account's password, startup fails rather than
+resetting it. Reset is for disposable
 data only. Moving a populated state directory to another clone is rejected;
 start that clone independently. Concurrent installers in one clone are rejected.
 
@@ -105,6 +106,7 @@ Choose ports on the **first run** when needed:
 OPENCRAWL_DEV_PORT=8192 OPENCRAWL_DEV_AIRBYTE_PORT=8100 ./dev/up
 ```
 
-Ports and credentials are saved for reruns. The sanitized acceptance receipt is
-`.opencrawl-dev/verification.json`: Airbyte job/row count, Temporal workflow ID,
-retrieval and authorization checks, and completion time, without tokens/passwords.
+Ports and credentials are saved for reruns. After `./dev/up demo`, its sanitized
+receipt is `.opencrawl-dev/verification.json`: Airbyte job/row count, Temporal
+workflow ID, retrieval and authorization checks, and completion time, without
+tokens/passwords. Normal startup does not create a demo receipt.

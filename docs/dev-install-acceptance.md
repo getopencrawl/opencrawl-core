@@ -5,11 +5,50 @@ Run `./dev/up` from a clean clone of `codex/core-shell-seam`. See
 ports and lifecycle commands. This acceptance covers the development distribution;
 it does not replace the production self-host checklist.
 
-Normal `./dev/up` now preserves first-run onboarding. `./dev/up demo` explicitly
-runs the synthetic ingestion and onboarding exercise described below. Historical
-receipts below were collected when that demo ran automatically at startup.
+Normal `./dev/up` preserves first-run onboarding. `./dev/up demo` explicitly
+runs the synthetic ingestion and onboarding exercise. It never imports personal
+agent history.
 
-## Verified behavior
+## First-run UI and integrations
+
+Implementation `8bb0bf35db8741d9715975312b9a19f2ac627ff6` passed a clean Ubuntu
+24.04 x86_64 install, without preinstalled Docker, Node or npm, in **291 seconds**.
+A real Chromium browser signed in with the generated account and verified
+`completed: false`, the agent onboarding screen, no page errors and no horizontal
+overflow at 1280×900 and 390×844. Workspace APIs correctly remained gated until
+onboarding completed.
+
+The explicit demo then passed real Airbyte → S3 → Temporal → OpenSearch ingestion
+and authenticated retrieval. A second browser check verified all six integration
+cards, the Google Drive setup dialog, the Agent setup navigation, and the source
+onboarding screen on desktop and mobile. These checks used only the generated
+development account and synthetic fixture. Screenshots and JSON from the first
+login, plus the sanitized preview API receipt, are in
+[the first-run evidence directory](evidence/dev-first-run-20261110/).
+
+The existing OSS preview runs that exact revision. Its authenticated API shows
+all six providers and preserves its existing synced GitHub connection. Existing
+accounts retain their completed onboarding and can reopen it through Agent setup.
+The cloud preview's containers were not changed.
+
+A second installation ran as an ordinary Docker-enabled user. Its explicit demo
+completed in **345 seconds**; generated seed files belonged to that user.
+Stop/resume preserved credentials, organization, workspace and source/job IDs.
+Non-root reset completed in **13 seconds**, removed the installation's state,
+cluster and Compose volumes, and preserved an unrelated container, network,
+volume and its stored sentinel. Root-owned installation reset also passed.
+
+[Core CI](https://github.com/getopencrawl/opencrawl-core/actions/runs/42845069020)
+and [self-host CI](https://github.com/getopencrawl/opencrawl-core/actions/runs/42845068528)
+passed for this implementation, including strict React checks, browser regressions,
+real Temporal and storage checks, capture, restart and backup/restore.
+
+The catalog is visible without external credentials; authorization of a real
+provider still requires operator configuration. The optional Composio adapter
+has contract and scope tests. This check did **not** authorize real Google Drive,
+Notion, Circleback or Slack accounts through Composio.
+
+## Earlier installer verification
 
 - A clean Ubuntu 24.04 x86_64 EC2 machine, 4 CPUs and 16 GiB RAM, starts without
   Docker, Node or npm. An ordinary sudo-capable user runs one command, with no
@@ -42,11 +81,14 @@ restart and backup/restore.
 
 ## Scope and reproducibility
 
-`dev/` only composes existing production adapters and bootstraps local demo data.
-Compared with pre-installer `6dba6df`, `src/`, `web/`, `web-v2/`, `deploy/`, package
-metadata and runtime lockfiles are unchanged. The installer and fixture are absent
-from the runtime image/package. No core package release or hosted shell pin change
-is needed. Main, production data and the established OSS/cloud previews are unchanged.
+The original installer at `fa42dd6` only composed existing production adapters;
+it left the runtime and shared UI unchanged. The later `8bb0bf3` correction also
+updates core's connector catalog, optional operator-owned OAuth adapter and shared
+React UI. The installer and fixture remain absent from the runtime image/package.
+The OSS preview uses an image built directly from that revision; the privately
+published `0.3.0-seam.7` package and cloud preview remain on the earlier runtime.
+A new immutable core package release is required before cloud consumes the new
+runtime. Main and production data are unchanged; no migration was performed.
 
 Airbyte 2.4's fresh catalog lacks CDK 7. The compatibility step inserts the pinned
 missing entry only in the installer's own dedicated database; it leaves existing
