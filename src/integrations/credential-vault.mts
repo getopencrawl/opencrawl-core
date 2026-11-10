@@ -2,8 +2,10 @@ import {createCipheriv,createDecipheriv,randomBytes} from 'node:crypto';
 import type {ConditionalStore,StoreVersion} from '../sessions/types.mjs';
 import {z} from 'zod';
 const token=z.string().min(1).max(16384);
+/** A direct OAuth grant. Its ID is also the connection ID that the grant's source jobs present. */
+export const GRANT_ID=/^grant_[a-f0-9]{48}$/;
 const schema=z.object({
-  id:z.string().regex(/^grant_[a-f0-9]{48}$/),organizationId:z.string().regex(/^org_[A-Za-z0-9]+$/),
+  id:z.string().regex(GRANT_ID),organizationId:z.string().regex(/^org_[A-Za-z0-9]+$/),
   userId:z.string().regex(/^user_[A-Za-z0-9]+$/),integrationId:z.string().regex(/^int_[a-f0-9]{26}$/),
   provider:z.literal('slack'),status:z.enum(['INITIATED','EXCHANGING','ACTIVE','REFRESHING','FAILED','REVOKED']),
   state:token,callbackUrl:z.string().url().max(4096),flowExpiresAt:z.number().finite(),proxyToken:token,
@@ -32,7 +34,7 @@ export function sealedEnvelope(key:Uint8Array){
 export function credentialVault({store,prefix,organizationId,key}:{store:ConditionalStore;prefix:string;organizationId:string;key:Uint8Array}){
   if(key.length!==32||!/^org_[A-Za-z0-9]+$/.test(organizationId)||!prefix||prefix.split('/').some(p=>!p||p==='.'||p==='..'))throw new Error('Invalid credential vault configuration');
   const envelope=sealedEnvelope(key);
-  const path=(id:string)=>{if(!/^grant_[a-f0-9]{48}$/.test(id))throw Object.assign(new Error('Invalid connector grant'),{status:404});return `${prefix}/${organizationId}/${id}.enc`;};
+  const path=(id:string)=>{if(!GRANT_ID.test(id))throw Object.assign(new Error('Invalid connector grant'),{status:404});return `${prefix}/${organizationId}/${id}.enc`;};
   const validate=(value:unknown,id:string)=>{const record=schema.parse(value);if(record.id!==id||record.organizationId!==organizationId)throw new Error('Credential ownership mismatch');return record;};
   const encode=(record:ConnectorGrant)=>{validate(record,record.id);return envelope.seal(path(record.id),Buffer.from(JSON.stringify(record)));};
   const decode=(bytes:Buffer,id:string)=>validate(JSON.parse(envelope.open(path(id),bytes).toString()),id);

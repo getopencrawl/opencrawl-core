@@ -1,14 +1,24 @@
 import {randomBytes,timingSafeEqual} from 'node:crypto';
 import type {ConnectorOAuth,IntegrationRegistry} from './ports.mjs';
-import type {ProxyRequest,ProxyResponse,ProviderData} from './types.mjs';
+import type {ConnectorManifest,ProxyRequest,ProxyResponse,ProviderData} from './types.mjs';
+import type {JsonObject} from '../sessions/types.mjs';
 import type {Principal} from '../identity/types.mjs';
 import type {credentialVault,ConnectorGrant} from './credential-vault.mjs';
+import {GRANT_ID} from './credential-vault.mjs';
 import {slackPublicRead} from './slack-proxy-policy.mjs';
 const SCOPES=['channels:read','channels:history','search:read','users:read','team:read','emoji:read'];
 const equal=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
 const fail=(status:number,message='Connector authorization unavailable'):never=>{throw Object.assign(new Error(message),{status});};
 interface TokenResponse {ok?:boolean;error?:string;access_token?:string;refresh_token?:string;expires_in?:number;token_type?:string;scope?:string;authed_user?:TokenResponse}
 interface Options {organizationId:string;url:string;proxyUrl:string;clientId:string;clientSecret:string;vault:ReturnType<typeof credentialVault>;registry:IntegrationRegistry;fetch?:typeof globalThis.fetch;now?:()=>number}
+/**
+ * The Slack connector as this adapter registers it. The shared manifest expects a broker account ID;
+ * this adapter's connections are its own grants, and Airbyte refuses a source whose settings miss a declared pattern.
+ */
+export function slackOAuthManifest(manifest:ConnectorManifest):ConnectorManifest{
+  const spec=manifest.spec.connection_specification,properties=spec.properties as JsonObject;
+  return {...manifest,spec:{...manifest.spec,connection_specification:{...spec,properties:{...properties,connected_account_id:{...properties.connected_account_id as JsonObject,pattern:GRANT_ID.source}}}}};
+}
 /** Operator-owned Slack app. No OpenCrawl service or managed credential account. */
 export function createSlackOAuth({organizationId,url,proxyUrl,clientId,clientSecret,vault,registry,fetch:send=globalThis.fetch,now=Date.now}:Options){
   if(!clientId||!clientSecret||new URL(url).protocol!=='https:'||!['https:','http:'].includes(new URL(proxyUrl).protocol))throw new Error('Configure Slack OAuth and the Airbyte-accessible app URL');

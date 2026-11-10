@@ -6,6 +6,8 @@ import {join} from 'node:path';
 import {createServer} from 'node:http';
 import {selfhostServices} from '../dist/src/selfhost/services.mjs';
 import {createComposioOAuth} from '../dist/src/integrations/composio.mjs';
+import {createSlackOAuth} from '../dist/src/integrations/slack-oauth.mjs';
+import {credentialVault} from '../dist/src/integrations/credential-vault.mjs';
 import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-registry.mjs';
 import {createProviderCatalog} from '../dist/src/integrations/providers.mjs';
 import {connectorManifest} from '../dist/src/integrations/manifests.mjs';
@@ -80,20 +82,23 @@ async function broker(t,respond=()=>({status:200,data:{ok:true},headers:{}})){
   return {registry,oauth,calls,providers,connect};
 }
 
+/** Airbyte refuses to create a source whose settings miss a required field or a declared type, pattern or range. */
+function conforms(id,config,manifest){
+  const spec=manifest.spec.connection_specification;
+  for(const key of spec.required)assert.ok(config[key]!==undefined&&config[key]!=='',`${id} manifest requires ${key}`);
+  for(const [key,value] of Object.entries(config)){
+    assert.ok(Object.hasOwn(spec.properties,key),`${id} manifest does not declare ${key}`);
+    const declared=spec.properties[key];
+    assert.equal(Number.isInteger(value)?'integer':typeof value,declared.type,`${id} ${key} must be ${declared.type}`);
+    if(declared.pattern)assert.match(value,new RegExp(declared.pattern),`${id} ${key} must match ${declared.pattern}`);
+    if(declared.minimum!==undefined)assert.ok(value>=declared.minimum&&value<=declared.maximum,`${id} ${key} is out of range`);
+  }
+}
 test('every brokered connector receives the configuration its manifest requires, without the operator key',async t=>{
   const f=await broker(t);
   for(const id of brokered){
     const record=await f.connect(id,'ca_'+id),config=await f.oauth.sourceConfiguration(record,f.providers[id]);
-    const spec=connectorManifest(id).spec.connection_specification;
-    for(const key of spec.required)assert.ok(config[key]!==undefined&&config[key]!=='',`${id} manifest requires ${key}`);
-    // Airbyte rejects a source whose settings do not match the connector's declared types and patterns.
-    for(const [key,value] of Object.entries(config)){
-      assert.ok(Object.hasOwn(spec.properties,key),`${id} manifest does not declare ${key}`);
-      const declared=spec.properties[key];
-      assert.equal(Number.isInteger(value)?'integer':typeof value,declared.type,`${id} ${key} must be ${declared.type}`);
-      if(declared.pattern)assert.match(value,new RegExp(declared.pattern),`${id} ${key} must match ${declared.pattern}`);
-      if(declared.minimum!==undefined)assert.ok(value>=declared.minimum&&value<=declared.maximum,`${id} ${key} is out of range`);
-    }
+    conforms(id,config,connectorManifest(id));
     assert.equal(config.credential_proxy_base_url,APP_FOR_AIRBYTE);
     assert.equal(config.connected_account_id,'ca_'+id);assert.equal(config.user_id,'selfhost:org_team:user_a');
     assert.ok(!JSON.stringify(config).includes(OPERATOR_KEY));
@@ -103,6 +108,29 @@ test('every brokered connector receives the configuration its manifest requires,
   const other=await f.oauth.sourceConfiguration(await f.connect('googledrive','ca_second','user_b'),f.providers.googledrive);
   assert.notEqual(drive.credential_proxy_api_key,other.credential_proxy_api_key);
   assert.equal(f.calls.length,0);
+});
+
+test('the operator’s own Slack app receives the configuration its registered connector requires',async t=>{
+  // What self-host registers in Airbyte once a Slack app is configured, and the provider that builds the source settings.
+  const {providers}=await fixture(t,{SLACK_CLIENT_ID:'client-id',SLACK_CLIENT_SECRET:'client-secret'});
+  assert.equal(providers.slack.connector.name,'OpenCrawl Slack (operator OAuth)');
+  const dir=await mkdtemp(join(tmpdir(),'opencrawl-slack-app-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const record={tenantId:'org_team',userId:'user_a',integrationId:'int_'+'a'.repeat(26),provider:'slack',environment:'selfhost',status:'provisioning',startDate:'2026-01-01T00:00:00Z'};
+  let connectedAccountId=null;
+  const slack=createSlackOAuth({organizationId:'org_team',url:'https://self.example',proxyUrl:APP_FOR_AIRBYTE,clientId:'client-id',clientSecret:'client-secret',
+    vault:credentialVault({store:createLocalSessionStore(dir),key:Buffer.alloc(32,7),prefix:'credentials',organizationId:'org_team'}),registry:{get:async()=>({...record,connectedAccountId})},
+    fetch:async target=>new URL(target).pathname==='/api/oauth.v2.access'
+      ?Response.json({ok:true,authed_user:{token_type:'user',access_token:'access-secret',refresh_token:'refresh-secret',scope:'channels:read,channels:history,search:read,users:read,team:read,emoji:read',expires_in:3600}})
+      :Response.json({ok:true,team_id:'T123',team:'Test',user:'Test'})});
+  const link=await slack.link({authConfigId:'slack',userId:'selfhost:org_team:user_a',callbackUrl:'https://self.example/integrations/slack/callback?integration='+record.integrationId+'&state=nonce'});
+  connectedAccountId=link.connected_account_id;
+  await slack.complete({tenantId:'org_team',userId:'user_a'},new URLSearchParams({state:new URL(link.redirect_url).searchParams.get('state'),code:'one-use-code'}));
+  const config=await slack.sourceConfiguration({...record,connectedAccountId},providers.slack);
+  conforms('slack (own app)',config,providers.slack.connector.manifest);
+  assert.equal(config.connected_account_id,connectedAccountId);assert.equal(config.credential_proxy_base_url,APP_FOR_AIRBYTE);
+  assert.doesNotMatch(JSON.stringify(config),/access-secret|refresh-secret|client-secret/);
+  // The brokered Slack connector keeps the published manifest, which names a broker account.
+  assert.throws(()=>conforms('slack (published)',config,connectorManifest('slack')),/must match/);
 });
 
 test('a brokered source capability reads only its own provider’s listed endpoints while connected',async t=>{

@@ -14,7 +14,7 @@ import {createConnectorSearch} from '../connectors/search.mjs';
 import {singleOrganizationStorage,singleOrganizationDestination} from '../integrations/single-organization-storage.mjs';
 import {createGitHubApp,githubAppSettings} from '../integrations/github.mjs';
 import {credentialVault} from '../integrations/credential-vault.mjs';
-import {createSlackOAuth} from '../integrations/slack-oauth.mjs';
+import {createSlackOAuth,slackOAuthManifest} from '../integrations/slack-oauth.mjs';
 import {createComposioOAuth} from '../integrations/composio.mjs';
 import {connectorSettingsStore} from '../integrations/connector-settings.mjs';
 import {errorInfo} from '../errors.mjs';
@@ -35,7 +35,7 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   let oauth:ReturnType<typeof createSlackOAuth>|undefined;
   if(env.SLACK_CLIENT_ID||env.SLACK_CLIENT_SECRET){
     oauth=createSlackOAuth({organizationId:settings.organizationId,url:settings.url,proxyUrl,clientId:required('SLACK_CLIENT_ID'),clientSecret:required('SLACK_CLIENT_SECRET'),vault:credentialVault({store,prefix:'connector-credentials/v1',organizationId:settings.organizationId,key:connectorKey()}),registry});
-    definitions.slack={name:'OpenCrawl Slack (operator OAuth)',manifest:connectorManifest('slack')};
+    definitions.slack={name:'OpenCrawl Slack (operator OAuth)',manifest:slackOAuthManifest(connectorManifest('slack'))};
   }
   const disabled=async():Promise<never>=>{throw new Error('Configure operator-owned connector OAuth');};
   const unavailable:ConnectorOAuth={authConfig:disabled,link:disabled,account:disabled,remove:disabled,proxy:disabled,sourceConfiguration:disabled};
