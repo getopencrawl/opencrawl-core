@@ -1,5 +1,7 @@
 import {errorInfo} from './types.mjs';
-import type {Workos, Principal} from './types.mjs';
+import type {WorkOS as Workos} from '@workos-inc/node';
+import type {Principal} from './types.mjs';
+import {workosDirectory} from './workos.mjs';
 import type {IdentitySettings} from './types.mjs';
 type CliResult = {status: 200; user: {id: string; email: string}; principal?: Principal} | {status: 401 | 403 | 503; code?: string};
 import {userPrincipal, singleOrganizationPrincipal} from './principal.mjs';
@@ -16,7 +18,8 @@ export function cliConfiguration(settings: Pick<IdentitySettings, 'clientId'>) {
 }
 
 export function cliIdentity(settings: Pick<IdentitySettings, 'clientId' | 'organizationId'>, workos: Workos) {
-  const fixedPrincipal = settings.organizationId ? singleOrganizationPrincipal(workos, settings.organizationId) : null;
+  const directory=workosDirectory(workos);
+  const fixedPrincipal = settings.organizationId ? singleOrganizationPrincipal(directory, settings.organizationId) : null;
   let keys: ReturnType<typeof createRemoteJWKSet> | undefined;
   return identify;
   function identify(authorization: string | undefined, options: {capture: true}): Promise<Exclude<CliResult, {status: 200}> | {status: 200; user: {id: string; email: string}; principal: Principal}>;
@@ -43,14 +46,14 @@ export function cliIdentity(settings: Pick<IdentitySettings, 'clientId' | 'organ
         (payload.sub_profile !== undefined && payload.sub_profile !== 'user') || payload.sub_type !== undefined) return {status: 401};
     // Fresh server-side verification; CLI claims and token response user fields
     // never authorize access. Enrollment grants no index or browser-preview access.
-    const current = await currentVerifiedUser(workos, payload.sub);
+    const current = await currentVerifiedUser(directory, payload.sub);
     if (current.status !== 200) return current;
-    const session = await currentUserSession(workos, payload.sub, payload.sid);
+    const session = await currentUserSession(directory, payload.sub, payload.sid);
     if (session.status !== 200) return session;
     const {user} = current;
     const result: CliResult = {status: 200, user: {id: user.id, email: user.email}};
     if (capture) {
-      const principal = await (fixedPrincipal ? fixedPrincipal(user, payload.org_id) : userPrincipal(workos, user, payload.org_id));
+      const principal = await (fixedPrincipal ? fixedPrincipal(user, payload.org_id) : userPrincipal(directory, user, payload.org_id));
       if (!principal) return {status:403, code:'ORGANIZATION_REQUIRED'};
       result.principal = {...principal, email:user.email,
         name:[user.firstName,user.lastName].filter(Boolean).join(' ') || null};

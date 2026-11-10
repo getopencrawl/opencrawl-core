@@ -5,7 +5,7 @@
 OpenCrawl core must provide a useful single-tenant product on infrastructure a
 customer controls, without access to the proprietary shell, an OpenCrawl
 account, or our control plane. One tenant is one customer/security boundary;
-it supports multiple users in one configured WorkOS organization. Basic security is part of core's
+it supports multiple users in one local organization. Basic security is part of core's
 self-hosted distribution, not a proprietary add-on.
 
 The hosted shell adds managed multitenancy and operation around the same product
@@ -16,10 +16,10 @@ in domain logic. No duplicated hosted version of a core operation.
 
 ## Placement
 
-Core owns the complete noncommercial UI, reusable WorkOS authentication and
+Core owns the complete noncommercial UI, reusable identity adapters and
 team operations, capture, board, sessions, memories, connector lifecycle,
 Airbyte clients, indexing, search, resource permissions and data lifecycle.
-Self-hosters supply their own WorkOS account and one organization, Airbyte,
+Self-hosters operate local Better Auth accounts and supply Airbyte,
 OpenSearch, connector credentials and documented supporting storage/jobs.
 
 The proprietary shell owns hosted tenant selection and provisioning, billing
@@ -111,9 +111,10 @@ routing and safe migration/cutover; it must not introduce per-feature index layo
 
 ## Shared application seam
 
-The single-tenant product supports multiple users through the operator’s own
-WorkOS account. WorkOS is the supported identity adapter for this iteration;
-reusable authentication, membership, role controls, UI, Airbyte and connector
+The single-tenant product uses Better Auth with local accounts in an operator-owned
+SQLite database. Cloud continues to use WorkOS. Both adapters expose core-owned
+identity directory facts; provider sessions and tokens stay at their runtime boundary.
+Reusable authentication, membership, role controls, UI, Airbyte and connector
 lifecycle implementations belong in core. Hosted multi-tenant selection and
 provisioning, billing, fleet operation and internal administration belong in
 shell. Source SDK names do not determine ownership. Core requires no account

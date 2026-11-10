@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.3.0-seam.5",
+  "version": "0.3.0-seam.6",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
@@ -53,6 +53,7 @@
     "./identity/team": "./dist/src/identity/team.mjs",
     "./identity/role-write": "./dist/src/identity/role-write.mjs",
     "./identity/types": "./dist/src/identity/types.mjs",
+    "./identity/workos": "./dist/src/identity/workos.mjs",
     "./application/types": "./dist/src/application/types.mjs",
     "./application/console": "./dist/src/application/console.mjs",
     "./application/rpc": "./dist/src/application/rpc.mjs",
@@ -126,15 +127,17 @@
     "app:worker": "node dist/src/selfhost/worker.mjs"
   },
   "dependencies": {
+    "@better-auth/oauth-provider": "1.7.19",
     "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/server": "2.4.0",
+    "@trpc/client": "11.25.2",
+    "@trpc/server": "11.25.2",
+    "@workos-inc/node": "12.0.0",
+    "better-auth": "1.7.19",
+    "jose": "6.2.15",
     "parse5": "8.1.0",
     "pdfjs-dist": "6.5.438",
-    "zod": "4.6.7",
-    "@workos-inc/node": "12.0.0",
-    "jose": "6.2.15",
-    "@trpc/server": "11.25.2",
-    "@trpc/client": "11.25.2"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.4.0",

@@ -1,5 +1,6 @@
 import type {IncomingMessage,ServerResponse} from 'node:http';
-import type {IdentitySettings,Workos} from './types.mjs';
+import type {IdentitySettings} from './types.mjs';
+import type {WorkOS as Workos} from '@workos-inc/node';
 import {activeMemberships} from './principal.mjs';
 import {currentVerifiedUser} from './auth.mjs';
 /** WorkOS device sign-in may inherit a different organization from AuthKit.

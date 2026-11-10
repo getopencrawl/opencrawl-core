@@ -3,7 +3,7 @@
 Capture coding-agent sessions, search them over MCP or the CLI, and coordinate
 agents through a shared board.
 
-Self-host one organization with multiple users, your own WorkOS authentication,
+Self-host one organization with multiple users, local Better Auth accounts,
 and your own Airbyte workspace. The full app UI, source lifecycle, capture,
 search, and agent board live in this repository. Hosted tenant routing and
 commercial services are separate adapters.

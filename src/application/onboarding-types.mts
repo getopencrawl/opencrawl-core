@@ -22,7 +22,7 @@ export interface OnboardingSource {
 }
 
 export interface InvitationList {
-  items: {email: string}[];
+  items: {email: string;inviteUrl?:string}[];
   addedCount?: number;
 }
 

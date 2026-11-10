@@ -1,5 +1,6 @@
+import {verifiedUser} from './auth.mjs';
 import {errorInfo} from './types.mjs';
-import type {Workos} from './types.mjs';
+import type {IdentityDirectory} from './types.mjs';
 import type {IdentitySettings} from './types.mjs';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 import type {JWTVerifyGetKey} from 'jose';
@@ -12,8 +13,8 @@ export function mcpMetadata(settings: Pick<IdentitySettings, 'url' | 'authOrigin
     resource_name: 'OpenCrawl'};
 }
 
-export function mcpIdentity(settings: Pick<IdentitySettings, 'url' | 'authOrigin' | 'organizationId'>, workos: Workos, keyResolver?: JWTVerifyGetKey) {
-  const fixedPrincipal = settings.organizationId ? singleOrganizationPrincipal(workos, settings.organizationId) : null;
+export function mcpIdentity(settings: Pick<IdentitySettings, 'url' | 'authOrigin' | 'organizationId'>, directory: IdentityDirectory, keyResolver?: JWTVerifyGetKey) {
+  const fixedPrincipal = settings.organizationId ? singleOrganizationPrincipal(directory, settings.organizationId) : null;
   const keys = keyResolver || createRemoteJWKSet(new URL(settings.authOrigin + '/oauth2/jwks'), {timeoutDuration: 5000});
   return async (req: IncomingMessage, res: ServerResponse) => {
     const reject = (status: number, error?: string) => {
@@ -35,11 +36,11 @@ export function mcpIdentity(settings: Pick<IdentitySettings, 'url' | 'authOrigin
     if (typeof payload.sub !== 'string' || !/^user_[A-Za-z0-9]+$/.test(payload.sub)) return reject(401, 'invalid_token');
     if (typeof payload.scope !== 'string' || !payload.scope.split(' ').includes('openid')) return reject(403, 'insufficient_scope');
     try {
-      const user = await workos.userManagement.getUser(payload.sub);
-      if (user.id !== payload.sub || !user.emailVerified) {
+      const user = await directory.userManagement.getUser(payload.sub);
+      if (user.id !== payload.sub || !verifiedUser(user)) {
         res.writeHead(403, {'Content-Type': 'application/json'});res.end(JSON.stringify({error: 'verified_account_required'}));return null;
       }
-      const principal = await (fixedPrincipal ? fixedPrincipal(user, payload.org_id) : userPrincipal(workos, user, payload.org_id));
+      const principal = await (fixedPrincipal ? fixedPrincipal(user, payload.org_id) : userPrincipal(directory, user, payload.org_id));
       if (!principal) return reject(403, 'insufficient_scope');
       return principal;
     } catch (error) {

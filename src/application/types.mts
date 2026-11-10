@@ -31,7 +31,8 @@ export interface TeamReport {
   viewerUserId: string;
   role: WorkspaceRole;
   members?: Array<{id: string; name: string | null; email: string; role: WorkspaceRole}>;
-  invitations?: Array<{email: string; state?: string}>;
+  /** inviteUrl: self-host shares the link directly because it sends no email. */
+  invitations?: Array<{email: string; state?: string; inviteUrl?: string}>;
 }
 
 export interface SettingsData {

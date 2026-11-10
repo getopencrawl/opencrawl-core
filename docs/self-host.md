@@ -1,8 +1,9 @@
 # Self-host OpenCrawl
 
-The default Docker Compose deployment runs the full application for one WorkOS
-organization with multiple users. You operate the WorkOS project, Airbyte
-workspace, connector credentials, and infrastructure. It does not contact an
+The default Docker Compose deployment runs the full application for one local
+organization with multiple users. Better Auth stores accounts, password hashes,
+sessions and OAuth grants in your installation’s SQLite database. You operate
+Airbyte, connector credentials, and infrastructure. It does not contact an
 OpenCrawl hosted service.
 
 This branch is a candidate. [Acceptance status](seam-acceptance.md) distinguishes
@@ -19,19 +20,25 @@ stops. Fill in the empty configuration fields, then run it again. You can also
 run `docker compose up -d --build --wait` directly from `deploy/` after configuring
 `.env`. Choose a fresh `COMPOSE_PROJECT_NAME` for each installation.
 
-Configure WorkOS AuthKit with:
+Put the application origin in `OPENCRAWL_URL`. The installer generates
+`OPENCRAWL_ORGANIZATION_ID`, `OPENCRAWL_AUTH_SECRET` and `OPENCRAWL_SETUP_TOKEN`.
+No WorkOS project, OpenCrawl account, or authentication SaaS subscription is needed.
+After startup, use the private setup link printed by `up.sh` to create the first
+administrator. Bootstrap is consumed once and does not reopen if members are removed.
 
-- Your client ID, server API key, and AuthKit origin.
-- One organization ID. Add the initial user to that organization as `admin`.
-- Redirect URI: `https://YOUR-APP/auth/callback`.
-- Sign-in endpoint: `https://YOUR-APP/auth/login`.
-- Logout redirect: `https://YOUR-APP/signed-out`.
-- The device authorization flow for the CLI and OAuth resource/audience
-  `https://YOUR-APP/mcp` for MCP clients.
+Sign in with email and password. An admin shares a private, single-use invitation
+link from Team; the app does not send invitation email. Give that link only to its
+intended recipient. Local enrollment grants workspace access without claiming
+mailbox verification. This release does not configure Google login, passkeys or
+enterprise SSO for self-host. Cloud retains its existing WorkOS capabilities.
 
-Put the application origin in `OPENCRAWL_URL`. Browser, CLI, and MCP admission
-always checks membership in the configured organization. Users may belong to
-other WorkOS organizations; that does not give them a second workspace here.
+CLI login uses this installation’s device authorization endpoint. MCP clients use
+PKCE, explicit consent and the installation’s `/mcp` audience. JWT access tokens
+last five minutes; rotating refresh tokens can be revoked through the advertised
+OAuth revocation endpoint. Browser logout ends the browser session; it does not
+revoke an independently consented offline grant. Removing membership denies all
+resource access, including previously issued credentials. No browser session can
+select a second organization here. See [identity boundary](identity-seam.md).
 
 Use an existing Airbyte workspace and API application. Set `AIRBYTE_URL`,
 `AIRBYTE_CLIENT_ID`, `AIRBYTE_CLIENT_SECRET`, and `AIRBYTE_WORKSPACE_ID`. The app
@@ -94,9 +101,25 @@ current source state. Team admins can invite users and manage roles; ordinary
 members can use shared data and keep supported session/memory resources private.
 The UI is the same core application consumed by the cloud shell.
 
+## Account recovery
+
+An operator with access to the private deployment can reset an enrolled account:
+
+```sh
+cd deploy
+docker compose exec -T app node dist/src/selfhost/recover.mjs account@example.com < /private/password-file
+```
+
+Use a private file containing only the new password (10–128 characters), then
+remove that file securely. The command changes the password and invalidates old
+browser sessions, OAuth access tokens and refresh grants. It preserves membership
+and source data. Users reconnect CLI/MCP afterward. Delegated capture credentials
+are separate; revoke those by their IDs from the account’s Capture page when needed.
+Do not delete the identity database to recover a password.
+
 ## Persistence, deletion, and backup
 
-Named volumes preserve S3 objects, OpenSearch indexes, the application registry,
+Named volumes preserve S3 objects, OpenSearch indexes, the identity database and application registry,
 and Temporal's PostgreSQL data. The registry refuses to reopen under a different
 organization. Workers rediscover active connections and captured objects after
 restarting; pending Airbyte creation intents are reconciled before any retry.
@@ -121,8 +144,8 @@ node deploy/backup.mjs create /absolute/new-backup-directory
 The script stops this Compose stack, saves its data volumes and `.env` with
 restricted permissions, records checksums and source revision, then restarts it.
 The environment includes the encryption key: preserve it alongside the backup.
-It does not back up external WorkOS or Airbyte resources. Use those operators'
-backup procedures as well.
+It does not back up external Airbyte resources. Use the Airbyte operator’s
+backup procedure as well.
 
 Restore only at the recorded Git revision into empty destination volumes:
 

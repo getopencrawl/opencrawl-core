@@ -1,21 +1,20 @@
-import {singleOrganizationDevice} from '../identity/single-organization-device.mjs';
 import type {createSlackOAuth} from '../integrations/slack-oauth.mjs';
 import {connectorProxyHandler} from '../integrations/proxy-http.mjs';
 import type {IncomingMessage,ServerResponse} from 'node:http';
-import type {Workos,Principal} from '../identity/types.mjs';
+import type {Principal} from '../identity/types.mjs';
 import type {SelfhostSettings} from './settings.mjs';
 import type {createObjectStore} from '../sessions/s3-store.mjs';
 import type {Integrations} from '../integrations/service.mjs';
 import type {ProviderCatalog} from '../integrations/types.mjs';
 import type {createConnectorResolver} from '../integrations/resolver.mjs';
-import {createWorkos} from '../identity/workos.mjs';
+import type {LocalIdentity} from '../identity/better-auth.mjs';
+import {localAuth} from './local-auth.mjs';
 import {Readable} from 'node:stream';
 import {readFile} from 'node:fs/promises';
-import {cookies,sealFlow,openFlow,verifiedUser,currentVerifiedUser} from '../identity/auth.mjs';
+import {currentVerifiedUser} from '../identity/auth.mjs';
 import {singleOrganizationIdentity} from '../identity/single-organization.mjs';
 import {singleOrganizationPrincipal} from '../identity/principal.mjs';
-import {cliIdentity,cliConfiguration} from '../identity/cli.mjs';
-import {mcpIdentity,mcpMetadata} from '../identity/mcp.mjs';
+import {mcpMetadata} from '../identity/mcp.mjs';
 import {teamService,isAdmin} from '../identity/team.mjs';
 import {roleWriteGuard} from '../identity/role-write.mjs';
 import {createOnboardingStatus} from '../onboarding-status.mjs';
@@ -45,29 +44,28 @@ import {captureSetupPrompt,cloudCapturePage} from '../sessions/cloud-setup.mjs';
 import {createCaptureCredentials,isCaptureCredential} from '../sessions/credentials.mjs';
 import {createSessionIngest,createCaptureHandler} from '../sessions/ingest.mjs';
 import {errorInfo} from '../errors.mjs';
-const SESSION='__Host-opencrawl-session',FLOW='__Host-opencrawl-flow';
 type Store=ReturnType<typeof createObjectStore>;
 export interface SelfhostApplicationOptions {
-  settings:SelfhostSettings;store:Store;prefix:string;workos?:Workos;
+  settings:SelfhostSettings;store:Store;prefix:string;identity:LocalIdentity;
   integrations?:Integrations;providers?:ProviderCatalog;connectors?:ReturnType<typeof createConnectorResolver>;
   oauth?:ReturnType<typeof createSlackOAuth>;
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
-/** Full product composition for one operator-owned WorkOS organization. */
-export function selfhostApplication({settings,store,prefix,workos:sdk,integrations,providers={},connectors,oauth,
+/** Full product composition for one self-hosted organization with its own accounts. */
+export function selfhostApplication({settings,store,prefix,identity,integrations,providers={},connectors,oauth,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
 }:SelfhostApplicationOptions) {
-  const workos=sdk||createWorkos(settings);
-  const deviceTokens=singleOrganizationDevice(settings,workos);
+  const directory=identity.directory;
   const credentialProxy=oauth?connectorProxyHandler(oauth):null;
-  const admit=singleOrganizationIdentity(workos,settings.organizationId),resolve=singleOrganizationPrincipal(workos,settings.organizationId);
-  const identifyCli=cliIdentity(settings,workos),organizations=teamService(workos,roleWriteGuard(store,prefix));
+  const admit=singleOrganizationIdentity(directory,settings.organizationId),resolve=singleOrganizationPrincipal(directory,settings.organizationId);
+  const accounts=localAuth({identity,url:settings.url,organizationId:settings.organizationId,setupToken:settings.setupToken,member:async browser=>(await admit(browser)).status===200});
+  const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(store,prefix));
   const onboarding=createOnboardingStatus({store,prefix}),observe=createOnboardingObserver(onboarding);
   const values=valueReports({store,prefix});
   const search=createSessionSearch(settings.search);
   async function authorize(principal:Principal,requested?:unknown) {
     if(principal?.tenantId!==settings.organizationId || principal.captureAccess!==undefined || requested!=null&&requested!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
-    const current=await currentVerifiedUser(workos,principal.userId);
+    const current=await currentVerifiedUser(directory,principal.userId);
     if(current.status!==200)throw Object.assign(new Error('Account unavailable'),{status:current.status});
     const result=await resolve(current.user,settings.organizationId);
     if(!result)throw Object.assign(new Error('Membership required'),{status:403});
@@ -83,7 +81,7 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
   const query=createWorkspaceSearchHandler({search:authorizedSearch,authenticate});
   const fetchPassage=createWorkspaceSearchHandler({search:authorizedSearch,authenticate,operation:'fetch'});
   const boardHandler=createBoardHandler({board,authenticate});
-  const mcp=createOpenCrawlMcp({origin:settings.url,revision:settings.revision,search:authorizedSearch,board,authenticate:mcpIdentity(settings,workos),onConnectionTest:p=>onboarding.mcpTest(p),onAuthenticated:(p,info)=>onboarding.mcp(p,info)});
+  const mcp=createOpenCrawlMcp({origin:settings.url,revision:settings.revision,search:authorizedSearch,board,authenticate:accounts.mcpIdentity,onConnectionTest:p=>onboarding.mcpTest(p),onAuthenticated:(p,info)=>onboarding.mcp(p,info)});
   const credentials=createCaptureCredentials({store,prefix});
   const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({store,prefix,onStored:observe.session}),authenticate:async req=>{
     const token=/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1];
@@ -102,7 +100,7 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
   const library=createLibraryApi({sessions:createSessionLibrary({store,prefix,...settings.search}),memories:createMemoryLibrary({store,prefix,...settings.search})});
   const members=async(organizationId:string)=>{
     if(organizationId!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
-    const result=await workos.userManagement.listOrganizationMemberships({organizationId,statuses:['active'],limit:100});
+    const result=await directory.userManagement.listOrganizationMemberships({organizationId,statuses:['active'],limit:100});
     const rows=result.autoPagination?await result.autoPagination():result.data;
     return [...new Map(rows.filter(m=>m.organizationId===organizationId&&m.status==='active').map(m=>[m.userId,m])).values()];
   };
@@ -113,19 +111,17 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
     ...['googledrive','slack','granola','circleback','notion','github'].flatMap(f=>['connectors','integrations'].map((kind):[string,[string,string]]=>[`/assets/${kind}/${f}.svg`,[`web/assets/connectors/${f}.svg`,'image/svg+xml']])),
   ]);
   return async(req:IncomingMessage,res:ServerResponse)=>{
-    for(const [key,value] of Object.entries(securityHeaders))res.setHeader(key,key==='Content-Security-Policy'?value.replace('https://*.authkit.app',settings.authOrigin):value);
+    for(const [key,value] of Object.entries(securityHeaders))if(key!=='Strict-Transport-Security'||settings.url.startsWith('https:'))res.setHeader(key,key==='Content-Security-Policy'?value.replace(" https://api.directory.com https://*.authkit.app",''):value);
     const respond=(status:number,body:string|Buffer,type='text/plain; charset=utf-8')=>{res.writeHead(status,{'Content-Type':type});res.end(body);};
     const json=(status:number,body:unknown)=>respond(status,JSON.stringify(body),'application/json');
     const redirect=(location:string)=>{res.writeHead(303,{Location:location});res.end();};
     const message=(status:number,heading:string,detail:string,href='/auth/login',action='Sign in')=>respond(status,document({kind:"message",heading,detail,href,action}),'text/html; charset=utf-8');
-    const cookie=(name:string,value:string,age=604800)=>{const old=res.getHeader('Set-Cookie');res.setHeader('Set-Cookie',[...(Array.isArray(old)?old:old?[String(old)]:[]),`${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`]);};
     try {
       const url=new URL(req.url||'/',settings.url);
       if(req.method==='GET'&&url.pathname==='/health')return json(200,{ok:true,mode:'selfhost',revision:settings.revision||'development'});
-      if(url.pathname==='/.well-known/opencrawl-cli')return req.method==='GET'?json(200,{...cliConfiguration(settings),auth:{...cliConfiguration(settings).auth,tokenEndpoint:settings.url+'/api/cli/token'}}):respond(405,'Method not allowed');
+      if(url.pathname==='/.well-known/opencrawl-cli')return req.method==='GET'?json(200,accounts.cliConfiguration()):respond(405,'Method not allowed');
       if(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'].includes(url.pathname)){res.setHeader('Access-Control-Allow-Origin','*');return req.method==='GET'?json(200,mcpMetadata(settings)):respond(405,'Method not allowed');}
       if(url.pathname==='/api/connector-proxy')return credentialProxy?await credentialProxy(req,res):respond(503,'Connector proxy unavailable');
-      if(url.pathname==='/api/cli/token')return await deviceTokens(req,res);
       if(url.pathname==='/mcp')return await mcp(req,res);
       if(url.pathname.startsWith('/api/sessions/'))return await capture(req,res);
       if(url.pathname==='/api/search')return await query(req,res);
@@ -143,41 +139,23 @@ export function selfhostApplication({settings,store,prefix,workos:sdk,integratio
       if(req.method==='GET'&&/^\/console\/assets\/(app|callback)\.(js|css)$/.test(url.pathname))return respond(200,await readAsset('web-v2/dist/selfhost/'+url.pathname.split('/').at(-1)),url.pathname.endsWith('.css')?'text/css':'text/javascript; charset=utf-8');
       if(req.method==='GET'&&assets.has(url.pathname)){const [file,type]=assets.get(url.pathname)!;return respond(200,await readAsset(file),type);}
       if(req.method==='GET'&&url.pathname==='/signed-out')return message(200,'You’re signed out','You have signed out of OpenCrawl.');
-      const jar=cookies(req.headers.cookie);
-      if(req.method==='GET'&&['/auth/login','/auth/signup'].includes(url.pathname)) {
-        const flow=await workos.userManagement.getAuthorizationUrlWithPKCE({provider:'authkit',clientId:settings.clientId,organizationId:settings.organizationId,redirectUri:settings.url+'/auth/callback',screenHint:url.pathname==='/auth/signup'?'sign-up':'sign-in',...(url.searchParams.get('invitation_token')?{invitationToken:url.searchParams.get('invitation_token')!}:{})});
-        cookie(FLOW,sealFlow({state:flow.state,codeVerifier:flow.codeVerifier,expiresAt:Date.now()+600000},settings.cookiePassword),600);return redirect(flow.url);
-      }
-      if(req.method==='GET'&&url.pathname==='/auth/callback') {
-        cookie(FLOW,'',0);
-        const flow=openFlow(jar[FLOW]||'',url.searchParams.get('state')||'',settings.cookiePassword);
-        if(!flow||!url.searchParams.get('code')||url.searchParams.has('error'))return message(400,'Try signing in again','This sign-in link expired or could not be verified.');
-        const result=await workos.userManagement.authenticateWithCode({clientId:settings.clientId,code:url.searchParams.get('code')!,codeVerifier:flow.codeVerifier,session:{sealSession:true,cookiePassword:settings.cookiePassword}});
-        if(!verifiedUser(result.user)||result.organizationId!=null&&result.organizationId!==settings.organizationId||!await resolve(result.user,result.organizationId))return message(403,'Workspace access denied','Ask an organization admin for an invitation.');
-        if(!result.sealedSession)return message(503,'Sign-in is unavailable','Try signing in again.');
-        cookie(SESSION,result.sealedSession);return redirect('/');
-      }
+      if(await accounts.route(req,res,url))return;
       const oauthCallback=url.pathname==='/oauth/connectors/slack/callback'&&req.method==='GET';
       const route=oauthCallback?{name:'connector-oauth-callback'}:productRoute(req.method||'',url.pathname);
       if(!route)return respond(404,'Not found');
       if(route.status)return respond(route.status,'Method not allowed');
       if(req.method==='POST'&&req.headers.origin!==settings.url)return respond(403,'Invalid request origin');
-      let identity,session;
-      if(jar[SESSION]) {
-        session=workos.userManagement.loadSealedSession({sessionData:jar[SESSION],cookiePassword:settings.cookiePassword});identity=await session.authenticate();
-        if(!identity.authenticated){const refreshed=await session.refresh();if(refreshed.authenticated&&refreshed.sealedSession){cookie(SESSION,refreshed.sealedSession);identity=await session.authenticate();}else if('retryable' in refreshed&&refreshed.retryable)return respond(503,'Sign-in is temporarily unavailable.');}
-      }
-      if(!identity?.authenticated){cookie(SESSION,'',0);return url.pathname==='/auth/logout'?redirect('/signed-out'):url.pathname.startsWith('/api/')?respond(401,'Sign in required'):redirect('/auth/login');}
-      if(url.pathname==='/auth/logout'){cookie(SESSION,'',0);return redirect(await session!.getLogoutUrl({returnTo:settings.url+'/signed-out'}));}
-      const current=await admit(identity);
+      const browser=await accounts.browserIdentity(req,res);
+      if(!browser.authenticated)return url.pathname.startsWith('/api/')?respond(401,'Sign in required'):redirect(await identity.setupRequired()?'/auth/signup':accounts.loginUrl(url.pathname+url.search));
+      const current=await admit(browser);
       if(current.status!==200)return respond(current.status,current.status===503?'Sign-in is temporarily unavailable.':'Workspace access denied');
-      const {principal,user,member,cacheScope}=current,activeIdentity=identity;
+      const {principal,user,member,cacheScope}=current,activeIdentity=browser;
       if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
       const sources=(p:Principal)=>integrations?integrations.list(p):Promise.resolve([]);
-      const consoleApi=createConsoleApi({url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>workos.organizations.getOrganization(id),members,user:id=>workos.userManagement.getUser(id),
+      const consoleApi=createConsoleApi({url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
-        usage:p=>usageReport({principal:p,workos,integrations,search,connectors,onboarding,values}),progress:guided.progress,next:guided.next,library,libraryFailure});
+        usage:p=>usageReport({principal:p,directory,integrations,search,connectors,onboarding,values}),progress:guided.progress,next:guided.next,library,libraryFailure});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{
         if(selected.name.startsWith('/api/console/')){
           if(selected.name!=='/api/console/bootstrap'&&!hasReceipt((await guided.progress(principal))?.completed))return reply(409,JSON.stringify({error:'Complete onboarding before opening the workspace.',onboardingUrl:await guided.next(principal)}),'application/json');

@@ -9,7 +9,7 @@ import type {OnboardingSource, OnboardingStatus} from '../src/onboarding/types.t
 interface FixtureState {
   status: OnboardingStatus;
   sources: OnboardingSource[];
-  invitations: {email: string}[];
+  invitations: {email: string;inviteUrl?:string}[];
   delayStatus: number;
   finishError: boolean;
   requests: {status: number; finish: number; invite: number; connect: number; aborted: number};

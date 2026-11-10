@@ -41,5 +41,5 @@ test('provider outages and ambiguous same-organization memberships fail closed',
   assert.deepEqual(await f.admit(identity), {status: 503});
   f.workos.userManagement.listOrganizationMemberships = async () => ({data: Array.from({length: 2}, () => ({userId: 'user_a', organizationId: org, status: 'active'}))});
   assert.equal((await f.admit(identity)).status, 403);
-  assert.throws(() => singleOrganizationIdentity(f.workos, ''), /one WorkOS organization/);
+  assert.throws(() => singleOrganizationIdentity(f.workos, ''), /one organization/);
 });

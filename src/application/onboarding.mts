@@ -1,6 +1,6 @@
 import {errorInfo} from '../errors.mjs';
 import type {IncomingMessage} from 'node:http';
-import type {Principal, HostedUser, Membership} from '../identity/types.mjs';
+import type {Principal, HostedUser, DirectoryMembership as Membership} from '../identity/types.mjs';
 import type {createOnboardingStatus} from '../onboarding-status.mjs';
 import type {createWorkspaceSearch} from '../search/workspace.mjs';
 import type {Integrations} from '../integrations/service.mjs';
@@ -57,7 +57,7 @@ export function createGuidedOnboarding({onboarding,integrations,organizations,au
           if (previous.some(invite => invite.email.toLowerCase() === (body.email as string).trim().toLowerCase())) return json(200,{items:previous,addedCount:0});
           const invitation = await organizations.invite(identity.user,principal.tenantId,body.email,member);
           track('organization_invitation_sent',principal);
-          return json(200,{items:[...previous,{email:invitation.email}],addedCount:1});
+          return json(200,{items:[...previous,{email:invitation.email,...(invitation.acceptInvitationUrl?{inviteUrl:invitation.acceptInvitationUrl}:{})}],addedCount:1});
         } catch(error) {return json(errorInfo(error).expose?errorInfo(error).status || 503:503,{error:errorInfo(error).expose?errorInfo(error).message:'We couldn’t send that invitation. Try again.'});}
       }
 

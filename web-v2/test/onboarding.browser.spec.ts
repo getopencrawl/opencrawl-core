@@ -216,3 +216,42 @@ test('mobile account disclosure closes before the drawer and hidden actions leav
   await expect(sidebar).not.toBeVisible();
   await expect(open).toBeFocused();
 });
+
+
+test('local account setup uses the shared React form and submits the private bootstrap grant',async({page})=>{
+  await page.setViewportSize({width:390,height:780});
+  await page.goto('/auth-fixture/setup');
+  await expect(page.getByRole('heading',{name:'Set up OpenCrawl'})).toBeVisible();
+  await page.getByLabel('Workspace name').fill('Local team');
+  await page.getByLabel('Your name').fill('Local admin');
+  await page.getByLabel('Email',{exact:true}).fill('local@example.com');
+  await page.getByLabel('Password (10+ characters)').fill('a private password');
+  await expect(page.getByLabel('Password (10+ characters)')).toHaveAttribute('type','password');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.route('**/auth/signup',route=>route.fulfill({status:200,contentType:'text/plain',body:'Submitted'}));
+  const posted=page.waitForRequest(request=>new URL(request.url()).pathname==='/auth/signup');
+  await page.getByRole('button',{name:'Create workspace'}).click();
+  const fields=new URLSearchParams((await posted).postData()||'');
+  expect(fields.get('setup')).toBe('private-once-only');expect(fields.get('email')).toBe('local@example.com');
+});
+
+test('React OAuth consent identifies the client, resource and scopes and submits an explicit denial',async({page})=>{
+  await page.goto('/auth-fixture/consent');
+  await expect(page.getByRole('heading',{name:'Allow Example MCP client to use OpenCrawl?'})).toBeVisible();
+  await expect(page.getByText('https://oss.example/mcp')).toBeVisible();
+  await expect(page.getByText('openid, offline_access')).toBeVisible();
+  await page.route('**/auth/consent',route=>route.fulfill({status:200,contentType:'text/plain',body:'Denied'}));
+  const posted=page.waitForRequest(request=>new URL(request.url()).pathname==='/auth/consent');
+  await page.getByRole('button',{name:'Deny',exact:true}).click();
+  const fields=new URLSearchParams((await posted).postData()||'');
+  expect(fields.get('accept')).toBe('false');expect(fields.get('oauth_query')).toBe('signed-consent-query');
+});
+
+
+test('self-host onboarding exposes private invitation links without claiming email delivery',async({page,request})=>{
+  await request.post('/__test/reset',{data:{status:complete,sources:connected,invitations:[{email:'teammate@example.com',inviteUrl:'https://oss.example/auth/signup?invitation=private-grant'}]}});
+  await page.goto('/onboarding/invite');
+  await expect(page.getByLabel('Private invitation link',{exact:true})).toHaveValue('https://oss.example/auth/signup?invitation=private-grant');
+  await expect(page.getByRole('button',{name:'Copy Private invitation link'})).toBeVisible();
+  await expect(page.getByText('Invitation sent.')).toHaveCount(0);
+});

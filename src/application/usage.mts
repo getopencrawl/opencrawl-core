@@ -1,5 +1,5 @@
 import {errorInfo} from '../errors.mjs';
-import type {Principal, Workos, HostedUser} from '../identity/types.mjs';
+import type {Principal, IdentityDirectory, HostedUser} from '../identity/types.mjs';
 import type {Log} from '../integrations/ports.mjs';
 import type {Integrations} from '../integrations/service.mjs';
 import type {createSessionSearch} from '../sessions/search.mjs';
@@ -10,7 +10,7 @@ type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage' | 'search'>
 interface ConnectionCount {total: number; kinds: Record<string, number>}
 interface Connectors {count(principal: Principal): Promise<ConnectionCount & {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}>}
 type Usage = Awaited<ReturnType<Sessions['usage']>>;
-interface UsageOptions {principal: Principal; workos: Workos; integrations?: Pick<Integrations, 'list'> | null; search?: Sessions | null; connectors?: Connectors | null; onboarding?: ReturnType<typeof createOnboardingStatus> | null; values?: ValueReports | null; captured?: ((principal: Principal) => Promise<{tokens: number; since: string}>) | null; tab?: string; days?: number; log?: Log}
+interface UsageOptions {principal: Principal; directory: IdentityDirectory; integrations?: Pick<Integrations, 'list'> | null; search?: Sessions | null; connectors?: Connectors | null; onboarding?: ReturnType<typeof createOnboardingStatus> | null; values?: ValueReports | null; captured?: ((principal: Principal) => Promise<{tokens: number; since: string}>) | null; tab?: string; days?: number; log?: Log}
 interface IndexReport {sessionEvents: number | null; connectorDocuments: number | null; connectorKinds: Record<string, number>; sources: Array<{name: string; count: number}>; searchMs: number | null; probes: number[]}
 // Shared usage report: integrations, WorkOS members, and session activity.
 // Activity and setup receipts are scoped to the selected organization.
@@ -23,7 +23,7 @@ const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floo
  * principal must already be verified for its tenant. Every source is optional: a missing
  * service shows as unavailable rather than failing the page.
  */
-export async function usageReport({principal, workos, integrations, search, connectors, onboarding, values, captured, tab, days = 30, log = () => {}}: UsageOptions) {
+export async function usageReport({principal, directory, integrations, search, connectors, onboarding, values, captured, tab, days = 30, log = () => {}}: UsageOptions) {
   const team = principal.tenantId.startsWith('org_');
   const memberScope = (userId: string) => ({tenantId: principal.tenantId, userId});
   function soft<T>(name: string, operation: () => Promise<T>): Promise<T | null>;
@@ -40,13 +40,13 @@ export async function usageReport({principal, workos, integrations, search, conn
   const emptyCounts: Awaited<ReturnType<Connectors['count']>> = {total:0,kinds:{},providers:{},connections:{}};
   // These reports are independent. Navigation waits for the slowest read, not their sum.
   const [organization, users, cards, agents, probeResults, counted, value] = await Promise.all([
-    team ? soft('organization', () => workos.organizations.getOrganization(principal.tenantId)) : null,
+    team ? soft('organization', () => directory.organizations.getOrganization(principal.tenantId)) : null,
     team ? soft('members', async () => {
-      const memberships = await workos.userManagement.listOrganizationMemberships({organizationId: principal.tenantId, statuses: ['active'], limit: 100});
+      const memberships = await directory.userManagement.listOrganizationMemberships({organizationId: principal.tenantId, statuses: ['active'], limit: 100});
       const rows = memberships.autoPagination ? await memberships.autoPagination() : memberships.data;
       const ids = [...new Set(rows.filter(m => m.organizationId === principal.tenantId && m.status === 'active').map(m => m.userId))];
-      return Promise.all(ids.map(id => workos.userManagement.getUser(id)));
-    }) : soft('members', async () => [await workos.userManagement.getUser(principal.userId)]),
+      return Promise.all(ids.map(id => directory.userManagement.getUser(id)));
+    }) : soft('members', async () => [await directory.userManagement.getUser(principal.userId)]),
     integrations ? soft('integrations', () => integrations.list(principal)) : null,
     search ? soft('sessions', () => search.usage(principal, {team: true, days}), empty()) : null,
     Promise.all(Array.from({length:search ? 3 : 0}, () => soft('probe', () => search!.search(principal, {query:PROBE,limit:10,raw:true})))),

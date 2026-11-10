@@ -1,5 +1,5 @@
 import {errorInfo} from './types.mjs';
-import type {Workos, HostedUser} from './types.mjs';
+import type {IdentityDirectory, HostedUser} from './types.mjs';
 export interface LoginFlow {state: string; expiresAt: number; codeVerifier: string; returnTo?: string; invitationToken?: string; organizationId?: string}
 export type VerifiedResult = {status: 200; user: HostedUser} | {status: 401 | 403 | 503};
 export interface BrowserIdentity {authenticated: boolean; sessionId?: string; user?: HostedUser}
@@ -36,14 +36,14 @@ export function openFlow(value: string, state: string, password: string): LoginF
 }
 
 export function verifiedUser(user: HostedUser | undefined | null) {
-  return user?.emailVerified === true;
+  return user?.emailVerified === true || user?.locallyEnrolled === true;
 }
 
 /** Sealed sessions contain a user snapshot; admission uses the current account. */
-export async function currentVerifiedUser(workos: Workos, userId: unknown): Promise<VerifiedResult> {
+export async function currentVerifiedUser(directory: IdentityDirectory, userId: unknown): Promise<VerifiedResult> {
   if (typeof userId !== 'string' || !/^user_[A-Za-z0-9]+$/.test(userId)) return {status: 401};
   try {
-    const user = await workos.userManagement.getUser(userId);
+    const user = await directory.userManagement.getUser(userId);
     if (user?.id !== userId) return {status: 401};
     return verifiedUser(user) ? {status: 200, user} : {status: 403};
   } catch (error) {
@@ -51,7 +51,7 @@ export async function currentVerifiedUser(workos: Workos, userId: unknown): Prom
   }
 }
 
-export async function currentUserSession(workos: Workos, userId: unknown, sessionId: unknown): Promise<{status: 200} | {status: 401 | 503}> {
+export async function currentUserSession(directory: IdentityDirectory, userId: unknown, sessionId: unknown): Promise<{status: 200} | {status: 401 | 503}> {
   if (typeof userId !== 'string' || !/^user_[A-Za-z0-9]+$/.test(userId) ||
       typeof sessionId !== 'string' || !sessionId) return {status: 401};
   let after;
@@ -61,7 +61,7 @@ export async function currentUserSession(workos: Workos, userId: unknown, sessio
     // AuthKit user session grants browser or first-party CLI authority. Scan
     // later pages, with a bound on provider work per request.
     for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
-      const page = await workos.userManagement.listSessions(userId, {
+      const page = await directory.userManagement.listSessions(userId, {
         limit: 100, order: 'desc', ...(after ? {after} : {}),
       });
       if (!Array.isArray(page?.data) || !page.listMetadata) return {status: 503};
@@ -80,11 +80,11 @@ export async function currentUserSession(workos: Workos, userId: unknown, sessio
 }
 
 /** The SDK verifies the cookie JWT but does not look up current session state. */
-export async function currentBrowserUser(workos: Workos, identity: BrowserIdentity | undefined): Promise<VerifiedResult> {
+export async function currentBrowserUser(directory: IdentityDirectory, identity: BrowserIdentity | undefined): Promise<VerifiedResult> {
   if (identity?.authenticated !== true || typeof identity.sessionId !== 'string' || !identity.sessionId) return {status: 401};
   // Both lookups key on the JWT-verified user id, so they run concurrently.
-  const [current, session] = await Promise.all([currentVerifiedUser(workos, identity.user?.id),
-    currentUserSession(workos, identity.user?.id, identity.sessionId)]);
+  const [current, session] = await Promise.all([currentVerifiedUser(directory, identity.user?.id),
+    currentUserSession(directory, identity.user?.id, identity.sessionId)]);
   if (current.status !== 200) return current;
   return session.status === 200 ? current : session;
 }

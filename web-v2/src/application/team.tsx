@@ -1,5 +1,5 @@
 import {useEffect, useId, useRef, useState, type FormEvent, type ReactNode} from 'react';
-import {Button, EmptyState, Input, LoadingState, Notice, Page, Section, Select, StatusBadge} from '../index.ts';
+import {Button, CopyField, EmptyState, Input, LoadingState, Notice, Page, Section, Select, StatusBadge} from '../index.ts';
 import {ConsoleApiError, failureMessage} from './errors.ts';
 import type {WorkspaceRole, TeamAdapter} from './api.ts';
 import {useResource} from './resource';
@@ -186,7 +186,7 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
           </li>;
         })}{invitations.map(invitation => <li className="oc-member-row" key={`invitation:${invitation.email.trim().toLowerCase()}`} data-state="pending">
           <span className="oc-member-avatar" aria-hidden="true">{initials(null, invitation.email)}</span>
-          <div className="oc-member-identity"><span className="oc-member-name oc-invitation-email">{invitation.email}</span></div>
+          <div className="oc-member-identity"><span className="oc-member-name oc-invitation-email">{invitation.email}</span>{invitation.inviteUrl && <CopyField label="Private invitation link" value={invitation.inviteUrl}/>}</div>
           <StatusBadge className="oc-member-role" tone="neutral" variant="pill">Pending</StatusBadge>
         </li>)}</ul> : data.members && <p className="muted">No members are listed yet.</p>}
         {roleError && <div id={roleErrorId}><Notice tone="danger">{roleError.message}</Notice></div>}

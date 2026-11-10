@@ -29,28 +29,28 @@ test('the usage report shows only the signed-in workspace’s own measured value
   assert.notEqual(valueReportKey(prefix, 'org_a'), valueReportKey(prefix, 'org_b'));
   assert.match(valueReportKey(prefix, 'org_a'), /^sessions\/staging\/v1\/value\/tenants\/[a-f0-9]{64}\.json$/);
   const values = valueReports({store, prefix});
-  const workos = {
+  const directory = {
     organizations: {getOrganization: async id => ({id, name: 'Acme'})},
     userManagement: {listOrganizationMemberships: async () => ({data: []}), getUser: async () => null},
   };
-  const read = tenantId => usageReport({principal: {tenantId, userId: 'user_a'}, workos, values});
+  const read = tenantId => usageReport({principal: {tenantId, userId: 'user_a'}, directory, values});
   assert.equal((await read('org_a')).value?.savings.tasks, 1198);
   assert.equal((await read('org_b')).value?.savings.tasks, 1);
   assert.equal((await read('org_c')).value, null);
   await store.put(valueReportKey(prefix, 'org_c'), '{"schema":1}');
   assert.equal((await read('org_c')).value, null);
-  assert.equal((await usageReport({principal: {tenantId: 'org_a', userId: 'user_a'}, workos})).value, null);
+  assert.equal((await usageReport({principal: {tenantId: 'org_a', userId: 'user_a'}, directory})).value, null);
 });
 
 test('tokens captured uses only the verified organization adapter', async () => {
-  const workos = {
+  const directory = {
     organizations: {getOrganization: async id => ({id, name: 'Acme'})},
     userManagement: {listOrganizationMemberships: async () => ({data: []}), getUser: async () => ({id: 'user_a', email: 'a@example.com'})},
   };
   const asked = [];
   const captured = async principal => {asked.push(principal.tenantId); return {tokens: 142_500_000, since: '2026-11-01T00:00:00.000Z'};};
-  assert.deepEqual((await usageReport({principal: {tenantId: 'org_a', userId: 'user_a'}, workos, captured})).capture, {tokens: 142_500_000, since: '2026-11-01T00:00:00.000Z'});
+  assert.deepEqual((await usageReport({principal: {tenantId: 'org_a', userId: 'user_a'}, directory, captured})).capture, {tokens: 142_500_000, since: '2026-11-01T00:00:00.000Z'});
   assert.deepEqual(asked, ['org_a']);
-  assert.equal((await usageReport({principal: {tenantId: 'user_a', userId: 'user_a'}, workos, captured})).capture, null);
-  assert.equal((await usageReport({principal: {tenantId: 'org_a', userId: 'user_a'}, workos})).capture, null);
+  assert.equal((await usageReport({principal: {tenantId: 'user_a', userId: 'user_a'}, directory, captured})).capture, null);
+  assert.equal((await usageReport({principal: {tenantId: 'org_a', userId: 'user_a'}, directory})).capture, null);
 });

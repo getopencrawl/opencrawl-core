@@ -1,4 +1,4 @@
-# One organization, multiple users. Bring your own WorkOS and Airbyte workspace.
+# One organization, multiple users. Local Better Auth accounts; bring your own Airbyte workspace.
 # Choose a fresh COMPOSE_PROJECT_NAME for each independent installation.
 name: ${COMPOSE_PROJECT_NAME:-opencrawl}
 x-runtime: &runtime
@@ -9,11 +9,10 @@ x-runtime: &runtime
   volumes: ["application:/data"]
   environment: &env
     OPENCRAWL_URL: ${OPENCRAWL_URL:?Set the HTTPS application origin}
-    WORKOS_AUTH_ORIGIN: ${WORKOS_AUTH_ORIGIN:?Set your WorkOS AuthKit origin}
-    WORKOS_CLIENT_ID: ${WORKOS_CLIENT_ID:?Set your WorkOS client ID}
-    WORKOS_API_KEY: ${WORKOS_API_KEY:?Set your WorkOS API key}
-    WORKOS_ORGANIZATION_ID: ${WORKOS_ORGANIZATION_ID:?Set your single WorkOS organization}
-    WORKOS_COOKIE_PASSWORD: ${WORKOS_COOKIE_PASSWORD:?Run ./up.sh to generate secrets}
+    OPENCRAWL_ORGANIZATION_ID: ${OPENCRAWL_ORGANIZATION_ID:?Run ./up.sh}
+    OPENCRAWL_AUTH_SECRET: ${OPENCRAWL_AUTH_SECRET:?Run ./up.sh}
+    OPENCRAWL_SETUP_TOKEN: ${OPENCRAWL_SETUP_TOKEN:?Run ./up.sh}
+    OPENCRAWL_IDENTITY_PATH: /data/identity.sqlite
     OPENCRAWL_REGISTRY_PATH: /data/integrations.sqlite
     OPENCRAWL_LANDING_S3_BUCKET: opencrawl
     OPENCRAWL_LANDING_S3_REGION: us-east-1

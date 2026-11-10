@@ -10,8 +10,8 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
   provisioning/routing, billing, entitlements,
   managed infrastructure, fleet operations and compliance exports.
 - Dependencies point into core. Never import the shell or require an OpenCrawl hosted account, license server,
-  or hosted control plane to use core. WorkOS is the supported identity provider
-  for now; self-hosters use their own WorkOS account and one organization.
+  or hosted control plane to use core. Self-host uses Better Auth with one local organization; cloud continues on
+  WorkOS. Keep provider verification in explicit identity adapters.
   Keep provider objects and managed credentials out of domain contracts.
 - Reusable authentication and team operations belong here; hosted tenant selection
   belongs to shell. Core enforces
@@ -68,9 +68,10 @@ Backend source under `src/` uses strict TypeScript (`.mts`, or `.cts` for Tempor
 
 ## Shared application seam
 
-The single-tenant product supports multiple users through the operator’s own
-WorkOS account. WorkOS is the supported identity adapter for this iteration;
-reusable authentication, membership, role controls, UI, Airbyte and connector
+The single-tenant product uses Better Auth with local accounts in an operator-owned
+SQLite database. Cloud continues to use WorkOS. Both adapters expose core-owned
+identity directory facts; provider sessions and tokens stay at their runtime boundary.
+Reusable authentication, membership, role controls, UI, Airbyte and connector
 lifecycle implementations belong in core. Hosted multi-tenant selection and
 provisioning, billing, fleet operation and internal administration belong in
 shell. Source SDK names do not determine ownership. Core requires no account

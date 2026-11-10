@@ -4,6 +4,7 @@ import {productPageSchema, type CallbackPage, type CapturePage} from '../../../s
 import {Button, Field, Input, LinkButton, Notice, Page, Textarea} from '../design/components.tsx';
 import {FocusedFrame} from '../design/focused-frame.tsx';
 import {CallbackChoices, readContinuation} from './callback-view.tsx';
+import {AuthDocument} from './auth-document.tsx';
 
 export function readBrowserDocument() {
   const element = document.getElementById('opencrawl-page');
@@ -53,5 +54,11 @@ export function ProductDocument({page}: {page:unknown}) {
   const data = productPageSchema.parse(page);
   if (data.kind === 'integration-callback') return <CallbackDocument page={data}/>;
   if (data.kind === 'capture') return <CaptureDocument page={data}/>;
+  if (data.kind === 'auth') return <AuthDocument page={data}/>;
+  if (data.kind === 'oauth-return') return <OAuthReturn url={data.url}/>;
   return <Page title={data.heading} description={data.detail}><div><LinkButton to={data.href} reloadDocument>{data.action}</LinkButton></div></Page>;
+}
+function OAuthReturn({url}: {url:string}) {
+  useEffect(()=>{window.location.assign(url);},[url]);
+  return <Page title="Returning to your app"><LinkButton to={url} reloadDocument>Continue</LinkButton></Page>;
 }
