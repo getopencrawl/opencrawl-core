@@ -164,7 +164,7 @@ async function up(){
     env_vars:{AIRBYTE_INSTALLATION_ID:state.project},storage:{type:'minio',minio:{accessKeyId:'opencrawldev',secretAccessKey:state.airbyteStorageSecret}},
     workloads:{resources:{useConnectorResourceDefaults:false,
       mainContainer:{cpu:{request:'0',limit:'2'},memory:{request:'0',limit:'2Gi'}},
-      check:{cpu:{request:'0'},memory:{request:'0'}},discover:{cpu:{request:'0'},memory:{request:'0'}},sidecar:{cpu:{request:'0'},memory:{request:'0'}}}},
+      check:{cpu:{request:'0'},memory:{request:'0'}},discover:{cpu:{request:'0'},memory:{request:'0'}},sidecar:{cpu:{request:'0'},memory:{request:'0'}}}}},
     server:{service:{type:'NodePort',port:8001,nodePort:30080},env_vars:{JOB_RESOURCE_VARIANT_OVERRIDE:'lowresource'}},
     connectorBuilderServer:{enabled:false},postgresql:{postgresqlPassword:state.airbyteDbPassword,storage:{volumeClaimValue:'5Gi'}},
     minio:{rootUser:'opencrawldev',rootPassword:state.airbyteStorageSecret,storage:{volumeClaimValue:'5Gi'},resources:{requests:{cpu:'100m',memory:'256Mi'},limits:{memory:'1Gi'}}}};
