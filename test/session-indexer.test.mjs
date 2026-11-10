@@ -261,3 +261,18 @@ test('time browsing without a query lists session passages newest or oldest firs
   assert.deepEqual(bodies[1].sort.slice(0,2),[{timestamp:{order:'asc',missing:'_last'}},{'session.sequence':'asc'}]);
   assert.ok(JSON.stringify(bodies[0].query).includes('match_all'));
 });
+
+test('collapse returns one best passage per session message', async () => {
+  const {createSessionSearch} = await import('../dist/src/sessions/search.mjs');
+  const bodies = [];
+  const search = createSessionSearch({endpoint:'http://search.test',tenantId:'org-a',index:'sessions-test',fetch:async(url,options)=>{
+    if(url.pathname.endsWith('/_search')){bodies.push(JSON.parse(options.body));return realmResponse('session',{hits:{total:{value:0},hits:[]}});}
+    return Response.json({error:{type:'resource_already_exists_exception'}},{status:400});
+  }});
+  const principal = {tenantId:'org-a',userId:'user-a'};
+  await search.search(principal,{query:'deadline',match:'any',collapse:true});
+  await search.search(principal,{query:'deadline',match:'any'});
+  await search.search(principal,{query:'',collapse:true});
+  assert.deepEqual(bodies[0].collapse,{field:'session.eventId'});
+  assert.equal(bodies[1].collapse,undefined);assert.equal(bodies[2].collapse,undefined);
+});

@@ -47,7 +47,7 @@ export interface Mapping {
   type?: string; dynamic?: string; properties?: Record<string, Mapping>; fields?: Record<string, Mapping>;
   _meta?: {schema?: number; tenantId?: string};
 }
-export interface SearchInput {query?: string; limit?: number; raw?: boolean; match?: string; sessionId?: string; id?: string; after?: string; before?: string; order?: string; role?: string}
+export interface SearchInput {query?: string; limit?: number; raw?: boolean; match?: string; sessionId?: string; id?: string; after?: string; before?: string; order?: string; role?: string; collapse?: boolean}
 export interface Passage extends SearchDocument {id: string; score?: number}
 export interface SearchResult {hits: Passage[]; total?: number; truncated?: boolean}
 export interface SearchAdapter {

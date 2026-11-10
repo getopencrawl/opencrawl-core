@@ -21,14 +21,16 @@ export function createSessionSearch(options: RealmOptions) {
   function search(principal: Principal, input: SearchInput & {raw: true}): Promise<OpenSearchResponse>;
   function search(principal: Principal, input?: SearchInput & {raw?: false}): Promise<SearchResult>;
   function search(principal: Principal, input: SearchInput): Promise<SearchResult | OpenSearchResponse>;
-  async function search(principal: Principal,{query='',limit=20,raw=false,match='all',sessionId,id,after,before,order,role}: SearchInput={}): Promise<SearchResult | OpenSearchResponse> {
+  async function search(principal: Principal,{query='',limit=20,raw=false,match='all',sessionId,id,after,before,order,role,collapse}: SearchInput={}): Promise<SearchResult | OpenSearchResponse> {
       if(role!==undefined&&(typeof role!=='string'||!/^[a-z_]{1,32}$/.test(role)))fail(400,'Invalid search filters');
       const byTime=timeOrder(order);
       sessionScope(principal);
       if(id!==undefined&&(typeof id!=='string'||!/^[A-Za-z0-9_:-]{1,256}$/.test(id)))fail(400,'Invalid passage id');
       if(!['all','any','phrase'].includes(match)||(sessionId!==undefined&&(typeof sessionId!=='string'||!sessionId||sessionId.length>200)))fail(400,'Invalid search filters');
       if(typeof query!=='string'||query.length>4000||!Number.isInteger(limit)||limit<1||limit>100)fail(400,'Invalid search query or limit');
-      const result=await resolve(principal).collection('session').search(principal,{size:limit,track_total_hits:true,
+      // One best passage per captured message: long replies and tool results are indexed as several
+      // passages and would otherwise fill the results with pieces of the same message.
+      const result=await resolve(principal).collection('session').search(principal,{size:limit,track_total_hits:true,...(collapse&&query?{collapse:{field:f('eventId')}}:{}),
         query:{bool:{filter:[{term:{tenantId:principal.tenantId}},visibleTo('session',principal),...(sessionId?[{term:{[f('sessionId')]:sessionId}}]:[]),...(id?[{term:{id}}]:[]),...(role?[{term:{[f('role')]:role}}]:[]),...timeRange(after,before)],must:query?[textQuery(query,match,resolve(principal).semantic)]:[{match_all:{}}]}},
         sort:query?[...(byTime?[byTime]:[]),'_score',...['receivedAt','sessionId','eventId','chunk','userId','installationId'].map(key=>({[f(key)]:key==='receivedAt'?'desc':'asc'}))]:byTime?[byTime,{[f('sequence')]:order==='newest'?'desc':'asc'},{[f('chunk')]:'asc'},{id:'asc'}]:[{[f('receivedAt')]:'desc'},{[f('sequence')]:'asc'}]});
       const hits=result?.hits?.hits;
