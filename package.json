@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.2.65",
+  "version": "0.2.66",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
@@ -99,12 +99,15 @@
     "typescript": "7.0.2"
   },
   "peerDependencies": {
+    "@tanstack/react-query": "5.107.1",
     "@temporalio/activity": "1.25.0",
     "@temporalio/client": "1.25.0",
     "@temporalio/common": "1.25.0",
     "@temporalio/worker": "1.25.0",
     "@temporalio/workflow": "1.25.0",
-    "@tanstack/react-query": "5.107.1"
+    "react-markdown": "10.1.0",
+    "remark-frontmatter": "5.0.0",
+    "remark-gfm": "4.0.1"
   },
   "peerDependenciesMeta": {
     "@temporalio/client": {
@@ -123,6 +126,15 @@
       "optional": true
     },
     "@tanstack/react-query": {
+      "optional": true
+    },
+    "react-markdown": {
+      "optional": true
+    },
+    "remark-frontmatter": {
+      "optional": true
+    },
+    "remark-gfm": {
       "optional": true
     }
   }

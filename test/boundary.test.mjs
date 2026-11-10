@@ -45,10 +45,16 @@ test('core runtime imports stay inside src, Node builtins, or reviewed portable 
   assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@modelcontextprotocol/node', '@modelcontextprotocol/server', 'parse5', 'pdfjs-dist', 'zod']);
   assert.deepEqual(pkg.optionalDependencies || {}, {});
   const temporal = ['@temporalio/activity', '@temporalio/client', '@temporalio/common', '@temporalio/worker', '@temporalio/workflow'];
-  assert.deepEqual(Object.keys(pkg.peerDependencies).sort(), ['@tanstack/react-query', ...temporal]);
+  const markdown = {'react-markdown':'10.1.0','remark-frontmatter':'5.0.0','remark-gfm':'4.0.1'};
+  assert.deepEqual(Object.keys(pkg.peerDependencies).sort(), ['@tanstack/react-query', ...temporal, ...Object.keys(markdown)].sort());
   // The optional MIT React cache is consumed only by web-v2; the runtime remains independent.
   assert.equal(pkg.peerDependencies['@tanstack/react-query'], '5.107.1');
   assert.deepEqual(pkg.peerDependenciesMeta['@tanstack/react-query'], {optional:true});
+  // Markdown is an optional UI peer, never a mandatory headless runtime dependency.
+  for (const [name, version] of Object.entries(markdown)) {
+    assert.equal(pkg.peerDependencies[name], version);
+    assert.deepEqual(pkg.peerDependenciesMeta[name], {optional:true});
+  }
   for (const name of temporal) {
     assert.equal(pkg.peerDependencies[name], '1.25.0');
     assert.deepEqual(pkg.peerDependenciesMeta[name], {optional: true});

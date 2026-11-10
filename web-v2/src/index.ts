@@ -3,6 +3,7 @@ export * from './router.tsx';
 export * from './contracts.ts';
 export * from './design/components.tsx';
 export {Icon} from './design/icons.tsx';
+export {Markdown} from './design/markdown.tsx';
 export * from './onboarding/index.ts';
 export * from './pages/types.ts';
 export {OverviewPage} from './pages/overview.tsx';
