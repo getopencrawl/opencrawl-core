@@ -96,7 +96,7 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
       const controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const session = await Promise.race([recentSessions.fetch(principal, args.id, {signal: controller.signal}),
+        const session = await Promise.race([recentSessions.fetch(principal, args.id, {signal: controller.signal, field: args.field}),
           new Promise<never>((_, reject) => {timer = setTimeout(() => {controller.abort(); reject(fail('Session fetch timed out', 503));}, sessionTimeoutMs);})]);
         const fields = ['firstUserMessage', 'lastUserMessage', 'latestAssistantMessage'] as const;
         const selected = fields.filter(field => args.field === 'context' || args.field === field);

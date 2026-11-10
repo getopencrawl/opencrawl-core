@@ -13,6 +13,7 @@ const identityFields = ['userId', 'harness', 'installationId', 'sessionId'] as c
 const f = (key: string) => realmField('session', key);
 const invalid = () => new Error('Invalid recent session response');
 const iso = (value: unknown) => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
+export type SessionContextField = 'context' | 'firstUserMessage' | 'lastUserMessage' | 'latestAssistantMessage';
 
 // Only message text is context. Tool arguments/results, thinking, attachments,
 // transport metadata and routing instructions must never become message text.
@@ -37,7 +38,7 @@ export function sessionMessage(event: SessionEvent) {
  * original events from immutable capture. No new projection or reindex needed. */
 export function createRecentSessions({store, prefix, ...options}: RealmOptions & {store: ObjectStore; prefix: string}) {
   const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
-  async function read(principal: Principal, {signal, summary = false, id}: {signal?: AbortSignal; summary?: boolean; id?: string} = {}) {
+  async function read(principal: Principal, {signal, summary = false, id, field = 'context'}: {signal?: AbortSignal; summary?: boolean; id?: string; field?: SessionContextField} = {}) {
     sessionScope(principal);
     if (principal.captureAccess !== undefined) throw Object.assign(new Error('Session read access required'), {status: 403});
     let selection: string[] | undefined;
@@ -125,9 +126,13 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
         const candidate = capturedTitle(event, batch);
         if (typeof candidate === 'string' && candidate.trim()) {title = candidate; titleTimestamp = iso(event.timestamp); break;}
       }
-      const firstUserMessage = !summary || !title ? await select('user', 'asc') : null;
-      const lastUserMessage = summary ? null : await select('user', 'desc');
-      const latestAssistantMessage = summary ? null : await select('assistant', 'desc');
+      // A selected field must bound source reads as well as returned text. Long
+      // tool-heavy sessions can otherwise exhaust the deadline scanning an
+      // unrelated field. The first prompt still supplies a missing title.
+      const wants = (name: SessionContextField) => !summary && (field === 'context' || field === name);
+      const firstUserMessage = wants('firstUserMessage') || !title ? await select('user', 'asc') : null;
+      const lastUserMessage = wants('lastUserMessage') ? await select('user', 'desc') : null;
+      const latestAssistantMessage = wants('latestAssistantMessage') ? await select('assistant', 'desc') : null;
       const titleSource = title ? 'captured' : firstUserMessage ? 'first_user_message' : 'session_id';
       title ||= firstUserMessage?.text.replace(/\s+/g, ' ').trim() || `Session ${identity.sessionId}`;
       if (titleSource === 'first_user_message') titleTimestamp = firstUserMessage!.timestamp;
@@ -135,7 +140,7 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
       if (!await authorize()) continue;
       const ref = 'session:' + Buffer.from(JSON.stringify([principal.tenantId, ...bucket.key])).toString('base64url');
       sessions.push({...identity, id: ref, title: summary ? preview(title, 120) : title, titleSource, titleTimestamp, lastActivityAt,
-        firstUserMessage: summary ? null : firstUserMessage, lastUserMessage, latestAssistantMessage, partial});
+        firstUserMessage: wants('firstUserMessage') ? firstUserMessage : null, lastUserMessage, latestAssistantMessage, partial});
     }
     return sessions;
   }
@@ -145,7 +150,7 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
       return (await read(principal, {...options, summary: true})).map(({id, harness, title, titleSource, lastActivityAt, partial}) =>
         ({id, harness, title: preview(title, 120), titleSource, lastActivityAt, partial}));
     },
-    async fetch(principal: Principal, id: string, options: {signal?: AbortSignal} = {}) {
+    async fetch(principal: Principal, id: string, options: {signal?: AbortSignal; field?: SessionContextField} = {}) {
       const row = (await read(principal, {...options, id}))[0];
       if (!row) throw Object.assign(new Error('Session not found or no longer available.'), {status: 404});
       return row;
