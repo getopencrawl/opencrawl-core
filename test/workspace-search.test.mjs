@@ -145,3 +145,12 @@ test('an empty query browses sessions or memories by time and is rejected everyw
   for (const invalid of [{query: ''}, {query: '', source: 'sessions'}, {query: '', order: 'newest'}, {query: '', source: 'connectors', order: 'newest'}])
     await assert.rejects(service.search(principal, invalid), /Invalid search/);
 });
+
+test('collapse is passed to sources only when requested', async () => {
+  const seen = [];
+  const service = createWorkspaceSearch({sessions: {search: async (p, q) => {seen.push(q.collapse);return {total: 1, hits: [hit('s1')]};}}});
+  await service.search(principal, {query: 'x', source: 'sessions', collapse: true});
+  await service.search(principal, {query: 'x', source: 'sessions'});
+  assert.deepEqual(seen, [true, undefined]);
+  await assert.rejects(service.search(principal, {query: 'x', collapse: 'yes'}), /Invalid search/);
+});
