@@ -23,6 +23,11 @@ on a developer machine, so installing there would record Cursor sessions under
 the Grok Bot name. Existing entries in the file are preserved; uninstall removes
 only OpenCrawl's.
 
+The setup prompt is the same for every agent and names this command. As a
+second line of defence, a plain `collect install` that finds neither Claude Code
+nor Codex on the machine says so in its output and names the command too, so an
+agent that ran the plain one on a Bot's computer corrects itself.
+
 The collector reads no Grok Bot transcript. A session is built from the hook
 payloads, in the event shapes used for Claude Code and Codex:
 

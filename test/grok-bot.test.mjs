@@ -103,7 +103,9 @@ test('a recorded Grok Bot tool call completes the recording step; other harnesse
 
 test('setup guidance sends Grok Bot to its own cloud computer with the explicit harness',()=>{
  const api='https://capture.example.com',prompt=captureSetupPrompt(api);
- for(const text of ['For Grok Bot','--harness grok-bot',api+'/mcp as a custom connector','newly created Bot',"skip a shared Bot's computer",'no local history to import'])assert.ok(prompt.includes(text),text);
+ for(const text of ['For Grok Bot','opencrawl collect install --yes --harness grok-bot --api '+api+' --json',api+'/mcp as a custom connector','newly created Bot',"skip a shared Bot's computer",'no local history to import'])assert.ok(prompt.includes(text),text);
+ // The cloud credential sentences stay together; "that" token is the one from /capture/cloud.
+ assert.ok(prompt.includes(api+'/capture/cloud for Claude cloud setup. For machine images, templates or snapshots, use that upload-only OPENCRAWL_SESSIONS_TOKEN'));
  const page=renderCloudCaptureSetup({api:'https://capture.example.com'});
  for(const text of ['Capture Grok Bot sessions','opencrawl collect install --yes --harness grok-bot --defer-auth --api https://capture.example.com','opencrawl login --no-browser --api https://capture.example.com','OPENCRAWL_SESSIONS_TOKEN','newly created Bot'])assert.ok(page.includes(text),text);
  // Shell operators in the copied command are escaped for HTML.

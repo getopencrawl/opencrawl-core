@@ -157,6 +157,8 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
       'grok-bot':!harnesses.includes('grok-bot')&&previous?.roots['grok-bot']||join(home,'.cursor')},
     claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
   const enrolled=config.harnesses!;
+  // Checked before the directories below are created.
+  const absent=harnesses.every(readsTranscript)&&!harnesses.some(harness=>existsSync(harnessRoot(config,harness))||Bun.which(harness==='codex'?'codex':'claude',{PATH:process.env.PATH}));
   for(const harness of enrolled)mkdirSync(harnessRoot(config,harness),{recursive:true,mode:0o700});
   // Validate every existing config before changing any of them.
   if(enrolled.includes('claude-code'))readJson(join(config.roots['claude-code'],'settings.json'));
@@ -185,6 +187,8 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   const backgroundStatus='harness-managed';
   const steps=[
     ...(harnesses.some(readsTranscript)?[process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':'Review OpenCrawl hooks in Codex /hooks or desktop Settings > Hooks. Restart existing Claude sessions if hooks have not reloaded.']:[]),
+    // An agent that ran the plain command on a Bot's computer reads this and corrects itself.
+    ...(absent&&!deferAuth&&!enrolled.includes('grok-bot')&&process.env.CLAUDE_CODE_REMOTE!=='true'?['Neither Claude Code nor Codex was found on this machine. If it is a Grok Bot cloud computer, capture it with opencrawl collect install --yes --harness grok-bot.']:[]),
     ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${hookFile(config,'grok-bot')}. Bots that are already running may keep the hooks they loaded earlier: from a newly created Bot, run a command, then check collect status for a stored receipt.`]:[])];
   return {notice:enrolled.includes('grok-bot')?captureNotice+' '+grokBotNotice:captureNotice,exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
     nextStep:steps.join(' ')};

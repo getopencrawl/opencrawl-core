@@ -124,6 +124,7 @@ test('install adds passive Cursor-format hooks beside existing ones; repeat, rol
   for(const event of GROK_BOT_HOOK_EVENTS)expect(installed.hooks[event].filter((entry:any)=>entry.command===ours.command)).toHaveLength(1);
   // Claude Code and Codex are untouched unless they are requested too.
   expect(readdirSync(f.dir)).not.toContain('claude');expect(readdirSync(f.dir)).not.toContain('codex');
+  expect(first.nextStep).not.toContain('Neither Claude Code nor Codex');
   expect((await f.install()).installationId).toBe(first.installationId);
   expect(readFileSync(f.hooksFile,'utf8')).toBe(JSON.stringify(installed,null,2)+'\n');
   // An unknown file version is left exactly as found.
@@ -350,6 +351,26 @@ test('the hook process always exits 0 with the answer Grok Bot expects, installe
   expect(captureStatus()).toMatchObject({pendingHooks:0,lastError:{code:'AUTH_REQUIRED'}});expect(captureStatus().queued).toBeGreaterThan(0);
   expect(Math.max(recorded.ms,signedOut.ms,unauthenticated.ms)).toBeLessThan(5000);
 }),30_000);
+
+test('a plain install that finds neither Claude Code nor Codex points the agent at the Grok Bot command',async()=>fixture(async f=>{
+  // The setup prompt is the same for every agent. A Bot that runs the plain
+  // command on its computer must be told, in the output it reads, what to run.
+  const path=process.env.PATH,node=Bun.which('node')!;
+  try {
+    process.env.PATH=join(node,'..'); // no claude or codex command, and their directories do not exist yet
+    const plain=await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e','']});
+    expect(plain.harnesses).toEqual(['claude-code','codex']);
+    expect(plain.nextStep).toContain('Neither Claude Code nor Codex was found on this machine.');
+    expect(plain.nextStep).toContain('opencrawl collect install --yes --harness grok-bot');
+    expect(existsSync(f.hooksFile)).toBe(false);
+    // Once either agent has a directory here, a plain install says nothing about Grok Bot.
+    expect((await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e','']})).nextStep).not.toContain('Grok Bot');
+    // Following the pointer adds the Bot's hooks beside the ones already installed.
+    const added=await f.install();
+    expect(added.harnesses).toEqual(['claude-code','codex','grok-bot']);expect(added.nextStep).not.toContain('Neither Claude Code nor Codex');
+    expect(JSON.parse(readFileSync(f.hooksFile,'utf8')).hooks.stop).toHaveLength(1);
+  } finally {process.env.PATH=path;}
+}));
 
 test('Claude Code and Codex hooks stand aside when a Cursor-format runtime runs them',async()=>fixture(async f=>{
   // Cursor, and so Grok Bot, also loads ~/.claude/settings.json hooks and waits on them.
