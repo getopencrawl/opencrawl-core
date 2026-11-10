@@ -54,6 +54,11 @@ kubeconfig leaves the user's default context and pre-existing Airbyte alone.
 Node, kind, kubectl, Helm and the Airbyte chart are pinned and checksum-verified.
 Third-party images and charts retain their own licenses.
 
+The pinned Airbyte 2.4 chart has an [upstream fresh-install catalog bug](https://github.com/airbytehq/airbyte/issues/84928).
+The installer adds the missing, digest-pinned CDK 7 entry only to its own new
+Airbyte database. It leaves existing catalog entries intact and never applies
+this compatibility step to an external Airbyte installation.
+
 ## Lifecycle
 
 ```sh

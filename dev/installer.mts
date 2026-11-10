@@ -7,16 +7,17 @@ import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 
 type Pin={url:string;sha256:string;member?:string;version?:string};
+interface Pins {kind:Pin;kubectl:Pin;helm:Pin;airbyte:Pin;kindNode:string;declarative:{version:string;imageSha:string}}
 interface State {
   format:1;root:string;project:string;createdAt:string;port:number;airbytePort:number;origin:string;
   organization:string;email:string;password:string;authSecret:string;setupToken:string;connectorKey:string;
   s3Key:string;s3Secret:string;temporalPassword:string;airbytePassword:string;airbyteClientId:string;
   airbyteClientSecret:string;airbyteDbPassword:string;airbyteStorageSecret:string;
-  workspaceId?:string;airbyteInstalled?:boolean;verifiedAt?:string;
+  workspaceId?:string;airbyteInstalled?:boolean;airbyteConfigHash?:string;verifiedAt?:string;
 }
 const root=realpathSync(resolve(dirname(fileURLToPath(import.meta.url)),'..'));
 const stateDir=join(root,'.opencrawl-dev'),stateFile=join(stateDir,'state.json'),bin=join(stateDir,'bin');
-const pins=JSON.parse(readFileSync(join(root,'dev/pins.json'),'utf8')) as Record<string,Pin>&{kindNode:string};
+const pins=JSON.parse(readFileSync(join(root,'dev/pins.json'),'utf8')) as Pins;
 const action=process.argv[2]||'up';
 if(!['up','status','stop','reset'].includes(action)||process.argv.slice(3).some(x=>x!=='--yes'))throw new Error('Use ./dev/up [up|status|stop|reset --yes]');
 process.umask(0o077);
@@ -39,7 +40,7 @@ function run(command:string,args:string[],options:{capture?:boolean;input?:strin
   const result=spawnSync(command,args,{cwd:root,env:{...process.env,DO_NOT_TRACK:'1'},encoding:'utf8',input:options.input,
     stdio:options.capture?['pipe','pipe','pipe']:['pipe','inherit','inherit'],maxBuffer:32*1024*1024});
   if(result.error)throw result.error;
-  if(result.status!==0&&!options.allowFailure)throw new Error(`${command.split('/').at(-1)} ${args[0]||''} failed (${result.status}); inspect the preceding output or .opencrawl-dev/logs. Existing data is preserved.`);
+  if(result.status!==0&&!options.allowFailure)throw new Error(`${command.split('/').at(-1)} ${args[0]||''} failed (${result.status}); inspect the preceding output. Existing data is preserved.`);
   return result.status===0?(result.stdout||''):'';
 }
 function privateFile(path:string,value:unknown){
@@ -67,7 +68,7 @@ if(existsSync(stateFile)){
 function save(){privateFile(stateFile,state);}
 const node=state.project+'-control-plane',kubeconfig=join(stateDir,'kubeconfig'),envFile=join(stateDir,'compose.env'),override=join(stateDir,'compose.json');
 const compose=(args:string[],options:Parameters<typeof run>[2]={})=>run('docker',['compose','--project-name',state.project,'--env-file',envFile,'-f',join(root,'deploy/compose.yaml'),'-f',override,...args],options);
-const kubectl=(args:string[],options:Parameters<typeof run>[2]={})=>run(join(bin,'kubectl'),['--kubeconfig',kubeconfig,'--context','kind-'+state.project,...args],options);
+const kubectl=(args:string[],options:Parameters<typeof run>[2]={})=>run(join(bin,'kubectl'),['--kubeconfig',kubeconfig,'--cache-dir',join(stateDir,'kube-cache'),'--context','kind-'+state.project,...args],options);
 const helm=(args:string[],options:Parameters<typeof run>[2]={})=>run(join(bin,'helm'),['--kubeconfig',kubeconfig,'--kube-context','kind-'+state.project,...args],options);
 function ownedNode(){
   const raw=run('docker',['inspect',node],{capture:true,allowFailure:true});if(!raw)return null;
@@ -159,18 +160,27 @@ async function up(){
   if(!/^\d+\.\d+\.\d+\.\d+$/.test(airbyteIp))throw new Error('Missing private Airbyte address');
   const values={global:{airbyteUrl:`http://localhost:${state.airbytePort}`,auth:{enabled:true,instanceAdmin:{password:state.airbytePassword,clientId:state.airbyteClientId,clientSecret:state.airbyteClientSecret},security:{cookieSecureSetting:false}},
     database:{password:state.airbyteDbPassword},
-    env_vars:{TRACKING_STRATEGY:'logging',AIRBYTE_INSTALLATION_ID:state.project},storage:{type:'minio',minio:{accessKeyId:'opencrawldev',secretAccessKey:state.airbyteStorageSecret}},
-    jobs:{resources:{requests:{cpu:'0',memory:'0'},limits:{cpu:'2',memory:'2Gi'}}}},
+    tracking:{enabled:false,strategy:'logging'},
+    env_vars:{AIRBYTE_INSTALLATION_ID:state.project},storage:{type:'minio',minio:{accessKeyId:'opencrawldev',secretAccessKey:state.airbyteStorageSecret}},
+    workloads:{resources:{useConnectorResourceDefaults:false,
+      mainContainer:{cpu:{request:'0',limit:'2'},memory:{request:'0',limit:'2Gi'}},
+      check:{cpu:{request:'0'},memory:{request:'0'}},discover:{cpu:{request:'0'},memory:{request:'0'}},sidecar:{cpu:{request:'0'},memory:{request:'0'}}}},
     server:{service:{type:'NodePort',port:8001,nodePort:30080},env_vars:{JOB_RESOURCE_VARIANT_OVERRIDE:'lowresource'}},
     connectorBuilderServer:{enabled:false},postgresql:{postgresqlPassword:state.airbyteDbPassword,storage:{volumeClaimValue:'5Gi'}},
-    minio:{rootUser:'opencrawldev',rootPassword:state.airbyteStorageSecret,storage:{volumeClaimValue:'5Gi'},resources:{requests:{cpu:'100m',memory:'256Mi'},limits:{memory:'1Gi'}}},
-    workloadLauncher:{env_vars:{CHECK_JOB_MAIN_CONTAINER_CPU_REQUEST:'0',CHECK_JOB_MAIN_CONTAINER_MEMORY_REQUEST:'0',DISCOVER_JOB_MAIN_CONTAINER_CPU_REQUEST:'0',DISCOVER_JOB_MAIN_CONTAINER_MEMORY_REQUEST:'0',SPEC_JOB_MAIN_CONTAINER_CPU_REQUEST:'0',SPEC_JOB_MAIN_CONTAINER_MEMORY_REQUEST:'0',SIDECAR_MAIN_CONTAINER_CPU_REQUEST:'0',SIDECAR_MAIN_CONTAINER_MEMORY_REQUEST:'0'}}};
+    minio:{rootUser:'opencrawldev',rootPassword:state.airbyteStorageSecret,storage:{volumeClaimValue:'5Gi'},resources:{requests:{cpu:'100m',memory:'256Mi'},limits:{memory:'1Gi'}}}};
   privateFile(join(stateDir,'airbyte-values.json'),values);
-  if(!state.airbyteInstalled){
+  const configHash=createHash('sha256').update(JSON.stringify({chart:pins.airbyte,values})).digest('hex');
+  if(!state.airbyteInstalled||state.airbyteConfigHash!==configHash){
     console.log('Installing pinned Airbyte in this clone’s private development cluster (first run can take 20 minutes)...');
     helm(['upgrade','--install','airbyte',chart,'--namespace','airbyte','--create-namespace','--values',join(stateDir,'airbyte-values.json'),'--wait','--timeout','20m']);
-    state.airbyteInstalled=true;save();
+    state.airbyteInstalled=true;state.airbyteConfigHash=configHash;save();
   }
+  // Airbyte 2.4's baked CDK catalog ends at major 4 (upstream issue #84928).
+  // Bootstrap only our dedicated pinned cluster; never an operator's Airbyte.
+  const cdk=pins.declarative;
+  if(!/^7\.\d+\.\d+$/.test(cdk.version)||!/^sha256:[a-f0-9]{64}$/.test(cdk.imageSha))throw new Error('Invalid pinned declarative runtime');
+  kubectl(['-n','airbyte','exec','-i','airbyte-db-0','--','psql','-U','airbyte','-d','db-airbyte','-v','ON_ERROR_STOP=1'],{capture:true,input:
+    `INSERT INTO declarative_manifest_image_version (major_version,image_version,created_at,updated_at,image_sha) VALUES (7,'${cdk.version}',now(),now(),'${cdk.imageSha}') ON CONFLICT (major_version) DO NOTHING;\n`});
   const airbyteUrl=`http://127.0.0.1:${state.airbytePort}`;
   const accessToken=await until('authenticated Airbyte API',async()=>{
     const r=await fetch(airbyteUrl+'/api/public/v1/applications/token',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client_id:state.airbyteClientId,client_secret:state.airbyteClientSecret,'grant-type':'client_credentials'}),signal:AbortSignal.timeout(10000)});
