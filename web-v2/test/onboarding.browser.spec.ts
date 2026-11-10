@@ -22,6 +22,33 @@ test('unconfigured OSS connectors remain visible and explain setup without start
   expect(connections).toBe(0);
 });
 
+for(const viewport of [{name:'desktop',width:1280,height:813},{name:'mobile',width:390,height:844}]){
+  test(`setup-required notes stay attached to compact connector tiles at ${viewport.name} width`,async({page,request})=>{
+    const setup=(id:string,name:string)=>({id,name,state:'setup-required',setup:{title:`Set up ${name}`,body:'Ask your administrator to configure this connection.'}});
+    await request.post('/__test/state',{data:{status:complete,sources:[setup('googledrive','Google Drive'),setup('slack','Slack'),{id:'granola',name:'Granola',state:'disconnected',auth:'api-key'},setup('circleback','Circleback'),setup('notion','Notion'),setup('github','GitHub')]}});
+    await page.setViewportSize({width:viewport.width,height:viewport.height});
+    await page.goto('/onboarding/sources');
+    await expect(page.getByText('Setup required',{exact:true})).toHaveCount(5);
+    await page.evaluate(()=>document.fonts.ready);
+    const cells=await page.locator('.connector-cell').evaluateAll(nodes=>nodes.map(node=>{
+      const tile=node.querySelector('.connector-tile')?.getBoundingClientRect();
+      const note=[...node.querySelectorAll('p')].find(text=>text.textContent==='Setup required')?.getBoundingClientRect();
+      return {cell:node.getBoundingClientRect().height,tile:tile?.height??0,gap:note&&tile?note.top-tile.bottom:null,note:note?.height??null};
+    }));
+    expect(cells).toHaveLength(6);
+    expect(cells.filter(cell=>cell.gap!==null)).toHaveLength(5);
+    for(const cell of cells){
+      expect(cell.tile).toBe(viewport.name==='mobile'?56:64);
+      // One caption directly under its tile, never the catalog's full-height state block.
+      expect(cell.cell).toBeLessThanOrEqual(cell.tile+32);
+      if(cell.gap===null||cell.note===null)continue;
+      expect(cell.gap).toBeGreaterThanOrEqual(4);expect(cell.gap).toBeLessThanOrEqual(12);
+      expect(cell.note).toBeLessThanOrEqual(24);
+    }
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  });
+}
+
 async function refresh(page: Page) {await page.evaluate(() => window.dispatchEvent(new Event('online')));}
 
 test('GitHub account choice preserves keyboard access, narrow layout and the selected OAuth state',async({page})=>{

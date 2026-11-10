@@ -189,6 +189,7 @@ body[data-onboarding] .brand img{width:32px;height:auto}
 .connector-tile[aria-busy="true"]{cursor:wait}
 .connector-tile[data-error]{border-color:var(--danger)}
 .connector-tile-error{margin:var(--space-2) 0 0;color:var(--danger);font-size:var(--text-xs);line-height:1.5}
+.connector-tile-note{margin:var(--space-2) 0 0;color:var(--muted);font-size:var(--text-xs);line-height:1.5}
 .connector-message{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:var(--space-3);min-height:216px;color:var(--muted);font-size:var(--text-ui)}
 #sources-loading{flex-direction:row;align-items:center;justify-content:flex-start}
 .connector-spinner{width:18px;height:18px;border:1.5px solid var(--accent);border-right-color:transparent;border-radius:50%}
