@@ -17,6 +17,13 @@ agents captured and control who else can.
   document-wide labels. Lists and viewers use the same bounded, read-time rule,
   so existing captures improve without reindexing or rewriting the source files.
   The original path remains visible and filtering includes titles and descriptions.
+  Memory contents render as read-only Markdown, including headings, lists, code,
+  links and GFM tables through the shared table component. Embedded HTML is not
+  executed and remote images are not loaded. YAML frontmatter stays out of the
+  rendered prose; View Markdown source reveals the complete, unchanged capture.
+  Browser consumers install the pinned optional Markdown peers declared by core;
+  `web-v2/package.json` provides them for the single-tenant console. Headless core
+  installations do not require the renderer.
 
 ## Visibility
 

@@ -1,6 +1,7 @@
 import {useState} from 'react';
 import {Button, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, Tabs} from '../design/components.js';
 import {Icon} from '../design/icons.js';
+import {Markdown} from '../design/markdown.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
 import type {Harness, LibraryAdapter, LibraryScope, MemoryRef, Visibility} from './library-types.js';
 import {MetaList, OwnerControls, VisibilityBadge, When, authorName, harnessName} from './library-controls.js';
@@ -53,6 +54,7 @@ function MemoryViewer({adapter, reference}: {adapter: LibraryAdapter; reference:
   const {data, error, loading, retry} = useResource(adapter, 'memories/read', memoryPath(reference), 0, signal => adapter('memories/read', reference, signal), 'This memory could not load. Try again.');
   const mutate = useLibraryMutation(adapter);
   const [visibility, setVisibility] = useState<Visibility | null>(null);
+  const [sourceOpen, setSourceOpen] = useState(false);
   const back = <Link to="/memories" className="oc-library-back"><Icon name="arrow-left"/>All memories</Link>;
   if (!data) return <div className="oc-library">{back}<PageHeader title="Memory"/>{loading ? <LoadingState label="Loading memory"/> : <>
     <Notice tone="danger">{error}</Notice><div className="actions"><Button onClick={retry}>Try again</Button></div></>}</div>;
@@ -67,6 +69,9 @@ function MemoryViewer({adapter, reference}: {adapter: LibraryAdapter; reference:
       {label: 'Agent', value: harnessName(memory.harness)}, {label: 'Updated', value: <When value={memory.modifiedAt}/>},
       {label: 'Written in', value: memory.sourceSessionId ? <Link to={sessionPath({userId: memory.userId, harness: memory.harness, sessionId: memory.sourceSessionId})}>Source session</Link> : null}]}/>
     {current === 'private' && <Notice>Only you can see this memory. Teammates and their agents cannot read or search it.</Notice>}
-    <div className="preserve-text bounded-text oc-memory-text" tabIndex={0} role="region" aria-label="Memory contents">{data.text}</div>
+    <div className="oc-memory-text" role="region" aria-label="Memory contents"><Markdown>{data.text}</Markdown></div>
+    <details className="oc-memory-source" onToggle={event => setSourceOpen(event.currentTarget.open)}><summary>View Markdown source</summary>
+      {sourceOpen && <pre className="preserve-text bounded-text" tabIndex={0} role="region" aria-label="Markdown source">{data.text}</pre>}
+    </details>
   </div>;
 }
