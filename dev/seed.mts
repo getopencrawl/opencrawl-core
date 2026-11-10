@@ -130,8 +130,15 @@ try{
   }finally{await scheduling.connection.close();}
   const marker='lunar otter';
   grant=await tokenForm({grant_type:'refresh_token',refresh_token:grant.refresh_token!});
-  const mcpResult=await rpc('tools/call',{name:'search',arguments:{query:marker,source:'connectors',match:'phrase'}});
-  assert.ok(JSON.stringify(mcpResult).includes('The lunar otter checks the ingestion pipeline'),'MCP did not retrieve the imported fixture');
+  // A completed indexing workflow can precede OpenSearch's search refresh.
+  // Observe the real authenticated read path without changing production refresh policy.
+  let searchable=false;
+  for(let attempt=0;attempt<30;attempt++){
+    const result=await rpc('tools/call',{name:'search',arguments:{query:marker,source:'connectors',match:'phrase'}});
+    if(JSON.stringify(result).includes('The lunar otter checks the ingestion pipeline')){searchable=true;break;}
+    console.log('Waiting for the imported sample to become searchable...');await delay(2000);
+  }
+  assert.ok(searchable,'MCP did not retrieve the imported fixture within 60 seconds');
   const complete=await json<{workspaceUrl:string}>('/api/onboarding/finish',{});assert.equal(complete.workspaceUrl,'/');
   const team=await json<{viewerUserId:string;organization:{id:string};role:string;members:Array<{id:string}>}>('/api/console/team');
   assert.equal(team.organization.id,input.organization);assert.equal(team.viewerUserId,seed.userId);assert.equal(team.role,'admin');

@@ -22,6 +22,8 @@ By default the application is at `http://localhost:8092` and Airbyte is at
 `http://localhost:8000`. A generated local Better Auth account is ready to use.
 The installer exercises a real device grant, refresh, MCP call and synthetic
 capture so the development account has completed normal onboarding.
+If sudo created the installation, read the generated credentials with
+`sudo cat .opencrawl-dev/login.txt`.
 
 It creates two **synthetic meeting records**, explicitly labeled as development
 samples. A private fixture HTTP service is read by an Airbyte declarative source.
@@ -31,6 +33,10 @@ authenticated MCP and browser search retrieve `lunar otter`. The sample uses the
 existing meeting schema and appears under Granola with a synthetic-account label;
 no Granola service or personal data is accessed. A synthetic agent session is
 also clearly labeled.
+
+Real external sources still require their owner's connector credentials or OAuth
+application. The zero-input preview uses only local synthetic data; it does not
+connect to your Google, GitHub, Slack or other accounts automatically.
 
 ## Development boundaries
 
