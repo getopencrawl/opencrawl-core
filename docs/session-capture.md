@@ -2,9 +2,95 @@
 
 Read [capture privacy and controls](capture-privacy.md) before enabling collection.
 
-The CLI installs capture for local Claude Code and Codex sessions, including sessions run by their desktop apps. Run `opencrawl login`, then `opencrawl collect install`. Codex requires reviewing/trusting the installed commands in `/hooks` or desktop Settings > Hooks. Existing sessions may need a restart.
+The CLI installs capture for local Claude Code and Codex sessions, including sessions run by their desktop apps, and for [Grok Bot](#grok-bot) on a Bot's cloud computer. Run `opencrawl login`, then `opencrawl collect install`. Codex requires reviewing/trusting the installed commands in `/hooks` or desktop Settings > Hooks. Existing sessions may need a restart.
 
 Capture uses command hooks and incremental reads of native JSONL transcripts. The harness supervises asynchronous hooks. Each hook durably saves its event, then attempts a nonblocking uploader lock; the winner uploads in that same process, and competing hooks exit. Unix dispatch uses exec to preserve the harness-owned PID. Capture never starts detached children. Each uploader has a 90-second process deadline and exits on detected parent loss (checked every second), including while waiting for locks or network responses. Durable unacknowledged bytes remain for the next hook. Foreground flush/backfill is unaffected. If the harness itself dies, reaping adopted children remains the host’s responsibility. The same mechanism runs on macOS, Linux and Windows without an init service. Legacy OpenCrawl LaunchAgents/user timers are removed during installation. The installer preserves existing hook groups, backs up changed files, and rolls back configuration writes if installation fails. It uses absolute executable paths so desktop launch environments do not need the interactive shell's PATH.
+
+## Grok Bot
+
+Grok Bot runs a person's Bots on one cloud computer and loads Cursor-format
+command hooks from `~/.cursor/hooks.json` there. Install on that computer, from a
+Bot's shell, not on the device that shows the chat:
+
+```sh
+npm i -g @getopencrawl/cli@next
+opencrawl login --no-browser          # or an upload-only OPENCRAWL_SESSIONS_TOKEN
+opencrawl collect install --yes --harness grok-bot
+```
+
+`--harness grok-bot` is never implied. Cursor reads the same `~/.cursor/hooks.json`
+on a developer machine, so installing there would record Cursor sessions under
+the Grok Bot name. Existing entries in the file are preserved; uninstall removes
+only OpenCrawl's.
+
+The collector reads no Grok Bot transcript. A session is built from the hook
+payloads, in the event shapes used for Claude Code and Codex:
+
+| Hook | Captured as |
+| --- | --- |
+| `beforeSubmitPrompt` | The person's message, with paths of attached files and rules (never their bytes) |
+| `afterAgentResponse` | The Bot's reply |
+| `afterAgentThought` | A reasoning summary |
+| `postToolUse`, `postToolUseFailure` | The tool call and its result or error, paired by `tool_use_id` |
+| `preCompact` | A compaction marker |
+| `sessionStart`, `sessionEnd`, `stop` | Lifecycle evidence, stored but not indexed |
+
+What differs from transcript capture:
+
+- **The hooks cannot block or deny.** Grok Bot waits for each hook, so the hook
+  answers first, saves its payload locally and returns. No permission hook
+  (`preToolUse`, `subagentStart`, the `before*` hooks) is registered, because an
+  invalid answer to one blocks the action; `postToolUse` already carries the tool
+  input. The process never exits with the blocking code 2.
+- **Uploads are bounded.** A hook uploads at a turn boundary (`stop`,
+  `sessionStart`, `sessionEnd`) or when 20 seconds have passed since the last
+  pass, and the process ends at five seconds regardless, inside its ten-second
+  hook timeout. A failed or cut-off pass backs off for one minute. Unsent work
+  stays in the local spool; `collect flush` drains it on demand.
+- **Capture starts when a Bot loads the hooks.** Nothing earlier is read and
+  there is no history import. Bots that are already running may keep the hook
+  configuration they loaded; verify from a newly created Bot.
+- **One installation covers the whole computer.** Every Bot the person runs
+  there is recorded and attributed to the person who installed capture. Do not
+  install on a shared Bot's computer.
+- **Connected-app results are not captured.** For HTTP MCP servers the runtime
+  passes hooks `{"redacted": true}` instead of the tool result, so only the
+  call's arguments are recorded. Shell, file and computer tools carry their
+  results; inline base64 images in them are stored as attachments.
+- **Payloads over 15 MiB are recorded as a size-only marker**, so one oversized
+  tool result cannot hold back the rest of the session.
+- **Origin is `cloud`.** Memory files, native session names, subagent linkage
+  and the board listener are not available for Grok Bot.
+
+A session is the hook's `conversation_id` (or `session_id`). Grok Bot is in beta,
+and some runtimes have been reported to emit only the tool hooks and leave those
+IDs blank. Capture then records tool activity only and groups it into one
+activity log per workspace and UTC day, named `Grok Bot activity in <workspace>
+on <date>`; this keeps the work searchable without presenting it as a
+conversation. `opencrawl collect status --json` on the Bot's computer shows what
+actually arrives. The hook contract here follows Cursor's published hook
+reference; confirm it on your own Bot computer before relying on coverage.
+
+Enterprise teams can prepare every member's computer with a Team Setup manifest
+that carries no credential:
+
+```json
+{
+  "manifestId": "opencrawl-capture",
+  "entries": [{
+    "id": "install-opencrawl-capture",
+    "setup": "#!/bin/sh\nset -eu\nnpm install --prefix \"$HOME/.local/share/opencrawl\" --no-audit --no-fund @getopencrawl/cli@next\nOPENCRAWL_NO_UPDATE=1 \"$HOME/.local/share/opencrawl/node_modules/.bin/opencrawl\" collect install --yes --harness grok-bot --defer-auth --api https://your-opencrawl.example --json"
+  }]
+}
+```
+
+Team Setup reruns the script when a computer starts and about daily, which also
+keeps the CLI current; installation is idempotent and keeps an identity that is
+already bound. `--defer-auth` installs the hooks without identifying anyone. Each member then
+signs in on their own computer (`opencrawl login --no-browser`), and the next
+hook binds that identity before anything is uploaded. Do not distribute one
+`OPENCRAWL_SESSIONS_TOKEN` as a Team Secret: an upload credential belongs to one
+person, so every member's sessions would be attributed to its owner.
 
 ## Contents and identity
 

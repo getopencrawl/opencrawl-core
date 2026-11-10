@@ -1,5 +1,5 @@
 import type {Principal, ObjectStore, SessionBatch, Authenticate, HttpHandler} from './types.mjs';
-import {parseJson} from './types.mjs';
+import {parseJson, isSessionHarness} from './types.mjs';
 import type {MemorySnapshot} from '../memories/types.mjs';
 import type {SearchAdapter} from '../search/types.mjs';
 import type {createCaptureCredentials} from './credentials.mjs';
@@ -49,7 +49,7 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
       // with toJSON methods or objects that change while storage I/O is pending.
       batch = parseJson<SessionBatch>(serialized);
       if (batch?.schemaVersion !== 1 || !id(batch.installationId) || !id(batch.sessionId) ||
-          !['claude-code', 'codex'].includes(batch.harness) || !Array.isArray(batch.events) || !batch.events.length ||
+          !isSessionHarness(batch.harness) || !Array.isArray(batch.events) || !batch.events.length ||
           !['cli', 'desktop', 'cloud', 'subagent', 'unknown'].includes(batch.origin)) fail(400, 'Invalid capture batch');
       if (batch.captureMode !== undefined && !['live','history'].includes(batch.captureMode)) fail(400, 'Invalid capture mode');
       if (batch.owner?.userId !== principal.userId || batch.owner?.tenantId !== principal.tenantId) fail(403, 'Capture owner does not match signed-in account');
@@ -87,7 +87,7 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
       if (!principal) fail(401, 'Authentication required');
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot read batches');
       if (!id(userId)) fail(400, 'Invalid author');
-      if (!['claude-code','codex'].includes(harness ?? '') || !id(installationId) || !id(sessionId) || !/^[a-f0-9]{64}$/.test(batchId ?? '')) fail(400, 'Invalid receipt');
+      if (!isSessionHarness(harness) || !id(installationId) || !id(sessionId) || !/^[a-f0-9]{64}$/.test(batchId ?? '')) fail(400, 'Invalid receipt');
       const data = await store.get(`${scope({...principal,userId})}/${harness}/${digest(installationId)}/${digest(sessionId)}/${batchId}.json.gz`, {maxBytes: MAX_STORED_BATCH_BYTES});
       if (!data) return null;
       const batch = parseJson<SessionBatch>(gunzipSync(data,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}));

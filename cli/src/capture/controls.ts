@@ -6,10 +6,10 @@ import {CliError} from '../oauth.ts';
 import {captureDir, readCaptureConfig} from './runtime.ts';
 import {captureNotice, projectPath} from './policy.ts';
 
-export async function approveCapture(approved:boolean, json=false) {
+export async function approveCapture(approved:boolean, json=false, notice=captureNotice) {
   if(approved)return true;
   if(json || !process.stdin.isTTY || !process.stderr.isTTY)return false;
-  process.stderr.write(captureNotice+'\n');
+  process.stderr.write(notice+'\n');
   const input=createInterface({input:process.stdin,output:process.stderr});
   try{return /^(y|yes)$/i.test((await input.question('Enable capture? [y/N] ')).trim());}
   finally{input.close();}

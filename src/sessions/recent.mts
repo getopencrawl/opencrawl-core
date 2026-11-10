@@ -1,4 +1,5 @@
 import type {Principal, ObjectStore, SessionEvent, SessionBatch, JsonValue} from './types.mjs';
+import {isSessionHarness} from './types.mjs';
 import type {RealmOptions, QueryBody, IndexHit} from '../search/types.mjs';
 interface RecentBucket {key: string[]; lastActivity: {value: number}}
 import {createRealmResolver, realmField} from '../search/realm.mjs';
@@ -66,7 +67,7 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
     for (const bucket of buckets) {
       if (!Array.isArray(bucket.key) || bucket.key.length !== 4 || bucket.key.some(value => typeof value !== 'string' || !/^[A-Za-z0-9_.:-]{1,200}$/.test(value)) || !Number.isFinite(bucket.lastActivity?.value)) throw invalid();
       const identity = {userId: bucket.key[0], harness: bucket.key[1], installationId: bucket.key[2], sessionId: bucket.key[3]};
-      if (!['codex', 'claude-code'].includes(identity.harness)) throw invalid();
+      if (!isSessionHarness(identity.harness)) throw invalid();
       if (selection && bucket.key.some((key, i) => key !== selection![i])) throw invalid();
       async function authorize() {
         const control = await controls.read({...principal, userId: identity.userId}, 'sessions', identity.harness, identity.sessionId);

@@ -10,7 +10,8 @@ import {setTimeout as pause} from 'node:timers/promises';
 import {createInterface} from 'node:readline';
 import {configDir, atomicFile, atomicJson, accessToken, withSessionLock, syncDirectory} from '../session.ts';
 import {CliError} from '../oauth.ts';
-import {parseRecord, detectOrigin, finalizeEventIdentity, hash, type Harness} from './parse.ts';
+import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
+import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotOversized, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
@@ -19,8 +20,14 @@ export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
 /** Bump when installed hook entries change so the next hook rewrites existing installs. */
 export const HOOK_MODE='managed-v2';
-export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:typeof HOOK_MODE|'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<Harness,string>,claudeDesktopSessionsRoot?:string,command:string[]};
+export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:typeof HOOK_MODE|'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<TranscriptHarness,string>&{'grok-bot'?:string},claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
+/** Installations made before a harness existed have no directory for it. */
+export function harnessRoot(config:CaptureConfig,harness:Harness) {
+  const root=config.roots[harness];
+  if(!root)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install --harness '+harness);
+  return root;
+}
 // Enrollment and every queued payload remain bound to their original destination.
 export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
   const {principal}=await request(config.api,'/api/sessions/identity',{signal},token);
@@ -87,7 +94,7 @@ export function recordError(error:any) {
 }
 function ensureDirectories() {for(const dir of ['queue','state','blobs','notices','sources'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});}
 const under = (file:string,dir:string) => file.startsWith(dir+sep);
-function transcriptAllowed(file:string, config:CaptureConfig, harness:Harness, approvedHistory=false) {
+function transcriptAllowed(file:string, config:CaptureConfig, harness:TranscriptHarness, approvedHistory=false) {
   const path=realpathSync(file);
   // Host-mirrored desktop history is accessible only through explicit backfill consent.
   if(approvedHistory&&harness==='claude-code'&&isClaudeDesktopTranscript(path,config))return path;
@@ -100,7 +107,7 @@ export function* walk(dir:string):Generator<string> {
   let entries;try{entries=readdirSync(dir,{withFileTypes:true});}catch{return;}
   for(const e of entries){const p=join(dir,e.name);if(e.isDirectory())yield*walk(p);else if(e.isFile()&&p.endsWith('.jsonl'))yield p;}
 }
-function findTranscript(config:CaptureConfig,harness:Harness,sessionId:string):string|undefined {
+function findTranscript(config:CaptureConfig,harness:TranscriptHarness,sessionId:string):string|undefined {
   const dirs=harness==='codex'?['sessions','archived_sessions']:['projects'];
   for(const d of dirs)for(const path of walk(join(config.roots[harness],d)))if(basename(path).includes(sessionId))return path;
 }
@@ -141,7 +148,7 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   atomicJson(join(captureDir(),'queue',hash(JSON.stringify(batch))+'.json'),batch);
 }
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
-export async function captureTranscript(config:CaptureConfig,harness:Harness,file:string,hook:any={},reconcileHistory=false) {
+export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false) {
   return withSessionLock('capture:spool',async()=>{
   if(readCaptureConfig()?.disabled)throw new CliError('CAPTURE_DISABLED','Capture is uninstalled. Reinstall before importing transcripts.');
   ensureDirectories();
@@ -334,11 +341,22 @@ export async function captureHook(harness:Harness,event:any) {
   return withSessionLock('capture:configuration',async()=>{
   const config=readCaptureConfig();if(!config||config.disabled)return;
   ensureDirectories();
+  const id=randomUUID(),at=new Date().toISOString();
+  if(harness==='grok-bot') {
+    if(!event||typeof event!=='object'||Array.isArray(event))throw new CliError('CAPTURE_EVENT_INVALID','Hook payload is not an object');
+    const session=grokBotSession(event,at);
+    if(captureExcluded(config,{sessionId:session.sessionId,cwd:session.cwd??undefined}))return;
+    // Hook payloads carry no time or order. Microseconds since the epoch keep
+    // events from separate hook processes in the order they were recorded.
+    const sequence=Math.round((performance.timeOrigin+performance.now())*1000);
+    const bytes=Buffer.byteLength(JSON.stringify(event));
+    atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,sequence,harness,event:bytes>GROK_BOT_MAX_HOOK_BYTES?grokBotOversized(event,bytes):event});
+    return;
+  }
   const sessionId=event?.session_id;
   if(typeof sessionId!=='string' || !/^[\w.:-]{1,200}$/.test(sessionId))throw new CliError('CAPTURE_SESSION_UNKNOWN','Hook missing session ID');
   if(captureExcluded(config,{sessionId,cwd:event.cwd}))return;
-  const id=randomUUID();
-  atomicJson(join(captureDir(),'notices',id+'.json'),{id,at:new Date().toISOString(),harness,event});
+  atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,harness,event});
   },Infinity);
 }
 
@@ -348,10 +366,21 @@ export async function drainCaptureNotices(config=readCaptureConfig()!) {
   ensureDirectories();
   return withSessionLock('capture:notices',async()=>{
   let processed=0,firstError:any;
+  // Grok Bot notices are the conversation itself, not pointers to a transcript.
+  const grokBot=new Map<string,{meta:any,title:any,notices:{path:string,notice:any}[]}>();
   for(const name of readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json'))) {
     await yieldToOwner();
     const path=join(captureDir(),'notices',name),notice=read(path);
     if(!notice)continue;
+    if(notice.harness==='grok-bot') {
+      const session=grokBotSession(notice.event,notice.at),key=JSON.stringify([session.sessionId,session.cwd]);
+      const group=grokBot.get(key)??{meta:{harness:'grok-bot',sessionId:session.sessionId,origin:'cloud',
+        originEvidence:session.identified?'Grok Bot cloud computer hook':'Grok Bot hook without a conversation ID; grouped by workspace and UTC day',
+        parentSessionId:null,...(session.cwd?{cwd:session.cwd}:{}),...(session.version?{harnessVersion:session.version}:{}),captureMode:'live'},
+        title:session.title?grokBotTitleEvent(session.sessionId,session.title,notice.at.slice(0,10)):null,notices:[]};
+      group.notices.push({path,notice});grokBot.set(key,group);
+      continue;
+    }
     try {
     const {harness,event,id,at}=notice;
     const file=event.transcript_path || findTranscript(config,harness,event.session_id);
@@ -373,6 +402,30 @@ export async function drainCaptureNotices(config=readCaptureConfig()!) {
     }
     unlinkSync(path);syncDirectory(dirname(path));processed++;
     }catch(error){firstError??=error;}
+  }
+  for(const group of grokBot.values()) {
+    await yieldToOwner();
+    group.notices.sort((a,b)=>(a.notice.sequence??0)-(b.notice.sequence??0));
+    // One batch per session and drain, split so a single large payload cannot
+    // hold back the rest. A notice is retired only after its batch is spooled.
+    type Chunk={events:any[],attachments:any[],paths:string[]};
+    const chunks:Chunk[]=[];let chunk:Chunk={events:[],attachments:[],paths:[]},bytes=0;
+    for(const {path,notice} of group.notices) {
+      const extracted:any[]=[];let next:any[];
+      try{next=grokBotEvents(notice).map(event=>attachmentTransform(event,extracted,group.meta.cwd??homedir()));}
+      catch(error){firstError??=error;continue;}
+      const size=Buffer.byteLength(JSON.stringify(next));
+      if(chunk.paths.length&&(chunk.paths.length>=100||bytes+size>8*1024*1024)){chunks.push(chunk);chunk={events:[],attachments:[],paths:[]};bytes=0;}
+      chunk.events.push(...next);chunk.attachments.push(...extracted);chunk.paths.push(path);bytes+=size;
+    }
+    if(chunk.paths.length)chunks.push(chunk);
+    for(const {events,attachments,paths} of chunks) {
+      try {
+        enqueue(config,group.meta,group.title?[group.title,...events]:events,attachments);
+        for(const path of paths){unlinkSync(path);processed++;}
+        syncDirectory(join(captureDir(),'notices'));
+      }catch(error){firstError??=error;}
+    }
   }
   if(firstError)throw firstError;
   return processed;
@@ -465,12 +518,36 @@ export async function flushCaptureWork() {
   return flushCaptures();
 }
 
+/** Cursor-format hooks block the agent while they run, so they cannot host the
+ * 90-second uploader. A turn boundary, or 20 seconds since the last pass, earns
+ * one pass in the hook's own process, which the hook command cuts off at its
+ * deadline. A failed or cut-off pass backs off for a minute. Unsent notices
+ * and batches stay queued for the next pass. */
+export async function hookFlush(event:any,{now=Date.now}={}) {
+  const config=readCaptureConfig();if(!config||config.disabled)return;
+  ensureDirectories();
+  const marker=join(captureDir(),'hook-flush.json'),last=read(marker);
+  const gap=last?.ok===false?60_000:GROK_BOT_BOUNDARIES.includes(event?.hook_event_name)?0:20_000;
+  if(last?.at&&now()-Date.parse(last.at)<gap)return;
+  try {
+    await withSessionLock('capture:worker',async()=>{
+      // Marked failed first, so a pass that is cut off also backs off.
+      atomicJson(marker,{at:new Date(now()).toISOString(),ok:false});
+      let failure:any;
+      try{if(config.authPending)await refreshCaptureIdentity(config);await drainCaptureNotices(config);}catch(error){failure=error;}
+      try{if(queuedNames().length)await flushCaptures({wait:false});}catch(error){failure??=error;}
+      if(failure)throw failure;
+      atomicJson(marker,{at:new Date(now()).toISOString(),ok:true});
+    },0);
+  } catch(error:any) {if(error?.code!=='SESSION_BUSY')throw error;}
+}
+
 export async function syncCaptures() {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
   if(config.disabled)return {uploaded:0};
   if(config.authPending)await refreshCaptureIdentity(config);
   const errors:any[]=[];
-  for(const harness of config.harnesses??['claude-code','codex'] as Harness[]) {
+  for(const harness of (config.harnesses??['claude-code','codex'] as Harness[]).filter(readsTranscript)) {
     const dirs=harness==='codex'?['sessions','archived_sessions']:['projects'];
     for(const dir of dirs)for(const path of walk(join(config.roots[harness],dir))) {
       // Installation enrolls new/active sessions; it never silently imports all historical conversations.

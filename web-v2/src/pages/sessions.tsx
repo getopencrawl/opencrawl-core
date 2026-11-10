@@ -2,13 +2,13 @@ import {useEffect, useRef, useState} from 'react';
 import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, Tabs} from '../design/components.js';
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
-import type {Harness, LibraryAdapter, LibraryScope, SessionRef, SessionSummary, TranscriptEntry, TranscriptEvent, Visibility} from './library-types.js';
+import type {SessionHarness, LibraryAdapter, LibraryScope, SessionRef, SessionSummary, TranscriptEntry, TranscriptEvent, Visibility} from './library-types.js';
 import {MetaList, OwnerControls, VisibilityBadge, When, authorName, byDay, harnessName} from './library-controls.js';
 import {failureMessage, useLibraryMutation, useResource} from './use-resource.js';
 import {consoleResourceKey, useConsoleModel} from '../data.tsx';
 
 const PAGE = 50, MAX = 500;
-const harnessOf = (value: string | null): Harness | null => value === 'claude-code' || value === 'codex' ? value : null;
+const harnessOf = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'grok-bot' ? value : null;
 export function sessionPath({userId, harness, sessionId}: SessionRef) {
   return '/sessions?' + new URLSearchParams({user: userId, harness, id: sessionId}).toString();
 }

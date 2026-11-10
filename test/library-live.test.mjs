@@ -167,3 +167,88 @@ test('visibility changes upgrade a realm no indexer has touched since the releas
   const stored = await transport('/_doc/session:one', undefined, 'GET');
   assert.equal(stored._source.session.private, true);
 });
+
+test('real Grok Bot sessions: hook-derived conversations and tool-only activity logs list, read, search and delete', {skip: !endpoint || !s3}, async t => {
+  const run = randomUUID(), environment = 'grok-' + run.slice(0, 8), tenantId = 'grok-' + run;
+  const alice = {tenantId, userId: 'alice'}, bob = {tenantId, userId: 'bob'};
+  const objects = new Set(), underlying = createObjectStore({endpoint: s3, bucket: 'capture-test', credentials: {accessKeyId: 'capture-test', secretAccessKey: 'capture-test-secret'}});
+  const store = {...underlying, put: async (k, b, m) => {objects.add(k); return underlying.put(k, b, m);}, compareAndSet: async (k, v, b) => {objects.add(k); return underlying.compareAndSet(k, v, b);}};
+  const prefix = 'sessions/grok-bot-test/' + run, options = {endpoint, environment, store, prefix};
+  t.after(async () => {for (const key of objects) await underlying.delete(key); await fetch(endpoint + '/' + realmIndex(environment, tenantId), {method: 'DELETE'});});
+  const search = createSessionSearch({endpoint, environment}), ingest = createSessionIngest({store, prefix});
+  const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
+  const api = createLibraryApi({sessions: createSessionLibrary(options)}), workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
+  const keys = () => [...objects].filter(key => key.endsWith('.json.gz'));
+  async function upload(owner, sessionId, harness, events) {
+    const before = new Set(keys());
+    await ingest.putBatch(owner, {schemaVersion: 1, owner, installationId: 'bot-computer', sessionId, harness, origin: harness === 'grok-bot' ? 'cloud' : 'cli', captureMode: 'live', events, attachments: []});
+    for (const key of keys().filter(key => !before.has(key))) await pipeline.processObject({key});
+    await search.refresh(owner);
+  }
+  const at = minute => `2026-11-10T10:${String(minute).padStart(2, '0')}:00.000Z`;
+  // The shapes the CLI derives from Cursor-format hook payloads on a Bot's computer.
+  await upload(alice, 'bot-conversation', 'grok-bot', [
+    {id: 'g0', kind: 'hook', timestamp: at(0), sequence: 1, data: {hook_event_name: 'sessionStart', session_id: 'bot-conversation', note: 'windlass'}},
+    {id: 'g1', kind: 'message', timestamp: at(1), sequence: 2, turnId: 'gen-1', data: {role: 'user', content: [{type: 'text', text: 'Expense the harbor conference pass'}]}},
+    {id: 'g2', kind: 'reasoning_summary', timestamp: at(2), sequence: 3, data: {type: 'reasoning', summary: [{type: 'summary_text', text: 'Find the receipt first.'}]}},
+    {id: 'g3', kind: 'tool_call', timestamp: at(3), sequence: 4, nativeId: 'tool-1', data: {type: 'tool_use', name: 'MCP:gmail_search', input: {query: 'harbor receipt'}, call_id: 'tool-1'}},
+    {id: 'g4', kind: 'tool_result', timestamp: at(3), sequence: 5, nativeId: 'tool-1', data: {type: 'tool_result', name: 'MCP:gmail_search', call_id: 'tool-1', output: {redacted: true}, duration_ms: 210}},
+    {id: 'g5', kind: 'message', timestamp: at(4), sequence: 6, data: {role: 'assistant', content: [{type: 'text', text: 'Registered and logged the expense.'}], model: 'grok-4.7'}},
+  ]);
+  // A runtime that reports only tool hooks, with no conversation ID.
+  const activity = 'activity-0123456789abcdef-2026-11-10';
+  await upload(alice, activity, 'grok-bot', [
+    {id: 'title', kind: 'session_title', timestamp: '2026-11-10T00:00:00.000Z', sequence: 0, data: {title: 'Grok Bot activity in expenses on 2026-11-10', titleType: 'auto'}},
+    {id: 't1', kind: 'tool_call', timestamp: at(6), sequence: 10, nativeId: 'tool-9', data: {type: 'tool_use', name: 'Shell', input: {command: 'ls quayside'}, call_id: 'tool-9'}},
+    {id: 't2', kind: 'tool_result', timestamp: at(6), sequence: 11, nativeId: 'tool-9', data: {type: 'tool_result', name: 'Shell', call_id: 'tool-9', output: {exitCode: 0, stdout: 'ledger.csv'}, duration_ms: 12}},
+  ]);
+  // Tool-only capture from another harness is still not a listed conversation.
+  await upload(alice, 'codex-tools', 'codex', [{id: 'c1', kind: 'tool_call', timestamp: at(7), sequence: 1, data: {type: 'function_call', name: 'shell', arguments: '{"cmd":"ls quayside"}', call_id: 'c'}}]);
+  await upload(bob, 'bob-chat', 'codex', [{id: 'b1', kind: 'message', timestamp: at(8), sequence: 1, data: {role: 'user', content: 'Bob harbor question'}}]);
+
+  const list = await api(bob, 'sessions/list', {});
+  assert.deepEqual(list.sessions.map(s => [s.userId, s.harness, s.sessionId, s.title, s.origin, s.events]), [
+    ['bob', 'codex', 'bob-chat', 'Bob harbor question', 'cli', 1],
+    ['alice', 'grok-bot', activity, 'Grok Bot activity in expenses on 2026-11-10', 'cloud', 1],
+    ['alice', 'grok-bot', 'bot-conversation', 'Expense the harbor conference pass', 'cloud', 3]]);
+  assert.deepEqual((await api(bob, 'sessions/list', {query: 'harbor'})).sessions.map(s => s.sessionId), ['bob-chat', 'bot-conversation']);
+  assert.deepEqual((await api(bob, 'sessions/list', {query: 'quayside'})).sessions.map(s => s.sessionId), [activity]);
+  assert.deepEqual((await api(bob, 'sessions/list', {query: 'expenses activity'})).sessions.map(s => s.sessionId), [activity]);
+
+  const transcript = await api(bob, 'sessions/read', {userId: 'alice', harness: 'grok-bot', sessionId: 'bot-conversation'});
+  assert.equal(transcript.session.title, 'Expense the harbor conference pass'); assert.equal(transcript.session.origin, 'cloud');
+  assert.deepEqual(transcript.events.flatMap(event => event.entries), [
+    {type: 'message', role: 'user', text: 'Expense the harbor conference pass'},
+    {type: 'note', label: 'Reasoning summary', text: 'Find the receipt first.', truncated: false},
+    {type: 'tool_call', name: 'MCP:gmail_search', input: JSON.stringify({query: 'harbor receipt'}, null, 2), truncated: false},
+    {type: 'tool_result', text: JSON.stringify({redacted: true}, null, 2), truncated: false},
+    {type: 'message', role: 'assistant', text: 'Registered and logged the expense.'}]);
+  assert.equal(transcript.total, 5, 'lifecycle hook evidence is not part of the transcript');
+  const log = await api(bob, 'sessions/read', {userId: 'alice', harness: 'grok-bot', sessionId: activity});
+  assert.equal(log.session.title, 'Grok Bot activity in expenses on 2026-11-10');
+  assert.deepEqual(log.events.flatMap(event => event.entries).map(entry => entry.type), ['tool_call', 'tool_result']);
+  // The same session ID under another harness is a different session.
+  await assert.rejects(api(bob, 'sessions/read', {userId: 'alice', harness: 'codex', sessionId: 'bot-conversation'}), {status: 404});
+
+  const found = await workspace.search(bob, {query: 'quayside ledger', source: 'sessions', match: 'any'});
+  assert.deepEqual(new Set(found.results.map(r => r.provenance.harness + ':' + r.provenance.sessionId)), new Set(['grok-bot:' + activity, 'codex:codex-tools']));
+  assert.equal((await workspace.search(bob, {query: 'windlass', source: 'sessions'})).results.length, 0, 'hook evidence is never indexed');
+  const latest = await recent.read(bob);
+  assert.deepEqual(latest.filter(s => s.harness === 'grok-bot').map(s => [s.sessionId, s.title, s.titleSource]), [
+    [activity, 'Grok Bot activity in expenses on 2026-11-10', 'captured'], ['bot-conversation', 'Expense the harbor conference pass', 'first_user_message']]);
+  assert.equal(latest.find(s => s.sessionId === 'bot-conversation').latestAssistantMessage.text, 'Registered and logged the expense.');
+  const usage = await search.usage(alice, {team: true, now: Date.parse(at(30))});
+  assert.deepEqual(usage.harnesses, [{name: 'grok-bot', count: 8}, {name: 'codex', count: 2}]);
+  assert.deepEqual(usage.origins, [{name: 'cloud', count: 8}, {name: 'cli', count: 2}]);
+  assert.equal(usage.toolCalls, 3); assert.equal(usage.messages, 3);
+
+  // Owner controls work exactly as for other harnesses.
+  await assert.rejects(api(bob, 'sessions/delete', {harness: 'grok-bot', sessionId: 'bot-conversation'}), {status: 404});
+  await api(alice, 'sessions/visibility', {harness: 'grok-bot', sessionId: activity, visibility: 'private'});
+  assert.deepEqual((await api(bob, 'sessions/list', {})).sessions.map(s => s.sessionId), ['bob-chat', 'bot-conversation']);
+  assert.equal((await workspace.search(bob, {query: 'quayside', source: 'sessions'})).results.filter(r => r.provenance.harness === 'grok-bot').length, 0);
+  const deleted = await api(alice, 'sessions/delete', {harness: 'grok-bot', sessionId: 'bot-conversation'});
+  assert.equal(deleted.objects, 2); // One batch and its event ledger.
+  assert.deepEqual((await api(alice, 'sessions/list', {})).sessions.map(s => s.sessionId), ['bob-chat', activity]);
+  assert.equal((await workspace.search(alice, {query: 'conference', source: 'sessions'})).results.length, 0);
+});

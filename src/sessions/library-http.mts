@@ -1,11 +1,13 @@
 import type {Principal, Authenticate, HttpHandler} from './types.mjs';
-import {parseJson, serviceError} from './types.mjs';
+import {parseJson, serviceError, SESSION_HARNESSES} from './types.mjs';
 import {z} from 'zod';
 import {sessionScope} from './event-identity.mjs';
 import type {createSessionLibrary} from './library.mjs';
 import type {createMemoryLibrary} from '../memories/library.mjs';
 
-const harness = z.enum(['claude-code', 'codex']);
+const harness = z.enum(SESSION_HARNESSES);
+// Memory files exist only for harnesses that keep them on disk.
+const memoryHarness = z.enum(['claude-code', 'codex']);
 const id = z.string().regex(/^[A-Za-z0-9_.:-]{1,200}$/);
 const path = z.string().min(4).max(2048);
 const visibility = z.enum(['team', 'private']);
@@ -16,9 +18,9 @@ export const libraryOperations = {
   'sessions/visibility': z.strictObject({harness, sessionId: id, visibility}),
   'sessions/delete': z.strictObject({harness, sessionId: id}),
   'memories/list': z.strictObject({scope}),
-  'memories/read': z.strictObject({userId: id, harness, path}),
-  'memories/visibility': z.strictObject({harness, path, visibility}),
-  'memories/delete': z.strictObject({harness, path}),
+  'memories/read': z.strictObject({userId: id, harness: memoryHarness, path}),
+  'memories/visibility': z.strictObject({harness: memoryHarness, path, visibility}),
+  'memories/delete': z.strictObject({harness: memoryHarness, path}),
 };
 export type LibraryOperation = keyof typeof libraryOperations;
 export const isLibraryOperation = (value: string): value is LibraryOperation => Object.hasOwn(libraryOperations, value);

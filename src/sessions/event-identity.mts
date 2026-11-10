@@ -1,5 +1,5 @@
 import type {Principal, SessionIdentity, SessionBatch, SessionEvent, EventReservationOptions, SourceOptions, ObjectStore, StorePage, StoreVersion} from './types.mjs';
-import {parseJson} from './types.mjs';
+import {parseJson, isSessionHarness, SESSION_HARNESSES} from './types.mjs';
 import {createHash} from 'node:crypto';
 import {gunzipSync} from 'node:zlib';
 
@@ -19,13 +19,13 @@ export function sessionScope(principal: Principal | null | undefined) {
 export function sourceBatchIdentity(prefix: string,key: string) {
  if(typeof key!=='string'||!key.startsWith(prefix+'/'))return null;
  const hash='[a-f0-9]{64}';
- const match=new RegExp(`^tenants/(${hash})/users/(${hash})/(claude-code|codex)/(${hash})/(${hash})/(${hash})\\.json\\.gz$`).exec(key.slice(prefix.length+1));
+ const match=new RegExp(`^tenants/(${hash})/users/(${hash})/(${SESSION_HARNESSES.join('|')})/(${hash})/(${hash})/(${hash})\\.json\\.gz$`).exec(key.slice(prefix.length+1));
  return match?{tenantHash:match[1],userHash:match[2],harness:match[3],installationHash:match[4],sessionHash:match[5],batchId:match[6]}:null;
 }
 function location({prefix,principal,harness,installationId,sessionId}: SessionIdentity) {
  if(typeof prefix!=='string'||!prefix||prefix.split('/').some(part=>!part||part==='.'||part==='..'))fail(400,'Invalid session prefix');
  const scope=sessionScope(principal);
- if(!['claude-code','codex'].includes(harness)||!id(installationId)||!id(sessionId))fail(400,'Invalid session identity');
+ if(!isSessionHarness(harness)||!id(installationId)||!id(sessionId))fail(400,'Invalid session identity');
  const identity=digest(JSON.stringify([principal.tenantId,principal.userId,harness,installationId,sessionId]));
  const source=`${prefix}/${scope}/${harness}/${digest(installationId)}/${digest(sessionId)}/`;
  return {identity,source,key:source+'event-identities-v1.json'};
