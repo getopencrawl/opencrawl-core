@@ -1,12 +1,12 @@
-import type {IncomingMessage, ServerResponse} from 'node:http';
+import type {IncomingMessage, ServerResponse, ServerOptions} from 'node:http';
 import type {Log} from '../integrations/ports.mjs';
 type DrainResult = {status: string; reason: string};
 export interface ShutdownReport extends DrainResult {protocol: number; phase: string; activeHandlers: number; acceptedHandlers: number; completedHandlers: number; rejectedHandlers: number; elapsedMs: number; exitCode: number}
-interface LifecycleOptions {analytics?: {close(): Promise<void>} | null; log?: Log; drainTimeoutMs?: number; exit?: (code: number) => unknown}
+interface LifecycleOptions {httpOptions?: Pick<ServerOptions,'keepAliveTimeout'|'requestTimeout'|'headersTimeout'>; analytics?: {close(): Promise<void>} | null; log?: Log; drainTimeoutMs?: number; exit?: (code: number) => unknown}
 import {createServer} from 'node:http';
 
 /** Track application work, not sockets: an aborted client can leave a write pending. */
-export function createDrainableServer(handler: (req: IncomingMessage, res: ServerResponse) => unknown, {analytics, log = () => {}, drainTimeoutMs = 15000, exit = code => process.exit(code)}: LifecycleOptions = {}) {
+export function createDrainableServer(handler: (req: IncomingMessage, res: ServerResponse) => unknown, {httpOptions, analytics, log = () => {}, drainTimeoutMs = 15000, exit = code => process.exit(code)}: LifecycleOptions = {}) {
   if (typeof handler !== 'function' || !Number.isInteger(drainTimeoutMs) || drainTimeoutMs < 1 || drainTimeoutMs > 15000) throw new Error('Invalid request lifecycle configuration');
   const active = new Set<Promise<unknown>>();
   let stopping = false, accepted = 0, completed = 0, rejected = 0;
@@ -16,7 +16,7 @@ export function createDrainableServer(handler: (req: IncomingMessage, res: Serve
     if (!res.headersSent) res.writeHead(503, {'Content-Type':'text/plain', 'Connection':'close', 'Cache-Control':'no-store'});
     res.end('Service temporarily unavailable');
   };
-  const server = createServer((req, res) => {
+  const server = createServer(httpOptions ?? {}, (req, res) => {
     if (stopping) return unavailable(res);
     accepted++;
     const task = Promise.resolve().then(() => handler(req, res)).catch(() => {
