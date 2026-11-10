@@ -230,3 +230,19 @@ test('search adapters derive neighbour passage ids from the same identity the in
   assert.notEqual(search.memories.neighbour(memory,1),search.memories.neighbour(memory,2));
   assert.equal(search.memories.neighbour({...memory,path:undefined},1),null);
 });
+
+test('session search filters on the recorded message role and rejects malformed roles', async () => {
+  const {createSessionSearch} = await import('../dist/src/sessions/search.mjs');
+  const bodies = [];
+  const search = createSessionSearch({endpoint:'http://search.test',tenantId:'org-a',index:'sessions-test',fetch:async(url,options)=>{
+    if(url.pathname.endsWith('/_search')){bodies.push(JSON.parse(options.body));return realmResponse('session',{hits:{total:{value:0},hits:[]}});}
+    if(url.pathname.endsWith('/_mapping'))return Response.json({});
+    return Response.json({error:{type:'resource_already_exists_exception'}},{status:400});
+  }});
+  const principal = {tenantId:'org-a',userId:'user-a'};
+  await search.search(principal,{query:'deadline',match:'any',role:'user'});
+  await search.search(principal,{query:'deadline',match:'any'});
+  const roleFilter = body => JSON.stringify(body).includes('{"term":{"session.role":"user"}}');
+  assert.equal(roleFilter(bodies[0]),true);assert.equal(roleFilter(bodies[1]),false);
+  await assert.rejects(search.search(principal,{query:'x',role:'User; DROP'}),e=>e.status===400);
+});
