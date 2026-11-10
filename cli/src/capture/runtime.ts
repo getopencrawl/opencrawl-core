@@ -357,7 +357,8 @@ export async function captureHook(harness:Harness,event:any) {
   if(typeof sessionId!=='string' || !/^[\w.:-]{1,200}$/.test(sessionId))throw new CliError('CAPTURE_SESSION_UNKNOWN','Hook missing session ID');
   if(captureExcluded(config,{sessionId,cwd:event.cwd}))return;
   atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,harness,event});
-  },Infinity);
+  // A Bot is waiting on a Grok Bot hook: give up on a held lock rather than queue behind it.
+  },harness==='grok-bot'?2000:Infinity);
 }
 
 // The original event is kept only until its immutable batch is spooled. Its ID
