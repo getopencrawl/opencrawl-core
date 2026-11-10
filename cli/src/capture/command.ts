@@ -1,6 +1,6 @@
 import {CliError} from '../oauth.ts';
 import {installCapture,uninstallCapture,upgradeCaptureHooks} from './install.ts';
-import {captureHook,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError} from './runtime.ts';
+import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError} from './runtime.ts';
 import {backfill,backfillPreview,selection,setupBackfill} from './backfill.ts';
 import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
 import {captureNotice} from './policy.ts';
@@ -41,7 +41,12 @@ export async function collectCommand(action:string,api:string,values:any) {
         if(!['claude-code','codex'].includes(values.harness))throw new Error('Invalid harness');
         let size=0;const chunks:Buffer[]=[];
         for await(const chunk of process.stdin){size+=chunk.length;if(size>48*1024*1024)throw new Error('Hook too large');chunks.push(Buffer.from(chunk));}
-        await captureHook(values.harness,JSON.parse(Buffer.concat(chunks).toString()));
+        const event=JSON.parse(Buffer.concat(chunks).toString());
+        await captureHook(values.harness,event);
+        // Async Claude Code hooks deliver this JSON on the next turn, so a
+        // paused capture is visible to the person instead of failing silently.
+        const notice=values.harness==='claude-code'&&['SessionStart','UserPromptSubmit'].includes(event?.hook_event_name)?captureAttentionNotice():null;
+        if(notice)process.stdout.write(JSON.stringify({systemMessage:notice,hookSpecificOutput:{hookEventName:event.hook_event_name,additionalContext:notice}})+'\n');
         await upgradeCaptureHooks();
         if(values.managed)await ownedCaptureWorker();
       }catch(e){try{recordError(e);}catch{}}
