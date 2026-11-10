@@ -240,6 +240,14 @@ Cloud image setup uses `collect install --yes --harness claude-code --defer-auth
 --backfill skip` without a runtime credential or identity lookup. The first async
 hook binds identity before parsing or uploading, without blocking the agent.
 
+Never image or snapshot a signed-in CLI. Sign-in refresh tokens rotate on every
+renewal, so when one machine renews a copied sign-in, every other copy is revoked.
+For machine images, templates and synced home directories, give capture an
+upload-only `OPENCRAWL_SESSIONS_TOKEN` (saved to `capture/receiver-token.json`)
+and run `opencrawl logout` before capturing the image. If capture loses its
+sign-in, `collect status` reports `attention`, and Claude Code receives the same
+notice on the next turn (at most hourly) instead of failing silently.
+
 ### Optional history import
 
 `collect install` and `collect backfill` ask terminal users whether to import past Claude Code sessions,

@@ -559,11 +559,28 @@ export async function flushCaptures({wait=true}={}) {
     return result;
   },wait?Infinity:0).catch(error=>{if(!wait&&error?.code==='SESSION_BUSY')return {uploaded:0};throw error;});
 }
+/** A capture failure the person must fix, or null. Uploads succeeding after
+ * the recorded error make it stale; queued data is retained either way. */
+export function captureAttention():string|null {
+  const config=readCaptureConfig();if(!config||config.disabled)return null;
+  const error=read(join(captureDir(),'last-error.json')),upload=read(join(captureDir(),'last-upload.json'));
+  if(error?.code!=='AUTH_REQUIRED' || upload?.at && Date.parse(upload.at)>=Date.parse(error.at))return null;
+  const queued=existsSync(join(captureDir(),'queue'))?queuedNames().length:0;
+  return `OpenCrawl session capture is paused: this machine can't sign in to ${new URL(config.api).hostname} (since ${error.at}; ${queued} batch${queued===1?'':'es'} queued locally, nothing lost). Run \`opencrawl login\` here. If this machine was created from an image or snapshot, a copied sign-in is revoked when another copy renews it; give capture an upload-only OPENCRAWL_SESSIONS_TOKEN instead.`;
+}
+/** Harness notice for a paused capture, at most hourly per installation. */
+export function captureAttentionNotice(now=Date.now()):string|null {
+  const message=captureAttention();if(!message)return null;
+  const marker=join(captureDir(),'attention-shown.json'),shown=read(marker);
+  if(shown?.at && now-Date.parse(shown.at)<3_600_000)return null;
+  atomicJson(marker,{at:new Date(now).toISOString()});
+  return message;
+}
 export function captureStatus() {
   const config=readCaptureConfig();
   return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.authPending?null:config?.owner,authenticationPending:Boolean(config?.authPending),installationId:config?.installationId,
     exclusions:config?.exclusions??{projects:[],sessions:[]},
     queued:existsSync(join(captureDir(),'queue'))?readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json')).length:0,
     pendingHooks:existsSync(join(captureDir(),'notices'))?noticeNames().length:0,
-    lastUpload:read(join(captureDir(),'last-upload.json')),lastError:read(join(captureDir(),'last-error.json'))};
+    lastUpload:read(join(captureDir(),'last-upload.json')),lastError:read(join(captureDir(),'last-error.json')),attention:captureAttention()};
 }
