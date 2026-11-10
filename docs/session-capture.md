@@ -53,10 +53,11 @@ What differs from transcript capture:
 - **One installation covers the whole computer.** Every Bot the person runs
   there is recorded and attributed to the person who installed capture. Do not
   install on a shared Bot's computer.
-- **Connected-app results are not captured.** For HTTP MCP servers the runtime
-  passes hooks `{"redacted": true}` instead of the tool result, so only the
-  call's arguments are recorded. Shell, file and computer tools carry their
-  results; inline base64 images in them are stored as attachments.
+- **Connected-app results are probably not captured.** Connected apps run on
+  the service's backend. Cursor documents that its cloud agents pass hooks
+  `{"redacted": true}` in place of an HTTP MCP tool's result, so expect only the
+  call's arguments. Shell, file and computer tools carry their results; inline
+  base64 images in them are stored as attachments.
 - **Payloads over 15 MiB are recorded as a size-only marker**, so one oversized
   tool result cannot hold back the rest of the session.
 - **Origin is `cloud`.** Memory files, native session names, subagent linkage
@@ -77,9 +78,13 @@ Grok Bot is in beta, and some runtimes have been reported to emit only the tool
 hooks and leave the IDs blank. Capture then records tool activity only and
 groups it into one activity log per workspace and UTC day, named `Grok Bot
 activity in <workspace> on <date>`; this keeps the work searchable without
-presenting it as a conversation. `opencrawl collect status --json` on the Bot's computer shows what
-actually arrives. The hook contract here follows Cursor's published hook
-reference; confirm it on your own Bot computer before relying on coverage.
+presenting it as a conversation. `opencrawl collect status --json` on the Bot's
+computer shows what actually arrives.
+
+xAI does not document command hooks for Grok Bot. The hooks file location
+follows a third-party integration's reported setup, and the payloads follow
+Cursor's published hook reference. Neither has been confirmed by OpenCrawl on a
+live Bot computer; check `collect status` there before relying on coverage.
 
 Enterprise teams can prepare every member's computer with a Team Setup manifest
 that carries no credential:
@@ -96,11 +101,15 @@ that carries no credential:
 
 Team Setup reruns the script when a computer starts and about daily, which also
 keeps the CLI current; installation is idempotent and keeps an identity that is
-already bound. `--defer-auth` installs the hooks without identifying anyone. Each member then
-signs in on their own computer (`opencrawl login --no-browser`), and the next
-hook binds that identity before anything is uploaded. Do not distribute one
-`OPENCRAWL_SESSIONS_TOKEN` as a Team Secret: an upload credential belongs to one
-person, so every member's sessions would be attributed to its owner.
+already bound. `--defer-auth` installs the hooks without identifying anyone.
+Each member then signs in on their own computer (`opencrawl login
+--no-browser`), and the next hook binds that identity before anything is
+uploaded. The hooks spool locally from the moment the manifest runs, so that
+sign-in also uploads what a member's Bots did since then: tell members before
+rolling it out. Do not distribute one `OPENCRAWL_SESSIONS_TOKEN` as a Team
+Secret: an upload credential belongs to one person, so every member's sessions
+would be attributed to its owner. This manifest follows xAI's documented format
+and has not been run by OpenCrawl on an Enterprise team.
 
 ## Contents and identity
 
