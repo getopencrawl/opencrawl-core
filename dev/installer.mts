@@ -158,6 +158,7 @@ async function up(){
   const airbyteIp=ownedNode()!.NetworkSettings.Networks[state.project+'_default'].IPAddress;
   if(!/^\d+\.\d+\.\d+\.\d+$/.test(airbyteIp))throw new Error('Missing private Airbyte address');
   const values={global:{airbyteUrl:`http://localhost:${state.airbytePort}`,auth:{enabled:true,instanceAdmin:{password:state.airbytePassword,clientId:state.airbyteClientId,clientSecret:state.airbyteClientSecret},security:{cookieSecureSetting:false}},
+    database:{password:state.airbyteDbPassword},
     env_vars:{TRACKING_STRATEGY:'logging',AIRBYTE_INSTALLATION_ID:state.project},storage:{type:'minio',minio:{accessKeyId:'opencrawldev',secretAccessKey:state.airbyteStorageSecret}},
     jobs:{resources:{requests:{cpu:'0',memory:'0'},limits:{cpu:'2',memory:'2Gi'}}}},
     server:{service:{type:'NodePort',port:8001,nodePort:30080},env_vars:{JOB_RESOURCE_VARIANT_OVERRIDE:'lowresource'}},
@@ -188,9 +189,11 @@ async function up(){
   writeCompose(airbyteIp,ip('s3'));
   console.log('Starting the normal authenticated application and indexing worker...');compose(['up','-d','--wait','--wait-timeout','600','app','worker']);
   const credentials={format:1,project:state.project,origin:state.origin,connectOrigin:'http://app:8092',organization:state.organization,email:state.email,password:state.password,setupToken:state.setupToken,fixtureUrl:`http://${ip('fixture')}:8080`};
-  privateFile(join(stateDir,'seed-input.json'),credentials);
+  const seedDir=join(stateDir,'seed');mkdirSync(seedDir,{recursive:true,mode:0o700});
+  privateFile(join(seedDir,'seed-input.json'),credentials);
   console.log('Verifying first login and real Airbyte → S3 → Temporal → OpenSearch ingestion...');
-  compose(['run','--rm','--no-deps','--user','root','--volume',`${join(root,'dev')}:/opencrawl/dev:ro`,'--volume',`${stateDir}:/dev-state`,'app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
+  compose(['run','--rm','--no-deps','--user','root','--volume',`${join(root,'dev')}:/opencrawl/dev:ro`,'--volume',`${seedDir}:/dev-state`,'app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
+  privateFile(join(stateDir,'verification.json'),JSON.parse(readFileSync(join(seedDir,'verification.json'),'utf8')));
   state.verifiedAt=new Date().toISOString();save();
   privateFile(join(stateDir,'login.txt'),`Development only\nURL: ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\nAirbyte URL: http://localhost:${state.airbytePort}\nAirbyte password: ${state.airbytePassword}\n`);
   summary();

@@ -74,10 +74,11 @@ const workspaceId=required('AIRBYTE_WORKSPACE_ID'),organizationId=input.organiza
 const airbyte=createAirbyte({url:required('AIRBYTE_URL'),clientId:required('AIRBYTE_CLIENT_ID'),clientSecret:required('AIRBYTE_CLIENT_SECRET')});
 const registry=createSingleOrganizationRegistry({path:required('OPENCRAWL_REGISTRY_PATH'),organizationId});
 const destination=singleOrganizationDestination({organizationId,bucket:required('OPENCRAWL_LANDING_S3_BUCKET'),region:required('OPENCRAWL_LANDING_S3_REGION'),endpoint:required('OPENCRAWL_AIRBYTE_S3_ENDPOINT'),accessKeyId:required('OPENCRAWL_LANDING_S3_ACCESS_KEY_ID'),secretAccessKey:required('OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY')});
+const specification={type:'Spec',connection_specification:{$schema:'http://json-schema.org/draft-07/schema#',type:'object',required:['base_url'],properties:{base_url:{type:'string',title:'Development fixture URL'}}}};
 const manifest:ConnectorManifest={version:'7.28.2',type:'DeclarativeSource',check:{type:'CheckStream',stream_names:['notes']},
   streams:[{type:'DeclarativeStream',name:'notes',primary_key:['id'],retriever:{type:'SimpleRetriever',requester:{type:'HttpRequester',url_base:"{{ config['base_url'] }}",path:'/notes',http_method:'GET'},record_selector:{type:'RecordSelector',extractor:{type:'DpathExtractor',field_path:['notes']}}},
     schema_loader:{type:'InlineSchemaLoader',schema:{$schema:'http://json-schema.org/draft-07/schema#',type:'object',additionalProperties:true,properties:{id:{type:'string'},title:{type:'string'},summary_markdown:{type:'string'},created_at:{type:'string'},updated_at:{type:'string'},url:{type:'string'}}}}}],
-  spec:{type:'Spec',connection_specification:{$schema:'http://json-schema.org/draft-07/schema#',type:'object',required:['base_url'],properties:{base_url:{type:'string',title:'Development fixture URL'}}}}};
+  spec:specification};
 
 try{
   const definitionName=input.project+' synthetic meeting source';
