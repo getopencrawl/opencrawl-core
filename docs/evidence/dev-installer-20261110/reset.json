@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "project": "ocdev-85728215344a",
+  "ownedContainersAndVolumesRemoved": true,
+  "ownClusterAndStateRemoved": true,
+  "unrelatedContainerVolumeAndNetworkPreserved": true
+}

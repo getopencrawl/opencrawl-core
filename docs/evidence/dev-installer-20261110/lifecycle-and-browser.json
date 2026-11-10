@@ -1,0 +1,63 @@
+{
+  "initial-ingestion": {
+    "ok": true,
+    "checkedAt": "2026-11-10T05:22:08.301Z",
+    "project": "ocdev-85728215344a",
+    "organization": "org_ddfa15546c5f54405e82feeb",
+    "syntheticFixture": true,
+    "identity": "better-auth-local",
+    "airbyte": {
+      "workspaceId": "88ec5c24-e8ab-4c21-a7a9-a0371c10fb32",
+      "connectionId": "18da4c51-5b76-4b89-83d8-fadbaeafc507",
+      "jobId": 1,
+      "status": "succeeded",
+      "rows": 2
+    },
+    "temporal": {
+      "workflowId": "dev-verify-ocdev-85728215344a-1794288127813"
+    },
+    "retrieval": {
+      "query": "lunar otter",
+      "authenticated": true,
+      "found": true,
+      "mcp": true
+    },
+    "onboardingCompleted": true,
+    "deviceGrant": true,
+    "refreshGrant": true,
+    "anonymousDenied": true,
+    "forgedScopeDenied": true,
+    "foreignOriginDenied": true
+  },
+  "lifecycle": {
+    "ok": true,
+    "revision": "fa42dd61603749090f594c96b91d4eb8908c27b5",
+    "checkedAt": "2026-11-10T05:32:28.744Z",
+    "resetRequiresExplicitYes": true,
+    "stopRetainsData": true,
+    "restartSearchVerified": true,
+    "repeatedUpVerified": true,
+    "identitiesAndCredentialsPreserved": true,
+    "airbyteResourcesAndJobPreserved": true,
+    "onlyLoopbackPublishedPorts": true,
+    "runtimeHasNoDevMountOrContainerControlSocket": true
+  },
+  "browser": {
+    "ok": true,
+    "checkedAt": "2026-11-10T05:33:10.925Z",
+    "reactLogin": true,
+    "onboardingComplete": true,
+    "renderedSearch": true,
+    "pageErrors": []
+  },
+  "checks": {
+    "revision": "fa42dd61603749090f594c96b91d4eb8908c27b5",
+    "coreTests": {
+      "passed": 321,
+      "skipped": 24,
+      "failed": 0
+    },
+    "toolingStrictTypecheck": true,
+    "productSourceAndProductionDeployUnchanged": true
+  }
+}
