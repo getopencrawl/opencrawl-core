@@ -67,7 +67,7 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
     sourceConfiguration:async(record,provider)=>(await byGrant(record.connectedAccountId||'')).sourceConfiguration(record,provider),
   };
   const providers=createProviderCatalog(definitions);
-  const brokered=['googledrive','notion','circleback',...(!oauth?['slack']:[])];
+  const brokered=['googledrive','notion','circleback',...(!oauth?['slack']:[])].filter(id=>!providers[id]!.unavailableReason);
   const sentence=(names:string[])=>names.length>1?names.slice(0,-1).join(', ')+' and '+names.at(-1):names[0]||'';
   // Present when an admin can add the key in the product; otherwise the setup text names the server setting.
   const credential:ConnectorCredential|undefined=saved?{id:'composio',name:'Composio',label:'Composio API key',url:'https://dashboard.composio.dev/~/project/settings/api-keys',

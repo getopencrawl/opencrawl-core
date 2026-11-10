@@ -143,7 +143,8 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
       if(!account)fail(404,'Account not found');
       if(invitationId){
         const invite=database.prepare('SELECT * FROM invitation WHERE id=? AND organizationId=?').get(invitationId,organizationId);
-        if(!invite||invite.status!=='pending'||Number(invite.expiresAt)<=Date.now()||invite.email!==account!.email)fail(410,'Invitation unavailable');
+        const expiresAt=typeof invite?.expiresAt==='string'?Date.parse(invite.expiresAt):Number(invite?.expiresAt);
+        if(!invite||invite.status!=='pending'||!Number.isFinite(expiresAt)||expiresAt<=Date.now()||invite.email!==account!.email)fail(410,'Invitation unavailable');
         role=invite!.role==='admin'?'admin':'member';
       }else{
         if(database.prepare('SELECT 1 FROM opencrawlIdentityState WHERE organizationId=? AND initialized=1').get(organizationId)||

@@ -35,9 +35,14 @@ test('fresh OSS exposes every supported connector and explains missing setup wit
 test('operator broker enables OAuth connectors without exposing its key in the catalog',async t=>{
   const service=await fixture(t,{COMPOSIO_API_KEY:'operator-private-key'});
   const cards=await service.integrations.list(principal);
-  for(const id of ['googledrive','notion','circleback','slack'])assert.equal(cards.find(c=>c.provider===id).state,'disconnected');
+  for(const id of ['notion','circleback','slack'])assert.equal(cards.find(c=>c.provider===id).state,'disconnected');
   assert.equal(cards.find(c=>c.provider==='github').state,'setup-required');
   assert.ok(!JSON.stringify(cards).includes('operator-private-key'));
+  const drive=cards.find(card=>card.provider==='googledrive');
+  assert.equal(drive.state,'setup-required');assert.equal(drive.setup.requirement,'Indexing not available');
+  assert.equal(drive.setup.credential,undefined);
+  await assert.rejects(service.integrations.connect(principal,'googledrive'),error=>error.status===503&&/not.*searchable/.test(error.message));
+  assert.equal((await service.registry.listTenant(principal.tenantId)).length,0);
 });
 
 test('operator OAuth binds requests and source configuration to its single organization',async()=>{
@@ -235,10 +240,10 @@ const states=async service=>Object.fromEntries((await service.integrations.list(
 
 test('an admin-entered broker key is checked, stored encrypted, and enables its connectors without a restart',async t=>{
   const composio=await brokerService(t),f=await installation(t,{COMPOSIO_BASE_URL:composio.url}),service=f.open();
-  const before=await service.integrations.list(principal),drive=before.find(card=>card.provider==='googledrive');
-  assert.equal(drive.state,'setup-required');assert.equal(drive.setup.requirement,'Needs a Composio key');
-  assert.deepEqual({id:drive.setup.credential.id,unlocks:drive.setup.credential.unlocks},{id:'composio',unlocks:['Google Drive','Notion','Circleback','Slack']});
-  assert.match(drive.setup.credential.url,/^https:\/\/dashboard\.composio\.dev\//);
+  const before=await service.integrations.list(principal),notion=before.find(card=>card.provider==='notion');
+  assert.equal(notion.state,'setup-required');assert.equal(notion.setup.requirement,'Needs a Composio key');
+  assert.deepEqual({id:notion.setup.credential.id,unlocks:notion.setup.credential.unlocks},{id:'composio',unlocks:['Notion','Circleback','Slack']});
+  assert.match(notion.setup.credential.url,/^https:\/\/dashboard\.composio\.dev\//);
   const github=before.find(card=>card.provider==='github');
   assert.equal(github.setup.requirement,'Needs a GitHub App');assert.equal(github.setup.credential,undefined);
 
@@ -252,7 +257,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
 
   await service.connectorSettings.save('composio','  good-project-key\n',by);
   assert.deepEqual(composio.seen.at(-1),{method:'GET',url:'/api/v3.1/auth_configs?limit=1',key:'good-project-key'});
-  assert.deepEqual(await states(service),{googledrive:'disconnected',slack:'disconnected',granola:'disconnected',circleback:'disconnected',notion:'disconnected',github:'setup-required'});
+  assert.deepEqual(await states(service),{googledrive:'setup-required',slack:'disconnected',granola:'disconnected',circleback:'disconnected',notion:'disconnected',github:'setup-required'});
   const sealed=await f.store.get('connector-settings/v1/org_team/settings.enc');
   assert.ok(sealed.length>40);assert.ok(!sealed.includes(Buffer.from('good-project-key')));
   assert.ok(!JSON.stringify(await service.integrations.list(principal)).includes('good-project-key'));
@@ -263,7 +268,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
 test('a broker key from the server environment cannot be replaced in the product; without a connector key nothing is stored',async t=>{
   const composio=await brokerService(t);
   const managed=(await installation(t,{COMPOSIO_BASE_URL:composio.url,COMPOSIO_API_KEY:'good-project-key'})).open();
-  assert.equal((await states(managed)).googledrive,'disconnected');
+  assert.equal((await states(managed)).googledrive,'setup-required');
   await assert.rejects(managed.connectorSettings.save('composio','another-project-key',{userId:'user_a'}),{status:409,expose:true});
   const bare=(await installation(t,{COMPOSIO_BASE_URL:composio.url,OPENCRAWL_CONNECTOR_KEY:''})).open();
   const card=(await bare.integrations.list(principal)).find(c=>c.provider==='notion');

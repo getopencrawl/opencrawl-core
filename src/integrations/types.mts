@@ -46,6 +46,8 @@ export interface GithubInstallation {id: string | number; account: {id: string |
 export interface GithubRepository {id: number; full_name: string; private?: boolean}
 interface ProviderBase {
   id: string; name: string; description: string; scope: 'team' | 'user'; help: string; teamOnly?: boolean;
+  /** A visible catalog entry whose end-to-end product path is not ready. */
+  unavailableReason?: string;
   owner(record: IntegrationRecord): string; connector: ConnectorDefinition;
   streams: Array<{name: string; syncMode: string; cursorField?: string[]}>;
   progressStream: string[]; progress?: Array<{stream: string; label: string; trailing?: boolean}>;

@@ -91,3 +91,7 @@ organization setup, auth outcomes, provider handoffs, capture setup and legal pa
 Servers send an empty application mount plus escaped inert page data; never compose
 feature markup or return an alternate server-rendered UI. Authorization, cookies,
 HTTP status and identity-changing redirects remain server responsibilities.
+
+Shared integration changes require a verified active admin membership bound to
+the principal and organization. Runtime adapters pass plain membership facts to
+core; UI controls reflect these permissions but never grant them.

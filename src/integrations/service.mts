@@ -182,6 +182,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
   async function provisionRecord(record: IntegrationRecord, secrets: Secrets) {
     requireWritable();
     const provider = providerFor(record.provider);
+    if(provider.unavailableReason)throw Object.assign(new Error(provider.unavailableReason),{status:503,expose:true});
     record = (await registry.get(record.tenantId, record.userId, record.integrationId))!;
     if (!ACTIVE.includes(record.status)) throw Object.assign(new Error('Connection setup is no longer authorized'), {status: 409});
     destination.validate(record);
@@ -281,12 +282,15 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
   /** What the card shows. Airbyte and the OAuth adapter details never leave the server. */
   async function view(principal: Principal, record: IntegrationRecord | null, provider: Provider): Promise<SourceCard & {integrationId?: string; connectedById?: string}>  {
     const base = {provider: provider.id, name: provider.name, description: provider.description, units: provider.units, scope: provider.scope, help: provider.help, auth: provider.auth === 'api-key' ? 'api-key' as const : 'oauth' as const, keyHelp: provider.keyHelp};
-    if (!record) return {...base, state: 'disconnected'};
+    if (!record) return provider.unavailableReason
+      ? {...base,state:'setup-required',setup:{title:`${provider.name} is not available yet`,requirement:'Indexing not available',body:provider.unavailableReason}}
+      : {...base, state: 'disconnected'};
     // Older saved labels used a retired separator; normalize display without
     // rewriting provider records or their authorization metadata.
     const account = record.account?.replace(/\s*\u00b7\s*/gu, ', ') || null;
     const shown = {...base, integrationId: record.integrationId, account, total: record.total ?? null,
       connectedBy: record.userId === principal.userId ? null : record.ownerEmail || 'a teammate', connectedById: record.userId, connectedAt: record.createdAt || null};
+    if(provider.unavailableReason&&record.status!=='disconnecting')return {...shown,state:'error',reconnect:true,message:provider.unavailableReason};
     if (record.status === 'connecting') {
       // Someone else's unfinished sign-in doesn't block the card for the rest of the team.
       if (record.userId !== principal.userId) return {...base, state: 'disconnected'};
@@ -487,6 +491,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     async connect(principal: Principal, providerId: string, {apiKey}: {apiKey?: unknown} = {}) {
       requireWritable();
       const provider = providerFor(providerId);
+      if(provider.unavailableReason)throw Object.assign(new Error(provider.unavailableReason),{status:503,expose:true});
       const live = (await registry.listTenant(principal.tenantId)).filter(r => visible(principal, provider, r));
       if (live.some(r => r.status !== 'connecting')) throw Object.assign(new Error('Already connected'), {status: 409});
       // Team-wide sources land under the OpenCrawl organization.
@@ -521,6 +526,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     async complete(principal: Principal, providerId: string, query: URLSearchParams): Promise<IntegrationCompletion> {
       requireWritable();
       const provider = providerFor(providerId);
+      if(provider.unavailableReason)return {ok:false,reason:'unavailable'};
       if (provider.auth === 'github-app') return completeGitHub(principal, provider, query);
       const id = query.get('integration') || '';
       if (!INTEGRATION.test(id)) return {ok: false, reason: 'invalid'};
@@ -574,6 +580,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       const provider = providerFor(providerId);
       const record = await current(principal, provider);
       if (!record || record.status === 'connecting') throw Object.assign(new Error('Not connected'), {status: 404});
+      if(provider.unavailableReason&&record.status!=='disconnecting')throw Object.assign(new Error(provider.unavailableReason),{status:503,expose:true});
       return resume(record, provider);
     },
 

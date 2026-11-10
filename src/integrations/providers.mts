@@ -33,6 +33,7 @@ const providers:ProviderCatalog = {
   googledrive: {
     id: 'googledrive',
     name: 'Google Drive',
+    unavailableReason: 'Google Drive indexing is not available in this release. Connecting an account would not make its files searchable. Use another source for now.',
     description: 'Files in your team’s shared drives.',
     toolkit: 'googledrive',
     // Per team, shared drives only. The connector lists each shared drive the signer belongs to
@@ -40,7 +41,7 @@ const providers:ProviderCatalog = {
     // no Workspace ID to Drive, so it is stored under workspace=<OpenCrawl team>.
     scope: 'team',
     teamOnly: true,
-    help: 'One person connects Google Drive for the whole team. OpenCrawl imports the shared drives that person belongs to, with Google Docs, Sheets and Slides as text, read-only, and keeps them up to date every hour. It never reads anyone’s My Drive or files shared with them personally.',
+    help: 'Google Drive indexing is not available in this release. The source adapter is retained for development, but new connections are disabled until files can be indexed and retrieved.',
     owner: record => `workspace=${record.workspace}`,
     authConfig: {name: 'OpenCrawl Google Drive shared read', credentials: {scopes: 'https://www.googleapis.com/auth/drive.readonly'}},
     connector: connectors.googledrive,

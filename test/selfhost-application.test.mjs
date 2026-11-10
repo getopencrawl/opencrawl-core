@@ -65,6 +65,21 @@ test('OSS first run creates one admin from the setup link; nobody else can sign 
   await f.post('/auth/logout','again',{});assert.equal((await f.request('/api/console/bootstrap','again')).status,401);
 });
 
+test('local admission rechecks the persisted invitation expiry inside its transaction',async t=>{
+  const f=await fixture(t);await f.admin();
+  const [admin]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
+  const email='expired@example.com';
+  const invite=await f.identity.directory.userManagement.sendInvitation({organizationId:org,email,inviterUserId:admin.userId,roleSlug:'member'});
+  const account=await f.identity.auth.api.signUpEmail({body:{email,name:'Expired invite',password:'another long password'}});
+  const {adapter}=await f.identity.auth.$context;
+  await adapter.update({model:'invitation',where:[{field:'id',value:invite.id}],update:{expiresAt:new Date(Date.now()-1000)}});
+  await assert.rejects(f.identity.admitAccount(account.user.id,'member',invite.id),{status:410});
+  assert.equal(await adapter.count({model:'member',where:[{field:'userId',value:account.user.id}]}),0);
+  assert.equal((await adapter.findOne({model:'invitation',where:[{field:'id',value:invite.id}]})).status,'pending');
+  const login=await f.request('/auth/login');
+  assert.doesNotMatch(login.headers.get('content-security-policy'),/workos|authkit|directory\.com/);
+});
+
 test('OSS invitations admit distinct members once; removing a membership denies access',async t=>{
   const f=await fixture(t);await f.admin();
   const invited=await f.join('bob','bob@example.com');

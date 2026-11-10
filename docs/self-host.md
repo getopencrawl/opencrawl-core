@@ -70,13 +70,15 @@ connection options.
 
 ## Connect sources
 
-The UI shows Google Drive, Slack, Notion, Circleback, Granola, and GitHub. A
+The UI shows Slack, Notion, Circleback, Granola, and GitHub. Google Drive is
+visible with an explicit unavailable notice: its source adapter exists, but its
+indexing path is not supported yet, so new connections are disabled. A
 connection that is waiting for operator setup says what it needs and cannot
 start authorization until that is in place. Onboarding does not require a
 connected source: the Sources step can be skipped and the workspace opens on
 agent capture alone.
 
-Google Drive, Notion, Circleback, and optionally Slack use your own Composio
+Notion, Circleback, and optionally Slack use your own Composio
 project. Composio is a hosted service: it runs the sign-in and keeps the provider
 tokens, so those connections depend on a Composio account. A workspace admin can
 add the project's API key in the product, from a waiting connection's setup

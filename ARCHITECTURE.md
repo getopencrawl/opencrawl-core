@@ -133,3 +133,7 @@ extension. Servers retain authorization, cookies, redirects and HTTP status, and
 supply only an empty app mount plus escaped inert JSON. No alternate HTML renderer
 or feature stylesheet is retained. The same core Page, controls and tokens serve
 focused documents and the workspace console.
+
+Shared integration changes require a verified active admin membership bound to
+the principal and organization. Runtime adapters pass plain membership facts to
+core; UI controls reflect these permissions but never grant them.

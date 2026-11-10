@@ -113,7 +113,7 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
     ...['googledrive','slack','granola','circleback','notion','github'].flatMap(f=>['connectors','integrations'].map((kind):[string,[string,string]]=>[`/assets/${kind}/${f}.svg`,[`web/assets/connectors/${f}.svg`,'image/svg+xml']])),
   ]);
   return async(req:IncomingMessage,res:ServerResponse)=>{
-    for(const [key,value] of Object.entries(securityHeaders))if(key!=='Strict-Transport-Security'||settings.url.startsWith('https:'))res.setHeader(key,key==='Content-Security-Policy'?value.replace(" https://api.directory.com https://*.authkit.app",''):value);
+    for(const [key,value] of Object.entries(securityHeaders))if(key!=='Strict-Transport-Security'||settings.url.startsWith('https:'))res.setHeader(key,key==='Content-Security-Policy'?value.replace(" https://api.workos.com https://*.authkit.app",''):value);
     const respond=(status:number,body:string|Buffer,type='text/plain; charset=utf-8')=>{res.writeHead(status,{'Content-Type':type});res.end(body);};
     const json=(status:number,body:unknown)=>respond(status,JSON.stringify(body),'application/json');
     const redirect=(location:string)=>{res.writeHead(303,{Location:location});res.end();};
