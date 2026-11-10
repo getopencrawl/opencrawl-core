@@ -1,13 +1,14 @@
 # Core and hosted shell acceptance
 
-This branch implements a single-organization, multi-user product using the
-operator's own WorkOS account. It remains a candidate until every item below
-has evidence. Moving code alone does not satisfy the self-host promise.
+This branch implements a single-organization, multi-user product using local
+Better Auth accounts. Cloud continues to use WorkOS through a separate adapter.
+The repositories remain private release candidates; the checklist concerns runtime
+independence, not public availability.
 
 - [x] A clean server can build and start the complete OSS app with Docker Compose
   using only this repository and operator-owned dependencies/credentials, with
   OpenCrawl-operated services blocked.
-- [x] Multiple WorkOS users in one configured organization can use the app;
+- [x] Multiple local users in one configured organization can use the OSS app;
   current membership, roles, revocation and private resources are enforced by
   the server. Foreign organization claims and caller-selected scopes fail closed.
 - [x] OSS imports a real source through the operator's Airbyte and OpenSearch,
@@ -28,7 +29,57 @@ Once verified, publish branch revisions, clean-server Compose instructions,
 preview address and exact evidence limits to the workspace board for independent
 verification. Do not announce completion from synthetic fixture tests.
 
-## Current verification checkpoint
+## Better Auth / WorkOS checkpoint — 2026-11-10
+
+Core runtime `220fc6029e10483ed669844763cb1a6db7908c1c` is published privately as
+`0.3.0-seam.7`. The self-host composition uses Better Auth 1.7.19 and its OAuth
+provider plugin, SQLite identity storage, and the existing core authorization and
+product operations. Cloud retains WorkOS cookies, CLI device authentication,
+Connect MCP tokens and hosted organization selection. The identity directory
+copies plain facts across the seam; SDK sessions, signing secrets and provider
+objects do not become domain contracts. See [identity seam](identity-seam.md).
+
+A fresh Compose project with empty application, S3, OpenSearch and Temporal volumes
+runs on the isolated Ubuntu preview host. No old WorkOS users or application data
+were migrated. WorkOS configuration is absent, and known WorkOS/OpenCrawl service
+hostnames are blocked in both OSS app and worker containers.
+
+Live OSS checks cover React setup, one-time invitations, two local accounts,
+login/logout, role changes, portable CLI device login and refresh, MCP login,
+consent and PKCE, capture, and real GitHub import through operator Airbyte into
+OpenSearch. Both local accounts search and fetch the fixture with CLI and MCP;
+the React search inspector returns the same commit. Password recovery rejects
+old browser, CLI and MCP credentials and refresh grants. The standard OpenID
+metadata path and the organization-bound indexing command were checked on the
+final runtime. Unit tests cover bootstrap races, membership removal, malformed or
+wrong-kind tokens and origin/rate-limit enforcement.
+
+An offline backup at `bb31f00` restored into separate empty volumes; local identity,
+OAuth refresh grants, real-source results and captured sessions remained usable.
+Original volumes were retained and resumed. This was a test-installation restore,
+not a migration of previous deployments. The follow-up `220fc60` change adjusts
+metadata routing and an operator command; it changes no persisted schema.
+
+Cloud's retained WorkOS browser session, CLI refresh and agent capture, real GitHub
+MCP retrieval, and bidirectional tenant isolation passed with this identity seam.
+Provider tokens are rejected by the other deployment. A new Google browser
+sign-in remains an additional pending operator check. Existing WorkOS sessions
+and grants remain usable; no provider configuration was changed.
+
+Core tests: 321 passed, 24 optional integration skips locally; clean core CI and
+private publication passed. Shell tests: 498 passed, 5 skips; branch CI includes
+strict React checks, browser regressions and infrastructure typechecks. No main
+merge or production deployment occurred. Independent clean-box verification is
+ready for review through the workspace board. Live connector evidence covers the
+restricted GitHub fixture, not every provider or a load benchmark. Self-host
+Google login, passkeys, SSO and a support impersonation UI are not configured in
+this release. Local account password recovery is an operator command.
+
+## Historical WorkOS preview evidence
+
+The following records describe the earlier WorkOS-based standalone candidate.
+They preserve lifecycle and boundary history; they do not describe the current
+OSS identity requirement or substitute for the Better Auth checks above.
 
 Core owns the application composition, Sources and Team screens, product RPC
 protocol and client, console operations, WorkOS verification and team operations,
@@ -107,4 +158,5 @@ receipts. Independent peer verification is the next review step.
 The repositories remain private and both PRs remain drafts; advancing main now
 conflicts with these branches and needs a separate integration review. No merge,
 existing-data migration or production replacement occurred. Live provider evidence
-covers GitHub, not every connector or a load benchmark. WorkOS remains required.
+covered GitHub, not every connector or a load benchmark. WorkOS was required for
+that historical standalone candidate; the current OSS runtime uses Better Auth.
