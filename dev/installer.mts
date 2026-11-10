@@ -210,4 +210,5 @@ async function up(){
   state.verifiedAt=new Date().toISOString();save();
   privateFile(join(stateDir,'login.txt'),`Development only\nURL: ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\nAirbyte URL: http://localhost:${state.airbytePort}\nAirbyte password: ${state.airbytePassword}\n`);
   summary();
+  console.log(`\nSign in to ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\n\nThese local development credentials are also saved in .opencrawl-dev/login.txt.`);
 }

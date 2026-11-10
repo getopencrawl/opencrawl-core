@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {randomBytes} from 'node:crypto';
-import {existsSync,readFileSync,writeFileSync} from 'node:fs';
+import {chownSync,existsSync,readFileSync,statSync,writeFileSync} from 'node:fs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createAirbyte} from '../dist/src/integrations/airbyte.mjs';
 import {createProvisioning,provisioningLabel} from '../dist/src/integrations/provisioning.mjs';
@@ -17,7 +17,13 @@ if(!/^http:\/\/\d+\.\d+\.\d+\.\d+:8080$/.test(input.fixtureUrl)||input.connectOr
 const stateFile='/dev-state/seed.json';
 const seed:SeedState=existsSync(stateFile)?JSON.parse(readFileSync(stateFile,'utf8')):{project:input.project,integrationId:'int_'+randomBytes(13).toString('hex')};
 if(seed.project!==input.project||!/^int_[a-f0-9]{26}$/.test(seed.integrationId))throw new Error('Sample data belongs to another development installation');
-const save=()=>writeFileSync(stateFile,JSON.stringify(seed,null,2)+'\n',{mode:0o600});save();
+// The container needs root for the shared app volume. Return private output
+// files to the bind directory's owner so a non-root installer can read them.
+function writeState(path:string,value:unknown){
+  writeFileSync(path,JSON.stringify(value,null,2)+'\n',{mode:0o600});
+  const {uid,gid}=statSync('/dev-state');chownSync(path,uid,gid);
+}
+const save=()=>writeState(stateFile,seed);save();
 const cookies=new Map<string,string>();
 async function request(path:string,init:RequestInit={}){
   const response=await fetch(input.connectOrigin+path,{...init,redirect:'manual',headers:{host:new URL(input.origin).host,cookie:[...cookies].map(([k,v])=>`${k}=${v}`).join('; '),...init.headers},signal:AbortSignal.timeout(30000)});
@@ -150,5 +156,5 @@ try{
   assert.equal(badOrigin.status,403,'Search accepted a foreign browser Origin');
   const report={ok:true,checkedAt:new Date().toISOString(),project:input.project,organization:organizationId,syntheticFixture:true,identity:'better-auth-local',
     airbyte:{workspaceId,connectionId,jobId:job.jobId,status:job.status,rows:job.rowsSynced},temporal:{workflowId},retrieval:{query:marker,authenticated:true,found:true,mcp:true},onboardingCompleted:true,deviceGrant:true,refreshGrant:true,anonymousDenied:true,forgedScopeDenied:true,foreignOriginDenied:true};
-  writeFileSync('/dev-state/verification.json',JSON.stringify(report,null,2)+'\n',{mode:0o600});console.log(JSON.stringify(report));
+  writeState('/dev-state/verification.json',report);console.log(JSON.stringify(report));
 }finally{registry.close();}

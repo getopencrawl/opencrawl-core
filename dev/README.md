@@ -17,13 +17,14 @@ Provide 4 CPUs, 16 GiB RAM and at least 40 GiB free disk. The first run download
 images and builds the shared React console and backend, so it requires internet
 access and can take tens of minutes. Subsequent runs reuse tools, images and data.
 
-The command prints the application URL and the location of a private login file.
+After verification succeeds, the command prints the application URL, email, and
+password directly in the terminal. It also saves them in a private login file.
 By default the application is at `http://localhost:8092` and Airbyte is at
 `http://localhost:8000`. A generated local Better Auth account is ready to use.
 The installer exercises a real device grant, refresh, MCP call and synthetic
 capture so the development account has completed normal onboarding.
-If sudo created the installation, read the generated credentials with
-`sudo cat .opencrawl-dev/login.txt`.
+To find the credentials later, read `.opencrawl-dev/login.txt` (use
+`sudo cat .opencrawl-dev/login.txt` if sudo created the installation).
 
 It creates two **synthetic meeting records**, explicitly labeled as development
 samples. A private fixture HTTP service is read by an Airbyte declarative source.

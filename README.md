@@ -32,8 +32,8 @@ ask for your system password. The first run downloads and builds images and can
 take tens of minutes.
 
 1. Open **http://localhost:8092**.
-2. Sign in with the credentials in `.opencrawl-dev/login.txt`
-   (`sudo cat .opencrawl-dev/login.txt` if sudo created the installation).
+2. Sign in with the email and password printed when startup finishes. They are
+   also saved in `.opencrawl-dev/login.txt`.
 3. Open **Diagnostics → Search inspector** and search for **`lunar otter`** to
    retrieve the synthetic sample records.
 
