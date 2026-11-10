@@ -30,3 +30,11 @@ test('semantic ranking adds a boosted learned-sparse clause and keeps all/phrase
   assert.deepEqual(textQuery('q','phrase',true),{match_phrase:{text:'q'}});
   assert.ok(!JSON.stringify(textQuery('q','any',false)).includes('neural_sparse'));
 });
+
+test('result order sorts by the common timestamp ahead of relevance and rejects unknown orders',async()=>{
+  const {timeOrder}=await import('../dist/src/search/text-query.mjs');
+  assert.equal(timeOrder(),null);assert.equal(timeOrder('relevance'),null);
+  assert.deepEqual(timeOrder('newest'),{timestamp:{order:'desc',missing:'_last'}});
+  assert.deepEqual(timeOrder('oldest'),{timestamp:{order:'asc',missing:'_last'}});
+  assert.throws(()=>timeOrder('random'),e=>e.status===400);
+});

@@ -2,7 +2,7 @@ import type {RealmOptions, OpenSearchResponse, IndexHit, QueryBody} from '../sea
 import type {ConnectorBinding, ConnectorPrincipal, ConnectorDocument, DocumentItem, SuppressionIdentity} from './types.mjs';
 import {createRealm} from '../search/realm.mjs';
 import {authorize, digest, documentId, validateBinding} from './scope.mjs';
-import {timeRange} from '../search/text-query.mjs';
+import {timeRange,timeOrder} from '../search/text-query.mjs';
 
 import {connectorMapping} from '../search/mapping.mjs';
 export {connectorMapping};
@@ -48,13 +48,14 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
       throw Object.assign(new Error('Document scope or identity mismatch'), {permanent: true});
     }
   }
-  type ConnectorSearchInput = {query?: string; limit?: number; raw?: boolean; match?: string; id?: string; after?: string; before?: string};
+  type ConnectorSearchInput = {query?: string; limit?: number; raw?: boolean; match?: string; id?: string; after?: string; before?: string; order?: string};
   type NormalizedResult = {hits: (ConnectorDocument & {id: string; score: number})[]; examined: number; truncated: boolean};
   type RawResult = {responses: unknown[]; examined: number; truncated: boolean};
   function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput & {raw: true}): Promise<RawResult>;
   function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input?: ConnectorSearchInput & {raw?: false}): Promise<NormalizedResult>;
   function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput): Promise<NormalizedResult | RawResult>;
-  async function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], {query, limit = 20, raw = false, match = 'all', id, after: since, before: until}: ConnectorSearchInput = {}) {
+  async function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], {query, limit = 20, raw = false, match = 'all', id, after: since, before: until, order}: ConnectorSearchInput = {}) {
+      const byTime = timeOrder(order);
       if (!Array.isArray(bindings) || !bindings.length || bindings.length > 100) throw new Error('Authorized connections required');
       for (const binding of bindings) scoped(principal, binding);
       if (id !== undefined && (typeof id !== 'string' || !/^[A-Za-z0-9_:-]{1,256}$/.test(id))) throw new Error('Invalid passage id');
@@ -67,7 +68,7 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
           query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: [...byConnection.keys()]}}, {terms: {[f('kind')]: SEARCHABLE_KINDS}}, {term: {[f('deleted')]: false}}, ...(id ? [{term:{id}}] : []), ...timeRange(since, until)], must: query.trim() ? [{multi_match: {query, fields: ['title^2', 'text', f('heading')], ...(match === 'phrase' ? {type:'phrase'} : {operator: match === 'all' ? 'and' : 'or'})}}] : [{match_all:{}}]}},
           // Native source IDs can collide across kinds (for example a GitHub
           // issue and review). The envelope ID makes search_after a total order.
-          sort: [{_score: 'desc'}, {[f('connectionId')]: 'asc'}, {[f('sourceId')]: 'asc'}, {id: 'asc'}], ...(after ? {search_after: after} : {})})});
+          sort: [...(byTime ? [byTime] : []), {_score: 'desc'}, {[f('connectionId')]: 'asc'}, {[f('sourceId')]: 'asc'}, {id: 'asc'}], ...(after ? {search_after: after} : {})})});
         const candidates = result?.hits?.hits;
         if (!Array.isArray(candidates)) throw new Error('Invalid connector search response');
         for (const hit of candidates) {
