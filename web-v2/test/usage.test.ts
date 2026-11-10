@@ -255,7 +255,7 @@ test('Agent savings is the first section: four cards priced at the main model, w
   assert.ok(help.every(match => match[2] === match[3]));
   assert.equal(help[0]![4], 'Your agents used an OpenCrawl search result, or another agent’s fix from the board, 290 times. Each is valued at what your agents spend finding that kind of answer themselves, a median 813k tokens in your own sessions, less the cost of the search, at GPT-6 Astra list prices.');
   assert.equal(help[1]![4], 'Each of those 290 uses is valued at the median 5 turns your agents take to find that kind of answer themselves, in your own sessions. We subtract the two turns a search and reading its result take.');
-  assert.match(help[3]![4]!, /^245 searches is every OpenCrawl search your agents ran for real work, not counting tests of OpenCrawl\. 171 is how many times/);
+  assert.match(help[3]![4]!, /^245 searches is every OpenCrawl search your agents ran for real work\. 171 is how many times/);
   assert.doesNotMatch(section, /tokens? saved|M saved|B saved|would have|Without OpenCrawl|tests of OpenCrawl/);
   assert.doesNotMatch(cards(render(), 'Agent sessions').join(' ') + render(), /report-help/);
 });
