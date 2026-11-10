@@ -44,8 +44,12 @@ application. The demo uses only local synthetic data; it does not
 connect to your Google, GitHub, Slack or other accounts automatically.
 
 All six integration cards remain visible. Connections that need operator setup
-explain what is missing. Add optional connector settings to the private
-`.opencrawl-dev/connectors.env` file, then rerun `./dev/up`. The accepted settings
+say what they are waiting for, and onboarding can finish without any of them.
+An admin can add the Composio API key in the product, on the Sources step or the
+Integrations page: it is checked, stored encrypted, and used without a restart.
+Other connector settings go in the private `.opencrawl-dev/connectors.env` file;
+rerun `./dev/up` after editing it. A key set there cannot be replaced in the
+product. The accepted settings
 are `COMPOSIO_API_KEY`, `COMPOSIO_BASE_URL`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `GITHUB_APP`,
 `AIRBYTE_GITHUB_REPOSITORY`, `AIRBYTE_GITHUB_TAG`, and `OPENCRAWL_AIRBYTE_APP_URL`.
 See [source setup](../docs/self-host.md#connect-sources) for credential ownership

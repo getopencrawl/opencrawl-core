@@ -34,8 +34,10 @@ take tens of minutes.
 2. Sign in with the email and password printed when startup finishes. They are
    also saved in `.opencrawl-dev/login.txt`.
 3. Follow onboarding to connect your coding agent, choose integrations, and
-   invite teammates. Integrations that need operator credentials show setup
-   instructions instead of disappearing.
+   invite teammates. Connecting an integration is optional: skip it and the
+   workspace opens on agent capture alone. Each integration says what it
+   needs. An admin can add a Composio API key in the product to enable Google
+   Drive, Notion, Circleback, and Slack sign-in.
 
 To try sample data instead, run `./dev/up demo`. This explicitly completes
 onboarding and imports synthetic records; search for **`lunar otter`** in

@@ -68,11 +68,19 @@ connection options.
 ## Connect sources
 
 The UI shows Google Drive, Slack, Notion, Circleback, Granola, and GitHub. A
-connection without operator credentials shows **Setup required** with guidance;
-it cannot start authorization until configured.
+connection that is waiting for operator setup says what it needs and cannot
+start authorization until that is in place. Onboarding does not require a
+connected source: the Sources step can be skipped and the workspace opens on
+agent capture alone.
 
 Google Drive, Notion, Circleback, and optionally Slack use your own Composio
-project. Set `COMPOSIO_API_KEY` in the server environment and restart the app.
+project. Composio is a hosted service: it runs the sign-in and keeps the provider
+tokens, so those connections depend on a Composio account. A workspace admin can
+add the project's API key in the product, from a waiting connection's setup
+dialog. The key is checked with Composio, stored encrypted with
+`OPENCRAWL_CONNECTOR_KEY`, and used without a restart. Alternatively set
+`COMPOSIO_API_KEY` in the server environment and restart the app; a key set
+there cannot be replaced in the product.
 Composio is optional: Granola, GitHub, and the direct Slack adapter work without
 it. The broker stores and refreshes provider grants. Its project key stays in
 the app: each Airbyte source job receives a separate revocable capability for its
@@ -120,8 +128,8 @@ When both a direct Slack app and Composio are configured, new Slack connections
 use the direct app. Existing grants continue through their original adapter.
 
 Sign in, follow onboarding to connect the CLI/MCP client and capture a real
-session, then connect a source. Setup completion uses recorded receipts and
-current source state. Team admins can invite users and manage roles; ordinary
+session, then connect a source or skip that step. Setup completion uses recorded
+receipts. Team admins can invite users and manage roles; ordinary
 members can use shared data and keep supported session/memory resources private.
 The UI is the same core application consumed by the cloud shell.
 
