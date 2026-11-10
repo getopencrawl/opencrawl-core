@@ -105,7 +105,14 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       if (version && version !== currentVersion) fail(409, 'Passage changed; fetch again from offset 0.');
       if (offset > hit.text.length) fail(400, 'Offset exceeds passage length.');
       const end = Math.min(offset + length, hit.text.length);
-      return {...hit, text: hit.text.slice(offset, end), offset, totalChars: hit.text.length, nextOffset: end < hit.text.length ? end : null, version: currentVersion};
+      // Long records are indexed as several passages. Name the neighbours so a reader can continue
+      // past this passage; the next one is confirmed through the same authorized lookup.
+      const raw = result.hits[0]!, chunk = typeof raw.chunk === 'number' ? raw.chunk : NaN;
+      const sibling = (number: number) => {const other = adapter.neighbour?.(raw, number); return other ? source + ':' + other : null;};
+      let nextId = sibling(chunk + 1);
+      if (nextId && !(await adapter.search(principal, {id: nextId.slice(source.length + 1), query: '', limit: 1})).hits.length) nextId = null;
+      return {...hit, text: hit.text.slice(offset, end), offset, totalChars: hit.text.length, nextOffset: end < hit.text.length ? end : null, version: currentVersion,
+        previousId: chunk > 0 ? sibling(chunk - 1) : null, nextId};
     },
   };
 }

@@ -11,6 +11,12 @@ export const MAX_EVENT_LEDGER_BYTES=16*1024*1024;
 const MAX_STORED_BATCH_BYTES=17*1024*1024,MAX_SOURCE_BATCHES=10000;
 
 /** Principal comes from the runtime adapter, never the request payload. */
+/** One document per captured event chunk, whichever installation uploaded it.
+ * Event IDs are content-derived, so the same native record re-uploaded from a
+ * cloned machine or a second install overwrites rather than duplicates. */
+export function sessionDocumentId({scope,harness,sessionId,eventId,chunk}: {scope: string; harness: string; sessionId: string; eventId: string; chunk: number}) {
+  return digest(JSON.stringify([scope,harness,sessionId,eventId,chunk]));
+}
 export function sessionScope(principal: Principal | null | undefined) {
  if(!principal||!id(principal.tenantId)||!id(principal.userId))fail(401,'Authentication required');
  if(principal.captureAccess!==undefined&&principal.captureAccess!=='write')fail(403,'Unknown capture access');

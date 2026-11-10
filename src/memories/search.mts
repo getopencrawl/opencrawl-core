@@ -9,6 +9,8 @@ import {textQuery,timeRange,timeOrder} from '../search/text-query.mjs';
 import {passages} from '../search/passages.mjs';
 
 const f=(field: string)=>realmField('memory',field);
+/** One passage of one memory file in one snapshot. */
+const passageId=(scope: string,snapshotId: string,path: string,chunk: number)=>digest(JSON.stringify([scope,snapshotId,path,chunk]));
 function fail(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
 const HEAD="if (ctx._source.memory == null || params.doc.memory.generation > ctx._source.memory.generation) { ctx._source = params.doc; } else if (params.doc.memory.generation == ctx._source.memory.generation && params.doc.memory.snapshotId != ctx._source.memory.snapshotId) { throw new IllegalArgumentException('Memory generation conflict'); } else { ctx.op = 'none'; }";
 export function createMemorySearch(options: RealmOptions) {
@@ -35,7 +37,7 @@ export function createMemorySearch(options: RealmOptions) {
         const chunks=passages(file.text);
         const sourceSessionId=/^(?:thread_id|originSessionId):\s*["']?([A-Za-z0-9_-]+)/m.exec(file.text)?.[1]??null;
         for(let chunk=0;chunk<chunks.length;chunk++) {
-          const item={id:digest(JSON.stringify([sessionScope(principal),snapshot.snapshotId,file.path,chunk])),document:{...common,kind:'passage',
+          const item={id:passageId(sessionScope(principal),snapshot.snapshotId,file.path,chunk),document:{...common,kind:'passage',
             path:file.path,project:file.project,modifiedAt:file.modifiedAt,sourceSessionId,chunk,title:`${snapshot.harness} memory: ${file.path}`,text:chunks[chunk],private:control?.visibility==='private'}};
           const size=Buffer.byteLength(JSON.stringify(item));
           if(bytes+size>3*1024*1024){await collection.bulk(principal,batch);batch=[];bytes=0;}
@@ -50,6 +52,10 @@ export function createMemorySearch(options: RealmOptions) {
       const headId=digest(JSON.stringify([sessionScope(principal),snapshot.harness,snapshot.installationId,'head']));
       await collection.bulk(principal,[{id:headId,document:{...common,kind:'snapshot'},script:HEAD}],{refresh:true});
       return count;
+    },
+    neighbour(hit: Passage,chunk: number){
+      if(!Number.isInteger(chunk)||chunk<0||typeof hit.userId!=='string'||typeof hit.snapshotId!=='string'||typeof hit.path!=='string')return null;
+      return passageId(sessionScope({tenantId:hit.tenantId,userId:hit.userId}),hit.snapshotId,hit.path,chunk);
     },
     async search(principal: Principal,{query='',limit=20,match='all',id,sessionId,after,before,order}: SearchInput={}) {
       const byTime=timeOrder(order);
