@@ -12,6 +12,8 @@ interface FixtureState {
   invitations: {email: string;inviteUrl?:string}[];
   delayStatus: number;
   finishError: boolean;
+  /** Mirrors a runtime that opens the workspace before any source is connected. */
+  sourcesOptional?: boolean;
   requests: {status: number; finish: number; invite: number; connect: number; aborted: number};
 }
 const fresh = (): FixtureState => ({status: {}, sources: [{id: 'slack', name: 'Slack', icon: '/assets/connectors/slack.svg', state: 'disconnected', auth: 'oauth'}, {id: 'granola', name: 'Granola', icon: '/assets/connectors/granola.svg', state: 'disconnected', auth: 'api-key'}], invitations: [], delayStatus: 0, finishError: false, requests: {status: 0, finish: 0, invite: 0, connect: 0, aborted: 0}});
@@ -44,7 +46,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (res.destroyed) return;
     return json(res, snapshot);
   }
-  if (url.pathname === '/api/onboarding/sources') return json(res, {items: state.sources});
+  if (url.pathname === '/api/onboarding/sources') return json(res, {items: state.sources, ...(state.sourcesOptional ? {optional: true} : {})});
   if (url.pathname === '/api/onboarding/invites') {
     if (req.method === 'POST') {
       const input = await body(req);
@@ -58,7 +60,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   }
   if (url.pathname === '/api/onboarding/finish') {
     state.requests.finish++;
-    if (state.finishError || !deriveOnboarding(state.status).complete || !state.sources.some(isSourceConnected)) return json(res, {error: 'Complete the required setup checks first.'}, 409);
+    if (state.finishError || !deriveOnboarding(state.status).complete || !state.sourcesOptional && !state.sources.some(isSourceConnected)) return json(res, {error: 'Complete the required setup checks first.'}, 409);
     return json(res, {workspaceUrl: '/'});
   }
   const connect = /^\/api\/integrations\/([^/]+)\/connect$/.exec(url.pathname);

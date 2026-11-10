@@ -470,6 +470,8 @@ Sources uses compact horizontal tiles with rounded-square provider logos on the
 left, labels in the middle and plus/check marks at the right. Hide catalog search
 below fifteen providers. API-key entry uses a named, focused dialog; OAuth returns
 to the same Sources screen. Next becomes available after a confirmed connection.
+Where the runtime makes sources optional, a quiet Skip for now takes its place
+until a connection is confirmed.
 
 Teammates appear in simple rows above one email field and Invite button. Enter
 adds one teammate, clears the field and returns focus for another. Keep errors

@@ -23,6 +23,10 @@ finished. The CLI's own final report describes full-import completion.
 Step one never advances automatically. Its Next action opens Sources only after
 the required receipts exist. Sources requires at least one authorized connection;
 indexing may continue in the background. Starting OAuth is not a connection.
+A runtime whose connectors first need operator setup sets `sourcesOptional`:
+Sources then offers Skip for now and finishing no longer requires a connection.
+The self-host application does this, so the workspace opens on agent capture
+alone; the hosted application keeps the gate.
 The provider callback returns to Sources without advancing the onboarding step.
 The catalog comes from the current hosted service, not a copied provider list.
 Search appears only for catalogs of at least fifteen connectors.

@@ -96,7 +96,8 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
     if(req.method==='GET'&&req.url==='/api/sessions/identity')await observe.cli(principal);
     return principal;
   }});
-  const guided=createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,smallJson});
+  // Every connector here needs an operator credential or a provider key, so capture alone opens the workspace.
+  const guided=createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,smallJson,sourcesOptional:true});
   const library=createLibraryApi({sessions:createSessionLibrary({store,prefix,...settings.search}),memories:createMemoryLibrary({store,prefix,...settings.search})});
   const members=async(organizationId:string)=>{
     if(organizationId!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
@@ -164,7 +165,7 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
         if(request.method==='GET'&&consolePages.has(target.pathname)){
           const progress=await guided.progress(principal);
           if(!target.pathname.startsWith('/onboarding')&&!hasReceipt(progress?.completed))return redirect(await guided.next(principal));
-          if(target.pathname.startsWith('/onboarding/')&&!hasReceipt(progress?.completed)){const next=await guided.next(principal);if(next==='/onboarding'||target.pathname==='/onboarding/invite'&&next==='/onboarding/sources')return redirect(next);}
+          if(target.pathname.startsWith('/onboarding/')&&!hasReceipt(progress?.completed)){const next=await guided.next(principal);if(next==='/onboarding'||target.pathname==='/onboarding/invite'&&next==='/onboarding/sources'&&!guided.sourcesOptional)return redirect(next);}
           return reply(200,consoleDocument(),'text/html; charset=utf-8');
         }
         if(guided.handles(selected.name))return guided.handle(request,{route:selected,principal,identity:{user},member,respond:reply});

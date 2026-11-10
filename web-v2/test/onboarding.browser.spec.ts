@@ -49,6 +49,23 @@ for(const viewport of [{name:'desktop',width:1280,height:813},{name:'mobile',wid
   });
 }
 
+test('a runtime with optional sources offers Skip for now and finishes without a connection',async({page,request})=>{
+  await request.post('/__test/state',{data:{status:complete,sourcesOptional:true}});
+  await page.goto('/onboarding/sources');
+  await expect(page.getByText('Connect a source to give your agent more context. You can also add one later.')).toBeVisible();
+  await expect(page.getByRole('link',{name:'Next',exact:true})).toHaveCount(0);
+  await page.getByRole('link',{name:'Skip for now',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Invite your teammates'})).toBeVisible();
+  await page.getByRole('button',{name:'Skip for now'}).click();
+  await expect(page.getByRole('heading',{name:'Workspace overview'})).toBeVisible();
+  expect(((await (await request.get('/__test/state')).json()) as {requests:{finish:number;connect:number}}).requests).toMatchObject({finish:1,connect:0});
+  // A confirmed connection restores the ordinary forward step.
+  await request.post('/__test/reset',{data:{status:complete,sourcesOptional:true,sources:connected}});
+  await page.goto('/onboarding/sources');
+  await expect(page.getByRole('link',{name:'Next',exact:true})).toBeVisible();
+  await expect(page.getByRole('link',{name:'Skip for now',exact:true})).toHaveCount(0);
+});
+
 async function refresh(page: Page) {await page.evaluate(() => window.dispatchEvent(new Event('online')));}
 
 test('GitHub account choice preserves keyboard access, narrow layout and the selected OAuth state',async({page})=>{
