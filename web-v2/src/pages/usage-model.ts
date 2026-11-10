@@ -1,4 +1,4 @@
-import type {UsageReport} from './types.ts';
+import type {ModelPrice, UsageReport, ValueReport} from './types.ts';
 
 export type UsageSource = NonNullable<UsageReport['ingestion']>['sources'][number];
 export type UsageMember = UsageReport['members'][number];
@@ -80,4 +80,17 @@ export function harnessName(name: string) {
 
 export function originName(name: string) {
   return ({cli: 'Terminal', desktop: 'Desktop app', cloud: 'Cloud', subagent: 'Subagents', unknown: 'Other'} as Record<string, string>)[name] || name;
+}
+
+/** List-price value, in dollars, of the tokens a value report credits as saved. */
+export function pricedSavings(saved: ValueReport['savings']['tokens'], price: ModelPrice) {
+  return (saved.input * price.input + saved.cacheRead * price.cacheRead + saved.cacheWrite * price.cacheWrite + saved.output * price.output) / 1e6;
+}
+
+export function savedTokens(saved: ValueReport['savings']['tokens']) {
+  return saved.input + saved.cacheRead + saved.cacheWrite + saved.output;
+}
+
+export function dollars(value: number) {
+  return value.toLocaleString('en-US', {style: 'currency', currency: 'USD', maximumFractionDigits: value < 100 ? 2 : 0});
 }
