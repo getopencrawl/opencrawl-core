@@ -555,4 +555,25 @@ img { max-width: 100%; }
 .oc-log-tools ol { list-style: none; margin: 0 0 var(--space-2); padding: 0 0 0 var(--space-3); border-left: 1px solid var(--line); display: grid; gap: var(--space-1); font-size: var(--text-sm); }
 .oc-log-tool .code-block { max-height: 20rem; margin-top: var(--space-1); padding: var(--space-3); }
 @media (max-width: 600px) { .oc-log > li { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); } .oc-log-gutter { flex-direction: row; gap: var(--space-2); } .oc-log-activity > .oc-log-gutter { display: none; } }
-.oc-memory-text { max-height: none; }
+.oc-memory-text { min-width: 0; max-height: none; }
+.oc-memory-source { min-width: 0; margin-top: var(--space-6); }
+.oc-memory-source > summary { color: var(--muted); cursor: pointer; }
+.oc-memory-source[open] > summary { margin-bottom: var(--space-3); }
+.oc-markdown { max-width: 75ch; min-width: 0; font-size: var(--text-body); line-height: var(--leading-prose); overflow-wrap: anywhere; }
+.oc-markdown > * + * { margin-top: var(--space-4); }
+.oc-markdown :is(h2,h3,h4,h5,h6) { margin-bottom: var(--space-2); line-height: var(--leading-ui); color: var(--strong); }
+.oc-markdown :is(h2,h3,h4,h5,h6):not(:first-child) { margin-top: var(--space-8); }
+.oc-markdown h2 { font-size: var(--text-heading); }
+.oc-markdown h3 { font-size: var(--text-title); }
+.oc-markdown :is(h4,h5,h6) { font-size: var(--text-body); }
+.oc-markdown :is(ul,ol) { padding-inline-start: var(--space-6); }
+.oc-markdown li + li, .oc-markdown li > * + * { margin-top: var(--space-2); }
+.oc-markdown :is(ul,ol) :is(ul,ol) { margin-block: var(--space-2); }
+.oc-markdown blockquote { margin-inline: 0; padding-inline-start: var(--space-4); border-inline-start: 1px solid var(--line-strong); color: var(--muted); }
+.oc-markdown :not(pre) > code { padding: 2px var(--space-1); background: var(--surface-subtle); border-radius: var(--radius-badge); }
+.oc-markdown pre { max-width: 100%; white-space: pre; overflow-wrap: normal; }
+.oc-markdown pre code { font-size: inherit; }
+.oc-markdown .oc-table-container td:last-child { white-space: normal; }
+.oc-markdown hr { margin-block: var(--space-6); border: 0; border-top: 1px solid var(--line); }
+.oc-markdown .contains-task-list { padding-inline-start: 0; list-style: none; }
+.oc-markdown .task-list-item > input { margin-inline-end: var(--space-2); }

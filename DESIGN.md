@@ -638,6 +638,14 @@ need review, and rendered states still need browser validation. Do not claim the
 React AST checker alone enforces legacy CSS ownership or that a parser proves
 visual behavior.
 
+## Memory documents
+
+Memory documents use the shared Markdown reader: 15px prose at the 75ch measure,
+semantic headings beneath the page title, spaced paragraphs and lists, monospace
+code, and the existing overflow-aware Table for GFM tables. Keep prose on the page
+surface and code on its inset surface. The separate Markdown source disclosure
+retains the unchanged capture and keyboard-scrollable raw text.
+
 ## Diagnostic search inspection
 
 Diagnostics is an administrative inspection surface, not the workspace's primary
