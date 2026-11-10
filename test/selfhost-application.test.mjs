@@ -12,7 +12,7 @@ import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {valueReportKey} from '../dist/src/application/value-report.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 const org='org_selfhost',setup='setup-token-for-tests';
-async function fixture(t){
+async function fixture(t,options={}){
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-selfhost-app-'));
   const store=createLocalSessionStore(dir),prefix='sessions/selfhost/v1';
   let app;const server=createServer((req,res)=>app(req,res));
@@ -21,7 +21,7 @@ async function fixture(t){
   const identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),databasePath:join(dir,'identity.sqlite'),organizationId:org});
   await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));identity.close();await rm(dir,{recursive:true,force:true});});
   const settings={organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),identityPath:join(dir,'identity.sqlite'),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org}};
-  app=selfhostApplication({settings,store,prefix,identity,readAsset:async file=>'asset:'+file});
+  app=selfhostApplication({settings,store,prefix,identity,readAsset:async file=>'asset:'+file,...options});
   const jars=new Map();
   const request=async(path,who=null,options={})=>{
     const jar=who?jars.get(who)||new Map():null;
@@ -93,6 +93,25 @@ test('OSS onboarding opens the workspace on agent capture alone; connecting a so
   const done=await finish();assert.equal(done.status,200);assert.deepEqual(await done.json(),{workspaceUrl:'/'});
   assert.equal((await f.request('/api/console/team','admin')).status,200);
   assert.equal((await (await f.request('/api/console/bootstrap','admin')).json()).onboarding.completed,true);
+});
+test('only an admin can store a connector credential, from this origin, before or after onboarding',async t=>{
+  const saved=[];let failure=null;
+  const f=await fixture(t,{connectorSettings:{save:async(id,value,by)=>{if(failure)throw failure;saved.push({id,value,userId:by.userId});}}});
+  await f.admin();await f.join('bob','bob@example.com');
+  const send=(who,body,headers={})=>f.request('/api/integrations/credentials/composio',who,{method:'POST',headers:{origin:f.origin,'content-type':'application/json',...headers},body:JSON.stringify(body)});
+  assert.equal((await send(null,{value:'k'})).status,401);
+  const member=await send('bob',{value:'project-key'});assert.equal(member.status,403);assert.equal((await member.json()).error.code,'ADMIN_REQUIRED');
+  assert.equal((await send('admin',{value:'project-key'},{origin:'https://foreign.example'})).status,403);
+  assert.equal((await f.request('/api/integrations/credentials/composio','admin')).status,405);
+  assert.equal(saved.length,0);
+  // The admin has not finished onboarding; the sources step is where the key is first needed.
+  const ok=await send('admin',{value:'project-key'});assert.equal(ok.status,200);assert.deepEqual(await ok.json(),{ok:true});
+  const [admin]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data.filter(m=>m.role.slug==='admin');
+  assert.deepEqual(saved,[{id:'composio',value:'project-key',userId:admin.userId}]);
+  failure=Object.assign(new Error('Composio did not accept that key.'),{status:400,expose:true});
+  const refused=await send('admin',{value:'bad'});assert.equal(refused.status,400);assert.equal((await refused.json()).error.message,'Composio did not accept that key.');
+  failure=new Error('storage exploded: s3://private-bucket');
+  const hidden=await send('admin',{value:'project-key'});assert.equal(hidden.status,503);assert.doesNotMatch(JSON.stringify(await hidden.json()),/private-bucket/);
 });
 test('OSS reads only its configured organization measured report from operator storage',async t=>{
   const f=await fixture(t);

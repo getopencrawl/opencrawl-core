@@ -54,6 +54,7 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
     connect: p.input(z.object({provider,apiKey:z.string().max(4000).optional()}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok?:boolean;redirectUrl?:string}>('/api/integrations/'+input.provider+'/connect','POST',{apiKey:input.apiKey})),
     retry: p.input(z.object({provider}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/retry','POST',{})),
     disconnect: p.input(z.object({provider}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/disconnect','POST',{})),
+    saveCredential: p.input(z.object({credential:provider,value:z.string().min(1).max(4000)}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/credentials/'+input.credential,'POST',{value:input.value})),
   }),
 };}
 const routes = productRoutes();

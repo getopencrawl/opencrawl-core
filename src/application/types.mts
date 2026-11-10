@@ -1,5 +1,6 @@
 /** Product wire contracts, shared by the single-organization and hosted applications. */
 export type WorkspaceRole = 'admin' | 'member';
+import type {SourceSetup} from './onboarding-types.mjs';
 
 export interface SourceCard {
   provider: string;
@@ -8,7 +9,7 @@ export interface SourceCard {
   units?: [string, string];
   account?: string | null;
   state: 'disconnected' | 'connecting' | 'syncing' | 'synced' | 'connected' | 'error' | 'unavailable' | 'setup-required';
-  setup?: {title:string;body:string};
+  setup?: SourceSetup;
   scope?: 'team' | 'user';
   auth: 'oauth' | 'api-key';
   help?: string;

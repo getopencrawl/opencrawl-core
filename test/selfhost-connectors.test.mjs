@@ -10,10 +10,11 @@ import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-r
 import {createProviderCatalog} from '../dist/src/integrations/providers.mjs';
 import {connectorManifest} from '../dist/src/integrations/manifests.mjs';
 import {connectorProxyHandler} from '../dist/src/integrations/proxy-http.mjs';
+import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 
 async function fixture(t,extra={}){
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-source-catalog-'));
-  const services=selfhostServices({organizationId:'org_team',url:'https://self.example',registryPath:join(dir,'registry.sqlite'),search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},{bucket:'owned'},
+  const services=selfhostServices({organizationId:'org_team',url:'https://self.example',registryPath:join(dir,'registry.sqlite'),search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},Object.assign(createLocalSessionStore(join(dir,'objects')),{bucket:'owned'}),
     {AIRBYTE_WORKSPACE_ID:'00000000-0000-0000-0000-000000000001',AIRBYTE_URL:'http://127.0.0.1:1',AIRBYTE_CLIENT_ID:'test',AIRBYTE_CLIENT_SECRET:'test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test',OPENCRAWL_CONNECTOR_KEY:Buffer.alloc(32,7).toString('base64'),...extra});
   t.after(async()=>{services.close();await rm(dir,{recursive:true,force:true});});return services;
 }
@@ -173,4 +174,65 @@ test('the connector proxy route carries brokered reads, including a request body
   assert.equal((await post({...search,method:'DELETE'})).status,400);
   assert.equal((await post({...search,endpoint:'https://api.notion.com/v1/pages'})).status,403);
   assert.equal(f.calls.length,1);
+});
+
+/** A stand-in for the broker's API that accepts exactly one project key. */
+async function brokerService(t,accepted='good-project-key'){
+  const seen=[];
+  const server=createServer((req,res)=>{
+    seen.push({method:req.method,url:req.url,key:req.headers['x-api-key']});
+    if(req.headers['x-api-key']!==accepted){res.writeHead(401,{'content-type':'application/json'});return res.end('{"error":"invalid key"}');}
+    res.writeHead(200,{'content-type':'application/json'});res.end('{"items":[]}');
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
+  return {url:'http://127.0.0.1:'+server.address().port,seen};
+}
+async function installation(t,env={}){
+  const dir=await mkdtemp(join(tmpdir(),'opencrawl-connector-settings-'));
+  const store=Object.assign(createLocalSessionStore(join(dir,'objects')),{bucket:'owned'});
+  const open=()=>{const services=selfhostServices({organizationId:'org_team',url:'https://self.example',registryPath:join(dir,'registry.sqlite'),search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},store,
+    {AIRBYTE_WORKSPACE_ID:'00000000-0000-0000-0000-000000000001',AIRBYTE_URL:'http://127.0.0.1:1',AIRBYTE_CLIENT_ID:'test',AIRBYTE_CLIENT_SECRET:'test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test',OPENCRAWL_CONNECTOR_KEY:Buffer.alloc(32,7).toString('base64'),...env});
+    t.after(()=>services.close());return services;};
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  return {store,open};
+}
+const states=async service=>Object.fromEntries((await service.integrations.list(principal)).map(card=>[card.provider,card.state]));
+
+test('an admin-entered broker key is checked, stored encrypted, and enables its connectors without a restart',async t=>{
+  const composio=await brokerService(t),f=await installation(t,{COMPOSIO_BASE_URL:composio.url}),service=f.open();
+  const before=await service.integrations.list(principal),drive=before.find(card=>card.provider==='googledrive');
+  assert.equal(drive.state,'setup-required');assert.equal(drive.setup.requirement,'Needs a Composio key');
+  assert.deepEqual({id:drive.setup.credential.id,unlocks:drive.setup.credential.unlocks},{id:'composio',unlocks:['Google Drive','Notion','Circleback','Slack']});
+  assert.match(drive.setup.credential.url,/^https:\/\/dashboard\.composio\.dev\//);
+  const github=before.find(card=>card.provider==='github');
+  assert.equal(github.setup.requirement,'Needs a GitHub App');assert.equal(github.setup.credential,undefined);
+
+  const by={userId:'user_a'};
+  await assert.rejects(service.connectorSettings.save('other','good-project-key',by),{status:404,expose:true});
+  await assert.rejects(service.connectorSettings.save('composio','',by),{status:400,expose:true});
+  await assert.rejects(service.connectorSettings.save('composio','has spaces in it',by),{status:400,expose:true});
+  assert.equal(composio.seen.length,0);
+  await assert.rejects(service.connectorSettings.save('composio','wrong-project-key',by),error=>error.status===400&&error.expose&&/did not accept/.test(error.message));
+  assert.equal((await states(service)).notion,'setup-required');
+
+  await service.connectorSettings.save('composio','  good-project-key\n',by);
+  assert.deepEqual(composio.seen.at(-1),{method:'GET',url:'/api/v3.1/auth_configs?limit=1',key:'good-project-key'});
+  assert.deepEqual(await states(service),{googledrive:'disconnected',slack:'disconnected',granola:'disconnected',circleback:'disconnected',notion:'disconnected',github:'setup-required'});
+  const sealed=await f.store.get('connector-settings/v1/org_team/settings.enc');
+  assert.ok(sealed.length>40);assert.ok(!sealed.includes(Buffer.from('good-project-key')));
+  assert.ok(!JSON.stringify(await service.integrations.list(principal)).includes('good-project-key'));
+  // The saved key survives a restart and reaches a second process.
+  assert.equal((await states(f.open())).notion,'disconnected');
+});
+
+test('a broker key from the server environment cannot be replaced in the product; without a connector key nothing is stored',async t=>{
+  const composio=await brokerService(t);
+  const managed=(await installation(t,{COMPOSIO_BASE_URL:composio.url,COMPOSIO_API_KEY:'good-project-key'})).open();
+  assert.equal((await states(managed)).googledrive,'disconnected');
+  await assert.rejects(managed.connectorSettings.save('composio','another-project-key',{userId:'user_a'}),{status:409,expose:true});
+  const bare=(await installation(t,{COMPOSIO_BASE_URL:composio.url,OPENCRAWL_CONNECTOR_KEY:''})).open();
+  const card=(await bare.integrations.list(principal)).find(c=>c.provider==='notion');
+  assert.equal(card.state,'setup-required');assert.equal(card.setup.credential,undefined);assert.match(card.setup.body,/COMPOSIO_API_KEY/);
+  await assert.rejects(bare.connectorSettings.save('composio','good-project-key',{userId:'user_a'}),{status:409,expose:true});
+  assert.equal(composio.seen.length,0);
 });

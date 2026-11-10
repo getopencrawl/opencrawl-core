@@ -49,10 +49,12 @@ export interface SelfhostApplicationOptions {
   settings:SelfhostSettings;store:Store;prefix:string;identity:LocalIdentity;
   integrations?:Integrations;providers?:ProviderCatalog;connectors?:ReturnType<typeof createConnectorResolver>;
   oauth?:ReturnType<typeof createSlackOAuth>;sourceCredentials?:SourceCredentialProxy;
+  /** Lets an admin store an operator connector credential from the product. */
+  connectorSettings?:{save(id:string,value:unknown,by:Principal):Promise<void>};
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,
+export function selfhostApplication({settings,store,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
 }:SelfhostApplicationOptions) {
   const directory=identity.directory;
@@ -171,6 +173,13 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
         if(guided.handles(selected.name))return guided.handle(request,{route:selected,principal,identity:{user},member,respond:reply});
         if(selected.name==='/api/onboarding')return reply(200,JSON.stringify({data:{...await onboarding.read(principal),displayName:user.firstName?.trim()||null}}),'application/json');
         if(['debug-search','debug-board'].includes(selected.name))return diagnosticRequest(request,target,selected,{search,connectors,board,principal,admin:isAdmin(member),revalidate:async()=>rpc||await revalidate()?200:403,respond:reply});
+        if(selected.name==='integration-credential'){
+          const refuse=(status:number,code:string,text:string)=>reply(status,JSON.stringify({error:{code,message:text}}),'application/json');
+          if(!connectorSettings)return refuse(503,'INTEGRATIONS_NOT_CONFIGURED','Integrations aren’t available yet.');
+          if(!isAdmin(member))return refuse(403,'ADMIN_REQUIRED','Only a workspace admin can change connector settings.');
+          try{const {value}=await smallJson(request,8192);await connectorSettings.save(selected.provider||'',value,principal);return reply(200,JSON.stringify({ok:true}),'application/json');}
+          catch(error){const info=errorInfo(error);return info.expose?refuse(info.status||400,'CREDENTIAL_NOT_SAVED',info.message):refuse(503,'INTEGRATION_UNAVAILABLE','We couldn’t save that. Please try again.');}
+        }
         if(selected.name.startsWith('integration-')||selected.name.startsWith('/api/integrations'))return integrationRequest(request,target,selected,{integrations,providers,principal,onboarding,guided,respond:reply,message,document});
         if(selected.name==='cloud-capture'||selected.name==='cloud-capture-revoke'){
           let credential,revoked=false;

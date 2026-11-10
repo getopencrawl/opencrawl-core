@@ -70,6 +70,8 @@ export function createComposioOAuth({apiKey,organizationId,proxyUrl,proxyKey,reg
     },
   };
   return {...oauth,
+    /** Confirms the project accepts this key before anything depends on it. */
+    async verify(){await request('GET','/auth_configs?limit=1');},
     /** One source's read through its capability. The caller is a source job, never a browser. */
     async proxyCredential(id:string,secret:string,userId:string,{endpoint,method='GET',query={},headers={},body}:ProxyRequest):Promise<ProxyResponse<unknown>>{
       if(!id||!equal(capability(id,owner(userId)),secret))fail(403);
