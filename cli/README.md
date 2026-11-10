@@ -203,3 +203,236 @@ The separate capture-only receiver and search server can still use
 token with `--api` or `OPENCRAWL_API_URL`. A saved capture destination or the hosted
 default never selects where a newly supplied environment token is sent. Remove
 an environment token when switching deployments to use their saved logins.
+
+Newly spooled events receive a versioned ID after attachment extraction and all
+event normalization. The ID covers the source record/notice identity and every
+field of the final JSON event. For the same source identity, equivalent final-event
+JSON property ordering gives the same ID; changed file bytes, attachment
+availability, or event metadata give a new ID.
+Queued batches retain their existing bytes and IDs across upgrades and retries.
+This upgrade preserves transcript cursors and does not trigger history backfill.
+Explicitly rereading history captured before this identity format, replacing or
+truncating a transcript, or recovering an older enqueue-before-checkpoint crash
+can produce a one-time duplicate of an unchanged legacy event under a new ID.
+Previous normalized payloads are not retained locally after acknowledgement, so
+the collector cannot safely infer that an old raw-record ID represents the same
+attachment content. It does not rewrite or choose between historical revisions.
+
+The harness runs each hook asynchronously and owns its process. The hook saves
+its notice locally, then competes for one nonblocking uploader lock. The winner
+parses permitted transcripts, spools immutable batches and uploads; other hooks
+exit after saving their notices. On Unix the shell and Node dispatcher replace
+themselves with the native CLI using exec, keeping the harness-owned PID. Capture
+never detaches a child, starts a service or launches a replacement worker.
+Each uploader has a 90-second deadline, including during outages or lock waits,
+and checks once per second that its original parent is still alive. Parent loss
+also ends the uploader. Unacknowledged batches stay queued for the next hook;
+explicit foreground flush/backfill is not subject to this background deadline.
+Uploader/session ownership uses SQLite transaction locks built into the CLI runtime;
+no database service is installed. The OS releases ownership on process death.
+Numeric PID files remain for diagnostics and conservative compatibility: a live
+or uncertain legacy owner is not evicted, including a potentially reused PID.
+Full mutual exclusion with older clients that ignore the SQLite lock is not promised.
+If the harness itself dies, the host must reap its adopted children, as for any
+process; capture does not install an init service to replace that host duty.
+Foreground flush/backfill waits for upload ownership and confirmed receipts.
+
+No systemd, launchd, cron, or installed daemon is required. Reinstall removes
+legacy OpenCrawl timers. Existing installations upgrade their owned hook settings
+on the next CLI invocation; restart existing sessions to load async settings.
+Legacy synchronous hooks remain local-only until those settings reload.
+The uploader polls known transcripts for 30 seconds after activity, including
+late writes after Stop, and retries failures with backoff while the harness lets
+it run. Later hooks or explicit sync/flush recover retained work after process
+loss. Harness teardown may cancel an async hook; no delivery is possible after
+a sandbox destroys unsent files. An idle interval is not a final-session receipt.
+`collect status` reports pending hooks separately from queued batches.
+
+Cloud image setup uses `collect install --yes --harness claude-code --defer-auth
+--backfill skip` without a runtime credential or identity lookup. The first async
+hook binds identity before parsing or uploading, without blocking the agent.
+
+Never image or snapshot a signed-in CLI. Sign-in refresh tokens rotate on every
+renewal, so when one machine renews a copied sign-in, every other copy is revoked.
+For machine images, templates and synced home directories, give capture an
+upload-only `OPENCRAWL_SESSIONS_TOKEN` (saved to `capture/receiver-token.json`)
+and run `opencrawl logout` before capturing the image. If capture loses its
+sign-in, `collect status` reports `attention`, and Claude Code receives the same
+notice on the next turn (at most hourly) instead of failing silently.
+
+### Grok Bot
+
+Grok Bot runs a person's Bots on one cloud computer and loads Cursor-format
+hooks from `~/.cursor/hooks.json` there. Ask a Bot to run, on its computer:
+
+```sh
+npm i -g @getopencrawl/cli@next
+opencrawl login --no-browser
+opencrawl collect install --yes --harness grok-bot
+```
+
+The harness is always explicit; a default install never writes to `~/.cursor`,
+which Cursor also reads on a developer machine. There is no Grok Bot transcript
+to read, so sessions are built from the hook payloads: the person's message, the
+Bot's replies and reasoning, and each tool call with its result. Every Bot on
+that computer is recorded and attributed to whoever installed capture, from the
+moment a Bot loads the hooks; there is no history import. A Bot keeps one
+conversation ID for life, so a session is one Bot's work on one UTC day.
+
+Grok Bot waits for each hook, so these hooks only answer, save the payload and
+return. None of them can deny an action, and none is a permission hook. Uploads
+happen inside a hook at a turn boundary or every 20 seconds, and the process ends
+at five seconds whatever the receiver does; only a sign-in renewal already in
+flight is allowed to finish, so the sign-in is never lost. With `--defer-auth`
+nothing is recorded until someone signs in. `collect status` reports pending
+hooks and queued batches; `collect flush` uploads them on demand. See
+[Grok Bot capture](../docs/session-capture.md#grok-bot) for the event mapping,
+limits and the Team Setup manifest.
+
+### Optional history import
+
+`collect install` and `collect backfill` ask terminal users whether to import past Claude Code sessions,
+Codex sessions, both, or skip (the default). Desktop coding sessions use the same
+native transcript stores. A JSON/noninteractive invocation returns
+`decision_required` (`backfill.status` during installation) with a preview and instructions for the agent
+to ask the user. It never assumes consent. `npm install` itself reads no history.
+
+Claude history includes native `.claude/projects` transcripts mirrored by Claude
+Desktop under its `local-agent-mode-sessions` application-data directory, including
+subagents. The preview counts these alongside the usual `~/.claude/projects`
+history. `CLAUDE_DESKTOP_CONFIG_DIR` can select another Claude application-data
+directory during installation. Existing default installations discover the standard
+desktop location automatically; custom transcript-root installations retain their
+configured scope until setup records a desktop location. Only an approved backfill
+reads these mirrors; hooks and background sync do not silently import them.
+Messages in the same runtime’s audit log are also imported when their native UUID
+is absent from its project transcripts. Cloud-only chats and records available
+only inside a VM are excluded.
+
+Agents must show the destination and counts, explain that messages, tool
+arguments/results and available attachments will leave the machine, and wait for
+the user's choice. The setup request alone is not consent to import history.
+
+```sh
+opencrawl collect install --backfill skip  # skip inactive history; active conversations include earlier messages
+opencrawl collect backfill  # interactive history import; defaults to skip
+opencrawl collect backfill --dry-run --json  # local metadata only; no upload
+# Only after the user chooses a source:
+opencrawl collect backfill --harness claude-code --yes
+opencrawl collect backfill --harness codex --yes
+opencrawl collect backfill --harness all --yes
+```
+
+During setup, `collect install --backfill claude-code|codex|all` records the
+user's explicit choice in the invocation and imports immediately; `--backfill
+skip` skips without prompting. `--json` alone never grants approval. Use the
+same `--api` as collection enrollment for preview/import.
+
+Preview reports transcript-file counts and on-disk bytes, not unique sessions
+or upload size. It scans `CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`)
+and `CODEX_HOME/{sessions,archived_sessions}` (default `~/.codex/`), including
+Codex `.jsonl.zst` compressed transcripts. Archives expand one at a time into a
+private temporary file, capped at 256 MiB; corrupt or oversized archives report
+an incomplete import and stay on disk. Temporary expanded files are removed. It follows no
+transcript symlinks and does not read conversation content. Import includes
+subagent transcripts in those directories and only records the harness saved
+locally. Cloud-only Claude chats, Cowork VM records, deleted sessions and missing
+attachments cannot be recovered by this importer.
+
+A one-time import reuses capture cursors, authentication, attachment storage and
+durable receipts. It does not turn on recurring historical scans. Rerun the
+same approved command after an interruption; completed records are skipped.
+Transient connection failures and HTTP 429/502/503/504 responses are retried up
+to four times for reads and content-addressed uploads, without changing the
+payload. Permanent rejections fail immediately. Replaying completed files
+requires one initial authentication rather than a network request per file.
+Approved backfills also reconcile older parser cursors to recover supported
+inter-agent messages. Routine hooks and sync do not trigger that historical
+reprocessing. Stable event identities prevent duplicate search documents.
+Failures return nonzero rather than reporting a complete import. Status still
+shows queued uploads and errors; `collect flush` retries uploads already queued.
+
+### Claude Code cloud
+
+Cloud sessions run on a fresh Linux VM. Local hooks do not transfer. The first
+setup prompt should direct hosted users to their deployment's `/capture/cloud`
+page, which issues a one-year, revocable, upload-only credential and supplies the
+exact setup script. Use a **personal** Claude environment: sessions using that
+credential are attributed to its owner, regardless of who starts them.
+
+Keep Limited/Trusted networking and allow the deployment's API hostname plus
+npm registries. Add `OPENCRAWL_SESSIONS_TOKEN` in Environment variables and append
+the provided script to Setup script. Save and start a fresh session using that
+environment. No local Claude installation is required. Human-only settings and
+a separate setup session are supported. Environment variables are visible to
+commands in that environment; don't paste the credential into the chat or repo.
+
+The installer detects `CLAUDE_CODE_REMOTE=true`, installs Claude hooks only and
+uses the same service-free uploader as local installations. `--harness claude-code` selects just Claude hooks; `--no-background` remains an accepted compatibility flag.
+The setup installs the CLI at
+`$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl`. After a user
+message, tool call and image, `collect status` must report a stored receipt and
+no error. Don't use manual sync as evidence that automatic hooks work. Search
+follows asynchronous indexing, not the upload acknowledgement.
+
+Cloud batches retain the native session UUID and the web session ID from the
+native `remote_session_change` attachment, and mark origin `cloud`. Internal
+prompt snapshots, environment snapshots and repeated tool/MCP listings are
+omitted. Image attachment bytes are stored separately using their digest.
+
+Self-hosted operators use the same protocol: with the configured receiver token,
+POST `/api/sessions/credentials` to obtain an upload-only delegation, store the
+returned token directly in a private file (not a transcript), then configure the
+personal environment above using their HTTPS receiver hostname. DELETE
+`/api/sessions/credentials/<id>` with the receiver token revokes it. The child
+credential cannot search/read, issue credentials or revoke credentials. The
+receiver always binds the operator's fixed tenant/user, including for delegated
+tokens. Changing that fixed identity invalidates old delegations.
+
+## Search workspace knowledge
+
+`opencrawl search "words" --json` queries sessions and all authorized indexed
+connectors. Use `--source sessions|connectors`, `--match any|all|phrase`,
+`--session-id ID` with sessions, and `--limit 1..40`. Follow `data.next` with
+`--cursor TOKEN` and otherwise identical arguments. Pages are live and bounded;
+inspect `coverage`, `partial`, `truncated` and `windowExhausted` before claiming
+completeness. Results contain compact verbatim excerpts and source provenance.
+Whitespace-equivalent passages within a session/resource are grouped; use
+`--no-dedupe` to inspect all occurrences. `duplicateCount` counts additional
+candidates in the current search window.
+
+Expand a result with `opencrawl fetch <result-id> --json`. Fetch returns up to
+6,000 characters of the original indexed passage. Continue with
+`--offset <nextOffset> --content-version <version>`; use `--length 1..16000` to
+control page size. A changed passage requires restarting from offset 0. Access
+and source visibility are checked again on every read. One indexed passage may
+be only part of a larger document or session.
+For self-hosting, set `OPENCRAWL_TOKEN` and `--api`; otherwise saved OAuth is used.
+
+## Process ownership acceptance
+
+Linux CI runs the real packaged CLI through `scripts/process-ownership.mts` in a
+fresh PID namespace. The test checks a 200-hook burst, bounded HTTP concurrency,
+late transcript tails, crash and deadline recovery, idle shutdown, and parent
+loss while keeping HOME, USERPROFILE and all skill installation paths inside a
+temporary fixture. No installed agent configuration or credentials are used.
+
+A small test-only C init fixture exposes raw `fork` and exact `waitpid` calls.
+This is needed because Node/libuv normally reaps children: a Node PID 1 would
+hide the adopted zombies that this test must detect. The fixture first proves
+that it leaves an adopted child as a zombie, then reaps only explicitly selected
+PIDs. All capture behavior and acceptance assertions remain in TypeScript. CI
+compiles this fixture; it adds no production dependency.
+
+## Managed skill refresh
+
+Automatic and explicit launcher updates regenerate the CLI-owned `opencrawl`
+skill using the selected release, including local edits and stale files. Other
+named skills remain separate. Skill failures do not prevent CLI use.
+`opencrawl skills refresh --json` retries regeneration and reports access errors.
+`OPENCRAWL_NO_UPDATE=1` disables automatic refresh too.
+
+Board discovery uses MCP `board_sync`/`board_topics`; expand a relevant reference
+with `board_fetch` or `opencrawl board fetch --workspace <id> --id <reference>
+--json`. Add `--field latestAssistantMessage` to narrow a session, or page with
+`--offset`, `--length` and `--content-version`.

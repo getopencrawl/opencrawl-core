@@ -88,6 +88,7 @@ async function harness(dist: string, root: string) {
     const address = server.address();
     assert(address && typeof address !== 'string');
     const api = 'http://127.0.0.1:' + address.port;
+    Object.assign(env,{OPENCRAWL_API_URL:api});
     const setup = track(spawn(process.execPath, [launcher, 'collect', 'install', '--yes', '--harness', 'claude-code', '--defer-auth', '--backfill', 'skip', '--api', api, '--json'], { env, stdio: ['ignore', 'pipe', 'pipe'] }));
     let output = '', errors = '';
     setup.stdout!.setEncoding('utf8').on('data', (s: string) => { output += s; });

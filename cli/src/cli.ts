@@ -129,7 +129,7 @@ export async function identity(api: string, fetcher = fetch, initialToken?: stri
 export async function main(args = process.argv.slice(2)) {
   // Process-owned work overlaps commands and async hooks. It is cancelled when
   // the command ends, so quick commands never wait and no orphan worker exists.
-  let memoryJob:ReturnType<typeof scheduleMemoryRefresh>|undefined=undefined;
+  const memoryJob:{current?:ReturnType<typeof scheduleMemoryRefresh>}={};
   let json = args.includes('--json');
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
@@ -156,8 +156,8 @@ export async function main(args = process.argv.slice(2)) {
       emit(data, JSON.stringify(data, null, 2));
       return data.results.some(result => ['conflict', 'error'].includes(result.status)) ? 1 : 0;
     }
-    return await withEnvironmentTokenOrigin(parsed.values.api ?? process.env.OPENCRAWL_API_URL, async () => {
-    if(command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob=scheduleMemoryRefresh();
+    return await withEnvironmentTokenOrigin((parsed.values.api as string|undefined) ?? process.env.OPENCRAWL_API_URL, async () => {
+    if(command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob.current=scheduleMemoryRefresh();
     if (command === 'board') {
       await boardCommand(parsed.positionals[1] ?? 'directory', api, parsed.values, data => writeBoardOutput(data, json));
       return 0;
@@ -210,7 +210,7 @@ export async function main(args = process.argv.slice(2)) {
     // Harnesses read a hook's exit code 2 as "block this action".
     return exit === 2 && args[0] === 'collect' && args[1] === 'hook' ? 1 : exit;
   } finally {
-    memoryJob?.stop();
+    memoryJob.current?.stop();
     // Upgrade only our hook settings locally; never launch an unowned process.
     if(args[0]!=='collect' && args[0]!=='logout' && args[0]!=='skills')try{await upgradeCaptureHooks();}catch{}
   }
