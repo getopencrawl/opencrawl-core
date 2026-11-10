@@ -234,7 +234,8 @@ const providers:ProviderCatalog = {
       {stream: 'transcripts', label: 'Transcript lines'},
     ],
     units: ['meeting', 'meetings'],
-    sourceConfiguration: ({startDate, record}) => ({start_date: startDate, folder_id: record!.settings?.folderId, num_workers: 2}),
+    // Circleback returns numeric folder IDs; the connector's configuration takes a string.
+    sourceConfiguration: ({startDate, record}) => ({start_date: startDate, folder_id: record!.settings?.folderId === undefined ? undefined : String(record!.settings.folderId), num_workers: 2}),
     /** The signed-in account and the workspace's shared Workspace folder, the only one read. */
     async account(proxy) {
       const [me, folders] = await Promise.all([proxy({endpoint: `${CIRCLEBACK}/oauth/test`}), proxy<Array<{id: string | number; type: string; workspaceId: string | number; name?: string}>>({endpoint: `${CIRCLEBACK}/folder`})]);

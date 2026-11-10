@@ -76,7 +76,7 @@ async function broker(t,respond=()=>({status:200,data:{ok:true},headers:{}})){
   const providers=createProviderCatalog({...Object.fromEntries([...brokered,'granola'].map(id=>[id,{name:id,manifest:connectorManifest(id)}])),github:{name:'github',docker:{repository:'r',tag:'t'}}});
   let n=0;
   const connect=(provider,connectedAccountId,userId='user_a')=>registry.create({tenantId:'org_team',userId,integrationId:'int_'+String(++n).padStart(26,'0'),provider,environment:'selfhost',scope:'team',status:'active',
-    createdAt:new Date().toISOString(),startDate:'2026-01-01T00:00:00Z',connectedAccountId,settings:{folderId:'folder_1'}});
+    createdAt:new Date().toISOString(),startDate:'2026-01-01T00:00:00Z',connectedAccountId,settings:{folderId:77}});
   return {registry,oauth,calls,providers,connect};
 }
 
@@ -86,7 +86,14 @@ test('every brokered connector receives the configuration its manifest requires,
     const record=await f.connect(id,'ca_'+id),config=await f.oauth.sourceConfiguration(record,f.providers[id]);
     const spec=connectorManifest(id).spec.connection_specification;
     for(const key of spec.required)assert.ok(config[key]!==undefined&&config[key]!=='',`${id} manifest requires ${key}`);
-    for(const key of Object.keys(config))assert.ok(Object.hasOwn(spec.properties,key),`${id} manifest does not declare ${key}`);
+    // Airbyte rejects a source whose settings do not match the connector's declared types and patterns.
+    for(const [key,value] of Object.entries(config)){
+      assert.ok(Object.hasOwn(spec.properties,key),`${id} manifest does not declare ${key}`);
+      const declared=spec.properties[key];
+      assert.equal(Number.isInteger(value)?'integer':typeof value,declared.type,`${id} ${key} must be ${declared.type}`);
+      if(declared.pattern)assert.match(value,new RegExp(declared.pattern),`${id} ${key} must match ${declared.pattern}`);
+      if(declared.minimum!==undefined)assert.ok(value>=declared.minimum&&value<=declared.maximum,`${id} ${key} is out of range`);
+    }
     assert.equal(config.credential_proxy_base_url,APP_FOR_AIRBYTE);
     assert.equal(config.connected_account_id,'ca_'+id);assert.equal(config.user_id,'selfhost:org_team:user_a');
     assert.ok(!JSON.stringify(config).includes(OPERATOR_KEY));
