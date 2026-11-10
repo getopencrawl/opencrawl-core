@@ -204,14 +204,17 @@ export function localAuth({identity,url,organizationId,setupToken,member}:LocalA
   /** Handles an auth route and returns true, or false for other paths. */
   async function routeAuth(req:IncomingMessage,res:ServerResponse,target:URL):Promise<boolean>{
     const path=target.pathname;
+    // OIDC appends discovery to its issuer path; OAuth metadata also supports
+    // the RFC 8414 path-prefix form. Match both before the protocol allowlist.
+    if(['/.well-known/oauth-authorization-server','/.well-known/oauth-authorization-server/api/auth','/.well-known/openid-configuration','/.well-known/openid-configuration/api/auth','/api/auth/.well-known/openid-configuration'].includes(path)){
+      if(req.method!=='GET'){res.setHeader('Allow','GET');json(res,405,{error:'method_not_allowed'});return true;}
+      res.setHeader('Access-Control-Allow-Origin','*');
+      await relay(res,await (path.includes('openid')?openidMetadata:authorizationMetadata)(new Request(url+path)));return true;
+    }
     if(path.startsWith('/api/auth/')){
       if(PUBLIC.get(path)!==req.method){json(res,404,{error:'not_found'});return true;}
       req.headers['x-opencrawl-client-ip']=req.socket.remoteAddress||'unknown';
       await handler(req,res);return true;
-    }
-    if(['/.well-known/oauth-authorization-server','/.well-known/oauth-authorization-server/api/auth','/.well-known/openid-configuration','/.well-known/openid-configuration/api/auth','/api/auth/.well-known/openid-configuration'].includes(path)){
-      res.setHeader('Access-Control-Allow-Origin','*');
-      await relay(res,await (path.includes('openid')?openidMetadata:authorizationMetadata)(new Request(url+path)));return true;
     }
     if(path==='/api/cli/device'){await cliToken(req,res,'/device/code');return true;}
     if(path==='/api/cli/token'){await cliToken(req,res,'/oauth2/token');return true;}

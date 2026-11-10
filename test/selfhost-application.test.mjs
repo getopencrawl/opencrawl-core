@@ -141,6 +141,10 @@ test('MCP clients register, need a member’s consent, and receive tokens accept
   assert.deepEqual(resource.authorization_servers,[f.origin+'/api/auth']);
   const metadata=await (await f.request('/.well-known/oauth-authorization-server/api/auth')).json();
   assert.equal(metadata.issuer,f.origin+'/api/auth');
+  const oidc=await f.request('/api/auth/.well-known/openid-configuration');
+  assert.equal(oidc.status,200);assert.equal((await oidc.json()).issuer,metadata.issuer);
+  const wrongMethod=await f.request('/api/auth/.well-known/openid-configuration',null,{method:'POST'});
+  assert.equal(wrongMethod.status,405);assert.equal(wrongMethod.headers.get('allow'),'GET');
   const callback='http://127.0.0.1:33418/callback';
   const client=await (await f.request('/api/auth/oauth2/register',null,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client_name:'Test agent',redirect_uris:[callback],token_endpoint_auth_method:'none',grant_types:['authorization_code','refresh_token'],response_types:['code']})})).json();
   assert.ok(client.client_id,JSON.stringify(client));

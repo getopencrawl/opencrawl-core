@@ -10,7 +10,7 @@ const denied = () => Object.assign(new Error('Integration scope is not authorize
 const conflict = () => Object.assign(new Error('Integration changed; refresh and retry'), {code: 'ConditionalCheckFailedException', status: 409});
 /** One durable registry bound permanently to one organization and environment. */
 export function createSingleOrganizationRegistry({path, organizationId, environment = 'selfhost'}: {path: string; organizationId: string; environment?: Environment}) {
-  if (!/^org_[A-Za-z0-9]+$/.test(organizationId)) throw new Error('Configure one WorkOS organization');
+  if (!/^org_[A-Za-z0-9]+$/.test(organizationId)) throw new Error('Configure one organization');
   const databasePath = resolve(path);
   mkdirSync(dirname(databasePath), {recursive: true, mode: 0o700});
   const db = new DatabaseSync(databasePath);
