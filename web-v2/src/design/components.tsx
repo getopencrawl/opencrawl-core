@@ -97,9 +97,13 @@ export function Tabs({items, value, onChange, label}: {items: ReadonlyArray<{val
   return <div className="oc-tabs" role="tablist" aria-label={label} ref={ref} onKeyDown={event => {const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')); const focused = buttons.findIndex(button => button === document.activeElement); let index = focused < 0 ? items.findIndex(item => item.value === value) : focused; if (event.key === 'ArrowRight') index = (index + 1) % items.length; else if (event.key === 'ArrowLeft') index = (index - 1 + items.length) % items.length; else if (event.key === 'Home') index = 0; else if (event.key === 'End') index = items.length - 1; else return; event.preventDefault(); const item = items[index]; if (!item) return; onChange(item.value); buttons[index]?.focus();}}>{items.map(item => <Button key={item.value} variant="plain" role="tab" aria-selected={item.value === value} tabIndex={item.value === value ? 0 : -1} onClick={() => onChange(item.value)}>{item.label}</Button>)}</div>;
 }
 
-export interface MetricItem {label: string; value: ReactNode; note?: ReactNode; title?: string}
+export interface MetricItem {label: string; value: ReactNode; note?: ReactNode; title?: string; /** How the number is calculated, shown when the question mark is hovered or focused. */ help?: string}
+function MetricHelp({label, help}: {label: string; help: string}) {
+  const id = useId();
+  return <span className="report-help"><button type="button" className="report-help-button" aria-label={`How ${label} is calculated`} aria-describedby={id}>?</button><span className="report-help-text" role="tooltip" id={id}>{help}</span></span>;
+}
 export function MetricGrid({items}: {items: ReadonlyArray<MetricItem>}) {
-  return <dl className="report-metrics">{items.map(item => <div className="report-metric" key={item.label}><dt>{item.label}</dt><dd><span className="report-metric-value" title={item.title}>{item.value}</span>{item.note && <span className="report-metric-note">{item.note}</span>}</dd></div>)}</dl>;
+  return <dl className="report-metrics">{items.map(item => <div className="report-metric" key={item.label}><dt>{item.label}{item.help && <MetricHelp label={item.label} help={item.help}/>}</dt><dd><span className="report-metric-value" title={item.title}>{item.value}</span>{item.note && <span className="report-metric-note">{item.note}</span>}</dd></div>)}</dl>;
 }
 
 export function BarList({rows, total, label}: {rows: ReadonlyArray<{name: string; count: number}>; total?: number; label: string}) {
