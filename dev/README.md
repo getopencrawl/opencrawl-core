@@ -74,6 +74,11 @@ product image and published runtime package.
 Airbyte uses its official Helm chart in a uniquely named kind cluster. Its
 internal workflow engine/database remain separate from OpenCrawl's. A dedicated
 kubeconfig leaves the user's default context and pre-existing Airbyte alone.
+Source jobs reach the app's credential proxy at a stable in-cluster name,
+`opencrawl-app.airbyte.svc.cluster.local:8092`, which each run points at the
+current app container and verifies from inside the cluster. The browser origin
+is this machine's loopback, which a job cannot reach. `OPENCRAWL_AIRBYTE_APP_URL`
+in `.opencrawl-dev/connectors.env` overrides the address.
 Node, kind, kubectl, Helm and the Airbyte chart are pinned and checksum-verified.
 Third-party images and charts retain their own licenses.
 

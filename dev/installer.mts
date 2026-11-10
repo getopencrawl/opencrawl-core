@@ -78,6 +78,18 @@ function ownedNode(){
   return info;
 }
 function composeExists(){return existsSync(envFile)&&existsSync(override);}
+// Airbyte source jobs call the app's credential proxy. The browser origin is this machine's
+// loopback, which a job cannot reach, so the cluster gets a stable name for the app container.
+const appService='opencrawl-app',appForAirbyte=`http://${appService}.airbyte.svc.cluster.local:8092`;
+async function publishApp(address:string){
+  kubectl(['apply','-f','-'],{capture:true,input:JSON.stringify({apiVersion:'v1',kind:'List',items:[
+    {apiVersion:'v1',kind:'Service',metadata:{name:appService,namespace:'airbyte'},spec:{ports:[{name:'http',port:8092,targetPort:8092,protocol:'TCP'}]}},
+    {apiVersion:'discovery.k8s.io/v1',kind:'EndpointSlice',metadata:{name:appService,namespace:'airbyte',labels:{'kubernetes.io/service-name':appService}},
+      addressType:'IPv4',ports:[{name:'http',port:8092,protocol:'TCP'}],endpoints:[{addresses:[address]}]},
+  ]})});
+  await until('Airbyte access to the application',async()=>kubectl(
+    ['-n','airbyte','exec','airbyte-db-0','--','wget','-q','-T','5','-O','-',appForAirbyte+'/health'],{capture:true,allowFailure:true}).includes('"ok":true'),2);
+}
 function summary(){
   console.log(`\nOpenCrawl development workspace: ${state.origin}\nAirbyte: http://localhost:${state.airbytePort}\nPrivate login details: ${join(stateDir,'login.txt')}\nLast startup check: ${state.startedAt||state.verifiedAt||'not yet started'}\nOptional demo ingestion check: ${state.verifiedAt||'not run (./dev/up demo)'}\nStop without deleting data: ./dev/up stop\nDelete this development installation: ./dev/up reset --yes`);
 }
@@ -139,7 +151,8 @@ function writeCompose(airbyteAddress='127.0.0.1',s3Address='s3',workspaceId=stat
     OPENCRAWL_AUTH_SECRET:state.authSecret,OPENCRAWL_SETUP_TOKEN:state.setupToken,OPENCRAWL_CONNECTOR_KEY:state.connectorKey,
     OPENCRAWL_S3_ACCESS_KEY_ID:state.s3Key,OPENCRAWL_S3_SECRET_ACCESS_KEY:state.s3Secret,OPENCRAWL_TEMPORAL_PASSWORD:state.temporalPassword,
     OPENCRAWL_AIRBYTE_S3_ENDPOINT:`http://${s3Address}:8333`,OPENCRAWL_APP_PORT:String(state.port),OPENCRAWL_APP_BIND:'127.0.0.1',OPENCRAWL_S3_BIND:'127.0.0.1',OPENCRAWL_S3_PORT:'0',
-    AIRBYTE_URL:`http://${airbyteAddress}:30080`,AIRBYTE_CLIENT_ID:state.airbyteClientId,AIRBYTE_CLIENT_SECRET:state.airbyteClientSecret,AIRBYTE_WORKSPACE_ID:workspaceId,...connectorEnv};
+    AIRBYTE_URL:`http://${airbyteAddress}:30080`,AIRBYTE_CLIENT_ID:state.airbyteClientId,AIRBYTE_CLIENT_SECRET:state.airbyteClientSecret,AIRBYTE_WORKSPACE_ID:workspaceId,
+    OPENCRAWL_AIRBYTE_APP_URL:appForAirbyte,...connectorEnv};
   privateFile(envFile,Object.entries(env).map(([k,v])=>`${k}=${JSON.stringify(v)}`).join('\n')+'\n');
   // Only additive dev composition. The normal images, env contract, data volumes,
   // workers and production behavior come from deploy/compose.yaml unchanged.
@@ -214,6 +227,7 @@ async function up(){
   }
   writeCompose(airbyteIp,ip('s3'));
   console.log('Starting the normal authenticated application and indexing worker...');compose(['up','-d','--wait','--wait-timeout','600','app','worker']);
+  await publishApp(ip('app'));
   const credentials={format:1,project:state.project,origin:state.origin,connectOrigin:'http://app:8092',organization:state.organization,email:state.email,password:state.password,setupToken:state.setupToken,fixtureUrl:`http://${ip('fixture')}:8080`};
   const seedDir=join(stateDir,'seed');mkdirSync(seedDir,{recursive:true,mode:0o700});
   privateFile(join(seedDir,'seed-input.json'),credentials);
