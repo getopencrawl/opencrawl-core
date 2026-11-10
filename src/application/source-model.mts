@@ -20,7 +20,7 @@ export function sourceStatus(source: SourceCard): {label: string; tone: 'neutral
 }
 
 export function sourceProgress(source: SourceCard): string {
-  if(source.state==='setup-required')return 'Your instance administrator needs to configure this connection.';
+  if(source.state==='setup-required')return source.setup?.requirement ? `${source.setup.requirement}.` : 'Your instance administrator needs to configure this connection.';
   const count = Math.max(0, source.synced ?? 0);
   const units = source.units ?? ['item', 'items'];
   const countText = `${count.toLocaleString()} ${count === 1 ? units[0] : units[1]}`;

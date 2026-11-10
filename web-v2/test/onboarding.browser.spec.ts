@@ -66,6 +66,74 @@ test('a runtime with optional sources offers Skip for now and finishes without a
   await expect(page.getByRole('link',{name:'Skip for now',exact:true})).toHaveCount(0);
 });
 
+const composio={id:'composio',name:'Composio',label:'Composio API key',url:'https://dashboard.composio.dev/~/project/settings/api-keys',help:'The key is stored encrypted on this instance.',unlocks:['Google Drive','Notion']};
+const waiting=(id:string,name:string)=>({id,name,state:'setup-required',auth:'oauth',setup:{title:`Set up ${name}`,body:`${name} signs in through Composio.`,requirement:'Needs a Composio key',credential:composio}});
+const locked=[waiting('googledrive','Google Drive'),{id:'granola',name:'Granola',state:'disconnected',auth:'api-key'},waiting('notion','Notion'),{id:'github',name:'GitHub',state:'setup-required',setup:{title:'Set up GitHub',body:'Configure a GitHub App on the server.',requirement:'Needs a GitHub App'}}];
+
+test('an admin adds the operator key from the Sources step and continues into sign-in',async({page,request})=>{
+  await request.post('/__test/state',{data:{status:complete,sourcesOptional:true,sources:locked}});
+  await page.route('https://provider.example/authorize',route=>route.fulfill({contentType:'text/html',body:'<h1>Provider authorization fixture</h1>'}));
+  await page.goto('/onboarding/sources');
+  // Connectors that can start come first; the rest say what they are waiting for.
+  await expect(page.getByRole('list',{name:'Ready to connect'}).getByRole('button')).toHaveText(['Granola']);
+  await expect(page.getByRole('list',{name:'Needs one-time setup'}).getByRole('button')).toHaveText(['Google Drive','Notion','GitHub']);
+  await expect(page.getByText('One Composio key unlocks Google Drive and Notion.')).toBeVisible();
+  await expect(page.getByText('Needs a Composio key',{exact:true})).toHaveCount(2);
+  await expect(page.getByText('Needs a GitHub App',{exact:true})).toHaveCount(1);
+  await page.getByRole('button',{name:'Set up GitHub',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Set up GitHub'})).toContainText('Configure a GitHub App on the server.');
+  await expect(page.getByRole('dialog').getByRole('textbox')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button',{name:'Set up Google Drive',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Set up Google Drive'});
+  await expect(dialog.getByLabel('Composio API key')).toBeFocused();
+  await expect(dialog.getByLabel('Composio API key')).toHaveAttribute('type','password');
+  await expect(dialog.getByRole('link',{name:'Get a key from Composio'})).toHaveAttribute('href',composio.url);
+  await expect(dialog.getByRole('button',{name:'Save key and connect Google Drive'})).toBeDisabled();
+  await dialog.getByLabel('Composio API key').fill('wrong-key');
+  await dialog.getByRole('button',{name:'Save key and connect Google Drive'}).click();
+  await expect(dialog.getByRole('alert')).toContainText('Composio did not accept that key.');
+  await expect(dialog.getByLabel('Composio API key')).toHaveValue('wrong-key');
+  await dialog.getByLabel('Composio API key').fill('accepted-key');
+  await dialog.getByLabel('Composio API key').press('Enter');
+  // Saving unlocks the connector and carries straight on into the provider's sign-in.
+  await expect(page).toHaveURL('https://provider.example/authorize');
+  const state=await (await request.get('/__test/state')).json() as {requests:{credential:number;connect:number};sources:{id:string;state:string;setup?:unknown}[]};
+  expect(state.requests).toMatchObject({credential:2,connect:1});
+  expect(state.sources.filter(source=>source.setup).map(source=>source.id)).toEqual(['github']);
+});
+
+test('a member is told to ask an admin instead of being shown the key form',async({page,request})=>{
+  await request.post('/__test/state',{data:{status:complete,sourcesOptional:true,sources:locked}});
+  await page.goto('/onboarding/sources?role=member');
+  await page.getByRole('button',{name:'Set up Notion',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Set up Notion'});
+  await expect(dialog).toContainText('Ask a workspace admin to add the Composio key.');
+  await expect(dialog.getByRole('textbox')).toHaveCount(0);
+  await expect(dialog.getByRole('button',{name:/Save key/})).toHaveCount(0);
+  expect(((await (await request.get('/__test/state')).json()) as {requests:{credential:number}}).requests.credential).toBe(0);
+});
+
+test('the Integrations page takes the operator key and opens sign-in in the reserved window',async({page,request,context})=>{
+  await request.post('/__test/state',{data:{status:complete,sources:locked}});
+  await context.route('https://provider.example/authorize',route=>route.fulfill({contentType:'text/html',body:'<h1>Provider authorization fixture</h1>'}));
+  await page.goto('/integrations-fixture');
+  await expect(page.getByRole('status').filter({hasText:'One Composio key unlocks Google Drive and Notion.'})).toBeVisible();
+  const notion=page.getByRole('article',{name:'Notion'});
+  await expect(notion).toContainText('Needs a Composio key.');
+  await notion.getByRole('button',{name:'Set up Notion'}).click();
+  const dialog=page.getByRole('dialog',{name:'Set up Notion'});
+  await dialog.getByLabel('Composio API key').fill('accepted-key');
+  const popup=page.waitForEvent('popup');
+  await dialog.getByRole('button',{name:'Save key and connect Notion'}).click();
+  await expect((await popup).getByRole('heading',{name:'Provider authorization fixture'})).toBeVisible();
+  await expect(dialog).not.toBeVisible();
+  // The other connector that was waiting for the same key is now ready as well.
+  await expect(page.getByRole('article',{name:'Google Drive'}).getByRole('button',{name:'Connect Google Drive'})).toBeVisible();
+  await expect(page.getByText('One Composio key unlocks')).toHaveCount(0);
+});
+
 async function refresh(page: Page) {await page.evaluate(() => window.dispatchEvent(new Event('online')));}
 
 test('GitHub account choice preserves keyboard access, narrow layout and the selected OAuth state',async({page})=>{

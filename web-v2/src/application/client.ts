@@ -26,6 +26,7 @@ return {
   connect:(provider:string,apiKey?:string,signal?:AbortSignal)=>write(()=>webRpc.integrations.connect.mutate({provider,apiKey},{signal}),signal),
   retry:(provider:string,signal?:AbortSignal)=>write(()=>webRpc.integrations.retry.mutate({provider},{signal}),signal),
   disconnect:(provider:string,signal?:AbortSignal)=>write(()=>webRpc.integrations.disconnect.mutate({provider},{signal}),signal),
+  saveCredential:(credential:string,value:string,signal?:AbortSignal)=>write(()=>webRpc.integrations.saveCredential.mutate({credential,value},{signal}),signal),
   invite:(email:string,signal?:AbortSignal)=>write(()=>webRpc.console.invite.mutate({email},{signal}),signal),
   changeRole:(userId:string,role:WorkspaceRole,signal?:AbortSignal)=>write(()=>webRpc.console.changeRole.mutate({userId,role},{signal}),signal),
   renameOrganization:(name:string,signal?:AbortSignal)=>write(()=>webRpc.console.rename.mutate({name},{signal}),signal),

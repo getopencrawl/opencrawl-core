@@ -9,6 +9,8 @@ export interface SourcesAdapter {
   connect(provider: string, apiKey?: string, signal?: AbortSignal): Promise<{ok?: boolean; redirectUrl?: string}>;
   retry(provider: string, signal?: AbortSignal): Promise<{ok: true}>;
   disconnect(provider: string, signal?: AbortSignal): Promise<{ok: true}>;
+  /** Admin only: store an operator credential named by a source's setup. */
+  saveCredential?(credential: string, value: string, signal?: AbortSignal): Promise<{ok: true}>;
 }
 export interface TeamAdapter {
   team(signal?: AbortSignal): Promise<TeamReport>;

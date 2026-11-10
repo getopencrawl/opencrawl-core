@@ -14,9 +14,11 @@ interface FixtureState {
   finishError: boolean;
   /** Mirrors a runtime that opens the workspace before any source is connected. */
   sourcesOptional?: boolean;
-  requests: {status: number; finish: number; invite: number; connect: number; aborted: number};
+  /** The one operator credential value this fixture accepts. */
+  acceptedCredential?: string;
+  requests: {status: number; finish: number; invite: number; connect: number; aborted: number; credential: number};
 }
-const fresh = (): FixtureState => ({status: {}, sources: [{id: 'slack', name: 'Slack', icon: '/assets/connectors/slack.svg', state: 'disconnected', auth: 'oauth'}, {id: 'granola', name: 'Granola', icon: '/assets/connectors/granola.svg', state: 'disconnected', auth: 'api-key'}], invitations: [], delayStatus: 0, finishError: false, requests: {status: 0, finish: 0, invite: 0, connect: 0, aborted: 0}});
+const fresh = (): FixtureState => ({status: {}, sources: [{id: 'slack', name: 'Slack', icon: '/assets/connectors/slack.svg', state: 'disconnected', auth: 'oauth'}, {id: 'granola', name: 'Granola', icon: '/assets/connectors/granola.svg', state: 'disconnected', auth: 'api-key'}], invitations: [], delayStatus: 0, finishError: false, requests: {status: 0, finish: 0, invite: 0, connect: 0, aborted: 0, credential: 0}});
 let state = fresh();
 const output = await build({entryPoints: [fileURLToPath(new URL('./fixtures/onboarding-app.tsx', import.meta.url))], bundle: true, write: false, outdir: 'test-memory', format: 'esm', platform: 'browser', target: 'es2022', sourcemap: false, external: ['/assets/*']});
 const javascript = output.outputFiles.find(file => file.path.endsWith('.js'))?.contents;
@@ -62,6 +64,16 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     state.requests.finish++;
     if (state.finishError || !deriveOnboarding(state.status).complete || !state.sourcesOptional && !state.sources.some(isSourceConnected)) return json(res, {error: 'Complete the required setup checks first.'}, 409);
     return json(res, {workspaceUrl: '/'});
+  }
+  if (url.pathname === '/api/console/sources') return json(res, {items: state.sources.map(source => ({provider: source.id, name: source.name, state: source.state, auth: source.auth === 'api-key' ? 'api-key' : 'oauth', setup: source.setup}))});
+  const credential = /^\/api\/integrations\/credentials\/([^/]+)$/.exec(url.pathname);
+  if (credential) {
+    state.requests.credential++;
+    const input = await body(req);
+    if (input.value !== (state.acceptedCredential ?? 'accepted-key')) return json(res, {error: 'Composio did not accept that key. Copy the API key from your Composio project and try again.'}, 400);
+    // One accepted key unlocks every connector that was waiting for it.
+    for (const source of state.sources) if (source.setup?.credential?.id === credential[1]) {delete source.setup; source.state = 'disconnected';}
+    return json(res, {ok: true});
   }
   const connect = /^\/api\/integrations\/([^/]+)\/connect$/.exec(url.pathname);
   if (connect) {

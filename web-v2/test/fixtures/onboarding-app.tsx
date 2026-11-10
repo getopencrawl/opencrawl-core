@@ -1,7 +1,8 @@
 /** Browser-test fixture only. It is never a product entrypoint or published asset. */
 import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
-import {AgentOnboarding, AppRouter, AppShell, Button, FocusedFrame, InviteOnboarding, Route, Routes, SourcesOnboarding, useLocation, useNavigate, type OnboardingAdapter} from '../../src/index.ts';
+import {AgentOnboarding, AppRouter, AppShell, Button, ConsoleDataProvider, FocusedFrame, InviteOnboarding, Route, Routes, SourcesOnboarding, SourcesPage, useLocation, useNavigate, type OnboardingAdapter} from '../../src/index.ts';
+import type {SourcesAdapter} from '../../src/application/api.ts';
 import '../../src/styles.css';
 import {DocumentFrame,ProductDocument} from '../../src/application/documents.tsx';
 import {CallbackChoices, readContinuation} from '../../src/application/callback-view.tsx';
@@ -20,9 +21,18 @@ const adapter: OnboardingAdapter = {
   status: signal => request('/api/onboarding', signal),
   sources: signal => request('/api/onboarding/sources', signal),
   connectSource: (id, body, signal) => request(`/api/integrations/${encodeURIComponent(id)}/connect`, signal, body),
+  saveCredential: (id, value, signal) => request(`/api/integrations/credentials/${encodeURIComponent(id)}`, signal, {value}),
   invitations: signal => request('/api/onboarding/invites', signal),
   invite: (email, signal) => request('/api/onboarding/invites', signal, {email}),
   finish: signal => request('/api/onboarding/finish', signal, {}),
+};
+const never = new AbortController().signal;
+/** The Integrations page against the same fixture state as the onboarding step. */
+const sourcesAdapter: SourcesAdapter = {
+  sources: signal => request('/api/console/sources', signal ?? never),
+  connect: (provider, apiKey, signal) => request(`/api/integrations/${encodeURIComponent(provider)}/connect`, signal ?? never, {apiKey}),
+  retry: async () => ({ok: true}), disconnect: async () => ({ok: true}),
+  saveCredential: (id, value, signal) => request(`/api/integrations/credentials/${encodeURIComponent(id)}`, signal ?? never, {value}),
 };
 export const setupPrompt = 'Set up OpenCrawl across all coding agents and environments I use. Inspect existing setup, reuse valid configuration and authentication, and complete what is missing. Keep credentials out of chats and repositories. Confirm recording and history import consent, then verify a newly recorded session.';
 const account = <form className="header-account" method="post" action="/auth/logout"><Button variant="quiet" type="submit">Sign out</Button></form>;
@@ -45,7 +55,8 @@ function Fixture() {
 
     <Route path="/callback-selection" element={<CallbackChoices model={readContinuation(JSON.stringify({name:'GitHub',returnTo:'/onboarding/sources',actions:[{label:'Connect first account',url:'https://github.com/login/oauth/authorize?client_id=owned&state=bound.42'},{label:'Connect second account',url:'https://github.com/login/oauth/authorize?client_id=owned&state=bound.43'},{label:'Install for another account',url:'https://github.com/apps/owned-app/installations/new?state=bound'}]}))}/>} />
     <Route path="/onboarding" element={<FocusedFrame footer={account}><AgentOnboarding adapter={adapter} mcpUrl="https://app.getopencrawl.com/mcp" setupPrompt={setupPrompt} /></FocusedFrame>} />
-    <Route path="/onboarding/sources" element={<FocusedFrame footer={account}><SourcesOnboarding adapter={adapter} /></FocusedFrame>} />
+    <Route path="/onboarding/sources" element={<FocusedFrame footer={account}><SourcesOnboarding adapter={adapter} canConfigure={!location.search.includes('role=member')} /></FocusedFrame>} />
+    <Route path="/integrations-fixture" element={<ConsoleDataProvider scopeKey="fixture" onAccessFailure={() => {}}><SourcesPage adapter={sourcesAdapter} canConfigure={!location.search.includes('role=member')} /></ConsoleDataProvider>} />
     <Route path="/onboarding/invite" element={<FocusedFrame footer={account}><InviteOnboarding adapter={adapter} canInvite /></FocusedFrame>} />
     <Route path="/" element={<h1>Workspace overview</h1>} />
     <Route path="/away" element={<h1>Different route</h1>} />

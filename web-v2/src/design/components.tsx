@@ -22,6 +22,10 @@ export function LinkButton({variant = 'secondary', className = '', ...props}: St
 export function Brand({className = '', reloadDocument = false}: {className?: string; reloadDocument?:boolean}) {
   return <Link className={`oc-brand ${className}`} to="/" reloadDocument={reloadDocument} aria-label="OpenCrawl home"><img src="/assets/opencrawl-mark.svg" width="38" height="20" alt=""/><span>opencrawl</span></Link>;
 }
+/** A link that leaves the product; internal paths use Link or LinkButton. */
+export function ExternalLink({href, children, className = ''}: {href: string; children: ReactNode; className?: string}) {
+  return <a className={`oc-external-link ${className}`} href={href} target="_blank" rel="noopener noreferrer">{children}<Icon name="external" size={16}/></a>;
+}
 export function Input({className = '', ...props}: Styled<InputHTMLAttributes<HTMLInputElement>> & {ref?: React.Ref<HTMLInputElement>}) {
   return <input {...props} className={`oc-input ${className}`}/>;
 }

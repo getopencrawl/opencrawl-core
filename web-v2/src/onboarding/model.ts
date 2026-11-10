@@ -18,6 +18,11 @@ export function isSourceConnected(source: OnboardingSource): boolean {
   return ['connected', 'syncing', 'synced'].includes(source.state);
 }
 
+/** "A, B and C" for a short list of names. */
+export function listPhrase(names: readonly string[]): string {
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0] ?? '';
+}
+
 export function normalizeInvitationEmail(value: string): string | null {
   const email = value.trim().toLowerCase();
   return email.length <= 254 && /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(email) ? email : null;

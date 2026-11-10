@@ -496,6 +496,7 @@ img { max-width: 100%; }
 .oc-search-context dd { margin: 0; overflow-wrap: anywhere; }
 .oc-search-excerpt { max-width: 75ch; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-body); line-height: var(--leading-prose); }
 .oc-search-excerpt mark { color: var(--strong); background: var(--selection); }
+.oc-external-link { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-sm); }
 .oc-search-source-link { display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--control-height); margin-top: var(--space-2); font-size: var(--text-sm); }
 .oc-search-results > .oc-disclosure { margin-top: var(--space-6); padding-top: var(--space-4); border-top: 1px solid var(--line); }
 @media (max-width: 800px) {
