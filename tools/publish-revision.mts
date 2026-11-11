@@ -63,9 +63,7 @@ if (import.meta.main) {
     if (selectedCli) assert.equal(version, selectedCli, 'Published CLI version mismatch');
     git('merge-base', '--is-ancestor', cli.opencrawlRevision!, requested);
     git('checkout', '--detach', requested);
-    // The selected source prepares the same source-bound package as continuous
-    // delivery. The isolated tag never advances latest or continuous.
-    execFileSync(process.execPath, ['tools/delivery.mts', 'prepare'], {stdio: 'inherit', env: {...process.env, RELEASE_CLI_VERSION: version}});
+    output('cli_version', version);
     output('revision', requested);
   }
 }
