@@ -5,7 +5,7 @@ import {selfhostServices} from './services.mjs';
 import {singleOrganizationSessionSource} from './indexing.mjs';
 import {standaloneStorage} from '../sessions/standalone.mjs';
 import {createSessionWorker,buildSessionWorkflows} from '../sessions/temporal/worker.mjs';
-import {ensureSessionSchedule} from '../sessions/temporal/client.mjs';
+import {ensureSessionSchedule,ensureSessionDeletionSchedule} from '../sessions/temporal/client.mjs';
 import {createConnectorWorker,buildConnectorWorkflows} from '../connectors/temporal/worker.mjs';
 import {connectorClient,ensureConnectorSchedule} from '../connectors/temporal/client.mjs';
 import {createConnectionPurger} from '../integrations/purge.mjs';
@@ -15,15 +15,17 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const settings=selfhostSettings(env),{store,prefix}=standaloneStorage(env),services=selfhostServices(settings,store,env);
   const address=env.TEMPORAL_ADDRESS,namespace=env.TEMPORAL_NAMESPACE;
   if(!address||!namespace)throw new Error('Configure Temporal address and namespace');
-  const config={address,namespace},taskQueue=env.TEMPORAL_CONNECTOR_TASK_QUEUE||'connector-indexing-v1',sessionQueue=env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1';
+  const config={address,namespace},taskQueue=env.TEMPORAL_CONNECTOR_TASK_QUEUE||'connector-indexing-v1',sessionQueue=env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',deletionQueue=env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1';
   const bundleRoot=env.OPENCRAWL_WORKFLOW_DIRECTORY||'/tmp/opencrawl-workflows';await mkdir(bundleRoot,{recursive:true});
   if(services.connectors)await buildConnectorWorkflows(bundleRoot+'/connectors.cjs');
   await buildSessionWorkflows(bundleRoot+'/sessions.cjs');
   const scheduling=await connectorClient(config),source=singleOrganizationSessionSource(settings,store,prefix);
   const connectors=services.connectors?await createConnectorWorker({...config,taskQueue,bundlePath:bundleRoot+'/connectors.cjs',resolve:services.connectors.resolve}):undefined;
   const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve});
-  const workers=connectors?[sessions,connectors]:[sessions];
+  const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:source.resolveDeletion,maxConcurrentActivityTaskExecutions:1});
+  const workers=connectors?[sessions,deletions,connectors]:[sessions,deletions];
   await ensureSessionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:sessionQueue});
+  const deletionSchedule=await ensureSessionDeletionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:deletionQueue});
   const realm=createRealm(settings.search),purge=createConnectionPurger({environment:'selfhost',generation:'v1',
     deleteSchedule:id=>scheduling.client.schedule.getHandle(id).delete(),
     async deleteDocuments(record){
@@ -42,7 +44,7 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
         }
         await purge(records.filter(r=>r.status==='disconnected'));
       }
-      if(workers.every(x=>x.worker.getState()==='RUNNING'))await writeFile(readiness,JSON.stringify({checkedAt:new Date().toISOString(),namespace,airbyteEnabled:!!connectors,taskQueue:connectors?taskQueue:undefined,sessionQueue}));
+      if(workers.every(x=>x.worker.getState()==='RUNNING'))await writeFile(readiness,JSON.stringify({checkedAt:new Date().toISOString(),namespace,deletionSchedule,airbyteEnabled:!!connectors,taskQueue:connectors?taskQueue:undefined,sessionQueue}));
     })().catch(async()=>{await unlink(readiness).catch(()=>{});console.error(JSON.stringify({event:'selfhost.indexing.discovery_failed'}));}).finally(()=>{inFlight=undefined;});
   };
   await unlink(readiness).catch(()=>{});const timer=setInterval(tick,30000);
