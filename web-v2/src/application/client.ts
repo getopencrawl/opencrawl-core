@@ -1,9 +1,9 @@
-import {createTRPCClient, httpBatchLink, type TRPCClient} from '@trpc/client';
+import {createTRPCClient, httpLink, type TRPCClient} from '@trpc/client';
 import type {ProductRouter} from '../../../dist/src/application/rpc.mjs';
 import type {LibraryAdapter, LibraryContract, LibraryOperation} from '../../../src/application/library-types.mjs';
 import type {WorkspaceRole} from './api.ts';
-import {rpcBatchOptions, rpcRead as read, rpcWrite as write} from './transport.ts';
-export function createProductApi(webRpc: TRPCClient<ProductRouter> = createTRPCClient<ProductRouter>({links: [httpBatchLink(rpcBatchOptions())]})) {
+import {rpcTransportOptions, rpcRead as read, rpcWrite as write} from './transport.ts';
+export function createProductApi(webRpc: TRPCClient<ProductRouter> = createTRPCClient<ProductRouter>({links: [httpLink(rpcTransportOptions())]})) {
 const libraryOperations: {[O in LibraryOperation]: (input: LibraryContract[O]['input'], signal: AbortSignal) => Promise<LibraryContract[O]['output']>} = {
   'sessions/list':(input,signal)=>read(()=>webRpc.library.sessions.list.query(input,{signal}),signal),
   'sessions/read':(input,signal)=>read(()=>webRpc.library.sessions.read.query(input,{signal}),signal),

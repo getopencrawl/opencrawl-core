@@ -6,7 +6,7 @@ import type {createSessionSearch} from '../sessions/search.mjs';
 import type {createOnboardingStatus, OnboardingReceipts} from '../onboarding-status.mjs';
 import {indexedSourceInventory} from './usage-inventory.mjs';
 import type {ValueReports} from './value-report.mjs';
-type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage' | 'search'>;
+type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage'>;
 interface ConnectionCount {total: number; kinds: Record<string, number>}
 interface Connectors {count(principal: Principal): Promise<ConnectionCount & {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}>}
 type Usage = Awaited<ReturnType<Sessions['usage']>>;
@@ -14,10 +14,8 @@ interface UsageOptions {principal: Principal; directory: IdentityDirectory; inte
 interface IndexReport {sessionEvents: number | null; connectorDocuments: number | null; connectorKinds: Record<string, number>; sources: Array<{name: string; count: number}>; searchMs: number | null; probes: number[]}
 // Shared usage report: integrations, WorkOS members, and session activity.
 // Activity and setup receipts are scoped to the selected organization.
-const PROBE = 'the';
 const empty = (): Usage => ({events: 0, lifetimeEvents: 0, sessions: 0, subagentSessions: 0, messages: 0, toolCalls: 0, machines: 0, opencrawlCalls: 0, tools: [], harnesses: [], origins: [], firstAt: null, lastAt: null, daily: [], people: []});
 const missing = (error: unknown) => errorInfo(error).status === 404 || errorInfo(error).type === 'index_not_found_exception';
-const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
 /**
  * principal must already be verified for its tenant. Every source is optional: a missing
@@ -39,7 +37,7 @@ export async function usageReport({principal, directory, integrations, search, c
 
   const emptyCounts: Awaited<ReturnType<Connectors['count']>> = {total:0,kinds:{},providers:{},connections:{}};
   // These reports are independent. Navigation waits for the slowest read, not their sum.
-  const [organization, users, cards, agents, probeResults, counted, value] = await Promise.all([
+  const [organization, users, cards, agents, counted, value] = await Promise.all([
     team ? soft('organization', () => directory.organizations.getOrganization(principal.tenantId)) : null,
     team ? soft('members', async () => {
       const memberships = await directory.userManagement.listOrganizationMemberships({organizationId: principal.tenantId, statuses: ['active'], limit: 100});
@@ -49,20 +47,18 @@ export async function usageReport({principal, directory, integrations, search, c
     }) : soft('members', async () => [await directory.userManagement.getUser(principal.userId)]),
     integrations ? soft('integrations', () => integrations.list(principal)) : null,
     search ? soft('sessions', () => search.usage(principal, {team: true, days}), empty()) : null,
-    Promise.all(Array.from({length:search ? 3 : 0}, () => soft('probe', () => search!.search(principal, {query:PROBE,limit:10,raw:true})))),
     connectors ? soft('connectors', () => connectors.count(principal), emptyCounts) : null,
     values ? soft('value', () => values.read(principal.tenantId)) : null,
   ]);
   const members = users || [];
   // The adapter defines the measurement period; billing policy stays in the host.
   const capture = organization && captured ? await soft('capture', () => captured(principal)) : null;
-  const probes = probeResults.flatMap(result => result && 'took' in result && typeof result.took === 'number' && Number.isFinite(result.took) ? [result.took] : []);
   const connectionCounts = counted?.connections || null;
   const providerNames = new Map((cards || []).map(card => [card.provider, card.name]));
   const index: IndexReport | null = search || connectors ? {
     sessionEvents:agents?.lifetimeEvents ?? null,connectorDocuments:counted?.total ?? null,connectorKinds:counted?.kinds || {},
     sources:Object.entries(counted?.providers || {}).map(([provider,count])=>({name:providerNames.get(provider)||provider,count:count.total})),
-    searchMs:probes.length?median(probes):null,probes,
+    searchMs:null,probes:[],
   } : null;
 
   const sources = (cards || []).filter(c => c.integrationId).map(c => ({

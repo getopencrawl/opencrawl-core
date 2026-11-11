@@ -69,7 +69,8 @@ export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
 
 export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation}: IntegrationOptions) {
   const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>}>();
-  const jobCache = new Map<string, {at: number; jobs: AirbyteJob[]}>();
+  const statusCache = new Map<string, {at: number; pending: boolean; result: Promise<{jobs: AirbyteJob[]; live: Record<string, number> | null}>}>();
+  const statusKey = (record: IntegrationRecord) => JSON.stringify([environment, record.tenantId, record.integrationId, record.airbyte?.connectionId]);
   const provisioning = new Map<string, Promise<IntegrationRecord>>();
   const requireWritable = () => {
     if (maintenance) throw Object.assign(new Error('Integration maintenance is in progress. Please retry shortly.'), {status: 503, expose: true});
@@ -137,13 +138,23 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     return newest(records.filter(r => r.status !== 'connecting')) || newest(records);
   }
 
-  async function jobsFor(connectionId: string) {
-    const cached = jobCache.get(connectionId);
-    // Absorbs polling from several open tabs; elapsed time, not the injectable clock.
-    if (cached && performance.now() - cached.at < 3000) return cached.jobs;
-    const jobs = await airbyte.jobs(connectionId, 100);
-    jobCache.set(connectionId, {at: performance.now(), jobs});
-    return jobs;
+  function statusFor(record: IntegrationRecord) {
+    const key = statusKey(record), cached = statusCache.get(key);
+    // Coalesce concurrent tabs and reports, including requests still in flight.
+    if (cached && (cached.pending || performance.now() - cached.at < 3000)) return cached.result;
+    const connectionId = required(record.airbyte?.connectionId, 'connection');
+    const result = Promise.all([airbyte.jobs(connectionId, 100), airbyte.streamCounts(connectionId).catch(() => null)])
+      .then(([jobs, live]) => {
+        const entry = statusCache.get(key);
+        if (entry?.result === result) {entry.pending = false; entry.at = performance.now();}
+        return {jobs, live};
+      }).catch(error => {
+        if (statusCache.get(key)?.result === result) statusCache.delete(key);
+        throw error;
+      });
+    if (statusCache.size >= 256) statusCache.delete(statusCache.keys().next().value!);
+    statusCache.set(key, {at: performance.now(), pending: true, result});
+    return result;
   }
 
   /** Read-only sign-in health. A provider grant alone never completes our callback. */
@@ -258,7 +269,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if (connectionId) await airbyte.deleteConnection(connectionId).catch(gone);
     if (sourceId) await airbyte.deleteSource(sourceId).catch(gone);
     if (destinationId) await airbyte.deleteDestination(destinationId).catch(gone);
-    if (connectionId) jobCache.delete(connectionId);
+    if (connectionId) statusCache.delete(statusKey(record));
     let deletedObjects = 0;
     if (record.s3Prefix) deletedObjects = await buckets.deletePrefix(record.s3Bucket || legacyBucket, `${record.s3Prefix}/`);
     if (record.connectedAccountId) await oauth.remove(required(record.connectedAccountId, 'connected account')).catch(gone);
@@ -308,13 +319,12 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if (record.status === 'error' && record.error === 'setup') return {...shown, state: 'error', message: 'We couldn’t finish setting up this connection.'};
     if (record.status === 'error' && record.error === 'recovery') return {...shown, state: 'error', message: 'Connection setup is waiting for an earlier request to finish. Retry later; contact support if it persists.'};
     if (record.status === 'error' && record.error === 'reconnect') return {...shown, state: 'error', reconnect: true, message: `We couldn’t finish setting up ${provider.name}. Disconnect it, then connect again with your API key.`};
-    const jobs = record.airbyte?.connectionId ? await jobsFor(record.airbyte.connectionId) : [];
+    const {jobs, live} = await statusFor(record);
     const running = jobs.find(j => ['pending', 'running', 'incomplete'].includes(j.status));
-    const live = await airbyte.streamCounts(required(record.airbyte?.connectionId, 'connection')).catch(() => null);
     // Distinct records from the bucket: Airbyte's per-sync row counts repeat every full-refresh
     // stream and every updated record. Only initial live import progress comes from Airbyte.
     const succeededSyncs = new Set(jobs.filter(j => j.status === 'succeeded').map(j => Number(j.jobId)));
-    const unique = distinct ? await distinct.get(record, provider, succeededSyncs) : null;
+    const unique = distinct ? await distinct.get(record, provider, succeededSyncs, {wait: 100}) : null;
     const counts = !unique ? live : !succeededSyncs.size && live
       ? Object.fromEntries([...new Set([...Object.keys(live), ...Object.keys(unique)])].map(s => [s, Math.max(live[s] || 0, unique[s] || 0)]))
       : unique;
@@ -449,7 +459,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       }
       return provision(record);
     }
-    jobCache.delete(required(record.airbyte?.connectionId, 'connection'));
+    statusCache.delete(statusKey(record));
     await airbyte.sync(required(record.airbyte?.connectionId, 'connection')).catch(error => { if (errorInfo(error).status !== 409) throw error; });
     if (record.status === 'error') await registry.update(record, {status: 'active', error: null}, {whenStatus: ['error']});
   }

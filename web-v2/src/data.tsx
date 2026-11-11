@@ -77,11 +77,3 @@ export function useConsoleResource<T>(key: readonly unknown[], read: (signal: Ab
   const data = invalidated || query.error && !transient(query.error) ? null : query.data ?? null;
   return {data, error: invalidated || (query.error ? message(query.error) : ''), loading: data === null && query.isLoading, refreshing: query.isFetching && data !== null, reload, invalidate, updateData, replaceData};
 }
-
-export function useConsolePrefetch(reads: ReadonlyArray<{key: readonly unknown[]; read: (signal: AbortSignal) => Promise<unknown>; staleMilliseconds?: number}>, enabled = true) {
-  const client = useContext(CacheContext);
-  useEffect(() => {
-    if (!client || !enabled) return;
-    for (const resource of reads) void client.prefetchQuery({queryKey: resource.key, queryFn: ({signal}) => resource.read(signal), staleTime: resource.staleMilliseconds ?? 30_000,meta:{staleMilliseconds:resource.staleMilliseconds??30_000}});
-  }, [client, reads, enabled]);
-}
