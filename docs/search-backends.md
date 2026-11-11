@@ -110,6 +110,9 @@ unsupported SQLite files. A newly created file is mode 0600. Back up/restore the
 application volume with API and worker stopped, including any SQLite WAL files;
 follow the existing cold-backup process. Do not copy only the main database file
 while writers are active. Keep source storage and resource controls in backups.
+For the existing backup tool, retain the profile with
+`COMPOSE_FILE=compose.yaml:compose.sqlite.yaml node deploy/backup.mjs create /absolute/backup-directory`
+and the same `COMPOSE_FILE` when restoring and restarting.
 
 Changing an existing deployment's backend does **not** migrate its index.
 Build a fresh target by replaying retained sources with appropriate fresh

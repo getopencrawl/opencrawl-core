@@ -26,7 +26,9 @@ export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql,
       const row = db.prepare(`SELECT ${expression} AS value FROM documents d, json_each(d.document, '${f.path}') j WHERE ${where.sql}`).get(...where.args)!;
       result[name] = {value: row.value, ...(f.date && row.value !== null ? {value_as_string: new Date(Number(row.value)).toISOString()} : {})};
     } else if (type === 'terms' || type === 'multi_terms') {
-      const opts = object(option); keys(opts, ['field', 'terms', 'size', 'order', 'shard_size', 'show_term_doc_count_error', 'min_doc_count']);
+      const opts = object(option); keys(opts, ['field', 'terms', 'size', 'order', 'shard_size', 'show_term_doc_count_error', 'min_doc_count', 'exclude']);
+      if (opts.min_doc_count !== undefined && opts.min_doc_count !== 1) unsupported('terms min_doc_count');
+      const excluded = opts.exclude === undefined ? [] : opts.exclude === '' ? [''] : Array.isArray(opts.exclude) && opts.exclude.every(v => typeof v === 'string') ? opts.exclude : unsupported('terms exclude (only exact values supported)');
       const names = type === 'terms' ? [opts.field] : Array.isArray(opts.terms) ? opts.terms.map(x => {const t = object(x); keys(t, ['field']); return t.field;}) : unsupported('multi_terms');
       if (!names.length || names.length > 8) return unsupported('aggregation fields');
       const fields = names.map(field), size = integer(opts.size, 10), joins = fields.map((f, i) => `json_each(d.document, '${f.path}') j${i}`).join(',');
@@ -50,9 +52,12 @@ export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql,
       }
       ordering.push(...fields.map((_, i) => 'k' + i + ' ASC'));
       const present = fields.map((_, i) => `j${i}.value IS NOT NULL`).join(' AND ');
-      const sql = `SELECT ${keyColumns.join(',')}, count(DISTINCT d.rowid) AS n FROM documents d, ${joins} WHERE ${where.sql} AND ${present} GROUP BY ${group}`;
-      const total = Number(db.prepare(`SELECT coalesce(sum(n),0) AS n FROM (${sql})`).get(...where.args)!.n);
-      const rows = db.prepare(sql + ' ORDER BY ' + ordering.join(',') + ' LIMIT ?').all(...where.args, size);
+      if (type === 'multi_terms' && excluded.length) unsupported('multi_terms exclude');
+      const exclusion = excluded.length ? ' AND j0.value NOT IN (' + excluded.map(() => '?').join(',') + ')' : '';
+      const args = [...where.args, ...excluded];
+      const sql = `SELECT ${keyColumns.join(',')}, count(DISTINCT d.rowid) AS n FROM documents d, ${joins} WHERE ${where.sql} AND ${present}${exclusion} GROUP BY ${group}`;
+      const total = Number(db.prepare(`SELECT coalesce(sum(n),0) AS n FROM (${sql})`).get(...args)!.n);
+      const rows = db.prepare(sql + ' ORDER BY ' + ordering.join(',') + ' LIMIT ?').all(...args, size);
       if ((budget.buckets -= rows.length) < 0) return unsupported('too many aggregation buckets');
       const buckets = rows.map(row => {
         const values = fields.map((_, i) => row['k' + i]);

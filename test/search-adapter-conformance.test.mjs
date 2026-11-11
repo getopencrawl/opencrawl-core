@@ -72,7 +72,7 @@ for (const backend of ['sqlite', 'opensearch']) {
       await collection.bulk(principal, [{id: 'versioned', document: {...document, receivedAt: '2026-11-01T00:00:00Z', text: 'old evidence'}, policy: 'session'}]);
       await assert.rejects(collection.bulk(principal, [{id: 'versioned', document: {...document, userId: 'intruder'}, policy: 'session'}]));
       assert.equal((await collection.mget(principal, ['versioned'])).docs[0]._source.text, 'new evidence');
-      const connectors = realm.collection('connector'), source = {...principal, deleted: false, extractedAt: 1, contentHash: 'a', text: 'source evidence'};
+      const connectors = realm.collection('connector'), source = {tenantId: principal.tenantId, deleted: false, extractedAt: 1, contentHash: 'a', text: 'source evidence'};
       await connectors.bulk(principal, [{id: 'suppressed', document: source, policy: 'connector'}]);
       await connectors.update(principal, 'suppressed', {patch: {'connector.deleted': true, text: '', title: ''}, upsert: {...source, deleted: true}});
       await connectors.bulk(principal, [{id: 'suppressed', document: {...source, extractedAt: 2}, policy: 'connector'}]);

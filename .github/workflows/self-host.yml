@@ -58,6 +58,9 @@ jobs:
         with:
           name: application-sqlite-${{ github.sha }}
           path: ${{ runner.temp }}/sqlite-seed/verification.json
+      - name: Show SQLite installation diagnostics on failure
+        if: failure()
+        run: docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml logs --tail 60 app worker s3
       - name: Remove only this job's disposable installation
         if: always()
         run: docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml down --volumes --remove-orphans
