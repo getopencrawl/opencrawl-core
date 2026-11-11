@@ -102,3 +102,16 @@ test('cold status stays unknown and failed refreshes label retained measurements
   await page.getByRole('button',{name:'Manage Delayed refresh'}).click();
   await expect(page.getByRole('dialog')).toContainText('Showing the last measurement.');
 });
+
+test('the first background measurement appears without waiting for the normal polling interval',async({page})=>{
+  let reads=0;
+  await page.route('**/api/console/sources',route=>{
+    const item:SourceCard=++reads===1 ? {...source(1),state:'connected',rows:undefined,synced:undefined,statusUpdatedAt:null,statusRefreshing:true} : {...source(1),statusUpdatedAt:'2026-11-05T12:00:00Z',statusRefreshing:false};
+    return route.fulfill({json:{items:[item]}});
+  });
+  await page.goto('/integrations-fixture');
+  const card=page.getByRole('article',{name:'Example connector 01'});
+  await expect(card).toContainText('Checking sync status…');
+  await expect(card.locator('.oc-connector-headline')).toContainText('100',{timeout:5000});
+  expect(reads).toBe(2);
+});
