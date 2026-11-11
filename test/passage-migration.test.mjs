@@ -20,7 +20,7 @@ async function fixture(){
     const id=sessionDocumentId({scope:sessionScope(owner),harness:'codex',sessionId:'session',eventId:'event',chunk});documents.set(id,d);
   }
   const collection={field:k=>'session.'+k,search:async(p,body)=>{
-    let entries=[...documents].filter(([,d])=>body.size===10000||!(d.passageVersion>=2));
+    let entries=[...documents].filter(([,d])=>body.size===1000||!(d.passageVersion>=2));
     entries.sort(([a],[b])=>a.localeCompare(b));if(body.search_after)entries=entries.filter(([id])=>id>body.search_after[0]);
     return {timed_out:false,_shards:{failed:0},hits:{total:{value:entries.length,relation:'eq'},hits:entries.slice(0,body.size).map(([id,d])=>({_id:id,_source:structuredClone(d),sort:[id]}))}};
   },mget:async(p,ids)=>({docs:ids.map(id=>({_id:id,found:documents.has(id),_source:structuredClone(documents.get(id))}))}),bulk:async(p,items)=>{for(const i of items)documents.set(i.id,structuredClone(i.document));},delete:async(p,ids)=>{for(const id of ids)documents.delete(id);}};

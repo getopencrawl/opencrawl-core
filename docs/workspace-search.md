@@ -177,13 +177,13 @@ No query client can invoke this operation or supply its scope.
 
 Before applying, deploy the new indexer and drain older writers; the legacy
 projection must not be recreated by an old worker. Keep the immutable captures
-and ingestion receipts. Set `dryRun: false`, persist `backup` before each event's
+and ingestion receipts. Set `dryRun: false`, persist `backup` before each bounded session group's
 write, and save the `onPage` cursor only after success. Store each backup under
 that event's original session-owned capture directory, with a non-capture name
-such as `passage-backups/v2/<event-hash>.backup` (not `.json.gz`). Session deletion
+such as `passage-backups/v2/<timestamp>-<content-hash>.backup` (not `.json.gz`). Session deletion
 then purges the backup and all versions with the raw session. The callback must
-preserve the first backup on replay, never overwrite it with a partial new
-projection. Do not put transcript backups in global checkpoint directories.
+preserve prior backups on replay, never overwrite them with a partial new
+projection. Restore all steps in reverse write order. Do not put transcript backups in global checkpoint directories.
 Checkpoints contain counts and identity cursors only.
 
 The migration validates capture ownership, adds compatible mapping fields,
