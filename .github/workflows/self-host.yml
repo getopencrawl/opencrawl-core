@@ -12,8 +12,14 @@ permissions:
   contents: read
 jobs:
   application:
-    name: Application without Airbyte
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: Application without Airbyte, runner: blacksmith-4vcpu-ubuntu-2404, arch: amd64}
+          - {name: Application without Airbyte (ARM64), runner: blacksmith-4vcpu-ubuntu-2404-arm, arch: arm64}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -32,6 +38,14 @@ jobs:
           test ! -e .opencrawl-dev/bin/airbyte.tgz
           test ! -e .opencrawl-dev/kubeconfig
           test -z "$(docker ps -aq --filter label=io.x-k8s.kind.cluster)"
+      - name: Require native images for every running service
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          project=$(node -p "require('./.opencrawl-dev/state.json').project")
+          for image in $(docker compose --project-name "$project" --env-file .opencrawl-dev/compose.env -f deploy/compose.yaml -f .opencrawl-dev/compose.json images -q | sort -u); do
+            test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "$EXPECTED_ARCH"
+          done
       - name: Verify persisted capture, search and board after stop/resume without reingestion
         run: |
           ./dev/up stop
@@ -44,15 +58,21 @@ jobs:
             app node --disable-warning=ExperimentalWarning dev/seed.mts
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: application-without-airbyte-${{ github.sha }}
+          name: application-without-airbyte-${{ matrix.arch }}-${{ github.sha }}
           path: .opencrawl-dev/seed/verification.json
       - name: Remove only this job's disposable installation
         if: always()
         run: ./dev/up reset --yes
   airbyte:
-    name: Full Airbyte and mode switching
+    name: Full Airbyte and mode switching (${{ matrix.arch }})
     if: github.event_name == 'workflow_dispatch' && inputs.full_airbyte
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: blacksmith-4vcpu-ubuntu-2404, arch: amd64}
+          - {runner: blacksmith-8vcpu-ubuntu-2404-arm, arch: arm64}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -79,14 +99,20 @@ jobs:
           JS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: application-full-airbyte-${{ github.sha }}
+          name: application-full-airbyte-${{ matrix.arch }}-${{ github.sha }}
           path: .opencrawl-dev/verification.json
       - name: Remove only this job's disposable installation
         if: always()
         run: ./dev/up reset --yes
   self-host:
-    name: Self-host smoke
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: Self-host smoke, runner: blacksmith-4vcpu-ubuntu-2404, arch: amd64}
+          - {name: Self-host smoke (ARM64), runner: blacksmith-4vcpu-ubuntu-2404-arm, arch: arm64}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     env:
       COMPOSE_PROJECT_NAME: opencrawl-smoke
@@ -126,3 +152,23 @@ jobs:
         run: |
           docker compose -f deploy/compose.capture.yaml down -v --remove-orphans
           rm -rf "$RUNNER_TEMP/opencrawl-backup"
+
+  macos-bootstrap:
+    name: macOS bootstrap (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      # Hosted macOS runners cannot start Docker VMs. This exercises the real
+      # native runtime download; Linux ARM jobs above verify the container stack.
+      - name: Verify the native runtime and portable installer errors
+        run: OPENCRAWL_TEST_BOOTSTRAP_DOWNLOAD=1 node --test test/dev-bootstrap.test.mjs
