@@ -78,7 +78,7 @@ test('real session and memory library: viewer, private visibility, owner-only co
   const options = {endpoint, environment, store, prefix};
   const search = createSessionSearch({store,prefix,endpoint, environment}), ingest = createSessionIngest({store, prefix});
   const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
-  const sessions = createSessionLibrary(options), memories = createMemoryLibrary(options), api = createLibraryApi({sessions, memories});
+  const sessions = createSessionLibrary({...options,scheduleDeletion:async()=>{}}), memories = createMemoryLibrary(options), api = createLibraryApi({sessions, memories});
   const workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
   const keys = () => [...objects].filter(key => key.endsWith('.json.gz'));
   async function upload(owner, sessionId, harness, events, installationId = 'laptop') {
@@ -145,7 +145,9 @@ test('real session and memory library: viewer, private visibility, owner-only co
 
   // Deleting removes raw capture from every installation and the index, and
   // future uploads of the session are accepted but discarded.
-  const deleted = await api(alice, 'sessions/delete', {harness: 'claude-code', sessionId: 'alpha'});
+  const accepted = await api(alice, 'sessions/delete', {harness: 'claude-code', sessionId: 'alpha'});
+  assert.equal(accepted.pending,true);
+  const deleted = await sessions.delete(alice,{harness:'claude-code',sessionId:'alpha'});
   assert.equal(deleted.objects, 4); // Two batches and two event ledgers.
   for (const key of objects) if (key.includes('/claude-code/') && !key.includes('/controls/')) assert.equal(await underlying.get(key), null, key);
   assert.deepEqual((await api(alice, 'sessions/list', {})).sessions.map(s => s.sessionId), ['gamma', 'beta']);
@@ -201,7 +203,7 @@ test('visibility changes upgrade a realm no indexer has touched since the releas
   const store = createObjectStore({endpoint: s3, bucket: 'capture-test', credentials: {accessKeyId: 'capture-test', secretAccessKey: 'capture-test-secret'}});
   const prefix = 'sessions/visibility-test/' + run, options = {endpoint, environment, store, prefix};
   t.after(async () => {for (const key of (await store.list(prefix + '/')).keys) await store.delete(key);});
-  const api = createLibraryApi({sessions: createSessionLibrary(options), memories: createMemoryLibrary(options)});
+  const api = createLibraryApi({sessions: createSessionLibrary({...options,scheduleDeletion:async()=>{}}), memories: createMemoryLibrary(options)});
   assert.equal((await api(owner, 'sessions/visibility', {harness: 'codex', sessionId: 'legacy', visibility: 'private'})).visibility, 'private');
   assert.equal((await api(owner, 'memories/visibility', {harness: 'codex', path: 'memories/a.md', visibility: 'private'})).visibility, 'private');
   const stored = await transport('/_doc/session:one', undefined, 'GET');
@@ -217,7 +219,8 @@ test('real Grok Bot sessions: hook-derived conversations and tool-only activity 
   t.after(async () => {for (const key of objects) await underlying.delete(key); await fetch(endpoint + '/' + realmIndex(environment, tenantId), {method: 'DELETE'});});
   const search = createSessionSearch({store,prefix,endpoint, environment}), ingest = createSessionIngest({store, prefix});
   const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
-  const api = createLibraryApi({sessions: createSessionLibrary(options)}), workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
+  const sessions = createSessionLibrary({...options, scheduleDeletion: async () => {}});
+  const api = createLibraryApi({sessions}), workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
   const keys = () => [...objects].filter(key => key.endsWith('.json.gz'));
   async function upload(owner, sessionId, harness, events) {
     const before = new Set(keys());
@@ -287,7 +290,9 @@ test('real Grok Bot sessions: hook-derived conversations and tool-only activity 
   await api(alice, 'sessions/visibility', {harness: 'grok-bot', sessionId: activity, visibility: 'private'});
   assert.deepEqual((await api(bob, 'sessions/list', {})).sessions.map(s => s.sessionId), ['bob-chat', 'bot-conversation']);
   assert.equal((await workspace.search(bob, {query: 'quayside', source: 'sessions'})).results.filter(r => r.provenance.harness === 'grok-bot').length, 0);
-  const deleted = await api(alice, 'sessions/delete', {harness: 'grok-bot', sessionId: 'bot-conversation'});
+  const accepted = await api(alice, 'sessions/delete', {harness: 'grok-bot', sessionId: 'bot-conversation'});
+  assert.equal(accepted.pending,true);
+  const deleted = await sessions.delete(alice,{harness:'grok-bot',sessionId:'bot-conversation'});
   assert.equal(deleted.objects, 2); // One batch and its event ledger.
   assert.deepEqual((await api(alice, 'sessions/list', {})).sessions.map(s => s.sessionId), ['bob-chat', activity]);
   assert.equal((await workspace.search(alice, {query: 'conference', source: 'sessions'})).results.length, 0);

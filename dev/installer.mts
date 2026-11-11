@@ -8,7 +8,7 @@ import {parseEnv} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
 
 type Pin={url:string;sha256:string;member?:string;version?:string};
-interface Pins {kind:Pin;kubectl:Pin;helm:Pin;airbyte:Pin;kindNode:string;declarative:{version:string;imageSha:string}}
+interface Pins {platforms:Record<string,{kind:Pin;kubectl:Pin;helm:Pin}>;airbyte:Pin;kindNode:string;declarative:{version:string;imageSha:string}}
 interface State {
   format:1;root:string;project:string;createdAt:string;port:number;airbytePort:number;origin:string;
   organization:string;email:string;password:string;authSecret:string;setupToken:string;connectorKey:string;
@@ -19,6 +19,8 @@ interface State {
 const root=realpathSync(resolve(dirname(fileURLToPath(import.meta.url)),'..'));
 const stateDir=join(root,'.opencrawl-dev'),stateFile=join(stateDir,'state.json'),bin=join(stateDir,'bin');
 const pins=JSON.parse(readFileSync(join(root,'dev/pins.json'),'utf8')) as Pins;
+const toolPins=pins.platforms[process.platform+'-'+process.arch];
+if(!toolPins)throw new Error('Development tools support Linux and macOS on x64 or ARM64');
 const args=process.argv.slice(2),actions=args.filter(x=>!x.startsWith('--')),action=actions[0]||'up',airbyteEnabled=!args.includes('--no-airbyte');
 if(actions.length>1||!['up','demo','status','stop','reset'].includes(action)||args.some(x=>!['up','demo','status','stop','reset','--yes','--no-airbyte'].includes(x))
   ||args.includes('--yes')&&action!=='reset'||!airbyteEnabled&&!['up','demo'].includes(action))throw new Error('Use ./dev/up [up|demo] [--no-airbyte], or ./dev/up [status|stop|reset --yes]');
@@ -202,7 +204,7 @@ async function up(){
   console.log(`\nSign in to ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\n\nThese local development credentials are also saved in .opencrawl-dev/login.txt.`);
 }
 async function startAirbyte(existing:ReturnType<typeof ownedNode>){
-  await download('kind',pins.kind);await download('kubectl',pins.kubectl);await download('helm',pins.helm);
+  await download('kind',toolPins!.kind);await download('kubectl',toolPins!.kubectl);await download('helm',toolPins!.helm);
   const chart=await download('airbyte.tgz',pins.airbyte);
   if(!existing){
     mkdirSync(join(stateDir,'airbyte-data'),{recursive:true,mode:0o700});

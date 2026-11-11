@@ -329,7 +329,7 @@ export function createSessionLibrary({store, prefix, purgeCopies, scheduleDeleti
         const matched = await collection.search(principal, {size: 0, query: {bool: {filter: matchFilter, must: [{match: {text: {query: query.trim(), operator: 'and'}}}]}},
           aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {lastActivity: {max: {field: 'timestamp'}}}}}});
         const keys = (matched.aggregations?.sessions?.buckets ?? []) as unknown as Array<{key: string[]}>;
-        if (!keys.length) return {sessions: [], limit, deletions: await pendingDeletions(principal)};
+        if (!keys.length) return {sessions: [], limit};
         filter.push({bool: {minimum_should_match: 1, should: keys.map(bucket => ({bool: {filter: sessionFilter({userId: bucket.key[0]!, harness: bucket.key[1]!, sessionId: bucket.key[2]!})}}))}});
       }
       const result = await collection.search(principal, {size: 0, query: {bool: {filter}}, aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {
@@ -351,7 +351,7 @@ export function createSessionLibrary({store, prefix, purgeCopies, scheduleDeleti
       const names = await titles(principal, sessions);
       for (const session of sessions) session.title = names.get(JSON.stringify([session.userId, session.harness, session.sessionId])) ?? session.title;
       const allowed = await Promise.all(sessions.map(session => readable(principal, session)));
-      return {sessions: sessions.filter((_, index) => allowed[index]), limit, deletions: await pendingDeletions(principal)};
+      return {sessions: sessions.filter((_, index) => allowed[index]), limit};
     },
 
     /** Index order and paging; content comes from the verified original batch. */

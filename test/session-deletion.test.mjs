@@ -99,12 +99,12 @@ test('index writers are fenced, and failed raw/search cleanup stays revoked and 
   const control=await createControls({store:f.store,prefix}).read(owner,'sessions','codex',value.sessionId);
   assert.equal(control.deletion.state,'pending');
   assert.equal((await f.search.search(peer)).hits.length,0);
-  assert.deepEqual((await f.library().list(owner)).deletions,[{harness:'codex',sessionId:value.sessionId}]);
+  assert.deepEqual((await f.library().pendingDeletions(owner)),[{harness:'codex',sessionId:value.sessionId}]);
   f.store.purgePrefix=purge;f.setSearchFailure(true);
   assert.equal((await f.library().delete(owner,value)).pending,true);
   f.setSearchFailure(false);
   assert.equal((await f.library().delete(owner,value)).deleted,true);
-  assert.equal((await f.library().list(owner)).deletions.length,0);
+  assert.equal((await f.library().pendingDeletions(owner)).length,0);
 });
 
 test('uncertain writes never expire into a false successful deletion',async()=>{
