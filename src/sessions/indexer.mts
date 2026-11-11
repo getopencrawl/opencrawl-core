@@ -115,7 +115,11 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
       const stateKey=receiptKey(key);
       if(await indexed(key))return {records:0,skipped:true};
       const bytes=await store.get(key);
-      if(!bytes)return {records:0,skipped:true}; // A queued source may have been permanently deleted.
+      if(!bytes){
+        const source=sourceBatchIdentity(prefix,key);
+        if(source&&(await controls.readSource(source))?.deletedAt)return {records:0,skipped:true};
+        throw new Error('Session source unavailable without a deletion tombstone');
+      }
       const memory=Boolean(memorySourceIdentity(prefix,key));
       const batch=parseJson<SessionBatch>(gunzipSync(bytes,{maxOutputLength:(memory?MAX_MEMORY_BYTES:MAX_BATCH_BYTES)+1024*1024}));
       const scope=principal||await resolvePrincipal!({key,batch});sessionScope(scope);

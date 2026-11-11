@@ -78,7 +78,7 @@ test('historical projection repair is scoped, dry-runnable, restartable, idempot
  const options={...f,...index,prefix,principal:{tenantId:owner.tenantId},pageSize:1,backup:async step=>steps.push(structuredClone(step)),onPage:async report=>progress.push(report)};
  const dry=await migrateSessionProjection({...options,dryRun:true});
  assert.equal(dry.rewritten,1);assert.equal(dry.removed,3);assert.deepEqual(index.rows,before);assert.equal(steps.length,0);
- index.interrupt(true);await assert.rejects(migrateSessionProjection(options),/interrupted/);index.interrupt(false);
+ index.interrupt(true);await assert.rejects(migrateSessionProjection(options),/write outcome is uncertain/);index.interrupt(false);
  assert.equal(steps.length,1);assert.deepEqual(index.rows,before);
  const repaired=await migrateSessionProjection(options);
  assert.equal(repaired.rewritten,1);assert.equal(repaired.removed,3);assert.equal(repaired.complete,true);

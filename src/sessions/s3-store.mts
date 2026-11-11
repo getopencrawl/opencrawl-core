@@ -193,8 +193,9 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
           if (select(key) && (!selectVersion || await selectVersion(key, async () => {
             const res = await request('GET', key);
             if (!res.ok) throw await storeError(res, 'VERIFY PURGE');
-            if (Number(res.headers.get('content-length')) > 256 * 1024 * 1024) throw new Error('Purge verification exceeds limit');
-            return Buffer.from(await res.arrayBuffer());
+            const parts:Uint8Array[]=[];let size=0;
+            for await(const part of res.body!){size+=part.length;if(size>256*1024*1024)throw new Error('Purge verification exceeds limit');parts.push(part);}
+            return Buffer.concat(parts);
           }))) throw new Error('Raw objects remain after version deletion');
         }
         cursor = page.nextToken;

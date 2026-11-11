@@ -7,7 +7,7 @@ import {createSessionLibrary} from '../dist/src/sessions/library.mjs';
 import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
 import {createSessionSearch} from '../dist/src/sessions/search.mjs';
 import {createControls} from '../dist/src/sessions/controls.mjs';
-import {sessionWriteBarrier} from '../dist/src/sessions/write-barrier.mjs';
+import {sessionWriteBarrier,withSessionDocumentWrites} from '../dist/src/sessions/write-barrier.mjs';
 import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 import {realmResponse} from './realm-fixture.mjs';
@@ -155,11 +155,38 @@ test('migration archives lose only the deleted session and preserve unrelated re
   const deleted={id:'deleted',document:{...owner,harness:'codex',sessionId:'native-session',text:'erase-this-copy'}};
   const kept={id:'kept',document:{...peer,harness:'codex',sessionId:'native-session',text:'preserve-other-owner'}};
   await store.put(key,gzipSync(JSON.stringify({previous:[deleted,kept]})));
-  const options={store,roots:[root],principal:owner,harness:'codex',sessionId:'native-session'};
+  const options={store,prefix,roots:[root],principal:owner,harness:'codex',sessionId:'native-session'};
   const put=store.put;store.put=async()=>{throw Error('Cannot preserve backup');};
-  await assert.rejects(purgeSessionArchives(options),/preserve/);assert.ok(await store.get(key));
+  await assert.rejects(purgeSessionArchives(options),/uncertain/);assert.ok(await store.get(key));
   store.put=put;assert.equal(await purgeSessionArchives(options),1);assert.equal(await store.get(key),null);
-  const remaining=[...store.data.values()].map(v=>JSON.parse(gunzipSync(v)));
+  const remaining=[...store.data].filter(([key])=>key.startsWith(root)).map(([,v])=>JSON.parse(gunzipSync(v)));
   assert.deepEqual(remaining,[{previous:[kept]}]);
   assert.equal(await purgeSessionArchives(options),0);
+});
+
+test('concurrent archive preservation cannot recreate a session after its deletion completes',async()=>{
+  const store=memorySessionStore(),root=prefix+'/_index/backups/',key=root+'page.json.gz';
+  const row=(who,text)=>({id:who.userId,document:{...who,harness:'codex',sessionId:'native-session',text}});
+  await store.put(key,gzipSync(JSON.stringify({previous:[row(owner,'remove-alice'),row(peer,'remove-bob')]})));
+  const entered=pause(),release=pause(),put=store.put;
+  store.put=async(key,...args)=>{if(key.includes('/redacted/')){entered.resolve();await release.promise;}return put(key,...args);};
+  const deleting=purgeSessionArchives({store,prefix,roots:[root],principal:owner,harness:'codex',sessionId:'native-session'});
+  await entered.promise;
+  await createControls({store,prefix}).update(peer,'sessions','codex','native-session',()=>({visibility:'team',deletedAt:new Date().toISOString()}));
+  const barrier=sessionWriteBarrier(store,prefix,peer,'codex','native-session');
+  assert.equal((await barrier.close()).pending,1,'other deletion cannot finish while an archive is copying it');
+  release.resolve();await assert.rejects(deleting,/remain after deletion/);
+  assert.equal((await barrier.close()).pending,0);
+  await purgeSessionArchives({store,prefix,roots:[root],principal:peer,harness:'codex',sessionId:'native-session'});
+  for(const [key,bytes]of store.data)if(key.startsWith(root))assert.doesNotMatch(gunzipSync(bytes).toString(),/remove-alice|remove-bob/);
+  await assert.rejects(withSessionDocumentWrites({store,prefix,tenantId:peer.tenantId,documents:[row(peer,'late copy')]},async()=>assert.fail('must not write')),{status:403});
+});
+
+test('a missing queued source requires a deletion tombstone before it is skipped',async()=>{
+  const f=fixture(),{key}=await f.upload(batch());
+  // Forget only this test's receipt and raw bytes to model a lost queued source.
+  for(const candidate of [...f.store.data.keys()])if(candidate===key||candidate.includes('/_index/'))f.store.data.delete(candidate);
+  await assert.rejects(f.pipeline().processObject({key}),/without a deletion tombstone/);
+  await createControls({store:f.store,prefix}).update(owner,'sessions','codex','native-session',()=>({visibility:'team',deletedAt:new Date().toISOString()}));
+  assert.equal((await f.pipeline().processObject({key})).skipped,true);
 });
