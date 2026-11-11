@@ -16,6 +16,7 @@ export interface TeamAdapter {
   team(signal?: AbortSignal): Promise<TeamReport>;
   invite(email: string, signal?: AbortSignal): Promise<{ok: true}>;
   changeRole(userId: string, role: WorkspaceRole, signal?: AbortSignal): Promise<{ok: true; userId: string; role: WorkspaceRole}>;
+  removeMember(userId: string, signal?: AbortSignal): Promise<{ok: true; userId: string}>;
   renameOrganization(name: string, signal?: AbortSignal): Promise<{ok: true; name: string}>;
 }
 /** The application depends on product operations; runtimes supply authorized transports. */
