@@ -14,6 +14,7 @@ import {capturedTitle, TITLE_KINDS} from './titles.mjs';
 export interface SessionKey {userId: string; harness: string; sessionId: string}
 export interface SessionSummary extends SessionKey {
   title: string; private: boolean; mine: boolean; origin: string | null; host: string | null;
+  hosts: string[]; hostsTruncated: boolean;
   firstActivityAt: string | null; lastActivityAt: string | null; events: number;
 }
 export type TranscriptEntry =
@@ -25,6 +26,13 @@ export interface TranscriptEvent {eventId: string; kind: string; timestamp: stri
 
 const identity = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 const f = (field: string) => realmField('session', field);
+// Bound per-session metadata while retaining the legacy most-frequent host.
+const hostTerms = {terms: {field: f('host'), size: 20, exclude: ''}};
+type HostBuckets = {buckets: Array<{key: string}>; sum_other_doc_count?: number};
+function capturedHosts(value?: HostBuckets) {
+  const hosts = [...new Set((value?.buckets ?? []).map(bucket => bucket.key).filter(host => typeof host === 'string' && host.trim()))];
+  return {host: hosts[0] ?? null, hosts: hosts.sort(), hostsTruncated: (value?.sum_other_doc_count ?? 0) > 0};
+}
 const MAX_TEXT = 20000;
 function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 function clip(text: string) {return text.length > MAX_TEXT ? {text: text.slice(0, MAX_TEXT), truncated: true} : {text, truncated: false};}
@@ -238,17 +246,17 @@ export function createSessionLibrary({store, prefix, purgeCopies, ...options}: R
       const result = await collection.search(principal, {size: 0, query: {bool: {filter}}, aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {
         lastActivity: {max: {field: 'timestamp'}}, firstActivity: {min: {field: 'timestamp'}},
         private: {filter: {term: {[f('private')]: true}}},
-        origin: {terms: {field: f('origin'), size: 1}}, host: {terms: {field: f('host'), size: 1}},
+        origin: {terms: {field: f('origin'), size: 1}}, host: hostTerms,
       }}}});
       type Bucket = {key: string[]; doc_count: number; lastActivity: {value: number | null}; firstActivity: {value: number | null}; private: {doc_count: number};
-        origin: {buckets: Array<{key: string}>}; host: {buckets: Array<{key: string}>}};
+        origin: {buckets: Array<{key: string}>}; host: HostBuckets};
       const buckets = result.aggregations?.sessions?.buckets as unknown as Bucket[] | undefined;
       if (!Array.isArray(buckets)) throw new Error('Invalid session list response');
       const sessions: SessionSummary[] = buckets.map(bucket => {
         const [userId, harness, sessionId] = bucket.key;
         if (!identity(userId) || !isSessionHarness(harness) || !identity(sessionId)) throw new Error('Invalid session list response');
         return {userId: userId!, harness: harness!, sessionId: sessionId!, title: `Session ${sessionId}`,
-          private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, host: bucket.host.buckets[0]?.key ?? null,
+          private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, ...capturedHosts(bucket.host),
           firstActivityAt: iso(bucket.firstActivity.value), lastActivityAt: iso(bucket.lastActivity.value), events: bucket.doc_count};
       });
       const names = await titles(principal, sessions);
@@ -265,6 +273,7 @@ export function createSessionLibrary({store, prefix, purgeCopies, ...options}: R
       if (!await readable(principal, key)) fail(404, 'Session not found');
       const filter = [...sessionFilter(key), {term: {[f('chunk')]: 0}}, visibleTo('session', principal)];
       const page = await collection.search(principal, {size: limit, track_total_hits: true, query: {bool: {filter, must_not: [{terms: {[f('kind')]: HIDDEN}}]}},
+        aggs: {host: hostTerms},
         sort: [{timestamp: {order: 'asc', missing: '_first'}}, {[f('sequence')]: 'asc'}, {[f('eventId')]: 'asc'}, {[f('installationId')]: 'asc'}, {id: 'asc'}],
         ...(after ? {search_after: after} : {})});
       if (!after && !page.hits.hits.length) fail(404, 'Session not found');
@@ -286,7 +295,8 @@ export function createSessionLibrary({store, prefix, purgeCopies, ...options}: R
       const first = page.hits.hits[0]?._source;
       const names = await titles(principal, [key]);
       if (!await readable(principal, key)) fail(404, 'Session not found');
-      return {session: {...key, title: names.get(JSON.stringify([key.userId, key.harness, key.sessionId])) ?? `Session ${key.sessionId}`, mine: key.userId === principal.userId, private: page.hits.hits.some(hit => hit._source?.private === true), origin: typeof first?.origin === 'string' ? first.origin : null},
+      return {session: {...key, title: names.get(JSON.stringify([key.userId, key.harness, key.sessionId])) ?? `Session ${key.sessionId}`, mine: key.userId === principal.userId, private: page.hits.hits.some(hit => hit._source?.private === true), origin: typeof first?.origin === 'string' ? first.origin : null,
+          ...capturedHosts(page.aggregations?.host as HostBuckets | undefined)},
         events, total: page.hits.total.value, next: page.hits.hits.length === limit ? encodeCursor(page.hits.hits.at(-1)!.sort) : null};
     },
 

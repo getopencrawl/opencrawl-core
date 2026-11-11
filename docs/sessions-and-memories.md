@@ -9,6 +9,12 @@ agents captured and control who else can.
   Thinking blocks, encrypted content and token accounting are never shown.
   Order and paging come from the index; text comes from the verified original
   capture batch.
+  The Hostname column identifies the machine that captured the transcript, not
+  necessarily where imported history originally ran. Missing hostnames appear
+  as `—`. Sessions with more than one recorded hostname show **Multiple hosts**;
+  the row tooltip and transcript metadata list the captured names. Up to 20
+  names are returned, with an ellipsis when additional names exist. This uses
+  existing indexed capture metadata and requires no backfill or new collection.
 - **Memories** lists the current memory files agents keep (the newest copy per
   person, agent and path) with a readable title, and shows the full file.
   Titles use an explicit frontmatter title/name, a meaningful opening Markdown
