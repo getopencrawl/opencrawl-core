@@ -560,6 +560,11 @@ img { max-width: 100%; }
 .oc-row-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-bottom: 1px solid var(--line); }
 .oc-row-item > .oc-row { border-bottom: 0; }
 .oc-row-item:hover { background: var(--surface-subtle); }
+.oc-row-actions { display: flex; align-items: center; gap: var(--space-1); }
+.oc-row-visibility { display: inline-flex; width: 36px; min-height: 36px; padding: 0; justify-content: center; color: var(--muted); }
+.oc-row-visibility[aria-pressed="false"] { color: var(--pending); }
+.oc-row-visibility:hover { color: var(--text); }
+@media (max-width: 800px) { .oc-row-visibility { width: 44px; min-height: 44px; } }
 .oc-row-action { width: 36px; min-height: 36px; padding: 0; justify-content: center; color: var(--quiet); }
 .oc-row-action:hover { color: var(--danger); }
 .oc-row-item:not(:hover) .oc-row-action:not(:focus-visible) { opacity: .45; }
