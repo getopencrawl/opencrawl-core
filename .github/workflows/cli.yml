@@ -92,7 +92,9 @@ jobs:
   publish:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish))
     needs: [build, checks]
-    runs-on: blacksmith-6vcpu-macos-15
+    # npm provenance requires a GitHub-hosted runner. Build and test artifacts
+    # can still come from Blacksmith; publish the exact validated artifact here.
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     environment: npm
     permissions:
