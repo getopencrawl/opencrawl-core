@@ -53,3 +53,19 @@ test('shared setup prompt covers consent, every environment, startup awareness a
  const page=document(cloudCapturePage({api,credential:{token:'<secret>',id:'abc',expiresAt:'2027-11-05'}}));
  assert.ok(page.includes('\\u003csecret\\u003e'));assert.ok(!page.includes('<secret>'));assert.doesNotMatch(page, /<textarea|<form/);
 });
+
+test('owner revocation permanently invalidates old delegations without affecting another user or workspace',async()=>{
+ const store=memory(),credentials=createCaptureCredentials({store});
+ const first=await credentials.issue(owner),second=await credentials.issue(owner);
+ const otherUser=await credentials.issue({...owner,userId:'other'}),otherTeam=await credentials.issue({...owner,tenantId:'other'});
+ // Legacy records without a generation are valid until the first owner revocation.
+ const key=[...store.data.keys()].find(key=>key.endsWith(first.id+'.json'));
+ const record=JSON.parse(store.data.get(key));delete record.generation;await store.put(key,JSON.stringify(record));
+ assert.ok(await credentials.authenticate(first.token));
+ await credentials.revokeAll(owner);
+ assert.equal(await credentials.authenticate(first.token),null);assert.equal(await credentials.authenticate(second.token),null);
+ assert.ok(await credentials.authenticate(otherUser.token));assert.ok(await credentials.authenticate(otherTeam.token));
+ const fresh=await credentials.issue(owner);assert.ok(await credentials.authenticate(fresh.token));
+ await assert.rejects(credentials.revokeAll(await credentials.authenticate(fresh.token)),{status:403});
+ await credentials.revokeAll(owner);assert.equal(await credentials.authenticate(fresh.token),null);
+});

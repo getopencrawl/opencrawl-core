@@ -6,12 +6,13 @@ attachments to the selected deployment. These can contain credentials, private
 source code and personal information. There is no automatic secret redaction.
 Repeated system/developer prompts are omitted; this is not a secret filter.
 
-Every member of a hosted team can read its captured sessions and memories unless
-the person who captured one marks it private in the Sessions or Memories page. A
-private session or memory is hidden from teammates, their agents and search. The
-owner can also delete a session (raw capture, search results and any later uploads
-of it) or a memory; see `docs/sessions-and-memories.md`. In the self-hosted
-preview, everyone with the MCP/read token can read the deployment's sessions.
+Every member of a hosted or self-hosted workspace can read its shared captured
+sessions and memories. The owner can mark a session or memory private in the
+Sessions or Memories page; it is then hidden from teammates, their agents and
+search. Owners can also delete individual items, subject to the retained-data
+limits described below. See [Sessions and Memories](sessions-and-memories.md).
+The separate capture-only Compose stack uses one operator-configured identity;
+anyone holding its read token has that identity's access.
 Active conversations are read from their beginning on first encounter, even if
 they started before installation. Inactive history requires separate consent.
 
@@ -69,11 +70,30 @@ uploader to exit and retry. It preserves original harness transcripts, login
 credentials, hook backups and exclusions. Reinstalling after purge can capture
 active conversations again from their beginning.
 
-Neither command deletes server data. The self-hosted preview's complete erasure
-procedure is in [the self-host guide](self-host.md#delete-a-deployment). Selective
-server-side session deletion is not implemented. Hosted deletion requires the
-deployment operator to remove raw objects, index records and applicable backups;
-do not claim that revoking a token deletes already uploaded content.
+Neither command deletes server data. Owners can delete individual sessions and
+memories in the console. Session deletion removes its raw capture and search
+projection and blocks later uploads for that session identity. Shared attachment
+objects may remain. Memory deletion removes it from search and ignores that
+version; immutable raw snapshots remain, and a newer file version can be captured
+again. See the exact [deletion behavior](sessions-and-memories.md#deletion).
+
+For whole-deployment deletion and backup handling, see the
+[self-host guide](self-host.md#persistence-deletion-and-backup). Backup copies and
+previously downloaded data are not recalled by console deletion.
+
+## Remove workspace access
+
+An admin can remove another member from Team. Confirmed removal immediately denies
+that person's workspace requests using existing browser, CLI, MCP and capture
+credentials; it does not wait for access tokens to expire. Upload-only capture
+credentials are invalidated permanently, even if the person is later reinvited.
+Directory-managed members must be removed through their identity provider.
+
+Removal does not delete the person's account, uploaded sessions or memories,
+attachments, exports or backups. Other members retain access to shared content;
+private content remains private. Previously delivered responses and downloaded
+copies cannot be recalled. Remove sensitive server content separately using the
+item deletion controls and the deployment's retention procedures.
 
 No server-side expiry is configured by the preview stack. Backups contain the
 same private data and credentials; restrict access and set your own retention.
