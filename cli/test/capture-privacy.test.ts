@@ -16,7 +16,8 @@ afterEach(()=>{if(priorTokenOrigin===undefined)delete process.env.OPENCRAWL_API_
 
 test('install requires informed consent before changing files or contacting an endpoint',async()=>{
   const result:any=await collectCommand('install','https://unreachable.example',{json:true});
-  expect(result.status).toBe('consent_required');expect(result.notice).toContain('not automatically redacted');
+  expect(result.status).toBe('consent_required');expect(result.notice).toContain('masks recognized secret formats');
+  expect(result.notice).toContain('Unknown formats, images and native memory files are not covered');
   expect(result.notice).toContain('Destination: https://unreachable.example.');
 });
 
@@ -36,7 +37,9 @@ test('project and session exclusions block new bytes and queued uploads; purge i
     const config:CaptureConfig={schemaVersion:1,api,owner,installationId:'device',installedAt:new Date().toISOString(),roots:{codex:join(dir,'codex'),'claude-code':join(dir,'claude')},command:[]};
     mkdirSync(captureDir(),{recursive:true});atomicJson(join(captureDir(),'config.json'),config);
     const transcript=join(config.roots.codex,'sessions','session.jsonl');mkdirSync(join(config.roots.codex,'sessions'),{recursive:true});
-    const project=join(dir,'sensitive');mkdirSync(project);
+    // The queued local scope must still match an exclusion when its path is
+    // credential-shaped and the outgoing metadata will be masked.
+    const project=join(dir,'ghp_'+'S'.repeat(36));mkdirSync(project);
     const writeTranscript=(id:string,cwd:string)=>writeFileSync(transcript,[
       {type:'session_meta',payload:{id,cwd,source:'cli'}},
       {type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'private fixture'},{type:'input_image',image_url:'data:image/png;base64,cHJpdmF0ZQ=='}]}},
