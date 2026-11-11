@@ -80,6 +80,18 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
         const row=await (await adapter()).update<MemberRow>({model:'member',where:[{field:'id',value:id},{field:'organizationId',value:organizationId}],update:{role:roleSlug}});
         return row?membership(row):fail(404,'Membership not found');
       },
+      async deleteOrganizationMembership(id){
+        database.exec('BEGIN IMMEDIATE');
+        try{
+          const row=database.prepare('SELECT member.userId,user.email FROM member JOIN user ON member.userId=user.id WHERE member.id=? AND member.organizationId=?').get(id,organizationId);
+          if(!row||typeof row.userId!=='string')fail(404,'Membership not found');
+          const userId=String(row!.userId);
+          database.prepare('DELETE FROM member WHERE id=? AND organizationId=?').run(id,organizationId);
+          database.prepare("UPDATE invitation SET status='canceled' WHERE organizationId=? AND lower(email)=lower(?) AND status='pending'").run(organizationId,String(row!.email));
+          revokeLocalCredentials(userId);
+          database.exec('COMMIT');
+        }catch(error){database.exec('ROLLBACK');throw error;}
+      },
       async listInvitations({organizationId:org}){
         ownOrganization(org);
         const rows=await (await adapter()).findMany<InvitationRow>({model:'invitation',where:[{field:'organizationId',value:org}],limit:1000});
@@ -166,6 +178,19 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
   }
   async function renameOrganization(name:string){await directory.organizations.updateOrganization({organization:organizationId,name});}
 
+  /** Called inside a transaction with the account or membership change. */
+  function revokeLocalCredentials(userId:string){
+    database.prepare('DELETE FROM session WHERE userId=?').run(userId);
+    database.prepare('DELETE FROM oauthAccessToken WHERE userId=?').run(userId);
+    database.prepare('DELETE FROM oauthRefreshToken WHERE userId=?').run(userId);
+    database.prepare('DELETE FROM deviceCode WHERE userId=?').run(userId);
+    database.prepare('DELETE FROM oauthConsent WHERE userId=?').run(userId);
+    database.prepare(`DELETE FROM verification WHERE CASE WHEN json_valid(value) THEN
+      json_extract(value,'$.type')='authorization_code'
+      AND json_extract(value,'$.userId')=? ELSE 0 END`).run(userId);
+    database.prepare('INSERT INTO opencrawlAccountEpoch (userId,notBefore) VALUES (?,?) ON CONFLICT(userId) DO UPDATE SET notBefore=excluded.notBefore').run(userId,Math.floor(Date.now()/1000)+1);
+  }
+
   /** Operator-only recovery, never exposed as an HTTP route. Passwords stay off argv/logs. */
   async function recoverPassword(email:string,password:string){
     if(password.length<10||password.length>128)fail(400,'Use a password of 10 to 128 characters');
@@ -176,18 +201,7 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
     try {
       const result=database.prepare("UPDATE account SET password=?, updatedAt=? WHERE userId=? AND providerId='credential'").run(hash,Date.now(),userId);
       if(result.changes!==1)fail(409,'Expected one password account');
-      database.prepare('DELETE FROM session WHERE userId=?').run(userId);
-      database.prepare('DELETE FROM oauthAccessToken WHERE userId=?').run(userId);
-      database.prepare('DELETE FROM oauthRefreshToken WHERE userId=?').run(userId);
-      database.prepare('DELETE FROM deviceCode WHERE userId=?').run(userId);
-      database.prepare('DELETE FROM oauthConsent WHERE userId=?').run(userId);
-      // Authorization codes are JSON values in the pinned provider's generic
-      // verification table. Revoke only this account's codes, preserving other
-      // users and unrelated verification records.
-      database.prepare(`DELETE FROM verification WHERE CASE WHEN json_valid(value) THEN
-        json_extract(value,'$.type')='authorization_code'
-        AND json_extract(value,'$.userId')=? ELSE 0 END`).run(userId);
-      database.prepare('INSERT INTO opencrawlAccountEpoch (userId,notBefore) VALUES (?,?) ON CONFLICT(userId) DO UPDATE SET notBefore=excluded.notBefore').run(userId,Math.floor(Date.now()/1000)+1);
+      revokeLocalCredentials(userId);
       database.exec('COMMIT');
     }catch(error){database.exec('ROLLBACK');throw error;}
   }

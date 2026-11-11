@@ -51,7 +51,9 @@ PKCE, explicit consent and the installation’s `/mcp` audience. JWT access toke
 last five minutes; rotating refresh tokens can be revoked through the advertised
 OAuth revocation endpoint. Browser logout ends the browser session; it does not
 revoke an independently consented offline grant. Removing membership denies all
-resource access, including previously issued credentials. No browser session can
+resource access immediately, including previously issued credentials. Admins remove
+other members from Team; self-removal is blocked to preserve an administrator.
+Removal preserves uploaded data and accounts; see [capture privacy](capture-privacy.md#remove-workspace-access). No browser session can
 select a second organization here. See [identity boundary](identity-seam.md).
 
 Use an existing Airbyte workspace and API application. Set `AIRBYTE_URL`,
@@ -143,7 +145,7 @@ use the direct app. Existing grants continue through their original adapter.
 
 Sign in, follow onboarding to connect the CLI/MCP client and capture a real
 session, then connect a source or skip that step. Setup completion uses recorded
-receipts. Team admins can invite users and manage roles; ordinary
+receipts. Team admins can invite users, manage roles and remove members; ordinary
 members can use shared data and keep supported session/memory resources private.
 The UI is the same core application consumed by the cloud shell.
 

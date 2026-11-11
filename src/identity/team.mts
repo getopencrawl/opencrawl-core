@@ -1,4 +1,4 @@
-import type {HostedUser, IdentityDirectory} from './types.mjs';
+import type {HostedUser, IdentityDirectory, Principal} from './types.mjs';
 import {errorInfo} from './types.mjs';
 import {activeMemberships} from './principal.mjs';
 import type {RoleWriteGuard, TeamRole} from './role-write.mjs';
@@ -7,7 +7,7 @@ interface AdminMembership {userId: string; organizationId: string; status: strin
 const fail = (status: number, message: string): never => {throw Object.assign(new Error(message), {status, expose: true});};
 export const isAdmin = (membership: Pick<AdminMembership, 'role' | 'roles'> | null | undefined) => [membership?.role, ...(membership?.roles || [])].some(role => role?.slug === 'admin');
 
-export function teamService(directory: IdentityDirectory, roleGuard?: RoleWriteGuard) {
+export function teamService(directory: IdentityDirectory, roleGuard?: RoleWriteGuard, revokeCaptureCredentials?: (principal: Principal) => Promise<void>) {
   // Callers that already loaded this request's membership pass it to skip a provider round trip.
   const requireAdmin = async (user: HostedUser, organizationId: string, known?: AdminMembership) => {
     const member = known?.userId === user.id && known.organizationId === organizationId && known.status === 'active' ? known
@@ -32,6 +32,37 @@ export function teamService(directory: IdentityDirectory, roleGuard?: RoleWriteG
       return {ok:true,name:updated.name};
     },
     requireAdmin,
+    async removeMember(user: HostedUser, organizationId: string, inputUserId: unknown): Promise<{ok:true;userId:string}> {
+      if(typeof inputUserId!=='string'||!/^user_[A-Za-z0-9]+$/.test(inputUserId))fail(400,'Choose an active teammate.');
+      const userId=inputUserId as string;
+      // Keeping the acting admin, under the same guard as role changes, prevents
+      // two admins removing/demoting one another and leaving no administrator.
+      if(userId===user.id)fail(400,'You cannot remove yourself. Ask another admin to remove you.');
+      if(!roleGuard||!revokeCaptureCredentials)fail(503,'Member removal is temporarily unavailable.');
+      const guard=await roleGuard!(organizationId,user.id,userId,'remove');
+      let attempted=false,confirmed=false;
+      try{
+        const [actors,targets]=await Promise.all([activeMemberships(directory,user.id,organizationId),activeMemberships(directory,userId,organizationId)]);
+        if(actors.length!==1||!isAdmin(actors[0]))fail(403,'Only a current organization admin can remove members.');
+        const target=targets.length===1?targets[0]:undefined;
+        if(!target?.id)fail(404,'That teammate is no longer an active workspace member.');
+        if(target!.directoryManaged)fail(409,'Remove this teammate through your identity provider. Their membership is directory-managed.');
+        attempted=true;
+        await directory.userManagement.deleteOrganizationMembership(target!.id);
+        await revokeCaptureCredentials!({tenantId:organizationId,userId});
+        const [currentActors,currentTargets]=await Promise.all([activeMemberships(directory,user.id,organizationId),activeMemberships(directory,userId,organizationId)]);
+        if(currentTargets.length||currentActors.length!==1||!isAdmin(currentActors[0]))fail(503,'Member removal could not be verified. Contact your workspace operator before trying again.');
+        confirmed=true;
+        return {ok:true,userId};
+      }catch(error){
+        if(attempted&&!confirmed&&!errorInfo(error).expose)fail(503,'Member removal could not be verified. Contact your workspace operator before trying again.');
+        throw error;
+      }finally{
+        // An ambiguous provider deletion can still complete later. Keep the
+        // organization guard held until its outcome is reconciled by the operator.
+        if(!attempted||confirmed)await guard.release();
+      }
+    },
     async changeRole(user: HostedUser, organizationId: string, inputUserId: unknown, inputRole: unknown): Promise<{ok:true; userId:string; role:TeamRole}> {
       if (typeof inputUserId !== 'string' || !/^user_[A-Za-z0-9]+$/.test(inputUserId)) fail(400, 'Choose an active teammate.');
       if (inputRole !== 'admin' && inputRole !== 'member') fail(400, 'Choose Admin or Member.');
