@@ -4,6 +4,7 @@ import {toNodeHandler,fromNodeHeaders} from 'better-auth/node';
 import {oauthProviderAuthServerMetadata,oauthProviderOpenIdConfigMetadata} from '@better-auth/oauth-provider';
 import {jwtVerify} from 'jose';
 import {document} from '../application/presentation.mjs';
+import {oauthReturnUrlSchema} from '../application/page-types.mjs';
 import {errorInfo} from '../errors.mjs';
 import {CLI_CLIENT_ID,type LocalIdentity} from '../identity/better-auth.mjs';
 import {currentVerifiedUser,type BrowserIdentity} from '../identity/auth.mjs';
@@ -46,7 +47,7 @@ export function localAuth({identity,url,organizationId,setupToken,member}:LocalA
   const go=(res:ServerResponse,location:string)=>{
     if(new URL(location,url).origin===url){res.writeHead(303,{Location:location});return void res.end();}
     const destination=new URL(location);
-    if(!['http:','https:'].includes(destination.protocol))throw Object.assign(new Error('Invalid OAuth callback'),{status:400});
+    if(!oauthReturnUrlSchema.safeParse(destination.href).success)throw Object.assign(new Error('Invalid OAuth callback'),{status:400});
     html(res,200,document({kind:'oauth-return',url:destination.href}));
   };
   const json=(res:ServerResponse,status:number,body:unknown)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(body));};

@@ -143,6 +143,18 @@ registered Airbyte source image when upgrading this connector's source.
 When both a direct Slack app and Composio are configured, new Slack connections
 use the direct app. Existing grants continue through their original adapter.
 
+Admins can select **Invite teammates now** during agent setup, enter each
+teammate’s email, and share the private invitation link directly. Self-hosting
+does not send invitation emails. Teammates choose their own passwords; do not
+create or share passwords for them. Inviting does not finish your agent setup.
+
+Claude desktop MCP sign-in supports its registered `claude://` callback as well
+as browser and loopback callbacks. Complete browser consent, return to Claude,
+and start a new chat or reload its tools if the connection is not visible yet.
+The CLI prints a browser-approval link; when run by an agent without a terminal
+or over SSH, it deliberately does not open a browser. Open the printed link
+on your own computer.
+
 Sign in, follow onboarding to connect the CLI/MCP client and capture a real
 session, then connect a source or skip that step. Setup completion uses recorded
 receipts. Team admins can invite users, manage roles and remove members; ordinary
