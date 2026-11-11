@@ -2,7 +2,7 @@ import {useEffect, useRef, useState} from 'react';
 import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, Tabs} from '../design/components.js';
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
-import type {SessionHarness, LibraryAdapter, LibraryScope, SessionRef, SessionSummary, TranscriptEntry, TranscriptEvent, Visibility} from './library-types.js';
+import type {SessionHarness, SessionHosts, LibraryAdapter, LibraryScope, SessionRef, SessionSummary, TranscriptEntry, TranscriptEvent, Visibility} from './library-types.js';
 import {MetaList, OwnerControls, VisibilityBadge, When, authorName, byDay, harnessName} from './library-controls.js';
 import {failureMessage, useLibraryMutation, useResource} from './use-resource.js';
 import {consoleResourceKey, useConsoleModel} from '../data.tsx';
@@ -11,6 +11,17 @@ const PAGE = 50, MAX = 500;
 const harnessOf = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'grok-bot' ? value : null;
 export function sessionPath({userId, harness, sessionId}: SessionRef) {
   return '/sessions?' + new URLSearchParams({user: userId, harness, id: sessionId}).toString();
+}
+
+function CaptureHostname({session, expanded = false}: {session: SessionHosts; expanded?: boolean}) {
+  const hosts = session.hosts ?? (session.host ? [session.host] : []);
+  const multiple = hosts.length > 1 || session.hostsTruncated;
+  const names = hosts.join(', ') + (session.hostsTruncated ? ', …' : '');
+  const label = expanded ? names || '—' : multiple ? 'Multiple hosts' : hosts[0] || '—';
+  const description = hosts.length ? `Captured on: ${names}. Imported history may have originated elsewhere.` : 'Capture hostname was not recorded.';
+  return <span className={expanded ? undefined : 'oc-row-host'} title={description} aria-label={`Hostname: ${names || 'not recorded'}`}>
+    {!expanded && <span className="oc-row-host-label" aria-hidden="true">Hostname: </span>}{label}
+  </span>;
 }
 
 /** Captured agent sessions: a searchable list and a transcript viewer. */
@@ -34,7 +45,26 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
   const mutate = useLibraryMutation(adapter);
   const [removing, setRemoving] = useState<SessionSummary | null>(null), [removal, setRemoval] = useState({busy: false, error: '', done: ''});
   const controller = useRef<AbortController | null>(null);
+  const visibilityController = useRef<AbortController | null>(null);
+  const [visibilityChange, setVisibilityChange] = useState({session: '', error: ''});
   useEffect(() => () => controller.current?.abort(), []);
+  useEffect(() => {
+    setVisibilityChange({session: '', error: ''});
+    return () => {visibilityController.current?.abort(); visibilityController.current = null;};
+  }, [adapter]);
+  async function toggleVisibility(session: SessionSummary) {
+    if (visibilityController.current || removal.busy) return;
+    const current = new AbortController(); visibilityController.current = current;
+    setVisibilityChange({session: sessionPath(session), error: ''});
+    try {
+      const result = await mutate('sessions/visibility', {harness: session.harness, sessionId: session.sessionId, visibility: session.private ? 'team' : 'private'}, current.signal);
+      if (current.signal.aborted) return;
+      replace(value => value && {...value, sessions: value.sessions.map(item => sessionPath(item) === sessionPath(session) ? {...item, private: result.visibility === 'private'} : item)});
+      setVisibilityChange({session: '', error: ''});
+    } catch (failure) {
+      if (!current.signal.aborted) setVisibilityChange({session: '', error: `Could not update visibility for “${session.title}”. ${failureMessage(failure, 'Try again.')}`});
+    } finally {if (visibilityController.current === current) visibilityController.current = null;}
+  }
   async function remove(session: {harness: SessionHarness; sessionId: string}) {
     controller.current?.abort(); const current = new AbortController(); controller.current = current;
     setRemoval({busy: true, error: '', done: ''});
@@ -54,6 +84,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
   return <Page title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them." bodyClassName="oc-library">
     {(params.get('deleted') === '1' || removal.done) && <Notice tone="success">Session permanently deleted from search and raw storage. Future uploads of this session will be discarded.</Notice>}
     {removal.error && !removing && <Notice tone="danger">{removal.error}</Notice>}
+    {visibilityChange.error && <Notice tone="danger">{visibilityChange.error}</Notice>}
     {data?.deletions?.map(item => <Notice key={item.harness + ':' + item.sessionId} tone="warning">
       <p>Session {item.sessionId} is hidden from everyone. Permanent storage cleanup is pending. Retry to finish; if it stays pending, ask your instance operator to check storage access or unfinished writes.</p>
       <Button busy={removal.busy} onClick={() => void remove(item)}>Retry deletion</Button>
@@ -66,15 +97,24 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     {error && <Notice tone="danger">{error}</Notice>}
     {error && <div className="actions"><Button onClick={retry}>Try again</Button></div>}
     {!data && loading && <LoadingState label="Loading sessions"/>}
-    {data && (data.sessions.length ? <ol className="oc-row-groups" aria-busy={loading || undefined}>{byDay(data.sessions, session => session.lastActivityAt).map(([day, items]) => <li key={day}>
+    {data && (data.sessions.length ? <><div className="oc-row-item oc-row-heading" aria-hidden="true"><div className="oc-row oc-row-with-host"><span>Session</span><span className="oc-row-optional">Captured by</span><span className="oc-row-optional">Agent</span><span className="oc-row-host" title="The machine that captured the transcript. Imported history may have originated elsewhere.">Hostname</span><span className="oc-row-end">Updated</span></div><span className="oc-row-actions">{scope === 'mine' && <span className="oc-row-visibility"/>}<span className="oc-row-action"/></span></div>
+    <ol className="oc-row-groups" aria-busy={loading || undefined}>{byDay(data.sessions, session => session.lastActivityAt).map(([day, items]) => <li key={day}>
       <h2 className="oc-row-group-label">{day}</h2>
-      <ul className="oc-rows">{items.map(session => <li key={sessionPath(session)} className="oc-row-item"><Link to={sessionPath(session)} className="oc-row">
+      <ul className="oc-rows">{items.map(session => <li key={sessionPath(session)} className="oc-row-item"><Link to={sessionPath(session)} className="oc-row oc-row-with-host">
         <span className="oc-row-title"><span>{session.title}</span><VisibilityBadge value={session.private}/></span>
         <span className="oc-row-optional">{authorName(session.userId, session.mine, data.authors)}</span>
         <span className="oc-row-optional">{harnessName(session.harness)}</span>
+        <CaptureHostname session={session}/>
         <span className="oc-row-end"><When value={session.lastActivityAt}/></span>
-      </Link>{session.mine ? <Button variant="quiet" className="oc-icon-button oc-row-action" aria-label={`Delete session: ${session.title}`} title="Delete session" onClick={() => {setRemoval({busy: false, error: '', done: ''}); setRemoving(session);}}><Icon name="trash" size={16}/></Button> : <span className="oc-row-action" aria-hidden="true"/>}</li>)}</ul>
-    </li>)}</ol> : <EmptyState title={query ? 'No matching sessions' : scope === 'mine' ? 'You have no captured sessions yet' : 'No captured sessions yet'}
+      </Link><span className="oc-row-actions">
+        {scope === 'mine' && session.mine && <Button variant="quiet" className="oc-icon-button oc-row-visibility"
+          aria-label={`Share session with team: ${session.title}`} aria-pressed={!session.private}
+          title={session.private ? 'Private. Share with team' : 'Shared with team. Make private'}
+          busy={visibilityChange.session === sessionPath(session)} disabled={Boolean(visibilityChange.session) || removal.busy}
+          onClick={() => void toggleVisibility(session)}>{visibilityChange.session !== sessionPath(session) && <Icon name={session.private ? 'eye-off' : 'eye'} size={18}/>}</Button>}
+        {session.mine ? <Button variant="quiet" className="oc-icon-button oc-row-action" disabled={Boolean(visibilityChange.session)} aria-label={`Delete session: ${session.title}`} title="Delete session" onClick={() => {setRemoval({busy: false, error: '', done: ''}); setRemoving(session);}}><Icon name="trash" size={16}/></Button> : <span className="oc-row-action" aria-hidden="true"/>}
+      </span></li>)}</ul>
+    </li>)}</ol></> : <EmptyState title={query ? 'No matching sessions' : scope === 'mine' ? 'You have no captured sessions yet' : 'No captured sessions yet'}
       description={query ? 'Try different words, or clear the search.' : 'Sessions appear here after an agent with OpenCrawl capture finishes a turn.'}/>)}
     <Dialog open={Boolean(removing)} onClose={() => {if (!removal.busy) setRemoving(null);}} title="Delete this session?"
       description="Permanently remove this transcript, uploaded attachments, and search results for everyone. This session cannot be captured again, including from another installation. Local files on your computer are unchanged."
@@ -158,7 +198,7 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
       onDelete={async signal => {const result = await mutate('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, signal); navigate(result.deleted ? '/sessions?deleted=1' : '/sessions', {replace: true});}}
       deleteDescription="Permanently remove this transcript, uploaded attachments, and search results for everyone. This session cannot be captured again, including from another installation. Local files on your computer are unchanged."/> : undefined}/>
     <MetaList items={[{label: 'Status', value: current === 'private' ? <VisibilityBadge value/> : null}, {label: 'Captured by', value: authorName(session.userId, session.mine, data.authors)}, {label: 'Agent', value: harnessName(session.harness)},
-      {label: 'Origin', value: session.origin}, {label: 'Events', value: data.total.toLocaleString('en-US')}, {label: 'Session ID', value: <code>{session.sessionId}</code>}]}/>
+      {label: 'Origin', value: session.origin}, {label: 'Hostname', value: <CaptureHostname session={session} expanded/>}, {label: 'Events', value: data.total.toLocaleString('en-US')}, {label: 'Session ID', value: <code>{session.sessionId}</code>}]}/>
     {current === 'private' && <Notice>Only you can see this session. Teammates and their agents cannot read or search it.</Notice>}
     {blocks.length ? <ol className="oc-log" aria-label="Transcript">{blocks.map((block, index) => <TranscriptBlock key={block.key} block={block} turn={index > 0 && block.kind === 'message' && block.role === 'user' && block.first}/>)}</ol>
       : <EmptyState title="No readable messages yet" description="This page contains only capture metadata. Load more of the session to continue."/>}

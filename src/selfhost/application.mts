@@ -51,10 +51,11 @@ export interface SelfhostApplicationOptions {
   oauth?:ReturnType<typeof createSlackOAuth>;sourceCredentials?:SourceCredentialProxy;
   /** Lets an admin store an operator connector credential from the product. */
   connectorSettings?:{save(id:string,value:unknown,by:Principal):Promise<void>};
+  scheduleSessionDeletion?:(key:string)=>Promise<unknown>;
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,
+export function selfhostApplication({settings,store,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
 }:SelfhostApplicationOptions) {
   const directory=identity.directory;
@@ -99,7 +100,7 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
     return principal;
   }});
   const guided=createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,smallJson});
-  const library=createLibraryApi({sessions:createSessionLibrary({store,prefix,...settings.search}),memories:createMemoryLibrary({store,prefix,...settings.search})});
+  const library=createLibraryApi({sessions:createSessionLibrary({store,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion}),memories:createMemoryLibrary({store,prefix,...settings.search})});
   const members=async(organizationId:string)=>{
     if(organizationId!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
     const result=await directory.userManagement.listOrganizationMemberships({organizationId,statuses:['active'],limit:100});

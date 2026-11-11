@@ -9,6 +9,12 @@ agents captured and control who else can.
   Thinking blocks, encrypted content and token accounting are never shown.
   Order and paging come from the index; text comes from the verified original
   capture batch.
+  The Hostname column identifies the machine that captured the transcript, not
+  necessarily where imported history originally ran. Missing hostnames appear
+  as `—`. Sessions with more than one recorded hostname show **Multiple hosts**;
+  the row tooltip and transcript metadata list the captured names. Up to 20
+  names are returned, with an ellipsis when additional names exist. This uses
+  existing indexed capture metadata and requires no backfill or new collection.
 - **Memories** lists the current memory files agents keep (the newest copy per
   person, agent and path) with a readable title, and shows the full file.
   Titles use an explicit frontmatter title/name, a meaningful opening Markdown
@@ -32,6 +38,11 @@ memory can mark it **private**. A private resource is excluded for everyone
 else from these pages, workspace search and fetch (CLI, HTTP, MCP), the board's
 recent sessions and transcript reads. Its owner still sees and searches it.
 Usage counts remain aggregate and include private activity without content.
+
+In **My sessions**, each row has an eye toggle: an open eye means shared with
+the team, and a crossed-out eye means private. Hover text names the action;
+keyboard and screen-reader users get a labelled toggle with its current sharing
+state. Visibility changes are shown only after the server confirms them.
 
 Visibility is stored as an owner control object beside the owner's capture
 objects (`<prefix>/tenants/<t>/users/<u>/controls/{sessions,memories}/...`) and
@@ -98,3 +109,24 @@ self-host console proxies them as `/api/reference/library/<operation>`.
 
 Capture-only credentials are refused. Ownership comes from the authenticated
 principal; requests cannot name another owner for a change.
+
+### Durable deletion rollout
+
+`requestDeletion` records an owner-authorized intent under the protected
+`_deletions/v1/` namespace and revokes reads before scheduling Temporal. Its
+stable workflow ID includes storage prefix, tenant, owner, harness and session.
+`deleteSessionV1` drains the write fence, purges archives, erases raw object
+versions, verifies search removal and records completion. Failed activities
+retry indefinitely with bounded backoff; a minute schedule recovers intents
+whose initial workflow submission was interrupted. History contains opaque
+references and sanitized failure types, never transcript content.
+
+Deploy the compatible core contract, then configure `scheduleDeletion` in the
+API and the separate deletion queue/worker in the shell. Only then activate
+`requestDeletion` in the public HTTP route and remove the old recovery UI.
+The current HTTP route retains synchronous deletion during this preparation.
+The operator-only `pendingDeletions` method lets an upgrade enumerate already
+requested erasures and submit them through the durable path. Previously
+authorized requests finish even if the owner subsequently leaves the workspace.
+After activation, rollback must retain a deletion-capable worker until all
+accepted requests have completed.
