@@ -4,7 +4,7 @@ import {digest,sessionScope} from './event-identity.mjs';
 
 /** Owner-controlled state for one captured session or memory file. Stored beside
  * the owner's capture objects, so it carries the same tenant/user scope. */
-export interface ResourceControl {schemaVersion: 1; visibility: 'team' | 'private'; deletedAt: string | null; updatedAt: string}
+export interface ResourceControl {schemaVersion: 1; visibility: 'team' | 'private'; deletedAt: string | null; updatedAt: string; deletion?: {sessionId: string; state: 'pending' | 'complete'}}
 export type ControlKind = 'sessions' | 'memories';
 const MAX_CONTROL_BYTES = 4096;
 function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status, permanent: status !== 503});}
@@ -30,7 +30,7 @@ export function createControls({store, prefix}: {store: ObjectStore; prefix: str
     const key = controlKey(prefix, owner, kind, harness, name);
     for (let attempt = 0; attempt < 8; attempt++) {
       const current = await store.readVersion(key, {maxBytes: MAX_CONTROL_BYTES});
-      const next: ResourceControl = {schemaVersion: 1, ...change(decode(current.data)), updatedAt: new Date().toISOString()};
+      const next: ResourceControl = {...decode(current.data), schemaVersion: 1, ...change(decode(current.data)), updatedAt: new Date().toISOString()};
       if (await store.compareAndSet(key, current.data ? current.version : null, Buffer.from(JSON.stringify(next)))) return next;
     }
     fail(503, 'Resource control busy; retry');

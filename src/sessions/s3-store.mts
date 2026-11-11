@@ -1,4 +1,4 @@
-import type {AwsCredentials, CredentialProvider, ListOptions, ReadOptions, ServiceError, StoreVersion} from './types.mjs';
+import type {AwsCredentials, CredentialProvider, ListOptions, ReadOptions, ServiceError, StoreVersion, ObjectStore} from './types.mjs';
 import {serviceError} from './types.mjs';
 /**
  * Minimal S3 client: enough for the receiver to land session segments in the user's S3 bucket
@@ -132,6 +132,76 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
     },
 
     delete: (key: string) => request('DELETE', key).then(() => undefined),
+
+    async purgePrefix(prefix: string, {select = () => true, selectVersion, beforeDelete}: Parameters<NonNullable<ObjectStore['purgePrefix']>>[1] = {}) {
+      if (!prefix || prefix.includes('..')) throw new Error('Explicit purge prefix required');
+      async function inventory(keyMarker?: string, versionMarker?: string) {
+        const res = await request('GET', undefined, {query: {versions: '', prefix, 'max-keys': '1000',
+          'key-marker': keyMarker, 'version-id-marker': versionMarker}});
+        if (!res.ok) throw await storeError(res, 'LIST VERSIONS');
+        const xml = await res.text();
+        if (!/<ListVersionsResult(?:\s|>)/.test(xml) || !/<IsTruncated>(true|false)<\/IsTruncated>/.test(xml)) throw new Error('Invalid S3 version inventory');
+        const entries = [...xml.matchAll(/<(Version|DeleteMarker)>([\s\S]*?)<\/\1>/g)].map(match => {
+          const key = unescapeXml(match[2].match(/<Key>([^<]*)<\/Key>/)?.[1] ?? '');
+          const version = unescapeXml(match[2].match(/<VersionId>([^<]*)<\/VersionId>/)?.[1] ?? '');
+          if (!key.startsWith(prefix) || !version) throw new Error('Invalid S3 version scope');
+          return {key, version, marker: match[1] === 'DeleteMarker'};
+        });
+        const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
+        const nextKey = unescapeXml(xml.match(/<NextKeyMarker>([^<]*)</)?.[1] ?? '');
+        const nextVersion = unescapeXml(xml.match(/<NextVersionIdMarker>([^<]*)</)?.[1] ?? '');
+        if (truncated && !nextKey) throw new Error('S3 version inventory omitted cursor');
+        return {entries, truncated, nextKey, nextVersion};
+      }
+      // Each sweep verifies both complete pagination and scope. Repeat the first
+      // sweep after deletion to prove no selected version remains.
+      let removed = 0;
+      for (let pass = 0; pass < 2; pass++) {
+        let keyMarker: string | undefined, versionMarker: string | undefined;
+        const seen = new Set<string>();
+        do {
+          const page = await inventory(keyMarker, versionMarker);
+          for (const item of page.entries) {
+            if (!select(item.key)) continue;
+            let cached: Buffer | undefined;
+            const read = async () => {
+              if (cached) return cached;
+              const res = await request('GET', item.key, {query: {versionId: item.version}});
+              if (!res.ok) throw await storeError(res, 'READ VERSION');
+              const parts: Uint8Array[] = []; let size = 0;
+              for await (const part of res.body!) {size += part.length; if (size > 256 * 1024 * 1024) throw new Error('Purge source exceeds limit'); parts.push(part);}
+              return cached = Buffer.concat(parts);
+            };
+            if (selectVersion && (item.marker || !await selectVersion(item.key, read))) continue;
+            if (pass) throw new Error('Raw session versions remain after deletion');
+            if (beforeDelete && !item.marker) await beforeDelete(item.key, read);
+            await request('DELETE', item.key, {query: {versionId: item.version}});
+            removed++;
+          }
+          if (!page.truncated) break;
+          const token = JSON.stringify([page.nextKey, page.nextVersion]);
+          if (seen.has(token)) throw new Error('S3 version inventory cursor did not advance');
+          seen.add(token); keyMarker = page.nextKey; versionMarker = page.nextVersion;
+        } while (true);
+      }
+      let cursor: string | null = null;
+      const seen = new Set<string>();
+      do {
+        const page = await listPage(prefix, {continuationToken: cursor});
+        for (const key of page.keys) {
+          if (!key.startsWith(prefix)) throw new Error('Purge verification outside scope');
+          if (select(key) && (!selectVersion || await selectVersion(key, async () => {
+            const res = await request('GET', key);
+            if (!res.ok) throw await storeError(res, 'VERIFY PURGE');
+            if (Number(res.headers.get('content-length')) > 256 * 1024 * 1024) throw new Error('Purge verification exceeds limit');
+            return Buffer.from(await res.arrayBuffer());
+          }))) throw new Error('Raw objects remain after version deletion');
+        }
+        cursor = page.nextToken;
+        if (cursor) {if (seen.has(cursor)) throw new Error('Purge verification cursor did not advance'); seen.add(cursor);}
+      } while (cursor);
+      return removed;
+    },
 
     /** Bounded streaming reads for connector files; closes the response on error/cancellation. */
     async *read(key: string, {maxBytes = 256 * 1024 * 1024}: ReadOptions = {}) {

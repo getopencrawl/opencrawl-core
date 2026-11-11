@@ -1,3 +1,4 @@
+import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gunzipSync,gzipSync} from 'node:zlib';
@@ -96,7 +97,7 @@ test('real OpenSearch: projection repair removes copied chunks, preserves privac
  skip:!process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
 },async t=>{
  const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL,environment='projection-'+randomUUID().slice(0,8),foreign={...owner,tenantId:'team-b'};
- const f=await fixture(),search=createSessionSearch({endpoint,environment}),realm=createRealm({endpoint,environment,tenantId:owner.tenantId});
+ const f=await fixture(),search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment}),realm=createRealm({endpoint,environment,tenantId:owner.tenantId});
  t.after(async()=>{for(const who of [owner,foreign])await fetch(endpoint+'/'+realmIndex(environment,who.tenantId),{method:'DELETE'});});
  await search.ensureIndex(owner);await search.ensureIndex(foreign);
  const old=indexFixture(f).rows,steps=[];

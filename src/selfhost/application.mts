@@ -64,7 +64,7 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
   const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(store,prefix));
   const onboarding=createOnboardingStatus({store,prefix}),observe=createOnboardingObserver(onboarding);
   const values=valueReports({store,prefix});
-  const search=createSessionSearch(settings.search);
+  const search=createSessionSearch({...settings.search,store,prefix});
   async function authorize(principal:Principal,requested?:unknown) {
     if(principal?.tenantId!==settings.organizationId || principal.captureAccess!==undefined || requested!=null&&requested!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
     const current=await currentVerifiedUser(directory,principal.userId);

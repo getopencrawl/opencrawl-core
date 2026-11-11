@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.3.3",
+  "version": "0.3.5",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
@@ -13,6 +13,7 @@
     "./sessions/search": "./dist/src/sessions/search.mjs",
     "./sessions/recent": "./dist/src/sessions/recent.mjs",
     "./sessions/library": "./dist/src/sessions/library.mjs",
+    "./sessions/deletion-archives": "./dist/src/sessions/deletion-archives.mjs",
     "./sessions/library-http": "./dist/src/sessions/library-http.mjs",
     "./memories/library": "./dist/src/memories/library.mjs",
     "./sessions/indexer": "./dist/src/sessions/indexer.mjs",

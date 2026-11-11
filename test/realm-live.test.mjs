@@ -1,3 +1,4 @@
+import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -22,7 +23,7 @@ test('real realm mapping upgrade preserves existing documents while adding norma
 });
 test('one physical organization realm holds all corpora with collision-safe identity, scoped retrieval and shared schema',{skip:!endpoint},async t=>{
   const environment='test-'+randomUUID().slice(0,8),owners=['a','b'].map(s=>({tenantId:'org-'+s,userId:'author'}));
-  const sessions=createSessionSearch({endpoint,environment}),board=createBoardSearch({endpoint,environment});
+  const sessions=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment}),board=createBoardSearch({endpoint,environment});
   t.after(async()=>{for(const p of owners)await fetch(endpoint+'/'+realmIndex(environment,p.tenantId),{method:'DELETE'});});
   for(const p of owners){
     const index=realmIndex(environment,p.tenantId),realm=createRealm({endpoint,index,tenantId:p.tenantId});
@@ -70,7 +71,7 @@ test('real migration freezes legacy writes, copies complete native data, verifie
 
 test('session replay cannot overwrite a newer captured event in the realm',{skip:!endpoint},async t=>{
  const environment='test-'+randomUUID().slice(0,8),owner={tenantId:'org-replay',userId:'author'},index=realmIndex(environment,owner.tenantId);
- const sessions=createSessionSearch({endpoint,environment});await sessions.ensureIndex(owner);
+ const sessions=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment});await sessions.ensureIndex(owner);
  t.after(()=>fetch(endpoint+'/'+index,{method:'DELETE'}));
  const base={...owner,harness:'codex',sessionId:'session',kind:'message',sequence:1};
  await sessions.putDocuments([{id:'event',document:{...base,receivedAt:'2026-11-02T00:00:00Z',text:'newer version'}}],owner);
@@ -81,7 +82,7 @@ test('session replay cannot overwrite a newer captured event in the realm',{skip
 
 test('session ID collisions cannot replace another uploader while team reads remain shared',{skip:!endpoint},async t=>{
  const environment='test-'+randomUUID().slice(0,8),owner={tenantId:'org-collision',userId:'author'},other={...owner,userId:'other-author'};
- const index=realmIndex(environment,owner.tenantId),sessions=createSessionSearch({endpoint,environment});
+ const index=realmIndex(environment,owner.tenantId),sessions=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment});
  await sessions.ensureIndex(owner);
  t.after(()=>fetch(endpoint+'/'+index,{method:'DELETE'}));
  const document={...owner,harness:'codex',sessionId:'session',kind:'message',sequence:1,receivedAt:'2026-11-01T00:00:00Z',text:'original author evidence'};

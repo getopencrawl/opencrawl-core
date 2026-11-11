@@ -6,6 +6,8 @@ import type {SourcesAdapter} from '../../src/application/api.ts';
 import '../../src/styles.css';
 import {DocumentFrame,ProductDocument} from '../../src/application/documents.tsx';
 import {CallbackChoices, readContinuation} from '../../src/application/callback-view.tsx';
+import {SessionsPage} from '../../src/pages/sessions.tsx';
+import type {LibraryAdapter} from '../../src/pages/library-types.ts';
 
 declare global {
   interface Window {__onboardingTestNavigate?: (path: string) => void;}
@@ -27,6 +29,7 @@ const adapter: OnboardingAdapter = {
   finish: signal => request('/api/onboarding/finish', signal, {}),
 };
 const never = new AbortController().signal;
+const libraryAdapter: LibraryAdapter = (operation, input, signal) => request('/api/library/' + operation, signal, input);
 /** The Integrations page against the same fixture state as the onboarding step. */
 const sourcesAdapter: SourcesAdapter = {
   sources: signal => request('/api/console/sources', signal ?? never),
@@ -51,6 +54,7 @@ function Fixture() {
     footer={<Button variant="quiet" onClick={() => {void navigate('/away');}}>Sign out</Button>}
   />;
   return <Routes>
+    <Route path="/sessions" element={<ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><SessionsPage adapter={libraryAdapter}/></ConsoleDataProvider>}/>
     <Route path="/auth-fixture/setup" element={<DocumentFrame signedIn={false}><ProductDocument page={{kind:'auth',view:'setup',setup:'private-once-only'}}/></DocumentFrame>}/>
     <Route path="/auth-fixture/consent" element={<DocumentFrame signedIn><ProductDocument page={{kind:'auth',view:'consent',clientName:'Example MCP client',oauthQuery:'signed-consent-query',resource:'https://oss.example/mcp',scopes:['openid','offline_access']}}/></DocumentFrame>}/>
 

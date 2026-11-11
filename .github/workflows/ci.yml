@@ -51,7 +51,7 @@ jobs:
             }
           }
           JS
-          node --test test/session-object-store.test.mjs test/session-indexer.test.mjs test/session-projection.test.mjs test/recent-sessions.test.mjs test/library-live.test.mjs test/connector-live.test.mjs test/connector-write-barrier-live.test.mjs test/board-search-live.test.mjs test/realm-live.test.mjs test/workspace-search-live.test.mjs test/memory-live.test.mjs
+          node --test test/session-object-store.test.mjs test/session-indexer.test.mjs test/session-projection.test.mjs test/recent-sessions.test.mjs test/library-live.test.mjs test/session-deletion-live.test.mjs test/connector-live.test.mjs test/connector-write-barrier-live.test.mjs test/board-search-live.test.mjs test/realm-live.test.mjs test/workspace-search-live.test.mjs test/memory-live.test.mjs
       - name: Remove disposable object store
         if: always()
         run: docker rm -f capture-s3-test capture-search-test || true

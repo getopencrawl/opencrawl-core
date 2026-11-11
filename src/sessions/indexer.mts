@@ -9,6 +9,7 @@ import {digest,sessionScope,MAX_BATCH_BYTES} from './ingest.mjs';
 import {sourceBatchIdentity,reserveSessionEvents} from './event-identity.mjs';
 import {memorySourceIdentity,verifyStoredMemory,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
 import {createControls} from './controls.mjs';
+import {sessionWriteBarrier, sessionWriteStore} from './write-barrier.mjs';
 import {memoryControls} from '../memories/library.mjs';
 export {sourceBatchIdentity} from './event-identity.mjs';
 export {memorySourceIdentity} from '../memories/snapshot.mjs';
@@ -68,7 +69,8 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team'}: {
         nativeId:typeof event.nativeId==='string'?event.nativeId:null,parentId:event.parentId??null,turnId:event.turnId??null,
         toolCallId:event.data?.call_id??event.data?.tool_use_id??null,toolNames:[...names],host:batch.host??null,
         attachments:attachments.map(a=>({sha256:a.sha256,size:a.size,mimeType:a.mimeType,path:a.path,
-          objectKey:/^[a-f0-9]{64}$/.test(a.sha256??'')?`${prefix}/${scope}/attachments/${a.sha256}`:null})),private:visibility==='private'};
+          objectKey:/^[a-f0-9]{64}$/.test(a.sha256??'')?(batch.attachments?.find(item=>item.sha256===a.sha256)?.objectKey===`${prefix}/${scope}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/attachments/${a.sha256}`
+            ? `${prefix}/${scope}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/attachments/${a.sha256}` : `${prefix}/${scope}/attachments/${a.sha256}`):null})),private:visibility==='private'};
       documents.push({id:sessionDocumentId({scope,harness:batch.harness,sessionId:batch.sessionId,eventId:event.id,chunk}),document});
     }
   }
@@ -113,7 +115,7 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
       const stateKey=receiptKey(key);
       if(await indexed(key))return {records:0,skipped:true};
       const bytes=await store.get(key);
-      if(!bytes)throw new Error('Session source object unavailable');
+      if(!bytes)return {records:0,skipped:true}; // A queued source may have been permanently deleted.
       const memory=Boolean(memorySourceIdentity(prefix,key));
       const batch=parseJson<SessionBatch>(gunzipSync(bytes,{maxOutputLength:(memory?MAX_MEMORY_BYTES:MAX_BATCH_BYTES)+1024*1024}));
       const scope=principal||await resolvePrincipal!({key,batch});sessionScope(scope);
@@ -130,15 +132,19 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
       // Owner controls apply before any write: deleted sessions are never indexed
       // again, and private sessions are written private.
       const control=await controls.read(scope,'sessions',batch.harness,batch.sessionId);
-      if(control?.deletedAt) {
+      const barrier=sessionWriteBarrier(store,prefix,scope,batch.harness,batch.sessionId);
+      if(control?.deletedAt || (await barrier.inspect()).closed) {
         await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:0,deleted:true,indexedAt:new Date().toISOString()})),'application/json');
         return {records:0,skipped:true};
       }
       const docs=batchDocuments({prefix,key,batch,principal:scope,visibility:control?.visibility});
       // Check the whole event before any chunk write. Receipt order, shorter
       // payloads and concurrent activities must never assemble mixed revisions.
-      await checkActive();await reserveSessionEvents({store,prefix,principal:scope,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
-      await checkActive();await search.ensureIndex(scope);await search.putDocuments(docs,scope);
+      try {
+      await checkActive();await reserveSessionEvents({store:sessionWriteStore(store,prefix,scope,batch.harness,batch.sessionId),prefix,principal:scope,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
+      await checkActive();await search.ensureIndex(scope);
+      await barrier.run('search-write',()=>search.putDocuments(docs,scope),{target:digest(key)});
+      } catch(error) {if((await barrier.inspect()).closed)return {records:0,skipped:true};throw error;}
       // A visibility change or delete that landed while this batch was indexing
       // must still apply to the documents just written.
       const after=await controls.read(scope,'sessions',batch.harness,batch.sessionId);
