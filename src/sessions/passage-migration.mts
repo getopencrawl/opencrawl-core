@@ -94,8 +94,10 @@ export async function migrateSessionPassages({realm,principal,store,prefix,backu
         if(batch.length)await collection.bulk(owner,batch);
         if(retired.length)await collection.delete(owner,retired);
         for(let start=0;start<written.length;start+=100){
+          // Visibility can change concurrently; compare source projection here,
+          // then reconcile the authoritative control below.
           const expected=written.slice(start,start+100),readback=await collection.mget(owner,expected.map(x=>x.id)),actual=new Map(readback.docs.map(h=>[h._id,h]));
-          if(expected.some(x=>!actual.get(x.id)?.found||documentDigest(actual.get(x.id)!._source)!==documentDigest(x.document)))throw new Error('Passage migration readback mismatch');
+          if(expected.some(x=>!actual.get(x.id)?.found||documentDigest({...actual.get(x.id)!._source,private:undefined})!==documentDigest({...x.document,private:undefined})))throw new Error('Passage migration readback mismatch');
         }
         const afterControl=await controls.read(owner,'sessions',sample.harness!,sample.sessionId!);
         if(afterControl?.deletedAt||(afterControl?.visibility??'team')!==(current?.visibility??'team'))await applySessionControl(collection,owner,{userId:owner.userId,harness:sample.harness!,sessionId:sample.sessionId!},afterControl!);

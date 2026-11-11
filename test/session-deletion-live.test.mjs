@@ -37,6 +37,9 @@ test('versioned S3 and real OpenSearch: erasure removes every raw version and bl
   await ingest.putAttachment(owner,sha,blob,value);
   const receipt=await ingest.putBatch(owner,value),root=`${prefix}/${sessionScope(owner)}/codex/${digest('device')}/${digest('delete-me')}/`,key=root+receipt.batchId+'.json.gz';
   await store.put(key,await store.get(key)); // a historical raw version
+  const recovery=root+'passage-backups/v2/recovery.backup';
+  await store.put(recovery,Buffer.from('old derived transcript recovery'));
+  await store.put(recovery,Buffer.from('new derived transcript recovery')); // every backup version must also be erased
   await pipeline.processObject({key});await search.refresh(owner);
   const found=await search.search(peer,{query:run});assert.ok(found.hits.length);
   await library.read(peer,{userId:owner.userId,harness:value.harness,sessionId:value.sessionId}); // warm rendered cache
