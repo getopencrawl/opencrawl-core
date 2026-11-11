@@ -222,3 +222,11 @@ return 409 and retain the local queue. Scoped uploads to a deleted session are
 acknowledged and discarded. This operation cannot erase independently copied
 backups or unrelated records quoting the same content; operators must apply
 retention and deletion policies to those copies separately.
+
+Migration and restore writers also require the canonical store and prefix. They
+acquire the same session fences before copying index documents or making
+backups. Restoring a deleted session is refused. If an embedding runtime retains
+core migration archives, pass their explicit roots through the library
+`purgeCopies` callback using `purgeSessionArchives`; all affected versions are
+sanitized and permanently removed, preserving unrelated records under their
+own session fences. No pre-upgrade migration writer may remain running.

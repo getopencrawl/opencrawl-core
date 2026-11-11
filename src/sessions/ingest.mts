@@ -17,6 +17,8 @@ export {digest,sessionScope,auditSessionEventIdentities,auditSessionEventSource}
 const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 export const MAX_BATCH_BYTES = 16 * 1024 * 1024;
+/** Capability checked by rollout tooling before accepting deletion requests. */
+export const sessionDeletionVersion = 1;
 export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const MAX_STORED_BATCH_BYTES = MAX_BATCH_BYTES + 1024 * 1024;
 
