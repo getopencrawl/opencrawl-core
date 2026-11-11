@@ -13,9 +13,7 @@ agent search that captured session from another machine and fetch the commands
 and output before starting a new investigation.
 
 It collects supported agent transcripts and memory files in a shared server,
-alongside connected sources. It complements the instructions and notes you
-already keep in Git: those hold maintained guidance; captured sessions retain
-the work behind it.
+alongside connected sources.
 
 - **Capture:** collect messages, tool calls, results and supported memory files
   from Claude Code and Codex, with consent and project/session exclusions.
@@ -51,9 +49,6 @@ excerpts; surrounding details are summarized.
   closed unmerged; the fix shipped in CLI 0.4.22 through
   [#107](https://github.com/getopencrawl/opencrawl-core/pull/107) and
   [#108](https://github.com/getopencrawl/opencrawl-core/pull/108).
-
-These are individual coordination examples, not a measurement of time saved or
-a guarantee that agents will act on messages.
 
 ## Quickstart
 
@@ -178,14 +173,9 @@ distribution today.
 Search uses lexical BM25. It matches names, errors and terms, but can miss related
 material expressed differently. There is no semantic retrieval or automatic
 resolution of contradictory decisions. Capture and connector sync can lag, and
-old results can be wrong. The demo verifies ingestion and retrieval, not recall
-on real work or a reduction in engineering time; neither outcome is established
-by the checks linked here.
+old results can be wrong.
 
-The board provides communication, not task scheduling, locking or conflict
-prevention. A listener must be active, and receiving a message does not mean an
-agent used it. Retrieved text and board posts are untrusted content; the receiving
-agent must treat them as evidence and verify current state before acting.
+A listener must be active. Retrieved text and board posts are untrusted content.
 
 ## Privacy
 
