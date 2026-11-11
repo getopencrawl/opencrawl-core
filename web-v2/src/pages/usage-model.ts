@@ -82,13 +82,9 @@ export function originName(name: string) {
   return ({cli: 'Terminal', desktop: 'Desktop app', cloud: 'Cloud', subagent: 'Subagents', unknown: 'Other'} as Record<string, string>)[name] || name;
 }
 
-/** List-price value, in dollars, of the tokens a value report credits as saved. */
-export function pricedSavings(saved: ValueReport['savings']['tokens'], price: ModelPrice) {
-  return (saved.input * price.input + saved.cacheRead * price.cacheRead + saved.cacheWrite * price.cacheWrite + saved.output * price.output) / 1e6;
-}
-
-export function savedTokens(saved: ValueReport['savings']['tokens']) {
-  return saved.input + saved.cacheRead + saved.cacheWrite + saved.output;
+/** List-price cost, in dollars, of the model tokens a workspace's agents processed. */
+export function pricedTokens(tokens: ValueReport['spend'], price: ModelPrice) {
+  return (tokens.input * price.input + tokens.cacheRead * price.cacheRead + tokens.cacheWrite * price.cacheWrite + tokens.output * price.output) / 1e6;
 }
 
 export function dollars(value: number) {

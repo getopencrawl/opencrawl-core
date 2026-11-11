@@ -2,23 +2,26 @@ export interface NamedCount {name: string; count: number}
 /** Per-million-token list prices for one model, as of a stated date. */
 export interface ModelPrice {model: string; input: number; cacheRead: number; cacheWrite: number; output: number; asOf: string}
 /**
- * What OpenCrawl has done for one workspace (schema 3), measured from work captured live
- * since it installed OpenCrawl and never estimated by the UI. Savings count only real uses:
- * a search whose result the agent then used, or a fix or decision reused from the board.
- * Each use is valued at what finding the same thing by digging costs in this workspace's
- * own sessions (the median), minus what the search itself cost.
+ * How OpenCrawl kept one workspace's agents aligned (schema 4), measured from work captured
+ * live since it installed OpenCrawl. Every number counts something that happened; nothing
+ * estimates what agents would have done otherwise, and no token or dollar saving is claimed.
  */
 export interface ValueReport {
-  schema: 3;
+  schema: 4;
   measuredAt: string;
   /** From the first live capture to the last day measured. */
   window: {from: string; to: string; days: number};
   /** The model the workspace's agents use most, priced at its list price. */
   model: ModelPrice & {share: number};
-  savings: {sessions: number; tasks: number; uses: number; digTokens: number; digTurns: number; tokenPercent: number; turns: number; turnPercent: number;
-    tokens: {input: number; cacheRead: number; cacheWrite: number; output: number}};
-  observed: {conflictsAvoided: number; duplicatesAvoided: number; knowledgeReused: number;
-    searches: number; searchesUseful: number; searchesUsed: number};
+  work: {sessions: number; tasks: number};
+  /** Model tokens the agents processed in captured sessions, by type. */
+  spend: {input: number; cacheRead: number; cacheWrite: number; output: number};
+  /** Times a message from another agent made an agent change course. */
+  drift: {conflictsAvoided: number; duplicatesAvoided: number};
+  /** Searches agents ran for real work, and board messages that reached an agent. */
+  usage: {searches: number; boardMessages: number};
+  /** Search results agents went on to use and fixes they picked up from the board, with what the searches found. */
+  value: {searchesUsed: number; fixesReused: number; found: {teammateWork: number; whereThingsLive: number; pastDecisions: number; pastFixes: number; other: number}};
 }
 export interface UsageReport {
   workspace: string | null;
