@@ -5,6 +5,7 @@
     "allowImportingTsExtensions": true
   },
   "include": [
+    "tools/delivery.mts",
     "dev/**/*.mts",
     "cli/scripts/**/*.mts",
     "plugins/scripts/**/*.mts"

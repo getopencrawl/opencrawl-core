@@ -1,0 +1,81 @@
+name: Core continuous delivery
+on:
+  schedule:
+    - cron: '1-59/5 * * * *'
+  workflow_run:
+    workflows: [Core CI, Repository security, Self-host preview, Plugin packages, CLI]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  packages: write
+concurrency:
+  group: core-continuous-delivery
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: ((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main') || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    env:
+      SOURCE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+      GH_TOKEN: ${{ github.token }}
+      NODE_AUTH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.SOURCE_REVISION }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+          registry-url: https://npm.pkg.github.com
+          scope: '@getopencrawl'
+      - name: Require all checks on the current protected main revision
+        id: gate
+        run: node tools/delivery.mts gate
+      - name: Prepare an immutable source-bound version
+        if: steps.gate.outputs.ready == 'true'
+        id: package
+        env:
+          RELEASE_CLI_VERSION: ${{ steps.gate.outputs.cli_version }}
+        run: node tools/delivery.mts prepare
+      - name: Reuse a completed immutable publication
+        if: steps.gate.outputs.ready == 'true'
+        id: existing
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          if npm view "@getopencrawl/opencrawl-core@$VERSION" --json > metadata.json 2> registry-error.txt; then
+            node -e 'const p=require("./metadata.json");if(p.opencrawlRevision!==process.env.SOURCE_REVISION)throw Error("Published source mismatch")'
+            echo 'published=true' >> "$GITHUB_OUTPUT"
+          else
+            grep -q E404 registry-error.txt
+            echo 'published=false' >> "$GITHUB_OUTPUT"
+          fi
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        if: steps.existing.outputs.published == 'false'
+      - run: npm ci --prefix web-v2 --ignore-scripts --no-audit --no-fund
+        if: steps.existing.outputs.published == 'false'
+      - name: Publish or resume the exact tested source
+        if: steps.existing.outputs.published == 'false'
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm publish --access restricted --tag continuous-pending
+      - name: Recheck main before advancing the continuous channel
+        if: steps.gate.outputs.ready == 'true'
+        id: promote
+        run: node tools/delivery.mts gate
+      - name: Promote tested package for hosted consumption
+        if: steps.promote.outputs.ready == 'true'
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          npm dist-tag add "@getopencrawl/opencrawl-core@$VERSION" continuous
+          printf 'Published `%s` from `%s`; hosted CD consumes the integrity-verified continuous channel.\n' "$VERSION" "$SOURCE_REVISION" >> "$GITHUB_STEP_SUMMARY"
