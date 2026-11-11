@@ -158,10 +158,10 @@ test('OSS reads only its configured organization measured report from operator s
   const onboarding=createOnboardingStatus({store:f.store,prefix:f.prefix}),principal={tenantId:org,userId:member.userId};
   await onboarding.cli(principal);await onboarding.mcpTest(principal);
   await onboarding.session(principal,{harness:'codex',events:[{kind:'message'}]});await onboarding.complete(principal);
-  const report={schema:3,measuredAt:'2026-11-09',window:{from:'2026-11-01',to:'2026-11-08',days:8},
+  const report={schema:4,measuredAt:'2026-11-09',window:{from:'2026-11-01',to:'2026-11-08',days:8},
     model:{model:'Measured model',input:1,cacheRead:0,cacheWrite:0,output:1,asOf:'2026-11-09',share:100},
-    savings:{sessions:1,tasks:1,uses:1,digTokens:10,digTurns:2,tokenPercent:20,turns:2,turnPercent:20,tokens:{input:1,cacheRead:0,cacheWrite:0,output:1}},
-    observed:{conflictsAvoided:0,duplicatesAvoided:0,knowledgeReused:0,searches:0,searchesUseful:0,searchesUsed:0}};
+    work:{sessions:1,tasks:1},spend:{input:1,cacheRead:0,cacheWrite:0,output:1},drift:{conflictsAvoided:0,duplicatesAvoided:0},usage:{searches:0,boardMessages:0},
+    value:{searchesUsed:0,fixesReused:0,found:{teammateWork:0,whereThingsLive:0,pastDecisions:0,pastFixes:0,other:0}}};
   await f.store.put(valueReportKey(f.prefix,'org_foreign'),JSON.stringify(report));
   assert.equal((await (await f.request('/api/console/usage','admin')).json()).value,null);
   await f.store.put(valueReportKey(f.prefix,org),JSON.stringify(report));
