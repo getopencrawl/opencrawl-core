@@ -115,9 +115,10 @@ export function createCaptureHandler({ingest, authenticate, search=undefined, cr
     try {
       if (req.headers.origin) return send(403, {error:{code:'BROWSER_REQUEST_DENIED'}});
       const principal = await authenticate(req);
+      if (!principal) throw Object.assign(new Error('Authentication required'), {status:401});
       const revalidate=async()=>{
         const current=await authenticate(req);
-        if(sessionScope(current)!==sessionScope(principal)||current.captureAccess!==principal.captureAccess)fail(403,'Capture access changed');
+        if(!current||sessionScope(current)!==sessionScope(principal)||current.captureAccess!==principal.captureAccess)fail(403,'Capture access changed');
       };
       const privateResult=async(status:number,data:Record<string,unknown>)=>{await revalidate();return send(status,data);};
       sessionScope(principal);
