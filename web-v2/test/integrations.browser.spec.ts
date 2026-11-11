@@ -38,12 +38,13 @@ for(const width of [1440,390]) test(`uniform cards disclose complete stats and s
 
 test('recovery dialogs preserve sign-in, sync and removal actions and member permissions',async({page})=>{
   const cases:SourceCard[]=[
-    {...source(1),name:'Expired',state:'error',recoveryAction:'connect',message:'Authorization expired.'},
+    {...source(1),name:'Expired',state:'error',rows:undefined,synced:undefined,recoveryAction:'connect',message:'Authorization expired.'},
     {...source(2),name:'Sync failed',state:'error',recoveryAction:'sync',message:'Sync failed.'},
     {...source(3),name:'Removal failed',state:'error',recoveryAction:'disconnect',message:'Removal did not finish.'},
   ];
   await page.route('**/api/console/sources',route=>route.fulfill({json:{items:cases}}));
   await page.goto('/integrations-fixture');
+  await expect(page.getByRole('article',{name:'Expired'})).toContainText('Authorization expired.');
   await page.getByRole('button',{name:'Fix connection Expired'}).click();
   let dialog=page.getByRole('dialog');
   await expect(dialog).toContainText('Authorization expired.');
