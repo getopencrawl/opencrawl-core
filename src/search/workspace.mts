@@ -2,7 +2,8 @@ import type {Principal, Authenticate, HttpHandler} from '../sessions/types.mjs';
 import {parseJson} from '../sessions/types.mjs';
 import type {SearchAdapter, Passage} from './types.mjs';
 import type {WorkspaceHit} from './presentation.mjs';
-interface WorkspaceOptions {sessions?: SearchAdapter & {memories?: SearchAdapter}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
+import type {SessionKey, createSessionLibrary} from '../sessions/library.mjs';
+interface WorkspaceOptions {sessions?: SearchAdapter & {memories?: SearchAdapter; titles?: ReturnType<typeof createSessionLibrary>['titles']}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
 interface SearchCursor {fingerprint?: string; expires: number; offset: number}
 import {serviceError} from '../sessions/types.mjs';
 import {createHash, createHmac, randomBytes, timingSafeEqual} from 'node:crypto';
@@ -45,6 +46,24 @@ const WINDOW = 100, TTL = 5 * 60_000;
  * Cursors are bounded live windows, not snapshots or a claim of exhaustive recall.
  */
 export function createWorkspaceSearch({sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now}: WorkspaceOptions = {}) {
+  async function named(principal: Principal, hits: WorkspaceHit[], before?: string) {
+    if (!sessions?.titles) return hits;
+    const keyOf = (hit: WorkspaceHit) => {
+      const {userId, harness, sessionId} = hit.provenance;
+      if (typeof userId !== 'string' || typeof harness !== 'string' || typeof sessionId !== 'string') throw new Error('Invalid session title identity');
+      return {userId, harness, sessionId} satisfies SessionKey;
+    };
+    const sessionHits = hits.filter(hit => hit.source === 'sessions');
+    if (!sessionHits.length) return hits;
+    const keyString = (key: SessionKey) => JSON.stringify([key.userId, key.harness, key.sessionId]);
+    const keys = [...new Map(sessionHits.map(hit => {const key = keyOf(hit); return [keyString(key), key] as const;})).values()];
+    const names = await sessions.titles(principal, keys, {before});
+    return hits.flatMap(hit => {
+      if (hit.source !== 'sessions') return [hit];
+      const title = names.get(keyString(keyOf(hit)));
+      return title === undefined ? [] : [{...hit, title}];
+    });
+  }
   function sign(value: string) {return createHmac('sha256', cursorKey).update(value).digest('base64url');}
   function encode(payload: SearchCursor) {const data = Buffer.from(JSON.stringify(payload)).toString('base64url'); return data + '.' + sign(data);}
   function decode(cursor: string, fingerprint: string): SearchCursor {
@@ -91,10 +110,15 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       });
       const deduped = query.dedupe ? groupDuplicates(ranked) : {results: ranked, suppressed: 0};
       const grouped=groupResources(deduped.results,query.groupBy);
-      const results = grouped.results.slice(page.offset, page.offset + query.limit).map(hit => {
+      const displayed = grouped.results.slice(page.offset, page.offset + query.limit);
+      const titled = query.select.includes('title') ? await named(principal, displayed, query.filters?.before) : displayed;
+      // Do not return stale facet counts or grouping metadata after observing a
+      // visibility change while reading the page's names.
+      if (titled.length !== displayed.length) fail(409, 'Search results changed; repeat the search.');
+      const results = titled.map(hit => {
         const {text,...rest}=hit, fields={...rest,...(query.select.includes('text')?excerpt(text,query.query,query.excerptChars):{})};
         return Object.fromEntries(Object.entries(fields).filter(([key])=>!['title','text','url','provenance'].includes(key)||query.select.includes(key as 'title'|'text'|'url'|'provenance')));
-      }), offset = page.offset + results.length;
+      }), offset = page.offset + displayed.length;
       const next = offset < grouped.results.length ? encode({fingerprint, offset, expires: page.expires}) : null;
       const coverage = groups.map(({source, state, hits, truncated}) => ({source, state, candidates: hits.length, truncated}));
       const partial = coverage.some(g => g.state === 'unavailable' || g.state === 'pending');
@@ -118,7 +142,9 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       const result = await adapter.search(principal, {id: documentId, query: '', limit: 1});
       if (!Array.isArray(result.hits) || result.hits.length > 1 || result.hits.some(hit => hit.tenantId !== principal.tenantId || hit.id !== documentId)) throw new Error('Invalid workspace fetch scope');
       if (!result.hits.length) fail(404, 'Passage not found or no longer available.');
-      const hit = workspaceHit(source, result.hits[0]), currentVersion = hash(hit);
+      const hit = (await named(principal, [workspaceHit(source, result.hits[0])]))[0];
+      if (!hit) fail(404, 'Passage not found or no longer available.');
+      const currentVersion = hash(hit);
       if (version && version !== currentVersion) fail(409, 'Passage changed; fetch again from offset 0.');
       if (offset > hit.text.length) fail(400, 'Offset exceeds passage length.');
       const end = Math.min(offset + length, hit.text.length);
