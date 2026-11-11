@@ -5,6 +5,7 @@ import {gzipSync} from 'node:zlib';
 import {createIntegrations} from '../dist/src/integrations/service.mjs';
 import {createRecordCounts} from '../dist/src/integrations/counts.mjs';
 import {usageReport} from '../dist/src/application/usage.mjs';
+import {sourceProgress,sourceStatus} from '../dist/src/application/source-model.mjs';
 const gate = () => Promise.withResolvers();
 const principal = {tenantId:'org_a',userId:'user_a'};
 const provider = {id:'slack',scope:'team',name:'Slack',streams:[],progressStream:['messages'],progress:[]};
@@ -19,6 +20,7 @@ test('cold and concurrent reads return immediately while one status refresh rema
   assert.deepEqual(calls,['jobs','streams']);
   assert.equal((await a)[0].state,'connected');assert.equal((await a)[0].synced,undefined);
   assert.equal((await a)[0].statusRefreshing,true);assert.deepEqual(await b,await a);
+  assert.equal(sourceProgress((await a)[0]),'Checking sync status…');
   jobs.resolve([{jobId:1,status:'succeeded'}]);streams.resolve({messages:12});
   await tick();assert.equal((await integrations.list(principal))[0].synced,12);
   await integrations.list(principal);assert.deepEqual(calls,['jobs','streams']);
@@ -42,6 +44,7 @@ test('refresh serves recent measurements, retries with backoff, expires stale da
   await integrations.list(principal);assert.equal(calls,2);
   pending.reject(Error('offline'));await tick();
   const failed=(await integrations.list(principal))[0];assert.equal(failed.synced,12);assert.equal(failed.statusUnavailable,true);assert.equal(calls,2);
+  assert.equal(sourceStatus(failed).label,'Status unavailable');assert.match(sourceProgress(failed),/last measurement/);
   time=300001;const expired=(await integrations.list(principal))[0];assert.equal(expired.state,'connected');assert.equal(expired.synced,undefined);
   records.splice(0);assert.equal((await integrations.list(principal))[0].state,'disconnected');
 });
