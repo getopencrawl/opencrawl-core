@@ -102,7 +102,7 @@ if(action==='status'){
 }else if(action==='reset'){
   if(!process.argv.includes('--yes'))throw new Error('reset --yes permanently deletes this clone’s development accounts, imported data and Airbyte cluster');
   if(ownedNode())run(join(bin,'kind'),['delete','cluster','--name',state.project,'--kubeconfig',kubeconfig]);
-  if(composeExists())compose(['down','--volumes']);
+  if(composeExists())compose(['down','--volumes','--remove-orphans']);
   // Airbyte's database owns files as container UIDs. Delete only this clone's
   // bind-mounted data using a short-lived container, before removing ownership state.
   const dataDir=join(stateDir,'airbyte-data');
@@ -174,7 +174,7 @@ async function up(){
     // Stop the old workers before pausing source jobs. Preserve connections, volumes and grants.
     if(composeExists()){
       compose(['stop','app','worker']);
-      if(state.airbyteEnabled!==false)compose(['rm','--stop','--force','fixture']);
+      if(state.airbyteEnabled!==false)compose(['stop','fixture']);
     }
     if(existing?.State.Running)run('docker',['stop',node]);
   }

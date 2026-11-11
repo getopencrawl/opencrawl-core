@@ -171,7 +171,7 @@ try{
   const result=await json<unknown>('/api/debug/search',{query:marker});
   assert.ok(JSON.stringify(result).includes(expected),'Authenticated product search did not retrieve the imported fixture');
   if(!verifyOnly)await rpc('tools/call',{name:'board_sync',arguments:{workspace:input.organization,agent:'dev:verification',topics:['dev-verification'],posts:[{id:input.project+'-board',topic:'dev-verification',text:'Synthetic development verification: capture and retrieval succeeded.'}]}});
-  const board=await rpc('tools/call',{name:'board_sync',arguments:{workspace:input.organization,agent:'dev:verification',topics:['dev-verification'],after:0,leave:true}});
+  const board=await rpc('tools/call',{name:'board_sync',arguments:{workspace:input.organization,agent:'dev:reader',topics:['dev-verification'],after:0,leave:true}});
   assert.ok(JSON.stringify(board).includes('Synthetic development verification: capture and retrieval succeeded.'));
   const forged=await request('/api/debug/search',{method:'POST',headers:{origin:input.origin,'content-type':'application/json'},body:JSON.stringify({query:marker,tenantId:'org_forged'})});
   assert.equal(forged.status,400,'Search accepted a caller-supplied tenant');
