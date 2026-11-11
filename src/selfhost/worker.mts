@@ -17,10 +17,12 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   if(!address||!namespace)throw new Error('Configure Temporal address and namespace');
   const config={address,namespace},taskQueue=env.TEMPORAL_CONNECTOR_TASK_QUEUE||'connector-indexing-v1',sessionQueue=env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1';
   const bundleRoot=env.OPENCRAWL_WORKFLOW_DIRECTORY||'/tmp/opencrawl-workflows';await mkdir(bundleRoot,{recursive:true});
-  await buildConnectorWorkflows(bundleRoot+'/connectors.cjs');await buildSessionWorkflows(bundleRoot+'/sessions.cjs');
+  if(services.connectors)await buildConnectorWorkflows(bundleRoot+'/connectors.cjs');
+  await buildSessionWorkflows(bundleRoot+'/sessions.cjs');
   const scheduling=await connectorClient(config),source=singleOrganizationSessionSource(settings,store,prefix);
-  const connectors=await createConnectorWorker({...config,taskQueue,bundlePath:bundleRoot+'/connectors.cjs',resolve:services.connectors.resolve});
+  const connectors=services.connectors?await createConnectorWorker({...config,taskQueue,bundlePath:bundleRoot+'/connectors.cjs',resolve:services.connectors.resolve}):undefined;
   const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve});
+  const workers=connectors?[sessions,connectors]:[sessions];
   await ensureSessionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:sessionQueue});
   const realm=createRealm(settings.search),purge=createConnectionPurger({environment:'selfhost',generation:'v1',
     deleteSchedule:id=>scheduling.client.schedule.getHandle(id).delete(),
@@ -32,19 +34,21 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const tick=()=>{
     if(inFlight||stopping)return;
     inFlight=(async()=>{
-      const records=await services.registry.listTenant(settings.organizationId);
-      for(const record of records.filter(r=>r.status==='active'&&eligible(r))){
-        const reference={tenantId:record.tenantId,userId:record.userId,connectionId:record.integrationId,generation:'v1'};
-        await services.connectors.resolve(reference);await ensureConnectorSchedule(scheduling.client,{reference,taskQueue,generation:'v1'});
+      if(services.connectors){
+        const records=await services.registry.listTenant(settings.organizationId);
+        for(const record of records.filter(r=>r.status==='active'&&eligible(r))){
+          const reference={tenantId:record.tenantId,userId:record.userId,connectionId:record.integrationId,generation:'v1'};
+          await services.connectors.resolve(reference);await ensureConnectorSchedule(scheduling.client,{reference,taskQueue,generation:'v1'});
+        }
+        await purge(records.filter(r=>r.status==='disconnected'));
       }
-      await purge(records.filter(r=>r.status==='disconnected'));
-      if(connectors.worker.getState()==='RUNNING'&&sessions.worker.getState()==='RUNNING')await writeFile(readiness,JSON.stringify({checkedAt:new Date().toISOString(),namespace,taskQueue,sessionQueue}));
+      if(workers.every(x=>x.worker.getState()==='RUNNING'))await writeFile(readiness,JSON.stringify({checkedAt:new Date().toISOString(),namespace,airbyteEnabled:!!connectors,taskQueue:connectors?taskQueue:undefined,sessionQueue}));
     })().catch(async()=>{await unlink(readiness).catch(()=>{});console.error(JSON.stringify({event:'selfhost.indexing.discovery_failed'}));}).finally(()=>{inFlight=undefined;});
   };
   await unlink(readiness).catch(()=>{});const timer=setInterval(tick,30000);
-  const stop=()=>{stopping=true;clearInterval(timer);for(const x of [connectors,sessions])if(x.worker.getState()==='RUNNING')x.worker.shutdown();};
+  const stop=()=>{stopping=true;clearInterval(timer);for(const x of workers)if(x.worker.getState()==='RUNNING')x.worker.shutdown();};
   process.once('SIGTERM',stop);process.once('SIGINT',stop);
-  const runs=[connectors.worker.run(),sessions.worker.run()];tick();
-  try{await Promise.all(runs);}finally{stop();await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await scheduling.connection.close();await connectors.connection.close();await sessions.connection.close();services.close();}
+  const runs=workers.map(x=>x.worker.run());tick();
+  try{await Promise.all(runs);}finally{stop();await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await runSelfhostWorker();

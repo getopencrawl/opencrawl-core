@@ -1,8 +1,89 @@
 name: Self-host preview
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full_airbyte:
+        description: Also verify the full Airbyte stack and switching modes
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
+  application:
+    name: Application without Airbyte
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - name: Install without Airbyte, then verify the real product
+        run: |
+          ./dev/up --no-airbyte
+          ./dev/up --no-airbyte demo
+          test ! -e .opencrawl-dev/bin/kind
+          test ! -e .opencrawl-dev/bin/kubectl
+          test ! -e .opencrawl-dev/bin/helm
+          test ! -e .opencrawl-dev/bin/airbyte.tgz
+          test ! -e .opencrawl-dev/kubeconfig
+          test -z "$(docker ps -aq --filter label=io.x-k8s.kind.cluster)"
+      - name: Verify persisted capture, search and board after stop/resume without reingestion
+        run: |
+          ./dev/up stop
+          ./dev/up --no-airbyte
+          project=$(node -p "require('./.opencrawl-dev/state.json').project")
+          compose() { docker compose --project-name "$project" --env-file .opencrawl-dev/compose.env -f deploy/compose.yaml -f .opencrawl-dev/compose.json "$@"; }
+          compose exec -T worker node -e "const fs=require('fs'),s=JSON.parse(fs.readFileSync('/tmp/opencrawl-worker-ready.json'));if(s.airbyteEnabled!==false||s.taskQueue||fs.existsSync('/tmp/opencrawl-workflows/connectors.cjs'))process.exit(1)"
+          compose run --rm --no-deps --user root -e OPENCRAWL_DEV_VERIFY_ONLY=true \
+            --volume "$PWD/dev:/opencrawl/dev:ro" --volume "$PWD/.opencrawl-dev/seed:/dev-state" \
+            app node --disable-warning=ExperimentalWarning dev/seed.mts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: application-without-airbyte-${{ github.sha }}
+          path: .opencrawl-dev/seed/verification.json
+      - name: Remove only this job's disposable installation
+        if: always()
+        run: ./dev/up reset --yes
+  airbyte:
+    name: Full Airbyte and mode switching
+    if: github.event_name == 'workflow_dispatch' && inputs.full_airbyte
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - name: Verify default startup, disable, and re-enable with retained data
+        run: |
+          ./dev/up demo
+          cp .opencrawl-dev/verification.json "$RUNNER_TEMP/full.json"
+          ./dev/up demo --no-airbyte
+          project=$(node -p "require('./.opencrawl-dev/state.json').project")
+          test "$(docker inspect --format '{{.State.Running}}' "$project-control-plane")" = false
+          ./dev/up demo
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const before=JSON.parse(readFileSync(process.env.RUNNER_TEMP+'/full.json'));
+          const after=JSON.parse(readFileSync('.opencrawl-dev/verification.json'));
+          assert.equal(after.organization,before.organization);
+          assert.deepEqual(after.airbyte,before.airbyte);
+          JS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: application-full-airbyte-${{ github.sha }}
+          path: .opencrawl-dev/verification.json
+      - name: Remove only this job's disposable installation
+        if: always()
+        run: ./dev/up reset --yes
   self-host:
     name: Self-host smoke
     runs-on: blacksmith-4vcpu-ubuntu-2404
