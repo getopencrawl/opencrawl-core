@@ -102,6 +102,7 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
         if(!admin(member))throw consoleFailure(403,'Only an organization admin can do that.');
         const payload=await input(req);
         if(Object.keys(payload).some(key=>key!=='userId')||typeof payload.userId!=='string'||!/^user_[A-Za-z0-9]+$/.test(payload.userId))throw consoleFailure(400,'Choose an active teammate.');
+        if(payload.userId===user.id)throw consoleFailure(400,'You cannot remove yourself. Ask another admin to remove you.');
         body=await services.removeMember(user,principal.tenantId,payload.userId);
       } else if (path === '/api/console/team/organization') {
         if (!admin(member)) throw consoleFailure(403,'Only an organization admin can do that.');
