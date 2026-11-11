@@ -4,7 +4,7 @@ import {digest,sessionScope} from './event-identity.mjs';
 
 /** Owner-controlled state for one captured session or memory file. Stored beside
  * the owner's capture objects, so it carries the same tenant/user scope. */
-export interface ResourceControl {schemaVersion: 1; visibility: 'team' | 'private'; deletedAt: string | null; updatedAt: string}
+export interface ResourceControl {schemaVersion: 1; visibility: 'team' | 'private'; deletedAt: string | null; updatedAt: string; deletion?: {sessionId: string; state: 'pending' | 'complete'}}
 export type ControlKind = 'sessions' | 'memories';
 const MAX_CONTROL_BYTES = 4096;
 function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status, permanent: status !== 503});}
@@ -17,10 +17,16 @@ function decode(bytes: Uint8Array | null): ResourceControl | null {
   if (!bytes) return null;
   const value = parseJson<ResourceControl>(bytes);
   if (value?.schemaVersion !== 1 || !['team', 'private'].includes(value.visibility) || (value.deletedAt !== null && !Number.isFinite(Date.parse(value.deletedAt)))) fail(503, 'Invalid resource control');
+  if(value.deletion&&(!value.deletedAt||typeof value.deletion.sessionId!=='string'||!/^[A-Za-z0-9_.:-]{1,200}$/.test(value.deletion.sessionId)||!['pending','complete'].includes(value.deletion.state)))fail(503,'Invalid deletion control');
   return value;
 }
 
 export function createControls({store, prefix}: {store: ObjectStore; prefix: string}) {
+  /** Used only after a worker validates the queued source key's scope. */
+  async function readSource(source:{tenantHash:string;userHash:string;harness:string;sessionHash:string}){
+    if(!isSessionHarness(source.harness)||![source.tenantHash,source.userHash,source.sessionHash].every(value=>/^[a-f0-9]{64}$/.test(value)))fail(400,'Invalid source control identity');
+    return decode((await store.readVersion(`${prefix}/tenants/${source.tenantHash}/users/${source.userHash}/controls/sessions/${source.harness}/${source.sessionHash}.json`,{maxBytes:MAX_CONTROL_BYTES})).data);
+  }
   async function read(owner: Principal, kind: ControlKind, harness: string, name: string) {
     if (typeof store.readVersion !== 'function') fail(503, 'Owner controls require conditional object storage');
     return decode((await store.readVersion(controlKey(prefix, owner, kind, harness, name), {maxBytes: MAX_CONTROL_BYTES})).data);
@@ -30,7 +36,7 @@ export function createControls({store, prefix}: {store: ObjectStore; prefix: str
     const key = controlKey(prefix, owner, kind, harness, name);
     for (let attempt = 0; attempt < 8; attempt++) {
       const current = await store.readVersion(key, {maxBytes: MAX_CONTROL_BYTES});
-      const next: ResourceControl = {schemaVersion: 1, ...change(decode(current.data)), updatedAt: new Date().toISOString()};
+      const next: ResourceControl = {...decode(current.data), schemaVersion: 1, ...change(decode(current.data)), updatedAt: new Date().toISOString()};
       if (await store.compareAndSet(key, current.data ? current.version : null, Buffer.from(JSON.stringify(next)))) return next;
     }
     fail(503, 'Resource control busy; retry');
@@ -54,7 +60,7 @@ export function createControls({store, prefix}: {store: ObjectStore; prefix: str
     } while (cursor);
     return found;
   }
-  return {read, update, list};
+  return {read, readSource, update, list};
 }
 
 /** Private resources stay readable by their owner only. Documents indexed before

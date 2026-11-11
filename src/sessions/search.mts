@@ -1,4 +1,4 @@
-import type {Principal} from './types.mjs';
+import type {Principal, ObjectStore} from './types.mjs';
 import type {RealmOptions, DocumentItem, SearchInput, SearchResult, OpenSearchResponse, Passage} from '../search/types.mjs';
 interface TermsAggregation {buckets: Array<{key: string; doc_count: number}>}
 interface SessionCount {count: {value: number}}
@@ -6,7 +6,7 @@ interface ActivityAggregation {doc_count: number; sessions: SessionCount; subage
 import {createRealmResolver,realmField} from '../search/realm.mjs';
 import {sessionScope} from './ingest.mjs';
 import {createMemorySearch} from '../memories/search.mjs';
-import {visibleTo} from './controls.mjs';
+import {visibleTo, createControls} from './controls.mjs';
 import type {ResourceControl} from './controls.mjs';
 import {applySessionControl} from './library.mjs';
 
@@ -14,13 +14,16 @@ import {sessionIndexMapping} from '../search/mapping.mjs';
 export {sessionIndexMapping};
 const UPSERT="if (ctx._source.session != null && (ctx._source.tenantId != params.doc.tenantId || ctx._source.session.userId != params.doc.session.userId)) { throw new IllegalArgumentException('Session document ownership mismatch'); } if (ctx._source.session == null || ctx._source.session.receivedAt == null || params.doc.session.receivedAt.compareTo(ctx._source.session.receivedAt) > 0) { ctx._source = params.doc; } else { ctx.op = 'none'; }";
 function fail(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
-export function createSessionSearch(options: RealmOptions) {
+export function createSessionSearch(options: RealmOptions & {store?: ObjectStore; prefix?: string}) {
   const resolve=createRealmResolver(options), f=(field: string)=>realmField('session',field);
+  const controls=options.store && options.prefix ? createControls({store:options.store,prefix:options.prefix}) : null;
   function search(principal: Principal, input: SearchInput & {raw: true}): Promise<OpenSearchResponse>;
   function search(principal: Principal, input?: SearchInput & {raw?: false}): Promise<SearchResult>;
   function search(principal: Principal, input: SearchInput): Promise<SearchResult | OpenSearchResponse>;
   async function search(principal: Principal,{query='',limit=20,raw=false,match='all',sessionId,id}: SearchInput={}): Promise<SearchResult | OpenSearchResponse> {
       sessionScope(principal);
+      if (principal.captureAccess !== undefined) fail(403, 'Session read access required');
+      if (!controls) fail(503, 'Session search requires authoritative resource controls');
       if(id!==undefined&&(typeof id!=='string'||!/^[A-Za-z0-9_:-]{1,256}$/.test(id)))fail(400,'Invalid passage id');
       if(!['all','any','phrase'].includes(match)||(sessionId!==undefined&&(typeof sessionId!=='string'||!sessionId||sessionId.length>200)))fail(400,'Invalid search filters');
       if(typeof query!=='string'||query.length>4000||!Number.isInteger(limit)||limit<1||limit>100)fail(400,'Invalid search query or limit');
@@ -29,8 +32,19 @@ export function createSessionSearch(options: RealmOptions) {
         sort:query?['_score',...['receivedAt','sessionId','eventId','chunk','userId','installationId'].map(key=>({[f(key)]:key==='receivedAt'?'desc':'asc'}))]:[{[f('receivedAt')]:'desc'},{[f('sequence')]:'asc'}]});
       const hits=result?.hits?.hits;
       if(!Array.isArray(hits)||hits.some(hit=>hit._source?.tenantId!==principal.tenantId||typeof hit._source?.userId!=='string'||!hit._source.userId))throw new Error('Search returned an invalid ownership scope');
+      // The index is a projection, never the authority for deletion/privacy.
+      // Recheck after retrieval, including fetch-by-ID and raw diagnostics.
+      const allowed=await Promise.all(hits.map(async hit=>{
+        const doc=hit._source;
+        if(typeof doc.harness!=='string'||typeof doc.sessionId!=='string')throw new Error('Invalid session search identity');
+        const control=await controls.read({...principal,userId:doc.userId!},'sessions',doc.harness,doc.sessionId);
+        return !control?.deletedAt && (control?.visibility!=='private'||doc.userId===principal.userId);
+      }));
+      result.hits.hits=hits.filter((_,i)=>allowed[i]);
+      const filtered=result.hits.hits.length!==hits.length;
+      if(filtered)result.hits.total={value:result.hits.hits.length,relation:'gte'};
       if(raw)return result;
-      return {total:result.hits.total?.value??0,hits:hits.map(hit=>({id:hit._id,score:hit._score,...hit._source} as Passage))};
+      return {total:result.hits.total?.value??0,...(filtered?{truncated:true}:{}),hits:result.hits.hits.map(hit=>({id:hit._id,score:hit._score,...hit._source} as Passage))};
     }
   return {
     memories:createMemorySearch(options),

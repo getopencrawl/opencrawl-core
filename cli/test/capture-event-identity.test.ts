@@ -44,7 +44,7 @@ test('replayed native attachment changes, disappearance and reappearance get saf
   writeFileSync(transcript+'.replacement',raw);renameSync(transcript+'.replacement',transcript);
   await captureTranscript(config,'claude-code',transcript);
   const entries=queued();expect(entries).toHaveLength(1);const {name,batch}=entries[0];ids.push(batch.events[0].id);
-  for(const attachment of batch.attachments)if(attachment.status==='captured')await ingest.putAttachment(config.owner,attachment.sha256,readFileSync(join(captureDir(),'blobs',attachment.sha256)));
+  for(const attachment of batch.attachments)if(attachment.status==='captured')await ingest.putAttachment(config.owner,attachment.sha256,readFileSync(join(captureDir(),'blobs',attachment.sha256)),batch);
   expect((await ingest.putBatch(config.owner,batch)).stored).toBe(true);
   if(content===null)expect(batch.attachments[0].status).toBe('missing');else expect(batch.events[0].data.content[0].sha256).toBe(hash(content));
   const before=readFileSync(join(captureDir(),'queue',name));await captureTranscript(config,'claude-code',transcript);expect(readFileSync(join(captureDir(),'queue',name))).toEqual(before);

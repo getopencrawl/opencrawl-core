@@ -45,11 +45,13 @@ test('self-hosted S3 receiver round-trips all four surfaces, attachments and res
   const receipts=[];
   assert.equal((await fetch(api+'/api/sessions/identity')).status,401);
   let response=await fetch(api+'/api/sessions/attachments/'+sha,{method:'PUT',headers,body:attachment});
-  assert.equal(response.status,200);
+  assert.equal(response.status,409); // Legacy unscoped writes cannot bypass deletion.
   for(const harness of ['claude-code','codex'])for(const origin of ['cli','desktop']){
     const batch={schemaVersion:1,owner,installationId:'installation',sessionId:harness+'-'+origin,harness,origin,
       events:[{id:'event',kind:'message',data:{role:'user',content:[{type:'opencrawl_attachment',sha256:sha}]}}],
       attachments:[{status:'captured',sha256:sha,size:attachment.length}]};
+    response=await fetch(api+'/api/sessions/attachments/'+sha+'?'+new URLSearchParams({harness,installationId:batch.installationId,sessionId:batch.sessionId}),{method:'PUT',headers,body:attachment});
+    assert.equal(response.status,200);
     const send=body=>fetch(api+'/api/sessions/batches',{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify(body)});
     response=await send(batch);assert.equal(response.status,200);
     const receipt=(await response.json()).data;
@@ -59,7 +61,7 @@ test('self-hosted S3 receiver round-trips all four surfaces, attachments and res
     assert.equal(JSON.parse(gunzipSync(await store.get(key))).origin,origin);
     receipts.push({harness,origin,installationId:batch.installationId,sessionId:batch.sessionId,batchId:receipt.batchId});
   }
-  assert.deepEqual(await store.get(`${prefix}/${sessionScope(owner)}/attachments/${sha}`),attachment);
+  assert.equal(await store.get(`${prefix}/${sessionScope(owner)}/attachments/${sha}`),null);
   await new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve()));
   server=await startStandaloneCapture(env);api='http://127.0.0.1:'+server.address().port;
   for(const {origin,...receipt} of receipts){
@@ -69,7 +71,7 @@ test('self-hosted S3 receiver round-trips all four surfaces, attachments and res
     assert.equal(batch.origin,origin);assert.equal(batch.attachments[0].sha256,sha);
   }
   const keys=(await store.list(prefix+'/')).keys;
-  assert.equal(keys.filter(key=>!key.includes('/onboarding/')).length,9); // Four ledgers, four batches, one attachment.
+  assert.equal(keys.filter(key=>!key.includes('/onboarding/')&&!key.includes('/controls/')).length,12); // Four ledgers, four batches, four session-scoped attachments.
   assert.ok(keys.every(key=>!key.includes('/index-pending/')));
   const status=await (await fetch(api+'/api/onboarding',{headers})).json();
   assert.equal(status.data.session.harness,'codex');

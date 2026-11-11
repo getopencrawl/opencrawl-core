@@ -1,3 +1,4 @@
+import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,7 +15,7 @@ const aggregations = people => ({activity: {doc_count: 8, sessions: {count: {val
 test('session usage counts only the principal, or the whole tenant when asked, and never returns text', async () => {
   const bodies = [];
   let people = [bucket('user_a')];
-  const search = createSessionSearch({endpoint: 'http://localhost:9200', index: 'sessions', fetch: async (_, options) => {
+  const search = createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint: 'http://localhost:9200', index: 'sessions', fetch: async (_, options) => {
     bodies.push(JSON.parse(options.body));
     return realmResponse('session',{hits: {total: {value: 80, relation: 'eq'}}, aggregations: aggregations(people)});
   }});

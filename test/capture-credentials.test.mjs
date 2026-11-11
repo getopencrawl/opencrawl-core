@@ -46,7 +46,7 @@ test('shared setup prompt covers consent, every environment, startup awareness a
  assert.ok(script.includes('--harness claude-code --defer-auth --backfill skip'));
  for(const text of ['collect backfill --dry-run','--harness <claude-code|codex|all> --yes','keep unanswered choices pending'])assert.ok(prompt.includes(text));
  // One consent question covers everything capture shares, before any import.
- for(const text of ['one consent question','native agent memory files','without automatic secret redaction','codexHooksAwaitingReview','never write hook trust','login --api '+api+' --json so my browser opens'])assert.ok(prompt.includes(text),text);
+ for(const text of ['one consent question','native agent memory files','recognized session secrets masked locally before upload', 'unknown secret formats, image contents and native memory files are not reliably covered','codexHooksAwaitingReview','never write hook trust','login --api '+api+' --json so my browser opens'])assert.ok(prompt.includes(text),text);
  assert.ok(prompt.indexOf('collect backfill --dry-run')<prompt.indexOf('one consent question that'),'preview counts precede the consent question');
  assert.ok(!script.includes('login'));assert.ok(!script.includes('systemctl'));
  assert.throws(()=>cloudSetupScript('https://capture.example.com/path'));

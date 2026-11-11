@@ -16,11 +16,12 @@ const denied = () => Object.assign(new Error('Connector writes are closed'), {st
  * store must provide linearizable readVersion/compareAndSet, including create.
  * Keep this control document outside every raw/derived data deletion prefix.
  * A transport failure never proves a started remote write stopped. */
-export function createConnectorWriteBarrier({tenantId, connectionId, store, namespace = 'selfhost', now = Date.now}: {tenantId: string; connectionId: string; store: ConditionalStore; namespace?: string; now?: () => number}) {
+export function createConnectorWriteBarrier({tenantId, connectionId, store, namespace = 'selfhost', now = Date.now, controlPrefix = PREFIX}: {tenantId: string; connectionId: string; store: ConditionalStore; namespace?: string; now?: () => number; controlPrefix?: string}) {
   if (![namespace, tenantId, connectionId].every(value => typeof value === 'string' && /^[A-Za-z0-9_:-]{1,200}$/.test(value)) ||
       typeof store?.readVersion !== 'function' || typeof store?.compareAndSet !== 'function') throw new Error('Explicit connector scope and conditional store required');
   const timestamp = () => {const value = now(); if (!Number.isSafeInteger(value) || value < 0) throw unavailable('Invalid connector write clock'); return value;};
-  const key = PREFIX + digest([namespace, tenantId, connectionId]) + '.json';
+  if (!controlPrefix.endsWith('/') || controlPrefix.slice(0, -1).split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Invalid write barrier control prefix');
+  const key = controlPrefix + digest([namespace, tenantId, connectionId]) + '.json';
   const initial = (): BarrierState => ({version: 1, namespace, tenantId, connectionId, closedAt: null, writers: []});
   async function read() {
     const item = await store.readVersion(key, {maxBytes: MAX_STATE_BYTES});

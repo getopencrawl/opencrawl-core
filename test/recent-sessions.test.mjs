@@ -1,3 +1,4 @@
+import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -126,7 +127,7 @@ test('selected reply fetch skips unrelated history reads and still rechecks visi
 test('real realm: newest ten org sessions, original first/last text, tool exclusion, timestamps and source isolation', {skip:!endpoint}, async t => {
   const environment='recent-'+randomUUID().slice(0,8), prefix='sessions/recent', store=memorySessionStore();
   const owner={tenantId:'team',userId:'alice'}, teammate={...owner,userId:'bob'}, foreign={...owner,tenantId:'foreign'};
-  const search=createSessionSearch({endpoint,environment}), recent=createRecentSessions({endpoint,environment,store,prefix});
+  const search=createSessionSearch({store,prefix,endpoint,environment}), recent=createRecentSessions({endpoint,environment,store,prefix});
   t.after(async()=>{for(const who of [owner,foreign])await fetch(endpoint+'/'+realmIndex(environment,who.tenantId),{method:'DELETE'});});
   for(let attempt=0;;attempt++){try{await search.ensureIndex(owner);await search.ensureIndex(foreign);break;}catch(error){if(attempt>=60)throw error;await new Promise(resolve=>setTimeout(resolve,1000));}}
   const ingest=createSessionIngest({store,prefix});

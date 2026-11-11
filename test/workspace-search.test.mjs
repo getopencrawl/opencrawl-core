@@ -1,3 +1,4 @@
+import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
@@ -64,7 +65,7 @@ test('partial OpenSearch shard responses cannot masquerade as complete searches'
   const binding={tenantId:'team-a',connectionId:'c',workspaceId:'w',provider:'notion',access:'workspace-global',rawPrefix:'raw/v1/source=notion/workspace=w/connection=c/'};
   for (const flags of [{timed_out:true},{_shards:{failed:1}}]) {
     const fetch=async()=>Response.json({...flags,hits:{total:{value:0},hits:[]}});
-    const sessions=createSessionSearch({endpoint:'http://localhost:9200',index:'test',fetch});
+    const sessions=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'test',fetch});
     const connectors=createConnectorSearch({endpoint:'http://localhost:9200',index:'test',tenantId:'team-a',fetch});
     await assert.rejects(sessions.search(principal,{query:'x'}),/incomplete/);
     await assert.rejects(connectors.search(principal,[binding],{query:'x'}),/incomplete/);

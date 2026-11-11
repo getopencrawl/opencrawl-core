@@ -1,3 +1,4 @@
+import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test, before} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -36,7 +37,7 @@ test('real session and memory library: viewer, private visibility, owner-only co
   await createIndexTransport({endpoint, index: realmIndex(environment, tenantId)})('', {settings: {number_of_shards: 1, number_of_replicas: 0}, mappings: {...old, _meta: {schema: 1, tenantId}}}, 'PUT');
 
   const options = {endpoint, environment, store, prefix};
-  const search = createSessionSearch({endpoint, environment}), ingest = createSessionIngest({store, prefix});
+  const search = createSessionSearch({store,prefix,endpoint, environment}), ingest = createSessionIngest({store, prefix});
   const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
   const sessions = createSessionLibrary(options), memories = createMemoryLibrary(options), api = createLibraryApi({sessions, memories});
   const workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
@@ -175,7 +176,7 @@ test('real Grok Bot sessions: hook-derived conversations and tool-only activity 
   const store = {...underlying, put: async (k, b, m) => {objects.add(k); return underlying.put(k, b, m);}, compareAndSet: async (k, v, b) => {objects.add(k); return underlying.compareAndSet(k, v, b);}};
   const prefix = 'sessions/grok-bot-test/' + run, options = {endpoint, environment, store, prefix};
   t.after(async () => {for (const key of objects) await underlying.delete(key); await fetch(endpoint + '/' + realmIndex(environment, tenantId), {method: 'DELETE'});});
-  const search = createSessionSearch({endpoint, environment}), ingest = createSessionIngest({store, prefix});
+  const search = createSessionSearch({store,prefix,endpoint, environment}), ingest = createSessionIngest({store, prefix});
   const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
   const api = createLibraryApi({sessions: createSessionLibrary(options)}), workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
   const keys = () => [...objects].filter(key => key.endsWith('.json.gz'));

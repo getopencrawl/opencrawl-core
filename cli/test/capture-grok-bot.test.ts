@@ -304,19 +304,19 @@ test('an uploader lock that is merely busy is quiet; one that leaves old notices
 
 test('excluded workspaces and oversized payloads never leave the computer',async()=>fixture(async f=>{
   await f.install();
-  await excludeCapture('/home/bot/private');
-  await captureHook('grok-bot',hook('beforeSubmitPrompt',{prompt:'private request',workspace_roots:['/home/bot/private/taxes']}));
+  await excludeCapture(join(f.dir,'private'));
+  await captureHook('grok-bot',hook('beforeSubmitPrompt',{prompt:'private request',workspace_roots:[join(f.dir,'private','taxes')]}));
   // With a project exclusion in place, an unknown working directory is excluded too.
   await captureHook('grok-bot',{hook_event_name:'beforeSubmitPrompt',conversation_id:'no-workspace',prompt:'unknown location'});
   expect(captureStatus().pendingHooks).toBe(0);
   // Excluding a Bot's conversation ID excludes every day of that Bot.
   await excludeCapture(undefined,base.conversation_id);
-  await captureHook('grok-bot',hook('beforeSubmitPrompt',{prompt:'excluded Bot'}));
+  await captureHook('grok-bot',hook('beforeSubmitPrompt',{prompt:'excluded Bot',workspace_roots:[f.dir]}));
   expect(captureStatus().pendingHooks).toBe(0);
-  await captureHook('grok-bot',hook('beforeSubmitPrompt',{conversation_id:'another-bot',prompt:'still recorded'}));
+  await captureHook('grok-bot',hook('beforeSubmitPrompt',{conversation_id:'another-bot',prompt:'still recorded',workspace_roots:[f.dir]}));
   expect(captureStatus().pendingHooks).toBe(1);await drainCaptureNotices();
   rmSync(join(captureDir(),'queue'),{recursive:true});mkdirSync(join(captureDir(),'queue'));
-  await captureHook('grok-bot',hook('postToolUse',{conversation_id:'another-bot',tool_name:'Shell',tool_input:{command:'cat big'},tool_output:'x'.repeat(15*1024*1024+1),tool_use_id:'big',duration:5}));
+  await captureHook('grok-bot',hook('postToolUse',{conversation_id:'another-bot',tool_name:'Shell',tool_input:{command:'cat big'},tool_output:'x'.repeat(15*1024*1024+1),tool_use_id:'big',duration:5,workspace_roots:[f.dir]}));
   await drainCaptureNotices();
   const batch=JSON.parse(readFileSync(join(captureDir(),'queue',readdirSync(join(captureDir(),'queue'))[0]),'utf8'));
   expect(batch.events).toHaveLength(1);

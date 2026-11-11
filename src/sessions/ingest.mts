@@ -11,11 +11,14 @@ import {gzipSync, gunzipSync} from 'node:zlib';
 import {digest,sessionScope,reserveSessionEvents} from './event-identity.mjs';
 import {createMemoryIngest,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
 import {createControls} from './controls.mjs';
+import {sessionWriteBarrier, sessionWriteStore} from './write-barrier.mjs';
 export {digest,sessionScope,auditSessionEventIdentities,auditSessionEventSource} from './event-identity.mjs';
 
 const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 export const MAX_BATCH_BYTES = 16 * 1024 * 1024;
+/** Capability checked by rollout tooling before accepting deletion requests. */
+export const sessionDeletionVersion = 1;
 export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const MAX_STORED_BATCH_BYTES = MAX_BATCH_BYTES + 1024 * 1024;
 
@@ -31,12 +34,17 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
       if(onMemoryStored)await onMemoryStored(principal,{harness:snapshot.harness,files:receipt.files,snapshotId:receipt.snapshotId});
       return receipt;
     },
-    async putAttachment(principal: Principal, hash: string, bytes: Uint8Array) {
+    async putAttachment(principal: Principal, hash: string, bytes: Uint8Array, session?: {harness: string; installationId: string; sessionId: string}) {
       const keyPrefix = scope(principal);
       if (!(bytes instanceof Uint8Array)) fail(400, 'Invalid attachment bytes');
       if (bytes.length > MAX_ATTACHMENT_BYTES) fail(413, 'Attachment exceeds limit');
       if (!/^[a-f0-9]{64}$/.test(hash) || digest(bytes) !== hash) fail(400, 'Attachment digest mismatch');
-      await store.put(`${keyPrefix}/attachments/${hash}`, bytes, 'application/octet-stream');
+      if (!session || !isSessionHarness(session.harness) || !id(session.sessionId) || !id(session.installationId)) fail(409, 'Upgrade the capture client: attachments require a session identity');
+      const barrier = sessionWriteBarrier(store, prefix, principal, session.harness, session.sessionId);
+      if ((await controls.read(principal, 'sessions', session.harness, session.sessionId))?.deletedAt || (await barrier.inspect()).closed) return {sha256: hash, size: bytes.length, discarded: 'session_deleted'};
+      try {
+        await sessionWriteStore(store, prefix, principal, session.harness, session.sessionId).put(`${keyPrefix}/${session.harness}/${digest(session.installationId)}/${digest(session.sessionId)}/attachments/${hash}`, bytes, 'application/octet-stream');
+      } catch (error) {if ((await barrier.inspect()).closed) return {sha256: hash, size: bytes.length, discarded: 'session_deleted'}; throw error;}
       return {sha256: hash, size: bytes.length};
     },
     async putBatch(principal: Principal, batch: SessionBatch) {
@@ -66,20 +74,30 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
       // The owner deleted this session. Accept the retry so clients stop sending
       // it, but never store or index it again.
       if ((await controls.read(principal, 'sessions', batch.harness, batch.sessionId))?.deletedAt) return {batchId: digest(serialized), eventCount: batch.events.length, stored: true, discarded: 'session_deleted'};
+      const barrier = sessionWriteBarrier(store, prefix, principal, batch.harness, batch.sessionId);
+      const discarded = () => ({batchId: digest(serialized), eventCount: batch.events.length, stored: true, discarded: 'session_deleted'});
+      if ((await barrier.inspect()).closed) return discarded();
+      const writes = sessionWriteStore(store, prefix, principal, batch.harness, batch.sessionId);
+      const attachmentKeys = new Map<string, string>();
+      try {
       for (const hash of attachments) {
-        if (!await exists(`${keyPrefix}/attachments/${hash}`, MAX_ATTACHMENT_BYTES)) fail(409, 'Attachment not uploaded');
+        const scoped = `${keyPrefix}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/attachments/${hash}`, legacy = `${keyPrefix}/attachments/${hash}`;
+        if (await exists(scoped, MAX_ATTACHMENT_BYTES)) attachmentKeys.set(hash, scoped);
+        else if (await exists(legacy, MAX_ATTACHMENT_BYTES)) attachmentKeys.set(hash, legacy);
+        else fail(409, 'Attachment not uploaded');
       }
-      await reserveSessionEvents({store,prefix,principal,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
+      await reserveSessionEvents({store:writes,prefix,principal,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
       const batchId = digest(serialized);
       const key = `${keyPrefix}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/${batchId}.json.gz`;
       // Immutable content-addressed batches: retries and simultaneous delivery do not duplicate or overwrite events.
       if (!await exists(key, MAX_STORED_BATCH_BYTES)) {
-        const record = {...batch, owner: {tenantId: principal.tenantId, userId: principal.userId,
+        const record = {...batch, attachments: batch.attachments.map(item => ({...item, objectKey: attachmentKeys.get(item.sha256 ?? '') ?? null})), owner: {tenantId: principal.tenantId, userId: principal.userId,
           name: principal.name ?? null, email: principal.email ?? null}, receivedAt: new Date().toISOString()};
-        await store.put(key, gzipSync(JSON.stringify(record)), 'application/gzip');
+        await writes.put(key, gzipSync(JSON.stringify(record)), 'application/gzip');
       }
       if (onStored) await onStored(principal, batch);
       return {batchId, eventCount: batch.events.length, stored: true};
+      } catch (error) {if ((await barrier.inspect()).closed) return discarded(); throw error;}
     },
     // The author selects a record within the authenticated tenant; it grants no authority.
     async getBatch(principal: Principal, {harness, installationId, sessionId, batchId, userId=principal?.userId}: Partial<SessionBatchReceipt>) {
@@ -139,8 +157,9 @@ export function createCaptureHandler({ingest, authenticate, search=undefined, cr
       }
       const attachment = /^\/api\/sessions\/attachments\/([a-f0-9]{64})$/.exec(url.pathname);
       if (attachment && req.method === 'PUT') {
+        const session = {harness: url.searchParams.get('harness') ?? '', installationId: url.searchParams.get('installationId') ?? '', sessionId: url.searchParams.get('sessionId') ?? ''};
         const bytes=await readBody(req,MAX_ATTACHMENT_BYTES);await revalidate();
-        return send(200, {data:await ingest.putAttachment(principal, attachment[1], bytes)});
+        return send(200, {data:await ingest.putAttachment(principal, attachment[1], bytes, session)});
       }
       if (url.pathname === '/api/sessions/batches' && req.method === 'POST') {
         let batch; try {batch = parseJson<SessionBatch>(await readBody(req, MAX_BATCH_BYTES));} catch(caught){const e=serviceError(caught);if(e.status)throw e;fail(400,'Invalid JSON');}

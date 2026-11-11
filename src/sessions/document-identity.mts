@@ -1,9 +1,10 @@
-import type {TenantPrincipal, JsonValue} from './types.mjs';
+import type {TenantPrincipal, JsonValue, ObjectStore} from './types.mjs';
 import type {DocumentItem, IndexHit, SearchDocument} from '../search/types.mjs';
 import type {createRealm} from '../search/realm.mjs';
 import {createHash} from 'node:crypto';
 import {sessionScope} from './ingest.mjs';
 import {sessionDocumentId} from './indexer.mjs';
+import {withSessionDocumentWrites} from './write-barrier.mjs';
 
 type Realm = Pick<ReturnType<typeof createRealm>, 'tenantId' | 'collection'>;
 type Hit = IndexHit<SearchDocument>;
@@ -64,8 +65,8 @@ async function write(sessions: ReturnType<Realm['collection']>, principal: Tenan
  * `restoreSessionDocumentIds` can undo it; the index is also rebuildable from
  * stored capture batches.
  */
-export async function migrateSessionDocumentIds({realm, principal, backup, dryRun = false, pageSize = 500, after = null, onPage = async () => {}}: {
-  realm: Realm; principal: TenantPrincipal; backup(step: SessionIdentityBackup): Promise<unknown>; dryRun?: boolean; pageSize?: number;
+export async function migrateSessionDocumentIds({realm, principal, store, prefix, backup, dryRun = false, pageSize = 500, after = null, onPage = async () => {}}: {
+  realm: Realm; principal: TenantPrincipal; store:ObjectStore; prefix:string; backup(step: SessionIdentityBackup): Promise<unknown>; dryRun?: boolean; pageSize?: number;
   after?: JsonValue[] | null; onPage?(report: SessionIdentityReport): Promise<unknown>;
 }): Promise<SessionIdentityReport> {
   if (principal?.tenantId !== realm.tenantId || principal.captureAccess !== undefined) throw Object.assign(new Error('Realm scope denied'), {status: 403});
@@ -76,6 +77,7 @@ export async function migrateSessionDocumentIds({realm, principal, backup, dryRu
 
   async function flush() {
     if (dryRun || !writes.length && !removals.length) {writes = []; removals = []; return;}
+    await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:[...writes,...removals]},async()=>{
     await backup({written: writes.map(item => item.id), removed: removals});
     // Write the surviving copy before removing anything, so an interrupted run
     // leaves at most an extra copy that the next run resolves.
@@ -83,6 +85,7 @@ export async function migrateSessionDocumentIds({realm, principal, backup, dryRu
     for (let start = 0; start < removals.length; start += 500) {
       await sessions.delete(principal, removals.slice(start, start + 500).map(item => item.id));
     }
+    });
     writes = []; removals = [];
   }
   function resolve(group: Hit[]) {
@@ -143,12 +146,12 @@ export async function migrateSessionDocumentIds({realm, principal, backup, dryRu
 }
 
 /** Undoes migration steps, newest first: puts removed documents back, then drops IDs the step created. */
-export async function restoreSessionDocumentIds({realm, principal, steps}: {realm: Realm; principal: TenantPrincipal; steps: SessionIdentityBackup[]}) {
+export async function restoreSessionDocumentIds({realm, principal, store, prefix, steps}: {realm: Realm; principal: TenantPrincipal; store:ObjectStore; prefix:string; steps: SessionIdentityBackup[]}) {
   if (principal?.tenantId !== realm.tenantId || principal.captureAccess !== undefined) throw Object.assign(new Error('Realm scope denied'), {status: 403});
   const sessions = realm.collection('session');
   let restored = 0, removed = 0;
   for (const step of [...steps].reverse()) {
-    await write(sessions, principal, step.removed);
+    await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:step.removed},()=>write(sessions, principal, step.removed));
     const previous = new Set(step.removed.map(item => item.id)), created = step.written.filter(id => !previous.has(id));
     for (let start = 0; start < created.length; start += 500) await sessions.delete(principal, created.slice(start, start + 500));
     restored += step.removed.length; removed += created.length;

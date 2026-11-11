@@ -9,12 +9,13 @@ import {createSessionSearch} from '../sessions/search.mjs';
 import {createConnectorSearch} from '../connectors/search.mjs';
 import {validateBinding, authorize} from '../connectors/scope.mjs';
 import {sessionScope} from '../sessions/ingest.mjs';
+import {standaloneStorage} from '../sessions/standalone.mjs';
 
 /** Operator-owned config only. Requests cannot choose credentials, indexes or bindings. */
 export async function configuredWorkspaceSearch(path: string) {
   const config = parseJson<OperatorSearchConfig>(await readFile(path, 'utf8'));
   const {principal} = config; sessionScope(principal);
-  const sessions = config.sessions ? createSessionSearch({...config.sessions, tenantId:principal.tenantId}) : undefined;
+  const sessions = config.sessions ? createSessionSearch({...config.sessions, ...standaloneStorage(), tenantId:principal.tenantId}) : undefined;
   let connectors;
   if (config.connectors) {
     const bindings = config.connectors.bindings.map(validateBinding);

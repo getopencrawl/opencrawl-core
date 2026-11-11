@@ -7,7 +7,7 @@ import {sessionClient,ensureSessionSchedule} from './client.mjs';
 export function standaloneSessionResolver(env=process.env) {
   const {store,prefix}=standaloneStorage(env),settings=searchSettings(env);
   if(!settings)throw new Error('Configure OPENCRAWL_OPENSEARCH_URL for the session worker');
-  const search=createSessionSearch(settings);
+  const search=createSessionSearch({...settings,store,prefix});
   const principal={tenantId:env.OPENCRAWL_TENANT_ID||'self-hosted',userId:env.OPENCRAWL_USER_ID||'owner'};
   const sourceId=env.OPENCRAWL_SESSION_SOURCE_ID||'self-hosted-sessions-v1';
   return {sourceId,resolve:async (input: SessionTaskInput)=>{
