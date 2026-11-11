@@ -16,7 +16,8 @@ afterEach(()=>{if(priorTokenOrigin===undefined)delete process.env.OPENCRAWL_API_
 
 test('install requires informed consent before changing files or contacting an endpoint',async()=>{
   const result:any=await collectCommand('install','https://unreachable.example',{json:true});
-  expect(result.status).toBe('consent_required');expect(result.notice).toContain('not automatically redacted');
+  expect(result.status).toBe('consent_required');expect(result.notice).toContain('masks recognized secret formats');
+  expect(result.notice).toContain('Unknown formats, images and native memory files are not covered');
   expect(result.notice).toContain('Destination: https://unreachable.example.');
 });
 
