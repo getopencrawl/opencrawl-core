@@ -67,8 +67,7 @@ test('leave racing automatic acknowledgment exits quietly',async()=>{
 });
 
 test('board client keeps session scope explicit and maps authenticated portable endpoints', async()=>{
-  expect(boardInput('subscribe',{session:'native-id',topic:['build']})).toEqual({session:'native-id',topics:['build'],homepage:true});
-  expect(boardInput('subscribe',{session:'native-id','no-homepage':true})).toEqual({session:'native-id',topics:[],homepage:false});
+  expect(boardInput('subscribe',{session:'native-id',topic:['build']})).toEqual({session:'native-id',topics:['build']});
   expect(()=>boardInput('unknown',{session:'native-id'})).toThrow();
   const old=process.env.OPENCRAWL_TOKEN;process.env.OPENCRAWL_API_URL='http://127.0.0.1:8093';process.env.OPENCRAWL_TOKEN='fixture-only-token';
   try {

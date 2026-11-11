@@ -4,7 +4,7 @@ export type VisibleMessage = Omit<BoardMessage, 'requestId' | 'publication'>;
 export interface Delivery {receipt: string; createdAt: number; through: number; more: boolean; messages: Array<VisibleMessage & {reasons: string[]}>}
 export interface Participant {
   name: string; task: string; harness: string; registeredAt: number; seen: number; left?: boolean;
-  topics: string[]; homepage: boolean; ackCursor: number; lastPoll: number | null; lastAckAt: number | null;
+  topics: string[]; /** Legacy stored flag; ignored. */ homepage?: boolean; ackCursor: number; lastPoll: number | null; lastAckAt: number | null;
   nextHomeAt: number; pending: Delivery | null; batches: number; acknowledgedBatches: number;
   lastDeliveryAt?: number; acknowledgedMessages?: number; lastReceipt?: string;
 }

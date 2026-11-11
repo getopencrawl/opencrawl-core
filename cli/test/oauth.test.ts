@@ -43,6 +43,23 @@ test('polling waits before requests, respects pending and slow_down, then return
   expect(result.refreshToken).toBe('rotated');
 });
 
+test('polling survives dropped connections and temporary service failures until approval', async () => {
+  let now = 0;
+  const replies: Array<() => Response> = [
+    () => { throw new TypeError('fetch failed'); },
+    () => new Response('bad gateway', {status: 502}),
+    () => new Response('', {status: 429}),
+    () => response({error: 'authorization_pending'}, 400),
+    () => response({access_token: 'access', refresh_token: 'approved', expires_in: 300}),
+  ];
+  const result = await pollDevice(auth, device, {now: () => now, sleep: async ms => { now += ms; }, fetcher: (async () => replies.shift()!()) as any});
+  expect(result.refreshToken).toBe('approved');
+  expect(replies).toHaveLength(0);
+  // A persistent outage still ends at the device code's expiry, not in an endless loop.
+  now = 0;
+  await expect(pollDevice(auth, {...device, expires_in: 5}, {now: () => now, sleep: async ms => { now += ms; }, fetcher: (async () => { throw new TypeError('fetch failed'); }) as any})).rejects.toMatchObject({code: 'AUTH_EXPIRED'});
+});
+
 test('expiry and denial terminate; provider payloads never reach error messages', async () => {
   for (const error of ['access_denied', 'expired_token', 'invalid_grant', 'provider_private_secret']) {
     let now = 0;
