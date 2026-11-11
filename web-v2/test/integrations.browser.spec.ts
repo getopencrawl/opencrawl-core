@@ -61,3 +61,26 @@ test('recovery dialogs preserve sign-in, sync and removal actions and member per
   await page.getByRole('button',{name:'Details Expired'}).click();
   await expect(page.getByRole('button',{name:/Restart sign-in|Retry|Disconnect/})).toHaveCount(0);
 });
+
+
+test('cards keep account context in Manage and use primary Connect for both connection paths',async({page})=>{
+  const connected={...source(1),name:'Connected source',account:'Example account',connectedBy:'admin@example.com'};
+  const direct={...source(4),name:'Direct source'};
+  const setup:SourceCard={...source(8),name:'Setup source',state:'setup-required',setup:{title:'Set up source',body:'Ask your administrator to configure this source.'}};
+  await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[connected,direct,setup]}}));
+  await page.goto('/integrations-fixture');
+  const card=page.getByRole('article',{name:'Connected source',exact:true});
+  await expect(card).not.toContainText('Example account');
+  await expect(page.locator('.oc-connector-heading p')).toHaveCount(0);
+  await card.getByRole('button',{name:'Manage Connected source'}).click();
+  await expect(page.getByRole('dialog')).toContainText('Example account');
+  await expect(page.getByRole('dialog')).toContainText('Connected by admin@example.com');
+  await page.keyboard.press('Escape');
+  for(const name of ['Direct source','Setup source']) await expect(page.getByRole('button',{name:`Connect ${name}`,exact:true})).toHaveClass(/\bprimary\b/);
+  await page.getByRole('button',{name:'Connect Direct source',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Connect Direct source'})).toContainText('Workspace connection');
+  await expect(page.getByRole('button',{name:'Continue to Direct source'})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'Connect Setup source',exact:true}).click();
+  await expect(page.getByRole('dialog')).toContainText('Ask your administrator to configure this source.');
+});
