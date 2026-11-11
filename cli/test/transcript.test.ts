@@ -1,8 +1,8 @@
 import {test, expect} from 'bun:test';
-import {mkdtempSync, mkdirSync, rmSync, utimesSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
-import {readTranscript, userItems, recordText, afterCompaction, findTranscript, EVENT_KINDS, TOOL_HEAD, TOOL_TAIL, TOOL_GAP} from '../src/transcript.ts';
+import {readTranscript, readProject, projectItems, userItems, recordText, recordHeading, afterCompaction, findTranscript, EVENT_KINDS, TOOL_HEAD, TOOL_TAIL, TOOL_GAP} from '../src/transcript.ts';
 import {transcriptFixture, projectDirectory} from './fixtures/transcript.ts';
 
 function scratch<T>(run: (dir: string) => T): T {
@@ -28,11 +28,13 @@ test('every transcript entry kind becomes the right verbatim event', () => scrat
   t.tool('Agent', {description: 'review', prompt: 'Review the exporter for off-by-one errors.'}, 'No errors found.');
   const kept = t.assistant('A message the harness keeps after compaction.');
   const {boundary} = t.compaction('The user asked for an exporter with a batch size.', [kept.uuid]);
+  t.hook('OpenCrawl verbatim record. The batch size is 275.');
   t.raw('{"type":"user","message":{"content":"this line is not valid JSON"');
   t.raw(JSON.stringify({type: 'file-history-snapshot', snapshot: {note: 'ignored'}}));
   const file = t.write(join(dir, 'session.jsonl'), {partial: '{"type":"user","message":{"content":"still being wri'});
 
-  const {events, compactions} = readTranscript(file);
+  const {events, compactions, unsent} = readTranscript(file);
+  expect(unsent).toEqual([]);
   expect(events.map(event => [event.kind, event.text])).toEqual([
     ['user', 'Ship the exporter. The batch size is 275.'],
     ['user', 'Second part,\nin two blocks.'],
@@ -61,16 +63,108 @@ test('every transcript entry kind becomes the right verbatim event', () => scrat
   timed.queued('sent earlier', {timestamp: '2026-01-05T07:59:00.000Z'});
   expect(readTranscript(timed.write(join(dir, 'timed.jsonl'))).events[0]!.ts).toBe('2026-01-05T07:59:00.000Z');
 
-  // Only what is asked for is read; the boundary is an event only on request.
+  // Only what is asked for is read; a boundary and what a hook added are events only on request.
   expect(readTranscript(file, {kinds: ['user', 'queued']}).events.map(event => event.kind)).toEqual(['user', 'user', 'user', 'queued', 'queued']);
   expect(readTranscript(file, {kinds: ['assistant']}).events).toHaveLength(2);
-  const all = readTranscript(file, {kinds: [...EVENT_KINDS, 'boundary']}).events;
+  const all = readTranscript(file, {kinds: [...EVENT_KINDS, 'hook', 'boundary']}).events;
   expect(all.filter(event => event.kind === 'boundary')).toEqual([{i: 17, ts: boundary.timestamp, kind: 'boundary', text: '', uuid: boundary.uuid, preserved: [kept.uuid]}]);
-  expect(afterCompaction(all)).toEqual({at: boundary.timestamp, boundary: 17, summary: 'The user asked for an exporter with a batch size.',
+  expect(all.at(-1)).toMatchObject({i: 19, kind: 'hook', text: 'OpenCrawl verbatim record. The batch size is 275.'});
+  expect(afterCompaction(all)).toEqual({at: boundary.timestamp, boundary: 17, until: Infinity, summary: 'The user asked for an exporter with a batch size.',
     preserved: new Set([kept.uuid]), preservedText: 'A message the harness keeps after compaction.'});
+  expect(afterCompaction(all, 1)).toEqual(afterCompaction(all));
+  expect(afterCompaction(all, 2)).toBeNull();
   // Until the harness has appended the summary there is nothing to compare with.
   expect(afterCompaction(all.filter(event => event.kind !== 'summary'))).toBeNull();
   expect(afterCompaction(readTranscript(file).events)).toBeNull();
+}));
+
+test('a message sent while the agent was busy and still queued when the transcript ends was never received', () => scratch(dir => {
+  const t = transcriptFixture();
+  t.user('Start the migration.');
+  // Delivered at the next turn, delivered mid-turn, and delivered with other content blocks.
+  t.queue('enqueue', 'Use the blue theme.'); t.queue('dequeue'); t.user('Use the blue theme.');
+  t.queue('enqueue', 'Also add a legend.'); t.queued([{type: 'text', text: 'Also add a legend.'}]); t.queue('remove', 'Also add a legend.', {reason: 'absorbed_mid_turn'});
+  // Two sent in a row and handed over as one message.
+  t.queue('enqueue', 'Rename the column.'); t.queue('enqueue', 'Then rerun the report.'); t.queue('dequeue'); t.queue('dequeue'); t.user('Rename the column.\nThen rerun the report.');
+  // Not the person's words to the agent: a background task's report and another agent's message waiting in the same queue, and a command.
+  t.queue('enqueue', '<task-notification>\nbuild finished</task-notification>');
+  t.queue('enqueue', '<agent-message from="reviewer">Looks fine to me.</agent-message>');
+  t.queue('enqueue', '/usage'); t.queue('dequeue');
+  t.queue('enqueue', '/review the open change');
+  // Taken back for editing, and dropped by a hook: neither is the person's standing word.
+  t.queue('enqueue', 'Delete the old tables.'); t.queue('popAll', 'Delete the old tables.');
+  t.queue('enqueue', 'Print the key.'); t.queue('remove', 'Print the key.', {reason: 'dropped_by_hook'});
+  // Still waiting when the session ended, the second time as well.
+  const waiting = t.queue('enqueue', '  Keep the legacy endpoint until March.  ');
+  t.queue('enqueue', 'Keep the legacy endpoint until March.');
+  t.queue('enqueue');
+  const file = t.write(join(dir, 'session.jsonl'));
+  expect(readTranscript(file).unsent).toEqual([{ts: waiting.timestamp, text: 'Keep the legacy endpoint until March.'}]);
+  expect(readTranscript(file, {kinds: ['user', 'queued']}).unsent).toHaveLength(1);
+  expect(readTranscript(file, {kinds: ['assistant']}).unsent).toEqual([]);
+  expect(readTranscript(file).events.map(event => event.text)).toEqual(['Start the migration.', 'Use the blue theme.', 'Also add a legend.', 'Rename the column.\nThen rerun the report.']);
+  // A path at the start of a message is not a command.
+  const path = transcriptFixture();
+  path.user('Start.'); path.queue('enqueue', '/etc/hosts needs an entry for the staging host.');
+  expect(readTranscript(path.write(join(dir, 'path.jsonl'))).unsent.map(one => one.text)).toEqual(['/etc/hosts needs an entry for the staging host.']);
+}));
+
+test('the sessions of a project are read together, oldest first, as far as the reach goes', () => scratch(dir => {
+  const project = join(dir, 'claude', 'projects', 'p'), day = 86_400_000, now = Date.parse('2026-03-01T00:00:00Z');
+  const session = (id: string, started: string, written: number, build: (t: ReturnType<typeof transcriptFixture>) => void) => {
+    const t = transcriptFixture(id, Date.parse(started));
+    build(t);
+    const file = t.write(join(project, id + '.jsonl'));
+    utimesSync(file, new Date(written), new Date(written));
+    return file;
+  };
+  session('aaaa', '2026-02-20T09:00:00Z', now - 9 * day, t => {t.user('First session: build the importer.'); t.assistant('Building.'); t.queue('enqueue', 'And log every skipped row.');});
+  session('bbbb', '2026-02-25T09:00:00Z', now - 4 * day, t => {t.user('Second session: add a dry run.'); t.tool('Bash', {command: 'ls'}, 'importer.ts');});
+  const current = session('cccc', '2026-02-28T09:00:00Z', now, t => {t.user('Third session: write the docs.'); t.queue('enqueue', 'Mention the dry run.');});
+  session('dddd', '2026-01-10T09:00:00Z', now - 50 * day, t => {t.user('Long ago: choose a name.');});
+  writeFileSync(join(project, 'empty.jsonl'), '');
+  // A transcript in which the person said nothing is not one of the project's sessions.
+  session('ffff', '2026-02-26T09:00:00Z', now - 3 * day, t => {t.user('<task-notification>\nnightly job finished</task-notification>', {origin: {kind: 'task-notification'}}); t.assistant('Noted.');});
+  mkdirSync(join(project, 'cccc', 'subagents'), {recursive: true}); writeFileSync(join(project, 'cccc', 'subagents', 'agent-a1.jsonl'), JSON.stringify({type: 'user', message: {content: 'subagent prompt'}}) + '\n');
+  const reach = {sessions: 10, days: 30, megabytes: 64};
+
+  const {sessions, omitted} = readProject(current, {kinds: ['user', 'queued'], reach, now});
+  expect(sessions.map(({id, number, other, started}) => [id, number, other, started])).toEqual([
+    ['aaaa', 1, true, '2026-02-20T09:00:01.000Z'], ['bbbb', 2, true, '2026-02-25T09:00:01.000Z'], ['cccc', 3, false, '2026-02-28T09:00:01.000Z']]);
+  // The session written to fifty days ago is beyond the reach; an empty transcript is no session.
+  expect(omitted).toBe(1);
+  // What an earlier session never received is part of what was said in it; in the current one it is still on its way.
+  expect(sessions[0]!.transcript.events.map(event => [event.kind, event.text, event.unsent ?? false])).toEqual([['user', 'First session: build the importer.', false], ['queued', 'And log every skipped row.', true]]);
+  expect(sessions[2]!.transcript.events.map(event => event.text)).toEqual(['Third session: write the docs.']);
+  const items = projectItems(sessions);
+  expect(items.map(({number, message}) => [number, message.session, message.other, message.text])).toEqual([
+    [1, 1, true, 'First session: build the importer.'], [2, 1, true, 'And log every skipped row.'], [3, 2, true, 'Second session: add a dry run.'], [4, 3, false, 'Third session: write the docs.']]);
+  expect(recordHeading(items)).toBe('# Every message the user sent in this project, session by session, word for word, oldest first');
+  expect(recordText(items)).toBe([
+    '## Session 1 (started 2026-02-20T09:00:01.000Z)', '[message 1, sent 2026-02-20T09:00:01.000Z]\nFirst session: build the importer.',
+    '[message 2, sent 2026-02-20T09:00:03.000Z, sent while the agent was busy and never handed to it before that session ended]\nAnd log every skipped row.',
+    '## Session 2 (started 2026-02-25T09:00:01.000Z)', '[message 3, sent 2026-02-25T09:00:01.000Z]\nSecond session: add a dry run.',
+    '## Session 3 (started 2026-02-28T09:00:01.000Z)', '[message 4, sent 2026-02-28T09:00:01.000Z]\nThird session: write the docs.'].join('\n\n'));
+
+  // The other sessions can be read for less than the current one, left out one by one, or not at all.
+  const mixed = readProject(current, {kinds: EVENT_KINDS, otherKinds: ['user', 'queued'], reach, now, skip: id => id === 'aaaa'});
+  expect(mixed.sessions.map(one => [one.id, one.number, one.transcript.events.map(event => event.kind)])).toEqual([['bbbb', 1, ['user']], ['cccc', 2, ['user']]]);
+  expect(readProject(current, {reach: {...reach, sessions: 1}, now}).sessions.map(one => one.id)).toEqual(['bbbb', 'cccc']);
+  // The sessions and their numbers do not depend on what is read from them.
+  expect(readProject(current, {kinds: ['tool_use', 'tool_result'], reach, now}).sessions.map(one => [one.id, one.number, one.transcript.events.map(event => event.kind)])).toEqual([
+    ['aaaa', 1, []], ['bbbb', 2, ['tool_use', 'tool_result']]]);
+  expect(readProject(current, {kinds: ['assistant'], reach, now}).sessions.map(one => [one.id, one.number, one.transcript.events.length])).toEqual([['aaaa', 1, 1], ['bbbb', 2, 0]]);
+  expect(readProject(current, {reach: {...reach, days: 3}, now}).sessions.map(one => one.id)).toEqual(['cccc']);
+  expect(readProject(current, {reach: {...reach, megabytes: 0}, now})).toMatchObject({sessions: [{id: 'cccc', number: 1, other: false}], omitted: 4});
+  // A project whose only session is this one keeps the plain record of a session.
+  const alone = projectItems(readProject(current, {reach: {sessions: 0, days: 0, megabytes: 0}, now}).sessions);
+  expect(alone.map(({message}) => message.session)).toEqual([undefined]);
+  expect(recordHeading(alone)).toBe('# Every message the user sent in this session, word for word, oldest first');
+  expect(recordText(alone)).toBe('[message 1, sent 2026-02-28T09:00:01.000Z]\nThird session: write the docs.');
+  // A new session has no transcript yet: the project is its earlier sessions.
+  const fresh = readProject(join(project, 'eeee.jsonl'), {reach, now});
+  expect(fresh.sessions.map(({id, other}) => [id, other])).toEqual([['aaaa', true], ['bbbb', true], ['cccc', true]]);
+  expect(projectItems(fresh.sessions.slice(1, 2)).map(({number, message}) => [number, message.session])).toEqual([[1, 2]]);
 }));
 
 test('a message written over several lines keeps every block once', () => scratch(dir => {

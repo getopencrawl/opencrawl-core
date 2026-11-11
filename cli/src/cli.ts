@@ -12,7 +12,7 @@ import {readSession, saveSession, accessToken, logout} from './session.ts';
 import {filesystemError} from './filesystem.ts';
 import {agentSkills} from './skills.ts';
 import {withEnvironmentTokenOrigin} from './environment-token.ts';
-import {recallCommand, formatRecall} from './recall.ts';
+import {recallCommand, formatRecall, driftCommand, formatDrift} from './recall.ts';
 
 declare const OPENCRAWL_VERSION: string;
 const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.2.0-dev';
@@ -26,7 +26,8 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
   fetch       Read the indexed passage behind a search result
-  recall      Quote this session's own transcript, on this machine
+  recall      Quote the transcripts of this project's sessions, on this machine
+  drift       Show what each compaction did to the user's exact words
   collect     Install and manage Claude Code, Codex and Grok Bot session capture
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
@@ -86,11 +87,13 @@ Recall: opencrawl recall "a few distinctive words" [--json]
   --limit 1..50                     Passages to print (default: 8)
   --kind user|assistant|tool|all    Whose words to search (default: all)
   --chars 200..8000                 Longest passage (default: 1200)
-  --session ID                      A Claude Code session other than this one
+  --session ID                      One Claude Code session, and only that one
   recall --user                     Every message the user sent, word for word
-Reads the Claude Code transcript of the current session from this machine and
-prints the best passages verbatim, oldest first, with who said each. It needs no
-sign-in and uses no network. Compaction summaries are never quoted.
+  drift [--session ID] [--limit N]  Per compaction: details kept, restored, gone
+Reads the Claude Code transcripts of the current session and of this project's
+other recent sessions from this machine, and prints the best passages verbatim,
+oldest first, with who said each. It needs no sign-in and uses no network.
+Compaction summaries are never quoted.
 
 Board: board register --session ID --name codex:unique-name --task "Current work"
   board directory [--after N]                   Discover taggable agents
@@ -162,8 +165,9 @@ export async function main(args = process.argv.slice(2)) {
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
-    // Recall is local: it never reaches the registry or any server.
-    if (command !== 'recall') updateJob = scheduleCliUpdate();
+    // Recall and drift are local: they never reach the registry or any server.
+    const local = command === 'recall' || command === 'drift';
+    if (!local) updateJob = scheduleCliUpdate();
     const localHook=command==='collect'&&parsed.positionals[1]==='hook'&&!parsed.values.managed;
     // Metadata-only recovery and a history preview must not start an unrelated
     // memory upload while the foreground operation is inspecting local state.
@@ -171,12 +175,17 @@ export async function main(args = process.argv.slice(2)) {
     if (command !== 'recall' && parsed.positionals.length > (['collect','search','fetch','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
-    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','recall','board','skills'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','recall','drift','board','skills'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (parsed.values.client && command !== 'skills') throw new CliError('INVALID_USAGE', 'Use --client with skills install or skills status.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
     if (command === 'recall') {
       const data = recallCommand(parsed.positionals.slice(1), parsed.values);
       emit(data, formatRecall(data));
+      return 0;
+    }
+    if (command === 'drift') {
+      const {show, ...data} = driftCommand(parsed.positionals.slice(1), parsed.values);
+      emit(data, formatDrift({show, ...data}));
       return 0;
     }
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL

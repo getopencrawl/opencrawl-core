@@ -113,11 +113,12 @@ else {const r=require('node:child_process').spawnSync(file,args,{stdio:'inherit'
 `);
   const hook=(...args:string[])=>(process.platform==='win32'?'':'exec ')+[quote(node),quote(runner),'collect','hook',...args].join(' ');
   const managed=(harness:Harness)=>():HookEntry=>({command:hook('--managed','--harness',harness),async:true,timeout:120});
-  // After a compaction the agent is handed the person's own words. Claude Code
-  // waits for a SessionStart hook, so what this one prints is in the context
-  // before the agent continues; the matcher limits it to sessions that start
-  // from a compaction. PostCompact measures what the summary lost, and nothing
-  // waits on it. Both read one local transcript and end within three seconds.
+  // A new session of a project, and a session whose context was just
+  // compacted, are handed the person's own words. Claude Code waits for a
+  // SessionStart hook, so what these print is in the context before the agent
+  // goes on; the matchers limit them to those two ways of starting. PostCompact
+  // measures what the summary lost, and nothing waits on it. All of them read
+  // local transcripts only and end within three seconds.
   const compaction=(process.platform==='win32'?'':'exec ')+[quote(node),quote(runner),'collect','compaction'].join(' ');
   // What a summary dropped can only be read once Claude Code has written the
   // summary down, so a second PostToolUse hook, one Claude Code waits for,
@@ -129,8 +130,8 @@ else {const r=require('node:child_process').spawnSync(file,args,{stdio:'inherit'
   const owed=process.platform==='win32'?compaction:`[ -e ${quote(join(captureDir(),PENDING_DIRECTORY))}/"$CLAUDE_CODE_SESSION_ID" ] || exit 0; ${compaction}`;
   if(harnesses.includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),
     ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','Stop','SubagentStop','SessionEnd'],managed('claude-code'),
-    [{event:'SessionStart',matcher:'compact',entry:{command:compaction,timeout:10}},{event:'PostCompact',entry:{command:compaction,async:true,timeout:10}},
-      {event:'PostToolUse',entry:{command:owed,timeout:5}}]);
+    [{event:'SessionStart',matcher:'startup',entry:{command:compaction,timeout:10}},{event:'SessionStart',matcher:'compact',entry:{command:compaction,timeout:10}},
+      {event:'PostCompact',entry:{command:compaction,async:true,timeout:10}},{event:'PostToolUse',entry:{command:owed,timeout:5}}]);
   // Codex runs SessionEnd synchronously within 3s. Record its notice locally;
   // the next managed hook uploads it instead of delaying exit or being killed.
   if(harnesses.includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),

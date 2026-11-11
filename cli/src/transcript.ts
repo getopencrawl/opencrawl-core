@@ -1,5 +1,5 @@
 import {openSync, readSync, closeSync, readdirSync, statSync} from 'node:fs';
-import {join, dirname, resolve} from 'node:path';
+import {join, dirname, basename, resolve} from 'node:path';
 import {homedir} from 'node:os';
 import {CliError} from './oauth.ts';
 
@@ -12,13 +12,23 @@ import {CliError} from './oauth.ts';
  *  tool_use    a tool call the agent made (command, path, written content)
  *  tool_result what a tool returned
  *  summary     a compaction summary: lossy, never evidence
+ *  hook        context a hook put into the conversation, such as the record
+ *              this CLI gives back after a compaction
  *  boundary    a compaction happened here; `preserved` names the records the
- *              harness kept word for word. Only read when asked for. */
-export type EventKind = 'user' | 'queued' | 'notice' | 'assistant' | 'tool_use' | 'tool_result' | 'summary' | 'boundary';
+ *              harness kept word for word
+ * `hook` and `boundary` are read only when asked for. */
+export type EventKind = 'user' | 'queued' | 'notice' | 'assistant' | 'tool_use' | 'tool_result' | 'summary' | 'hook' | 'boundary';
 /** `uuid` is the transcript record's own. `omitted` counts the characters left
- * out of the middle of a long tool call or result. */
-export type TranscriptEvent = {i: number; ts: string | null; kind: EventKind; text: string; uuid?: string; omitted?: number; preserved?: string[]};
-export type Transcript = {events: TranscriptEvent[]; compactions: number};
+ * out of the middle of a long tool call or result. `hook` names the hook event
+ * whose hook added a context. `session` numbers the session of the project an
+ * event comes from when several are read together, and `other` marks one that
+ * is not the current session. `unsent` marks a message the person sent that
+ * its session ended without receiving. */
+export type TranscriptEvent = {i: number; ts: string | null; kind: EventKind; text: string; uuid?: string; omitted?: number; preserved?: string[]; hook?: string;
+  session?: number; other?: boolean; unsent?: boolean};
+/** `unsent` holds what the person sent while the agent was busy and that was
+ * neither handed to the agent nor taken back by the end of the transcript. */
+export type Transcript = {events: TranscriptEvent[]; compactions: number; unsent: {ts: string | null; text: string}[]};
 export const EVENT_KINDS: readonly EventKind[] = ['user', 'queued', 'notice', 'assistant', 'tool_use', 'tool_result', 'summary'];
 
 /** A long tool call or result keeps this much of its start and of its end:
@@ -84,7 +94,7 @@ function* fileLines(path: string, until: number): Generator<Buffer> {
 export function readTranscript(path: string, {kinds = EVENT_KINDS, until = Infinity}: {kinds?: readonly EventKind[]; until?: number} = {}): Transcript {
   const want = new Set(kinds), events: TranscriptEvent[] = [];
   let uuid: string | undefined;
-  const add = (ts: unknown, kind: EventKind, value: string) => {
+  const add = (ts: unknown, kind: EventKind, value: string): TranscriptEvent | undefined => {
     if (!want.has(kind)) return;
     let text = value.trim(), omitted: number | undefined;
     if (!text) return;
@@ -93,12 +103,16 @@ export function readTranscript(path: string, {kinds = EVENT_KINDS, until = Infin
       text = text.slice(0, TOOL_HEAD) + TOOL_GAP + text.slice(-TOOL_TAIL);
     }
     events.push({i: events.length, ts: typeof ts === 'string' ? ts : null, kind, text, ...(uuid ? {uuid} : {}), ...(omitted ? {omitted} : {})});
+    return events.at(-1);
   };
   const people = want.has('user') || want.has('queued') || want.has('notice') || want.has('summary');
   const tools = want.has('tool_use') || want.has('tool_result');
-  const types = [...(people || tools ? ['user'] : []), ...(people ? ['attachment'] : []), ...(tools || want.has('assistant') ? ['assistant'] : []), 'system'];
+  const types = [...(people || tools ? ['user'] : []), ...(people || want.has('hook') ? ['attachment'] : []), ...(tools || want.has('assistant') ? ['assistant'] : []),
+    ...(want.has('queued') ? ['queue-operation'] : []), 'system'];
   const relevant = new RegExp(`"type"\\s*:\\s*"(?:${types.join('|')})"`);
   const seen = new Set<string>(), recalls = new Set<string>();
+  // What was queued while the agent was busy, what reached the agent, and what was taken out of the queue.
+  const queued: {ts: string | null; text: string}[] = [], received = new Set<string>(), withdrawn: string[] = [];
   let compactions = 0;
   for (const bytes of fileLines(path, until)) {
     const line = bytes.toString('utf8');
@@ -116,16 +130,22 @@ export function readTranscript(path: string, {kinds = EVENT_KINDS, until = Infin
       const person = fromPerson(entry.origin);
       // An unattributed meta entry is the harness talking: a caveat, an expansion.
       if (entry.isMeta && person) continue;
+      received.add(blocksText(content).trim());
       add(ts, person ? 'user' : 'notice', blocksText(content));
       if (Array.isArray(content)) for (const block of content) {
         if (block?.type === 'tool_result' && !recalls.has(block.tool_use_id)) add(ts, 'tool_result', resultText(block.content));
       }
     } else if (entry.type === 'attachment') {
-      const queued = entry.attachment;
-      if (queued?.type !== 'queued_command') continue;
-      const person = fromPerson(queued.origin) && (queued.commandMode === undefined || queued.commandMode === 'prompt');
-      if (queued.isMeta && person) continue;
-      add(queued.timestamp ?? ts, person ? 'queued' : 'notice', blocksText(queued.prompt));
+      const attached = entry.attachment;
+      if (attached?.type === 'hook_additional_context') {
+        const added = add(ts, 'hook', Array.isArray(attached.content) ? attached.content.join('\n') : typeof attached.content === 'string' ? attached.content : '');
+        if (added && typeof attached.hookEvent === 'string') added.hook = attached.hookEvent;
+      }
+      if (attached?.type !== 'queued_command') continue;
+      const person = fromPerson(attached.origin) && (attached.commandMode === undefined || attached.commandMode === 'prompt');
+      received.add(blocksText(attached.prompt).trim());
+      if (attached.isMeta && person) continue;
+      add(attached.timestamp ?? ts, person ? 'queued' : 'notice', blocksText(attached.prompt));
     } else if (entry.type === 'assistant') {
       const content = entry.message?.content, id = entry.message?.id;
       if (!Array.isArray(content)) continue;
@@ -148,29 +168,106 @@ export function readTranscript(path: string, {kinds = EVENT_KINDS, until = Infin
       const kept = entry.compactMetadata?.preservedMessages, uuids = Array.isArray(kept?.allUuids) && kept.allUuids.length ? kept.allUuids : kept?.uuids;
       if (want.has('boundary')) events.push({i: events.length, ts: typeof ts === 'string' ? ts : null, kind: 'boundary', text: '', ...(uuid ? {uuid} : {}),
         preserved: Array.isArray(uuids) ? uuids.filter((id: unknown) => typeof id === 'string') : []});
+    } else if (entry.type === 'queue-operation' && typeof entry.content === 'string') {
+      // Claude Code logs a message sent while the agent is busy when it is queued,
+      // and again when it is removed from the queue, with the reason.
+      if (entry.operation === 'enqueue') queued.push({ts: typeof ts === 'string' ? ts : null, text: entry.content.trim()});
+      else withdrawn.push(entry.content);
     }
   }
-  return {events, compactions};
+  // Still queued when the transcript ends: sent, and never handed to the agent.
+  // A message that reached the agent is in the transcript again, word for word,
+  // on its own or as lines of a longer one; one that was removed for any other
+  // reason (taken back for editing, dropped by a hook) is not the person's
+  // standing word. The queue record does not say who sent an entry, so what
+  // does not read as typed by a person is left out: an envelope such as a task
+  // notification or another agent's message, and a slash command.
+  const arrived = (text: string) => received.has(text) || [...received].some(whole => ('\n' + whole + '\n').includes('\n' + text + '\n'));
+  const unsent = queued.filter(({text}, at) => text && !/^<[a-z][\w-]*[\s>]/.test(text) && !/^\/[\w:-]+(?:\s|$)/.test(text) && !arrived(text)
+    && !withdrawn.some(taken => taken.includes(text)) && queued.findIndex(other => other.text === text) === at);
+  return {events, compactions, unsent};
 }
 
-/** What the agent still has after the newest compaction: the summary, and the
- * text of the records the harness kept word for word. Null until the transcript
- * shows that compaction: the harness appends the boundary and its summary only
- * after the compaction hooks have run. Needs every kind, and `boundary`. */
-export function afterCompaction(events: TranscriptEvent[]) {
-  let boundary: TranscriptEvent | undefined;
-  for (const event of events) if (event.kind === 'boundary') boundary = event;
-  const summary = boundary && events.find(event => event.kind === 'summary' && event.i > boundary!.i);
+/** What the agent still has after a compaction (the newest unless `number`
+ * counts one from the first): the summary, and the text of the records the
+ * harness kept word for word. Null until the transcript shows that compaction:
+ * the harness appends the boundary and its summary only after the compaction
+ * hooks have run. Needs every kind, and `boundary`. */
+export function afterCompaction(events: TranscriptEvent[], number?: number) {
+  const boundaries = events.filter(event => event.kind === 'boundary');
+  const boundary = boundaries[number === undefined ? boundaries.length - 1 : number - 1], next = boundary && boundaries[boundaries.indexOf(boundary) + 1];
+  const summary = boundary && events.find(event => event.kind === 'summary' && event.i > boundary.i && (!next || event.i < next.i));
   if (!boundary || !summary) return null;
   const preserved = new Set(boundary.preserved);
-  const kept = events.filter(event => event.i < boundary!.i && event.uuid !== undefined && preserved.has(event.uuid) && event.kind !== 'summary' && event.kind !== 'boundary');
-  return {at: boundary.ts, boundary: boundary.i, summary: summary.text, preserved, preservedText: kept.map(event => event.text).join('\n')};
+  const kept = events.filter(event => event.i < boundary.i && event.uuid !== undefined && preserved.has(event.uuid) && !['summary', 'boundary', 'hook'].includes(event.kind));
+  return {at: boundary.ts, boundary: boundary.i, until: next ? next.i : Infinity, summary: summary.text, preserved, preservedText: kept.map(event => event.text).join('\n')};
 }
 
 /** Everything the person said, oldest first. */
 export const userMessages = (events: TranscriptEvent[]) => events.filter(event => event.kind === 'user' || event.kind === 'queued');
 
-export type UserItem = {number: number; message: TranscriptEvent; count: number};
+/** How far back the sessions of a project are read: at most this many other
+ * sessions, written to within this many days, and this much transcript; and
+ * with `since` (epoch milliseconds), none that was last written to before it. */
+export type Reach = {sessions: number; days: number; megabytes: number; since?: number};
+export type ProjectSession = {id: string; number: number; started: string | null; other: boolean; transcript: Transcript};
+
+/** The other sessions of a project are the transcripts beside this one, the
+ * most recently written first. Subagent transcripts live below their session
+ * and are not sessions. */
+function otherSessions(transcript: string) {
+  const found: {id: string; file: string; written: number; size: number}[] = [];
+  try {
+    for (const name of readdirSync(dirname(transcript))) {
+      if (!name.endsWith('.jsonl') || name === basename(transcript)) continue;
+      try {
+        const stat = statSync(join(dirname(transcript), name));
+        if (stat.isFile() && stat.size) found.push({id: name.slice(0, -6), file: join(dirname(transcript), name), written: stat.mtimeMs, size: stat.size});
+      } catch {}
+    }
+  } catch {}
+  return found.sort((a, b) => b.written - a.written || a.id.localeCompare(b.id));
+}
+
+/** The sessions of one project read together, oldest first by when they began:
+ * this one, and the others from the most recently written back as far as the
+ * reach goes. Another session is one of the project's when the person said
+ * something in it, whichever kinds are read from it, so that the sessions and
+ * their numbers are the same for every reader. `skip` leaves a session out (an
+ * excluded one). `omitted` counts the transcripts beyond the reach, and those
+ * that could not be read in time. A message that a session never received
+ * counts as said only once that session is over, so only in the other
+ * sessions, where it becomes a `queued` event marked `unsent`. */
+export function readProject(transcript: string, {kinds = EVENT_KINDS, otherKinds = kinds, reach, until = Infinity, now = Date.now(), skip = () => false}:
+  {kinds?: readonly EventKind[]; otherKinds?: readonly EventKind[]; reach: Reach; until?: number; now?: number; skip?: (id: string) => boolean}) {
+  const read: Omit<ProjectSession, 'number'>[] = [];
+  const started = (events: TranscriptEvent[]) => events.find(event => event.ts)?.ts ?? null;
+  // A new session has no transcript until its first message is written.
+  try {
+    const own = readTranscript(transcript, {kinds, until});
+    if (own.events.length) read.push({id: basename(transcript, '.jsonl'), other: false, transcript: own, started: started(own.events)});
+  } catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
+  const others = (id: string, file: string) => {
+    const session = readTranscript(file, {kinds: [...new Set<EventKind>([...otherKinds, 'user', 'queued'])], until});
+    for (const {ts, text} of session.unsent) session.events.push({i: session.events.length, ts, kind: 'queued', text, unsent: true});
+    const said = userMessages(session.events);
+    if (!said.length) return false;
+    read.push({id, other: true, started: started(said), transcript: {...session, events: session.events.filter(event => otherKinds.includes(event.kind))}});
+    return true;
+  };
+  let omitted = 0, taken = 0, bytes = 0;
+  for (const {id, file, written, size} of otherSessions(transcript)) {
+    if (skip(id)) continue;
+    // Past the count or the age, everything older is out; a transcript too large for what is left of the budget is passed over.
+    if (taken >= reach.sessions || now - written > reach.days * 86_400_000 || written < (reach.since ?? 0) || bytes + size > reach.megabytes * 1024 * 1024) {omitted++; continue;}
+    bytes += size;
+    try {if (others(id, file)) taken++;} catch {omitted++;}
+  }
+  read.sort((a, b) => (a.started ?? '').localeCompare(b.started ?? '') || a.id.localeCompare(b.id));
+  return {sessions: read.map((session, at): ProjectSession => ({...session, number: at + 1})), omitted};
+}
+
+export type UserItem = {number: number; message: TranscriptEvent; count: number; started?: string | null};
 /** The person's messages as a numbered record. A sender that repeats itself (a
  * scheduler, a notifier) opens every message the same way: those collapse to
  * the newest, with the number of times it was sent. */
@@ -182,9 +279,29 @@ export function userItems(events: TranscriptEvent[]): UserItem[] {
   }
   return [...latest.values()].sort((a, b) => a.message.i - b.message.i).map((item, index) => ({number: index + 1, ...item}));
 }
-export const RECORD_HEADING = '# Every message the user sent in this session, word for word, oldest first';
-export const recordText = (items: UserItem[]) => items.map(({number, message, count}) =>
-  `[message ${number}${message.ts ? `, sent ${message.ts}` : ''}${count > 1 ? `, repeated ${count} times, latest shown` : ''}]\n${message.text}`).join('\n\n');
+/** The record of several sessions: each session's messages in turn, numbered
+ * through, every message carrying the number of its session. */
+export function projectItems(sessions: ProjectSession[]): UserItem[] {
+  // A project whose only session is this one has the plain record of a session.
+  if (sessions.length === 1 && !sessions[0]!.other) return userItems(sessions[0]!.transcript.events);
+  return sessions.flatMap(({number, other, started, transcript}) => userItems(transcript.events)
+    .map(item => ({...item, started, message: {...item.message, session: number, other}}))).map((item, index) => ({...item, number: index + 1}));
+}
+/** Whether a record spans sessions: its heading, its layout and what is said about it follow from that. */
+export const spansSessions = (items: UserItem[]) => items.some(item => item.message.session !== undefined);
+export const recordHeading = (items: UserItem[]) => spansSessions(items)
+  ? '# Every message the user sent in this project, session by session, word for word, oldest first'
+  : '# Every message the user sent in this session, word for word, oldest first';
+export function recordText(items: UserItem[]) {
+  const parts: string[] = [];
+  let session: number | undefined;
+  for (const {number, message, count, started} of items) {
+    if (message.session !== session) {session = message.session; parts.push(`## Session ${session}${started ? ` (started ${started})` : ''}`);}
+    parts.push(`[message ${number}${message.ts ? `, sent ${message.ts}` : ''}${count > 1 ? `, repeated ${count} times, latest shown` : ''}`
+      + `${message.unsent ? ', sent while the agent was busy and never handed to it before that session ended' : ''}]\n${message.text}`);
+  }
+  return parts.join('\n\n');
+}
 
 /** Claude Code names a project directory after its working directory, with
  * every character that is not a letter or digit replaced by a dash. */
