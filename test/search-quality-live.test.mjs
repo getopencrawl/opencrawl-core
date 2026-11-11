@@ -21,7 +21,7 @@ test('real engine origin filters and facets preserve tenant and current privacy 
   for(const [owner,sessionId,origin,text] of [[peer,'discussion','desktop','origin evidence from the conversation'],[peer,'worker','subagent','origin evidence from a useful worker'],[outsider,'discussion','desktop','origin evidence foreign marker']]){
     const receipt=await ingest.putBatch(owner,{schemaVersion:1,owner,harness:'codex',origin,installationId:'fixture',sessionId,attachments:[],events:[{id:'same-event',kind:'message',timestamp:'2026-11-01T00:00:00Z',data:{role:'assistant',content:text}}]});
     const key=[...store.data.keys()].find(k=>k.endsWith(receipt.batchId+'.json.gz')),batch=JSON.parse(gunzipSync(store.data.get(key)));
-    await sessions.ensureIndex(owner);await sessions.bulk(owner,batchDocuments({prefix,key,batch,principal:owner}));await sessions.refresh(owner);
+    await sessions.ensureIndex(owner);await sessions.putDocuments(batchDocuments({prefix,key,batch,principal:owner}),owner);await sessions.refresh(owner);
   }
   const input={query:'origin evidence',match:'all',source:'sessions',facets:['origin']};
   const unfiltered=await workspace.search(principal,input);
