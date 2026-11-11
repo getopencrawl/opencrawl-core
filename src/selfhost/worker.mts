@@ -1,5 +1,6 @@
 import {mkdir,writeFile,unlink} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
+import {setTimeout as delay} from 'node:timers/promises';
 import {selfhostSettings} from './settings.mjs';
 import {selfhostServices} from './services.mjs';
 import {singleOrganizationSessionSource} from './indexing.mjs';
@@ -11,6 +12,24 @@ import {connectorClient,ensureConnectorSchedule} from '../connectors/temporal/cl
 import {createConnectionPurger} from '../integrations/purge.mjs';
 import {eligible} from '../integrations/resolver.mjs';
 import {createRealm} from '../search/realm.mjs';
+/** A restarted Temporal frontend can be healthy before history hosts own the
+ * existing schedules. Retry only transient gRPC failures during startup. */
+export async function withTemporalStartupRetry<T>(run:()=>Promise<T>,{timeoutMs=60000,delayMs=1000}={}):Promise<T>{
+  const deadline=performance.now()+timeoutMs;
+  for(;;){
+    try{return await run();}
+    catch(error){
+      let current:unknown=error,transient=false;
+      for(let depth=0;depth<5&&current&&typeof current==='object';depth++){
+        const item=current as {code?:unknown;cause?:unknown};
+        if(item.code===4||item.code===14)transient=true;
+        current=item.cause;
+      }
+      if(!transient||performance.now()>=deadline)throw error;
+      await delay(Math.min(delayMs,Math.max(0,deadline-performance.now())));
+    }
+  }
+}
 export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const settings=selfhostSettings(env),{store,prefix}=standaloneStorage(env),services=selfhostServices(settings,store,env);
   const address=env.TEMPORAL_ADDRESS,namespace=env.TEMPORAL_NAMESPACE;
@@ -24,8 +43,8 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve});
   const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:source.resolveDeletion,maxConcurrentActivityTaskExecutions:1});
   const workers=connectors?[sessions,deletions,connectors]:[sessions,deletions];
-  await ensureSessionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:sessionQueue});
-  const deletionSchedule=await ensureSessionDeletionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:deletionQueue});
+  await withTemporalStartupRetry(()=>ensureSessionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:sessionQueue}));
+  const deletionSchedule=await withTemporalStartupRetry(()=>ensureSessionDeletionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:deletionQueue}));
   const realm=createRealm(settings.search),purge=createConnectionPurger({environment:'selfhost',generation:'v1',
     deleteSchedule:id=>scheduling.client.schedule.getHandle(id).delete(),
     async deleteDocuments(record){
