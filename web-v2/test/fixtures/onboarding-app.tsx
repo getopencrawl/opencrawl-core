@@ -2,8 +2,10 @@
 import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
 import {AgentOnboarding, AppRouter, AppShell, Button, ConsoleDataProvider, FocusedFrame, InviteOnboarding, Route, Routes, SourcesOnboarding, SourcesPage, useLocation, useNavigate, type OnboardingAdapter} from '../../src/index.ts';
-import type {SourcesAdapter} from '../../src/application/api.ts';
+import type {TeamAdapter, SourcesAdapter} from '../../src/application/api.ts';
 import '../../src/styles.css';
+import {TeamPage} from '../../src/application/team.tsx';
+import {ConsoleApiError} from '../../src/application/errors.ts';
 import {DocumentFrame,ProductDocument} from '../../src/application/documents.tsx';
 import {CallbackChoices, readContinuation} from '../../src/application/callback-view.tsx';
 
@@ -14,7 +16,7 @@ declare global {
 async function request<T>(path: string, signal: AbortSignal, body?: unknown): Promise<T> {
   const response = await fetch(path, {signal, method: body === undefined ? 'GET' : 'POST', headers: {'content-type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
   const value: unknown = await response.json();
-  if (!response.ok) throw new Error(typeof value === 'object' && value && 'error' in value ? String(value.error) : 'Request failed');
+  if (!response.ok) throw new ConsoleApiError(typeof value === 'object' && value && 'error' in value ? String(value.error) : 'Request failed', response.status);
   return value as T;
 }
 const adapter: OnboardingAdapter = {
@@ -34,6 +36,7 @@ const sourcesAdapter: SourcesAdapter = {
   retry: async () => ({ok: true}), disconnect: async () => ({ok: true}),
   saveCredential: (id, value, signal) => request(`/api/integrations/credentials/${encodeURIComponent(id)}`, signal ?? never, {value}),
 };
+const teamAdapter: TeamAdapter = {team: signal => request('/api/console/team', signal ?? never), invite: async () => ({ok:true}), changeRole: async (userId,role) => ({ok:true,userId,role}), renameOrganization: async name => ({ok:true,name}), removeMember: (userId,signal) => request('/api/console/team/remove',signal ?? never,{userId})};
 export const setupPrompt = 'Set up OpenCrawl across all coding agents and environments I use. Inspect existing setup, reuse valid configuration and authentication, and complete what is missing. Keep credentials out of chats and repositories. Confirm recording and history import consent, then verify a newly recorded session.';
 const account = <form className="header-account" method="post" action="/auth/logout"><Button variant="quiet" type="submit">Sign out</Button></form>;
 
@@ -52,6 +55,7 @@ function Fixture() {
     footer={<Button variant="quiet" onClick={() => {void navigate('/away');}}>Sign out</Button>}
   />;
   return <Routes>
+    <Route path="/team-fixture" element={<ConsoleDataProvider scopeKey="team-fixture" onAccessFailure={() => {}}><TeamPage adapter={teamAdapter}/></ConsoleDataProvider>} />
     <Route path="/auth-fixture/setup" element={<DocumentFrame signedIn={false}><ProductDocument page={{kind:'auth',view:'setup',setup:'private-once-only'}}/></DocumentFrame>}/>
     <Route path="/auth-fixture/consent" element={<DocumentFrame signedIn><ProductDocument page={{kind:'auth',view:'consent',clientName:'Example MCP client',oauthQuery:'signed-consent-query',resource:'https://oss.example/mcp',scopes:['openid','offline_access']}}/></DocumentFrame>}/>
 
