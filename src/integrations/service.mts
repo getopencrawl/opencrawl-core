@@ -292,7 +292,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
 
   /** What the card shows. Airbyte and the OAuth adapter details never leave the server. */
   async function view(principal: Principal, record: IntegrationRecord | null, provider: Provider): Promise<SourceCard & {integrationId?: string; connectedById?: string}>  {
-    const base = {provider: provider.id, name: provider.name, description: provider.description, units: provider.units, scope: provider.scope, help: provider.help, auth: provider.auth === 'api-key' ? 'api-key' as const : 'oauth' as const, keyHelp: provider.keyHelp};
+    const base = {provider: provider.id, name: provider.name, description: provider.description, primaryMetric: provider.primaryMetric, units: provider.units, scope: provider.scope, help: provider.help, auth: provider.auth === 'api-key' ? 'api-key' as const : 'oauth' as const, keyHelp: provider.keyHelp};
     if (!record) return provider.unavailableReason
       ? {...base,state:'setup-required',setup:{title:`${provider.name} is not available yet`,requirement:'Indexing not available',body:provider.unavailableReason}}
       : {...base, state: 'disconnected'};

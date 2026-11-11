@@ -32,6 +32,7 @@ export function createProviderCatalog(connectors: Record<string,ConnectorDefinit
 const providers:ProviderCatalog = {
   googledrive: {
     id: 'googledrive',
+    primaryMetric: 'Files',
     name: 'Google Drive',
     unavailableReason: 'Google Drive indexing is not available in this release. Connecting an account would not make its files searchable. Use another source for now.',
     description: 'Files in your team’s shared drives.',
@@ -84,6 +85,7 @@ const providers:ProviderCatalog = {
   },
   slack: {
     id: 'slack',
+    primaryMetric: 'Messages',
     name: 'Slack',
     description: 'Public channels in your workspace.',
     toolkit: 'slack',
@@ -144,6 +146,7 @@ const providers:ProviderCatalog = {
   },
   granola: {
     id: 'granola',
+    primaryMetric: 'Notes',
     name: 'Granola',
     description: 'Meeting notes shared with your whole workspace.',
     // A workspace API key is created by a Granola admin and, on Granola's side, can only read
@@ -210,6 +213,7 @@ const providers:ProviderCatalog = {
   },
   circleback: {
     id: 'circleback',
+    primaryMetric: 'Meetings',
     name: 'Circleback',
     description: 'Meeting notes shared with your whole workspace.',
     // Circleback uses dynamic OAuth client registration; the credential adapter owns the grant.
@@ -261,6 +265,7 @@ const providers:ProviderCatalog = {
   },
   notion: {
     id: 'notion',
+    primaryMetric: 'Pages',
     name: 'Notion',
     description: 'Pages and databases shared with OpenCrawl.',
     toolkit: 'notion',
@@ -310,6 +315,7 @@ const providers:ProviderCatalog = {
   },
   github: {
     id: 'github',
+    primaryMetric: 'Commits',
     name: 'GitHub',
     description: 'Code, history, pull requests and issues of the repositories you choose.',
     // The operator-owned read-only GitHub App: the owner picks repositories at
