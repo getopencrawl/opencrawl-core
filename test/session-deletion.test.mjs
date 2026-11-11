@@ -175,7 +175,7 @@ test('concurrent archive preservation cannot recreate a session after its deleti
   await createControls({store,prefix}).update(peer,'sessions','codex','native-session',()=>({visibility:'team',deletedAt:new Date().toISOString()}));
   const barrier=sessionWriteBarrier(store,prefix,peer,'codex','native-session');
   assert.equal((await barrier.close()).pending,1,'other deletion cannot finish while an archive is copying it');
-  release.resolve();await assert.rejects(deleting,/remain after deletion/);
+  release.resolve();await deleting;
   assert.equal((await barrier.close()).pending,0);
   await purgeSessionArchives({store,prefix,roots:[root],principal:peer,harness:'codex',sessionId:'native-session'});
   for(const [key,bytes]of store.data)if(key.startsWith(root))assert.doesNotMatch(gunzipSync(bytes).toString(),/remove-alice|remove-bob/);
@@ -189,4 +189,25 @@ test('a missing queued source requires a deletion tombstone before it is skipped
   await assert.rejects(f.pipeline().processObject({key}),/without a deletion tombstone/);
   await createControls({store:f.store,prefix}).update(owner,'sessions','codex','native-session',()=>({visibility:'team',deletedAt:new Date().toISOString()}));
   assert.equal((await f.pipeline().processObject({key})).skipped,true);
+});
+
+
+test('unrelated archive pages do not read controls for every captured event',async()=>{
+  const store=memorySessionStore(),root=prefix+'/_index/backups/';
+  await store.put(root+'unrelated.json.gz',gzipSync(JSON.stringify({previous:Array.from({length:1000},(_,i)=>({id:String(i),document:{...peer,harness:'codex',sessionId:'unrelated',text:'preserve'}}))})));
+  store.readVersion=async()=>assert.fail('unrelated archive scan must not issue control reads');
+  assert.equal(await purgeSessionArchives({store,prefix,roots:[root],principal:owner,harness:'codex',sessionId:'native-session'}),0);
+  assert.ok(await store.get(root+'unrelated.json.gz'));
+});
+
+test('matching archive pages bound control reads by distinct retained sessions',async()=>{
+  const store=memorySessionStore(),root=prefix+'/_index/backups/';
+  const target={id:'target',document:{...owner,harness:'codex',sessionId:'native-session',text:'erase'}};
+  const kept=Array.from({length:1000},(_,i)=>({id:String(i),document:{...peer,harness:'codex',sessionId:'keep',text:'preserve'}}));
+  await store.put(root+'matching.json.gz',gzipSync(JSON.stringify({previous:[target,...kept]})));
+  let reads=0;const read=store.readVersion;store.readVersion=(...args)=>{reads++;return read(...args);};
+  assert.equal(await purgeSessionArchives({store,prefix,roots:[root],principal:owner,harness:'codex',sessionId:'native-session'}),1);
+  assert.ok(reads<20,`expected bounded controls and fences, got ${reads} reads`);
+  const remaining=[...store.data].filter(([key])=>key.startsWith(root));
+  assert.equal(remaining.length,1);assert.deepEqual(JSON.parse(gunzipSync(remaining[0][1])).previous,kept);
 });
