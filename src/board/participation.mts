@@ -15,7 +15,9 @@ const workspace = {workspace: text(200).optional()};
 export const participationSchemas = {
   register: z.strictObject({session, name, task: text(240), harness: text(40).default('other')}).extend(workspace),
   directory: z.strictObject({after: z.number().int().nonnegative().default(0)}).extend(workspace),
-  subscribe: z.strictObject({session, topics: z.array(topic).max(32), homepage: z.boolean().default(true)}).extend(workspace),
+  // Older CLIs still send homepage; it is accepted and ignored. Deliveries are
+  // only mentions and subscribed topics, so unrelated posts never wake an agent.
+  subscribe: z.strictObject({session, topics: z.array(topic).max(32), homepage: z.boolean().optional()}).extend(workspace),
   inbox: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/).optional()}).extend(workspace),
   ack: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/)}).extend(workspace),
   leave: z.strictObject({session}).extend(workspace),
@@ -58,7 +60,7 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
       const participants = state.participants ||= {};
       const directory = () => Object.entries(participants).filter(([, p]) => p.seen > time - retainMs).sort((a,b) => b[1].seen - a[1].seen || a[0].localeCompare(b[0])).map(([agent, p]) => ({
         agent, name: p.name, task: p.task, harness: p.harness, seen: p.seen,
-        listening: !p.left && Number(p.lastPoll) > time - aliveMs, left: Boolean(p.left), topics: p.topics, homepage: p.homepage,
+        listening: !p.left && Number(p.lastPoll) > time - aliveMs, left: Boolean(p.left), topics: p.topics,
         registeredAt: p.registeredAt, lastPoll: p.lastPoll, lastAckAt: p.lastAckAt,
         acknowledgedThrough: p.ackCursor, pending: p.pending ? {receipt: p.pending.receipt, createdAt: p.pending.createdAt, messages: p.pending.messages.length} : null,
         batches: p.batches, acknowledgedBatches: p.acknowledgedBatches,
@@ -78,21 +80,21 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
         if (p && p.name !== args.name) throw fail('Keep the registered name when resuming this session', 409);
         if (!p && Object.keys(participants).length >= 2048) throw fail('Session registry is full', 429);
         const resumed = Boolean(p);
-        p ||= {name: args.name, task: args.task, harness: args.harness, registeredAt: time, seen: time, topics: [], homepage: true,
+        p ||= {name: args.name, task: args.task, harness: args.harness, registeredAt: time, seen: time, topics: [],
           ackCursor: state.messages.length, lastPoll: null, lastAckAt: null, nextHomeAt: time + 60_000,
           pending: null, batches: 0, acknowledgedBatches: 0};
         Object.assign(p, {seen: time, left: false, task: args.task, harness: args.harness});
         participants[id] = p;
         const home = resumed ? [] : state.messages.slice(-5).map(({requestId, publication, ...message}) => message);
         result = {workspace: principal.tenantId, agent: id, session: args.session, name: p.name, resumed,
-          subscriptions: {homepage: p.homepage, mentions: true, topics: p.topics}, home, agents: directory().slice(0, 8), pollAfterMs: 10_000};
+          subscriptions: {mentions: true, topics: p.topics}, home, agents: directory().slice(0, 8), pollAfterMs: 10_000};
       } else {
         if (!p) throw fail('Register this session before using the board', 404);
         if (operation === 'inbox' && p.left) return {workspace: principal.tenantId, agent: id, left: true, batch: null};
         if (operation !== 'leave' && p.left) throw fail('Session has left; register it again to resume', 409);
         if (operation === 'subscribe') {
-          p.topics = [...new Set(args.topics)].sort(); p.homepage = args.homepage; p.seen = time;
-          result = {agent: id, homepage: p.homepage, mentions: true, topics: p.topics, effectiveAfter: p.ackCursor};
+          p.topics = [...new Set(args.topics)].sort(); delete p.homepage; p.seen = time;
+          result = {agent: id, mentions: true, topics: p.topics, effectiveAfter: p.ackCursor};
         } else if (operation === 'leave') {
           p.left = true; p.seen = time;
           result = {agent: id, left: true};
@@ -130,12 +132,13 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
             const unseen = state.messages.slice(p.ackCursor);
             const own = (m: BoardMessage) => ownBoardMessage(m, principal.userId, id, p.name, state);
             const urgent = (m: BoardMessage) => m.mentions?.includes(id) || p.topics.includes(m.topic);
+            // Unrelated posts are skipped; the periodic pass only advances the cursor past them.
             const ready = unseen.some(m => !own(m) && urgent(m)) || time >= p.nextHomeAt;
             if (ready) {
               const messages = []; let through = p.ackCursor, bytes = 0;
               for (const m of unseen) {
-                if (!own(m) && (p.homepage || urgent(m))) {
-                  const reasons = [...(m.mentions?.includes(id) ? ['mention'] : []), ...(p.topics.includes(m.topic) ? ['topic'] : []), ...(p.homepage ? ['homepage'] : [])];
+                if (!own(m) && urgent(m)) {
+                  const reasons = [...(m.mentions?.includes(id) ? ['mention'] : []), ...(p.topics.includes(m.topic) ? ['topic'] : [])];
                   const {requestId, publication, ...visible} = m, message = {...visible, reasons};
                   const size = Buffer.byteLength(JSON.stringify(message));
                   if (messages.length >= 8 || bytes + size > 8192) break;
