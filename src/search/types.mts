@@ -10,11 +10,13 @@ export interface SearchDocument {
   installationId?: string; sessionId?: string; eventId?: string; role?: string | null;
   sequence?: number; chunk?: number; url?: string; host?: string | null;
   path?: string; project?: string; snapshotId?: string; generation?: number; modifiedAt?: string;
+  projectionId?: string; passageVersion?: number; chunkCount?: number;
   sourceSessionId?: string | null; connectionId?: string; workspaceId?: string; sourceId?: string;
   parentId?: string | null; parentKind?: string; channelId?: string; heading?: string;
   boardId?: string;
 }
-export type WritePolicy = 'session' | 'connector' | 'memory-head' | 'session-projection';
+export type NamedWritePolicy = 'session' | 'connector' | 'memory-head' | 'session-projection';
+export type WritePolicy = NamedWritePolicy | {name: 'memory-projection-rollback'; expectedProjectionId: string};
 export interface DocumentItem<T extends SearchDocument = SearchDocument> {id: string; document: T; script?: string; policy?: WritePolicy}
 export interface IndexHit<T extends SearchDocument = SearchDocument> {
   _id: string; _source: T; _score: number; found?: boolean; sort?: JsonValue[];

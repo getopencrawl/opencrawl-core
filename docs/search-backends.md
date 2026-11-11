@@ -67,6 +67,10 @@ OpenSearch-shaped requests, **not an OpenSearch protocol emulator**.
   index initialization and a search-visibility barrier (`refresh`).
 - Named `session`, `connector`, `memory-head` and `session-projection` write
   policies preserve ownership, replay ordering and connector tombstones.
+  Memory heads can atomically advance the passage format of the same snapshot.
+  The `memory-projection-rollback` policy includes an expected projection ID and
+  restores a retained head only when its owner, snapshot and generation still
+  match. A newer capture or projection remains authoritative.
   OpenSearch compiles them to its existing Painless scripts; SQLite evaluates
   them within a writer transaction. Ordinary product callers use policies and
   field patches. Legacy raw scripts remain OpenSearch-only.
