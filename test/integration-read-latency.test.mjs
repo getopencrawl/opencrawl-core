@@ -64,3 +64,13 @@ test('integration cards show durable measurements without waiting for a raw-data
   // The scan remains unresolved until cleanup. The page must still return the durable count.
   assert.equal((await integrations.list(principal))[0].synced,2);
 });
+
+test('missing distinct counts stay unknown instead of reporting cumulative Airbyte rows as unique records', {timeout:2000}, async t=>{
+  const scan=gate();t.after(()=>scan.resolve([]));
+  const integrations=createIntegrations({environment:'production',appUrl:'https://app.example',providers:{slack:provider},
+    registry:{listTenant:async()=>[record]},oauth:{},destination:{},workspaceId:async()=>'workspace',legacyBucket:'owned',
+    airbyte:{jobs:async()=>[{jobId:1,status:'succeeded',rowsSynced:999}],streamCounts:async()=>({messages:999})},
+    buckets:{read:async()=>{throw Object.assign(Error('missing'),{status:404});},list:async()=>scan.promise,write:async()=>{},stream:async()=>assert.fail('No objects')}});
+  const alive=setInterval(()=>{},1000);t.after(()=>clearInterval(alive));
+  const card=(await integrations.list(principal))[0];assert.equal(card.state,'synced');assert.equal(card.synced,undefined);assert.deepEqual(card.rows,[]);
+});

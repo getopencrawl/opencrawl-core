@@ -62,7 +62,7 @@ export async function usageReport({principal, directory, integrations, search, c
   } : null;
 
   const sources = (cards || []).filter(c => c.integrationId).map(c => ({
-    name: c.name, icon: `/assets/integrations/${c.provider}.svg`, account: c.account, state: c.state, records: c.synced || 0,
+    name: c.name, icon: `/assets/integrations/${c.provider}.svg`, account: c.account, state: c.state, records: c.synced ?? null,
     units: c.units, rows: c.rows, lastSyncedAt: c.lastSyncedAt || null, connectedAt: c.connectedAt || null,
     connectedBy: (owner => owner ? displayName(owner) : c.connectedBy)(members.find(u => u.id === c.connectedById)),
     connectedById: c.connectedById,

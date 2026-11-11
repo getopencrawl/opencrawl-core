@@ -325,14 +325,14 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     // stream and every updated record. Only initial live import progress comes from Airbyte.
     const succeededSyncs = new Set(jobs.filter(j => j.status === 'succeeded').map(j => Number(j.jobId)));
     const unique = distinct ? await distinct.get(record, provider, succeededSyncs, {wait: 100}) : null;
-    const counts = !unique ? live : !succeededSyncs.size && live
+    const counts = !unique ? (distinct && succeededSyncs.size ? null : live) : !succeededSyncs.size && live
       ? Object.fromEntries([...new Set([...Object.keys(live), ...Object.keys(unique)])].map(s => [s, Math.max(live[s] || 0, unique[s] || 0)]))
       : unique;
     // The headline counts only the provider's main streams (messages, not channel or user lists).
-    const synced = counts ? provider.progressStream.reduce((sum, stream) => sum + (counts[stream] || 0), 0) : jobs.reduce((sum, j) => sum + (j.rowsSynced || 0), 0);
+    const synced = counts ? provider.progressStream.reduce((sum, stream) => sum + (counts[stream] || 0), 0) : distinct && succeededSyncs.size ? undefined : jobs.reduce((sum, j) => sum + (j.rowsSynced || 0), 0);
     // Once every message is in, only trailing work (restoring long messages) is still running.
-    const bulkDone = !!record.total && synced >= record.total;
-    const rows = (provider.progress || []).map(({stream, label, trailing}) => ({label, count: counts?.[stream] || 0, trailing: !!trailing, done: !running || (bulkDone && !trailing)}));
+    const bulkDone = !!record.total && synced !== undefined && synced >= record.total;
+    const rows = (counts ? provider.progress || [] : []).map(({stream, label, trailing}) => ({label, count: counts?.[stream] || 0, trailing: !!trailing, done: !running || (bulkDone && !trailing)}));
     const succeeded = jobs.find(j => j.status === 'succeeded');
     const latest = jobs[0];
     const lastSyncedAt = succeeded ? (succeeded.lastUpdatedAt || succeeded.startTime) : null;
@@ -340,7 +340,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       // ETA from the current import pace, only once it has a total and some progress.
       let eta = null;
       const started = Date.parse(running?.startTime || '');
-      if (!succeeded && record.total && synced > 0 && synced < record.total && started) {
+      if (!succeeded && record.total && synced !== undefined && synced > 0 && synced < record.total && started) {
         const rate = synced / Math.max(1, now() - started);
         eta = Math.round((record.total - synced) / rate / 1000);
       }
