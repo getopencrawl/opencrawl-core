@@ -149,7 +149,7 @@ export function SourceRow({source, canManage = false, pending, active, connect, 
   const [setupOpen, setSetupOpen] = useState(false);
   const status = sourceStatus(source);
   const restartSignIn = source.recoveryAction === 'connect';
-  const progress = source.initial !== false && source.total ? Math.min(source.synced ?? 0, source.total) : undefined;
+  const progress = source.initial !== false && source.total && source.synced !== undefined ? Math.min(source.synced, source.total) : undefined;
   const account = [source.account || source.description, source.connectedBy && `connected by ${source.connectedBy}`].filter(Boolean).join(', ');
   const syncedAt = source.lastSyncedAt && Number.isFinite(Date.parse(source.lastSyncedAt)) ? source.lastSyncedAt : null;
   const hasAction = ['disconnected', 'connecting'].includes(source.state) || restartSignIn || (source.state === 'error' && !source.reconnect);
@@ -164,6 +164,7 @@ export function SourceRow({source, canManage = false, pending, active, connect, 
       <span>{syncedAt && source.state === 'synced' ? <><span className="sr-only">Connected</span>Synced <time dateTime={syncedAt} title={new Date(syncedAt).toLocaleString()}>{relativeTime(syncedAt)}</time></> : ['synced','connected'].includes(source.state) ? 'Connected' : <><span className="sr-only">{status.label}</span> {sourceProgress(source)}</>}</span>
     </p>}
     {source.state === 'syncing' && <progress className="oc-connection-progress" aria-label={`${source.name} import progress`} {...(progress !== undefined && source.total ? {value: progress, max: source.total} : {})} />}
+    {source.synced === undefined && ['synced','syncing','connected'].includes(source.state) && <p className="muted" role="status">Updating imported counts…</p>}
     {Boolean(source.rows?.length) && <ul className="oc-connection-streams" aria-label={`${source.name} imported data`}>{source.rows?.map(row => {
       const done = row.done || source.state === 'synced';
       const importing = source.state === 'syncing' && !done;

@@ -5,6 +5,12 @@ export interface SelfhostSettings extends IdentitySettings {
   registryPath:string; search:{endpoint:string;username?:string;password?:string;environment:string;tenantId:string};
 }
 const LOOPBACK=new Set(['localhost','127.0.0.1','[::1]']);
+/** Explicit opt-out; a typo must not silently disable source ingestion. */
+export function airbyteEnabled(env:NodeJS.ProcessEnv=process.env):boolean {
+  const value=env.OPENCRAWL_AIRBYTE_ENABLED??'true';
+  if(!['true','false'].includes(value))throw new Error('OPENCRAWL_AIRBYTE_ENABLED must be true or false');
+  return value==='true';
+}
 /** Operator configuration; requests never choose a tenant or storage namespace. */
 export function selfhostSettings(env:NodeJS.ProcessEnv=process.env):SelfhostSettings {
   const required=(name:string)=>{const value=env[name]?.trim();if(!value)throw new Error(`${name} is required`);return value;};

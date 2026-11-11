@@ -1,6 +1,6 @@
 import {Component, useCallback, useEffect, useRef, useState, useMemo} from 'react';
 import type {ErrorInfo, ReactNode} from 'react';
-import {ConsoleDataProvider, useConsolePrefetch, useConsoleQueryClient, consoleResourceKey, libraryResourceKey, AppRouter, AppShell, FocusedFrame, AgentOnboarding, SourcesOnboarding, InviteOnboarding, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, Page, LinkButton, Navigate, Routes, Route, useLocation, useNavigate} from '../index.ts';
+import {ConsoleDataProvider, useConsoleQueryClient, AppRouter, AppShell, FocusedFrame, AgentOnboarding, SourcesOnboarding, InviteOnboarding, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, Page, LinkButton, Navigate, Routes, Route, useLocation, useNavigate} from '../index.ts';
 import type {ConsoleDataAdapter, NavigationItem, OnboardingAdapter} from '../index.ts';
 import type {Bootstrap, ProductApi} from './api.ts';
 import {SourcesPage} from './sources.tsx';
@@ -17,10 +17,8 @@ export interface ConsoleExtensions<B extends Bootstrap> {
   routes?: (context: ConsoleExtensionContext<B>) => ConsoleRoute[];
   decorateRoute?: (route: ConsoleRoute, data: B) => ConsoleRoute;
   teamFooter?: ReactNode;
-  prefetches?: ReadonlyArray<{key: readonly unknown[]; read: (signal: AbortSignal) => Promise<unknown>; staleMilliseconds?: number}>;
 }
-function WarmWorkspace({prefetches}: {prefetches: NonNullable<ConsoleExtensions<Bootstrap>['prefetches']>}) {
-  useConsolePrefetch(prefetches);
+function WorkspaceInvalidation() {
   const cache=useConsoleQueryClient();
   useEffect(()=>{
     const changed=()=>{void cache?.invalidateQueries();};
@@ -45,14 +43,6 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     ...(api.saveCredential ? {saveCredential: (id: string, value: string, signal: AbortSignal) => api.saveCredential!(id, value, signal)} : {}),
     invitations: api.onboardingInvitations, invite: api.onboardingInvite, finish: api.finishOnboarding,
   }), [api]);
-  const prefetches = useMemo(() => [
-    {key: consoleResourceKey(dataAdapter, 'usage'), read: (signal: AbortSignal) => dataAdapter.usage(signal), staleMilliseconds: 60_000},
-    {key: consoleResourceKey(api.sources), read: api.sources},
-    {key: consoleResourceKey(api.team), read: api.team},
-    {key: libraryResourceKey(libraryAdapter, 'sessions/list', 'all\n', 50), read: (signal: AbortSignal) => libraryAdapter('sessions/list', {scope: 'all', query: '', limit: 50}, signal)},
-    {key: libraryResourceKey(libraryAdapter, 'memories/list', 'all'), read: (signal: AbortSignal) => libraryAdapter('memories/list', {scope: 'all'}, signal)},
-    ...(extensions?.prefetches ?? []),
-  ], [api, dataAdapter, libraryAdapter, extensions]);
   const [data,setData] = useState<B | null>(null), [error,setError] = useState('');
   const [attempt,setAttempt] = useState(0);
   const accessEpoch=useRef(0),blocked=useRef(false);
@@ -109,7 +99,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     <Route path="/onboarding/invite" element={<InviteOnboarding adapter={onboardingAdapter} canInvite={data.canInvite} onComplete={async path => {await refresh();navigate(path);}}/>}/>
   </Routes></FocusedFrame></ConsoleDataProvider>;
   const shown = extensions?.decorateRoute ? routes.map(route => extensions.decorateRoute!(route, data)) : routes;
-  return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WarmWorkspace prefetches={prefetches}/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>}/></ConsoleDataProvider>;
+  return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>}/></ConsoleDataProvider>;
 }
 /** One application composition for self-hosted and hosted deployments. */
 export function OpenCrawlApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>; extensions?: ConsoleExtensions<B>}) {

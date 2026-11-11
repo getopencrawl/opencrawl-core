@@ -14,17 +14,26 @@ agent board. You do not need an OpenCrawl or WorkOS account to run it.
 Use **Ubuntu 24.04 x86_64**, with sudo access, **4 CPUs, 16 GiB RAM, and 40 GiB
 free disk**. Internet access is required. macOS, Windows, and ARM are not yet
 supported by this installer; use an Ubuntu machine or VM.
-
-The installer is currently on the `codex/core-shell-seam` preview branch. The
-repository remains private while we prepare the OSS release.
+Without Airbyte, use **4 CPUs, 8 GiB RAM, and 20 GiB free disk**.
 
 ```sh
-git clone --branch codex/core-shell-seam https://github.com/getopencrawl/opencrawl-core.git
+git clone https://github.com/getopencrawl/opencrawl-core.git
 cd opencrawl-core
 ./dev/up
 ```
 
-From an existing checkout of this branch, just run `./dev/up`. The script installs
+For agent capture, memories, search, and board without external sources:
+
+```sh
+./dev/up --no-airbyte
+```
+
+This uses Docker Compose only: no Airbyte, Kubernetes, Helm, or connector credentials.
+Repeat `--no-airbyte` on each startup; running `./dev/up` enables the full stack.
+Switching modes preserves existing data. External source access and syncing are
+unavailable while Airbyte is disabled.
+
+From an existing checkout, just run your chosen command. The script installs
 its tools, starts all dependencies, and creates a local account. No service credentials,
 OAuth application, Node installation, or `.env` editing is required. Sudo may
 ask for your system password. The first run downloads and builds images and can
@@ -36,11 +45,11 @@ take tens of minutes.
 3. Follow onboarding to connect your coding agent, choose integrations, and
    invite teammates. Connecting an integration is optional: skip it and the
    workspace opens on agent capture alone. Each integration says what it
-   needs. An admin can add a Composio API key in the product to enable Google
-   Drive, Notion, Circleback, and Slack sign-in.
+   needs. With Airbyte enabled, an admin can add a Composio API key in the product
+   to enable Notion, Circleback, and Slack sign-in. Google Drive indexing is not yet supported.
 
-To try sample data instead, run `./dev/up demo`. This explicitly completes
-onboarding and imports synthetic records; search for **`lunar otter`** in
+To try sample data instead, run `./dev/up demo` (or `./dev/up demo --no-airbyte`).
+This explicitly completes onboarding and imports synthetic records; search for **`lunar otter`** in
 **Diagnostics → Search inspector** afterward.
 
 Airbyte is available at **http://localhost:8000**. Ports bind to loopback; for a
@@ -66,13 +75,14 @@ The development installer provisions these automatically:
 | --- | --- |
 | Node.js and React | Application backend and web console |
 | Better Auth and SQLite | Local accounts, membership, and application state |
-| Airbyte | Source connectors and data synchronization |
+| Airbyte (optional) | External source connectors and data synchronization |
 | S3-compatible storage | Captured sessions and connector output; SeaweedFS locally |
 | Temporal and PostgreSQL | Durable background jobs and workflow state |
 | OpenSearch | Indexing and search |
 
-The dev stack uses Docker Compose plus a local kind Kubernetes cluster for
-Airbyte. Production deployments can operate the dependencies independently;
+The dev stack uses Docker Compose, plus a local kind Kubernetes cluster when
+Airbyte is enabled. Airbyte's supported deployment requires Kubernetes; OpenCrawl's
+own services run in Compose. Production deployments can operate the dependencies independently;
 the application does not depend on the dev installer. See the
 [self-hosting guide](docs/self-host.md) for operator-managed deployment.
 Third-party dependencies retain their own licenses.

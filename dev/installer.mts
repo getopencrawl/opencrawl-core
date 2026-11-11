@@ -14,13 +14,14 @@ interface State {
   organization:string;email:string;password:string;authSecret:string;setupToken:string;connectorKey:string;
   s3Key:string;s3Secret:string;temporalPassword:string;airbytePassword:string;airbyteClientId:string;
   airbyteClientSecret:string;airbyteDbPassword:string;airbyteStorageSecret:string;
-  workspaceId?:string;airbyteInstalled?:boolean;airbyteConfigHash?:string;verifiedAt?:string;startedAt?:string;
+  workspaceId?:string;airbyteInstalled?:boolean;airbyteConfigHash?:string;airbyteEnabled?:boolean;verifiedAt?:string;startedAt?:string;
 }
 const root=realpathSync(resolve(dirname(fileURLToPath(import.meta.url)),'..'));
 const stateDir=join(root,'.opencrawl-dev'),stateFile=join(stateDir,'state.json'),bin=join(stateDir,'bin');
 const pins=JSON.parse(readFileSync(join(root,'dev/pins.json'),'utf8')) as Pins;
-const action=process.argv[2]||'up';
-if(!['up','demo','status','stop','reset'].includes(action)||process.argv.slice(3).some(x=>x!=='--yes'))throw new Error('Use ./dev/up [up|demo|status|stop|reset --yes]');
+const args=process.argv.slice(2),actions=args.filter(x=>!x.startsWith('--')),action=actions[0]||'up',airbyteEnabled=!args.includes('--no-airbyte');
+if(actions.length>1||!['up','demo','status','stop','reset'].includes(action)||args.some(x=>!['up','demo','status','stop','reset','--yes','--no-airbyte'].includes(x))
+  ||args.includes('--yes')&&action!=='reset'||!airbyteEnabled&&!['up','demo'].includes(action))throw new Error('Use ./dev/up [up|demo] [--no-airbyte], or ./dev/up [status|stop|reset --yes]');
 process.umask(0o077);
 mkdirSync(stateDir,{recursive:true,mode:0o700});
 if(lstatSync(stateDir).isSymbolicLink())throw new Error('Refusing symlinked state');
@@ -91,7 +92,7 @@ async function publishApp(address:string){
     ['-n','airbyte','exec','airbyte-db-0','--','wget','-q','-T','5','-O','-',appForAirbyte+'/health'],{capture:true,allowFailure:true}).includes('"ok":true'),2);
 }
 function summary(){
-  console.log(`\nOpenCrawl development workspace: ${state.origin}\nAirbyte: http://localhost:${state.airbytePort}\nPrivate login details: ${join(stateDir,'login.txt')}\nLast startup check: ${state.startedAt||state.verifiedAt||'not yet started'}\nOptional demo ingestion check: ${state.verifiedAt||'not run (./dev/up demo)'}\nStop without deleting data: ./dev/up stop\nDelete this development installation: ./dev/up reset --yes`);
+  console.log(`\nOpenCrawl development workspace: ${state.origin}\nAirbyte: ${state.airbyteEnabled===false?'disabled':`http://localhost:${state.airbytePort}`}\nPrivate login details: ${join(stateDir,'login.txt')}\nLast startup check: ${state.startedAt||'not yet started'}\nOptional demo ingestion check: ${state.verifiedAt||'not run'}\nResume: ./dev/up${state.airbyteEnabled===false?' --no-airbyte':''}\nStop without deleting data: ./dev/up stop\nDelete this development installation: ./dev/up reset --yes`);
 }
 if(action==='status'){
   if(composeExists())compose(['ps']);
@@ -101,7 +102,7 @@ if(action==='status'){
 }else if(action==='reset'){
   if(!process.argv.includes('--yes'))throw new Error('reset --yes permanently deletes this clone’s development accounts, imported data and Airbyte cluster');
   if(ownedNode())run(join(bin,'kind'),['delete','cluster','--name',state.project,'--kubeconfig',kubeconfig]);
-  if(composeExists())compose(['down','--volumes']);
+  if(composeExists())compose(['down','--volumes','--remove-orphans']);
   // Airbyte's database owns files as container UIDs. Delete only this clone's
   // bind-mounted data using a short-lived container, before removing ownership state.
   const dataDir=join(stateDir,'airbyte-data');
@@ -150,29 +151,59 @@ function writeCompose(airbyteAddress='127.0.0.1',s3Address='s3',workspaceId=stat
   const env={COMPOSE_PROJECT_NAME:state.project,OPENCRAWL_IMAGE_TAG:state.project,OPENCRAWL_URL:state.origin,OPENCRAWL_ORGANIZATION_ID:state.organization,
     OPENCRAWL_AUTH_SECRET:state.authSecret,OPENCRAWL_SETUP_TOKEN:state.setupToken,OPENCRAWL_CONNECTOR_KEY:state.connectorKey,
     OPENCRAWL_S3_ACCESS_KEY_ID:state.s3Key,OPENCRAWL_S3_SECRET_ACCESS_KEY:state.s3Secret,OPENCRAWL_TEMPORAL_PASSWORD:state.temporalPassword,
-    OPENCRAWL_AIRBYTE_S3_ENDPOINT:`http://${s3Address}:8333`,OPENCRAWL_APP_PORT:String(state.port),OPENCRAWL_APP_BIND:'127.0.0.1',OPENCRAWL_S3_BIND:'127.0.0.1',OPENCRAWL_S3_PORT:'0',
-    AIRBYTE_URL:`http://${airbyteAddress}:30080`,AIRBYTE_CLIENT_ID:state.airbyteClientId,AIRBYTE_CLIENT_SECRET:state.airbyteClientSecret,AIRBYTE_WORKSPACE_ID:workspaceId,
-    OPENCRAWL_AIRBYTE_APP_URL:appForAirbyte,...connectorEnv};
+    OPENCRAWL_AIRBYTE_ENABLED:String(airbyteEnabled),OPENCRAWL_APP_PORT:String(state.port),OPENCRAWL_APP_BIND:'127.0.0.1',OPENCRAWL_S3_BIND:'127.0.0.1',OPENCRAWL_S3_PORT:'0',
+    ...(airbyteEnabled?{OPENCRAWL_AIRBYTE_S3_ENDPOINT:`http://${s3Address}:8333`,AIRBYTE_URL:`http://${airbyteAddress}:30080`,AIRBYTE_CLIENT_ID:state.airbyteClientId,AIRBYTE_CLIENT_SECRET:state.airbyteClientSecret,AIRBYTE_WORKSPACE_ID:workspaceId,
+      OPENCRAWL_AIRBYTE_APP_URL:appForAirbyte,...connectorEnv}:{} )};
   privateFile(envFile,Object.entries(env).map(([k,v])=>`${k}=${JSON.stringify(v)}`).join('\n')+'\n');
   // Only additive dev composition. The normal images, env contract, data volumes,
   // workers and production behavior come from deploy/compose.yaml unchanged.
   privateFile(override,{services:{
     app:{environment:{REVISION:run('git',['rev-parse','HEAD'],{capture:true}).trim()}},
-    fixture:{image:'node:24.22.2-bookworm-slim',command:['node','--disable-warning=ExperimentalWarning','/fixture.mts'],volumes:[`${join(root,'dev/fixture.mts')}:/fixture.mts:ro`],restart:'unless-stopped',healthcheck:{test:['CMD','node','-e',"fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"],interval:'5s',timeout:'5s',retries:12}},
+    ...(airbyteEnabled?{fixture:{image:'node:24.22.2-bookworm-slim',command:['node','--disable-warning=ExperimentalWarning','/fixture.mts'],volumes:[`${join(root,'dev/fixture.mts')}:/fixture.mts:ro`],restart:'unless-stopped',healthcheck:{test:['CMD','node','-e',"fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"],interval:'5s',timeout:'5s',retries:12}}}:{}),
   }});
 }
 async function up(){
   const docker=JSON.parse(run('docker',['info','--format','{{json .}}'],{capture:true})) as {MemTotal:number;NCPU:number};
-  if(docker.MemTotal<12*1024**3||docker.NCPU<4)throw new Error('Allocate at least 4 CPUs and 16 GiB RAM to Docker for the full dev stack');
-  const disk=statfsSync(root);if(!state.startedAt&&!state.verifiedAt&&disk.bavail*disk.bsize<40*1024**3)throw new Error('At least 40 GiB free disk is required for the initial images and build');
-  await download('kind',pins.kind);await download('kubectl',pins.kubectl);await download('helm',pins.helm);
-  const chart=await download('airbyte.tgz',pins.airbyte);
+  if(docker.MemTotal<(airbyteEnabled?12:6)*1024**3||docker.NCPU<4)throw new Error(`Allocate at least 4 CPUs and ${airbyteEnabled?16:8} GiB RAM to Docker`);
+  const disk=statfsSync(root),minimumDisk=airbyteEnabled?40:20;
+  if(!state.startedAt&&!state.verifiedAt&&disk.bavail*disk.bsize<minimumDisk*1024**3)throw new Error(`At least ${minimumDisk} GiB free disk is required for the initial images and build`);
   const existing=ownedNode();
-  if(!existing){await freePort(state.airbytePort);await freePort(state.port);}
+  if(airbyteEnabled&&!existing)await freePort(state.airbytePort);
+  if(!state.startedAt&&!composeExists())await freePort(state.port);
+  if(!airbyteEnabled){
+    // Stop the old workers before pausing source jobs. Preserve connections, volumes and grants.
+    if(composeExists()){
+      compose(['stop','app','worker']);
+      if(state.airbyteEnabled!==false)compose(['stop','fixture']);
+    }
+    if(existing?.State.Running)run('docker',['stop',node]);
+  }
   writeCompose();
   console.log('Starting the normal storage and workflow dependencies...');
-  compose(['up','-d','--wait','--wait-timeout','600','s3','opensearch','temporal','fixture']);
+  compose(['up','-d','--wait','--wait-timeout','600','s3','opensearch','temporal',...(airbyteEnabled?['fixture']:[])]);
   console.log('Building the shared product runtime and React console...');compose(['build','app']);
+  if(airbyteEnabled)await startAirbyte(existing);
+  console.log('Starting the normal authenticated application and indexing worker...');compose(['up','-d','--wait','--wait-timeout','600','app','worker']);
+  if(airbyteEnabled)await publishApp(ip('app'));
+  const credentials={format:1,project:state.project,origin:state.origin,connectOrigin:'http://app:8092',organization:state.organization,email:state.email,password:state.password,setupToken:state.setupToken,
+    airbyteEnabled,...(airbyteEnabled?{fixtureUrl:`http://${ip('fixture')}:8080`}:{})};
+  const seedDir=join(stateDir,'seed');mkdirSync(seedDir,{recursive:true,mode:0o700});
+  privateFile(join(seedDir,'seed-input.json'),credentials);
+  console.log(action==='demo'?`Loading demo data and verifying ${airbyteEnabled?'Airbyte → ':''}S3 → Temporal → OpenSearch ingestion...`:'Creating the local account and preserving first-run onboarding...');
+  compose(['run','--rm','--no-deps','--user','root','--volume',`${join(root,'dev')}:/opencrawl/dev:ro`,'--volume',`${seedDir}:/dev-state`,'app','node','--disable-warning=ExperimentalWarning',action==='demo'?'dev/seed.mts':'dev/bootstrap.mts']);
+  if(state.airbyteEnabled!==airbyteEnabled)delete state.verifiedAt;
+  if(action==='demo'){
+    privateFile(join(stateDir,'verification.json'),JSON.parse(readFileSync(join(seedDir,'verification.json'),'utf8')));
+    state.verifiedAt=new Date().toISOString();
+  }
+  state.airbyteEnabled=airbyteEnabled;state.startedAt=new Date().toISOString();save();
+  privateFile(join(stateDir,'login.txt'),`Development only\nURL: ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\n`+(airbyteEnabled?`Airbyte URL: http://localhost:${state.airbytePort}\nAirbyte password: ${state.airbytePassword}\n`:'Airbyte disabled. Resume with ./dev/up --no-airbyte\n'));
+  summary();
+  console.log(`\nSign in to ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\n\nThese local development credentials are also saved in .opencrawl-dev/login.txt.`);
+}
+async function startAirbyte(existing:ReturnType<typeof ownedNode>){
+  await download('kind',pins.kind);await download('kubectl',pins.kubectl);await download('helm',pins.helm);
+  const chart=await download('airbyte.tgz',pins.airbyte);
   if(!existing){
     mkdirSync(join(stateDir,'airbyte-data'),{recursive:true,mode:0o700});
     privateFile(join(stateDir,'kind.json'),{kind:'Cluster',apiVersion:'kind.x-k8s.io/v1alpha4',networking:{apiServerAddress:'127.0.0.1'},nodes:[{role:'control-plane',image:pins.kindNode,
@@ -228,19 +259,4 @@ async function up(){
     if(!state.workspaceId)throw new Error('Airbyte returned no workspace ID');save();
   }
   writeCompose(airbyteIp,ip('s3'));
-  console.log('Starting the normal authenticated application and indexing worker...');compose(['up','-d','--wait','--wait-timeout','600','app','worker']);
-  await publishApp(ip('app'));
-  const credentials={format:1,project:state.project,origin:state.origin,connectOrigin:'http://app:8092',organization:state.organization,email:state.email,password:state.password,setupToken:state.setupToken,fixtureUrl:`http://${ip('fixture')}:8080`};
-  const seedDir=join(stateDir,'seed');mkdirSync(seedDir,{recursive:true,mode:0o700});
-  privateFile(join(seedDir,'seed-input.json'),credentials);
-  console.log(action==='demo'?'Loading demo data and verifying real Airbyte → S3 → Temporal → OpenSearch ingestion...':'Creating the local account and preserving first-run onboarding...');
-  compose(['run','--rm','--no-deps','--user','root','--volume',`${join(root,'dev')}:/opencrawl/dev:ro`,'--volume',`${seedDir}:/dev-state`,'app','node','--disable-warning=ExperimentalWarning',action==='demo'?'dev/seed.mts':'dev/bootstrap.mts']);
-  if(action==='demo'){
-    privateFile(join(stateDir,'verification.json'),JSON.parse(readFileSync(join(seedDir,'verification.json'),'utf8')));
-    state.verifiedAt=new Date().toISOString();
-  }
-  state.startedAt=new Date().toISOString();save();
-  privateFile(join(stateDir,'login.txt'),`Development only\nURL: ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\nAirbyte URL: http://localhost:${state.airbytePort}\nAirbyte password: ${state.airbytePassword}\n`);
-  summary();
-  console.log(`\nSign in to ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\n\nThese local development credentials are also saved in .opencrawl-dev/login.txt.`);
 }

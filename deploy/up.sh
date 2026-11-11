@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 umask 077
+if [ "${1:-}" = --no-airbyte ]; then
+  export OPENCRAWL_AIRBYTE_ENABLED=false
+  shift
+fi
 cd "$(dirname "$0")"
 command -v docker >/dev/null 2>&1 || { echo "Install Docker with the Compose plugin first." >&2; exit 1; }
 if [ ! -f .env ]; then
@@ -14,7 +18,7 @@ if [ ! -f .env ]; then
       -e "s/^OPENCRAWL_S3_SECRET_ACCESS_KEY=$/OPENCRAWL_S3_SECRET_ACCESS_KEY=$(secret)/" \
       -e "s/^OPENCRAWL_TEMPORAL_PASSWORD=$/OPENCRAWL_TEMPORAL_PASSWORD=$(secret)/" .env.example > .env
   chmod 600 .env
-  echo "Created deploy/.env with local secrets. Fill in your Airbyte and HTTPS settings, then run ./up.sh again."
+  echo "Created deploy/.env with local secrets. Set OPENCRAWL_URL, then run ./up.sh --no-airbyte, or configure Airbyte and run ./up.sh."
   exit 0
 fi
 docker compose up -d --build --wait --wait-timeout 600 "$@"
