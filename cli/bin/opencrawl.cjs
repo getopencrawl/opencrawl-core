@@ -13,7 +13,8 @@ const ROOT = path.resolve(__dirname, '..');
 const PACKAGE = '@getopencrawl/cli';
 const REGISTRY = 'https://registry.npmjs.org';
 const CHANNEL = 'next';
-const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+const RETRY = 15 * 60 * 1000;
 const cacheRoot = () => path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'opencrawl');
 const stable = value => typeof value === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value);
 function compare(a, b) {
@@ -80,23 +81,32 @@ function npmCli(nodeExecutable = process.execPath) {
   }
   throw new Error('npm is required for updates. Install Node.js with npm and retry.');
 }
-async function update({force = false, root = ROOT, fetcher = fetch, install = installRelease} = {}) {
+function updateDue(state, now = Date.now()) {
+  // Old launchers recorded only checkedAt. Shorten that old daily interval too.
+  const next = Number.isFinite(state?.nextCheckAt) ? state.nextCheckAt : (state?.checkedAt || 0) + 6 * HOUR;
+  return !state || next <= now || next > now + 6 * HOUR;
+}
+async function update({force = false, root = ROOT, fetcher = fetch, install = installRelease, signal, now = Date.now, random = Math.random} = {}) {
   const stateFile = path.join(cacheRoot(), 'update.json');
   const state = read(stateFile);
   const current = read(path.join(activeRoot(root), 'package.json')).version;
-  if (!force && state?.checkedAt > Date.now() - DAY) return {updated: false, version: current};
-  const response = await fetcher(`${REGISTRY}/@getopencrawl%2fcli/${CHANNEL}`, {redirect: 'error', signal: AbortSignal.timeout(10_000)});
+  if (!force && !updateDue(state, now())) return {updated: false, version: current};
+  signal?.throwIfAborted();
+  const response = await fetcher(`${REGISTRY}/@getopencrawl%2fcli/${CHANNEL}`, {redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000)});
   if (!response.ok) throw new Error('The npm registry could not check for updates.');
   const latest = await response.json();
   if (latest.name !== PACKAGE || !stable(latest.version)) throw new Error('The registry returned invalid release metadata.');
-  if (compare(latest.version, current) <= 0) { write(stateFile, {checkedAt: Date.now()}); return {updated: false, version: current}; }
+  const checked = () => { const checkedAt = now(); write(stateFile, {checkedAt, nextCheckAt: checkedAt + 3 * HOUR + Math.floor(random() * 3 * HOUR)}); };
+  signal?.throwIfAborted();
+  if (compare(latest.version, current) <= 0) { checked(); return {updated: false, version: current}; }
   await install(latest.version);
+  signal?.throwIfAborted();
   if (!validRelease(releaseRoot(latest.version), latest.version)) throw new Error('The installed update is incomplete.');
   const selected = read(path.join(activeRoot(root), 'package.json')).version;
   // Keep old npm-installed bootstraps able to delegate to the cached launcher.
   // New launchers select the maximum complete release, even if this hint races.
   write(path.join(cacheRoot(), 'current.json'), {version: selected});
-  write(stateFile, {checkedAt: Date.now()});
+  checked();
   return {updated: compare(selected, current) > 0, version: selected};
 }
 async function installRelease(version, {registry = REGISTRY} = {}) {
@@ -130,10 +140,10 @@ async function installRelease(version, {registry = REGISTRY} = {}) {
     }
   } finally { fs.rmSync(stage, {recursive: true, force: true}); }
 }
-async function automaticUpdate() {
+async function automaticUpdate(options = {}) {
   if (process.env.OPENCRAWL_NO_UPDATE === '1') return;
-  try { await update(); }
-  catch { try { write(path.join(cacheRoot(), 'update.json'), {checkedAt: Date.now() - DAY + 15 * 60_000}); } catch {} }
+  try { return await update(options); }
+  catch { try { write(path.join(cacheRoot(), 'update.json'), {nextCheckAt: Date.now() + RETRY}); } catch {} }
 }
 function refreshSkills(root, {force = false, run = spawnSync} = {}) {
   const version = read(path.join(root, 'package.json'))?.version;
@@ -162,7 +172,7 @@ function refreshSkills(root, {force = false, run = spawnSync} = {}) {
 }
 async function main(args = process.argv.slice(2)) {
   if (args[0] === '--internal-update') {
-    try { await update(); refreshSkills(activeRoot()); } catch { write(path.join(cacheRoot(), 'update.json'), {checkedAt: Date.now() - DAY + 15 * 60_000}); }
+    await automaticUpdate();
     return 0;
   }
   const selected = activeRoot();
@@ -187,7 +197,8 @@ async function main(args = process.argv.slice(2)) {
       return reportFailure(error, args);
     }
   }
-  if (!(args[0] === 'collect' && ['hook','worker'].includes(args[1]))) await automaticUpdate();
+  // The native process overlaps opportunistic updates with its command, including
+  // direct managed hooks. It owns cancellation and the shared update lock.
   const root = activeRoot();
   if (process.env.OPENCRAWL_NO_UPDATE !== '1' && !(args[0] === 'collect' && ['hook', 'worker'].includes(args[1]))) {
     const skills = refreshSkills(root);
@@ -208,5 +219,5 @@ function reportFailure(error, args) {
   else process.stderr.write(`opencrawl: ${message}\n`);
   return 1;
 }
-module.exports = {channel: CHANNEL, target, stable, compare, activeRoot, update, installRelease, refreshSkills, binary, npmCli, main};
+module.exports = {channel: CHANNEL, cacheRoot, updateDue, automaticUpdate, target, stable, compare, activeRoot, update, installRelease, refreshSkills, binary, npmCli, main};
 if (require.main === module) main().then(code => { process.exitCode = code; }).catch(error => { process.exitCode = reportFailure(error, process.argv.slice(2)); });

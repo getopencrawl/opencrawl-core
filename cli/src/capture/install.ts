@@ -100,9 +100,9 @@ function configureHooks(config:CaptureConfig,harnesses:Harness[]) {
   // Resolve the selected npm binary without running its launcher. On Unix exec
   // preserves the PID owned by the harness, including cancellation and reaping.
   atomicFile(runner,`const command=${JSON.stringify(config.command)};
-const env={...process.env,OPENCRAWL_CONFIG_HOME:${JSON.stringify(dirname(configDir()))},OPENCRAWL_NO_UPDATE:'1'};
+const env={...process.env,OPENCRAWL_CONFIG_HOME:${JSON.stringify(dirname(configDir()))}};
 let file=command[0],args=command.slice(1);
-if(args[0]&&require('node:path').basename(args[0])==='opencrawl.cjs'){const cli=require(args[0]);file=cli.binary(cli.activeRoot());args=args.slice(1);}
+if(args[0]&&require('node:path').basename(args[0])==='opencrawl.cjs'){env.OPENCRAWL_LAUNCHER=args[0];env.OPENCRAWL_NODE=file;const cli=require(args[0]);file=cli.binary(cli.activeRoot());args=args.slice(1);}
 args.push(...process.argv.slice(2));
 if(process.platform!=='win32')process.execve(file,[file,...args],env);
 else {const r=require('node:child_process').spawnSync(file,args,{stdio:'inherit',windowsHide:true,env});process.exitCode=r.status??1;}

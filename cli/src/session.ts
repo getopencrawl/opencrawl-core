@@ -62,14 +62,19 @@ const heldLocks=new Set<()=>void>();
 process.once('exit',()=>{for(const release of heldLocks)try{release();}catch{}});
 const lockIdentity=(file:string)=>{const st=statSync(file,{bigint:true});return [st.dev,st.ino,st.birthtimeNs,st.ctimeNs].join(':');};
 export async function withSessionLock<T>(api: string, operation: () => Promise<T>, waitMs = 20_000,signal?:AbortSignal): Promise<T> {
-  try { return await lockedSession(api, operation, waitMs, signal); }
+  return withFileLock(sessionFile(api) + '.lock', operation, waitMs, signal);
+}
+
+/** Kernel-backed exclusion also serves the per-user release cache, independent of capture config. */
+export async function withFileLock<T>(file: string, operation: () => Promise<T>, waitMs = 20_000,signal?:AbortSignal): Promise<T> {
+  try { return await lockedFile(file, operation, waitMs, signal); }
   catch (error) { throw filesystemError(error, 'update local OpenCrawl state'); }
 }
 
-async function lockedSession<T>(api: string, operation: () => Promise<T>, waitMs: number, signal?:AbortSignal): Promise<T> {
+async function lockedFile<T>(file: string, operation: () => Promise<T>, waitMs: number, signal?:AbortSignal): Promise<T> {
   signal?.throwIfAborted();
-  const file = sessionFile(api) + '.lock',database=file+'.sqlite';
-  mkdirSync(configDir(), {recursive: true, mode: 0o700});
+  const database=file+'.sqlite';
+  mkdirSync(dirname(file), {recursive: true, mode: 0o700});
   // Check write access before SQLite obscures the OS error as CANTOPEN, and
   // create the lock database privately without ever replacing its inode.
   closeSync(openSync(database, 'a', 0o600));

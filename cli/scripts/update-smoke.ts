@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {createServer} from 'node:http';
+import {installNativeRelease} from '../src/update.ts';
 import {standaloneCapture} from '../../dist/src/sessions/standalone.mjs';
 import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
 import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
@@ -60,6 +61,7 @@ try {
     const path = decodeURIComponent(new URL(request.url).pathname);
     for (const [name, releases] of packages) {
       for (const [release, item] of releases) if (path === `/${name}/${release}.tgz`) return new Response(Uint8Array.from(item.bytes));
+      for (const [release,item] of releases) if(path===`/${name}/${release}`)return Response.json({...item.pkg,dist:{tarball:`${server.url.origin}/${name}/${release}.tgz`,integrity:'sha512-'+createHash('sha512').update(item.bytes).digest('base64')}});
       if (path === `/${name}`) return Response.json({name, 'dist-tags': {latest: version}, versions: Object.fromEntries([...releases].map(([release, item]) => [release, {...item.pkg, dist: {tarball: `${server.url.origin}/${name}/${release}.tgz`, integrity: 'sha512-' + createHash('sha512').update(item.bytes).digest('base64')}}]))});
     }
     return new Response('Not found', {status: 404});
@@ -72,6 +74,12 @@ try {
     const installedRoot = join(install, 'node_modules/@getopencrawl/cli');
     const launcher = join(installedRoot, 'bin/opencrawl.cjs');
     if (sync(['node', launcher, '--version']) !== original.version) throw new Error('Initial installation mismatch');
+    // The process-owned automatic path installs these same real npm artifacts
+    // without invoking npm. Execute its published binary on every target OS.
+    const automaticCache=join(scratch,'automatic-cache');
+    await installNativeRelease(version,{launcher:{...createRequire(import.meta.url)(launcher),cacheRoot:()=>automaticCache},registry:server.url.origin});
+    const automaticLauncher=join(automaticCache,'releases',version,'node_modules/@getopencrawl/cli/bin/opencrawl.cjs');
+    if(sync(['node',automaticLauncher,'--version'])!==version)throw new Error('Automatic artifact installation did not produce a runnable release');
     // Seed edits and stale files in both CLI-owned skills, plus another named skill.
     sync(['node', launcher, 'skills', 'install', '--client', 'claude-code', '--client', 'codex', '--api', 'http://127.0.0.1:8093', '--json']);
     const skillRoot = join(scratch, 'claude/skills/opencrawl'), skillFile = join(skillRoot, 'SKILL.md');
@@ -118,7 +126,7 @@ try {
     if (skillReceipt.version !== version || skillReceipt.result.updated !== 2 || skillReceipt.result.conflicts !== 0) throw new Error('Upgrade did not report managed skill outcomes');
     // The ordinary version command also performs the existing legacy hook migration.
     const upgradedConfig = readFileSync(join(capture, 'config.json'), 'utf8');
-    if (JSON.stringify(JSON.parse(upgradedConfig)) !== JSON.stringify({...config, hookMode: 'managed-v2'})) throw new Error('Upgrade changed capture configuration beyond the expected hook migration');
+    if (JSON.stringify(JSON.parse(upgradedConfig)) !== JSON.stringify({...config, hookMode: 'managed-v3'})) throw new Error('Upgrade changed capture configuration beyond the expected hook migration');
     const selectedApi = (...args: string[]) => JSON.parse(sync(['node', launcher, 'skills', 'status', '--client', 'claude-code', '--json', ...args])).data.api;
     delete env.OPENCRAWL_API_URL;
     if (selectedApi() !== api) throw new Error('CLI ignored saved server configuration');
