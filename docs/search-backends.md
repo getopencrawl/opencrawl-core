@@ -104,6 +104,8 @@ fail explicitly. SQLite work is synchronous in the process, so expensive
 queries or writer contention can affect API latency. This adapter targets
 smaller single-host installations; no throughput or corpus-size guarantee is
 implied by the conformance suite.
+The internal query timeout is checked before returning results; it cannot
+interrupt an executing synchronous SQLite statement. Requests exceeding it fail.
 
 The index uses an application ID and schema version and rejects unrelated or
 unsupported SQLite files. A newly created file is mode 0600. Back up/restore the

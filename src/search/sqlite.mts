@@ -129,7 +129,12 @@ export function createSqliteRealm(options: RealmOptions): SearchRealm {
         async search(principal, body, {createIfMissing = true} = {}) {
           scope(principal);
           keys(body, ['query', 'size', `from`, 'sort', 'search_after', '_source', 'aggs', 'track_total_hits', 'track_scores', 'timeout']);
-          return withDatabase(false, createIfMissing, db => {
+          const started = performance.now();
+          const duration = body.timeout === undefined ? null : typeof body.timeout === 'string' && /^(\d+)(ms|s)$/.exec(body.timeout);
+          if (duration === false || body.timeout !== undefined && !duration) unsupported('timeout (use milliseconds or seconds)');
+          const timeout = duration ? Number(duration[1]) * (duration[2] === 's' ? 1000 : 1) : Infinity;
+          if (duration && !Number.isSafeInteger(timeout)) unsupported('timeout');
+          const result = withDatabase(false, createIfMissing, db => {
             const compiler = new QueryCompiler(fts), where = and(whereScope(), compiler.query(body.query ?? {match_all: {}}));
             const score = compiler.score(), output = response();
             output.hits.total.value = Number(db.prepare('SELECT count(*) AS n FROM documents d WHERE ' + where.sql).get(...where.args)!.n);
@@ -140,6 +145,10 @@ export function createSqliteRealm(options: RealmOptions): SearchRealm {
             if (body.aggs) output.aggregations = aggregate(db, fts, where, score, body.aggs) as Record<string, Aggregation>;
             return output;
           });
+          // Synchronous SQLite cannot be interrupted by the JS event loop. Never
+          // return a successful result after the caller's elapsed-time budget.
+          if (performance.now() - started >= timeout) throw fail('SQLite search exceeded timeout');
+          return result;
         },
         async mget(principal, ids) {
           scope(principal); ids.forEach(validateId);

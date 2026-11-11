@@ -48,6 +48,8 @@ test('SQLite persists across factories, isolates colliding tenants and rejects u
   for (const query of [{query_string: {query: '*'}}, {bool: {filter: [{term: {'session.userId': 'alice'}}], surprise: true}}, {term: {"session.userId') OR 1=1 --": 'alice'}}]) {
     await assert.rejects(documents.search(principal, {query}), /Unsupported/);
   }
+  await assert.rejects(documents.search(principal, {timeout: '0ms'}), /exceeded timeout/);
+  await assert.rejects(documents.search(principal, {timeout: 'invalid'}), /Unsupported/);
   await assert.rejects(documents.bulk(principal, [{id: 'new', document: {...principal, text: 'must roll back'}}, {id: 'same', document: {...principal, userId: 'bob'}, policy: 'session'}]));
   assert.equal((await documents.mget(principal, ['new'])).docs[0].found, false);
   const unrelated = path + '.unrelated';
