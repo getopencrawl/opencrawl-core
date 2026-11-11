@@ -1,4 +1,3 @@
-import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -21,10 +20,11 @@ test('live unified MCP searches native sessions and every connector; no private 
   const environment='ws-'+run.slice(0,8),connectorIndex=realmIndex(environment,principal.tenantId),objects=[];
   const underlying=createObjectStore({endpoint:s3,bucket:'capture-test',credentials:{accessKeyId:'capture-test',secretAccessKey:'capture-test-secret'}});
   const store={...underlying,put:async(k,b,m)=>{objects.push(k);return underlying.put(k,b,m);}};
-  const sessions=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment}),search=createConnectorSearch({endpoint,index:connectorIndex,tenantId:principal.tenantId});
+  const prefix='sessions/workspace-live/'+run;
+  const sessions=createSessionSearch({store,prefix,endpoint,environment}),search=createConnectorSearch({endpoint,index:connectorIndex,tenantId:principal.tenantId});
   t.after(async()=>{for(const key of objects)await store.delete(key);for(const owner of [principal,outsider])await fetch(endpoint+'/'+realmIndex(environment,owner.tenantId),{method:'DELETE'});});
-  const prefix='sessions/workspace-live/'+run,ingest=createSessionIngest({store,prefix});
-  for(const owner of [peer,outsider])await ingest.putBatch(owner,{schemaVersion:1,owner,harness:'codex',origin:'unknown',installationId:'fixture',sessionId:'same',attachments:[],events:[{id:'event',kind:'message',data:{role:'user',content:'violet lighthouse session evidence'}}]});
+  const ingest=createSessionIngest({store,prefix});
+  for(const owner of [peer,outsider])await ingest.putBatch(owner,{schemaVersion:1,owner,harness:'codex',origin:'unknown',installationId:'fixture',sessionId:'same',attachments:[],events:[{id:'event',kind:'message',data:{role:'user',content:'violet lighthouse session evidence'}},{id:'title',kind:'session_title',data:{title:'Recorded lighthouse investigation'}}]});
   const pipeline=createSessionPipeline({store,prefix,search:sessions,resolvePrincipal:async({batch})=>batch.owner});
   for(const key of (await pipeline.listPage()).keys)await pipeline.processObject({key});await sessions.refresh(principal);await sessions.refresh(outsider);
   await search.ensureIndex();
@@ -55,9 +55,11 @@ test('live unified MCP searches native sessions and every connector; no private 
   assert.equal(result.partial,false);assert.ok(result.results.some(r=>r.source==='sessions'&&r.provenance.userId==='bob'));
   assert.deepEqual(new Set(result.results.filter(r=>r.source==='connectors').map(r=>r.provenance.provider)),new Set(['slack','notion','github','granola','circleback']));
   assert.equal(result.results.filter(r=>r.source==='sessions').length,1);
+  assert.equal(result.results.find(r=>r.source==='sessions').title,'Recorded lighthouse investigation');
   for (const hit of result.results) {
     const fetched=await client.callTool({name:'fetch',arguments:{id:hit.id}});
     assert.ok(!fetched.isError,JSON.stringify(fetched));assert.match(fetched.structuredContent.text,/violet lighthouse/);
+    if(hit.source==='sessions')assert.equal(fetched.structuredContent.title,'Recorded lighthouse investigation');
   }
   assert.equal((await call({query:'lighthouse violet',match:'phrase'})).results.length,0);
   assert.ok((await call({query:'lighthouse violet',match:'all'})).results.length>=6);
