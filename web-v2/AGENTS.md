@@ -69,11 +69,13 @@ existing report during routine updates. Abort hidden/unmounted reads and discard
 old-adapter completions. Only explicit server failures may retain stale data;
 access or unclassified failures clear it. Initial failures retain a retry action.
 
-Integrations preserves the original centered, catalog-ordered stack of connection
-cards through the shared `oc-connection-*` patterns. Keep per-stream import counts
-visible; use real progress only when it measures completed work against a known
-total. Retain shared dialogs and the distinct recovery paths for sign-in, sync,
-and permanent deletion.
+Integrations uses an alphabetical, responsive grid of uniform connector cards.
+Every collapsed card occupies the same space. Show the catalog-selected key metric,
+or the highest valid count when no key metric is available, with an N more caret
+button that expands the full list of stats. Keep real zero counts, per-stream
+completion, and measured progress. Use 8px solid status dots without glow and
+unframed provider icons. Search and state filters support a growing catalog.
+Shared dialogs retain setup, sign-in recovery, sync retries and confirmed deletion.
 
 Team administration uses the shared management-page and member-list patterns.
 Keep names and emails together, roles explicit, pending invitations in the same

@@ -5,7 +5,7 @@ const baseURL = `http://127.0.0.1:${Number(process.env.ONBOARDING_TEST_PORT || 4
 
 export default defineConfig({
   testDir: '.',
-  testMatch: 'onboarding.browser.spec.ts',
+  testMatch: '*.browser.spec.ts',
   fullyParallel: false,
   workers: 1,
   retries: 0,
