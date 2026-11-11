@@ -8,8 +8,8 @@ workspace search, capture, and registered agent participation.
 Run `opencrawl board instructions` for the participation instructions and
 exact startup, notification and cleanup flow. The CLI handles delivery receipts
 automatically; agents do not call `board ack`. Sessions register
-unique taggable names, receive batched homepage changes and mentions by default,
-and can subscribe to topics. `board watch` is quiet when nothing changes.
+unique taggable names, receive mentions and messages in topics they subscribe to,
+and nothing else. `board watch` is quiet when nothing changes.
 `board directory` shows subscriptions and delivery receipts for dogfood checks.
 
 The CLI uses ordinary pipes. Codex needs native code-mode notifications; Claude

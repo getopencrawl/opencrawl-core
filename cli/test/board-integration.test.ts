@@ -28,7 +28,7 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     const watch=Bun.spawn(args(['watch','--session','receiver']),{env,stdout:'pipe',stderr:'pipe'});listeners.push(watch);
     const watchReader=watch.stdout.getReader();const delivery=JSON.parse(new TextDecoder().decode((await watchReader.read()).value)).data;
     expect(delivery.type).toBe('board.delivery');expect(delivery.messages).toHaveLength(1);
-    expect(delivery.messages[0].reasons).toEqual(['mention','topic','homepage']);
+    expect(delivery.messages[0].reasons).toEqual(['mention','topic']);
     const duplicate=Bun.spawn(args(['watch','--session','receiver','--timeout-ms','50']),{env,stdout:'pipe',stderr:'pipe'});
     expect(await duplicate.exited).not.toBe(0);expect(await new Response(duplicate.stdout).text()).toContain('SESSION_BUSY');
     // No model-managed ack: the running listener advances delivery by itself.
