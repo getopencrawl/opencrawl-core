@@ -20,10 +20,12 @@ test('a flush that outlives its sign-in token renews it, re-verifies identity an
  const handler=createCaptureHandler({ingest,authenticate:async (req:IncomingMessage)=>{
   const principal=valid.get(/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1]??'');
   if(!principal)throw Object.assign(Error('Capture sign-in required'),{status:401});
-  if(req.url==='/api/sessions/identity')identities++;
   return principal;
  }});
  const server=createServer(async(req,res)=>{
+  // Count HTTP identity requests, not authenticate() calls: the receiver also
+  // rechecks membership immediately before returning private results.
+  if(req.url==='/api/sessions/identity')identities++;
   if(req.url==='/token'&&req.method==='POST'){
    refreshes++;valid.set(issue,issuedFor);
    res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({access_token:issue,refresh_token:'refresh-'+refreshes,expires_in:3600}));return;
