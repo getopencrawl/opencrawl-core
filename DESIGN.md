@@ -201,6 +201,9 @@ Authentication outcomes, organization selection, provider handoffs and capture
 setup use React's shared focused frame, Page and controls. Servers send inert
 page data into the same application bundle; they never render feature HTML.
 React onboarding preserves its approved presentation in `web-v2/src/onboarding/onboarding.css`.
+After onboarding, Agent setup reuses its prompt and live checklist inside the
+shared workspace Page. The sidebar remains available, and setup does not restart
+the initial onboarding flow.
 Use the existing self-hosted fonts, OC marks, provider logos and shared SVG icons.
 The font license remains at `web/assets/Geist-OFL.txt`.
 
@@ -276,7 +279,7 @@ current page uses a lavender wash. The sidebar scrolls on short viewports.
 The brand, navigation and account rows share a 32px leading column,
 12px gap and aligned text edge. Rows use 8px horizontal insets inside the 8px sidebar gutter. The footer
 uses 16px insets, preserving the same icon and label alignment. Navigation targets are 44px tall with 4px between rows; distinct
-groups are separated by 12px of space, without a navigation divider. Keep the mark and wordmark optically aligned, and dock the identity row to the sidebar edges rather than floating it as a card.
+groups retain the same 4px row spacing, without extra grouping space or a navigation divider. Keep the mark and wordmark optically aligned, and dock the identity row to the sidebar edges rather than floating it as a card.
 
 Content is centered at 1200px within the remaining area, with 32px side insets,
 48px top padding and 64px bottom padding. At 800px and below, the same navigation

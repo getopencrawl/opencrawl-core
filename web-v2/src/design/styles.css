@@ -42,7 +42,7 @@ img { max-width: 100%; }
 .oc-sidebar .oc-brand img { width: var(--console-nav-leading); height: auto; }
 /* Align the lowercase wordmark ink with the mark rather than its line box. */
 :is(.oc-sidebar, .oc-mobile-header) .oc-brand > span { position: relative; top: -2px; }
-.oc-sidebar nav { display: grid; gap: var(--space-3); flex-shrink: 0; }
+.oc-sidebar nav { display: grid; gap: var(--space-1); flex-shrink: 0; }
 .oc-nav-group { display: grid; gap: var(--space-1); }
 .oc-nav-group:empty { display: none; }
 .oc-nav-link { display: grid; grid-template-columns: var(--console-nav-leading) minmax(0, 1fr); align-items: center; gap: var(--space-3); min-height: 44px; padding: var(--space-2); border-radius: var(--radius-control); color: var(--muted); text-decoration: none; transition: background var(--motion-fast), color var(--motion-fast); }
