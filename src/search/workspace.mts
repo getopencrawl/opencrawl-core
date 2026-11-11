@@ -62,6 +62,8 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot search workspace data.');
       const parsed = workspaceSearchSchema.safeParse(input);
       if (!parsed.success) fail(400, 'Invalid search request. Check query, source, match, filters, order, facets, select, excerptChars, sessionId, limit, dedupe, groupBy and cursor. Empty query requires a time order.');
+      // Preserve the original dedupe=false inspection contract for older clients.
+      if(!parsed.data.dedupe&&(input as {groupBy?:unknown}).groupBy===undefined)parsed.data.groupBy='none';
       const {cursor, ...query} = parsed.data;
       const fingerprint = hash([principal.tenantId, principal.userId, query]);
       const page = cursor ? decode(cursor, fingerprint) : {offset: 0, expires: now() + TTL};

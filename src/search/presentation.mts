@@ -31,7 +31,7 @@ export function workspaceHit(source: string, hit: Passage, sourceRank?: number) 
       snapshotId:hit.snapshotId,generation:hit.generation,modifiedAt:hit.modifiedAt,receivedAt:hit.receivedAt,sourceSessionId:hit.sourceSessionId,chunk:hit.chunk,kind:hit.kind}
     : {provider: hit.provider, connectionId: hit.connectionId, workspaceId: hit.workspaceId, sourceId: hit.sourceId, kind: hit.kind, parentId: hit.parentId, parentKind: hit.parentKind, channelId: hit.channelId, authorId: hit.authorId, timestamp: hit.timestamp, sequence: hit.sequence, heading: hit.heading, repository:hit.repository};
   return {id: source + ':' + hit.id, source, ...(sourceRank ? {sourceRank} : {}),
-    ...(typeof hit.chunkCount==='number'?{passage:{index:hit.chunk,count:hit.chunkCount,start:hit.textStart,end:hit.textEnd}}:{}),
+    ...(source!=='connectors'&&typeof hit.chunkCount==='number'&&hit.chunkCount>0&&Number.isInteger(hit.chunk)?{passage:{index:hit.chunk,count:hit.chunkCount,start:hit.textStart,end:hit.textEnd}}:{}),
     title: (hit.title || (source === 'sessions' ? `Session ${hit.sessionId}` : hit.kind) || 'Indexed passage').slice(0, 240),
     text: hit.text || '', ...(hit.url ? {url: hit.url} : {}), provenance};
 }

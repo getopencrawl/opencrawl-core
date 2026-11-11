@@ -32,3 +32,10 @@ test('time browsing merges source timestamps, puts unknown dates last, and rejec
   assert.deepEqual(r.results.map(h=>h.id),['memories:m','sessions:a','connectors:c']);
   await assert.rejects(s.search(principal,{query:''}),/Invalid/);
 });
+
+test('legacy dedupe=false inspects all chunks and connector counters are not passage offsets',async()=>{
+  const s=createWorkspaceSearch({sessions:{search:async()=>({hits:[hit('a',{eventId:'e',text:'first'}),hit('b',{eventId:'e',text:'second'})]})},connectors:{search:async()=>({hits:[hit('c',{chunkCount:0})]})}});
+  assert.equal((await s.search(principal,{query:'x',source:'sessions'})).results.length,1);
+  assert.equal((await s.search(principal,{query:'x',source:'sessions',dedupe:false})).results.length,2);
+  assert.equal((await s.search(principal,{query:'x',source:'connectors'})).results[0].passage,undefined);
+});
