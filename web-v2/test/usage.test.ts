@@ -5,7 +5,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {MemoryRouter} from '../src/router.tsx';
 import {SourcesSummary, UsagePage, UsageReportView} from '../src/pages/usage.tsx';
 import type {ConsoleDataAdapter, UsageReport} from '../src/pages/types.ts';
-import {ago, compact, count, harnessName, pricedTokens, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
+import {ago, compact, count, harnessName, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
 import {harnessName as libraryHarnessName} from '../src/pages/library-controls.tsx';
 import type {ValueReport} from '../src/pages/types.ts';
 
@@ -235,42 +235,49 @@ function cards(html: string, heading: string) {
   return [...section.matchAll(/<dt>([^<]*)(?:<span class="report-help">.*?<\/span><\/span>)?<\/dt><dd><span class="report-metric-value"[^>]*>(.*?)<\/span>(?:<span class="report-metric-note">(.*?)<\/span>)?/g)].map(match => match.slice(1, 4));
 }
 
-test('Agent alignment is the first section: four cards of things that happened, each with a how-it-is-counted hover', () => {
-  const html = render({...report(), value: value()});
-  assert.deepEqual([...html.matchAll(/<h2\b[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]), ['Agent alignment', 'Agent sessions', 'Data sources', 'Team']);
-  assert.ok(html.indexOf('>Agent alignment</h2>') < html.indexOf('report-metrics'));
-  // 10M input at $10 + 1B cache reads at $1 + 2M output at $50 = $1,200.
-  assert.equal(pricedTokens(value().spend, value().model), 1200);
+const capture = {tokens: 52_500_000, since: '2026-11-01T00:00:00.000Z'};
+
+test('with a measured report Usage has one Agent alignment row: tokens captured, drift saves, uses and answers used', () => {
+  const html = render({...report(), value: value(), capture});
+  assert.deepEqual([...html.matchAll(/<h2\b[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]), ['Agent alignment', 'Data sources', 'Team']);
   assert.deepEqual(cards(html, 'Agent alignment'), [
-    ['AI spend', '$1,200', '1B tokens at GPT-6 Astra list prices'],
+    ['Tokens captured', '52.5M', 'since 2026-11-01, from agent sessions'],
     ['Drift saves', '42', '35 conflicts, 7 duplicates avoided'],
     ['OpenCrawl uses', '4,030', '340 searches, 3,690 board messages'],
     ['Answers agents used', '290', '221 search results, 69 board fixes'],
   ]);
   const text = html.replace(/<[^>]*>/g, '');
   assert.match(text, /How OpenCrawl kept your agents on track since 2026-11-05, across 386 sessions and 368 tasks\./);
-  const section = text.slice(text.indexOf('Agent alignment'), text.indexOf('Agent sessions'));
-  assert.doesNotMatch(section, /saved|savings|fewer|would have|Without OpenCrawl|OpenCrawl cost|×/i);
+  const section = text.slice(text.indexOf('Agent alignment'), text.indexOf('Data sources'));
+  assert.doesNotMatch(section, /AI spend|list prices|\$|saved|savings|fewer|would have|Without OpenCrawl|OpenCrawl cost|×/i);
+  for (const label of ['Sessions', 'Messages', 'Tool calls', 'OpenCrawl calls']) assert.doesNotMatch(html, new RegExp(`<dt>${label}<`));
+  // The capture charts stay under the merged row.
+  for (const kept of ['Daily agent sessions', 'Where agents run', 'Machines capturing:']) assert.ok(section.includes(kept), kept);
   const help = [...html.matchAll(/<button type="button" class="report-help-button" aria-label="([^"]+)" aria-describedby="([^"]+)">\?<\/button><span class="report-help-text" role="tooltip" id="([^"]+)">(.*?)<\/span>/g)];
-  assert.deepEqual(help.map(match => match[1]), ['How AI spend is calculated', 'How Drift saves is calculated', 'How OpenCrawl uses is calculated', 'How Answers agents used is calculated']);
+  assert.deepEqual(help.map(match => match[1]), ['How Tokens captured is calculated', 'How Drift saves is calculated', 'How OpenCrawl uses is calculated', 'How Answers agents used is calculated']);
   assert.ok(help.every(match => match[2] === match[3]));
-  assert.equal(help[0]![4], 'Your agents processed 1B model tokens in the sessions OpenCrawl captured since 2026-11-05. This prices them at GPT-6 Astra list prices as of 2026-11-09, the model your agents use most; a subscription plan costs you less.');
+  assert.equal(help[0]![4], 'The text of your agents’ sessions that OpenCrawl has stored since 2026-11-01, counted in tokens. This is what OpenCrawl billing is based on.');
   assert.equal(help[3]![4], '221 search results the agent’s next message went on to use, plus 69 fixes and decisions picked up from another agent on the board. Searches most often found what teammates’ agents were doing (116), where things live (65), past decisions (34).');
-  assert.doesNotMatch(render(), /report-help/);
 });
 
-test('without a measurement there is no Agent alignment section; a workspace with no uses shows zeros plainly', () => {
-  assert.doesNotMatch(render(), /Agent alignment/);
-  assert.doesNotMatch(render({...report(), value: null}), /Agent alignment/);
+test('the merged row adapts: sessions lead when tokens are not metered, and zero uses show plainly', () => {
+  assert.deepEqual(cards(render({...report(), value: value()}), 'Agent alignment').map(card => card[0]), ['Sessions', 'Drift saves', 'OpenCrawl uses', 'Answers agents used']);
   const empty = {...value(), drift: {conflictsAvoided: 1, duplicatesAvoided: 0}, usage: {searches: 0, boardMessages: 1},
     value: {searchesUsed: 0, fixesReused: 1, found: {teammateWork: 0, whereThingsLive: 0, pastDecisions: 0, pastFixes: 0, other: 0}}};
-  const html = render({...report(), value: empty});
+  const html = render({...report(), value: empty, capture});
   assert.deepEqual(cards(html, 'Agent alignment').slice(1), [
     ['Drift saves', '1', '1 conflict, 0 duplicates avoided'],
     ['OpenCrawl uses', '1', '0 searches, 1 board message'],
     ['Answers agents used', '1', '0 search results, 1 board fix'],
   ]);
   assert.doesNotMatch(html, /Searches most often found/);
+  const unavailable = render({...report(), agents: null, value: value(), capture});
+  assert.equal(cards(unavailable, 'Agent alignment').length, 4);
+});
+
+test('without a measured report the section stays Agent sessions with its capture cards and no hovers', () => {
+  assert.doesNotMatch(render(), /Agent alignment|report-help/);
+  assert.doesNotMatch(render({...report(), value: null}), /Agent alignment/);
 });
 
 test('Agent sessions shows tokens captured when metered and OpenCrawl calls instead of machines', () => {

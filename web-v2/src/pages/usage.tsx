@@ -1,8 +1,9 @@
 import {consoleResourceKey, useConsoleResource} from '../data.tsx';
+import type {MetricItem} from '../design/components.js';
 import {ActivityChart, BarList, Button, EmptyState, LoadingState, MetricGrid, Notice, Page, Section, StatusBadge, Table} from '../design/components.js';
 import {Link} from '../router.js';
 import type {ConsoleDataAdapter, UsageReport, ValueReport} from './types.js';
-import {ago, compact, count, dollars, harnessName, memberName, originName, plural, pricedTokens, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
+import {ago, compact, count, harnessName, memberName, originName, plural, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
 import type {UsageMember, UsageSource} from './usage-model.ts';
 
 export {count} from './usage-model.ts';
@@ -62,28 +63,19 @@ function SourceCard({source, now}: {source: UsageSource; now: number}) {
   );
 }
 
-/** How OpenCrawl kept this workspace's agents aligned: four cards of things that happened, the first section on Usage. */
-function ValueReportSection({value}: {value: ValueReport}) {
-  const {spend, drift, usage, model, work} = value;
-  const tokens = spend.input + spend.cacheRead + spend.cacheWrite + spend.output;
-  const saves = drift.conflictsAvoided + drift.duplicatesAvoided;
-  const answers = value.value.searchesUsed + value.value.fixesReused;
+/** Three cards of things OpenCrawl did for this workspace's agents; each counts something that happened. */
+function alignmentCards(value: ValueReport): MetricItem[] {
+  const {drift, usage} = value;
   const found = ([['teammateWork', 'what teammates’ agents were doing'], ['whereThingsLive', 'where things live'], ['pastDecisions', 'past decisions'], ['pastFixes', 'past fixes']] as const)
-    .map(([key, label]) => ({label, count: value.value.found[key]})).filter(item => item.count > 0).sort((a, b) => b.count - a.count);
-  return (
-    <Section className="report-section" title="Agent alignment" description={`How OpenCrawl kept your agents on track since ${value.window.from}, across ${plural(work.sessions, 'session')} and ${plural(work.tasks, 'task')}.`}>
-      <MetricGrid items={[
-        {label: 'AI spend', value: dollars(pricedTokens(spend, model)), note: `${compact(tokens)} tokens at ${model.model} list prices`, title: count(tokens),
-          help: `Your agents processed ${compact(tokens)} model tokens in the sessions OpenCrawl captured since ${value.window.from}. This prices them at ${model.model} list prices as of ${model.asOf}, the model your agents use most; a subscription plan costs you less.`},
-        {label: 'Drift saves', value: count(saves), note: `${plural(drift.conflictsAvoided, 'conflict')}, ${plural(drift.duplicatesAvoided, 'duplicate')} avoided`,
-          help: 'Times a message from another agent reached an agent through OpenCrawl and it changed course: it held off work another agent owned, or dropped work already done. Counted only when the agent’s next actions show the change, and repeats within 30 minutes count once.'},
-        {label: 'OpenCrawl uses', value: compact(usage.searches + usage.boardMessages), note: `${plural(usage.searches, 'search', 'searches')}, ${plural(usage.boardMessages, 'board message')}`, title: count(usage.searches + usage.boardMessages),
-          help: `${plural(usage.searches, 'search', 'searches')} your agents ran against your team’s memory while doing real work. ${plural(usage.boardMessages, 'message')} from other agents reached an agent’s context through the board.`},
-        {label: 'Answers agents used', value: count(answers), note: `${plural(value.value.searchesUsed, 'search result')}, ${plural(value.value.fixesReused, 'board fix', 'board fixes')}`,
-          help: `${plural(value.value.searchesUsed, 'search result')} the agent’s next message went on to use, plus ${plural(value.value.fixesReused, 'fix or decision', 'fixes and decisions')} picked up from another agent on the board.${found.length ? ` Searches most often found ${found.slice(0, 3).map(item => `${item.label} (${count(item.count)})`).join(', ')}.` : ''}`},
-      ]}/>
-    </Section>
-  );
+    .map(([key, label]) => ({label, count: value.value.found[key]})).filter(item => item.count > 0).sort((x, y) => y.count - x.count);
+  return [
+    {label: 'Drift saves', value: count(drift.conflictsAvoided + drift.duplicatesAvoided), note: `${plural(drift.conflictsAvoided, 'conflict')}, ${plural(drift.duplicatesAvoided, 'duplicate')} avoided`,
+      help: 'Times a message from another agent reached an agent through OpenCrawl and it changed course: it held off work another agent owned, or dropped work already done. Counted only when the agent’s next actions show the change, and repeats within 30 minutes count once.'},
+    {label: 'OpenCrawl uses', value: compact(usage.searches + usage.boardMessages), note: `${plural(usage.searches, 'search', 'searches')}, ${plural(usage.boardMessages, 'board message')}`, title: count(usage.searches + usage.boardMessages),
+      help: `${plural(usage.searches, 'search', 'searches')} your agents ran against your team’s memory while doing real work. ${plural(usage.boardMessages, 'message')} from other agents reached an agent’s context through the board.`},
+    {label: 'Answers agents used', value: count(value.value.searchesUsed + value.value.fixesReused), note: `${plural(value.value.searchesUsed, 'search result')}, ${plural(value.value.fixesReused, 'board fix', 'board fixes')}`,
+      help: `${plural(value.value.searchesUsed, 'search result')} the agent’s next message went on to use, plus ${plural(value.value.fixesReused, 'fix or decision', 'fixes and decisions')} picked up from another agent on the board.${found.length ? ` Searches most often found ${found.slice(0, 3).map(item => `${item.label} (${count(item.count)})`).join(', ')}.` : ''}`},
+  ];
 }
 
 function DataSourcesReport({report, now}: {report: UsageReport; now: number}) {
@@ -107,17 +99,27 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
   const subagents = data?.subagentSessions || 0;
   const busiest = daily.reduce<(typeof daily)[number] | undefined>((best, day) => !best || day.sessions > best.sessions ? day : best, undefined);
 
+  const value = report.value;
+  const captured: MetricItem | null = report.capture
+    ? {label: 'Tokens captured', value: compact(report.capture.tokens), note: `since ${report.capture.since.slice(0, 10)}, from agent sessions`, title: count(report.capture.tokens),
+      ...(value ? {help: `The text of your agents’ sessions that OpenCrawl has stored since ${report.capture.since.slice(0, 10)}, counted in tokens. This is what OpenCrawl billing is based on.`} : {})}
+    : null;
+  const sessions: MetricItem | null = data ? {label: 'Sessions', value: compact(data.sessions), note: `${activeDays} active ${activeDays === 1 ? 'day' : 'days'}${subagents ? `, plus ${plural(subagents, 'subagent session')}` : ''}`, title: count(data.sessions)} : null;
+  // With a measured report the section is one row: what OpenCrawl captured, then what it did for the agents.
+  const first = captured ?? sessions;
+  const cards: MetricItem[] = value ? [...(first ? [first] : []), ...alignmentCards(value)] : data ? [
+    sessions!,
+    {label: 'Messages', value: compact(data.messages), note: 'prompts and replies captured', title: count(data.messages)},
+    captured ?? {label: 'Tool calls', value: compact(data.toolCalls), note: 'tools used across captured sessions', title: count(data.toolCalls)},
+    {label: 'OpenCrawl calls', value: compact(data.opencrawlCalls), note: `searches and board reads${people != null ? ` by ${plural(people, 'person', 'people')}` : ''}`, title: count(data.opencrawlCalls)},
+  ] : [];
+  const description = value ? `How OpenCrawl kept your agents on track since ${value.window.from}, across ${plural(value.work.sessions, 'session')} and ${plural(value.work.tasks, 'task')}.`
+    : report.days ? `Captured activity over the last ${report.days} days.` : 'Captured agent activity.';
+
   return (
-    <Section className="report-section" title="Agent sessions" description={report.days ? `Captured activity over the last ${report.days} days.` : 'Captured agent activity.'}>
-      {!data ? <EmptyState title="Agent reporting isn’t available on this deployment."/> : <>
-        <MetricGrid items={[
-          {label: 'Sessions', value: compact(data.sessions), note: `${activeDays} active ${activeDays === 1 ? 'day' : 'days'}${subagents ? `, plus ${plural(subagents, 'subagent session')}` : ''}`, title: count(data.sessions)},
-          {label: 'Messages', value: compact(data.messages), note: 'prompts and replies captured', title: count(data.messages)},
-          report.capture
-            ? {label: 'Tokens captured', value: compact(report.capture.tokens), note: `since ${report.capture.since.slice(0, 10)}, from agent sessions`, title: count(report.capture.tokens)}
-            : {label: 'Tool calls', value: compact(data.toolCalls), note: 'tools used across captured sessions', title: count(data.toolCalls)},
-          {label: 'OpenCrawl calls', value: compact(data.opencrawlCalls), note: `searches and board reads${people != null ? ` by ${plural(people, 'person', 'people')}` : ''}`, title: count(data.opencrawlCalls)},
-        ]}/>
+    <Section className="report-section" title={value ? 'Agent alignment' : 'Agent sessions'} description={description}>
+      {cards.length > 0 && <MetricGrid items={cards}/>}
+      {!data ? (value ? null : <EmptyState title="Agent reporting isn’t available on this deployment."/>) : <>
         <p className="report-note">
           Machines capturing: <strong>{count(data.machines)}</strong>. Last capture: <strong>{data.lastAt ? ago(data.lastAt, now) : 'Not yet'}</strong>
           {data.firstAt && <>. Capturing since {data.firstAt.slice(0, 10)}</>}
@@ -198,7 +200,6 @@ function TeamReport({report, now}: {report: UsageReport; now: number}) {
 
 export function UsageReportView({data, now = Date.now()}: {data: UsageReport; now?: number}) {
   return <>
-    {data.value && <ValueReportSection value={data.value}/>}
     <AgentReport report={data} now={now}/>
     <DataSourcesReport report={data} now={now}/>
     <TeamReport report={data} now={now}/>
