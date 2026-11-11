@@ -52,6 +52,7 @@ test('OSS first run creates one admin from the setup link; nobody else can sign 
   await f.admin();
   const boot=await (await f.request('/api/console/bootstrap','admin')).json();
   assert.equal(boot.workspace.name,'Self-hosted team');
+  assert.deepEqual(boot.invitationPolicy,{delivery:'link',beforeAgentSetup:true});
   assert.deepEqual(boot.onboarding,{completed:false,next:'/onboarding'});
   // Setup is single-use and Better Auth's own sign-up endpoint is not reachable.
   assert.equal((await f.post('/auth/signup','mallory',{setup,workspace:'x',name:'M',email:'m@example.com',password:'long enough password'})).status,403);
@@ -99,8 +100,9 @@ test('OSS onboarding requires agent setup only; the Sources step can be skipped'
   const finish=()=>f.request('/api/onboarding/finish','admin',{method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'});
   // Skipping sources never skips agent setup.
   assert.equal((await finish()).status,409);
-  for(const path of ['/onboarding/sources','/onboarding/invite'])assert.equal((await f.request(path,'admin')).headers.get('location'),'/onboarding');
-  assert.equal((await f.request('/api/onboarding/invites','admin')).status,409);
+  assert.equal((await f.request('/onboarding/sources','admin')).headers.get('location'),'/onboarding');
+  assert.equal((await f.request('/onboarding/invite','admin')).status,200);
+  assert.equal((await f.request('/api/onboarding/invites','admin')).status,200);
   await onboarding.cli(principal);await onboarding.mcpTest(principal);await onboarding.session(principal,{harness:'codex',events:[{kind:'message'}]});
   // With nothing connected, setup resumes at Sources, yet Invite opens and finishing needs no source.
   assert.deepEqual((await (await f.request('/api/console/bootstrap','admin')).json()).onboarding,{completed:false,next:'/onboarding/sources'});
@@ -110,6 +112,8 @@ test('OSS onboarding requires agent setup only; the Sources step can be skipped'
   const done=await finish();assert.equal(done.status,200);assert.deepEqual(await done.json(),{workspaceUrl:'/'});
   assert.ok((await onboarding.read(principal)).completed.observedAt);
   assert.equal((await f.request('/api/console/team','admin')).status,200);
+  const invitation=await f.request('/api/console/team/invite','admin',{method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:JSON.stringify({email:'new-member@example.com'})});
+  assert.equal(invitation.status,200);assert.ok((await invitation.json()).inviteUrl.startsWith(f.origin+'/auth/signup?invitation='));
   assert.equal((await (await f.request('/api/console/bootstrap','admin')).json()).onboarding.completed,true);
   assert.equal((await finish()).status,200,'completion is idempotent');
 });
@@ -228,7 +232,8 @@ test('password recovery revokes pre-approved device logins without revoking anot
   assert.equal((await f.request('/api/cli/me',null,{headers:{authorization:'Bearer '+tokens.access_token}})).status,200);
 });
 
-test('MCP clients register, need a member’s consent, and receive tokens accepted by /mcp',async t=>{
+for(const callback of ['http://127.0.0.1:33418/callback','claude://claude.ai/mcp-auth-callback/sdk'])
+test(`MCP clients complete consent, token exchange and revocation with ${new URL(callback).protocol} callbacks`,async t=>{
   const f=await fixture(t);await f.admin();
   const resource=await (await f.request('/.well-known/oauth-protected-resource/mcp')).json();
   assert.deepEqual(resource.authorization_servers,[f.origin+'/api/auth']);
@@ -238,11 +243,14 @@ test('MCP clients register, need a member’s consent, and receive tokens accept
   assert.equal(oidc.status,200);assert.equal((await oidc.json()).issuer,metadata.issuer);
   const wrongMethod=await f.request('/api/auth/.well-known/openid-configuration',null,{method:'POST'});
   assert.equal(wrongMethod.status,405);assert.equal(wrongMethod.headers.get('allow'),'GET');
-  const callback='http://127.0.0.1:33418/callback';
   const client=await (await f.request('/api/auth/oauth2/register',null,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client_name:'Test agent',redirect_uris:[callback],token_endpoint_auth_method:'none',grant_types:['authorization_code','refresh_token'],response_types:['code']})})).json();
   assert.ok(client.client_id,JSON.stringify(client));
   const verifier=randomBytes(32).toString('base64url'),challenge=createHash('sha256').update(verifier).digest('base64url');
   const authorize='/api/auth/oauth2/authorize?'+new URLSearchParams({response_type:'code',client_id:client.client_id,redirect_uri:callback,scope:'openid offline_access',state:'s1',code_challenge:challenge,code_challenge_method:'S256',resource:f.origin+'/mcp'});
+  const mismatched=await f.request(authorize.replace(encodeURIComponent(callback),encodeURIComponent('claude://other.example/callback')),'admin');
+  const refusal=new URL((await mismatched.json()).url);
+  assert.equal(refusal.origin,f.origin);assert.equal(refusal.pathname,'/api/auth/error');
+  assert.equal(refusal.searchParams.get('error'),'invalid_redirect');assert.equal(refusal.searchParams.has('code'),false);
   const started=await f.request(authorize,'oauth',{headers:{accept:'text/html','sec-fetch-mode':'navigate'}});
   const login=new URL(started.headers.get('location')||(await started.json()).url,f.origin);
   assert.equal(login.pathname,'/auth/login');
@@ -251,9 +259,11 @@ test('MCP clients register, need a member’s consent, and receive tokens accept
   const consent=new URL(signedIn.headers.get('location'),f.origin);
   assert.equal(consent.pathname,'/auth/consent');
   assert.match(await (await f.request(consent.pathname+consent.search,'oauth')).text(),/Test agent/);
-  const approved=await (await f.post('/auth/consent','oauth',{oauth_query:consent.searchParams.toString(),accept:'true'})).text();
+  const approval=await f.post('/auth/consent','oauth',{oauth_query:consent.searchParams.toString(),accept:'true'});
+  assert.equal(approval.status,200,'valid registered callback must survive the browser return');
+  const approved=await approval.text();
   const redirect=new URL(JSON.parse(/<script[^>]+id="opencrawl-page"[^>]*>(.*?)<\/script>/s.exec(approved)[1]).page.url);
-  assert.equal(redirect.origin+redirect.pathname,callback);assert.equal(redirect.searchParams.get('state'),'s1');
+  assert.equal(redirect.href.split('?')[0],callback);assert.equal(redirect.searchParams.get('state'),'s1');
   const token=await (await f.request('/api/auth/oauth2/token',null,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code:redirect.searchParams.get('code'),redirect_uri:callback,client_id:client.client_id,code_verifier:verifier,resource:f.origin+'/mcp'})})).json();
   assert.ok(token.access_token);
   const mcp=await f.request('/mcp',null,{method:'POST',headers:{authorization:'Bearer '+token.access_token,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'test',version:'1'}}})});
@@ -271,7 +281,12 @@ test('MCP clients register, need a member’s consent, and receive tokens accept
   assert.equal(stale.status,400);
   assert.equal((await f.post('/auth/login','fresh',{email:'ada@example.com',password:'recovered long password'})).status,303);
   const again=await f.request(authorize,'fresh',{headers:{accept:'text/html','sec-fetch-mode':'navigate'}});
-  assert.equal(new URL(again.headers.get('location')||(await again.json()).url,f.origin).pathname,'/auth/consent');
+  const consentAgain=new URL(again.headers.get('location')||(await again.json()).url,f.origin);
+  assert.equal(consentAgain.pathname,'/auth/consent');
+  const denied=await f.post('/auth/consent','fresh',{oauth_query:consentAgain.searchParams.toString(),accept:'false'});
+  assert.equal(denied.status,200);
+  const denial=new URL(JSON.parse(/<script[^>]+id="opencrawl-page"[^>]*>(.*?)<\/script>/s.exec(await denied.text())[1]).page.url);
+  assert.equal(denial.searchParams.get('error'),'access_denied');assert.equal(denial.searchParams.has('code'),false);
 });
 
 test('delegated capture works for the configured team, remains write-only, and obeys revocation',async t=>{
@@ -360,4 +375,31 @@ test('admin removal immediately denies existing browser, CLI, MCP and capture cr
  assert.equal((await f.request('/api/console/bootstrap','bob-again')).status,200);
  assert.equal((await f.request('/api/cli/me',null,{headers:auth})).status,401);
  assert.equal((await f.request('/api/sessions/identity',null,{headers:captureAuth})).status,401);
+});
+
+test('self-host admin can invite a teammate before agent verification without opening the workspace',async t=>{
+  const f=await fixture(t);await f.admin();
+  const invite=(who,email,origin=f.origin)=>f.request('/api/onboarding/invites',who,{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({email})});
+  assert.equal((await invite(null,'bob@example.com')).status,401);
+  assert.equal((await invite('admin','bob@example.com','https://foreign.example')).status,403);
+  assert.equal((await f.request('/onboarding/invite','admin')).status,200);
+  const created=await invite('admin','bob@example.com');assert.equal(created.status,200);
+  const result=await created.json();assert.equal(result.addedCount,1);
+  const link=new URL(result.items[0].inviteUrl);assert.equal(link.origin,f.origin);
+  const joined=await f.post('/auth/signup','bob',{invitation:link.searchParams.get('invitation'),name:'Bob',password:'another long password'});
+  assert.equal(joined.status,303);
+  assert.equal((await f.request('/api/console/bootstrap','bob')).status,200);
+  assert.equal((await invite('bob','mallory@example.com')).status,403);
+  assert.equal((await f.request('/api/onboarding/invites','bob')).status,403);
+  assert.equal((await f.request('/api/console/team','admin')).status,409);
+  assert.equal((await f.request('/onboarding/sources','admin')).headers.get('location'),'/onboarding');
+  assert.equal((await f.request('/api/onboarding/finish','admin',{method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'})).status,409);
+});
+
+test('MCP registration rejects executable and local-file callback schemes',async t=>{
+  for(const redirect of ['javascript:alert(1)','data:text/html,hello','file:///etc/passwd','vbscript:alert(1)','claude://secret@claude.ai/mcp-auth-callback/sdk','claude://claude.ai/mcp-auth-callback/sdk#fragment']){
+    const f=await fixture(t);
+    const response=await f.request('/api/auth/oauth2/register',null,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client_name:'Unsafe',redirect_uris:[redirect],token_endpoint_auth_method:'none',grant_types:['authorization_code'],response_types:['code']})});
+    assert.equal(response.status,400,redirect);
+  }
 });

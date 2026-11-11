@@ -94,9 +94,9 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   }
   if (!data.onboarding.completed && !onboarding) return <Navigate to={data.onboarding.next} replace/>;
   if (onboarding) return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><FocusedFrame footer={<SignOut/>}><Routes>
-    <Route path="/onboarding" element={<AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt}/>}/>
+    <Route path="/onboarding" element={<AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} canInviteBeforeSetup={data.canInvite && data.invitationPolicy?.beforeAgentSetup}/>}/>
     <Route path="/onboarding/sources" element={<SourcesOnboarding adapter={onboardingAdapter} canConfigure={data.workspace.role === 'admin'}/>}/>
-    <Route path="/onboarding/invite" element={<InviteOnboarding adapter={onboardingAdapter} canInvite={data.canInvite} onComplete={async path => {await refresh();navigate(path);}}/>}/>
+    <Route path="/onboarding/invite" element={<InviteOnboarding adapter={onboardingAdapter} canInvite={data.canInvite} invitationDelivery={data.invitationPolicy?.delivery} returnToAgent={Boolean(data.invitationPolicy?.beforeAgentSetup && !data.onboarding.completed && data.onboarding.next === '/onboarding')} onComplete={async path => {await refresh();navigate(path);}}/>}/>
   </Routes></FocusedFrame></ConsoleDataProvider>;
   const shown = extensions?.decorateRoute ? routes.map(route => extensions.decorateRoute!(route, data)) : routes;
   return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>}/></ConsoleDataProvider>;
