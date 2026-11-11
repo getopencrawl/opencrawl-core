@@ -47,6 +47,7 @@ function Fixture() {
   const navigate = useNavigate();
   const location = useLocation();
   useEffect(() => {window.__onboardingTestNavigate = path => {void navigate(path);}; return () => {delete window.__onboardingTestNavigate;};}, [navigate]);
+  if (location.pathname === '/sessions') return <ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/sessions', label: 'Sessions', icon: 'sessions', element: <SessionsPage adapter={libraryAdapter}/>}]}/></ConsoleDataProvider>;
   if (location.pathname === '/integrations-fixture') return <ConsoleDataProvider scopeKey="fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[{path:'/integrations-fixture',label:'Integrations',icon:'sources',element:<SourcesPage adapter={sourcesAdapter} canConfigure={!location.search.includes('role=member')}/>}]}/></ConsoleDataProvider>;
   if (location.pathname.startsWith('/workspace')) return <AppShell
     workspace={{name: 'Example workspace', userName: 'Alex', email: 'alex@example.test', role: 'Admin'}}
@@ -58,7 +59,6 @@ function Fixture() {
     footer={<Button variant="quiet" onClick={() => {void navigate('/away');}}>Sign out</Button>}
   />;
   return <Routes>
-    <Route path="/sessions" element={<ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><SessionsPage adapter={libraryAdapter}/></ConsoleDataProvider>}/>
     <Route path="/team-fixture" element={<ConsoleDataProvider scopeKey="team-fixture" onAccessFailure={() => {}}><TeamPage adapter={teamAdapter}/></ConsoleDataProvider>} />
     <Route path="/auth-fixture/setup" element={<DocumentFrame signedIn={false}><ProductDocument page={{kind:'auth',view:'setup',setup:'private-once-only'}}/></DocumentFrame>}/>
     <Route path="/auth-fixture/consent" element={<DocumentFrame signedIn><ProductDocument page={{kind:'auth',view:'consent',clientName:'Example MCP client',oauthQuery:'signed-consent-query',resource:'https://oss.example/mcp',scopes:['openid','offline_access']}}/></DocumentFrame>}/>
