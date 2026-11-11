@@ -59,7 +59,7 @@ test('real migration freezes legacy writes, copies complete native data, verifie
  const doc={tenantId:principal.tenantId,userId:principal.userId,harness:'codex',installationId:'machine',sessionId:'session',eventId:'event',chunk:0,kind:'message',text:'exact complete body',receivedAt:'2026-11-01T00:00:00.000Z'};
  await request('/_doc/event?refresh=true',doc,'PUT');
  const source=legacyRealmSource({endpoint,index:legacy,corpus:'session',tenantId:principal.tenantId});let checkpoint=null;
- const options={principal,corpus:'session',source,realm,load:async()=>checkpoint,save:async value=>{checkpoint=value;}};
+ const options={store:deletionTestStore(),prefix:'capture-v1',principal,corpus:'session',source,realm,load:async()=>checkpoint,save:async value=>{checkpoint=value;}};
  await assert.rejects(migrateRealmCorpus(options),/write-blocked/);
  await request('/_settings',{index:{blocks:{write:true}}},'PUT');
  assert.equal((await migrateRealmCorpus(options)).copied,1);assert.equal(checkpoint.complete,true);
