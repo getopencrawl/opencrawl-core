@@ -74,7 +74,9 @@ Every collapsed card occupies the same space. Show the catalog-selected key metr
 or the highest valid count when no key metric is available, with an N more caret
 button that expands the full list of stats. Keep real zero counts, per-stream
 completion, and measured progress. Use 8px solid status dots without glow and
-unframed provider icons. Search and state filters support a growing catalog.
+unframed provider icons. Keep account/scope details inside Manage, not beneath
+the card title. Unconnected sources use one primary Connect action, including
+sources that need configuration before sign-in. Search and state filters support a growing catalog.
 Shared dialogs retain setup, sign-in recovery, sync retries and confirmed deletion.
 
 Team administration uses the shared management-page and member-list patterns.

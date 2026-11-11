@@ -4,6 +4,7 @@ import {upgradeCaptureHooks} from './capture/install.ts';
 import {collectCommand} from './capture/command.ts';
 import {readCaptureConfig} from './capture/runtime.ts';
 import {scheduleMemoryRefresh} from './capture/memory.ts';
+import {scheduleCliUpdate} from './update.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs} from 'node:util';
 import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest} from './oauth.ts';
@@ -76,7 +77,7 @@ Search returns compact verbatim excerpts. Expand with opencrawl fetch <result-id
   --content-version VERSION         Detect changes between fetch pages
 Use OPENCRAWL_TOKEN with an explicit --api or OPENCRAWL_API_URL for a self-hosted
 bearer token; otherwise uses saved login. Environment tokens never use a default server.
-Updates run automatically before ordinary commands, at most once per day.
+Updates are checked opportunistically every 3–6 hours, including capture hooks and workers.
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
 
 Board: board register --session ID --name codex:unique-name --task "Current work"
@@ -137,6 +138,7 @@ export async function main(args = process.argv.slice(2)) {
   // Process-owned work overlaps commands and async hooks. It is cancelled when
   // the command ends, so quick commands never wait and no orphan worker exists.
   const memoryJob:{current?:ReturnType<typeof scheduleMemoryRefresh>}={};
+  const updateJob=scheduleCliUpdate();
   let json = args.includes('--json');
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
@@ -218,6 +220,7 @@ export async function main(args = process.argv.slice(2)) {
     return exit === 2 && args[0] === 'collect' && args[1] === 'hook' ? 1 : exit;
   } finally {
     memoryJob.current?.stop();
+    await updateJob.stop();
     // Upgrade only our hook settings locally; never launch an unowned process.
     if(args[0]!=='collect' && args[0]!=='logout' && args[0]!=='skills')try{await upgradeCaptureHooks();}catch{}
   }

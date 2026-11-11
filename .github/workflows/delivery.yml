@@ -20,7 +20,9 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     env:
-      SOURCE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+      # Late CLI callbacks must evaluate current main, not their older build SHA.
+      # The gate still requires every check on this exact selected revision.
+      SOURCE_REVISION: ${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
       NODE_AUTH_TOKEN: ${{ github.token }}
     steps:
@@ -51,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           if npm view "@getopencrawl/opencrawl-core@$VERSION" --json > metadata.json 2> registry-error.txt; then
-            node -e 'const p=require("./metadata.json");if(p.opencrawlRevision!==process.env.SOURCE_REVISION)throw Error("Published source mismatch")'
+            node tools/package-provenance.mts metadata.json "$VERSION" "$SOURCE_REVISION"
             echo 'published=true' >> "$GITHUB_OUTPUT"
           else
             grep -q E404 registry-error.txt

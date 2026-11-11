@@ -16,32 +16,48 @@ export async function purgeSessionArchives({store,prefix,roots,principal,harness
   sessionScope(principal);
   if(principal.captureAccess!==undefined||!store.purgePrefix)throw new Error('Archive erasure requires a trusted reader and permanent storage deletion');
   const controls=createControls({store,prefix});
-  async function redact(bytes:Buffer) {
+  const isTarget=(doc:Record<string,unknown>)=>doc.userId===principal.userId&&doc.harness===harness&&doc.sessionId===sessionId;
+  function archive(bytes:Buffer) {
     const value=parseJson<Record<string,unknown>>(gunzipSync(bytes,{maxOutputLength:256*1024*1024}));
     if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid session archive');
-    let changed=false,found=false;const documents:DocumentItem[]=[];
+    let found=false,matched=false;
     for(const field of ['removed','previous'])if(field in value){
       found=true;const rows=value[field];if(!Array.isArray(rows))throw new Error('Invalid session archive records');
-      const kept:unknown[]=[];
       for(const item of rows){
         if(!item||typeof item!=='object'||!('document'in item)||!item.document||typeof item.document!=='object')throw new Error('Invalid session archive document');
         const doc=item.document as Record<string,unknown>;
         if(typeof doc.tenantId!=='string'||typeof doc.userId!=='string'||typeof doc.harness!=='string'||typeof doc.sessionId!=='string')throw new Error('Invalid session archive identity');
         if(doc.tenantId!==principal.tenantId)throw new Error('Session archive tenant mismatch');
-        const remove=doc.userId===principal.userId&&doc.harness===harness&&doc.sessionId===sessionId ||
-          Boolean((await controls.read({tenantId:doc.tenantId,userId:doc.userId},'sessions',doc.harness,doc.sessionId))?.deletedAt);
-        changed ||= remove;if(!remove){kept.push(item);documents.push(item as DocumentItem);}
+        matched ||= isTarget(doc);
+      }
+    }
+    if(!found)throw new Error('Unknown session archive format');
+    return {value,matched};
+  }
+  async function redact(bytes:Buffer) {
+    const {value,matched}=archive(bytes);
+    if(!matched)return null;
+    const documents:DocumentItem[]=[],deleted=new Map<string,boolean>();
+    for(const field of ['removed','previous'])if(field in value){
+      const kept:DocumentItem[]=[];
+      for(const item of value[field] as DocumentItem[]){
+        const doc=item.document;
+        if(isTarget(doc))continue;
+        const identity=JSON.stringify([doc.userId,doc.harness,doc.sessionId]);
+        if(!deleted.has(identity))deleted.set(identity,Boolean((await controls.read({tenantId:doc.tenantId as string,userId:doc.userId as string},'sessions',doc.harness as string,doc.sessionId as string))?.deletedAt));
+        if(!deleted.get(identity)){kept.push(item);documents.push(item);}
       }
       value[field]=kept;
     }
-    if(!found)throw new Error('Unknown session archive format');
-    return changed?{bytes:gzipSync(JSON.stringify(value)),documents}:null;
+    return {bytes:gzipSync(JSON.stringify(value)),documents};
   }
   let removed=0;
   for(const root of roots){
     if(!root.endsWith('/')||root.split('/').slice(0,-1).some(part=>!part||part==='.'||part==='..'))throw new Error('Explicit session archive prefix required');
     removed+=await store.purgePrefix(root,{select:key=>key.endsWith('.json.gz'),
-      selectVersion:async(_key,read)=>(await redact(await read()))!==null,
+      // Unaffected archives need no control reads. A matching page rechecks
+      // each retained session once, then the write barrier guards its copy.
+      selectVersion:async(_key,read)=>archive(await read()).matched,
       beforeDelete:async(key,read)=>{
         const original=await read();
         for(let attempt=0;;attempt++){

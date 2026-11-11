@@ -9,12 +9,14 @@ import {ConnectorCard, ProviderIcon, SourceStats, SourceProgress} from './connec
 import {alphabeticalSources, sourceConnected} from './connector-card-model.ts';
 import {listPhrase} from '../onboarding/model.ts';
 
+// Pick up the first background snapshot promptly, then return to normal polling.
+const refreshInterval = (data: {items: SourceCard[]} | undefined) => data?.items.some(source => source.statusUpdatedAt === null && source.statusRefreshing && !source.statusUnavailable) ? 1000 : 30_000;
 
 export function SourcesPage({adapter, canConfigure = false}: {adapter: SourcesAdapter; /** Admin permission for shared integrations and operator credentials. */ canConfigure?: boolean}) {
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState<string | null>(null);
-  const {data, error, loading, reload, invalidate} = useResource(adapter.sources, {autoRefreshMilliseconds:30_000, paused:pending !== null});
+  const {data, error, loading, reload, invalidate} = useResource(adapter.sources, {autoRefreshMilliseconds:refreshInterval, paused:pending !== null});
   const [actionError, setActionError] = useState('');
   const [success, setSuccess] = useState('');
   const [confirmation, setConfirmation] = useState<SourceCard | null>(null);
@@ -130,7 +132,7 @@ export function SourcesPage({adapter, canConfigure = false}: {adapter: SourcesAd
   return <Page bodyClassName="oc-connections" id="data-controls" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">
     {error && <Notice tone="danger">{data ? 'Connection status couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}</Notice>}
     {actionError && !confirmation && !keySource && !setupSource && <Notice tone="danger">{actionError}</Notice>}
-    {unlock && <Notice>{canConfigure && adapter.saveCredential ? `One ${unlock.name} key unlocks ${listPhrase(unlock.unlocks)}. Choose Set up on any of them to add it.` : `${listPhrase(unlock.unlocks)} need a ${unlock.name} key. Ask a workspace admin to add it.`}</Notice>}
+    {unlock && <Notice>{canConfigure && adapter.saveCredential ? `One ${unlock.name} key unlocks ${listPhrase(unlock.unlocks)}. Choose Connect on any of them to add it.` : `${listPhrase(unlock.unlocks)} need a ${unlock.name} key. Ask a workspace admin to add it.`}</Notice>}
     {!canConfigure && data?.items.some(source => source.scope !== 'user') && <Notice>Workspace admins manage shared integrations.</Notice>}
     {success && <Notice tone="success">{success}</Notice>}
     {!data ? loading ? <LoadingState label="Loading integrations" /> : <EmptyState title="Integrations couldn’t load" description="Try again to see your connections." action={<Button onClick={() => void reload()}>Try again</Button>} /> : <>
@@ -160,7 +162,7 @@ export function SourceRow({source, canManage = false, pending, active, connect, 
   const [open, setOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const available = source.state === 'disconnected' || source.state === 'setup-required';
-  const action = available ? source.state === 'setup-required' ? 'Set up' : canManage ? 'Connect' : 'Details' : !canManage || source.state === 'unavailable' ? 'Details' : source.state === 'error' ? 'Fix connection' : 'Manage';
+  const action = available ? canManage ? 'Connect' : 'Details' : !canManage || source.state === 'unavailable' ? 'Details' : source.state === 'error' ? 'Fix connection' : 'Manage';
   const restart = source.state === 'connecting' || source.recoveryAction === 'connect';
   const retryable = source.state === 'error' && !source.reconnect && !restart;
   function invoke(callback: () => void) {setOpen(false); callback();}
@@ -178,7 +180,7 @@ export function SourceRow({source, canManage = false, pending, active, connect, 
       {restart && <Button variant="primary" disabled={pending} onClick={()=>invoke(connect)}>{active ? 'Connecting…' : 'Restart sign-in'}</Button>}
       {retryable && <Button disabled={pending} onClick={()=>invoke(retry)}>{active ? 'Retrying…' : source.recoveryAction === 'disconnect' ? 'Retry removal' : 'Retry sync'}</Button>}
     </> : undefined}>
-      <div className="oc-source-detail-account"><ProviderIcon source={source}/><div><strong>{source.account ?? source.name}</strong>{source.connectedBy && <p>Connected by {source.connectedBy}</p>}</div></div>
+      <div className="oc-source-detail-account"><ProviderIcon source={source}/><div><strong>{source.account || (source.scope === 'user' ? 'Personal connection' : 'Workspace connection')}</strong>{source.connectedBy && <p>Connected by {source.connectedBy}</p>}</div></div>
       {!available && <SourceProgress source={source}/>}
       {Boolean(source.rows?.length) && <SourceStats source={source}/>}
       {!canManage && source.scope !== 'user' && <p className="muted">Workspace admins manage this integration.</p>}
