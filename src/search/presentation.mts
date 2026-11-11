@@ -62,16 +62,26 @@ export function groupDuplicates(hits: WorkspaceHit[]) {
 
 export type WorkspaceHit = ReturnType<typeof workspaceHit> & {duplicateCount?: number; duplicateIds?: string[]};
 
-export function groupResources(hits:WorkspaceHit[], mode:'none'|'resource'|'session') {
+export function groupResources(hits:WorkspaceHit[], mode:'none'|'resource'|'session', preferContent=true) {
   if(mode==='none')return {results:hits,suppressed:0};
   const seen=new Map<string,WorkspaceHit&{groupedCount?:number;groupedIds?:string[]}>(),results:Array<WorkspaceHit&{groupedCount?:number;groupedIds?:string[]}>=[];
   for(const hit of hits){
     const p=hit.provenance;
     const key=JSON.stringify(hit.source==='sessions'?[hit.source,p.userId,p.harness,p.sessionId,...(mode==='session'?[]:[p.eventId||hit.id])]:
       hit.source==='memories'?[hit.source,p.userId,p.harness,p.installationId,p.path,p.snapshotId]:
-      [hit.source,p.provider,p.connectionId,p.parentKind||p.kind,p.parentId||p.sourceId||hit.id]);
+      [hit.source,p.provider,p.connectionId,p.workspaceId,p.parentKind||p.kind,p.parentId||p.sourceId||hit.id]);
     const existing=seen.get(key);
-    if(existing){existing.groupedCount=(existing.groupedCount||0)+1;existing.groupedIds??=[];if(existing.groupedIds.length<3)existing.groupedIds.push(hit.id);}
+    if(existing){
+      const normalized=(text:string)=>text.replace(/\s+/g,' ').trim();
+      // A connector's title-only parent is useful for finding the resource,
+      // but its best matching content passage is more useful to read. Preserve
+      // the resource's ranked slot and never replace substantive parent text.
+      const titleOnly=!existing.text.trim()||normalized(existing.text)===normalized(existing.title);
+      if(preferContent&&hit.source==='connectors'&&hit.provenance.kind==='passage'&&existing.provenance.kind!=='passage'&&titleOnly&&hit.text.trim()&&normalized(hit.text)!==normalized(hit.title)){
+        const copy={...hit,groupedCount:(existing.groupedCount||0)+1,groupedIds:[existing.id,...(existing.groupedIds??[])].slice(0,3)};
+        results[results.indexOf(existing)]=copy;seen.set(key,copy);
+      }else{existing.groupedCount=(existing.groupedCount||0)+1;existing.groupedIds??=[];if(existing.groupedIds.length<3)existing.groupedIds.push(hit.id);}
+    }
     else {const copy={...hit};seen.set(key,copy);results.push(copy);}
   }
   return {results,suppressed:hits.length-results.length};

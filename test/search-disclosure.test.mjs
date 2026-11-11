@@ -2,13 +2,33 @@ import {memorySessionStore as deletionTestStore} from './session-store-fixture.m
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
-import {excerpt, groupDuplicates} from '../dist/src/search/presentation.mjs';
+import {excerpt, groupDuplicates, groupResources} from '../dist/src/search/presentation.mjs';
 import {createSessionSearch} from '../dist/src/sessions/search.mjs';
 import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
 import {documentId} from '../dist/src/connectors/scope.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 
 const principal = {tenantId:'team', userId:'reader'};
+test('resource groups choose a matching content passage over a title-only parent without moving its slot',()=>{
+  const parent={id:'parent',source:'connectors',title:'Fix fork identity',text:'Fix fork identity',sourceRank:1,provenance:{provider:'github',connectionId:'c',workspaceId:'w',sourceId:'repo:33',kind:'pull_request'}};
+  const passage={...parent,id:'body',sourceRank:3,text:'Fix fork identity\nKeep the leading native session identity across resumed imports.',provenance:{...parent.provenance,sourceId:'repo:33:body:0',kind:'passage',parentId:'repo:33',parentKind:'pull_request'}};
+  const unrelated={...parent,id:'other',provenance:{...parent.provenance,sourceId:'repo:34'}};
+  const second={...passage,id:'validation',text:'Fix fork identity\nRegression tests passed.'};
+  const input=[parent,unrelated,passage,second],grouped=groupResources(input,'resource');
+  assert.deepEqual(grouped.results.map(h=>h.id),['body','other']);assert.equal(grouped.suppressed,2);
+  assert.equal(grouped.results[0].sourceRank,3);assert.equal(grouped.results[0].groupedCount,2);
+  assert.deepEqual(grouped.results[0].groupedIds,['parent','validation']);assert.equal(parent.groupedCount,undefined);
+  assert.deepEqual(groupResources(input,'none').results,input);
+  assert.equal(groupResources(input,'resource',false).results[0].id,'parent');
+  assert.equal(groupResources([{...parent,text:'The full parent document contains useful detail.'},passage],'resource').results[0].id,'parent');
+  assert.equal(groupResources([parent,{...passage,text:passage.title}],'resource').results[0].id,'parent');
+  for(const field of ['connectionId','workspaceId','provider']){
+    const foreign={...passage,provenance:{...passage.provenance,[field]:'different'}};
+    assert.equal(groupResources([parent,foreign],'resource').results.length,2);
+  }
+  const session={...parent,source:'sessions',provenance:{userId:'owner',harness:'codex',sessionId:'s',eventId:'e',kind:'message'}};
+  assert.equal(groupResources([session,{...session,id:'second-chunk',text:'More context'}],'resource').results[0].id,'parent');
+});
 test('compact excerpts preserve exact source text and find evidence beyond navigation', () => {
   const text = 'Navigation\n'.repeat(400) + 'The largest SSD is 500GB [add $300.00].\n' + 'Footer\n'.repeat(200);
   const result = excerpt(text, '500GB SSD');

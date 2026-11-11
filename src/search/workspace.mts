@@ -90,7 +90,7 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
         const at=time(a),bt=time(b);return (Number.isFinite(at)&&Number.isFinite(bt)?(at-bt)*(query.order==='newest'?-1:1):Number.isFinite(at)?-1:Number.isFinite(bt)?1:0)||a.id.localeCompare(b.id);
       });
       const deduped = query.dedupe ? groupDuplicates(ranked) : {results: ranked, suppressed: 0};
-      const grouped=groupResources(deduped.results,query.groupBy);
+      const grouped=groupResources(deduped.results,query.groupBy,query.order==='relevance');
       const results = grouped.results.slice(page.offset, page.offset + query.limit).map(hit => {
         const {text,...rest}=hit, fields={...rest,...(query.select.includes('text')?excerpt(text,query.query,query.excerptChars):{})};
         return Object.fromEntries(Object.entries(fields).filter(([key])=>!['title','text','url','provenance'].includes(key)||query.select.includes(key as 'title'|'text'|'url'|'provenance')));
