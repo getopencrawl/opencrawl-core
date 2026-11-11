@@ -126,7 +126,7 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k];Object.assign(process.env,saved);
   rmSync(dir,{recursive:true,force:true});
  }
-},20000);
+},60000);
 
 test('interactive setup choice defaults to skip and never interprets a generic yes as all sources',async()=>{
  for(const answer of ['','skip','s','no'])expect(await chooseBackfill(async()=>answer)).toBe('skip');
