@@ -6,6 +6,10 @@ on:
         description: 'Optional full mainline SHA to publish on the isolated revision channel'
         required: false
         type: string
+      cli_version:
+        description: 'Optional already-published CLI version for a revision release'
+        required: false
+        type: string
 permissions:
   contents: read
   packages: write
@@ -30,6 +34,7 @@ jobs:
         id: source
         env:
           REQUESTED_REVISION: ${{ inputs.revision }}
+          SELECTED_CLI_VERSION: ${{ inputs.cli_version }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node dist/tools/publish-revision.mjs
       # A historical source must not ship tools compiled from the workflow head.
