@@ -372,9 +372,7 @@ img { max-width: 100%; }
 .oc-connector-card { min-width:0; border:1px solid var(--line-strong); border-radius:var(--radius-panel); background:var(--surface); overflow:hidden; }
 .oc-connector-summary { height:224px; display:grid; grid-template-rows:44px minmax(0,1fr) 48px; gap:var(--space-4); padding:var(--space-5) var(--space-5) 0; }
 .oc-connector-heading { display:flex; align-items:center; gap:var(--space-3); min-width:0; }
-.oc-connector-heading > div { min-width:0; }
-.oc-connector-heading h2 { font-size:var(--text-title); font-weight:550; letter-spacing:normal; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.oc-connector-heading p { margin-top:2px; color:var(--muted); font-size:var(--text-xs); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.oc-connector-heading h2 { min-width:0; font-size:var(--text-title); font-weight:550; letter-spacing:normal; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .oc-connector-icon { flex:0 0 32px; width:32px; height:32px; object-fit:contain; }
 .oc-connector-placeholder { display:grid; place-items:center; flex:0 0 32px; width:32px; height:32px; color:var(--quiet); }
 .oc-connector-content { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); min-width:0; }
