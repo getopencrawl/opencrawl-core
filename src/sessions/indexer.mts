@@ -55,15 +55,25 @@ export function searchableEventData(harness:string,event:SessionEvent):unknown {
   if(event.kind==='tool_call'&&['name','arguments','input','action'].some(key=>d[key]!==undefined))return {name:d.name,arguments:d.arguments??d.input??d.action};
   return data;
 }
-export function batchDocuments({prefix,key,batch,principal,visibility='team'}: {prefix: string; key: string; batch: SessionBatch; principal: Principal; visibility?: 'team' | 'private'}): DocumentItem[] {
+export function batchDocuments({prefix,key,batch,principal,visibility='team',eventIds}: {prefix: string; key: string; batch: SessionBatch; principal: Principal; visibility?: 'team' | 'private'; eventIds?: readonly string[]}): DocumentItem[] {
   const scope=sessionScope(principal),identity=sourceBatchIdentity(prefix,key);
   if(!identity||identity.tenantHash!==digest(principal.tenantId)||identity.userHash!==digest(principal.userId)||
     batch?.owner?.tenantId!==principal.tenantId||batch?.owner?.userId!==principal.userId||batch.schemaVersion!==1||
     batch.harness!==identity.harness||digest(batch.installationId??'')!==identity.installationHash||digest(batch.sessionId??'')!==identity.sessionHash||
     !Array.isArray(batch.events)||batch.events.length>1000)throw new Error('Stored batch does not match its authorized scope and source key');
-  const documents=[];
+  if(eventIds!==undefined&&(!Array.isArray(eventIds)||!eventIds.length||eventIds.length>1000||eventIds.some(id=>typeof id!=='string'||!id)||new Set(eventIds).size!==eventIds.length))throw new Error('Invalid event selection');
+  const selected=eventIds===undefined?null:new Set(eventIds),available=new Set<string>();
+  // A migration page may need only a few events from this immutable batch.
+  // Validate the full batch envelope and event identities before selecting;
+  // do not rebuild unrelated event text, attachments and passage boundaries.
   for(const event of batch.events){
     if(!event||typeof event.id!=='string'||!event.id||typeof event.kind!=='string')throw Object.assign(new Error('Malformed stored event'),{permanent:true});
+    available.add(event.id);
+  }
+  if(selected&&[...selected].some(id=>!available.has(id)))throw new Error('Selected event is absent from stored batch');
+  const documents=[];
+  for(const event of batch.events){
+    if(selected&&!selected.has(event.id))continue;
     // Hooks and Codex user_message notifications echo the native transcript.
     // Keep their immutable capture evidence, without indexing a second copy.
     const data=searchableEventData(batch.harness,event);

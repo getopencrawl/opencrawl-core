@@ -6,7 +6,9 @@ export type Visibility = 'team' | 'private';
 export type Harness = 'claude-code' | 'codex';
 export type SessionHarness = Harness | 'grok-bot';
 export interface SessionRef {userId: string; harness: SessionHarness; sessionId: string}
-export interface SessionSummary extends SessionRef {
+/** Capture-machine names, not a verified original execution host. Optional for older adapters. */
+export interface SessionHosts {host?: string | null; hosts?: string[]; hostsTruncated?: boolean}
+export interface SessionSummary extends SessionRef, SessionHosts {
   title: string; private: boolean; mine: boolean; origin: string | null; host: string | null;
   firstActivityAt: string | null; lastActivityAt: string | null; events: number;
 }
@@ -17,7 +19,7 @@ export type TranscriptEntry =
   | {type: 'note'; label: string; text: string; truncated: boolean};
 export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[]}
 export interface SessionTranscript {
-  session: SessionRef & {title: string; mine: boolean; private: boolean; origin: string | null};
+  session: SessionRef & SessionHosts & {title: string; mine: boolean; private: boolean; origin: string | null};
   events: TranscriptEvent[]; total: number; next: string | null;
 }
 export interface MemoryRef {userId: string; harness: Harness; path: string}
