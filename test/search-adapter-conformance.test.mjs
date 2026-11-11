@@ -83,5 +83,23 @@ for (const backend of ['sqlite', 'opensearch']) {
       await collection.byQuery(principal, 'delete', {term: {id: 'versioned'}});
       assert.equal((await collection.mget(principal, ['versioned'])).docs[0].found, false);
     });
+    await t.test('memory projection activation and conditional rollback preserve newer heads', async () => {
+      const memories=realm.collection('memory'),head={...principal,kind:'snapshot',generation:1,snapshotId:'snapshot-one'};
+      const one={...head,projectionId:'a'.repeat(64),passageVersion:2},two={...head,projectionId:'b'.repeat(64),passageVersion:3};
+      const put=(document,policy='memory-head',id='head')=>memories.bulk(principal,[{id,document,policy}],{refresh:true});
+      const current=async()=> (await memories.mget(principal,['head'])).docs[0]._source;
+      const rollback=expectedProjectionId=>({name:'memory-projection-rollback',expectedProjectionId});
+      await put(head);await put(one);assert.equal((await current()).projectionId,one.projectionId);
+      await put(head);assert.equal((await current()).projectionId,one.projectionId,'legacy replay cannot replace published projection');
+      await put(two);await put(one);assert.equal((await current()).projectionId,two.projectionId,'older projection cannot replace newer format');
+      await put(head,rollback(one.projectionId));assert.equal((await current()).projectionId,two.projectionId,'stale rollback is a no-op');
+      await put({...head,userId:'intruder'},rollback(two.projectionId));assert.equal((await current()).userId,principal.userId);
+      await put(head,rollback(two.projectionId));assert.equal((await current()).projectionId,undefined);
+      await put(one);await put({...head,generation:2,snapshotId:'snapshot-two'});
+      await put(head,rollback(one.projectionId));assert.equal((await current()).snapshotId,'snapshot-two','newer capture wins rollback race');
+      await put(head,rollback(one.projectionId),'missing-head');assert.equal((await memories.mget(principal,['missing-head'])).docs[0].found,false);
+      await assert.rejects(put(head,rollback('invalid-projection')));
+      await assert.rejects(put({...head,generation:2,snapshotId:'conflicting-snapshot'}));
+    });
   });
 }
