@@ -52,6 +52,8 @@ test('library HTTP requires authentication, rejects browsers, unknown operations
 test('Codex IDE and attached-file headers never become the prompt or title', () => {
   const wrapped = '# Files mentioned by the user:\n\n## shot.png: /tmp/shot.png\n\n## My request for Codex:\nMove the nav to a left sidebar\n';
   assert.equal(promptText(wrapped), 'Move the nav to a left sidebar');
+  assert.equal(promptText('# Files pasted by the user:\n\n## Design.txt: /tmp/Design.txt\n\n## My request:\nImplement the capture flow'), 'Implement the capture flow');
+  assert.equal(promptText('# Files pasted by the user:\n\n## Design.txt: /tmp/Design.txt'), null);
   assert.equal(promptText('# Context from my IDE setup:\n\n## Open tabs:\n- a.ts'), null);
   assert.equal(promptText('<environment_context>cwd</environment_context>'), null);
   assert.equal(promptText('  plain ask '), 'plain ask');
