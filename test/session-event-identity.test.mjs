@@ -29,7 +29,8 @@ function pipeline(store) {
 test('reusing an event ID cannot publish a shorter revision or leave mixed search chunks',async()=>{
  const store=memorySessionStore(),ingest=createSessionIngest({store,prefix}),p=pipeline(store);
  await ingest.putBatch(owner,batch([event('event',{text:'x'.repeat(17000)+' original-tail'})]));
- const key=sourceKeys(store)[0];await p.worker.processObject({key});assert.equal(p.documents.size,2);
+ const key=sourceKeys(store)[0];await p.worker.processObject({key});assert.ok(p.documents.size>1);
+ assert.equal([...p.documents.values()].map(d=>d.text).join(''),'x'.repeat(17000)+' original-tail');
  await assert.rejects(ingest.putBatch(owner,batch([event('event',{text:'short replacement'})])),{status:409,code:'SESSION_EVENT_ID_CONFLICT'});
  assert.equal(sourceKeys(store).length,1);assert.equal(p.writes,1);
  assert.ok([...p.documents.values()].every(doc=>!doc.text.includes('replacement')));

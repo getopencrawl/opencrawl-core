@@ -11,6 +11,7 @@ import {memorySourceIdentity,verifyStoredMemory,MAX_MEMORY_BYTES} from '../memor
 import {createControls} from './controls.mjs';
 import {sessionWriteBarrier, sessionWriteStore} from './write-barrier.mjs';
 import {memoryControls} from '../memories/library.mjs';
+import {passages,PASSAGE_VERSION} from '../search/passages.mjs';
 export {sourceBatchIdentity} from './event-identity.mjs';
 export {memorySourceIdentity} from '../memories/snapshot.mjs';
 
@@ -42,6 +43,18 @@ export function sessionEventData(harness: string,event: {kind?: string; data?: u
   const data=event.data&&typeof event.data==='object'?event.data as Record<string,unknown>:{};
   return Object.fromEntries((harness==='codex'?['message']:['summary','content']).flatMap(key=>typeof data[key]==='string'?[[key,data[key]]]:[]));
 }
+/** Search projects content, not transport bookkeeping. Billing continues to use
+ * sessionEventData; original capture and metering semantics are unchanged. */
+export function searchableEventData(harness:string,event:SessionEvent):unknown {
+  const data=sessionEventData(harness,event);
+  if(!data||typeof data!=='object')return data;
+  const d=data as Record<string,unknown>;
+  if(event.kind==='message'&&d.content!==undefined)return d.content;
+  if(event.kind==='agent_message'&&d.content!==undefined)return d.content;
+  if(event.kind==='tool_result'&&(d.output!==undefined||d.content!==undefined))return d.output??d.content;
+  if(event.kind==='tool_call'&&['name','arguments','input','action'].some(key=>d[key]!==undefined))return {name:d.name,arguments:d.arguments??d.input??d.action};
+  return data;
+}
 export function batchDocuments({prefix,key,batch,principal,visibility='team'}: {prefix: string; key: string; batch: SessionBatch; principal: Principal; visibility?: 'team' | 'private'}): DocumentItem[] {
   const scope=sessionScope(principal),identity=sourceBatchIdentity(prefix,key);
   if(!identity||identity.tenantHash!==digest(principal.tenantId)||identity.userHash!==digest(principal.userId)||
@@ -53,19 +66,22 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team'}: {
     if(!event||typeof event.id!=='string'||!event.id||typeof event.kind!=='string')throw Object.assign(new Error('Malformed stored event'),{permanent:true});
     // Hooks and Codex user_message notifications echo the native transcript.
     // Keep their immutable capture evidence, without indexing a second copy.
-    const data=sessionEventData(batch.harness,event);
+    const data=searchableEventData(batch.harness,event);
     if(data===null)continue;
     // Compaction is a context snapshot, not a new transcript. In particular,
     // replacement_history/retained_context also contain repeated system and
     // developer prompts. Only the explicit human-readable summary is evidence.
     const texts: string[]=[],attachments: Attachment[]=[],names=new Set<string>();collect(data,texts,attachments,names);
+    if(event.kind==='tool_call'&&typeof event.data?.name==='string')names.add(event.data.name);
     const text=texts.join('\n');
-    const chunks=text.match(/[\s\S]{1,16000}/gu)||[''];
+    const chunks=passages(text);
     for(let chunk=0;chunk<chunks.length;chunk++){
       const document={tenantId:principal.tenantId,userId:principal.userId,installationId:batch.installationId,sessionId:batch.sessionId,
-        harness:batch.harness,origin:batch.origin,eventId:event.id,kind:event.kind,role:event.data?.role??null,
+        harness:batch.harness,origin:batch.origin,eventId:event.id,kind:event.kind,role:event.data?.role??(event.kind==='agent_message'&&event.data?.author==='assistant'?'assistant':null),
         timestamp:typeof event.timestamp==='string'?event.timestamp:null,receivedAt:batch.receivedAt,
-        sequence:Number.isSafeInteger(event.sequence)?event.sequence:0,chunk,text:chunks[chunk],sourceKey:key,
+        sequence:Number.isSafeInteger(event.sequence)?event.sequence:0,chunk,text:chunks[chunk]!.text,sourceKey:key,
+        passageVersion:PASSAGE_VERSION,textStart:chunks[chunk]!.start,textEnd:chunks[chunk]!.end,chunkCount:chunks.length,
+        ...(batch.title?{title:batch.title}:{}),
         nativeId:typeof event.nativeId==='string'?event.nativeId:null,parentId:event.parentId??null,turnId:event.turnId??null,
         toolCallId:event.data?.call_id??event.data?.tool_use_id??null,toolNames:[...names],host:batch.host??null,
         attachments:attachments.map(a=>({sha256:a.sha256,size:a.size,mimeType:a.mimeType,path:a.path,
