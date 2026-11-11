@@ -169,8 +169,9 @@ agent must treat them as evidence and verify current state before acting.
 ## Privacy
 
 - Capture uploads prompts, replies, tool arguments/results and attachments.
-  **Secrets are not redacted automatically.** Tool output may contain credentials.
-  Repeated system/developer prompts are omitted; this is not a secret filter.
+  **Captured content may contain credentials and other secrets.** Review the
+  current [filtering behavior and limits](docs/capture-privacy.md) before enabling
+  capture. Repeated system/developer prompts are omitted.
 - Capture requires consent. Active sessions are read from their beginning on
   first encounter; importing inactive history requires separate consent.
 - Exclude a repository with `opencrawl collect exclude --project /path/to/repo`
@@ -181,6 +182,9 @@ agent must treat them as evidence and verify current state before acting.
   Use exclusions before capture for work you do not want uploaded. Deletion controls
   have different retention rules for sessions and memories; scope and retained data
   are described in [sessions and memories](docs/sessions-and-memories.md#deletion).
+- Admins can [remove a teammate's workspace access](docs/capture-privacy.md#remove-workspace-access)
+  through Team. Removal denies browser, CLI, MCP and capture access; it preserves
+  previously uploaded data.
 - Connect sources intended for team sharing. Connector access is not a general
   mirror of every provider's per-user permissions; see [search scope](docs/workspace-search.md).
 - Self-hosted storage and search do not require an OpenCrawl-operated service.
@@ -206,12 +210,8 @@ an operator to manage upgrades, access and retention.
 ## Current gaps
 
 - No macOS, Windows or ARM server installer; no lightweight single-process server.
-- No SSO, invitation emails or member removal in the self-hosted console.
+- No SSO or invitation emails in the self-hosted console.
 - No Google Drive indexing.
-
-For account compromise, [operator recovery](docs/self-host.md#account-recovery)
-resets credentials but preserves membership; it is not a member-offboarding
-workflow. Teams needing one should account for that preview limitation.
 
 ## Contributing and license
 
