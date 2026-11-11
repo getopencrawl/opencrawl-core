@@ -7,6 +7,32 @@ const connected = [{id: 'slack', name: 'Slack', icon: '/assets/connectors/slack.
 
 test.beforeEach(async ({request}) => {await request.post('/__test/reset', {data: {}});});
 
+test('session deletion confirms intent and distinguishes pending erasure across reload and retry',async({page})=>{
+  let phase='present',attempts=0;
+  const session={userId:'alice',harness:'codex',sessionId:'test-native-id',title:'Private planning',private:false,mine:true,origin:'desktop',host:null,firstActivityAt:null,lastActivityAt:null,events:1};
+  await page.route('**/api/library/**',async route=>{
+    if(route.request().url().endsWith('/sessions/delete')){
+      expect(route.request().postDataJSON()).toEqual({harness:'codex',sessionId:'test-native-id'});
+      phase=++attempts===1?'pending':'complete';
+      await route.fulfill({json:{deleted:phase==='complete',pending:phase==='pending'}});return;
+    }
+    await route.fulfill({json:{sessions:phase==='present'?[session]:[],limit:50,deletions:phase==='pending'?[{harness:'codex',sessionId:'test-native-id'}]:[]}});
+  });
+  await page.goto('/sessions');
+  await page.getByRole('button',{name:'Delete session: Private planning'}).click();
+  await expect(page.getByRole('dialog')).toContainText('cannot be captured again');
+  expect(attempts).toBe(0);
+  await page.getByRole('dialog').getByRole('button',{name:'Delete session',exact:true}).click();
+  await expect(page.getByText('Permanent storage cleanup is pending.',{exact:false})).toBeVisible();
+  await expect(page.getByText('Session permanently deleted from search and raw storage.',{exact:false})).toHaveCount(0);
+  await expect(page.getByRole('link',{name:'Private planning',exact:false})).toHaveCount(0);
+  await page.reload();
+  await page.getByRole('button',{name:'Retry deletion'}).click();
+  await expect(page.getByText('Session permanently deleted from search and raw storage.',{exact:false})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Retry deletion'})).toHaveCount(0);
+  expect(attempts).toBe(2);
+});
+
 for (const viewport of [{name: 'desktop', width: 1280, height: 813}, {name: 'mobile', width: 390, height: 844}]) {
   test(`Agent setup stays in the workspace with uniform navigation spacing on ${viewport.name}`, async ({page, request}, testInfo) => {
     await request.post('/__test/state', {data: {status: complete}});

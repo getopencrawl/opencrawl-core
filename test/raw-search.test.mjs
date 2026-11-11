@@ -1,3 +1,4 @@
+import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,8 +8,8 @@ import {documentId} from '../dist/src/connectors/scope.mjs';
 
 test('raw session responses retain OpenSearch fields after ownership checks', async () => {
   const owner = {tenantId: 'tenant', userId: 'user'};
-  const response = {took: 2, timed_out: false, _shards: {successful: 1,failed:0}, hits: {total: {value: 1, relation: 'eq'}, hits: [{_id: 'id', _index: 'sessions', _score: 2, _source: {...owner, text: 'hello'}}]}};
-  const search = createSessionSearch({endpoint: 'http://localhost:9200', index: 'sessions', fetch: async (_, options) => {
+  const response = {took: 2, timed_out: false, _shards: {successful: 1,failed:0}, hits: {total: {value: 1, relation: 'eq'}, hits: [{_id: 'id', _index: 'sessions', _score: 2, _source: {...owner, harness: 'codex', sessionId: 's', text: 'hello'}}]}};
+  const search = createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint: 'http://localhost:9200', index: 'sessions', fetch: async (_, options) => {
     assert.deepEqual(JSON.parse(options.body).query.bool.filter, [{term: {tenantId: owner.tenantId}},{term:{corpus:'session'}}]);
     return realmResponse('session',response);
   }});

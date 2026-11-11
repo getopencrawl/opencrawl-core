@@ -1,5 +1,8 @@
 import type {Principal, ObjectStore, SessionEvent, JsonValue} from './types.mjs';
-import {isSessionHarness} from './types.mjs';
+import {isSessionHarness, SESSION_HARNESSES, parseJson} from './types.mjs';
+import {gunzipSync} from 'node:zlib';
+import type {SessionBatch} from './types.mjs';
+import {sessionWriteBarrier} from './write-barrier.mjs';
 import type {RealmOptions, QueryBody, IndexHit} from '../search/types.mjs';
 import {createRealmResolver, realmField} from '../search/realm.mjs';
 import {createSessionIngest, sessionScope, digest} from './ingest.mjs';
@@ -113,7 +116,7 @@ function decodeCursor(cursor: unknown): JsonValue[] | undefined {
 /** Team members read every session that is not private to another member.
  * Only the owner changes visibility or deletes; deletion removes raw capture,
  * search documents and future uploads of the same session. */
-export function createSessionLibrary({store, prefix, ...options}: RealmOptions & {store: ObjectStore; prefix: string}) {
+export function createSessionLibrary({store, prefix, purgeCopies, ...options}: RealmOptions & {store: ObjectStore; prefix: string; purgeCopies?: (principal: Principal, key: SessionKey) => Promise<number>}) {
   const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
   const reader = (principal: Principal) => {
     sessionScope(principal);
@@ -121,6 +124,17 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
     return resolve(principal).collection('session');
   };
   const sessionFilter = (key: SessionKey) => [{term: {[f('userId')]: key.userId}}, {term: {[f('harness')]: key.harness}}, {term: {[f('sessionId')]: key.sessionId}}];
+  async function readable(principal: Principal, key: SessionKey) {
+    const control = await controls.read({...principal, userId: key.userId}, 'sessions', key.harness, key.sessionId);
+    return !control?.deletedAt && (control?.visibility !== 'private' || key.userId === principal.userId);
+  }
+  async function pendingDeletions(principal: Principal) {
+    const pending: Array<{harness: string; sessionId: string}> = [];
+    for (const harness of SESSION_HARNESSES) for (const control of (await controls.list(principal, 'sessions', harness)).values()) {
+      if (control.deletedAt && control.deletion?.state === 'pending') pending.push({harness, sessionId: control.deletion.sessionId});
+    }
+    return pending;
+  }
   const userText = {bool: {minimum_should_match: 1, should: [{term: {[f('kind')]: 'user_message'}}, {bool: {filter: [{term: {[f('kind')]: 'message'}}, {term: {[f('role')]: 'user'}}]}}]}};
   /** One scoped query for all displayed titles. Read the originals, since indexed
    * text also contains native IDs, channels and tool-result strings. */
@@ -218,7 +232,7 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
         const matched = await collection.search(principal, {size: 0, query: {bool: {filter: matchFilter, must: [{match: {text: {query: query.trim(), operator: 'and'}}}]}},
           aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {lastActivity: {max: {field: 'timestamp'}}}}}});
         const keys = (matched.aggregations?.sessions?.buckets ?? []) as unknown as Array<{key: string[]}>;
-        if (!keys.length) return {sessions: [], limit};
+        if (!keys.length) return {sessions: [], limit, deletions: await pendingDeletions(principal)};
         filter.push({bool: {minimum_should_match: 1, should: keys.map(bucket => ({bool: {filter: sessionFilter({userId: bucket.key[0]!, harness: bucket.key[1]!, sessionId: bucket.key[2]!})}}))}});
       }
       const result = await collection.search(principal, {size: 0, query: {bool: {filter}}, aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {
@@ -239,7 +253,8 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
       });
       const names = await titles(principal, sessions);
       for (const session of sessions) session.title = names.get(JSON.stringify([session.userId, session.harness, session.sessionId])) ?? session.title;
-      return {sessions, limit};
+      const allowed = await Promise.all(sessions.map(session => readable(principal, session)));
+      return {sessions: sessions.filter((_, index) => allowed[index]), limit, deletions: await pendingDeletions(principal)};
     },
 
     /** Index order and paging; content comes from the verified original batch. */
@@ -247,6 +262,7 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
       const key = checkKey(input), after = decodeCursor(input.cursor), limit = input.limit ?? 100;
       if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 200) fail(400, 'Invalid page size');
       const collection = reader(principal);
+      if (!await readable(principal, key)) fail(404, 'Session not found');
       const filter = [...sessionFilter(key), {term: {[f('chunk')]: 0}}, visibleTo('session', principal)];
       const page = await collection.search(principal, {size: limit, track_total_hits: true, query: {bool: {filter, must_not: [{terms: {[f('kind')]: HIDDEN}}]}},
         sort: [{timestamp: {order: 'asc', missing: '_first'}}, {[f('sequence')]: 'asc'}, {[f('eventId')]: 'asc'}, {[f('installationId')]: 'asc'}, {id: 'asc'}],
@@ -269,6 +285,7 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
       }
       const first = page.hits.hits[0]?._source;
       const names = await titles(principal, [key]);
+      if (!await readable(principal, key)) fail(404, 'Session not found');
       return {session: {...key, title: names.get(JSON.stringify([key.userId, key.harness, key.sessionId])) ?? `Session ${key.sessionId}`, mine: key.userId === principal.userId, private: page.hits.hits.some(hit => hit._source?.private === true), origin: typeof first?.origin === 'string' ? first.origin : null},
         events, total: page.hits.total.value, next: page.hits.hits.length === limit ? encodeCursor(page.hits.hits.at(-1)!.sort) : null};
     },
@@ -287,30 +304,48 @@ export function createSessionLibrary({store, prefix, ...options}: RealmOptions &
 
     async delete(principal: Principal, input: {harness?: unknown; sessionId?: unknown}) {
       const key = checkKey({userId: principal.userId, harness: input.harness as string, sessionId: input.sessionId as string});
-      if (!await owned(principal, key)) fail(404, 'Only the person who captured a session can delete it');
-      if (!store.delete) fail(503, 'Session deletion requires object deletion support');
-      // Tombstone first: uploads and indexing that race this request are discarded.
-      const control = await controls.update(principal, 'sessions', key.harness, key.sessionId, current => ({visibility: current?.visibility ?? 'team', deletedAt: current?.deletedAt ?? new Date().toISOString()}));
-      const root = `${prefix}/${sessionScope(principal)}/${key.harness}/`, sessionHash = digest(key.sessionId);
-      let removed = 0, installations: string | null = null;
-      const seen = new Set<string>();
-      do {
-        const page = await store.listPage(root, {delimiter: '/', continuationToken: installations, maxKeys: 1000});
-        for (const installation of page.prefixes ?? []) {
-          if (!installation.startsWith(root) || !/^[a-f0-9]{64}\/$/.test(installation.slice(root.length))) continue;
-          const source = installation + sessionHash + '/';
-          let cursor: string | null = null;
-          do {
-            const objects = await store.listPage(source, {continuationToken: cursor, maxKeys: 1000});
-            for (const object of objects.keys) {if (!object.startsWith(source)) throw new Error('Session inventory outside scope'); await store.delete(object); removed++;}
-            cursor = objects.nextToken;
-          } while (cursor);
-        }
-        installations = page.nextToken;
-        if (installations) {if (seen.has(installations)) throw new Error('Session inventory cursor did not advance'); seen.add(installations);}
-      } while (installations);
-      const {changed} = await apply(principal, key, control);
-      return {...key, deleted: true, objects: removed, documents: changed};
+      reader(principal);
+      const previous = await controls.read(principal, 'sessions', key.harness, key.sessionId);
+      if (!previous?.deletedAt && !await owned(principal, key)) fail(404, 'Only the person who captured a session can delete it');
+      // Revocation precedes cleanup. Keep a durable retry record without text.
+      const control = await controls.update(principal, 'sessions', key.harness, key.sessionId, current => ({
+        visibility: current?.visibility ?? 'team', deletedAt: current?.deletedAt ?? new Date().toISOString(),
+        deletion: {sessionId: key.sessionId, state: 'pending'},
+      }));
+      rendered.clear(); cachedChars = 0;
+      let objects = 0, documents = 0;
+      try {
+        const fence = await sessionWriteBarrier(store, prefix, principal, key.harness, key.sessionId).close();
+        documents += (await apply(principal, key, control)).changed;
+        if (fence.pending) return {...key, deleted: false, pending: true, objects, documents};
+        if (!store.purgePrefix) throw new Error('Permanent version deletion is unavailable');
+        if (purgeCopies) objects += await purgeCopies(principal, key);
+        const root = `${prefix}/${sessionScope(principal)}/${key.harness}/`, sessionHash = digest(key.sessionId);
+        objects += await store.purgePrefix(root, {select: object => new RegExp(`^[a-f0-9]{64}/${sessionHash}/`).test(object.slice(root.length)), beforeDelete: async (object, read) => {
+          if (!object.endsWith('.json.gz')) return;
+          const batch = parseJson<SessionBatch>(gunzipSync(await read(), {maxOutputLength: 17 * 1024 * 1024}));
+          if (batch.owner?.tenantId !== principal.tenantId || batch.owner?.userId !== principal.userId || batch.harness !== key.harness || batch.sessionId !== key.sessionId) throw new Error('Purge source scope mismatch');
+          // Old clients used owner-scoped blobs: erase all of their versions
+          // before removing the manifest needed to find them on a retry.
+          for (const attachment of batch.attachments ?? []) if (attachment.status === 'captured' && /^[a-f0-9]{64}$/.test(attachment.sha256 ?? '')) {
+            const blob = `${prefix}/${sessionScope(principal)}/attachments/${attachment.sha256}`;
+            objects += await store.purgePrefix!(blob, {select: candidate => candidate === blob});
+          }
+        }});
+        // Include unrefreshed writes completed before the fence closed.
+        await resolve(principal).refresh(principal);
+        documents += (await apply(principal, key, control)).changed;
+        if (await owned(principal, key)) throw new Error('Session search documents remain');
+        await controls.update(principal, 'sessions', key.harness, key.sessionId, current => ({
+          visibility: current?.visibility ?? 'team', deletedAt: control.deletedAt,
+          deletion: {sessionId: key.sessionId, state: 'complete'},
+        }));
+        return {...key, deleted: true, pending: false, objects, documents};
+      } catch {
+        // Permission failures, object locks and uncertain writes never become
+        // successful erasure. The owner can resume after restart from the UI.
+        return {...key, deleted: false, pending: true, objects, documents};
+      }
     },
   };
 }

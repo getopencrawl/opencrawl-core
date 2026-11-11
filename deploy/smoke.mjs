@@ -14,7 +14,7 @@ if(action==='seed') {
   assert.equal((await fetch(receiver+'/api/sessions/identity')).status,401);
   const {principal}=await request(receiver+'/api/sessions/identity',{headers});
   const marker='oss-smoke-'+randomUUID(),attachment=Buffer.from('synthetic attachment '+marker),sha256=createHash('sha256').update(attachment).digest('hex');
-  await request(receiver+'/api/sessions/attachments/'+sha256,{method:'PUT',headers:{...headers,'content-type':'application/octet-stream'},body:attachment});
+  await request(receiver+'/api/sessions/attachments/'+sha256+'?'+new URLSearchParams({harness:'codex',installationId:marker,sessionId:marker}),{method:'PUT',headers:{...headers,'content-type':'application/octet-stream'},body:attachment});
   const batch={schemaVersion:1,owner:principal,harness:'codex',origin:'cli',installationId:marker,sessionId:marker,
     events:[{id:marker,kind:'message',data:{role:'user',content:marker}}],attachments:[{status:'captured',sha256,size:attachment.length}]};
   assert.equal((await fetch(receiver+'/api/sessions/batches',{method:'POST',headers,body:JSON.stringify({...batch,owner:{...principal,tenantId:'forged'}})})).status,403);

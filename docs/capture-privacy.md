@@ -102,9 +102,12 @@ credentials, hook backups and exclusions. Reinstalling after purge can capture
 active conversations again from their beginning.
 
 Neither command deletes server data. Owners can delete individual sessions and
-memories in the console. Session deletion removes its raw capture and search
-projection and blocks later uploads for that session identity. Shared attachment
-objects may remain. Memory deletion removes it from search and ignores that
+memories in the console. Session deletion immediately hides the session, permanently removes its search
+projection and every stored version of its raw capture and attachments, and
+blocks later uploads for the same owner, harness and native session identity
+across installations. The console reports completion only after writes have
+settled and erasure is verified; otherwise it shows a pending deletion with Retry.
+Legacy owner-shared attachment copies are erased too. Memory deletion removes it from search and ignores that
 version; immutable raw snapshots remain, and a newer file version can be captured
 again. See the exact [deletion behavior](sessions-and-memories.md#deletion).
 

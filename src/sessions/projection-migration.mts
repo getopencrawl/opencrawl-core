@@ -4,6 +4,7 @@ import type {createRealm} from '../search/realm.mjs';
 import {gunzipSync} from 'node:zlib';
 import {MAX_BATCH_BYTES,digest} from './ingest.mjs';
 import {batchDocuments,sourceBatchIdentity} from './indexer.mjs';
+import {withSessionDocumentWrites} from './write-barrier.mjs';
 
 type Realm = Pick<ReturnType<typeof createRealm>, 'tenantId' | 'collection'>;
 export interface SessionProjectionReport {scanned: number; rewritten: number; removed: number; unchanged: number; after: JsonValue[] | null; complete: boolean}
@@ -13,7 +14,7 @@ export interface SessionProjectionBackup {previous: DocumentItem[]}
  * receipts stay intact. Deploy the fixed worker before running this migration.
  * Back up each page before mutation. A crash repeats the page idempotently. */
 export async function migrateSessionProjection({realm, principal, store, prefix, backup, dryRun=false, pageSize=100, after=null, onPage=async()=>{}}: {
-  realm: Realm; principal: TenantPrincipal; store: Pick<ObjectStore,'get'>; prefix: string;
+  realm: Realm; principal: TenantPrincipal; store: ObjectStore; prefix: string;
   backup(step: SessionProjectionBackup): Promise<unknown>; dryRun?: boolean; pageSize?: number; after?: JsonValue[] | null;
   onPage?(report: SessionProjectionReport): Promise<unknown>;
 }): Promise<SessionProjectionReport> {
@@ -78,22 +79,24 @@ export async function migrateSessionProjection({realm, principal, store, prefix,
     const cursor=hits.at(-1)?.sort;
     if(!cursor||JSON.stringify(cursor)===JSON.stringify(report.after))throw new Error('Session projection scan returned no advancing cursor');
     if(!dryRun&&previous.length) {
+      await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:previous},async()=>{
       await backup({previous});
       // Each replacement is at most one 16k text chunk; cap bulk size separately.
       for(const item of writes)await sessions.bulk(principal,[{...item,script:"if (ctx._source.session == null) { ctx.op = 'none'; } else { ctx._source.text = params.doc.text; ctx._source.session.attachments = params.doc.session.attachments; ctx._source.session.toolNames = params.doc.session.toolNames; }"}]);
       if(removals.length)await sessions.delete(principal,removals);
+      });
     }
     report.after=cursor;await onPage({...report});
   }
 }
 
 /** Restore saved pages in reverse, using only the tenant they were saved for. */
-export async function restoreSessionProjection({realm,principal,steps}: {realm: Realm; principal: TenantPrincipal; steps: SessionProjectionBackup[]}) {
+export async function restoreSessionProjection({realm,principal,store,prefix,steps}: {realm: Realm; principal: TenantPrincipal; store:ObjectStore; prefix:string; steps: SessionProjectionBackup[]}) {
   if(!principal?.tenantId||principal.tenantId!==realm.tenantId||principal.captureAccess!==undefined)throw Object.assign(new Error('Realm scope denied'),{status:403});
   let restored=0;
   for(const step of [...steps].reverse())for(const item of step.previous) {
     if(item.document.tenantId!==principal.tenantId)throw new Error('Backup scope denied');
-    await realm.collection('session').bulk(principal,[item]);restored++;
+    await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:[item]},()=>realm.collection('session').bulk(principal,[item]));restored++;
   }
   return {restored};
 }

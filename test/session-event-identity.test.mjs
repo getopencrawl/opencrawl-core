@@ -87,7 +87,7 @@ test('failed publication leaves a reservation, not an accepted event, and retrie
  const store=memorySessionStore(),put=store.put;let fail=true;
  store.put=async(key,data)=>{if(fail&&key.endsWith('.json.gz'))throw new Error('source storage unavailable');return put(key,data);};
  const ingest=createSessionIngest({store,prefix});
- await assert.rejects(ingest.putBatch(owner,batch()),/source storage unavailable/);assert.equal(sourceKeys(store).length,0);
+ await assert.rejects(ingest.putBatch(owner,batch()),/write outcome is uncertain/);assert.equal(sourceKeys(store).length,0);
  const report=await auditSessionEventIdentities(options(store));assert.equal(report.events,0);assert.equal(report.reservedEvents,1);
  await assert.rejects(ingest.putBatch(owner,batch([event('event',{text:'different'})])),{status:409});
  fail=false;await ingest.putBatch(owner,batch());assert.equal(sourceKeys(store).length,1);

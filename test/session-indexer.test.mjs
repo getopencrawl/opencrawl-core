@@ -1,3 +1,4 @@
+import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {realmIndex} from '../dist/src/search/realm.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
@@ -59,19 +60,19 @@ test('discovery skips indexed objects without an activity each, and retries unfi
 
 test('bulk item errors are failures even with HTTP 200; search binds the team and retains human attribution',async()=>{
  const requests=[];
- const search=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async(url,options)=>{
+ const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async(url,options)=>{
   requests.push(JSON.parse(options.body));
   if(url.pathname.endsWith('_bulk'))return realmResponse('session',{errors:true,items:[{index:{status:429}}]});
   return realmResponse('session',{hits:{total:{value:0},hits:[]}});
  }});
  // Replace the fake parser for NDJSON, then retain the observed search body.
- const failing=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{errors:true,items:[{index:{status:429}}]})});
+ const failing=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{errors:true,items:[{index:{status:429}}]})});
  await assert.rejects(failing.putDocuments([{id:'id',document:{...owner,harness:'codex',receivedAt:'2026-11-01T00:00:00Z',text:'retry me'}}],owner),/failed or missing items/);
  await search.search(owner,{query:'tenant-b OR *'});
  assert.deepEqual(requests[0].query.bool.filter,[{term:{tenantId:'tenant-a'}},{term:{corpus:'session'}}]);
  await assert.rejects(search.search(null,{query:'anything'}),/Authentication/);
  await assert.rejects(search.search(owner,{limit:101}),/Invalid search/);
- const leaking=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{hits:{total:{value:1},hits:[{_id:'foreign',_source:{tenantId:'tenant-b',userId:'same-user'}}]}})});
+ const leaking=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{hits:{total:{value:1},hits:[{_id:'foreign',_source:{tenantId:'tenant-b',userId:'same-user'}}]}})});
  await assert.rejects(leaking.search(owner),/ownership scope/);
 });
 
@@ -80,18 +81,19 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, t
 },async t=>{
  const environment='test-'+randomUUID().slice(0,8),index=realmIndex(environment,owner.tenantId),prefix='sessions/index-test/'+randomUUID();
  const {store}=standaloneStorage({OPENCRAWL_LANDING_S3_ENDPOINT:process.env.OPENCRAWL_TEST_S3_ENDPOINT,OPENCRAWL_LANDING_S3_BUCKET:'capture-test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'capture-test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'capture-test-secret'});
- const search=createSessionSearch({endpoint:process.env.OPENCRAWL_TEST_OPENSEARCH_URL,environment});
+ const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:process.env.OPENCRAWL_TEST_OPENSEARCH_URL,environment});
  for(let attempt=0;;attempt++){try{await store.checkAccess();await search.ensureIndex(owner);break;}catch(e){if(attempt>=60)throw e;await new Promise(r=>setTimeout(r,1000));}}
  t.after(async()=>{for(const key of (await store.list(prefix+'/')).keys)await store.delete(key);for(const tenantId of [owner.tenantId,'tenant-b'])await fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL+'/'+realmIndex(environment,tenantId),{method:'DELETE'});});
  const ingest=createSessionIngest({store,prefix});
  const owners=[owner,{...owner,tenantId:'tenant-b'},{...owner,userId:'other-user'}];
  for(const principal of owners)await search.ensureIndex(principal);
  for(const principal of owners){
-  const bytes=Buffer.from('attachment fixture'),sha=digest(bytes);await ingest.putAttachment(principal,sha,bytes);
+  const bytes=Buffer.from('attachment fixture'),sha=digest(bytes);
   for(const harness of ['claude-code','codex'])for(const origin of ['cli','desktop']){
   const b=batch(principal,'searchable violet attachment workflow');b.harness=harness;b.origin=origin;b.sessionId+='-'+origin;
   b.events[0].data.content.push({type:'opencrawl_attachment',sha256:sha,size:bytes.length});b.attachments=[{status:'captured',sha256:sha,size:bytes.length}];
   b.events.push({id:'tool-event',kind:'tool_result',data:{call_id:'tool-1',output:'Build completed successfully'}});
+  await ingest.putAttachment(principal,sha,bytes,b);
   await ingest.putBatch(principal,b);
  }}
  const single=createSessionPipeline({store,prefix,search,principal:owner});
@@ -103,7 +105,7 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, t
  for(const principal of owners){
   const expected=principal.tenantId===owner.tenantId?8:4;
   const result=await search.search(principal,{query:'violet'});assert.equal(result.total,expected);
-  assert.ok(result.hits.every(hit=>hit.attachments.every(a=>a.objectKey.startsWith(prefix+'/'+sessionScope(hit)+'/attachments/'))));
+  assert.ok(result.hits.every(hit=>hit.attachments.every(a=>a.objectKey.startsWith(prefix+'/'+sessionScope(hit)+'/'+hit.harness+'/'))));
   assert.ok(result.hits.every(hit=>hit.tenantId===principal.tenantId));
   assert.deepEqual(new Set(result.hits.map(hit=>hit.userId)),new Set(owners.filter(p=>p.tenantId===principal.tenantId).map(p=>p.userId)));
   assert.equal((await search.search(principal,{query:'Build completed'})).total,expected);
@@ -144,14 +146,14 @@ test('capture only lands immutable data and succeeds without any processing serv
  const ingest=createSessionIngest({store,prefix}),value=batch(owner);
  assert.equal((await ingest.putBatch(owner,value)).stored,true);
  assert.equal((await ingest.putBatch(owner,value)).stored,true);
- assert.equal(store.data.size,2); // Immutable batch and its atomic event ledger.
+ assert.equal(store.data.size,3); // Immutable batch, event ledger and durable write fence.
 });
 
 test('real OpenSearch usage separates windowed activity from lifetime inventory and excludes future events', {
  skip: !process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
 }, async t => {
  const environment='usage-'+randomUUID().slice(0,8), endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
- const search=createSessionSearch({endpoint,environment});
+ const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment});
  const teammate={...owner,userId:'teammate'},foreign={...owner,tenantId:'foreign-usage'};
  t.after(async()=>{for(const tenantId of [owner.tenantId,foreign.tenantId])await fetch(endpoint+'/'+realmIndex(environment,tenantId),{method:'DELETE'});});
  await search.ensureIndex(owner);await search.ensureIndex(foreign);
@@ -178,8 +180,8 @@ test('worker rejects forged source keys and checkpoints only after all indexing 
  const search={identity:'target',ensureIndex:async()=>{},putDocuments:async()=>{if(fail)throw new Error('Partial bulk failure');}};
  const pipeline=createSessionPipeline({store,prefix,search,principal:owner});
  await assert.rejects(pipeline.processObject({key:key.replace('tenants/','tenants/foreign/')}),/authorized source/);
- await assert.rejects(pipeline.processObject({key}),/Partial bulk/);
- assert.equal(store.data.size,2);
+ await assert.rejects(pipeline.processObject({key}),/write outcome is uncertain/);
+ assert.equal(store.data.size,3); // Source, event ledger and unresolved write fence; no index receipt.
  fail=false;assert.equal((await pipeline.processObject({key})).records,1);
  assert.equal((await pipeline.processObject({key})).skipped,true);
  assert.equal([...store.data.keys()].filter(k=>k.includes('/_index/')).length,1);
@@ -187,7 +189,7 @@ test('worker rejects forged source keys and checkpoints only after all indexing 
 
 test('OpenSearch SigV4 signs temporary credentials for the es service and index-scoped endpoint',async()=>{
  let captured;
- const search=createSessionSearch({endpoint:'https://search.example.com',index:'session-test',region:'us-west-2',
+ const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'https://search.example.com',index:'session-test',region:'us-west-2',
   credentials:async()=>({accessKeyId:'test-key',secretAccessKey:'test-secret',sessionToken:'temporary-token'}),
   fetch:async(url,options)=>{captured={url,options};return realmResponse('session',{hits:{total:{value:0},hits:[]}});}});
  await search.search(owner,{query:'hello'});
@@ -199,9 +201,9 @@ test('OpenSearch SigV4 signs temporary credentials for the es service and index-
 
 
 test('search returns another teammate with attribution and rejects foreign tenant results',async()=>{
- const teammate={tenantId:owner.tenantId,userId:'teammate',text:'shared knowledge'};
+ const teammate={tenantId:owner.tenantId,userId:'teammate',harness:'codex',sessionId:'s',text:'shared knowledge'};
  let source=teammate;
- const search=createSessionSearch({endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{hits:{total:{value:1},hits:[{_id:'event',_source:source}]}})});
+ const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{hits:{total:{value:1},hits:[{_id:'event',_source:source}]}})});
  assert.equal((await search.search(owner)).hits[0].userId,'teammate');
  source={...teammate,tenantId:'another-team'};
  await assert.rejects(search.search(owner),/ownership scope/);
