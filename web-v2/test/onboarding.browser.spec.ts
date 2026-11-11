@@ -7,6 +7,35 @@ const connected = [{id: 'slack', name: 'Slack', icon: '/assets/connectors/slack.
 
 test.beforeEach(async ({request}) => {await request.post('/__test/reset', {data: {}});});
 
+for (const viewport of [{name: 'desktop', width: 1280, height: 813}, {name: 'mobile', width: 390, height: 844}]) {
+  test(`Agent setup stays in the workspace with uniform navigation spacing on ${viewport.name}`, async ({page, request}, testInfo) => {
+    await request.post('/__test/state', {data: {status: complete}});
+    await page.setViewportSize(viewport);
+    await page.goto('/workspace');
+    let documents = 0;
+    page.on('request', request => {if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documents++;});
+    if (viewport.name === 'mobile') await page.getByRole('button', {name: 'Open workspace navigation'}).click();
+    const navigation = page.getByRole('navigation', {name: 'Workspace navigation'});
+    const gaps = await navigation.getByRole('link').evaluateAll(links => links.slice(1).map((link, index) => link.getBoundingClientRect().top - links[index]!.getBoundingClientRect().bottom));
+    expect(gaps).toEqual([4, 4]);
+    await navigation.getByRole('link', {name: 'Agent setup', exact: true}).click();
+    await expect(page.getByRole('heading', {name: 'Agent setup', exact: true})).toBeFocused();
+    await expect(page.getByRole('heading', {name: 'Connect your primary coding agent'})).toBeVisible();
+    await expect(page.getByRole('main')).toHaveCount(1);
+    await expect(page.getByRole('navigation', {name: 'Onboarding steps'})).toHaveCount(0);
+    await expect(page.locator('body')).not.toHaveAttribute('data-onboarding');
+    await page.getByRole('button', {name: 'Show setup prompt'}).click();
+    await expect(page.locator('#connect-preview')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({path: testInfo.outputPath(`agent-setup-${viewport.name}.png`), fullPage: true});
+    await page.goBack();
+    await expect(page.getByRole('heading', {name: 'Console home'})).toBeVisible();
+    await page.goForward();
+    await expect(page.getByRole('heading', {name: 'Agent setup', exact: true})).toBeVisible();
+    expect(documents).toBe(0);
+  });
+}
+
 test('unconfigured OSS connectors remain visible and explain setup without starting OAuth',async({page,request})=>{
   await request.post('/__test/state',{data:{status:complete,sources:[
     {id:'googledrive',name:'Google Drive',state:'setup-required',setup:{title:'Set up Google Drive',body:'Ask your administrator to configure COMPOSIO_API_KEY.'}},

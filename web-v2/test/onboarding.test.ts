@@ -41,6 +41,15 @@ test('completed agent setup preserves the original instruction, full grouped che
   assert.match(html, /class="focus-content focus-panel"/);
 });
 
+test('workspace agent setup shares its prompt and receipts without restarting the onboarding flow', () => {
+  const html = render(createElement(AgentOnboarding, {adapter, mcpUrl: 'https://app.getopencrawl.com/mcp', setupPrompt: 'The approved setup prompt.', initialStatus: complete, presentation: 'workspace'}));
+  assert.match(html, /<h1[^>]*>Agent setup<\/h1>/);
+  assert.match(html, /<h2[^>]*>Connect your primary coding agent<\/h2>/);
+  assert.match(html, /The approved setup prompt\./);
+  assert.match(html, /First session recording received/);
+  assert.doesNotMatch(html, /<main|next-step|Next is available|onboarding-flow/);
+});
+
 test('history completion requires an explicit valid completion receipt and remains optional', () => {
   const histories: OnboardingStatus['history'][] = [null, {...receipt, state: 'received'}, {...receipt, state: 'importing'},
     {...receipt, state: 'skipped'}, {observedAt: 'not a date', state: 'complete'}];

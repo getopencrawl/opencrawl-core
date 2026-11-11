@@ -1,6 +1,6 @@
 import {consoleResourceKey} from '../data.tsx';
 import {useEffect, useRef, useState, type ReactNode} from 'react';
-import {Button, Textarea} from '../design/components.tsx';
+import {Button, Page, Textarea} from '../design/components.tsx';
 import {Icon} from '../design/icons.tsx';
 import {CommandSnippet} from './copy.tsx';
 import {deriveOnboarding, hasReceipt, promptModel} from './model.ts';
@@ -51,9 +51,10 @@ export interface AgentOnboardingProps {
   mcpUrl: string;
   setupPrompt: string;
   initialStatus?: OnboardingStatus;
+  presentation?: 'focused' | 'workspace';
 }
 
-export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus}: AgentOnboardingProps) {
+export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus, presentation = 'focused'}: AgentOnboardingProps) {
   const progress = useOnboardingResource(signal => adapter.status(signal), {key:consoleResourceKey(adapter,'onboarding-status'), interval: 5000, initial: initialStatus});
   const status = progress.data ?? {};
   const derived = deriveOnboarding(status);
@@ -98,12 +99,13 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus}: A
     }
   }
 
-  return <OnboardingShell step="agent" nextUrl="/onboarding/sources" nextVisible={!progress.error && !manual && derived.complete}>
+  const Heading = presentation === 'workspace' ? 'h2' : 'h1';
+  const content = <>
     {progress.loading ? <section className="focus-loading" role="status"><span className="waiting-dot" aria-hidden="true" />Checking your connection…</section>
-      : progress.error ? <section aria-labelledby="error-title"><h1 id="error-title" tabIndex={-1}>Let’s reconnect</h1><p className="focus-description">We couldn’t check your progress. Try again to pick up where you left off.</p><div className="focus-action"><Button variant="primary" onClick={progress.reload}>Try again<Icon name="arrow-right" /></Button></div><p className="focus-reassurance">You don’t need to repeat your setup.</p></section>
-        : manual ? <section aria-labelledby="manual-title"><h1 id="manual-title" tabIndex={-1}>Copy this prompt</h1><p className="focus-description">Automatic copying isn’t available. Copy the selected text, then paste it into your coding agent.</p><label className="sr-only" htmlFor="copy-fallback">Prompt to copy</label><Textarea ref={fallback} id="copy-fallback" readOnly rows={6} value={manual.text} /><div className="focus-action"><Button variant="primary" onClick={() => {showCopied(manual.step); setManual(null); requestAnimationFrame(() => copyButton.current?.focus());}}>I’ve copied it<Icon name="arrow-right" /></Button></div></section>
+      : progress.error ? <section aria-labelledby="error-title"><Heading id="error-title" tabIndex={-1}>Let’s reconnect</Heading><p className="focus-description">We couldn’t check your progress. Try again to pick up where you left off.</p><div className="focus-action"><Button variant="primary" onClick={progress.reload}>Try again<Icon name="arrow-right" /></Button></div><p className="focus-reassurance">You don’t need to repeat your setup.</p></section>
+        : manual ? <section aria-labelledby="manual-title"><Heading id="manual-title" tabIndex={-1}>Copy this prompt</Heading><p className="focus-description">Automatic copying isn’t available. Copy the selected text, then paste it into your coding agent.</p><label className="sr-only" htmlFor="copy-fallback">Prompt to copy</label><Textarea ref={fallback} id="copy-fallback" readOnly rows={6} value={manual.text} /><div className="focus-action"><Button variant="primary" onClick={() => {showCopied(manual.step); setManual(null); requestAnimationFrame(() => copyButton.current?.focus());}}>I’ve copied it<Icon name="arrow-right" /></Button></div></section>
           : <section aria-labelledby="connect-title">
-            <h1 id="connect-title" tabIndex={-1}>{title}</h1>
+            <Heading id="connect-title" tabIndex={-1}>{title}</Heading>
             <p className="focus-description">{description}</p>
             <div className="focus-action"><div className="prompt-actions"><Button ref={copyButton} variant="primary" className="copy-prompt" data-label={prompt.label} onClick={() => void copy()}><span>{copied === promptStep ? 'Copied' : prompt.label}</span></Button><Button variant="primary" className="prompt-toggle" aria-label={`${expanded ? 'Hide' : 'Show'} ${prompt.name} prompt`} aria-expanded={expanded} aria-controls="connect-preview" onClick={() => setExpanded(value => !value)}><Icon name="chevron-down" /></Button></div></div>
             <div className="prompt-preview" id="connect-preview" hidden={!expanded}><p>{prompt.text}</p></div>
@@ -118,6 +120,9 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus}: A
               </Signal>
             </ul>
           </section>}
-    <p className="sr-only" role="status" aria-live="polite">{copied ? 'Copied' : derived.complete ? 'All required checks passed. Next is available.' : progress.error ? 'We couldn’t check your progress. Try again.' : ''}</p>
-  </OnboardingShell>;
+    <p className="sr-only" role="status" aria-live="polite">{copied ? 'Copied' : derived.complete ? `All required checks passed.${presentation === 'focused' ? ' Next is available.' : ''}` : progress.error ? 'We couldn’t check your progress. Try again.' : ''}</p>
+  </>;
+  return presentation === 'workspace'
+    ? <Page title="Agent setup" bodyClassName="focus-panel">{content}</Page>
+    : <OnboardingShell step="agent" nextUrl="/onboarding/sources" nextVisible={!progress.error && !manual && derived.complete}>{content}</OnboardingShell>;
 }
