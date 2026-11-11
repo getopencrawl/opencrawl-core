@@ -6,6 +6,16 @@ On a clean Ubuntu 24.04 x86_64 machine with sudo access, clone this repository a
 ./dev/up
 ```
 
+Use `./dev/up --no-airbyte` for agent capture, memories, search, local accounts and
+board without external sources. This starts only Docker Compose services and
+does not download kind, kubectl, Helm, or Airbyte. Use 4 CPUs, 8 GiB RAM and 20 GiB
+free disk in this mode. Source cards explain that Airbyte is disabled.
+Repeat the flag for every startup or demo; `./dev/up` without it enables Airbyte.
+Switching to this mode stops this clone's Airbyte cluster and connector workers
+without deleting connections, grants or data. External source reads and changes
+remain unavailable until Airbyte is enabled again. `stop`, `status`, and `reset --yes`
+operate on the whole installation without a mode flag.
+
 No service account, OAuth application, Node installation, `.env` editing or manual
 Airbyte setup is required. The script installs Docker/Compose from Ubuntu's signed
 package repositories when absent; sudo may ask for your system password. With
@@ -29,6 +39,9 @@ To find the credentials later, read `.opencrawl-dev/login.txt` (use
 ## Optional demo data
 
 Run `./dev/up demo` to complete onboarding automatically and load sample data.
+With `./dev/up demo --no-airbyte`, the sample is an agent session instead of a
+meeting import. It verifies the real session indexing workflow, MCP and product
+search, board read/write, local login, device/refresh grants and scope checks.
 This optional command exercises a real device grant, refresh, MCP call and
 synthetic capture, then creates two **synthetic meeting records**, explicitly labeled as development
 samples. A private fixture HTTP service is read by an Airbyte declarative source.

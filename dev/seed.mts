@@ -9,11 +9,13 @@ import {singleOrganizationDestination} from '../dist/src/integrations/single-org
 import {connectorClient,ensureConnectorSchedule} from '../dist/src/connectors/temporal/client.mjs';
 import type {ConnectorManifest} from '../dist/src/integrations/types.mjs';
 
-interface Input {format:number;project:string;origin:string;connectOrigin:string;organization:string;email:string;password:string;setupToken:string;fixtureUrl:string}
+interface Input {format:number;project:string;origin:string;connectOrigin:string;organization:string;email:string;password:string;setupToken:string;airbyteEnabled:boolean;fixtureUrl?:string}
 interface SeedState {project:string;integrationId:string;definitionId?:string;definitionIntent?:boolean;jobId?:string|number;userId?:string}
 const input=JSON.parse(readFileSync('/dev-state/seed-input.json','utf8')) as Input;
+const verifyOnly=process.env.OPENCRAWL_DEV_VERIFY_ONLY==='true';
 if(input.format!==1||!/^ocdev-[a-f0-9]{12}$/.test(input.project)||input.organization!==process.env.OPENCRAWL_ORGANIZATION_ID)throw new Error('Development seed scope mismatch');
-if(!/^http:\/\/\d+\.\d+\.\d+\.\d+:8080$/.test(input.fixtureUrl)||input.connectOrigin!=='http://app:8092')throw new Error('Unexpected development fixture address');
+if(input.airbyteEnabled!==(process.env.OPENCRAWL_AIRBYTE_ENABLED!=='false'))throw new Error('Development seed mode mismatch');
+if(input.airbyteEnabled&&!/^http:\/\/\d+\.\d+\.\d+\.\d+:8080$/.test(input.fixtureUrl||'')||input.connectOrigin!=='http://app:8092')throw new Error('Unexpected development fixture address');
 const stateFile='/dev-state/seed.json';
 const seed:SeedState=existsSync(stateFile)?JSON.parse(readFileSync(stateFile,'utf8')):{project:input.project,integrationId:'int_'+randomBytes(13).toString('hex')};
 if(seed.project!==input.project||!/^int_[a-f0-9]{26}$/.test(seed.integrationId))throw new Error('Sample data belongs to another development installation');
@@ -69,13 +71,17 @@ async function rpc(method:string,params:unknown):Promise<{isError?:boolean;struc
 }
 await rpc('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'OpenCrawl development installer',version:'1'}});
 await rpc('tools/call',{name:'test_connection',arguments:{}});
-const batch={schemaVersion:1,owner:principal,harness:'codex',origin:'cli',installationId:input.project,sessionId:input.project+'-sample',events:[{id:input.project+'-sample-message',kind:'message',data:{role:'user',content:'Synthetic OpenCrawl development setup verification. No personal agent history was imported.'}}],attachments:[]};
-const captured=await protocol('/api/sessions/batches',{method:'POST',headers:{...bearer(),'content-type':'application/json'},body:JSON.stringify(batch)});assert.equal(captured.status,200);
+const sessionText='The lunar otter checks agent capture. Synthetic OpenCrawl development setup verification. No personal agent history was imported.';
+const batch={schemaVersion:1,owner:principal,harness:'codex',origin:'cli',installationId:input.project,sessionId:input.project+'-sample',events:[{id:input.project+'-sample-message',kind:'message',data:{role:'user',content:sessionText}}],attachments:[]};
+if(!verifyOnly){const captured=await protocol('/api/sessions/batches',{method:'POST',headers:{...bearer(),'content-type':'application/json'},body:JSON.stringify(batch)});assert.equal(captured.status,200);}
 assert.ok((await json<{data:{cli?:{observedAt:string};mcpTest?:{observedAt:string};session?:{observedAt:string}}}>('/api/onboarding')).data.session?.observedAt);
 const denied=await fetch(input.connectOrigin+'/api/console/team',{redirect:'manual',headers:{host:new URL(input.origin).host}});
 assert.ok([401,302,303].includes(denied.status),'Anonymous team access was accepted');
 
 const required=(name:string)=>{const value=process.env[name];if(!value)throw new Error(`${name} is required`);return value;};
+let ingestion:Record<string,unknown>,expected:string;
+if(input.airbyteEnabled){
+if(verifyOnly)throw new Error('Read-only demo verification currently supports --no-airbyte');
 const workspaceId=required('AIRBYTE_WORKSPACE_ID'),organizationId=input.organization;
 const airbyte=createAirbyte({url:required('AIRBYTE_URL'),clientId:required('AIRBYTE_CLIENT_ID'),clientSecret:required('AIRBYTE_CLIENT_SECRET')});
 const registry=createSingleOrganizationRegistry({path:required('OPENCRAWL_REGISTRY_PATH'),organizationId});
@@ -134,14 +140,28 @@ try{
     workflowId='dev-verify-'+input.project+'-'+Date.now();
     await scheduling.client.workflow.execute('indexConnectorV1',{workflowId,taskQueue:required('TEMPORAL_CONNECTOR_TASK_QUEUE'),args:[reference],workflowExecutionTimeout:'5 minutes'});
   }finally{await scheduling.connection.close();}
+  ingestion={airbyte:{workspaceId,connectionId,jobId:job.jobId,status:job.status,rows:job.rowsSynced},temporal:{workflowId}};
+  expected='The lunar otter checks the ingestion pipeline';
+}finally{registry.close();}
+}else{
+  const scheduling=await connectorClient({address:required('TEMPORAL_ADDRESS'),namespace:required('TEMPORAL_NAMESPACE')});
+  const workflowId='dev-capture-'+input.project+'-'+Date.now();
+  try{
+    if(!verifyOnly)await scheduling.client.workflow.execute('indexSessionsV1',{workflowId,taskQueue:required('TEMPORAL_SESSION_TASK_QUEUE'),args:[{sourceId:'sessions-'+input.organization+'-v1'}],workflowExecutionTimeout:'5 minutes'});
+  }finally{await scheduling.connection.close();}
+  const sources=await json<{items:Array<{state:string;setup?:{requirement?:string}}>}>('/api/onboarding/sources');
+  assert.equal(sources.items.length,6);
+  assert.ok(sources.items.every(card=>card.state==='setup-required'&&card.setup?.requirement==='Airbyte disabled'));
+  ingestion={airbyte:{enabled:false},temporal:verifyOnly?{reindex:false}:{workflowId}};expected=sessionText;
+}
   const marker='lunar otter';
   grant=await tokenForm({grant_type:'refresh_token',refresh_token:grant.refresh_token!});
   // A completed indexing workflow can precede OpenSearch's search refresh.
   // Observe the real authenticated read path without changing production refresh policy.
   let searchable=false;
   for(let attempt=0;attempt<30;attempt++){
-    const result=await rpc('tools/call',{name:'search',arguments:{query:marker,source:'connectors',match:'phrase'}});
-    if(JSON.stringify(result).includes('The lunar otter checks the ingestion pipeline')){searchable=true;break;}
+    const result=await rpc('tools/call',{name:'search',arguments:{query:marker,source:input.airbyteEnabled?'connectors':'sessions',match:'phrase'}});
+    if(JSON.stringify(result).includes(expected)){searchable=true;break;}
     console.log('Waiting for the imported sample to become searchable...');await delay(2000);
   }
   assert.ok(searchable,'MCP did not retrieve the imported fixture within 60 seconds');
@@ -149,12 +169,14 @@ try{
   const team=await json<{viewerUserId:string;organization:{id:string};role:string;members:Array<{id:string}>}>('/api/console/team');
   assert.equal(team.organization.id,input.organization);assert.equal(team.viewerUserId,seed.userId);assert.equal(team.role,'admin');
   const result=await json<unknown>('/api/debug/search',{query:marker});
-  assert.ok(JSON.stringify(result).includes('The lunar otter checks the ingestion pipeline'),'Authenticated product search did not retrieve the imported fixture');
+  assert.ok(JSON.stringify(result).includes(expected),'Authenticated product search did not retrieve the imported fixture');
+  if(!verifyOnly)await rpc('tools/call',{name:'board_sync',arguments:{workspace:input.organization,agent:'dev:verification',topics:['dev-verification'],posts:[{id:input.project+'-board',topic:'dev-verification',text:'Synthetic development verification: capture and retrieval succeeded.'}]}});
+  const board=await rpc('tools/call',{name:'board_sync',arguments:{workspace:input.organization,agent:'dev:reader',topics:['dev-verification'],after:0,leave:true}});
+  assert.ok(JSON.stringify(board).includes('Synthetic development verification: capture and retrieval succeeded.'));
   const forged=await request('/api/debug/search',{method:'POST',headers:{origin:input.origin,'content-type':'application/json'},body:JSON.stringify({query:marker,tenantId:'org_forged'})});
   assert.equal(forged.status,400,'Search accepted a caller-supplied tenant');
   const badOrigin=await request('/api/debug/search',{method:'POST',headers:{origin:'https://invalid.example','content-type':'application/json'},body:JSON.stringify({query:marker})});
   assert.equal(badOrigin.status,403,'Search accepted a foreign browser Origin');
-  const report={ok:true,checkedAt:new Date().toISOString(),project:input.project,organization:organizationId,syntheticFixture:true,identity:'better-auth-local',
-    airbyte:{workspaceId,connectionId,jobId:job.jobId,status:job.status,rows:job.rowsSynced},temporal:{workflowId},retrieval:{query:marker,authenticated:true,found:true,mcp:true},onboardingCompleted:true,deviceGrant:true,refreshGrant:true,anonymousDenied:true,forgedScopeDenied:true,foreignOriginDenied:true};
+  const report={ok:true,checkedAt:new Date().toISOString(),project:input.project,organization:input.organization,syntheticFixture:true,verifyOnly,identity:'better-auth-local',
+    ...ingestion,retrieval:{query:marker,authenticated:true,found:true,mcp:true},board:true,onboardingCompleted:true,deviceGrant:true,refreshGrant:true,anonymousDenied:true,forgedScopeDenied:true,foreignOriginDenied:true};
   writeState('/dev-state/verification.json',report);console.log(JSON.stringify(report));
-}finally{registry.close();}
