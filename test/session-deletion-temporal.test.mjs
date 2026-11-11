@@ -7,6 +7,7 @@ import {TestWorkflowEnvironment} from '@temporalio/testing';
 import {Worker,Runtime,DefaultLogger} from '@temporalio/worker';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {createSessionLibrary} from '../dist/src/sessions/library.mjs';
+import {createLibraryApi} from '../dist/src/sessions/library-http.mjs';
 import {createSessionDeletionRequests} from '../dist/src/sessions/deletion-requests.mjs';
 import {createControls} from '../dist/src/sessions/controls.mjs';
 import {buildSessionWorkflows,createSessionWorker} from '../dist/src/sessions/temporal/worker.mjs';
@@ -20,7 +21,7 @@ test('request acceptance persists owner-authorized intent before revocation; no 
   const f=fixture();await f.upload(batch());let submissions=0,erased=0;
   f.store.purgePrefix=async()=>{erased++;throw Error('must run on worker');};
   const library=createSessionLibrary({...f.options,scheduleDeletion:async()=>{submissions++;throw Error('TEMPORAL_PROVIDER_PRIVATE_BODY');}});
-  const api=(principal,_path,input)=>library.requestDeletion(principal,input);
+  const api=createLibraryApi({sessions:library});
   await assert.rejects(api({...owner,captureAccess:'write'},'sessions/delete',session),{status:403});
   await assert.rejects(api({...owner,userId:'intruder'},'sessions/delete',session),{status:404});
   const accepted=await api(owner,'sessions/delete',session);
@@ -30,7 +31,7 @@ test('request acceptance persists owner-authorized intent before revocation; no 
   const requests=createSessionDeletionRequests(f.options),page=await requests.list();assert.equal(page.keys.length,1);
   assert.deepEqual((await requests.read(page.keys[0])).owner,owner);
   await api(owner,'sessions/delete',session);assert.equal((await requests.list()).keys.length,1);
-  assert.deepEqual(await library.pendingDeletions(owner),[session]);
+  assert.equal((await library.list(owner)).deletions,undefined);
 });
 
 test('request storage failures do not expose provider details or masquerade as user access denial',async()=>{
@@ -76,8 +77,7 @@ test('real Temporal deletion retries, survives worker replacement, recovers unse
   const lateUpload=createSessionIngest(f.options).putBatch(owner,batch({installationId:'late',events:[{id:'late',kind:'message',data:{content:'PRIVATE_TRANSCRIPT_SENTINEL'}}]}));
   await writeStarted.promise;t.after(()=>releaseWrite.resolve());
   let workflowId;
-  const library=createSessionLibrary({...f.options,scheduleDeletion:async key=>{workflowId=await startSessionDeletion(env.client,{...config,key});}});
-  const api=(principal,_path,input)=>library.requestDeletion(principal,input);
+  const api=createLibraryApi({sessions:createSessionLibrary({...f.options,scheduleDeletion:async key=>{workflowId=await startSessionDeletion(env.client,{...config,key});}})});
   // Queue while no worker runs: immediate access revocation is independent of execution.
   await api(owner,'sessions/delete',session);assert.ok(workflowId);
   await api(owner,'sessions/delete',session);
