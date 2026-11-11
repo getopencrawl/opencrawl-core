@@ -76,9 +76,9 @@ export async function migrateSessionPassages({realm,principal,store,prefix,backu
         for(let i=0;i<reads.length;i++){
           const read=reads[i]!;if(read.status==='rejected')throw read.reason;if(!read.value)throw new Error('Missing immutable source; projection preserved');
           const [key,ids]=group[i]!,batch=JSON.parse(gunzipSync(read.value,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}).toString('utf8')) as SessionBatch;
-          const docs=batchDocuments({prefix,key,batch,principal:owner});
+          const docs=batchDocuments({prefix,key,batch,principal:owner,eventIds:ids});
           if(batch.sessionId!==sample.sessionId||batch.harness!==sample.harness||ids.some(id=>!batch.events.some(e=>e.id===id&&e.kind===events.get(id)!._source.kind)))throw new Error('Capture does not contain indexed event');
-          replacements.push(...docs.filter(x=>ids.includes(x.document.eventId!)));
+          replacements.push(...docs);
         }
       }
       const changed=previous.filter(x=>needed.has(x.document.eventId!)),replacementIds=replacements.map(x=>x.id),replacementSet=new Set(replacementIds),retired=changed.map(x=>x.id).filter(id=>!replacementSet.has(id));
