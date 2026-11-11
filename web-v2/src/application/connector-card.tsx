@@ -22,9 +22,9 @@ export function ProviderIcon({source}: {source: SourceCard}) {
 }
 export function SourceStats({source}: {source: SourceCard}) {
   return <dl className="oc-source-counts" aria-label={`${source.name} imported data`}>{source.rows?.map(row => {
-    const done = row.done || source.state === 'synced';
-    const importing = source.state === 'syncing' && !done;
-    return <div key={row.label} data-done={Boolean(done)}><dt>{row.label}<span className="sr-only">: {done ? 'Up to date' : importing ? 'Importing' : 'Import incomplete'}</span>{importing && <Icon name="loader" className="oc-spin" size={12}/>}</dt><dd>{row.count.toLocaleString('en-US')}</dd></div>;
+    const done = !source.statusUnavailable && (row.done || source.state === 'synced');
+    const importing = !source.statusUnavailable && source.state === 'syncing' && !done;
+    return <div key={row.label} data-done={Boolean(done)}><dt>{row.label}<span className="sr-only">: {source.statusUnavailable ? 'Last measured' : done ? 'Up to date' : importing ? 'Importing' : 'Import incomplete'}</span>{importing && <Icon name="loader" className="oc-spin" size={12}/>}</dt><dd>{row.count.toLocaleString('en-US')}</dd></div>;
   })}</dl>;
 }
 export function SourceProgress({source}: {source: SourceCard}) {
@@ -42,7 +42,8 @@ export function ConnectorCard({source, primaryMetric, action, pending = false, o
   const more = Math.max(0, (source.rows?.length ?? 0) - (headline ? 1 : 0));
   const available = source.state === 'disconnected' || source.state === 'setup-required';
   const lastSynced = source.lastSyncedAt && Number.isFinite(Date.parse(source.lastSyncedAt)) ? source.lastSyncedAt : null;
-  const statusHint = ['syncing','error','connecting','setup-required','unavailable'].includes(source.state) ? sourceProgress(source) : lastSynced ? new Date(lastSynced).toLocaleString() : status.label;
+  const waitingForStatus = source.statusUnavailable || source.statusUpdatedAt === null;
+  const statusHint = waitingForStatus || ['syncing','error','connecting','setup-required','unavailable'].includes(source.state) ? sourceProgress(source) : lastSynced ? new Date(lastSynced).toLocaleString() : status.label;
   const metricText = headline ? new Intl.NumberFormat('en-US', headline.count >= 1_000_000 ? {notation:'compact',maximumFractionDigits:1} : {}).format(headline.count) : '';
   return <article className="oc-connector-card" aria-label={source.name} data-state={source.state} data-expanded={expanded}>
     <div className="oc-connector-summary">
@@ -51,9 +52,9 @@ export function ConnectorCard({source, primaryMetric, action, pending = false, o
         {headline ? <>
           <dl className="oc-connector-headline"><dt title={headline.label}>{headline.label}</dt><dd title={headline.count.toLocaleString('en-US')} aria-label={headline.count.toLocaleString('en-US')}>{metricText}</dd></dl>
           {more>0 && <Button className="oc-connector-more" variant="plain" aria-expanded={expanded} aria-controls={statsId} aria-label={`${expanded ? 'Show fewer stats' : `Show ${more} more stats`} for ${source.name}`} onClick={()=>setExpanded(value=>!value)}>{expanded ? 'Show less' : `${more} more`}<Icon name="chevron-down" size={14}/></Button>}
-        </> : <p className="oc-connector-description">{available ? source.description : source.state==='syncing' ? 'Your first import is starting. Counts will appear here.' : ['error','connecting','unavailable'].includes(source.state) ? sourceProgress(source) : source.synced === undefined ? 'Updating imported counts…' : 'No imported data yet.'}</p>}
+        </> : <p className="oc-connector-description">{available ? source.description : waitingForStatus ? sourceProgress(source) : source.state==='syncing' ? 'Your first import is starting. Counts will appear here.' : ['error','connecting','unavailable'].includes(source.state) ? sourceProgress(source) : source.synced === undefined ? 'Updating imported counts…' : 'No imported data yet.'}</p>}
       </div>
-      <footer className="oc-connector-footer"><span data-tone={status.tone} title={statusHint}>{source.state==='syncing'||source.state==='connecting'?<Icon name="loader" className="oc-spin" size={12}/>:<span className="oc-connector-dot" aria-hidden="true"/>}<span>{source.state==='synced' && lastSynced ? <>Synced <time dateTime={lastSynced}>{relativeTime(lastSynced)}</time></> : status.label}</span></span><Button variant={action === 'Connect' ? 'primary' : source.state==='error' ? 'secondary' : 'quiet'} disabled={pending} onClick={onAction} aria-label={`${action} ${source.name}`}>{action}{!available&&source.state!=='error'&&<Icon name="chevron-right" size={14}/>}</Button></footer>
+      <footer className="oc-connector-footer"><span data-tone={status.tone} title={statusHint}>{!source.statusUnavailable && (source.state==='syncing'||source.state==='connecting')?<Icon name="loader" className="oc-spin" size={12}/>:<span className="oc-connector-dot" aria-hidden="true"/>}<span>{!source.statusUnavailable && source.state==='synced' && lastSynced ? <>Synced <time dateTime={lastSynced}>{relativeTime(lastSynced)}</time></> : status.label}</span></span><Button variant={action === 'Connect' ? 'primary' : source.state==='error' ? 'secondary' : 'quiet'} disabled={pending} onClick={onAction} aria-label={`${action} ${source.name}`}>{action}{!available&&source.state!=='error'&&<Icon name="chevron-right" size={14}/>}</Button></footer>
     </div>
     {more>0 && <div id={statsId} className="oc-connector-details" hidden={!expanded}><h3>Imported data</h3><SourceStats source={source}/>{source.state==='syncing'&&<SourceProgress source={source}/>} </div>}
   </article>;

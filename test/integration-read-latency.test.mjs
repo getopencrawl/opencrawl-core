@@ -5,29 +5,48 @@ import {gzipSync} from 'node:zlib';
 import {createIntegrations} from '../dist/src/integrations/service.mjs';
 import {createRecordCounts} from '../dist/src/integrations/counts.mjs';
 import {usageReport} from '../dist/src/application/usage.mjs';
+import {sourceProgress,sourceStatus} from '../dist/src/application/source-model.mjs';
 const gate = () => Promise.withResolvers();
 const principal = {tenantId:'org_a',userId:'user_a'};
 const provider = {id:'slack',scope:'team',name:'Slack',streams:[],progressStream:['messages'],progress:[]};
 const record = {...principal,environment:'production',integrationId:'int_'+'a'.repeat(26),provider:'slack',status:'active',createdAt:'2026-01-01',s3Bucket:'owned',s3Prefix:'raw/connection',airbyte:{connectionId:'connection'}};
-const service = (airbyte, records=[record]) => createIntegrations({environment:'production',appUrl:'https://app.example',providers:{slack:provider},airbyte,
+const service = (airbyte, records=[record], options={}) => createIntegrations({environment:'production',appUrl:'https://app.example',providers:{slack:provider},airbyte,...options,
   registry:{listTenant:async tenant=>records.filter(record=>record.tenantId===tenant)},buckets:{},oauth:{},destination:{},workspaceId:async()=>'workspace',legacyBucket:'owned'});
 
-test('integration job and stream reads run together and concurrent readers share the in-flight result',async()=>{
+test('cold and concurrent reads return immediately while one status refresh remains blocked',async()=>{
   const jobs=gate(), streams=gate(),calls=[];
   const integrations=service({jobs:async()=>{calls.push('jobs');return jobs.promise;},streamCounts:async()=>{calls.push('streams');return streams.promise;}});
   const a=integrations.list(principal),b=integrations.list(principal);await tick();
   assert.deepEqual(calls,['jobs','streams']);
+  assert.equal((await a)[0].state,'connected');assert.equal((await a)[0].synced,undefined);
+  assert.equal((await a)[0].statusRefreshing,true);assert.deepEqual(await b,await a);
+  assert.equal(sourceProgress((await a)[0]),'Checking sync status…');
   jobs.resolve([{jobId:1,status:'succeeded'}]);streams.resolve({messages:12});
-  assert.equal((await a)[0].synced,12);assert.deepEqual(await b,await a);
+  await tick();assert.equal((await integrations.list(principal))[0].synced,12);
   await integrations.list(principal);assert.deepEqual(calls,['jobs','streams']);
 });
 
 test('status caching cannot reuse colliding connection IDs across organizations and failures can retry',async()=>{
-  let calls=0,fail=true;
-  const integrations=service({jobs:async()=>{calls++;if(fail)throw Error('unavailable');return [{jobId:1,status:'succeeded'}];},streamCounts:async()=>({messages:calls})},[record,{...record,tenantId:'org_b'}]);
-  assert.equal((await integrations.list(principal))[0].state,'unavailable');fail=false;
+  let calls=0,fail=true,time=0;
+  const integrations=service({jobs:async()=>{calls++;if(fail)throw Error('unavailable');return [{jobId:1,status:'succeeded'}];},streamCounts:async()=>({messages:calls})},[record,{...record,tenantId:'org_b'}],{now:()=>time});
+  await integrations.list(principal);await tick();
+  assert.equal((await integrations.list(principal))[0].statusUnavailable,true);assert.equal(calls,1);
+  fail=false;time=5000;await integrations.list(principal);await tick();
   assert.equal((await integrations.list(principal))[0].state,'synced');
   await integrations.list({...principal,tenantId:'org_b'});assert.equal(calls,3);
+});
+
+test('refresh serves recent measurements, retries with backoff, expires stale data and observes disconnects',async()=>{
+  let time=0,fail=false,calls=0;const records=[record],pending=gate();
+  const integrations=service({jobs:async()=>{calls++;if(fail)return pending.promise;return [{jobId:1,status:'succeeded'}];},streamCounts:async()=>({messages:12})},records,{now:()=>time});
+  await integrations.list(principal);await tick();fail=true;time=5000;
+  const old=(await integrations.list(principal))[0];assert.equal(old.synced,12);assert.equal(old.statusRefreshing,true);
+  await integrations.list(principal);assert.equal(calls,2);
+  pending.reject(Error('offline'));await tick();
+  const failed=(await integrations.list(principal))[0];assert.equal(failed.synced,12);assert.equal(failed.statusUnavailable,true);assert.equal(calls,2);
+  assert.equal(sourceStatus(failed).label,'Status unavailable');assert.match(sourceProgress(failed),/last measurement/);
+  time=300001;const expired=(await integrations.list(principal))[0];assert.equal(expired.state,'connected');assert.equal(expired.synced,undefined);
+  records.splice(0);assert.equal((await integrations.list(principal))[0].state,'disconnected');
 });
 
 test('durable counts remain readable while a slow recount runs, and scoped caches do not collide',async()=>{
@@ -62,6 +81,7 @@ test('integration cards show durable measurements without waiting for a raw-data
     buckets:{read:async()=>saved,list:async()=>scan.promise,write:async()=>{},stream:async()=>assert.fail('No objects')}});
   const alive=setInterval(()=>{},1000);t.after(()=>clearInterval(alive));
   // The scan remains unresolved until cleanup. The page must still return the durable count.
+  await integrations.list(principal);await tick();
   assert.equal((await integrations.list(principal))[0].synced,2);
 });
 
@@ -72,5 +92,6 @@ test('missing distinct counts stay unknown instead of reporting cumulative Airby
     airbyte:{jobs:async()=>[{jobId:1,status:'succeeded',rowsSynced:999}],streamCounts:async()=>({messages:999})},
     buckets:{read:async()=>{throw Object.assign(Error('missing'),{status:404});},list:async()=>scan.promise,write:async()=>{},stream:async()=>assert.fail('No objects')}});
   const alive=setInterval(()=>{},1000);t.after(()=>clearInterval(alive));
+  await integrations.list(principal);await tick();
   const card=(await integrations.list(principal))[0];assert.equal(card.state,'synced');assert.equal(card.synced,undefined);assert.deepEqual(card.rows,[]);
 });

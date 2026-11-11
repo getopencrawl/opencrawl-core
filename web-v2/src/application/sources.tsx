@@ -9,12 +9,14 @@ import {ConnectorCard, ProviderIcon, SourceStats, SourceProgress} from './connec
 import {alphabeticalSources, sourceConnected} from './connector-card-model.ts';
 import {listPhrase} from '../onboarding/model.ts';
 
+// Pick up the first background snapshot promptly, then return to normal polling.
+const refreshInterval = (data: {items: SourceCard[]} | undefined) => data?.items.some(source => source.statusUpdatedAt === null && source.statusRefreshing && !source.statusUnavailable) ? 1000 : 30_000;
 
 export function SourcesPage({adapter, canConfigure = false}: {adapter: SourcesAdapter; /** Admin permission for shared integrations and operator credentials. */ canConfigure?: boolean}) {
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState<string | null>(null);
-  const {data, error, loading, reload, invalidate} = useResource(adapter.sources, {autoRefreshMilliseconds:30_000, paused:pending !== null});
+  const {data, error, loading, reload, invalidate} = useResource(adapter.sources, {autoRefreshMilliseconds:refreshInterval, paused:pending !== null});
   const [actionError, setActionError] = useState('');
   const [success, setSuccess] = useState('');
   const [confirmation, setConfirmation] = useState<SourceCard | null>(null);

@@ -62,7 +62,6 @@ test('recovery dialogs preserve sign-in, sync and removal actions and member per
   await expect(page.getByRole('button',{name:/Restart sign-in|Retry|Disconnect/})).toHaveCount(0);
 });
 
-
 test('cards keep account context in Manage and use primary Connect for both connection paths',async({page})=>{
   const connected={...source(1),name:'Connected source',account:'Example account',connectedBy:'admin@example.com'};
   const direct={...source(4),name:'Direct source'};
@@ -83,4 +82,36 @@ test('cards keep account context in Manage and use primary Connect for both conn
   await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'Connect Setup source',exact:true}).click();
   await expect(page.getByRole('dialog')).toContainText('Ask your administrator to configure this source.');
+});
+
+test('cold status stays unknown and failed refreshes label retained measurements',async({page})=>{
+  const cases:SourceCard[]=[
+    {...source(1),name:'Cold connection',state:'connected',rows:undefined,synced:undefined,statusUpdatedAt:null,statusRefreshing:true},
+    {...source(2),name:'Delayed refresh',statusUpdatedAt:'2026-11-05T12:00:00Z',lastSyncedAt:'2026-11-05T12:00:00Z',statusUnavailable:true},
+  ];
+  await page.route('**/api/console/sources',route=>route.fulfill({json:{items:cases}}));
+  await page.goto('/integrations-fixture');
+  const cold=page.getByRole('article',{name:'Cold connection'}),stale=page.getByRole('article',{name:'Delayed refresh'});
+  await expect(cold).toContainText('Checking sync status…');
+  await expect(cold.locator('.oc-connector-headline')).toHaveCount(0);
+  await expect(stale).toContainText('Status unavailable');
+  await expect(stale.locator('.oc-connector-footer')).not.toContainText('Synced');
+  await expect(stale.locator('.oc-connector-headline')).toContainText('200');
+  await stale.getByRole('button',{name:'Show 2 more stats for Delayed refresh'}).click();
+  await expect(stale.locator('.oc-source-counts')).toContainText('Last measured');
+  await page.getByRole('button',{name:'Manage Delayed refresh'}).click();
+  await expect(page.getByRole('dialog')).toContainText('Showing the last measurement.');
+});
+
+test('the first background measurement appears without waiting for the normal polling interval',async({page})=>{
+  let reads=0;
+  await page.route('**/api/console/sources',route=>{
+    const item:SourceCard=++reads===1 ? {...source(1),state:'connected',rows:undefined,synced:undefined,statusUpdatedAt:null,statusRefreshing:true} : {...source(1),statusUpdatedAt:'2026-11-05T12:00:00Z',statusRefreshing:false};
+    return route.fulfill({json:{items:[item]}});
+  });
+  await page.goto('/integrations-fixture');
+  const card=page.getByRole('article',{name:'Example connector 01'});
+  await expect(card).toContainText('Checking sync status…');
+  await expect(card.locator('.oc-connector-headline')).toContainText('100',{timeout:5000});
+  expect(reads).toBe(2);
 });
