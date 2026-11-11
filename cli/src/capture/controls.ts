@@ -38,7 +38,7 @@ export async function purgeLocalCapture(approved:boolean) {
   return withSessionLock('capture:memories',()=>withSessionLock('capture:worker',()=>withSessionLock('capture:notices',()=>withSessionLock('capture:spool',()=>withSessionLock('capture:flush',()=>withSessionLock('capture:configuration',async()=>{
     const config=readCaptureConfig();
     if(!config?.disabled)throw new CliError('CAPTURE_ACTIVE','Run collect uninstall and wait for active capture to stop before purging.');
-    for(const name of ['queue','blobs','notices','sources','state','memories','last-upload.json','last-error.json']) {
+    for(const name of ['queue','blobs','notices','sources','state','memories','last-upload.json','last-error.json','drift.jsonl','records','pending']) {
       const path=join(captureDir(),name);
       if(existsSync(path))rmSync(path,{recursive:true,force:true});
     }

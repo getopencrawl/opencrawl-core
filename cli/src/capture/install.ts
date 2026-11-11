@@ -11,6 +11,7 @@ import {CliError} from '../oauth.ts';
 import {environmentToken} from '../environment-token.ts';
 import {captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, codexHooksAwaitingReview, HOOK_MODE, type CaptureConfig} from './runtime.ts';
 import {captureNotice, grokBotNotice} from './policy.ts';
+import {PENDING_DIRECTORY} from './compaction.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 const marker='OpenCrawl session capture';
 const quote=(s:string)=>process.platform==='win32'?'"'+s.replace(/"/g,'""')+'"':"'"+s.replace(/'/g,"'\\''")+"'";
@@ -27,7 +28,9 @@ function writeHarnessJson(file:string,value:unknown) {
 }
 function backup(file:string){if(existsSync(file)){const p=join(captureDir(),'backups',randomUUID()+'.json');copyFileSync(file,p);}}
 type HookEntry={command:string,async?:boolean,timeout:number};
-function modifyHooks(file:string,events:string[],entry:((event:string)=>HookEntry)|null) {
+/** A hook that runs only for one matcher value of its event. */
+type MatchedHook={event:string,matcher?:string,entry:HookEntry};
+function modifyHooks(file:string,events:string[],entry:((event:string)=>HookEntry)|null,matched:MatchedHook[]=[]) {
   const config=readJson(file);
   if(config.hooks && (typeof config.hooks!=='object'||Array.isArray(config.hooks)))throw new CliError('CAPTURE_INVALID_CONFIG','Existing harness hooks config is invalid');
   const hooks=config.hooks??{};
@@ -41,6 +44,7 @@ function modifyHooks(file:string,events:string[],entry:((event:string)=>HookEntr
     if(!hooks[event].length)delete hooks[event];
   }
   if(entry)for(const event of events)(hooks[event]??=[]).push({hooks:[{type:'command',...entry(event),statusMessage:marker}]});
+  for(const {event,matcher,entry:hook} of matched)(hooks[event]??=[]).push({...(matcher?{matcher}:{}),hooks:[{type:'command',...hook,statusMessage:marker}]});
   backup(file);writeHarnessJson(file,{...config,hooks});
 }
 const hookFile=(config:CaptureConfig,harness:Harness)=>join(harnessRoot(config,harness),harness==='claude-code'?'settings.json':'hooks.json');
@@ -109,8 +113,24 @@ else {const r=require('node:child_process').spawnSync(file,args,{stdio:'inherit'
 `);
   const hook=(...args:string[])=>(process.platform==='win32'?'':'exec ')+[quote(node),quote(runner),'collect','hook',...args].join(' ');
   const managed=(harness:Harness)=>():HookEntry=>({command:hook('--managed','--harness',harness),async:true,timeout:120});
+  // After a compaction the agent is handed the person's own words. Claude Code
+  // waits for a SessionStart hook, so what this one prints is in the context
+  // before the agent continues; the matcher limits it to sessions that start
+  // from a compaction. PostCompact measures what the summary lost, and nothing
+  // waits on it. Both read one local transcript and end within three seconds.
+  const compaction=(process.platform==='win32'?'':'exec ')+[quote(node),quote(runner),'collect','compaction'].join(' ');
+  // What a summary dropped can only be read once Claude Code has written the
+  // summary down, so a second PostToolUse hook, one Claude Code waits for,
+  // delivers it with the first tool result after a compaction. It runs on
+  // every tool call: its command first tests in the shell for the file a
+  // compaction leaves, and starts nothing when there is none. Claude Code gives
+  // hook commands the session ID; without it the test is whether any session
+  // is owed a comparison. Where the command is not POSIX the CLI does the test.
+  const owed=process.platform==='win32'?compaction:`[ -e ${quote(join(captureDir(),PENDING_DIRECTORY))}/"$CLAUDE_CODE_SESSION_ID" ] || exit 0; ${compaction}`;
   if(harnesses.includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),
-    ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','Stop','SubagentStop','SessionEnd'],managed('claude-code'));
+    ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','Stop','SubagentStop','SessionEnd'],managed('claude-code'),
+    [{event:'SessionStart',matcher:'compact',entry:{command:compaction,timeout:10}},{event:'PostCompact',entry:{command:compaction,async:true,timeout:10}},
+      {event:'PostToolUse',entry:{command:owed,timeout:5}}]);
   // Codex runs SessionEnd synchronously within 3s. Record its notice locally;
   // the next managed hook uploads it instead of delaying exit or being killed.
   if(harnesses.includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),

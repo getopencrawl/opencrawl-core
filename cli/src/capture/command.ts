@@ -1,8 +1,9 @@
 import {CliError} from '../oauth.ts';
 import {installCapture,uninstallCapture,upgradeCaptureHooks} from './install.ts';
-import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush,bindHookIdentity} from './runtime.ts';
+import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush,bindHookIdentity,captureDir,readCaptureConfig} from './runtime.ts';
 import {credentialRotation} from '../session.ts';
 import {grokBotResponse} from './grok-bot.ts';
+import {compactionHookOutput} from './compaction.ts';
 import {backfill,backfillPreview,selection,setupBackfill} from './backfill.ts';
 import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
 import {captureNoticeFor} from './policy.ts';
@@ -46,6 +47,22 @@ async function grokBotHook() {
   await new Promise<void>(resolve=>process.stdout.write('',()=>resolve()));
   finish();
   return null;
+}
+/** Claude Code waits on the SessionStart hook that follows a compaction and on
+ * the PostToolUse hook that completes it: what they print is in the agent's
+ * context before it continues. So these hooks, and the PostCompact measurement
+ * beside them, read one local transcript and do nothing else: no update check,
+ * sign-in, upload or network. Any failure, and the three-second limit, end the
+ * process silently with exit code 0. */
+const COMPACTION_HOOK_MS=3000;
+export async function compactionHook() {
+  const deadline=setTimeout(()=>process.exit(0),COMPACTION_HOOK_MS);
+  let output='';
+  try{output=await compactionHookOutput(await hookInput(true),{config:readCaptureConfig(),directory:captureDir(),until:Date.now()+COMPACTION_HOOK_MS-500});}catch{}
+  clearTimeout(deadline);
+  // The pipe may still be open, which would keep this process alive.
+  await new Promise<void>(resolve=>process.stdout.write(output,()=>resolve()));
+  process.exit(0);
 }
 export async function collectCommand(action:string,api:string,values:any) {
   if((values.backfill!==undefined || values['defer-auth']) && action!=='install' || values['dry-run'] && action!=='backfill' || values.yes && !['backfill','install','purge'].includes(action))throw new CliError('INVALID_USAGE','Use --backfill with install; --dry-run with backfill; --yes with install, backfill or purge.',64);

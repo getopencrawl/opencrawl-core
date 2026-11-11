@@ -1,7 +1,7 @@
 import {searchWorkspace, searchInput, formatSearch, fetchWorkspace, fetchInput, formatFetch} from './search.ts';
 import {boardCommand, writeBoardOutput} from './board.ts';
 import {upgradeCaptureHooks} from './capture/install.ts';
-import {collectCommand} from './capture/command.ts';
+import {collectCommand, compactionHook} from './capture/command.ts';
 import {readCaptureConfig} from './capture/runtime.ts';
 import {scheduleMemoryRefresh} from './capture/memory.ts';
 import {scheduleCliUpdate} from './update.ts';
@@ -12,6 +12,7 @@ import {readSession, saveSession, accessToken, logout} from './session.ts';
 import {filesystemError} from './filesystem.ts';
 import {agentSkills} from './skills.ts';
 import {withEnvironmentTokenOrigin} from './environment-token.ts';
+import {recallCommand, formatRecall} from './recall.ts';
 
 declare const OPENCRAWL_VERSION: string;
 const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.2.0-dev';
@@ -25,6 +26,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
   fetch       Read the indexed passage behind a search result
+  recall      Quote this session's own transcript, on this machine
   collect     Install and manage Claude Code, Codex and Grok Bot session capture
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
@@ -79,6 +81,16 @@ Use OPENCRAWL_TOKEN with an explicit --api or OPENCRAWL_API_URL for a self-hoste
 bearer token; otherwise uses saved login. Environment tokens never use a default server.
 Updates are checked opportunistically every 3–6 hours, including capture hooks and workers.
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
+
+Recall: opencrawl recall "a few distinctive words" [--json]
+  --limit 1..50                     Passages to print (default: 8)
+  --kind user|assistant|tool|all    Whose words to search (default: all)
+  --chars 200..8000                 Longest passage (default: 1200)
+  --session ID                      A Claude Code session other than this one
+  recall --user                     Every message the user sent, word for word
+Reads the Claude Code transcript of the current session from this machine and
+prints the best passages verbatim, oldest first, with who said each. It needs no
+sign-in and uses no network. Compaction summaries are never quoted.
 
 Board: board register --session ID --name codex:unique-name --task "Current work"
   board directory [--after N]                   Discover taggable agents
@@ -135,28 +147,38 @@ export async function identity(api: string, fetcher = fetch, initialToken?: stri
 }
 
 export async function main(args = process.argv.slice(2)) {
+  // The harness is waiting on this hook: it reads one local transcript and
+  // must not update, sign in, upload or fail. It ends the process itself.
+  if (args[0] === 'collect' && args[1] === 'compaction') {await compactionHook(); return 0;}
   // Process-owned work overlaps commands and async hooks. It is cancelled when
   // the command ends, so quick commands never wait and no orphan worker exists.
   const memoryJob:{current?:ReturnType<typeof scheduleMemoryRefresh>}={};
-  const updateJob=scheduleCliUpdate();
+  let updateJob:ReturnType<typeof scheduleCliUpdate>|undefined;
   let json = args.includes('--json');
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {kind:{type:'string'},chars:{type:'string'},user:{type:'boolean'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
+    // Recall is local: it never reaches the registry or any server.
+    if (command !== 'recall') updateJob = scheduleCliUpdate();
     const localHook=command==='collect'&&parsed.positionals[1]==='hook'&&!parsed.values.managed;
     // Metadata-only recovery and a history preview must not start an unrelated
     // memory upload while the foreground operation is inspecting local state.
     const localCollect=command==='collect'&&(['uninstall','titles'].includes(parsed.positionals[1]??'')||parsed.positionals[1]==='backfill'&&!parsed.values.yes);
-    if (parsed.positionals.length > (['collect','search','fetch','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    if (command !== 'recall' && parsed.positionals.length > (['collect','search','fetch','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
-    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','board','skills'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','recall','board','skills'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (parsed.values.client && command !== 'skills') throw new CliError('INVALID_USAGE', 'Use --client with skills install or skills status.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
+    if (command === 'recall') {
+      const data = recallCommand(parsed.positionals.slice(1), parsed.values);
+      emit(data, formatRecall(data));
+      return 0;
+    }
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL
       ?? readCaptureConfig()?.api
       ?? 'https://app.getopencrawl.com');
@@ -220,7 +242,7 @@ export async function main(args = process.argv.slice(2)) {
     return exit === 2 && args[0] === 'collect' && args[1] === 'hook' ? 1 : exit;
   } finally {
     memoryJob.current?.stop();
-    await updateJob.stop();
+    await updateJob?.stop();
     // Upgrade only our hook settings locally; never launch an unowned process.
     if(args[0]!=='collect' && args[0]!=='logout' && args[0]!=='skills')try{await upgradeCaptureHooks();}catch{}
   }

@@ -123,7 +123,8 @@ are not supported in v0. Platform packages are optional dependencies at the exac
 launcher version; there are no install scripts.
 
 Every CLI invocation, including capture hooks and workers, opportunistically checks
-one shared per-user timer. Successful checks schedule the next check 3–6 hours
+one shared per-user timer; `opencrawl recall` and the compaction hooks, which stay
+off the network, are the exception. Successful checks schedule the next check 3–6 hours
 later, with jitter to spread load. A kernel-backed cache lock lets only one
 opportunistic updater run at a time. An unused installation waits for its next
 invocation; there is no daemon or idle-host timer.
@@ -188,9 +189,48 @@ is Apache-2.0 licensed.
 
 Read [capture privacy and controls](../docs/capture-privacy.md). After signing in, run `opencrawl collect install` to install Claude Code and Codex hooks and the on-demand transcript uploader. Review the commands in Codex `/hooks` or desktop Settings > Hooks. The same local configuration covers desktop and terminal sessions.
 
-`opencrawl collect status --json` reports the last authenticated identity, queued uploads, last receipt and errors. `collect sync` reconciles active transcripts; `collect flush` processes pending hooks and known transcript tails, then waits for queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
+`opencrawl collect status --json` reports the last authenticated identity, queued uploads, last receipt, errors and the latest compaction measurement. `collect sync` reconciles active transcripts; `collect flush` processes pending hooks and known transcript tails, then waits for queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
 
 Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service determines the current team from login and validates human attribution. Capture enrollment and queued records stay pinned to their original team and author. A changed login blocks uploads before attachments are sent. Resolve pending data before explicitly reinstalling for a different destination. Self-hosted users sign in to their own deployment; see below and [capture architecture and limits](../docs/session-capture.md).
+
+### After a compaction
+
+When Claude Code compacts a context, the summary loses exact details of what the
+person said. `collect install` adds three Claude Code hooks that give them back
+from the session's own transcript, and `opencrawl recall` searches that
+transcript on demand. None of this signs in, uploads or uses the network.
+
+```sh
+opencrawl recall "thumbnail width"           # best passages, verbatim, oldest first
+opencrawl recall "cache size" --kind user    # only what the person said
+opencrawl recall --user                      # every message the person sent
+```
+
+After a compaction the agent is given every message the person sent, word for
+word, when that fits in the context. Otherwise it gets an index of the messages
+and the path of a private file that holds all of them, and then, with its next
+tool result, the lines whose exact details (names, numbers, code) the summary
+dropped. Claude Code inlines hook context only up to 10,000 characters; longer
+text is replaced by a 2 KB preview and a file path, so what these hooks inject
+stays under 9,500 characters. A `PostCompact` hook records how many exact details
+each summary kept; `collect status --json` shows the latest counts as
+`lastCompaction`.
+
+Those lines can only be worked out once Claude Code has written the summary
+down, which it does after the compaction hooks have run. That is why a second
+`PostToolUse` entry is installed beside the capture hook: it is the one
+`PostToolUse` hook Claude Code waits for, so its output arrives with the first
+tool result. It starts no process beyond a shell test unless a compaction has
+just happened: the command first checks for the file a compaction leaves, and
+exits at once when there is none. On Windows, where hook commands are not run
+by a POSIX shell, the CLI makes that check itself and so is started on every
+tool call.
+
+Claude Code waits for the `SessionStart` hook that follows a compaction and for
+that `PostToolUse` hook; each reads one file and ends within three seconds.
+Every failure is silent: exit code 0, no output. `recall` and these hooks never
+check for updates. See [after a compaction](../docs/session-capture.md#after-a-compaction)
+for the files, the exclusion rules and the limits.
 
 ### Self-hosted
 

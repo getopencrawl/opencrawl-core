@@ -73,6 +73,9 @@ apply to new capture and queued uploads; existing uploads are unchanged. An
 upload already in flight finishes before the exclusion command completes.
 Excluded pending batches are retained locally until explicitly purged. Exclusions
 survive reinstall and local purge; inspect them with `collect status --json`.
+After a compaction the CLI keeps, on this machine only, a record of your own
+messages for the session and a measurement of the summary. Neither is uploaded,
+and neither is written for excluded work.
 
 For a new installation, review consent and install with `--backfill skip`, then
 set exclusions before starting/resuming agents. To change an existing installation
@@ -95,7 +98,8 @@ opencrawl collect purge --yes
 ```
 
 Uninstall stops new collection and preserves pending data. Purge permanently
-deletes local capture queues, attachment copies, hook notices and parsing cursors;
+deletes local capture queues, attachment copies, hook notices, parsing cursors,
+and the records and measurements kept [after a compaction](session-capture.md#after-a-compaction);
 it refuses while capture is enabled or its worker is active. Wait for an active
 uploader to exit and retry. It preserves original harness transcripts, login
 credentials, hook backups and exclusions. Reinstalling after purge can capture

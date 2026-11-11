@@ -160,9 +160,79 @@ Installation enrolls new sessions and existing sessions modified afterward. Exis
 
 ## Reliability and control
 
-`opencrawl collect status --json` shows the last authenticated identity, installation, pending batches, last receipt and last error. `collect sync` reconciles transcripts and uploads; `collect flush` processes pending hook notices and known transcript tails, then waits for queued batches to receive durable acknowledgements. `collect uninstall` stops collection and removes only OpenCrawl's hooks; it preserves queued data. Explicit flush remains available after uninstall.
+`opencrawl collect status --json` shows the last authenticated identity, installation, pending batches, last receipt, last error and the latest [compaction measurement](#after-a-compaction). `collect sync` reconciles transcripts and uploads; `collect flush` processes pending hook notices and known transcript tails, then waits for queued batches to receive durable acknowledgements. `collect uninstall` stops collection and removes only OpenCrawl's hooks; it preserves queued data. Explicit flush remains available after uninstall.
 
 The collector persists batches before advancing cursors, holds incomplete trailing JSONL lines, and deletes batches only after a matching durable receipt. Repeated transcript records have stable IDs; hook/transcript duplicates remain available for downstream deduplication. Enrollment and queued records stay pinned to their original team and human author. A changed login rejects uploads before any attachment bytes are sent. Sign back into the original destination, or uninstall and explicitly resolve/purge pending data before reinstalling for another destination. Rejected uploads remain queued. The default local spool is `~/.config/opencrawl/capture/`: `queue/` contains pending JSON batches, `blobs/` contains attachment bytes keyed by SHA-256, and `state/` contains transcript cursors. `OPENCRAWL_CONFIG_HOME` takes precedence over `XDG_CONFIG_HOME`; either replaces `~/.config`. Local spool/configuration files are private to the OS user. Unreferenced attachment blobs are reclaimed after a 24-hour grace period.
+
+## After a compaction
+
+Claude Code replaces a full context with a summary, and a summary loses exact
+details of what the person said. For Claude Code, capture installs three more
+hooks and the CLI has one more command to give those details back. All of it
+reads the session's own transcript on this machine: nothing here signs in,
+uploads, uses the network or depends on what has been indexed.
+
+- **The record of the person's messages.** A `SessionStart` hook that runs only
+  when a session starts from a compaction (`"matcher": "compact"`) writes every
+  message the person sent, word for word and oldest first, to
+  `capture/records/<session-id>.md`. If the record fits, the hook puts all of it
+  in the agent's context. Otherwise the agent gets an index of the messages, one
+  line each, and the path and size of the file. Messages that a program sent in
+  the person's place (background task reports, other agents, scheduled prompts)
+  are not part of the record, and a sender that repeats the same opening is
+  collapsed to its newest message.
+- **What the summary dropped.** When the record did not fit, the first tool
+  result after the compaction adds, word for word, the lines of the person's
+  messages that hold an exact detail found neither in the new summary nor in
+  the messages Claude Code kept verbatim. Exact details are code spans, numbers
+  of three or more digits, dotted versions, identifiers containing `_`, and
+  hyphenated identifiers with a digit or a capital. A second `PostToolUse` hook
+  delivers this, and it is one Claude Code waits for, so it is built to cost
+  almost nothing: its command first tests, in the shell, for the file a
+  compaction leaves under `capture/pending/`, and starts no process when there
+  is none. Claude Code gives hook commands the session ID, so the test is for
+  that session's file; without the ID it is whether any session is owed a
+  comparison. Where hook commands are not run by a POSIX shell (Windows), the
+  CLI makes the test itself, so there it is started on every tool call.
+- **`opencrawl recall "<a few distinctive words>"`** searches the whole transcript
+  of the current session (the person, the agent's own text, tool calls and
+  results) and prints the best passages verbatim, oldest first, with who said
+  each. Compaction summaries are never quoted. `opencrawl recall --user` prints
+  the record. The session is the one named by `--session`, else the one the
+  command runs inside (`CLAUDE_SESSION_ID` or `CLAUDE_CODE_SESSION_ID`), else the
+  newest transcript of the current project under `CLAUDE_CONFIG_DIR`; never
+  another project's.
+- **The drift meter.** A `PostCompact` hook counts how many exact details of the
+  person's messages appear in the summary and appends one line to
+  `capture/drift.jsonl`: `{ts, session, trigger, anchors, kept, lost, summaryChars}`,
+  with up to 200 of the lost details. `opencrawl collect status --json` reports
+  the latest counts as `lastCompaction`, never the details themselves.
+
+Two facts about Claude Code (checked on 2.1.321) shape this. It inlines hook
+context only up to 10,000 characters; longer text is replaced by a 2 KB preview
+and a file path. Everything these hooks put in the context therefore stays under
+9,500 characters. And during a compaction it generates the summary, runs the
+`SessionStart` hooks, runs the `PostCompact` hooks, and only then appends the
+summary to the transcript, so the comparison with the summary can first be made
+at the next tool result. A hook it does not wait for can add context too, but
+that arrives several tool calls later.
+
+These hooks never deny an action and never hold the agent for long. Claude Code
+waits for the `SessionStart` hook and, when a comparison is owed, for the
+`PostToolUse` hook; each reads one file and ends within three seconds. Any
+failure in any of them ends silently, with exit code 0 and no output, and they
+do nothing once capture is uninstalled. A comparison that is not collected
+within fifteen minutes is dropped.
+
+For an excluded project or session nothing is written, neither a record nor a
+measurement; the agent still gets its record in the context, and `recall` still
+works, because both only read the transcript Claude Code already keeps. Record
+files hold the person's messages as typed, are private to the OS user, are
+replaced at each compaction, and are removed 30 days after their session last
+compacted and by `collect purge`. A recognised credential is never written to
+`drift.jsonl`. Existing installations get the hooks from the next hook or CLI
+command after updating. The capture hooks themselves, and Codex and Grok Bot,
+are unchanged.
 
 ## Single-tenant deployment
 
