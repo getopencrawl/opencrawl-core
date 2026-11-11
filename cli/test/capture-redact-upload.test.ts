@@ -43,6 +43,8 @@ test('all capture sources and legacy retries mask locally before batch and decod
     await captureTranscript(config,'claude-code',claude);
     writeFileSync(join(captureDir(),'notices','hook.json'),JSON.stringify({id:'hook',at:'2026-11-01T00:00:00Z',harness:'claude-code',event:{session_id:'hook',cwd:dir,prompt:secret}}));
     writeFileSync(join(captureDir(),'notices','grok.json'),JSON.stringify({id:'grok',sequence:1,at:'2026-11-01T00:00:00Z',harness:'grok-bot',event:{conversation_id:uuid,hook_event_name:'postToolUse',cwd:dir,tool_name:'Shell',tool_input:{api_key:secret},tool_output:secret}}));
+    let deep:any={token:secret};for(let n=0;n<300;n++)deep={next:deep};
+    writeFileSync(join(captureDir(),'notices','grok-deep.json'),JSON.stringify({id:'grok-deep',sequence:2,at:'2026-11-01T00:00:00Z',harness:'grok-bot',event:{conversation_id:uuid,hook_event_name:'postToolUse',cwd:dir,tool_name:'Shell',tool_input:{},tool_output:JSON.stringify(deep)}}));
     await drainCaptureNotices(config);
     for(const file of readdirSync(join(captureDir(),'queue')))expect(readFileSync(join(captureDir(),'queue',file),'utf8')).not.toContain(secret);
     for(const file of readdirSync(join(captureDir(),'blobs')))expect(readFileSync(join(captureDir(),'blobs',file),'utf8')).not.toContain(secret);

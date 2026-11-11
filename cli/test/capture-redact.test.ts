@@ -62,8 +62,9 @@ test('private key tails are withheld; decoded text and binary attachment bytes a
 });
 
 test('oversized nesting fails closed and repeated near matches complete within the test deadline',()=>{
-  let nested:any={token:samples[0]};for(let i=0;i<70;i++)nested={nested};
+  let nested:any={token:samples[0]};for(let i=0;i<300;i++)nested={nested};
   expect(()=>redactValue(nested)).toThrow('masking depth');
+  expect(redactText(JSON.stringify(nested))).toBe(SECRET_MASK);
   const text=('word'.repeat(40)+' uuid=550e8400-e29b-41d4-a716-446655440000\n').repeat(5000);
   expect(redactText(text)).toBe(text);
 });

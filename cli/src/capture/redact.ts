@@ -1,6 +1,9 @@
 import {CliError} from '../oauth.ts';
 
 export const SECRET_MASK = '[REDACTED]';
+// The wire event format allows 128 levels; leave room for the batch envelope
+// and decoded tool JSON without reducing the existing event-format limit.
+export const MAX_REDACTION_DEPTH = 256;
 
 // Credential-shaped rules adapted from Gitleaks v8.30.0 (MIT):
 // https://github.com/gitleaks/gitleaks/blob/v8.30.0/config/gitleaks.toml
@@ -54,22 +57,29 @@ function maskPatterns(text:string):string {
 }
 
 export function redactText(text:string,depth=0):string {
-  if(depth>64)throw new CliError('CAPTURE_REDACTION_TOO_DEEP','Capture content exceeds the supported masking depth; retained locally');
+  if(depth>MAX_REDACTION_DEPTH)throw new CliError('CAPTURE_REDACTION_TOO_DEEP','Capture content exceeds the supported masking depth; retained locally');
   // Tool arguments/results often contain serialized JSON with escaped values.
   // Decode that layer before matching; preserve the original formatting if safe.
   if(/^\s*[\[{]/.test(text)) {
     let parsed:unknown;
     try {parsed=JSON.parse(text);}catch {}
     if(parsed && typeof parsed==='object') {
-      const masked=redactValue(parsed,depth+1);
-      if(JSON.stringify(masked)!==JSON.stringify(parsed))return JSON.stringify(masked);
+      try {
+        const masked=redactValue(parsed,depth+1);
+        if(JSON.stringify(masked)!==JSON.stringify(parsed))return JSON.stringify(masked);
+      }catch(error){
+        // An encoded result can be deeper than the event envelope. Withhold
+        // that value, not neighbouring events, and never fall back to raw text.
+        if(error instanceof CliError && error.code==='CAPTURE_REDACTION_TOO_DEEP')return SECRET_MASK;
+        throw error;
+      }
     }
   }
   return maskPatterns(text);
 }
 
 export function redactValue(value:any,depth=0):any {
-  if(depth>64)throw new CliError('CAPTURE_REDACTION_TOO_DEEP','Capture content exceeds the supported masking depth; retained locally');
+  if(depth>MAX_REDACTION_DEPTH)throw new CliError('CAPTURE_REDACTION_TOO_DEEP','Capture content exceeds the supported masking depth; retained locally');
   if(typeof value==='string')return redactText(value,depth);
   if(Array.isArray(value))return value.map(item=>redactValue(item,depth+1));
   if(!value || typeof value!=='object')return value;

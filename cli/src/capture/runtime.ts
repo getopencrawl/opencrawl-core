@@ -16,7 +16,7 @@ import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GR
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
-import {redactValue,redactAttachment} from './redact.ts';
+import {redactValue,redactAttachment,MAX_REDACTION_DEPTH} from './redact.ts';
 
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
@@ -182,7 +182,7 @@ function prepareCaptureUpload(original:any) {
     }
   }
   function replace(value:any,depth=0):any {
-    if(depth>64)throw new CliError('CAPTURE_REDACTION_TOO_DEEP','Capture content exceeds the supported masking depth; retained locally');
+    if(depth>MAX_REDACTION_DEPTH)throw new CliError('CAPTURE_REDACTION_TOO_DEEP','Capture content exceeds the supported masking depth; retained locally');
     if(Array.isArray(value))return value.map(item=>replace(item,depth+1));
     if(!value || typeof value!=='object')return value;
     const result=Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,replace(entry,depth+1)]));
