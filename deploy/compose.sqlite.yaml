@@ -1,0 +1,13 @@
+# Opt-in for a new installation. See docs/search-backends.md before switching an existing index.
+# docker compose -f deploy/compose.yaml -f deploy/compose.sqlite.yaml up -d
+services:
+  app:
+    environment:
+      OPENCRAWL_SEARCH_URL: sqlite:///data/search.sqlite
+    depends_on: !override
+      s3: {condition: service_started}
+  worker:
+    environment:
+      OPENCRAWL_SEARCH_URL: sqlite:///data/search.sqlite
+  opensearch:
+    profiles: [opensearch]

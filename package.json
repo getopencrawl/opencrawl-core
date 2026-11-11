@@ -40,6 +40,8 @@
     "./connectors/slack-source-messages": "./dist/src/connectors/slack-source-messages.mjs",
     "./search": "./dist/src/search/workspace.mjs",
     "./search/realm": "./dist/src/search/realm.mjs",
+    "./search/types": "./dist/src/search/types.mjs",
+    "./search/sqlite": "./dist/src/search/sqlite.mjs",
     "./search/migration": "./dist/src/search/migration.mjs",
     "./connectors/slack-source-message-references": "./dist/src/connectors/slack-source-message-references.mjs",
     "./onboarding/state": "./dist/src/onboarding-state.mjs",

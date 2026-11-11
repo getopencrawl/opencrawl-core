@@ -66,5 +66,22 @@ for (const backend of ['sqlite', 'opensearch']) {
       assert.deepEqual(ids(await collection.search(principal, {query: lexicalQuery('replacement', 'all')})), []);
       assert.equal((await realm.collection('memory').mget(principal, ['one'])).docs[0].found, true);
     });
+    await t.test('atomic policies preserve newer writes, owners and suppressions', async () => {
+      const document = {...principal, receivedAt: '2026-11-02T00:00:00Z', text: 'new evidence'};
+      await collection.bulk(principal, [{id: 'versioned', document, policy: 'session'}]);
+      await collection.bulk(principal, [{id: 'versioned', document: {...document, receivedAt: '2026-11-01T00:00:00Z', text: 'old evidence'}, policy: 'session'}]);
+      await assert.rejects(collection.bulk(principal, [{id: 'versioned', document: {...document, userId: 'intruder'}, policy: 'session'}]));
+      assert.equal((await collection.mget(principal, ['versioned'])).docs[0]._source.text, 'new evidence');
+      const connectors = realm.collection('connector'), source = {...principal, deleted: false, extractedAt: 1, contentHash: 'a', text: 'source evidence'};
+      await connectors.bulk(principal, [{id: 'suppressed', document: source, policy: 'connector'}]);
+      await connectors.update(principal, 'suppressed', {patch: {'connector.deleted': true, text: '', title: ''}, upsert: {...source, deleted: true}});
+      await connectors.bulk(principal, [{id: 'suppressed', document: {...source, extractedAt: 2}, policy: 'connector'}]);
+      assert.equal((await connectors.mget(principal, ['suppressed'])).docs[0]._source.deleted, true);
+      await realm.refresh(principal);
+      await collection.byQuery(principal, 'update', {term: {id: 'versioned'}}, {set: {'session.private': true}});
+      assert.equal((await collection.mget(principal, ['versioned'])).docs[0]._source.private, true);
+      await collection.byQuery(principal, 'delete', {term: {id: 'versioned'}});
+      assert.equal((await collection.mget(principal, ['versioned'])).docs[0].found, false);
+    });
   });
 }

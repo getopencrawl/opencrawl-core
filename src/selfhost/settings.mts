@@ -1,5 +1,6 @@
 import type {IdentitySettings} from '../identity/types.mjs';
 import {CLI_CLIENT_ID} from '../identity/better-auth.mjs';
+import {sqlitePath} from '../search/sqlite.mjs';
 export interface SelfhostSettings extends IdentitySettings {
   organizationId:string; authSecret:string; identityPath:string; setupToken:string; revision?:string;
   registryPath:string; search:{endpoint:string;username?:string;password?:string;environment:string;tenantId:string};
@@ -22,10 +23,12 @@ export function selfhostSettings(env:NodeJS.ProcessEnv=process.env):SelfhostSett
   const authSecret=required('OPENCRAWL_AUTH_SECRET');
   if(authSecret.length<32)throw new Error('OPENCRAWL_AUTH_SECRET must be at least 32 characters');
   if(required('OPENCRAWL_SETUP_TOKEN').length<32)throw new Error('OPENCRAWL_SETUP_TOKEN must be at least 32 characters');
-  const endpoint=required('OPENCRAWL_OPENSEARCH_URL'),search=new URL(endpoint);
-  if(!['http:','https:'].includes(search.protocol)||search.username||search.password||search.search||search.hash)throw new Error('Invalid OpenSearch endpoint');
+  const endpoint=env.OPENCRAWL_SEARCH_URL?.trim()||required('OPENCRAWL_OPENSEARCH_URL'),search=new URL(endpoint);
+  if(search.protocol==='sqlite:')sqlitePath(endpoint);
+  else if(!['http:','https:'].includes(search.protocol)||search.username||search.password||search.search||search.hash)throw new Error('Invalid search endpoint');
   const username=env.OPENCRAWL_OPENSEARCH_USERNAME,password=env.OPENCRAWL_OPENSEARCH_PASSWORD;
   if(Boolean(username)!==Boolean(password))throw new Error('Set both OpenSearch username and password');
+  if(search.protocol==='sqlite:'&&(username||password))throw new Error('SQLite search does not use OpenSearch credentials');
   return {url,authOrigin:url+'/api/auth',clientId:CLI_CLIENT_ID,organizationId,authSecret,revision:env.REVISION,
     identityPath:env.OPENCRAWL_IDENTITY_PATH||'/data/identity.sqlite',setupToken:required('OPENCRAWL_SETUP_TOKEN'),
     registryPath:env.OPENCRAWL_REGISTRY_PATH||'/data/integrations.sqlite',

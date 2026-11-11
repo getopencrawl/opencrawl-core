@@ -111,7 +111,7 @@ type SessionCollection = ReturnType<ReturnType<ReturnType<typeof createRealmReso
 export function applySessionControl(collection: SessionCollection, principal: Principal, key: SessionKey, control: ResourceControl) {
   const query = {bool: {filter: [{term: {[f('userId')]: key.userId}}, {term: {[f('harness')]: key.harness}}, {term: {[f('sessionId')]: key.sessionId}}]}};
   return control.deletedAt ? collection.byQuery(principal, 'delete', query)
-    : collection.byQuery(principal, 'update', query, {lang: 'painless', source: 'ctx._source.session.private = params.value', params: {value: control.visibility === 'private'}});
+    : collection.byQuery(principal, 'update', query, {set: {'session.private': control.visibility === 'private'}});
 }
 
 function encodeCursor(sort: JsonValue[] | undefined) {return sort ? Buffer.from(JSON.stringify(sort)).toString('base64url') : null;}
