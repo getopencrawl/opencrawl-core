@@ -5,7 +5,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {MemoryRouter} from '../src/router.tsx';
 import {SourcesSummary, UsagePage, UsageReportView} from '../src/pages/usage.tsx';
 import type {ConsoleDataAdapter, UsageReport} from '../src/pages/types.ts';
-import {ago, compact, count, harnessName, pricedSavings, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
+import {ago, compact, count, harnessName, pricedTokens, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
 import {harnessName as libraryHarnessName} from '../src/pages/library-controls.tsx';
 import type {ValueReport} from '../src/pages/types.ts';
 
@@ -219,11 +219,13 @@ test('date formatting and compact source-summary exports remain usable by existi
 
 function value(): ValueReport {
   return {
-    schema: 3, measuredAt: '2026-11-10', window: {from: '2026-11-05', to: '2026-11-10', days: 6},
+    schema: 4, measuredAt: '2026-11-10', window: {from: '2026-11-05', to: '2026-11-10', days: 6},
     model: {model: 'GPT-6 Astra', input: 10, cacheRead: 1, cacheWrite: 12.5, output: 50, asOf: '2026-11-09', share: 63},
-    savings: {sessions: 69, tasks: 368, uses: 290, digTokens: 812809, digTurns: 5, tokenPercent: 3.7, turns: 1008, turnPercent: 4.1,
-      tokens: {input: 10_000_000, cacheRead: 1_000_000_000, cacheWrite: 0, output: 2_000_000}},
-    observed: {conflictsAvoided: 37, duplicatesAvoided: 10, knowledgeReused: 52, searches: 245, searchesUseful: 206, searchesUsed: 171},
+    work: {sessions: 386, tasks: 368},
+    spend: {input: 10_000_000, cacheRead: 1_000_000_000, cacheWrite: 0, output: 2_000_000},
+    drift: {conflictsAvoided: 35, duplicatesAvoided: 7},
+    usage: {searches: 340, boardMessages: 3690},
+    value: {searchesUsed: 221, fixesReused: 69, found: {teammateWork: 116, whereThingsLive: 65, pastDecisions: 34, pastFixes: 2, other: 4}},
   };
 }
 
@@ -233,38 +235,42 @@ function cards(html: string, heading: string) {
   return [...section.matchAll(/<dt>([^<]*)(?:<span class="report-help">.*?<\/span><\/span>)?<\/dt><dd><span class="report-metric-value"[^>]*>(.*?)<\/span>(?:<span class="report-metric-note">(.*?)<\/span>)?/g)].map(match => match.slice(1, 4));
 }
 
-test('Agent savings is the first section: four cards priced at the main model, with no explanatory note', () => {
+test('Agent alignment is the first section: four cards of things that happened, each with a how-it-is-counted hover', () => {
   const html = render({...report(), value: value()});
-  assert.deepEqual([...html.matchAll(/<h2\b[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]), ['Agent savings', 'Agent sessions', 'Data sources', 'Team']);
-  assert.ok(html.indexOf('>Agent savings</h2>') < html.indexOf('report-metrics'));
+  assert.deepEqual([...html.matchAll(/<h2\b[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]), ['Agent alignment', 'Agent sessions', 'Data sources', 'Team']);
+  assert.ok(html.indexOf('>Agent alignment</h2>') < html.indexOf('report-metrics'));
   // 10M input at $10 + 1B cache reads at $1 + 2M output at $50 = $1,200.
-  assert.equal(pricedSavings(value().savings.tokens, value().model), 1200);
-  assert.deepEqual(cards(html, 'Agent savings'), [
-    ['Saved vs GPT-6 Astra', '$1,200', '3.7% fewer tokens'],
-    ['Turns saved', '1,008', '4.1% fewer turns, across 290 uses'],
-    ['Conflicts avoided', '37', 'plus 10 duplicate tasks skipped'],
-    ['Searches used', '171', 'of 245 searches by your agents'],
+  assert.equal(pricedTokens(value().spend, value().model), 1200);
+  assert.deepEqual(cards(html, 'Agent alignment'), [
+    ['AI spend', '$1,200', '1B tokens at GPT-6 Astra list prices'],
+    ['Drift saves', '42', '35 conflicts, 7 duplicates avoided'],
+    ['OpenCrawl uses', '4,030', '340 searches, 3,690 board messages'],
+    ['Answers agents used', '290', '221 search results, 69 board fixes'],
   ]);
   const text = html.replace(/<[^>]*>/g, '');
-  assert.doesNotMatch(text, /OpenCrawl cost|of OpenCrawl usage|×/);
-  assert.match(text, /What OpenCrawl saved your team since 2026-11-05, across 69 sessions and 368 tasks\./);
-  const section = text.slice(text.indexOf('Agent savings'), text.indexOf('Agent sessions'));
-  assert.doesNotMatch(section.replace(/How [^?]*\?/g, ''), /Measured|replaying|held-out|skills install|could|would have saved/);
+  assert.match(text, /How OpenCrawl kept your agents on track since 2026-11-05, across 386 sessions and 368 tasks\./);
+  const section = text.slice(text.indexOf('Agent alignment'), text.indexOf('Agent sessions'));
+  assert.doesNotMatch(section, /saved|savings|fewer|would have|Without OpenCrawl|OpenCrawl cost|×/i);
   const help = [...html.matchAll(/<button type="button" class="report-help-button" aria-label="([^"]+)" aria-describedby="([^"]+)">\?<\/button><span class="report-help-text" role="tooltip" id="([^"]+)">(.*?)<\/span>/g)];
-  assert.deepEqual(help.map(match => match[1]), ['How Saved vs GPT-6 Astra is calculated', 'How Turns saved is calculated', 'How Conflicts avoided is calculated', 'How Searches used is calculated']);
+  assert.deepEqual(help.map(match => match[1]), ['How AI spend is calculated', 'How Drift saves is calculated', 'How OpenCrawl uses is calculated', 'How Answers agents used is calculated']);
   assert.ok(help.every(match => match[2] === match[3]));
-  assert.equal(help[0]![4], 'Your agents used an OpenCrawl search result, or another agent’s fix from the board, 290 times. Each is valued at what your agents spend finding that kind of answer themselves, a median 813k tokens in your own sessions, less the cost of the search, at GPT-6 Astra list prices.');
-  assert.equal(help[1]![4], 'Each of those 290 uses is valued at the median 5 turns your agents take to find that kind of answer themselves, in your own sessions. We subtract the two turns a search and reading its result take.');
-  assert.match(help[3]![4]!, /^245 searches is every OpenCrawl search your agents ran for real work\. 171 is how many times/);
-  assert.doesNotMatch(section, /tokens? saved|M saved|B saved|would have|Without OpenCrawl|tests of OpenCrawl/);
-  assert.doesNotMatch(cards(render(), 'Agent sessions').join(' ') + render(), /report-help/);
+  assert.equal(help[0]![4], 'Your agents processed 1B model tokens in the sessions OpenCrawl captured since 2026-11-05. This prices them at GPT-6 Astra list prices as of 2026-11-09, the model your agents use most; a subscription plan costs you less.');
+  assert.equal(help[3]![4], '221 search results the agent’s next message went on to use, plus 69 fixes and decisions picked up from another agent on the board. Searches most often found what teammates’ agents were doing (116), where things live (65), past decisions (34).');
+  assert.doesNotMatch(render(), /report-help/);
 });
 
-test('without a measurement there is no Agent savings section; no searches yet says so on the card', () => {
-  assert.doesNotMatch(render(), /Agent savings/);
-  assert.doesNotMatch(render({...report(), value: null}), /Agent savings/);
-  const html = render({...report(), value: {...value(), observed: {...value().observed, searches: 0, searchesUseful: 0, searchesUsed: 0}}});
-  assert.deepEqual(cards(html, 'Agent savings')[3], ['Searches used', '0', 'your agents haven’t searched yet']);
+test('without a measurement there is no Agent alignment section; a workspace with no uses shows zeros plainly', () => {
+  assert.doesNotMatch(render(), /Agent alignment/);
+  assert.doesNotMatch(render({...report(), value: null}), /Agent alignment/);
+  const empty = {...value(), drift: {conflictsAvoided: 1, duplicatesAvoided: 0}, usage: {searches: 0, boardMessages: 1},
+    value: {searchesUsed: 0, fixesReused: 1, found: {teammateWork: 0, whereThingsLive: 0, pastDecisions: 0, pastFixes: 0, other: 0}}};
+  const html = render({...report(), value: empty});
+  assert.deepEqual(cards(html, 'Agent alignment').slice(1), [
+    ['Drift saves', '1', '1 conflict, 0 duplicates avoided'],
+    ['OpenCrawl uses', '1', '0 searches, 1 board message'],
+    ['Answers agents used', '1', '0 search results, 1 board fix'],
+  ]);
+  assert.doesNotMatch(html, /Searches most often found/);
 });
 
 test('Agent sessions shows tokens captured when metered and OpenCrawl calls instead of machines', () => {

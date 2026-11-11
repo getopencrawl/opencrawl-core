@@ -2,7 +2,7 @@ import {consoleResourceKey, useConsoleResource} from '../data.tsx';
 import {ActivityChart, BarList, Button, EmptyState, LoadingState, MetricGrid, Notice, Page, Section, StatusBadge, Table} from '../design/components.js';
 import {Link} from '../router.js';
 import type {ConsoleDataAdapter, UsageReport, ValueReport} from './types.js';
-import {ago, compact, count, dollars, harnessName, memberName, originName, plural, pricedSavings, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
+import {ago, compact, count, dollars, harnessName, memberName, originName, plural, pricedTokens, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
 import type {UsageMember, UsageSource} from './usage-model.ts';
 
 export {count} from './usage-model.ts';
@@ -62,21 +62,25 @@ function SourceCard({source, now}: {source: UsageSource; now: number}) {
   );
 }
 
-/** What OpenCrawl saved this workspace: the first thing on Usage, four cards in the Agent sessions pattern. */
+/** How OpenCrawl kept this workspace's agents aligned: four cards of things that happened, the first section on Usage. */
 function ValueReportSection({value}: {value: ValueReport}) {
-  const {savings, observed, model} = value;
-  const usd = pricedSavings(savings.tokens, model);
+  const {spend, drift, usage, model, work} = value;
+  const tokens = spend.input + spend.cacheRead + spend.cacheWrite + spend.output;
+  const saves = drift.conflictsAvoided + drift.duplicatesAvoided;
+  const answers = value.value.searchesUsed + value.value.fixesReused;
+  const found = ([['teammateWork', 'what teammates’ agents were doing'], ['whereThingsLive', 'where things live'], ['pastDecisions', 'past decisions'], ['pastFixes', 'past fixes']] as const)
+    .map(([key, label]) => ({label, count: value.value.found[key]})).filter(item => item.count > 0).sort((a, b) => b.count - a.count);
   return (
-    <Section className="report-section" title="Agent savings" description={`What OpenCrawl saved your team since ${value.window.from}, across ${plural(savings.sessions, 'session')} and ${plural(savings.tasks, 'task')}.`}>
+    <Section className="report-section" title="Agent alignment" description={`How OpenCrawl kept your agents on track since ${value.window.from}, across ${plural(work.sessions, 'session')} and ${plural(work.tasks, 'task')}.`}>
       <MetricGrid items={[
-        {label: `Saved vs ${model.model}`, value: dollars(usd), note: `${savings.tokenPercent.toLocaleString('en-US')}% fewer tokens`,
-          help: `Your agents used an OpenCrawl search result, or another agent’s fix from the board, ${plural(savings.uses, 'time')}. Each is valued at what your agents spend finding that kind of answer themselves, a median ${compact(savings.digTokens)} tokens in your own sessions, less the cost of the search, at ${model.model} list prices.`},
-        {label: 'Turns saved', value: compact(savings.turns), note: `${savings.turnPercent.toLocaleString('en-US')}% fewer turns, across ${plural(savings.uses, 'use')}`, title: count(savings.turns),
-          help: `Each of those ${plural(savings.uses, 'use')} is valued at the median ${plural(savings.digTurns, 'turn')} your agents take to find that kind of answer themselves, in your own sessions. We subtract the two turns a search and reading its result take.`},
-        {label: 'Conflicts avoided', value: count(observed.conflictsAvoided), note: observed.duplicatesAvoided ? `plus ${plural(observed.duplicatesAvoided, 'duplicate task')} skipped` : 'times agents waited on each other',
-          help: 'Times a board message from one agent reached another agent, which then changed its plan, such as waiting on a release or dropping work already done. Counted only when the agent’s next actions show the change, and repeats within 30 minutes count once.'},
-        {label: 'Searches used', value: count(observed.searchesUsed), note: observed.searches ? `of ${plural(observed.searches, 'search', 'searches')} by your agents` : 'your agents haven’t searched yet',
-          help: `${plural(observed.searches, 'search', 'searches')} is every OpenCrawl search your agents ran for real work. ${count(observed.searchesUsed)} is how many times the agent’s next message used what came back.`},
+        {label: 'AI spend', value: dollars(pricedTokens(spend, model)), note: `${compact(tokens)} tokens at ${model.model} list prices`, title: count(tokens),
+          help: `Your agents processed ${compact(tokens)} model tokens in the sessions OpenCrawl captured since ${value.window.from}. This prices them at ${model.model} list prices as of ${model.asOf}, the model your agents use most; a subscription plan costs you less.`},
+        {label: 'Drift saves', value: count(saves), note: `${plural(drift.conflictsAvoided, 'conflict')}, ${plural(drift.duplicatesAvoided, 'duplicate')} avoided`,
+          help: 'Times a message from another agent reached an agent through OpenCrawl and it changed course: it held off work another agent owned, or dropped work already done. Counted only when the agent’s next actions show the change, and repeats within 30 minutes count once.'},
+        {label: 'OpenCrawl uses', value: compact(usage.searches + usage.boardMessages), note: `${plural(usage.searches, 'search', 'searches')}, ${plural(usage.boardMessages, 'board message')}`, title: count(usage.searches + usage.boardMessages),
+          help: `${plural(usage.searches, 'search', 'searches')} your agents ran against your team’s memory while doing real work. ${plural(usage.boardMessages, 'message')} from other agents reached an agent’s context through the board.`},
+        {label: 'Answers agents used', value: count(answers), note: `${plural(value.value.searchesUsed, 'search result')}, ${plural(value.value.fixesReused, 'board fix', 'board fixes')}`,
+          help: `${plural(value.value.searchesUsed, 'search result')} the agent’s next message went on to use, plus ${plural(value.value.fixesReused, 'fix or decision', 'fixes and decisions')} picked up from another agent on the board.${found.length ? ` Searches most often found ${found.slice(0, 3).map(item => `${item.label} (${count(item.count)})`).join(', ')}.` : ''}`},
       ]}/>
     </Section>
   );
