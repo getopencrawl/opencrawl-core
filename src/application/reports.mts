@@ -26,7 +26,7 @@ export interface UsageReport {
   days: number;
   generatedAt: string;
   ingestion: null | {
-    sources: Array<{name: string; icon: string; account?: string; state: string; records: number; indexed: number | null; indexedSpecies?: NamedCount[]; lastSyncedAt: string | null; connectedBy?: string; units?: [string, string]; rows?: Array<{label: string; count: number}>}>;
+    sources: Array<{name: string; icon: string; account?: string; state: string; records: number | null; indexed: number | null; indexedSpecies?: NamedCount[]; lastSyncedAt: string | null; connectedBy?: string; units?: [string, string]; rows?: Array<{label: string; count: number}>}>;
     index: null | {sessionEvents: number | null; connectorDocuments: number | null; sources: NamedCount[]; searchMs: number | null; probes?: number[]};
   };
   agents: null | {

@@ -10,8 +10,10 @@ const rpcFetch = async (url:RequestInfo|URL, init?:RequestInit):Promise<Response
     const error={error:{message:status===403?'Your workspace access changed. Sign in again to continue.':'Your session changed. Sign in again to continue.',code:status===403?-32003:-32001,data:{httpStatus:status,code:status===403?'FORBIDDEN':'UNAUTHORIZED'}}};
     return Response.json(target.searchParams.get('batch')==='1'?target.pathname.split('/').at(-1)!.split(',').map(()=>error):error,{status});
   };
-/** Reads use POST bodies and one shared bounded batch. */
-export const rpcBatchOptions = (url = '/api/trpc') => ({url, maxItems: 8, maxURLLength: 8000, fetch: rpcFetch, methodOverride: 'POST' as const});
+/** Independent POST reads keep slow operations and cancellation isolated. */
+export const rpcTransportOptions = (url = '/api/trpc') => ({url, fetch: rpcFetch, methodOverride: 'POST' as const});
+/** Compatibility for older consumers: never combine unrelated operations. */
+export const rpcBatchOptions = (url = '/api/trpc') => ({...rpcTransportOptions(url), maxItems: 1, maxURLLength: 8000});
 
 /** Normalize transport failures once; every operation retains the router's inferred types. */
 export async function rpcRead<T>(operation:()=>Promise<T>,signal?:AbortSignal):Promise<T> {

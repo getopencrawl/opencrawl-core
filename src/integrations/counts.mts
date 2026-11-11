@@ -41,6 +41,9 @@ export function createRecordCounts({buckets, legacyBucket, log = () => {}, now =
   const states = new Map<string, CountEntry>();
   const running = new Map<string, Promise<Record<string, number> | null>>();
 
+  const cacheKey = (record: IntegrationRecord) => JSON.stringify([record.integrationId, record.environment, record.tenantId, record.userId, record.s3Bucket || legacyBucket, record.s3Prefix]);
+  const countsOf = (state: CountState) => Object.fromEntries([...Object.entries(state.ids).map(([s, ids]) => [s, ids.size]), ...Object.entries(state.full).map(([s, full]) => [s, full.count])]);
+
   const keysFor = (provider: Provider) => provider.keys || (provider.connector?.manifest ? manifestKeys(provider.connector.manifest) : {});
   const stateKey = (record: IntegrationRecord) => `_opencrawl/counts/connection=${record.integrationId}.json.gz`;
 
@@ -71,8 +74,11 @@ export function createRecordCounts({buckets, legacyBucket, log = () => {}, now =
 
   async function refresh(record: IntegrationRecord, provider: Provider, succeeded: Set<number>) {
     const bucket = record.s3Bucket || legacyBucket;
-    const entry = states.get(record.integrationId);
-    const state: CountState = entry?.state || await load(bucket, record) || {read: new Set(), ids: {}, full: {}};
+    const entry = states.get(cacheKey(record));
+    const saved = entry?.state || await load(bucket, record);
+    const state: CountState = saved || {read: new Set(), ids: {}, full: {}};
+    // Publish the last durable measurement before scanning any newly landed data.
+    if (!entry && saved) states.set(cacheKey(record), {state, counts: countsOf(state), at: 0, succeeded: ''});
     const keys = keysFor(provider);
     const fullRefresh = new Set(provider.streams.filter(s => s.syncMode.startsWith('full_refresh')).map(s => s.name));
     const objects = (await buckets.list(bucket, `${record.s3Prefix}/`))
@@ -103,8 +109,8 @@ export function createRecordCounts({buckets, legacyBucket, log = () => {}, now =
     }
 
     if (changed) await save(bucket, record, state).catch(error => log('integration.counts.save_failed', {integrationId: record.integrationId, message: errorInfo(error).message}));
-    const counts = Object.fromEntries([...Object.entries(state.ids).map(([s, set]) => [s, set.size]), ...Object.entries(state.full).map(([s, f]) => [s, f.count])]);
-    states.set(record.integrationId, {state, counts, at: now(), succeeded: [...succeeded].sort().join(',')});
+    const counts = countsOf(state);
+    states.set(cacheKey(record), {state, counts, at: now(), succeeded: [...succeeded].sort().join(',')});
     return counts;
   }
 
@@ -115,18 +121,23 @@ export function createRecordCounts({buckets, legacyBucket, log = () => {}, now =
      */
     async get(record: IntegrationRecord, provider: Provider, succeeded: Set<number>, {wait = 3000} = {}) {
       if (!record.s3Prefix) return null;
-      const cached = states.get(record.integrationId);
+      const cached = states.get(cacheKey(record));
       const key = [...succeeded].sort().join(',');
       if (cached && cached.succeeded === key && now() - cached.at < fresh) return cached.counts;
-      if (!running.has(record.integrationId)) {
-        running.set(record.integrationId, refresh(record, provider, succeeded)
+      if (!running.has(cacheKey(record))) {
+        running.set(cacheKey(record), refresh(record, provider, succeeded)
           .catch(error => { log('integration.counts.failed', {integrationId: record.integrationId, message: errorInfo(error).message}); return null; })
-          .finally(() => running.delete(record.integrationId)));
+          .finally(() => running.delete(cacheKey(record))));
       }
-      const timeout = new Promise<undefined>(resolve => setTimeout(resolve, wait, undefined).unref?.());
-      const counts = await Promise.race([running.get(record.integrationId), timeout]);
-      return counts === undefined ? cached?.counts ?? null : counts ?? cached?.counts ?? null;
+      // A previous measurement remains usable while its refresh runs independently.
+      if (cached) return cached.counts;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<undefined>(resolve => {timer = setTimeout(resolve, wait, undefined); timer.unref?.();});
+      try {
+        const counts = await Promise.race([running.get(cacheKey(record)), timeout]);
+        return counts ?? states.get(cacheKey(record))?.counts ?? null;
+      } finally {clearTimeout(timer);}
     },
-    forget: (integrationId: string) => states.delete(integrationId),
+    forget: (integrationId: string) => {for (const key of states.keys()) if ((JSON.parse(key) as string[])[0] === integrationId) states.delete(key);},
   };
 }
