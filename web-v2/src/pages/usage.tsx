@@ -101,7 +101,7 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
 
   const value = report.value;
   const captured: MetricItem | null = report.capture
-    ? {label: 'Tokens captured', value: compact(report.capture.tokens), note: `since ${report.capture.since.slice(0, 10)}, from agent sessions`, title: count(report.capture.tokens),
+    ? {label: 'Tokens captured', value: compact(report.capture.tokens), note: value ? `captured since ${report.capture.since.slice(0, 10)}` : `since ${report.capture.since.slice(0, 10)}, from agent sessions`, title: count(report.capture.tokens),
       ...(value ? {help: `The text of your agents’ sessions that OpenCrawl has stored since ${report.capture.since.slice(0, 10)}, counted in tokens. This is what OpenCrawl billing is based on.`} : {})}
     : null;
   const sessions: MetricItem | null = data ? {label: 'Sessions', value: compact(data.sessions), note: `${activeDays} active ${activeDays === 1 ? 'day' : 'days'}${subagents ? `, plus ${plural(subagents, 'subagent session')}` : ''}`, title: count(data.sessions)} : null;

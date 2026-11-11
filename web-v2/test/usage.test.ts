@@ -241,7 +241,7 @@ test('with a measured report Usage has one Agent alignment row: tokens captured,
   const html = render({...report(), value: value(), capture});
   assert.deepEqual([...html.matchAll(/<h2\b[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]), ['Agent alignment', 'Data sources', 'Team']);
   assert.deepEqual(cards(html, 'Agent alignment'), [
-    ['Tokens captured', '52.5M', 'since 2026-11-01, from agent sessions'],
+    ['Tokens captured', '52.5M', 'captured since 2026-11-01'],
     ['Drift saves', '42', '35 conflicts, 7 duplicates avoided'],
     ['OpenCrawl uses', '4,030', '340 searches, 3,690 board messages'],
     ['Answers agents used', '290', '221 search results, 69 board fixes'],
