@@ -6,6 +6,7 @@
   },
   "include": [
     "tools/delivery.mts",
+    "tools/package-provenance.mts",
     "dev/**/*.mts",
     "cli/scripts/**/*.mts",
     "plugins/scripts/**/*.mts"
