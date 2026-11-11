@@ -19,11 +19,11 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-backfill-')),saved={...process.env};
  const principal={tenantId:'test',userId:'test-user'},token='backfill-test-token-01234567890123456789';
  const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest({store,onStored:undefined});
- const receipts:any[]=[],batches:any[]=[];let requests=0,offline=false,failUpload=false,phase='setup';
+ const receipts:any[]=[],batches:any[]=[];let requests=0,offline=false,failUpload=false,failNext=0,phase='setup';
  const handler=standaloneCapture({token,principal,store,prefix:undefined,search:undefined});
  const server=createServer(async(req,res)=>{
   requests++;
-  if(offline || failUpload && req.url==='/api/sessions/batches'){res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:'OFFLINE'}}));return;}
+  if(offline || (failUpload || failNext>0&&failNext--) && req.url==='/api/sessions/batches'){res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:'OFFLINE'}}));return;}
   if(req.url==='/api/sessions/batches') {
    const chunks=[];for await(const chunk of req)chunks.push(chunk);
    const batch=JSON.parse(Buffer.concat(chunks).toString());batches.push(batch);
@@ -90,9 +90,10 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   expect(readCaptureConfig()!.owner.tenantId).toBe('current-team');
   expect(batches.every(b=>b.owner.tenantId==='current-team')).toBe(true);
   expect(batches.map(b=>b.harness)).toEqual(['claude-code','claude-code']);
-  phase='offline-auth';offline=true;await expect(backfill(api,'codex',true)).rejects.toThrow();offline=false;
-  phase='offline-upload';failUpload=true;await expect(backfill(api,'codex',true)).rejects.toThrow();expect(captureStatus().queued).toBe(1);failUpload=false;
-  phase='resume';expect((await backfill(api,'codex',true)).processed).toBe(2);
+  phase='offline-auth';offline=true;await expect(backfill(api,'codex',true,{retryDelays:[0]})).rejects.toThrow();offline=false;
+  phase='offline-upload';failUpload=true;await expect(backfill(api,'codex',true,{retryDelays:[0,0]})).rejects.toThrow();expect(captureStatus().queued).toBe(1);failUpload=false;
+  // One outage longer than the request's own retries (a deploy) must not end the import.
+  phase='resume';failNext=6;expect((await backfill(api,'codex',true,{retryDelays:[0,0]})).processed).toBe(2);expect(failNext).toBe(0);
   expect(new Set(batches.map(b=>b.harness+'/'+b.origin))).toEqual(new Set(['claude-code/cli','claude-code/desktop','codex/cli','codex/desktop']));
   expect(JSON.stringify(batches)).not.toContain('EXCLUDED');
   expect(batches.every(b=>b.captureMode==='history')).toBe(true);
@@ -125,7 +126,7 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k];Object.assign(process.env,saved);
   rmSync(dir,{recursive:true,force:true});
  }
-},20000);
+},60000);
 
 test('interactive setup choice defaults to skip and never interprets a generic yes as all sources',async()=>{
  for(const answer of ['','skip','s','no'])expect(await chooseBackfill(async()=>answer)).toBe('skip');

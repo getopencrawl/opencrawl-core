@@ -9,12 +9,22 @@ import {GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
 import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {environmentToken} from '../environment-token.ts';
-import {captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, HOOK_MODE, type CaptureConfig} from './runtime.ts';
+import {captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, codexHooksAwaitingReview, HOOK_MODE, type CaptureConfig} from './runtime.ts';
 import {captureNotice, grokBotNotice} from './policy.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 const marker='OpenCrawl session capture';
 const quote=(s:string)=>process.platform==='win32'?'"'+s.replace(/"/g,'""')+'"':"'"+s.replace(/'/g,"'\\''")+"'";
 function readJson(file:string){return existsSync(file)?JSON.parse(readFileSync(file,'utf8')):{};}
+/** Rewrite another program's JSON config the way people keep it: their
+ * indentation (two spaces when new or unknown), same permissions, and the
+ * directory left as it is. */
+function writeHarnessJson(file:string,value:unknown) {
+  const before=existsSync(file)?readFileSync(file,'utf8'):'';
+  const text=before.trim();
+  const indent=/\n([ \t]+)\S/.exec(text)?.[1]??(text&&!text.includes('\n')?'':'  ');
+  mkdirSync(dirname(file),{recursive:true});
+  replaceFile(file,(indent?JSON.stringify(value,null,indent):JSON.stringify(value))+'\n');
+}
 function backup(file:string){if(existsSync(file)){const p=join(captureDir(),'backups',randomUUID()+'.json');copyFileSync(file,p);}}
 type HookEntry={command:string,async?:boolean,timeout:number};
 function modifyHooks(file:string,events:string[],entry:((event:string)=>HookEntry)|null) {
@@ -31,7 +41,7 @@ function modifyHooks(file:string,events:string[],entry:((event:string)=>HookEntr
     if(!hooks[event].length)delete hooks[event];
   }
   if(entry)for(const event of events)(hooks[event]??=[]).push({hooks:[{type:'command',...entry(event),statusMessage:marker}]});
-  backup(file);atomicJson(file,{...config,hooks});
+  backup(file);writeHarnessJson(file,{...config,hooks});
 }
 const hookFile=(config:CaptureConfig,harness:Harness)=>join(harnessRoot(config,harness),harness==='claude-code'?'settings.json':'hooks.json');
 // Cursor-format entries have no label field; the command itself marks ownership.
@@ -76,9 +86,8 @@ function enableCodex(root:string) {
   // Validate before touching the user's file.
   Bun.TOML.parse(after);
   backup(file);
-  const temp=file+'.opencrawl-tmp';writeFileSync(temp,after,{mode:0o600});
-  // Atomic replacement without changing unrelated TOML settings.
-  renameSync(temp,file);
+  // Atomic replacement without changing unrelated TOML settings or permissions.
+  replaceFile(file,after);
 }
 function configureHooks(config:CaptureConfig,harnesses:Harness[]) {
   const runner=join(captureDir(),'runner.cjs');
@@ -129,7 +138,8 @@ export async function upgradeCaptureHooks() {
     } catch(error) {
       for(const [file,bytes] of originals) {
         if(bytes===null){try{unlinkSync(file);}catch{}}
-        else if(harnesses.includes('grok-bot')&&file===hookFile(current,'grok-bot'))replaceFile(file,bytes);
+        // Harness configs keep their permissions; only our own files use atomicFile.
+        else if(harnesses.some(h=>file===hookFile(current,h)))replaceFile(file,bytes);
         else atomicFile(file,bytes);
       }
       throw error;
@@ -179,8 +189,8 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   } catch(error) {
     for(const [path,bytes] of originals) {
       if(bytes===null){try{unlinkSync(path);}catch{}}
-      else if(enrolled.includes('grok-bot')&&path===hookFile(config,'grok-bot'))replaceFile(path,bytes);
-      else {const temp=path+'.rollback-'+randomUUID();writeFileSync(temp,bytes,{mode:0o600});renameSync(temp,path);}
+      // Restore harness files with their own permissions; replaceFile keeps the mode.
+      else replaceFile(path,bytes);
     }
     throw error;
   }
@@ -188,7 +198,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   removeLegacyService(home);
   const backgroundStatus='harness-managed';
   const steps=[
-    ...(harnesses.some(readsTranscript)?[process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':'Review OpenCrawl hooks in Codex /hooks or desktop Settings > Hooks. Restart existing Claude sessions if hooks have not reloaded.']:[]),
+    ...(harnesses.some(readsTranscript)?[process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':[...(codexHooksAwaitingReview(config)?['Codex needs you to trust the new hooks: open Codex, run /hooks (or desktop Settings > Hooks), trust "OpenCrawl session capture" and start a new session. collect status reports any hook still awaiting review.']:[]),'Restart existing Claude sessions if hooks have not reloaded.'].join(' ')]:[]),
     // An agent that ran the plain command on a Bot's computer reads this and corrects itself.
     ...(absent&&!deferAuth&&!enrolled.includes('grok-bot')&&process.env.CLAUDE_CODE_REMOTE!=='true'?['Neither Claude Code nor Codex was found on this machine. If it is a Grok Bot cloud computer, capture it with opencrawl collect install --yes --harness grok-bot.']:[]),
     ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${hookFile(config,'grok-bot')}. Bots that are already running may keep the hooks they loaded earlier: from a newly created Bot, run a command, then check collect status for a stored receipt.`]:[])];

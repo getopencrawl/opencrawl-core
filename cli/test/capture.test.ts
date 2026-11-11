@@ -1,5 +1,5 @@
 import {test,expect} from 'bun:test';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,appendFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,appendFileSync,statSync,chmodSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
@@ -49,7 +49,9 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     process.env.CODEX_HOME=join(dir,'codex');
     mkdirSync(process.env.CLAUDE_CONFIG_DIR,{recursive:true});mkdirSync(process.env.CODEX_HOME,{recursive:true});
     const other={type:'command',command:'echo existing'};
-    writeFileSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json'),JSON.stringify({permissions:{allow:['Read']},hooks:{Stop:[{hooks:[other]}]}}));
+    // People keep settings pretty-printed and readable by other tools.
+    writeFileSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json'),JSON.stringify({permissions:{allow:['Read']},hooks:{Stop:[{hooks:[other]}]}},null,4)+'\n');
+    chmodSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json'),0o644);chmodSync(process.env.CLAUDE_CONFIG_DIR,0o755);
     writeFileSync(join(process.env.CODEX_HOME,'config.toml'),'model = "example"\n[features]\nhooks = false\nother = true\n');
     const options={background:false,home:dir,command:[process.execPath,'-e','']};
     const first=await installCapture(api,options);
@@ -58,6 +60,15 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     expect(settings.hooks.Stop[1].hooks[0].async).toBe(true);
     expect(settings.hooks.Stop[1].hooks[0].command).toContain('--managed');
     expect(settings.permissions).toEqual({allow:['Read']});expect(settings.hooks.Stop).toHaveLength(2);
+    const settingsText=readFileSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8');
+    expect(settingsText).toStartWith('{\n    "permissions"');expect(settingsText).toEndWith('}\n');
+    // Windows has no POSIX modes; elsewhere install must keep the user's file and directory modes.
+    if(process.platform!=='win32'){
+      expect(statSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json')).mode&0o777).toBe(0o644);
+      expect(statSync(process.env.CLAUDE_CONFIG_DIR).mode&0o777).toBe(0o755);
+    }
+    // A new hooks file uses the harness's conventional two-space format.
+    expect(readFileSync(join(process.env.CODEX_HOME,'hooks.json'),'utf8')).toStartWith('{\n  "hooks"');
     expect((Bun.TOML.parse(readFileSync(join(process.env.CODEX_HOME,'config.toml'),'utf8')) as any).features).toEqual({hooks:true,other:true});
     // Codex runs SessionEnd synchronously within 3s: record locally, never upload there.
     const codexInstalled=JSON.parse(readFileSync(join(process.env.CODEX_HOME,'hooks.json'),'utf8')).hooks;
@@ -66,6 +77,17 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     expect(codexInstalled.SessionEnd[0].hooks[0].command).not.toContain('--managed');
     expect(codexInstalled.Stop[0].hooks[0]).toMatchObject({async:true,timeout:120});
     expect(codexInstalled.Stop[0].hooks[0].command).toContain('--managed');
+    // New Codex hooks need the person's review; status reports it until Codex records trust.
+    const codexEvents=Object.entries(codexInstalled) as [string,any[]][];
+    const ours=codexEvents.reduce((n,[,groups])=>n+groups.length,0);
+    expect(captureStatus().codexHooksAwaitingReview).toBe(ours);
+    expect(captureStatus().attention).toContain('/hooks');
+    const codexHome=process.env.CODEX_HOME!,codexToml=join(codexHome,'config.toml'),tomlBefore=readFileSync(codexToml,'utf8');
+    const snake=(e:string)=>e.replace(/([a-z0-9])([A-Z])/g,'$1_$2').toLowerCase();
+    writeFileSync(codexToml,tomlBefore+codexEvents.map(([e])=>`\n[hooks.state.${JSON.stringify(`${join(codexHome,'hooks.json')}:${snake(e)}:0:0`)}]\ntrusted_hash = "sha256:test"\n`).join(''));
+    expect(captureStatus().codexHooksAwaitingReview).toBe(0);
+    expect(captureStatus().attention).toBeNull();
+    writeFileSync(codexToml,tomlBefore);
     const beforeClaude=readFileSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8');
     const codexHooks=join(process.env.CODEX_HOME,'hooks.json'),goodHooks=readFileSync(codexHooks,'utf8');
     writeFileSync(codexHooks,JSON.stringify({hooks:{Stop:'invalid'}}));
