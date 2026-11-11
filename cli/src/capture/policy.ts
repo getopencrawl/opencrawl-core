@@ -3,7 +3,7 @@ import {realpathSync} from 'node:fs';
 import {apiOrigin} from '../oauth.ts';
 
 export type CaptureExclusions = {projects:string[], sessions:string[]};
-export const captureNotice = (api:string) => `Destination: ${apiOrigin(api)}. Capture shares user/agent messages, raw tool inputs/results, attachments and native agent memory files with everyone who can read your OpenCrawl team or deployment. Secrets in those records are not automatically redacted. Active conversations are read from their beginning. Memories refresh automatically during CLI use. Inactive conversation history requires separate consent. Uninstall stops collection; it does not delete uploaded or queued data.`;
+export const captureNotice = (api:string) => `Destination: ${apiOrigin(api)}. Capture shares user/agent messages, tool inputs/results, attachments and native agent memory files with everyone who can read your OpenCrawl team or deployment. The CLI masks recognized secret formats in session captures locally before upload. Unknown formats, images and native memory files are not covered by this filter. Active conversations are read from their beginning. Memories refresh automatically during CLI use. Inactive conversation history requires separate consent. Uninstall stops collection; it does not delete uploaded or queued data.`;
 
 /** One hooks file serves the whole cloud computer, so the scope is every Bot on it. */
 export const grokBotNotice = 'Grok Bot capture records every Bot that runs on this cloud computer, including Bots created later and anyone chatting with a Bot hosted here, attributed to the person who installs it. Recording starts when a Bot loads the hooks; earlier conversations are not read.';
