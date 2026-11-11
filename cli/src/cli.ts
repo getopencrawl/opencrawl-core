@@ -62,7 +62,7 @@ Search: opencrawl search "words" --json
   --match any|all|phrase                    Default: any; all requires every term
   --limit 1..40                     Default: 10
   --session-id ID                   Narrow a sessions-only query
-  --filters JSON                   Exact roles/authors/kinds/providers/repositories/harnesses/projects/paths
+  --filters JSON                   Exact roles/authors/kinds/providers/repositories/harnesses/origins/projects/paths
   --role user|assistant             Session role filter
   --after ISO --before ISO          Original message/memory time bounds
   --order relevance|newest|oldest    Empty query allowed with time order
