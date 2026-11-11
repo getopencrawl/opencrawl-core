@@ -38,7 +38,7 @@ test('SQLite persists across factories, isolates colliding tenants and rejects u
   await realm.ensureIndex();
   const documents = realm.collection('session');
   await documents.bulk(principal, [{id: 'same', document: {...principal, text: 'retained evidence', sequence: 1}}]);
-  const reopened = createRealm({endpoint, tenantId: principal.tenantId});
+  const reopened = createRealm({endpoint: '  ' + endpoint.replace('sqlite:', 'SQLITE:') + '  ', tenantId: principal.tenantId});
   assert.equal((await reopened.collection('session').mget(principal, ['same'])).docs[0]._source.text, 'retained evidence');
   assert.equal((await stat(path)).mode & 0o777, 0o600);
   const foreign = {...principal, tenantId: 'other'};

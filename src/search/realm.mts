@@ -19,7 +19,7 @@ function compatible(actual: Mapping | undefined,expected: Mapping): boolean {
 }
 /** One tenant-bound index, mapping and transport for every searchable corpus. */
 export function createRealm(options: RealmOptions): SearchRealm {
-  return options.endpoint.startsWith('sqlite:') ? createSqliteRealm(options) : createOpenSearchRealm(options);
+  return new URL(options.endpoint).protocol === 'sqlite:' ? createSqliteRealm(options) : createOpenSearchRealm(options);
 }
 export function createOpenSearchRealm({endpoint,index,tenantId,environment='selfhost',generation='v1',username,password,credentials,region='us-east-1',replicas=0,fetch:send=globalThis.fetch}: RealmOptions): SearchRealm {
   if(typeof tenantId!=='string'||!tenantId)throw fail('Realm tenant required',403);
