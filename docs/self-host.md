@@ -11,7 +11,7 @@ sessions and OAuth grants in your installation’s SQLite database. You operate
 Airbyte, connector credentials, and infrastructure. It does not contact an
 OpenCrawl hosted service.
 
-This is a pre-1.0 preview. [Acceptance status](seam-acceptance.md) distinguishes
+This branch is a candidate. [Acceptance status](seam-acceptance.md) distinguishes
 unit/regression checks from a clean-server install and real provider verification.
 
 ## Configure your installation

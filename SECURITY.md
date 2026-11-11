@@ -3,7 +3,8 @@
 Report vulnerabilities through this repository's
 [GitHub private vulnerability reporting](https://github.com/getopencrawl/opencrawl-core/security/advisories/new).
 If that form is unavailable, ask a maintainer for a private reporting channel
-without including vulnerability details.
+without including vulnerability details. Private vulnerability reporting must be
+enabled when the repository becomes public; GitHub does not offer it for private repositories.
 Do not put vulnerability details, credentials, personal data or session
 transcripts in public issues or pull requests.
 

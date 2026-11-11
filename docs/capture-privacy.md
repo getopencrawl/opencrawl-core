@@ -6,15 +6,14 @@ attachments to the selected deployment. These can contain credentials, private
 source code and personal information. There is no automatic secret redaction.
 Repeated system/developer prompts are omitted; this is not a secret filter.
 
-Every member of a team, hosted or self-hosted, can read its captured sessions and
-memories unless the person who captured one marks it private in the Sessions or
-Memories page. A private session or memory is hidden from teammates, their agents
-and search. The owner can also delete a session (raw capture, search results and
-any later uploads of it) or a memory; see [sessions and memories](sessions-and-memories.md).
-The separate capture-only smoke stack (`deploy/compose.capture.yaml`) is different:
-it uses static bearer tokens, and everyone holding one shares that token's identity
-and access. Active conversations are read from their beginning on first encounter,
-even if they started before installation. Inactive history requires separate consent.
+Every member of a hosted team can read its captured sessions and memories unless
+the person who captured one marks it private in the Sessions or Memories page. A
+private session or memory is hidden from teammates, their agents and search. The
+owner can also delete a session (raw capture, search results and any later uploads
+of it) or a memory; see `docs/sessions-and-memories.md`. In the self-hosted
+preview, everyone with the MCP/read token can read the deployment's sessions.
+Active conversations are read from their beginning on first encounter, even if
+they started before installation. Inactive history requires separate consent.
 
 Grok Bot capture has a wider scope than one conversation: its hooks file serves
 the whole cloud computer, so every Bot the person runs there is recorded,
@@ -70,13 +69,11 @@ uploader to exit and retry. It preserves original harness transcripts, login
 credentials, hook backups and exclusions. Reinstalling after purge can capture
 active conversations again from their beginning.
 
-Neither command deletes server data. To remove an uploaded session or memory, its
-owner deletes it from the Sessions or Memories page; [sessions and memories](sessions-and-memories.md#deletion)
-lists exactly what is removed and what is retained. `./dev/up reset --yes` deletes
-a whole development installation. For an operator-managed deployment, see
-[persistence, deletion, and backup](self-host.md#persistence-deletion-and-backup).
-Existing backups keep their copies until they are deleted. Revoking a token does
-not delete content that was already uploaded.
+Neither command deletes server data. The self-hosted preview's complete erasure
+procedure is in [the self-host guide](self-host.md#delete-a-deployment). Selective
+server-side session deletion is not implemented. Hosted deletion requires the
+deployment operator to remove raw objects, index records and applicable backups;
+do not claim that revoking a token deletes already uploaded content.
 
 No server-side expiry is configured by the preview stack. Backups contain the
 same private data and credentials; restrict access and set your own retention.

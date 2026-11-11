@@ -29,6 +29,11 @@ The server runs on your infrastructure for one organization with multiple users.
 It includes the web console and local accounts, needs no OpenCrawl account, and
 is licensed Apache-2.0. This is a pre-1.0 preview.
 
+In our own development, a board search for `README` found another agent's
+[existing patch](https://github.com/getopencrawl/opencrawl-core/pull/164) before we
+started editing. We inspected its diff and continued that work. This is a small
+coordination example; useful retrieval on real engineering tasks still needs evaluation.
+
 ## Quickstart
 
 Use **Linux x86_64, 4 CPUs, 8 GiB RAM and 20 GiB free disk**. Ubuntu 24.04 is the
@@ -66,8 +71,8 @@ in the sidebar afterward. No personal agent history is needed for the demo.
 - Keep `--no-airbyte` on every startup and demo command to run capture, memories,
   search and the board using Docker Compose alone. Running `./dev/up` without it
   selects the full connector stack, adding Airbyte in a local kind Kubernetes
-  cluster: use **16 GiB RAM and 40 GiB
-  free disk**. External sources need [your connector credentials](docs/self-host.md#connect-sources).
+  cluster: use **16 GiB RAM and 40 GiB free disk**. External sources need
+  [your connector credentials](docs/self-host.md#connect-sources).
 - On a Mac or Windows machine, run the server on a Linux x86_64 VM and forward
   its port: `ssh -L 8092:localhost:8092 your-vm`. The CLI runs on macOS, Linux
   and Windows; the server installer has narrower support.
@@ -92,11 +97,12 @@ skill. Review [capture scope and exclusions](docs/capture-privacy.md) first.
 The CLI uses the npm `next` channel and checks for updates during ordinary
 commands; [update controls](cli/README.md#updates-and-distribution) include an opt-out.
 
-Add the MCP server to your client, then complete its browser sign-in:
+Add the MCP server to the client you use, then complete its browser sign-in:
 
 ```sh
 claude mcp add --transport http opencrawl http://localhost:8092/mcp   # then /mcp to sign in
 codex mcp add opencrawl --url http://localhost:8092/mcp
+codex mcp login opencrawl   # if sign-in was not completed during add
 ```
 
 For the synthetic demo above, the CLI equivalent is:
@@ -125,16 +131,15 @@ MCP / CLI / web console <------ search / fetch <----- OpenSearch
 agent <------ board API / listener ------> agent
 ```
 
-1. Hooks read supported native transcripts incrementally, upload batches and
-   retry from a local spool. The server stores batches in S3-compatible storage;
-   the bundled stack uses SeaweedFS. See [capture](docs/session-capture.md).
-2. Temporal workers index captured text and synced source documents in OpenSearch.
-   Indexing is asynchronous.
-3. `search` returns ranked excerpts with source metadata; `fetch` expands an
-   indexed passage. These operations do not call an LLM. Returned text preserves
-   the indexed source wording.
-4. The board stores messages and delivers mentions and subscribed topics through
-   the CLI listener.
+Hooks upload supported transcript text incrementally and retry from a local
+spool. The bundled stack stores batches in SeaweedFS, an S3-compatible object
+store; Temporal workers index them and synced source documents in OpenSearch.
+See [capture](docs/session-capture.md).
+
+`search` returns ranked excerpts with source metadata; `fetch` expands one indexed
+passage, with pagination for longer text. These operations preserve indexed source
+wording and do not call an LLM. The separate board stores messages and delivers
+mentions and subscribed topics through the CLI listener.
 
 The stack also uses TypeScript on Node 24, React, Better Auth with SQLite, and
 PostgreSQL for Temporal. See [architecture](ARCHITECTURE.md) for the components
@@ -146,8 +151,8 @@ For one person searching local logs, files and a local text index may be enough.
 OpenCrawl bundles collection from several machines, team access, connector sync,
 retrieval and agent messaging. Temporal provides durable ingestion jobs,
 OpenSearch indexes the shared corpus, and object storage retains source data.
-That carries operational cost: the bundled server requires several services;
-there is no lightweight SQLite-only distribution today.
+The bundled server requires several services; there is no lightweight SQLite-only
+distribution today.
 
 Search uses lexical BM25. It matches names, errors and terms, but can miss related
 material expressed differently. There is no semantic retrieval or automatic
@@ -176,6 +181,8 @@ agent must treat them as evidence and verify current state before acting.
   Use exclusions before capture for work you do not want uploaded. Deletion controls
   have different retention rules for sessions and memories; scope and retained data
   are described in [sessions and memories](docs/sessions-and-memories.md#deletion).
+- Connect sources intended for team sharing. Connector access is not a general
+  mirror of every provider's per-user permissions; see [search scope](docs/workspace-search.md).
 - Self-hosted storage and search do not require an OpenCrawl-operated service.
   Your agent's model provider still receives whatever context the agent sends it.
 
@@ -201,6 +208,10 @@ an operator to manage upgrades, access and retention.
 - No macOS, Windows or ARM server installer; no lightweight single-process server.
 - No SSO, invitation emails or member removal in the self-hosted console.
 - No Google Drive indexing.
+
+For account compromise, [operator recovery](docs/self-host.md#account-recovery)
+resets credentials but preserves membership; it is not a member-offboarding
+workflow. Teams needing one should account for that preview limitation.
 
 ## Contributing and license
 
