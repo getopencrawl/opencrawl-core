@@ -1,10 +1,15 @@
 import {basename} from 'node:path';
 import {CliError} from './oauth.ts';
-import {findTranscript, readTranscript, userItems, recordText, RECORD_HEADING, TOOL_HEAD, TOOL_GAP, type EventKind, type TranscriptEvent} from './transcript.ts';
+import {findTranscript, readTranscript, readProject, projectItems, recordText, recordHeading, EVENT_KINDS, TOOL_HEAD, TOOL_GAP, type EventKind, type TranscriptEvent, type Reach} from './transcript.ts';
+import {recordPolicy, compactionReports, enrolledSince} from './capture/compaction.ts';
+import {captureExcluded} from './capture/policy.ts';
+import {readCaptureConfig} from './capture/runtime.ts';
 
-/** `opencrawl recall`: the agent's own session transcript, searched on this
- * machine and quoted verbatim. No sign-in and no network: the transcript is
- * the harness's local file, whether or not capture is installed. */
+/** `opencrawl recall`: the transcripts of this session and of the project's
+ * other sessions, searched on this machine and quoted verbatim. No sign-in and
+ * no network: they are the harness's local files, whether or not capture is
+ * installed. `opencrawl drift` reads the same file to say what each
+ * compaction of the session did to the person's own words. */
 const KINDS: Record<string, EventKind[]> = {
   user: ['user', 'queued'], assistant: ['assistant'], tool: ['tool_use', 'tool_result'],
   // A compaction summary is a paraphrase of the rest; quoting it would launder it into evidence.
@@ -14,12 +19,16 @@ const SPEAKER: Partial<Record<EventKind, string>> = {
   user: 'the user said', queued: 'the user said (while you were working)', notice: 'an automated message or another agent said',
   assistant: 'you wrote', tool_use: 'you ran', tool_result: 'a tool returned',
 };
+/** In another session of the project the agent was not this one. */
+const ELSEWHERE: Partial<Record<EventKind, string>> = {...SPEAKER, queued: 'the user said (while the agent was working)', assistant: 'the agent wrote', tool_use: 'the agent ran'};
+const speaker = (event: TranscriptEvent) => event.unsent ? 'the user said (never handed to the agent)' : (event.other ? ELSEWHERE : SPEAKER)[event.kind] ?? event.kind;
 /** What the person said outranks everything else, then the agent's own words. */
 const WEIGHT: Partial<Record<EventKind, number>> = {user: 1.6, queued: 1.6, assistant: 1.2};
 /** Passages are cut from at most this much of one message. */
 const MAX_EVENT_CHARS = 60_000;
 
-export type Passage = {timestamp: string | null; kind: EventKind; speaker: string; offset: number; text: string};
+/** `session` numbers the session a passage comes from when it is not the current one. */
+export type Passage = {timestamp: string | null; kind: EventKind; speaker: string; offset: number; text: string; session?: number};
 export type Recall = {query: string; terms: string[]; matched: number; passages: Passage[]};
 
 /** `thumb_width`, `2024.06` and `v3.8.1-rc2` are searched whole and as their parts. */
@@ -86,7 +95,7 @@ export function rankPassages(events: TranscriptEvent[], query: string, {limit = 
   }
   const best = [...hits].sort((a, b) => b.score - a.score).slice(0, limit).sort((a, b) => a.event.i - b.event.i || a.offset - b.offset);
   return {query, terms, matched: hits.length, passages: best.map(({event, offset, length}) => ({
-    timestamp: event.ts, kind: event.kind, speaker: SPEAKER[event.kind] ?? event.kind,
+    timestamp: event.ts, kind: event.kind, speaker: speaker(event), ...(event.other ? {session: event.session} : {}),
     // Report where the passage starts in the original, before its middle was left out.
     offset: event.omitted && offset > TOOL_HEAD ? Math.max(TOOL_HEAD, offset - TOOL_GAP.length) + event.omitted : offset,
     text: event.text.slice(offset, offset + length),
@@ -100,28 +109,70 @@ function bounded(value: unknown, name: string, fallback: number, min: number, ma
   return number;
 }
 
+/** The sessions a command reads: the named session alone, else the current one
+ * with the project's other sessions as far as the record reaches. What recall
+ * prints becomes part of the transcript of the session that ran it. Where
+ * capture is installed it therefore keeps to what the record keeps to: a
+ * session excluded from capture is not read for another session and reads no
+ * other, and no other session from before capture was installed is read. */
+function sessionsOf(values: Record<string, unknown>, kinds: readonly EventKind[]) {
+  if (values.session !== undefined && typeof values.session !== 'string') throw new CliError('INVALID_USAGE', 'Pass one --session ID.', 64);
+  const transcript = findTranscript({session: values.session}), session = basename(transcript, '.jsonl'), alone: Reach = {sessions: 0, days: 0, megabytes: 0};
+  let reach = values.session === undefined ? recordPolicy('compact', true).reach : alone, skip = (_id: string) => false;
+  if (reach !== alone) try {
+    const config = readCaptureConfig(), cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+    if (config && !config.disabled) {
+      skip = id => captureExcluded(config, {sessionId: id, cwd});
+      reach = skip(session) ? alone : {...reach, since: enrolledSince(config)};
+    }
+  } catch {reach = alone;}
+  return {session, transcript, sessions: readProject(transcript, {kinds, reach, skip}).sessions};
+}
+
 export function recallCommand(words: string[], values: Record<string, unknown>) {
   const query = words.join(' ').trim();
-  if (values.session !== undefined && typeof values.session !== 'string') throw new CliError('INVALID_USAGE', 'Pass one --session ID.', 64);
   if (values.user) {
-    // The complete record of what the person asked, as the compaction hook writes it.
+    // The complete record of what the person asked, as the hooks write it.
     if (query || values.kind !== undefined || values.limit !== undefined || values.chars !== undefined) throw new CliError('INVALID_USAGE', 'Use opencrawl recall --user on its own, or opencrawl recall "words".', 64);
-    const transcript = findTranscript({session: values.session});
-    const items = userItems(readTranscript(transcript, {kinds: KINDS.user!}).events);
-    return {session: basename(transcript, '.jsonl'), transcript, messages: items.length, record: recordText(items)};
+    const {session, transcript, sessions} = sessionsOf(values, KINDS.user!), items = projectItems(sessions);
+    return {session, transcript, sessions: sessions.length, messages: items.length, record: items.length ? recordHeading(items) + '\n\n' + recordText(items) : ''};
   }
   if (!query) throw new CliError('INVALID_USAGE', 'Give recall a few distinctive words: opencrawl recall "words".', 64);
   const kind = values.kind ?? 'all';
   if (typeof kind !== 'string' || !Object.hasOwn(KINDS, kind)) throw new CliError('INVALID_USAGE', 'Use --kind user, assistant, tool or all.', 64);
   const limit = bounded(values.limit, 'limit', 8, 1, 50), chars = bounded(values.chars, 'chars', 1200, 200, 8000);
-  const transcript = findTranscript({session: values.session});
-  const {events, compactions} = readTranscript(transcript, {kinds: KINDS[kind]!});
-  return {session: basename(transcript, '.jsonl'), transcript, compactions, ...rankPassages(events, query, {limit, chars})};
+  const {session, transcript, sessions} = sessionsOf(values, KINDS[kind]!);
+  // One list, oldest session first; an event of another session says which.
+  const events: TranscriptEvent[] = [];
+  for (const {number, other, transcript: {events: own}} of sessions) for (const event of own) events.push({...event, i: events.length, ...(sessions.length > 1 ? {session: number, other} : {})});
+  return {session, transcript, sessions: sessions.length, compactions: sessions.find(one => !one.other)?.transcript.compactions ?? 0, ...rankPassages(events, query, {limit, chars})};
 }
 
 export function formatRecall(data: ReturnType<typeof recallCommand>) {
-  if ('record' in data) return data.messages ? `${RECORD_HEADING}\n\n${data.record}` : "opencrawl recall: the user has sent no messages in this session's transcript.";
-  if (!data.matched) return `opencrawl recall: nothing in this session's transcript matched "${data.query}". Try fewer or more distinctive words.`;
-  return [`opencrawl recall: ${data.matched} passage${data.matched === 1 ? '' : 's'} matched in this session's transcript; showing ${data.passages.length}, oldest first, verbatim. A later statement overrides an earlier one.`,
-    ...data.passages.map(passage => `\n--- [${passage.timestamp ?? '?'} | ${passage.speaker}${passage.offset ? ` | from character ${passage.offset}` : ''}] ---\n${passage.text}`)].join('\n');
+  const where = data.sessions > 1 ? `the transcripts of this project's ${data.sessions} sessions` : "this session's transcript";
+  if ('record' in data) return data.record || `opencrawl recall: the user has sent no messages in ${where}.`;
+  if (!data.matched) return `opencrawl recall: nothing in ${where} matched "${data.query}". Try fewer or more distinctive words.`;
+  return [`opencrawl recall: ${data.matched} passage${data.matched === 1 ? '' : 's'} matched in ${where}; showing ${data.passages.length}, oldest first, verbatim. A later statement overrides an earlier one.`,
+    ...data.passages.map(passage => `\n--- [${passage.timestamp ?? '?'} | ${passage.session === undefined ? '' : `session ${passage.session} of this project | `}${passage.speaker}`
+      + `${passage.offset ? ` | from character ${passage.offset}` : ''}] ---\n${passage.text}`)].join('\n');
+}
+
+/** `opencrawl drift`: for each compaction of the session, what became of the
+ * exact details in the person's messages. */
+export function driftCommand(words: string[], values: Record<string, unknown>) {
+  if (words.length) throw new CliError('INVALID_USAGE', 'Use opencrawl drift [--session ID] [--json].', 64);
+  if (values.session !== undefined && typeof values.session !== 'string') throw new CliError('INVALID_USAGE', 'Pass one --session ID.', 64);
+  const show = bounded(values.limit, 'limit', 12, 1, 200), transcript = findTranscript({session: values.session});
+  return {session: basename(transcript, '.jsonl'), transcript, show, compactions: compactionReports(readTranscript(transcript, {kinds: [...EVENT_KINDS, 'hook', 'boundary']}).events)};
+}
+
+export function formatDrift({compactions, show}: Pick<ReturnType<typeof driftCommand>, 'compactions' | 'show'>) {
+  if (!compactions.length) return 'opencrawl drift: this session has not been compacted yet; nothing has drifted.';
+  const columns = ['compaction', 'details', 'in summary', 'in context', 'restored', 'gone'];
+  const row = (cells: (string | number)[]) => cells.map((cell, at) => String(cell).padStart(columns[at]!.length)).join('  ');
+  const last = compactions.at(-1)!.gone;
+  return ["opencrawl drift: exact details of the user's messages (code, numbers, names) after each compaction", row(columns),
+    ...compactions.map(one => row([one.compaction, one.details, one.inSummary, one.inContext, one.restoredByRecord, one.gone.length])), '',
+    ...(last.length ? [`Gone from the context after the latest compaction (${last.length}): ${last.slice(0, show).map(detail => '`' + detail + '`').join(', ')}${last.length > show ? ' ...' : ''}`,
+      'Run `opencrawl recall "<one of them>"` to read the passage that holds it.'] : ['Nothing the user wrote is missing from the context after the latest compaction.'])].join('\n');
 }

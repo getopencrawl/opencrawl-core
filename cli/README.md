@@ -123,8 +123,8 @@ are not supported in v0. Platform packages are optional dependencies at the exac
 launcher version; there are no install scripts.
 
 Every CLI invocation, including capture hooks and workers, opportunistically checks
-one shared per-user timer; `opencrawl recall` and the compaction hooks, which stay
-off the network, are the exception. Successful checks schedule the next check 3–6 hours
+one shared per-user timer; `opencrawl recall`, `opencrawl drift` and the record hooks,
+which stay off the network, are the exception. Successful checks schedule the next check 3–6 hours
 later, with jitter to spread load. A kernel-backed cache lock lets only one
 opportunistic updater run at a time. An unused installation waits for its next
 invocation; there is no daemon or idle-host timer.
@@ -193,32 +193,64 @@ Read [capture privacy and controls](../docs/capture-privacy.md). After signing i
 
 Messages, tool arguments/results and attachments are collected with native session IDs and a stable installation ID. System/developer prompts are excluded. The hosted service determines the current team from login and validates human attribution. Capture enrollment and queued records stay pinned to their original team and author. A changed login blocks uploads before attachments are sent. Resolve pending data before explicitly reinstalling for a different destination. Self-hosted users sign in to their own deployment; see below and [capture architecture and limits](../docs/session-capture.md).
 
-### After a compaction
+### The verbatim record
 
-When Claude Code compacts a context, the summary loses exact details of what the
-person said. `collect install` adds three Claude Code hooks that give them back
-from the session's own transcript, and `opencrawl recall` searches that
-transcript on demand. None of this signs in, uploads or uses the network.
+An agent works from what it has in its context. A new session starts without
+the conversations before it, and when Claude Code compacts a context the
+summary that replaces it can lose exact details of what the person said. The
+transcripts on this machine still hold every word. The record makes the
+person's own words available again whatever the summary kept, and the drift
+meter shows how much each summary lost. `collect install` adds four Claude Code
+hook entries for this, and two commands read the same transcripts on demand.
+None of it signs in, uploads or uses the network. What it puts in a session is
+part of that session, and capture treats it like the rest of the session.
 
 ```sh
 opencrawl recall "thumbnail width"           # best passages, verbatim, oldest first
 opencrawl recall "cache size" --kind user    # only what the person said
 opencrawl recall --user                      # every message the person sent
+opencrawl drift                              # what each compaction kept, gave back and lost
 ```
 
-After a compaction the agent is given every message the person sent, word for
-word, when that fits in the context. Otherwise it gets an index of the messages
-and the path of a private file that holds all of them, and then, with its next
-tool result, the lines whose exact details (names, numbers, code) the summary
-dropped. Claude Code inlines hook context only up to 10,000 characters; longer
-text is replaced by a 2 KB preview and a file path, so what these hooks inject
-stays under 9,500 characters. A `PostCompact` hook records how many exact details
-each summary kept; `collect status --json` shows the latest counts as
-`lastCompaction`.
+The record covers the sessions of one project: the transcripts Claude Code
+keeps for the same project directory on this machine, as far back as the ten
+most recently used other sessions of the last 30 days, and never a session
+from before capture was installed or one excluded from capture. It is written
+to a private file, grouped by session. A message the person sent while the
+agent was busy, and that its session ended without handing to the agent, is
+part of the record and marked as such. Sessions captured on other machines are
+not covered yet: reading those would need the server.
 
-Those lines can only be worked out once Claude Code has written the summary
-down, which it does after the compaction hooks have run. That is why a second
-`PostToolUse` entry is installed beside the capture hook: it is the one
+- **A new session.** When a project has earlier sessions, a new one is given
+  what the person said in them: every message, word for word, when that fits in
+  the context; otherwise an index of the messages and the instruction to read
+  the record file first. The first session of a project is given nothing.
+- **After a compaction.** The agent is given the record again, now with the
+  current session: whole when it fits, otherwise the index and the path of the
+  file. Then, with its next tool result, it gets the lines whose exact details
+  (names, numbers, code) are neither in the new summary nor in the messages
+  Claude Code kept verbatim. A line whose value the person later replaced is
+  left out when the summary has the replacement, and a line that is shown
+  brings the later lines on the same subject with it, marked as the ones that
+  count. When more was dropped than fits, the agent is told to read the record
+  file now.
+- **`opencrawl recall`** searches the transcripts of the current session and of
+  the project's other sessions and says which session a passage is from;
+  `--session ID` searches that session alone.
+- **`opencrawl drift`** shows, for each compaction of the session, how many
+  exact details the person had given, how many the summary has, how many were
+  still in the context, how many the record gave back, and which are gone.
+  `--json` prints the same per compaction. A `PostCompact` hook records the
+  count for each summary as it is made; `collect status --json` shows the latest
+  as `lastCompaction`.
+
+Claude Code inlines hook context only up to 10,000 characters; longer text is
+replaced by a 2 KB preview and a file path, so what these hooks inject stays
+under 9,500 characters.
+
+The dropped lines can only be worked out once Claude Code has written the
+summary down, which it does after the compaction hooks have run. That is why a
+second `PostToolUse` entry is installed beside the capture hook: it is the one
 `PostToolUse` hook Claude Code waits for, so its output arrives with the first
 tool result. It starts no process beyond a shell test unless a compaction has
 just happened: the command first checks for the file a compaction leaves, and
@@ -226,11 +258,12 @@ exits at once when there is none. On Windows, where hook commands are not run
 by a POSIX shell, the CLI makes that check itself and so is started on every
 tool call.
 
-Claude Code waits for the `SessionStart` hook that follows a compaction and for
-that `PostToolUse` hook; each reads one file and ends within three seconds.
-Every failure is silent: exit code 0, no output. `recall` and these hooks never
-check for updates. See [after a compaction](../docs/session-capture.md#after-a-compaction)
-for the files, the exclusion rules and the limits.
+Claude Code waits for the two `SessionStart` hooks (a new session, a compaction)
+and for that `PostToolUse` hook; each reads local transcripts only and ends
+within three seconds. Every failure is silent: exit code 0, no output. `recall`,
+`drift` and these hooks never check for updates. See
+[the verbatim record](../docs/session-capture.md#the-verbatim-record) for the
+files, the exclusion rules and the limits.
 
 ### Self-hosted
 

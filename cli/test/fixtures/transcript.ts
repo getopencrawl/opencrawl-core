@@ -34,6 +34,10 @@ export function transcriptFixture(session = '11111111-2222-4333-8444-55555555555
         compactMetadata: {trigger: 'auto', preTokens: 72_000, postTokens: 12_000, preservedMessages: {anchorUuid: preserved[0], uuids: preserved, allUuids: preserved}}});
       return {boundary, summary: record({type: 'user', message: {role: 'user', content: summary}, isCompactSummary: true, isVisibleInTranscriptOnly: true})};
     },
+    /** Claude Code's log of its message queue: a message sent while the agent is busy, and what became of it. */
+    queue: (operation: 'enqueue' | 'dequeue' | 'remove' | 'popAll', content?: string, extra: object = {}) => record({type: 'queue-operation', operation, ...(content === undefined ? {} : {content}), ...extra}),
+    /** Context a hook put into the conversation. */
+    hook: (text: string, hookEvent = 'SessionStart') => record({type: 'attachment', attachment: {type: 'hook_additional_context', content: [text], hookName: hookEvent, hookEvent}}),
     raw: (line: string) => {lines.push(line);},
     write(path: string, {partial = ''} = {}) {
       mkdirSync(dirname(path), {recursive: true});
