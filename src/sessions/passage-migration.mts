@@ -18,12 +18,13 @@ export interface PassageMigrationReport {events:number; passages:number; skipped
  * one session, so the runtime can keep it inside that session's deletion root.
  * Checkpoint after complete pages; replay uses the preserved first backup.
  * Raw captures, event ledgers and ingest receipts are never rewritten. */
-export async function migrateSessionPassages({realm,principal,store,prefix,backup,onPage=async()=>{},dryRun=true,pageSize=100,after=null,maxEvents=Infinity}: {
+export async function migrateSessionPassages({realm,principal,store,prefix,backup,onPage=async()=>{},dryRun=true,pageSize=100,after=null,maxEvents=Infinity,eventIdRange}: {
   realm:Realm;principal:TenantPrincipal;store:ObjectStore;prefix:string;backup(step:PassageMigrationStep):Promise<unknown>;
-  onPage?(report:PassageMigrationReport):Promise<unknown>;dryRun?:boolean;pageSize?:number;after?:JsonValue[]|null;maxEvents?:number;
+  onPage?(report:PassageMigrationReport):Promise<unknown>;dryRun?:boolean;pageSize?:number;after?:JsonValue[]|null;maxEvents?:number;eventIdRange?:{gte?:string;lt?:string};
 }):Promise<PassageMigrationReport>{
   if(!principal?.tenantId||principal.tenantId!==realm.tenantId||principal.captureAccess!==undefined)throw Object.assign(new Error('Realm scope denied'),{status:403});
   if(!Number.isInteger(pageSize)||pageSize<1||pageSize>100||!(maxEvents>0))throw new Error('Invalid migration bounds');
+  if(eventIdRange&&(!Object.keys(eventIdRange).length||Object.entries(eventIdRange).some(([k,v])=>!['gte','lt'].includes(k)||typeof v!=='string'||!v.length||v.length>200)||eventIdRange.gte&&eventIdRange.lt&&eventIdRange.gte>=eventIdRange.lt))throw new Error('Invalid event ID partition');
   if(!dryRun)await realm.ensureIndex();
   const collection=realm.collection('session'),f=collection.field,controls=createControls({store,prefix});
   const report:PassageMigrationReport={events:0,passages:0,skippedDeleted:0,after,complete:false};
@@ -32,7 +33,7 @@ export async function migrateSessionPassages({realm,principal,store,prefix,backu
   let lastCompletedEvent='';
   for(;;){
     const page=await collection.search(principal,{size:Math.min(pageSize,maxEvents-report.events),track_total_hits:false,
-      query:{bool:{must_not:[{range:{[f('passageVersion')]:{gte:PASSAGE_VERSION}}}]}},
+      query:{bool:{...(eventIdRange?{filter:[{range:{[f('eventId')]:eventIdRange}}]}:{}),must_not:[{range:{[f('passageVersion')]:{gte:PASSAGE_VERSION}}}]}},
       sort:[...['userId','harness','sessionId','eventId'].map(k=>({[f(k)]:'asc'})),{id:'asc'}],...(report.after?{search_after:report.after}:{})});
     if(page.timed_out||page._shards?.failed!==0)throw new Error('Incomplete passage migration scan');
     if(!page.hits.hits.length){report.complete=true;report.after=null;await onPage({...report});return report;}

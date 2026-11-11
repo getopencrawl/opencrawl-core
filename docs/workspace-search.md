@@ -200,3 +200,9 @@ For rollback, drain migration/index writers, read preserved backups and call
 sessions cannot be restored. Retain recovery data until verification and the
 operator's retention policy permit its deletion. Metering and capture history
 are unaffected by projection changes.
+
+For large corpora, independent operators can use disjoint `eventIdRange`
+partitions (`gte` inclusive, `lt` exclusive). Keep a separate checkpoint for each
+partition and verify their union covers every event ID. The operation still
+constrains the authenticated realm and session fences. Bound concurrency and
+retain all partition backups for rollback.
