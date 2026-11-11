@@ -11,6 +11,56 @@ on:
 permissions:
   contents: read
 jobs:
+  sqlite:
+    name: Application with SQLite FTS5
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: ocdev-0123456789ab
+      OPENCRAWL_IMAGE_TAG: sqlite-ci
+      OPENCRAWL_URL: http://localhost:8092
+      OPENCRAWL_AIRBYTE_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - name: Install the documented SQLite profile without OpenSearch
+        run: |
+          ./deploy/up.sh
+          compose() { docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml "$@"; }
+          compose up -d --build --wait --wait-timeout 600
+          test -z "$(docker ps -aq --filter label=com.docker.compose.project="$COMPOSE_PROJECT_NAME" --filter label=com.docker.compose.service=opensearch)"
+          mkdir -p "$RUNNER_TEMP/sqlite-seed"
+          node --input-type=module <<'JS'
+          import {readFileSync,writeFileSync} from 'node:fs';
+          import {randomBytes} from 'node:crypto';
+          const env=Object.fromEntries(readFileSync('deploy/.env','utf8').split('\n').filter(l=>l&&!l.startsWith('#')).map(l=>{const i=l.indexOf('=');return [l.slice(0,i),l.slice(i+1)];}));
+          writeFileSync(process.env.RUNNER_TEMP+'/sqlite-seed/seed-input.json',JSON.stringify({
+            format:1,project:process.env.COMPOSE_PROJECT_NAME,origin:process.env.OPENCRAWL_URL,connectOrigin:'http://app:8092',
+            organization:env.OPENCRAWL_ORGANIZATION_ID,setupToken:env.OPENCRAWL_SETUP_TOKEN,
+            email:'sqlite@example.com',password:randomBytes(24).toString('hex'),airbyteEnabled:false,
+          }),{mode:0o600});
+          JS
+          compose run --rm --no-deps --user root --volume "$PWD/dev:/opencrawl/dev:ro" \
+            --volume "$RUNNER_TEMP/sqlite-seed:/dev-state" app node --disable-warning=ExperimentalWarning dev/seed.mts
+      - name: Verify durable SQLite capture, search and board after restart
+        run: |
+          compose() { docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml "$@"; }
+          compose stop app worker
+          compose up -d --wait --wait-timeout 600 app worker
+          compose run --rm --no-deps --user root -e OPENCRAWL_DEV_VERIFY_ONLY=true \
+            --volume "$PWD/dev:/opencrawl/dev:ro" --volume "$RUNNER_TEMP/sqlite-seed:/dev-state" \
+            app node --disable-warning=ExperimentalWarning dev/seed.mts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: application-sqlite-${{ github.sha }}
+          path: ${{ runner.temp }}/sqlite-seed/verification.json
+      - name: Remove only this job's disposable installation
+        if: always()
+        run: docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml down --volumes --remove-orphans
   application:
     name: ${{ matrix.name }}
     strategy:
