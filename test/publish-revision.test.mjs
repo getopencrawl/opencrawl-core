@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateRevision, validateCli} from '../tools/publish-revision.mts';
+import {validateRevision, validateCli} from '../dist/tools/publish-revision.mjs';
 const revision = 'a'.repeat(40), repository = 'example/core';
 const runs = ['ci', 'security', 'self-host', 'plugins', 'cli'].map((name, i) => ({id: i + 1, path: `.github/workflows/${name}.yml`, event: 'push', head_branch: 'main', head_sha: revision, conclusion: 'success', status: 'completed', head_repository: {full_name: repository}}));
 

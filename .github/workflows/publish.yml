@@ -24,12 +24,16 @@ jobs:
           node-version: 24.22.2
           registry-url: https://npm.pkg.github.com
           scope: '@getopencrawl'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
       - name: Select a checked immutable source
         id: source
         env:
           REQUESTED_REVISION: ${{ inputs.revision }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node tools/publish-revision.mts
+        run: node dist/tools/publish-revision.mjs
+      # A historical source must not ship tools compiled from the workflow head.
+      - run: rm -rf dist
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - run: npm ci --prefix web-v2 --ignore-scripts --no-audit --no-fund

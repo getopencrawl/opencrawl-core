@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {appendFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
-import {ready, cliVersion, type Run} from './delivery.mts';
+import {ready, cliVersion, type Run} from './delivery.mjs';
 
 export function validateRevision(revision: string, mainline: boolean, runs: Run[], repository: string): void {
   assert(/^[a-f0-9]{40}$/.test(revision), 'Expected an immutable full source revision');
