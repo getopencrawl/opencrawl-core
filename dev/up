@@ -2,15 +2,21 @@
 set -euo pipefail
 umask 077
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
-if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
+for arg in "$@"; do
+if [[ "$arg" == --help || "$arg" == -h ]]; then
   cat <<'HELP'
-Usage: ./dev/up [up|demo|status|stop|reset --yes]
+Usage: ./dev/up [up|demo] [--no-airbyte]
+       ./dev/up [status|stop|reset --yes]
 
 Development only. Ubuntu 24.04 x86_64, 4 CPUs, 16 GiB RAM, 40 GiB free disk.
+With --no-airbyte: 4 CPUs, 8 GiB RAM, 20 GiB free disk; Docker Compose only.
 The first run installs Docker if absent (using sudo), downloads pinned tools,
 starts a private Airbyte kind cluster and the normal OpenCrawl Compose stack,
 generates a local login, and leaves first-run onboarding ready for you.
 Use ./dev/up demo to load synthetic data and automatically complete onboarding.
+Use ./dev/up --no-airbyte for capture, memories, search and board without external
+sources. Repeat the flag on every up/demo invocation; omit it to enable Airbyte.
+Existing Airbyte data is retained when disabling it.
 No service credentials or .env editing. Internet is needed to download images.
 
 OPENCRAWL_DEV_PORT=8092 and OPENCRAWL_DEV_AIRBYTE_PORT=8000 select loopback ports
@@ -20,6 +26,10 @@ only this clone's development installation. Production deploy/ is independent.
 HELP
   exit 0
 fi
+case "$arg" in up|demo|status|stop|reset|--yes|--no-airbyte) ;; *) echo "Unknown argument: $arg. See ./dev/up --help." >&2; exit 1 ;; esac
+done
+MIN_DISK_KIB=41943040
+for arg in "$@"; do [[ "$arg" != --no-airbyte ]] || MIN_DISK_KIB=20971520; done
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || {
   echo 'This installer currently supports Linux x86_64; use a disposable Ubuntu 24.04 VM.' >&2; exit 1;
 }
@@ -36,7 +46,7 @@ if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
     [[ "$ID" == ubuntu && "$VERSION_ID" == 24.04 ]] || {
       echo 'Automatic Docker installation supports Ubuntu 24.04. Install Docker and Compose first on other Linux distributions.' >&2; exit 1;
     }
-    [[ $(df -Pk "$ROOT" | awk 'NR==2 {print $4}') -ge 41943040 ]] || { echo 'At least 40 GiB free disk is required.' >&2; exit 1; }
+    [[ $(df -Pk "$ROOT" | awk 'NR==2 {print $4}') -ge "$MIN_DISK_KIB" ]] || { echo "At least $((MIN_DISK_KIB / 1048576)) GiB free disk is required." >&2; exit 1; }
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y docker.io docker-compose-v2 curl ca-certificates xz-utils

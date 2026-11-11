@@ -1,4 +1,5 @@
 import type {SelfhostSettings} from './settings.mjs';
+import {airbyteEnabled} from './settings.mjs';
 import type {createObjectStore} from '../sessions/s3-store.mjs';
 import type {ConnectorOAuth} from '../integrations/ports.mjs';
 import type {ConnectorDefinition,ProxyRequest,ProviderData} from '../integrations/types.mjs';
@@ -19,6 +20,26 @@ import {createComposioOAuth} from '../integrations/composio.mjs';
 import {connectorSettingsStore} from '../integrations/connector-settings.mjs';
 import {errorInfo} from '../errors.mjs';
 export function selfhostServices(settings:SelfhostSettings,store:ReturnType<typeof createObjectStore>,env:NodeJS.ProcessEnv=process.env){
+  const enabled=airbyteEnabled(env);
+  const definitions:Record<string,ConnectorDefinition>=Object.fromEntries(['slack','googledrive','notion','circleback','granola'].map(id=>[id,{name:`OpenCrawl ${id} (operator-owned)`,manifest:connectorManifest(id)}]));
+  definitions.github={name:'OpenCrawl GitHub (app)',docker:{repository:env.AIRBYTE_GITHUB_REPOSITORY||'opencrawl/source-github',tag:env.AIRBYTE_GITHUB_TAG||'local'}};
+  if(!enabled){
+    const providers=createProviderCatalog(definitions);
+    const registry=createSingleOrganizationRegistry({path:settings.registryPath,organizationId:settings.organizationId});
+    const body='External sources are disabled on this instance. Ask your administrator to enable Airbyte. Agent capture, memories, search and the board remain available.';
+    const disabled=async():Promise<never>=>{throw Object.assign(new Error(body),{status:503,expose:true});};
+    const integrations:ReturnType<typeof createIntegrations>={
+      providers:()=>Object.values(providers),
+      async list(principal){
+        if(principal.tenantId!==settings.organizationId)throw Object.assign(new Error('Workspace scope denied'),{status:403});
+        return Object.values(providers).map(provider=>({provider:provider.id,name:provider.name,description:provider.description,scope:provider.scope,units:provider.units,help:provider.help,
+          auth:provider.auth==='api-key'?'api-key' as const:'oauth' as const,state:'setup-required' as const,
+          setup:{title:'Enable external sources',requirement:'Airbyte disabled',body}}));
+      },
+      connect:disabled,complete:disabled,retry:disabled,disconnect:disabled,disconnectAll:disabled,recoverRecord:disabled,
+    };
+    return {registry,providers,integrations,connectors:undefined,oauth:undefined,sourceCredentials:undefined,connectorSettings:undefined,recover:async()=>{},close:registry.close};
+  }
   const required=(key:string)=>{const value=env[key];if(!value)throw new Error(`${key} is required`);return value;};
   const workspaceId=required('AIRBYTE_WORKSPACE_ID');if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(workspaceId))throw new Error('Invalid Airbyte workspace');
   const airbyte=createAirbyte({url:required('AIRBYTE_URL'),clientId:required('AIRBYTE_CLIENT_ID'),clientSecret:required('AIRBYTE_CLIENT_SECRET')});
@@ -26,9 +47,7 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   const buckets=singleOrganizationStorage(settings.organizationId,store);
   const destination=singleOrganizationDestination({organizationId:settings.organizationId,bucket:store.bucket,region:env.OPENCRAWL_LANDING_S3_REGION||'us-east-1',endpoint:env.OPENCRAWL_AIRBYTE_S3_ENDPOINT||env.OPENCRAWL_LANDING_S3_ENDPOINT,
     accessKeyId:required('OPENCRAWL_LANDING_S3_ACCESS_KEY_ID'),secretAccessKey:required('OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY'),definitionId:env.AIRBYTE_S3_DESTINATION_DEFINITION_ID});
-  const definitions:Record<string,ConnectorDefinition>=Object.fromEntries(['slack','googledrive','notion','circleback','granola'].map(id=>[id,{name:`OpenCrawl ${id} (operator-owned)`,manifest:connectorManifest(id)}]));
   const githubConfig=githubAppSettings(env.GITHUB_APP||null),github=githubConfig?createGitHubApp(githubConfig):null;
-  definitions.github={name:'OpenCrawl GitHub (app)',docker:{repository:env.AIRBYTE_GITHUB_REPOSITORY||'opencrawl/source-github',tag:env.AIRBYTE_GITHUB_TAG||'local'}};
   // Source jobs reach the app here; it is rarely the browser origin.
   const proxyUrl=env.OPENCRAWL_AIRBYTE_APP_URL||settings.url;
   const connectorKey=()=>{const encoded=required('OPENCRAWL_CONNECTOR_KEY'),key=Buffer.from(encoded,'base64');if(key.length!==32||key.toString('base64')!==encoded)throw new Error('OPENCRAWL_CONNECTOR_KEY must be a base64-encoded 32-byte key');return key;};
