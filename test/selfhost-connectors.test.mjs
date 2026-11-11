@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createServer} from 'node:http';
 import {selfhostServices} from '../dist/src/selfhost/services.mjs';
+import {airbyteEnabled} from '../dist/src/selfhost/settings.mjs';
 import {createComposioOAuth} from '../dist/src/integrations/composio.mjs';
 import {createSlackOAuth} from '../dist/src/integrations/slack-oauth.mjs';
 import {credentialVault} from '../dist/src/integrations/credential-vault.mjs';
@@ -21,6 +22,26 @@ async function fixture(t,extra={}){
   t.after(async()=>{services.close();await rm(dir,{recursive:true,force:true});});return services;
 }
 const principal={tenantId:'org_team',userId:'user_a'};
+
+test('Airbyte opt-out needs no connector credentials and exposes setup guidance without outbound work',async t=>{
+  const service=await fixture(t,{OPENCRAWL_AIRBYTE_ENABLED:'false',AIRBYTE_WORKSPACE_ID:undefined,AIRBYTE_URL:undefined,AIRBYTE_CLIENT_ID:undefined,AIRBYTE_CLIENT_SECRET:undefined,
+    OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:undefined,OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:undefined,OPENCRAWL_CONNECTOR_KEY:undefined,
+    GITHUB_APP:'invalid unused configuration',SLACK_CLIENT_ID:'incomplete-unused-configuration'});
+  const cards=await service.integrations.list(principal);
+  assert.deepEqual(cards.map(c=>c.provider).sort(),['circleback','github','googledrive','granola','notion','slack']);
+  assert.ok(cards.every(card=>card.state==='setup-required'&&card.setup.requirement==='Airbyte disabled'&&!card.setup.credential));
+  assert.equal(service.connectors,undefined);assert.equal(service.sourceCredentials,undefined);assert.equal(service.oauth,undefined);assert.equal(service.connectorSettings,undefined);
+  await assert.rejects(service.integrations.list({...principal,tenantId:'org_other'}),error=>error.status===403);
+  for(const method of ['connect','complete','retry','disconnect','disconnectAll','recoverRecord'])await assert.rejects(service.integrations[method](principal,'granola'),error=>error.status===503);
+  await service.recover();
+  assert.deepEqual(await service.registry.listTenant(principal.tenantId),[]);
+});
+
+test('Airbyte is enabled by default and invalid opt-out values fail closed',()=>{
+  assert.equal(airbyteEnabled({}),true);assert.equal(airbyteEnabled({OPENCRAWL_AIRBYTE_ENABLED:'true'}),true);
+  for(const value of ['','0','False','disabled'])assert.throws(()=>airbyteEnabled({OPENCRAWL_AIRBYTE_ENABLED:value}),/must be true or false/);
+  assert.throws(()=>selfhostServices({}, {}, {}),/AIRBYTE_WORKSPACE_ID is required/);
+});
 
 test('fresh OSS exposes every supported connector and explains missing setup without starting a connection',async t=>{
   const service=await fixture(t);

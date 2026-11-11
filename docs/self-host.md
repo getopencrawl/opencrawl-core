@@ -25,6 +25,15 @@ stops. Fill in the empty configuration fields, then run it again. You can also
 run `docker compose up -d --build --wait` directly from `deploy/` after configuring
 `.env`. Choose a fresh `COMPOSE_PROJECT_NAME` for each installation.
 
+To run capture, memories, search and the board without external sources, use
+`./deploy/up.sh --no-airbyte`. Only `OPENCRAWL_URL` needs manual configuration;
+the script generates local secrets. Airbyte settings can stay empty. Repeat the
+flag on startup, or set `OPENCRAWL_AIRBYTE_ENABLED=false` in `deploy/.env` for a
+persistent setting. The app shows source setup guidance and runs only the session
+indexing worker. Existing connector data and grants are retained, but external
+source access is disabled until Airbyte is enabled again. This operator-managed
+script does not stop an independently operated Airbyte server.
+
 Put the application origin in `OPENCRAWL_URL`. The installer generates
 `OPENCRAWL_ORGANIZATION_ID`, `OPENCRAWL_AUTH_SECRET` and `OPENCRAWL_SETUP_TOKEN`.
 No WorkOS project, OpenCrawl account, or authentication SaaS subscription is needed.
