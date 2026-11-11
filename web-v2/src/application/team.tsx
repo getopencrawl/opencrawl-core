@@ -1,10 +1,10 @@
 import {useEffect, useId, useRef, useState, type FormEvent, type ReactNode} from 'react';
-import {Button, CopyField, EmptyState, Input, LoadingState, Notice, Page, Section, Select, StatusBadge} from '../index.ts';
+import {Button, CopyField, Dialog, EmptyState, Input, LoadingState, Notice, Page, Section, Select, StatusBadge} from '../index.ts';
 import {ConsoleApiError, failureMessage} from './errors.ts';
 import type {WorkspaceRole, TeamAdapter} from './api.ts';
 import {useResource} from './resource';
 
-type TeamMutation = {kind: 'invite'} | {kind: 'role'; userId: string; role: WorkspaceRole} | {kind: 'organization'};
+type TeamMutation = {kind: 'invite'} | {kind: 'role'; userId: string; role: WorkspaceRole} | {kind: 'remove'; userId: string} | {kind: 'organization'};
 
 function initials(name: string | null, email: string): string {
   const words = name && name !== email ? name.trim().split(/\s+/).filter(Boolean) : [];
@@ -27,6 +27,8 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
   const [organizationError, setOrganizationError] = useState('');
   const [organizationSuccess, setOrganizationSuccess] = useState('');
   const [pending, setPending] = useState<TeamMutation | null>(null);
+  const [removing, setRemoving] = useState<{id: string; email: string} | null>(null);
+  const [removalError, setRemovalError] = useState('');
   const {data, error, loading, reload, invalidate, updateData} = useResource(adapter.team, {autoRefreshMilliseconds: 30_000, paused: pending !== null});
   const [inviteError, setInviteError] = useState('');
   const [roleError, setRoleError] = useState<{userId: string; message: string} | null>(null);
@@ -91,6 +93,7 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
     if (failure instanceof ConsoleApiError && [401, 402, 403].includes(failure.status)) {
       focusInvite.current = false;
       focusOrganization.current = false;
+      setRemoving(null);
       invalidate(message);
       await reload();
     } else if (roleMember) {
@@ -163,6 +166,28 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
     } finally {finish(request);}
   }
 
+  async function removeMember() {
+    const member = removing;
+    if (!member || member.id === data?.viewerUserId) return;
+    const request = begin({kind: 'remove', userId: member.id});
+    if (!request) return;
+    setRemovalError('');
+    try {
+      const result = await adapter.removeMember(member.id, request.signal);
+      if (!current(request)) return;
+      if (!result.ok || result.userId !== member.id) throw new Error('The server did not confirm this removal.');
+      updateData(report => ({...report, members: report.members?.filter(item => item.id !== member.id)}));
+      setRemoving(null);
+      setSuccess(`${member.email} was removed. Their workspace access has been revoked.`);
+      focusInvite.current = true;
+      await reload();
+    } catch (failure) {
+      if (!current(request)) return;
+      if (failure instanceof ConsoleApiError && [401, 402, 403].includes(failure.status)) await failed(failure, request);
+      else setRemovalError(`We couldn’t confirm the removal of ${member.email}. ${failureMessage(failure)}`);
+    } finally {finish(request);}
+  }
+
   return <TeamFrame organizationName={data?.organization.name}>
     {error && <Notice tone="danger">{data ? 'Team information couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}</Notice>}
     {!data ? loading ? <TeamRosterLoading /> : <EmptyState title="Your team couldn’t load" action={<Button onClick={() => void reload()}>Try again</Button>} /> : <>
@@ -173,7 +198,7 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
           return <li className="oc-member-row" key={member.id} data-state="active">
             <span className="oc-member-avatar" aria-hidden="true">{initials(member.name, member.email)}</span>
             <div className="oc-member-identity"><span className="oc-member-name">{name || member.email}</span>{name && <span className="oc-member-email">{member.email}</span>}</div>
-            {data.role === 'admin' && data.viewerUserId && member.id !== data.viewerUserId ? <Select
+            {data.role === 'admin' && data.viewerUserId && member.id !== data.viewerUserId && !member.directoryManaged ? <Select
               className="oc-member-role"
               aria-label={`Role for ${member.email}`}
               aria-busy={(pending?.kind === 'role' && pending.userId === member.id) || undefined}
@@ -183,6 +208,9 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
               value={pending?.kind === 'role' && pending.userId === member.id ? pending.role : member.role}
               onChange={event => void changeRole(member, event.currentTarget)}
             ><option value="admin">Admin</option><option value="member">Member</option></Select> : <span className="oc-member-role">{member.role === 'admin' ? 'Admin' : 'Member'}</span>}
+            {data.role === 'admin' && data.viewerUserId && member.id !== data.viewerUserId && (member.directoryManaged
+              ? <span className="muted">Managed by identity provider</span>
+              : <Button variant="quiet" disabled={pending !== null} aria-label={`Remove ${member.email}`} onClick={() => {setRemoving({id:member.id,email:member.email}); setRemovalError('');}}>Remove</Button>)}
           </li>;
         })}{invitations.map(invitation => <li className="oc-member-row" key={`invitation:${invitation.email.trim().toLowerCase()}`} data-state="pending">
           <span className="oc-member-avatar" aria-hidden="true">{initials(null, invitation.email)}</span>
@@ -209,6 +237,14 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
         {organizationSuccess && <Notice tone="success">{organizationSuccess}</Notice>}
       </Section>}
       {footer}
+      <Dialog open={removing !== null && data.role === 'admin'} onClose={() => {if (!pending) setRemoving(null);}} title="Remove teammate?" description={removing?.email} actions={<>
+        <Button variant="quiet" disabled={pending !== null} onClick={() => setRemoving(null)}>Cancel</Button>
+        <Button variant="danger" busy={pending?.kind === 'remove'} disabled={pending !== null} onClick={() => void removeMember()}>Remove teammate</Button>
+      </>}>
+        <p>Their access to this workspace will be revoked immediately, including existing browser, CLI, MCP and capture credentials. Their uploaded sessions and memories will remain.</p>
+        <p>They will need a new invitation to rejoin.</p>
+        {removalError && <Notice tone="danger">{removalError}</Notice>}
+      </Dialog>
     </>}
   </TeamFrame>;
 }

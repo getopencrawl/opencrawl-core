@@ -85,6 +85,11 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
     async getBatch(principal: Principal, {harness, installationId, sessionId, batchId, userId=principal?.userId}: Partial<SessionBatchReceipt>) {
       sessionScope(principal);
       if (!principal) fail(401, 'Authentication required');
+      const revalidate=async()=>{
+        const current=await authenticate(req);
+        if(sessionScope(current)!==sessionScope(principal)||current.captureAccess!==principal.captureAccess)fail(403,'Capture access changed');
+      };
+      const privateResult=async(status:number,data:Record<string,unknown>)=>{await revalidate();return send(status,data);};
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot read batches');
       if (!id(userId)) fail(400, 'Invalid author');
       if (!isSessionHarness(harness) || !id(installationId) || !id(sessionId) || !/^[a-f0-9]{64}$/.test(batchId ?? '')) fail(400, 'Invalid receipt');
@@ -123,29 +128,32 @@ export function createCaptureHandler({ingest, authenticate, search=undefined, cr
         req.method==='POST' && url.pathname==='/api/sessions/batches' ||
         req.method==='POST' && url.pathname==='/api/sessions/memories' ||
         req.method==='PUT' && /^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(url.pathname))) return send(403,{error:{code:'CAPTURE_WRITE_ONLY'}});
-      if(credentials && req.method==='POST' && url.pathname==='/api/sessions/credentials') return send(200,{data:await credentials.issue(principal)});
+      if(credentials && req.method==='POST' && url.pathname==='/api/sessions/credentials') return await privateResult(200,{data:await credentials.issue(principal)});
       const credential=/^\/api\/sessions\/credentials\/([a-f0-9]{64})$/.exec(url.pathname);
       if(credentials && req.method==='DELETE' && credential) return send(200,{data:await credentials.revoke(principal,credential[1])});
-      if (req.method === 'GET' && url.pathname === '/api/sessions/identity') return send(200, {data:{principal}});
+      if (req.method === 'GET' && url.pathname === '/api/sessions/identity') return await privateResult(200, {data:{principal}});
       if(req.method==='GET' && url.pathname==='/api/sessions/search') {
         if(!search)return send(503,{error:{code:'SEARCH_NOT_CONFIGURED'}});
-        return send(200,{data:await search.search(principal,{query:url.searchParams.get('q')??'',limit:Number(url.searchParams.get('limit')??20)})});
+        return await privateResult(200,{data:await search.search(principal,{query:url.searchParams.get('q')??'',limit:Number(url.searchParams.get('limit')??20)})});
       }
       const attachment = /^\/api\/sessions\/attachments\/([a-f0-9]{64})$/.exec(url.pathname);
       if (attachment && req.method === 'PUT') {
-        return send(200, {data:await ingest.putAttachment(principal, attachment[1], await readBody(req, MAX_ATTACHMENT_BYTES))});
+        const bytes=await readBody(req,MAX_ATTACHMENT_BYTES);await revalidate();
+        return send(200, {data:await ingest.putAttachment(principal, attachment[1], bytes)});
       }
       if (url.pathname === '/api/sessions/batches' && req.method === 'POST') {
         let batch; try {batch = parseJson<SessionBatch>(await readBody(req, MAX_BATCH_BYTES));} catch(caught){const e=serviceError(caught);if(e.status)throw e;fail(400,'Invalid JSON');}
+        await revalidate();
         return send(200, {data:await ingest.putBatch(principal,batch)});
       }
       if (url.pathname === '/api/sessions/memories' && req.method === 'POST') {
         let snapshot;try{snapshot=parseJson<MemorySnapshot>(await readBody(req,MAX_MEMORY_BYTES));}catch(caught){const e=serviceError(caught);if(e.status)throw e;fail(400,'Invalid memory JSON');}
+        await revalidate();
         return send(200,{data:await ingest.putMemorySnapshot(principal,snapshot)});
       }
       if (url.pathname === '/api/sessions/batches' && req.method === 'GET') {
         const batch = await ingest.getBatch(principal, Object.fromEntries(url.searchParams));
-        return send(batch ? 200 : 404, batch ? {data:batch} : {error:{code:'NOT_FOUND'}});
+        return await privateResult(batch ? 200 : 404, batch ? {data:batch} : {error:{code:'NOT_FOUND'}});
       }
       return send(404,{error:{code:'NOT_FOUND'}});
     } catch(caught){const e=serviceError(caught);return send(e.status || 503,{error:{code:e.status ? 'CAPTURE_REJECTED':'CAPTURE_UNAVAILABLE', message:e.status ? e.message:'Capture storage unavailable'}});}
