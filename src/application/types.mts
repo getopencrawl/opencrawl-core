@@ -19,6 +19,10 @@ export interface SourceCard {
   connectedBy?: string | null;
   connectedAt?: string | null;
   lastSyncedAt?: string | null;
+  /** Provider status is refreshed independently of the page read. */
+  statusUpdatedAt?: string | null;
+  statusRefreshing?: boolean;
+  statusUnavailable?: boolean;
   synced?: number;
   total?: number | null;
   initial?: boolean;

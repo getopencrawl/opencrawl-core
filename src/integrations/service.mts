@@ -16,6 +16,8 @@ export interface IntegrationOptions {
   log?: Log; maintenance?: boolean; revokeInstallation?: (installationId: string) => Promise<void>;
 }
 interface Secrets {apiKey?: string}
+interface StatusSnapshot {jobs: AirbyteJob[]; live: Record<string, number> | null}
+interface StatusEntry {attemptedAt: number; updatedAt?: number; value?: StatusSnapshot; pending?: Promise<void>; failed: boolean}
 type PendingSignInState = 'pending' | 'expired' | 'unavailable';
 // Product lifecycle: runtimes supply credential and infrastructure adapters.
 import {randomBytes, timingSafeEqual} from 'node:crypto';
@@ -69,7 +71,7 @@ export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
 
 export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation}: IntegrationOptions) {
   const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>}>();
-  const statusCache = new Map<string, {at: number; pending: boolean; result: Promise<{jobs: AirbyteJob[]; live: Record<string, number> | null}>}>();
+  const statusCache = new Map<string, StatusEntry>();
   const statusKey = (record: IntegrationRecord) => JSON.stringify([environment, record.tenantId, record.userId, record.integrationId, record.airbyte?.connectionId]);
   const provisioning = new Map<string, Promise<IntegrationRecord>>();
   const requireWritable = () => {
@@ -139,22 +141,38 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
   }
 
   function statusFor(record: IntegrationRecord) {
-    const key = statusKey(record), cached = statusCache.get(key);
-    // Coalesce concurrent tabs and reports, including requests still in flight.
-    if (cached && (cached.pending || performance.now() - cached.at < 3000)) return cached.result;
+    const key = statusKey(record);
+    let entry = statusCache.get(key);
+    if (entry && (entry.pending || now() - entry.attemptedAt < 5000)) return entry;
+    if (!entry) {
+      // Never evict in-flight work and start a duplicate refresh under load.
+      if (statusCache.size >= 256) {
+        const idle = [...statusCache].find(([, value]) => !value.pending);
+        if (!idle) return {attemptedAt: now(), failed: true} satisfies StatusEntry;
+        statusCache.delete(idle[0]);
+      }
+      entry = {attemptedAt: now(), failed: false};
+      statusCache.set(key, entry);
+    }
     const connectionId = required(record.airbyte?.connectionId, 'connection');
-    const result = Promise.all([airbyte.jobs(connectionId, 100), airbyte.streamCounts(connectionId).catch(() => null)])
-      .then(([jobs, live]) => {
-        const entry = statusCache.get(key);
-        if (entry?.result === result) {entry.pending = false; entry.at = performance.now();}
-        return {jobs, live};
+    const refreshing = entry;
+    refreshing.attemptedAt = now();
+    // Status is display data, never an access decision. The registry is still read
+    // for every request; a slow or failed provider cannot block that response.
+    refreshing.pending = Promise.all([airbyte.jobs(connectionId, 100), airbyte.streamCounts(connectionId).catch(() => null)])
+      .then(async ([jobs, live]) => {
+        if (statusCache.get(key) !== refreshing) return;
+        refreshing.value = {jobs, live};
+        refreshing.updatedAt = now();
+        refreshing.failed = false;
+        // Warm durable counts off the response path too. Their own refresh is
+        // single-flight and publishes saved measurements before any raw scan.
+        if (distinct) await distinct.get(record, providerFor(record.provider), new Set(jobs.filter(job => job.status === 'succeeded').map(job => Number(job.jobId))), {wait:0});
       }).catch(error => {
-        if (statusCache.get(key)?.result === result) statusCache.delete(key);
-        throw error;
-      });
-    if (statusCache.size >= 256) statusCache.delete(statusCache.keys().next().value!);
-    statusCache.set(key, {at: performance.now(), pending: true, result});
-    return result;
+        refreshing.failed = true;
+        log('integration.status.refresh_failed', {provider: record.provider, integrationId: record.integrationId, message: errorInfo(error).message});
+      }).finally(() => {refreshing.pending = undefined;});
+    return refreshing;
   }
 
   /** Read-only sign-in health. A provider grant alone never completes our callback. */
@@ -319,12 +337,19 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if (record.status === 'error' && record.error === 'setup') return {...shown, state: 'error', message: 'We couldn’t finish setting up this connection.'};
     if (record.status === 'error' && record.error === 'recovery') return {...shown, state: 'error', message: 'Connection setup is waiting for an earlier request to finish. Retry later; contact support if it persists.'};
     if (record.status === 'error' && record.error === 'reconnect') return {...shown, state: 'error', reconnect: true, message: `We couldn’t finish setting up ${provider.name}. Disconnect it, then connect again with your API key.`};
-    const {jobs, live} = await statusFor(record);
+    const status = statusFor(record);
+    const statusUpdatedAt = status.updatedAt === undefined ? null : new Date(status.updatedAt).toISOString();
+    // Do not invent a running import or zero count before the first measurement.
+    // A failed refresh retains recent measurements, but never indefinitely.
+    const snapshot = status.updatedAt !== undefined && now() - status.updatedAt < 300_000 ? status.value : undefined;
+    const measured = {...shown, statusUpdatedAt, statusRefreshing: Boolean(status.pending), statusUnavailable: status.failed || (status.updatedAt !== undefined && !snapshot)};
+    if (!snapshot) return {...measured, state: 'connected'};
+    const {jobs, live} = snapshot;
     const running = jobs.find(j => ['pending', 'running', 'incomplete'].includes(j.status));
     // Distinct records from the bucket: Airbyte's per-sync row counts repeat every full-refresh
     // stream and every updated record. Only initial live import progress comes from Airbyte.
     const succeededSyncs = new Set(jobs.filter(j => j.status === 'succeeded').map(j => Number(j.jobId)));
-    const unique = distinct ? await distinct.get(record, provider, succeededSyncs, {wait: 100}) : null;
+    const unique = distinct ? await distinct.get(record, provider, succeededSyncs, {wait: 0}) : null;
     const counts = !unique ? (distinct && succeededSyncs.size ? null : live) : !succeededSyncs.size && live
       ? Object.fromEntries([...new Set([...Object.keys(live), ...Object.keys(unique)])].map(s => [s, Math.max(live[s] || 0, unique[s] || 0)]))
       : unique;
@@ -344,10 +369,10 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
         const rate = synced / Math.max(1, now() - started);
         eta = Math.round((record.total - synced) / rate / 1000);
       }
-      return {...shown, state: 'syncing', synced, rows, eta, initial: !succeeded, finishing: bulkDone && rows.some(r => r.trailing), lastSyncedAt};
+      return {...measured, state: 'syncing', synced, rows, eta, initial: !succeeded, finishing: bulkDone && rows.some(r => r.trailing), lastSyncedAt};
     }
-    if (latest.status === 'failed' || latest.status === 'cancelled') return {...shown, state: 'error', synced, lastSyncedAt, message: 'The last sync didn’t finish. We’ll retry on schedule, or you can retry now.'};
-    return {...shown, state: 'synced', synced, rows, lastSyncedAt};
+    if (latest.status === 'failed' || latest.status === 'cancelled') return {...measured, state: 'error', synced, lastSyncedAt, message: 'The last sync didn’t finish. We’ll retry on schedule, or you can retry now.'};
+    return {...measured, state: 'synced', synced, rows, lastSyncedAt};
   }
 
   async function connectWithKey(principal: Principal, provider: KeyProvider, apiKey: unknown) {
