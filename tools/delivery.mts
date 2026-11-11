@@ -5,7 +5,8 @@ export interface Run {id: number; path: string; event: string; head_branch: stri
 const required = ['.github/workflows/ci.yml', '.github/workflows/security.yml', '.github/workflows/self-host.yml', '.github/workflows/plugins.yml'];
 export function ready(runs: Run[], revision: string, repository: string): boolean {
   const trusted = runs.filter(run => run.head_sha === revision && run.head_branch === 'main' && run.event === 'push' && run.head_repository?.full_name === repository);
-  return required.every(path => {
+  const gates = trusted.some(run => run.path === '.github/workflows/cli.yml') ? [...required, '.github/workflows/cli.yml'] : required;
+  return gates.every(path => {
     const run = trusted.filter(run => run.path === path).sort((a, b) => b.id - a.id)[0];
     return run?.status === 'completed' && run.conclusion === 'success';
   });
@@ -22,6 +23,12 @@ export function cliVersion(base: string, published?: string): string {
   for (let i = 0; i < 3; i++) {if (wanted[i]! > previous[i]!) return base; if (wanted[i]! < previous[i]!) break;}
   return `${previous[0]}.${previous[1]}.${previous[2]! + 1n}`;
 }
+export function pinCli(source: string, version: string): string {
+  cliVersion(version);
+  const pattern = /@getopencrawl\/cli@\d+\.\d+\.\d+/g;
+  if ([...source.matchAll(pattern)].length !== 1) throw Error('Expected exactly one pinned cloud CLI installation');
+  return source.replace(pattern, '@getopencrawl/cli@' + version);
+}
 async function api(path: string): Promise<unknown> {
   const response = await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/${path}`, {headers: {authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json'}, signal: AbortSignal.timeout(30_000)});
   if (!response.ok) throw Error(`GitHub ${path}: ${response.status}`);
@@ -36,7 +43,17 @@ if (import.meta.main) {
     const head = await api('git/ref/heads/main') as {object: {sha: string}};
     const runs = await api(`actions/runs?head_sha=${revision}&event=push&branch=main&per_page=100`) as {total_count: number; workflow_runs: Run[]};
     if (runs.total_count > 100) throw Error('Incomplete release check inventory');
-    const eligible = head.object.sha === revision && ready(runs.workflow_runs, revision, process.env.GITHUB_REPOSITORY!);
+    let eligible = head.object.sha === revision && ready(runs.workflow_runs, revision, process.env.GITHUB_REPOSITORY!);
+    if (eligible) {
+      const response = await fetch('https://registry.npmjs.org/@getopencrawl%2fcli/next', {signal: AbortSignal.timeout(30_000)});
+      if (!response.ok) throw Error(`Published CLI channel unavailable: ${response.status}`);
+      const cli = await response.json() as {version: string; opencrawlRevision?: string};
+      cliVersion(cli.version);
+      const requiredCli = execFileSync('git', ['log', '-1', '--format=%H', '--', 'cli', 'tools/delivery.mts', '.github/workflows/cli.yml'], {encoding: 'utf8'}).trim();
+      if (!cli.opencrawlRevision || !/^[a-f0-9]{40}$/.test(cli.opencrawlRevision)) eligible = false;
+      else try {execFileSync('git', ['merge-base', '--is-ancestor', requiredCli, cli.opencrawlRevision], {stdio: 'ignore'});} catch {eligible = false;}
+      if (eligible) output('cli_version', cli.version);
+    }
     output('ready', String(eligible));
     console.log(eligible ? `All core release gates passed for ${revision}` : 'Waiting for all current-main release gates; no publication');
   } else if (mode === 'prepare') {
@@ -45,11 +62,16 @@ if (import.meta.main) {
     const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
     pkg.version = continuousVersion(pkg.version, count, revision);
     pkg.opencrawlRevision = revision;
+    const cli = process.env.RELEASE_CLI_VERSION!;
+    cliVersion(cli);
+    pkg.opencrawlCliVersion = cli;
+    const setup = 'src/sessions/cloud-setup.mts';
+    writeFileSync(setup, pinCli(readFileSync(setup, 'utf8'), cli));
     writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
     const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
     lock.version = lock.packages[''].version = pkg.version;
     writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
-    writeFileSync('revision.json', JSON.stringify({revision}) + '\n');
+    writeFileSync('revision.json', JSON.stringify({revision, cliVersion: cli}) + '\n');
     output('version', pkg.version);
   } else if (mode === 'cli-version') {
     const pkg = JSON.parse(readFileSync('cli/package.json', 'utf8'));

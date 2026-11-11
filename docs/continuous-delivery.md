@@ -25,6 +25,10 @@ version is used for the build and all Linux, macOS and Windows checks. Publicati
 promotes `next` only after every platform and the launcher are downloadable.
 Source provenance is included in the launcher package. No manual publish dispatch
 or version-reservation queue is needed after automation is enabled.
+Core delivery waits until the published CLI includes the latest client-source
+changes. During packaging it stamps that already-published stable version into
+the generated cloud setup script and records it in release metadata. Cloud
+installations keep an exact version pin; no mutable install tag is introduced.
 
 Merge changes only when they are ready for normal deployment. A one-time data
 transition must be encoded in the deployment path before merging dependent

@@ -3,7 +3,7 @@ on:
   schedule:
     - cron: '1-59/5 * * * *'
   workflow_run:
-    workflows: [Core CI, Repository security, Self-host preview, Plugin packages]
+    workflows: [Core CI, Repository security, Self-host preview, Plugin packages, CLI]
     branches: [main]
     types: [completed]
   workflow_dispatch:
@@ -40,6 +40,8 @@ jobs:
       - name: Prepare an immutable source-bound version
         if: steps.gate.outputs.ready == 'true'
         id: package
+        env:
+          RELEASE_CLI_VERSION: ${{ steps.gate.outputs.cli_version }}
         run: node tools/delivery.mts prepare
       - name: Reuse a completed immutable publication
         if: steps.gate.outputs.ready == 'true'
