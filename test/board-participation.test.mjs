@@ -42,28 +42,27 @@ test('participation fails closed; same session IDs remain tenant- and user-scope
   assert.equal(agents.length,2); assert.ok(agents.some(p=>p.agent===a.agent));
 });
 
-test('homepage is batched and quiet, mentions immediate, delivery survives restart until explicit acknowledgment', async t => {
+test('only mentions and subscribed topics are delivered, and delivery survives restart until acknowledgment', async t => {
   const f=await fixture(t); let board=f.make();
   const registration=await register(board,alice); await register(board,bob,'two','claude:two');
-  assert.deepEqual(registration.subscriptions,{homepage:true,mentions:true,topics:[]});
+  assert.deepEqual(registration.subscriptions,{mentions:true,topics:[]});
+  // An unrelated post never wakes this agent, including after the periodic pass.
   await post(board,1); assert.equal((await inbox(board)).batch,null);
-  f.advance();
+  f.advance(); assert.equal((await inbox(board)).batch,null);
+  await post(board,2,'@codex:one please check the dependency');
   const first=(await inbox(board)).batch;
-  assert.deepEqual(first.messages.map(m=>m.id),[1]);
-  assert.deepEqual(first.messages[0].reasons,['homepage']);
+  assert.deepEqual(first.messages.map(m=>m.id),[2]);
+  assert.deepEqual(first.messages[0].reasons,['mention']);
   board=f.restart();
   assert.deepEqual((await inbox(board)).batch,first);
   assert.equal((await register(board,alice)).resumed,true);
   await assert.rejects(ack(board,'0'.repeat(64)),{status:409});
   await ack(board,first.receipt); await ack(board,first.receipt);
   assert.equal((await inbox(board)).batch,null);
-  await post(board,2,'@codex:one please check the dependency');
-  const mention=(await inbox(board)).batch;
-  assert.deepEqual(mention.messages.map(m=>m.id),[2]);
-  assert.deepEqual(mention.messages[0].reasons,['mention','homepage']);
-  await ack(board,mention.receipt);
+  await post(board,3); f.advance(); assert.equal((await inbox(board)).batch,null);
   const stats=(await board.participate(alice,'directory')).agents.find(a=>a.agent===registration.agent);
-  assert.equal(stats.acknowledgedBatches,2); assert.equal(stats.batches,2); assert.equal(stats.pending,null);
+  assert.equal(stats.acknowledgedBatches,1); assert.equal(stats.batches,1); assert.equal(stats.pending,null);
+  assert.equal('homepage' in stats,false);
   assert.equal(stats.listening,true); f.advance(180_000);
   assert.equal((await board.participate(alice,'directory')).agents.find(a=>a.agent===registration.agent).listening,false);
 });
@@ -71,7 +70,8 @@ test('homepage is batched and quiet, mentions immediate, delivery survives resta
 test('all subscribed messages arrive in bounded batches without losing overlap or echoing own posts', async t => {
   const f=await fixture(t), board=f.make();
   await register(board,alice); await register(board,bob,'two','claude:two');
-  await board.participate(alice,'subscribe',{session:'one',homepage:false,topics:['deploy']});
+  // Older CLIs still send homepage:true; it is accepted and has no effect.
+  await board.participate(alice,'subscribe',{session:'one',homepage:true,topics:['deploy']});
   await post(board,'skip','Unrelated','other');
   for(let i=1;i<=20;i++)await post(board,i,`@codex:one update ${i} ${'x'.repeat(350)}`,'deploy');
   const found=[];
@@ -85,8 +85,8 @@ test('all subscribed messages arrive in bounded batches without losing overlap o
   await board.participate(alice,'publish',{session:'one',id:'self',topic:'deploy',text:'@codex:one own post'});
   assert.equal((await inbox(board)).batch,null);
   await board.participate(alice,'subscribe',{session:'one',topics:[]});
-  await post(board,'back','Homepage resumes','other'); f.advance();
-  assert.equal((await inbox(board)).batch.messages[0].text,'Homepage resumes');
+  await post(board,'back','Unrelated after unsubscribing','other'); f.advance();
+  assert.equal((await inbox(board)).batch,null);
 });
 
 test('concurrent registration, publishing, polling and ack retries preserve identities and log', async t => {
@@ -117,7 +117,7 @@ test('legacy MCP posts resolve registered mentions without changing board_sync c
 test('MCP and CLI suppress their own cross-transport posts without suppressing peers', async t => {
   const f=await fixture(t); let board=f.make();
   await register(board,alice); await register(board,alice,'another','codex:another');
-  await board.participate(alice,'subscribe',{session:'one',homepage:false,topics:['build']});
+  await board.participate(alice,'subscribe',{session:'one',topics:['build']});
   const sync=(principal,agent,posts=[])=>board.sync(principal,{workspace:'a',agent,topics:['build'],after:0,posts});
   const own=await sync(alice,'codex:one',[{id:'mcp',topic:'build',text:'Own MCP update'}]);
   assert.deepEqual(own.accepted,[1]); assert.deepEqual(own.messages,[]);
@@ -152,7 +152,7 @@ test('inline mentions accept sentence punctuation through CLI and MCP without cr
       const batch=(await inbox(board)).batch;
       assert.equal(batch.messages.length,1);
       assert.deepEqual(batch.messages[0].mentions,[target.agent]);
-      assert.deepEqual(batch.messages[0].reasons,['mention','homepage']);
+      assert.deepEqual(batch.messages[0].reasons,['mention']);
       await ack(board,batch.receipt);
     }
   }
