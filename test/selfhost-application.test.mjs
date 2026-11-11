@@ -353,7 +353,8 @@ test('admin removal immediately denies existing browser, CLI, MCP and capture cr
  assert.equal((await f.request('/api/console/bootstrap','admin')).status,200);
  assert.equal((await f.store.get('retained-member-data')).toString(),'uploaded before removal');
  assert.equal((await f.identity.directory.userManagement.getUser(bob.userId)).email,'bob@example.com');
- assert.notEqual((await f.post('/auth/login','bob-again',{email:'bob@example.com',password:'another long password'})).status,303);
+ await f.post('/auth/login','bob-again',{email:'bob@example.com',password:'another long password'});
+ assert.equal((await f.request('/api/console/bootstrap','bob-again')).status,403);
  const invitation=await f.identity.directory.userManagement.sendInvitation({organizationId:org,email:'bob@example.com',inviterUserId:admin.userId,roleSlug:'member'});
  await f.identity.admitAccount(bob.userId,'member',invitation.id);
  assert.equal((await f.post('/auth/login','reinvited',{email:'bob@example.com',password:'another long password'})).status,303);
