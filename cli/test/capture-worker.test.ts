@@ -203,7 +203,7 @@ test('async hook retains its harness-owned PID on Unix; legacy upgrade preserves
  expect(captureStatus().pendingHooks).toBe(1);
  expect(readCaptureConfig()!.installationId).toBe(config.installationId);
  expect(readCaptureConfig()!.owner).toEqual(config.owner);
- expect(readCaptureConfig()!.hookMode).toBe('managed-v2');
+ expect(readCaptureConfig()!.hookMode).toBe('managed-v3');
  expect(JSON.parse(readFileSync(hooksFile,'utf8')).hooks.Stop[0].hooks[0].async).toBe(true);
  const upgraded=readFileSync(hooksFile,'utf8');await upgradeCaptureHooks();expect(readFileSync(hooksFile,'utf8')).toBe(upgraded);
  // Installs from the first managed hook layout are rewritten once by the next hook.
@@ -212,7 +212,7 @@ test('async hook retains its harness-owned PID on Unix; legacy upgrade preserves
  firstLayout.hooks.SessionEnd[0].hooks[0]={...firstLayout.hooks.Stop[0].hooks[0]};
  writeFileSync(join(config.roots.codex,'hooks.json'),JSON.stringify(firstLayout));
  await upgradeCaptureHooks();
- expect(readCaptureConfig()!.hookMode).toBe('managed-v2');
+ expect(readCaptureConfig()!.hookMode).toBe('managed-v3');
  expect(JSON.parse(readFileSync(join(config.roots.codex,'hooks.json'),'utf8')).hooks.SessionEnd[0].hooks[0]).toMatchObject({timeout:3});
  // Installing one harness also upgrades the dispatcher for already enrolled ones.
  const codexFile=join(config.roots.codex,'hooks.json');

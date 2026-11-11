@@ -122,16 +122,28 @@ arm64/x64, Linux glibc arm64/x64 and Windows x64. Alpine/musl and Windows arm64
 are not supported in v0. Platform packages are optional dependencies at the exact
 launcher version; there are no install scripts.
 
-Before ordinary commands, the launcher checks for updates at most once per day.
-It awaits the update in the invoking process; hooks never check for updates.
-It checks the npm `next` release channel, installs into a private user-owned cache with
-npm integrity verification and install scripts disabled, then atomically publishes
-the complete release. Each invocation selects the highest complete cached version
-newer than the npm-installed copy. Concurrent installers keep separate temporary
-stages and reuse a complete same-version winner; a delayed older update cannot
-lower the selected version. No sudo or global-directory writes are needed.
-Offline/update failures preserve the working copy and retry after 15 minutes.
-An unused installation updates when it is next invoked, not on a timer.
+Every CLI invocation, including capture hooks and workers, opportunistically checks
+one shared per-user timer. Successful checks schedule the next check 3–6 hours
+later, with jitter to spread load. A kernel-backed cache lock lets only one
+opportunistic updater run at a time. An unused installation waits for its next
+invocation; there is no daemon or idle-host timer.
+
+Automatic checks and downloads overlap the command inside its own process. They
+never hold up capture or create background subprocesses; unfinished work is
+cancelled when the command finishes. Managed async hooks and workers provide a
+longer opportunity to finish an update. Failures and interrupted checks retry on
+a later invocation after 15 minutes. Quick commands alone do not guarantee an
+update finishes; use `opencrawl update` when an immediate update is required.
+
+Both paths use the npm `next` channel and atomically publish complete releases
+into a private user-owned cache. Automatic installation downloads the launcher
+and exact platform package from the public npm registry, verifies their SHA-512
+integrity and package identities, and writes only allowlisted regular files.
+It runs no package scripts. Explicit updates use npm with scripts disabled.
+Each new invocation selects the highest complete cached release; running captures
+finish using their existing version. A failure preserves the working copy.
+Existing managed hook runners migrate locally to remove their hardcoded update
+opt-out; an explicitly inherited opt-out remains respected.
 
 `OPENCRAWL_NO_UPDATE=1` disables automatic updates for reproducible agent runs.
 `opencrawl update [--json]` explicitly updates from that same channel. Cached releases live under
