@@ -26,8 +26,29 @@ export const fetchWorkspace = (api: string, input: Record<string, unknown>, fetc
 
 export function searchInput(query: string | undefined, values: Record<string, unknown>) {
   const source = values.source ?? 'all', match = values.match ?? 'any', limit = Number(values.limit ?? 10), sessionId = values['session-id'], cursor = values.cursor;
-  if (!query?.trim() || query.length > 4000 || !['all','sessions','connectors','memories'].includes(source as string) || !['all','any','phrase'].includes(match as string) || !Number.isInteger(limit) || limit < 1 || limit > 40 || (sessionId !== undefined && (source !== 'sessions' || typeof sessionId !== 'string' || !sessionId || sessionId.length > 200)) || (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 2048))) throw new CliError('INVALID_USAGE', 'Use search "words" [--source all|sessions|connectors|memories] [--match any|all|phrase] [--limit 1..40] [--session-id ID] [--cursor TOKEN].', 64);
-  return {query: query.trim(), source, match, limit, ...(values['no-dedupe'] ? {dedupe:false} : {}), ...(sessionId ? {sessionId} : {}), ...(cursor ? {cursor} : {})};
+  const order=values.order;
+  if ((!query?.trim()&&!['newest','oldest'].includes(String(order))) || (query?.length??0) > 4000 || !['all','sessions','connectors','memories'].includes(source as string) || !['all','any','phrase'].includes(match as string) || !Number.isInteger(limit) || limit < 1 || limit > 40 || (sessionId !== undefined && (source !== 'sessions' || typeof sessionId !== 'string' || !sessionId || sessionId.length > 200)) || (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 2048)) || order!==undefined&&!['relevance','newest','oldest'].includes(String(order))) throw new CliError('INVALID_USAGE', 'Use search "keywords" --match all. See opencrawl --help for filters, projections and browsing.', 64);
+  let filters:Record<string,unknown>={};
+  if(values.filters!==undefined){try{filters=JSON.parse(String(values.filters));}catch{throw new CliError('INVALID_USAGE','--filters requires a JSON object.',64);}}
+  if(!filters||typeof filters!=='object'||Array.isArray(filters))throw new CliError('INVALID_USAGE','--filters requires a JSON object.',64);
+  for(const key of ['after','before'])if(values[key]!==undefined)filters[key]=values[key];
+  if(values.role!==undefined)filters.roles=[values.role];
+  const arrays=['authors','kinds','excludeKinds','roles','harnesses','providers','repositories','projects','paths','toolNames'];
+  for(const [key,value] of Object.entries(filters)){
+    const valid=arrays.includes(key)?Array.isArray(value)&&value.length>0&&value.length<=20&&value.every(x=>typeof x==='string'&&x.length>0&&x.length<=500):
+      ['after','before'].includes(key)&&typeof value==='string'&&/^\d{4}-\d\d-\d\dT/.test(value)&&Number.isFinite(Date.parse(value));
+    if(!valid)throw new CliError('INVALID_USAGE','Invalid search filter '+key+'.',64);
+  }
+  if(filters.roles&&(!(filters.roles as string[]).every(r=>['user','assistant','system','developer'].includes(r))||(filters.roles as string[]).length>4))throw new CliError('INVALID_USAGE','Invalid roles filter.',64);
+  if(filters.after&&filters.before&&Date.parse(String(filters.after))>Date.parse(String(filters.before)))throw new CliError('INVALID_USAGE','after must not exceed before.',64);
+  const extra:Record<string,unknown>={};
+  for(const [flag,key,allowed] of [['select','select',['title','text','url','provenance']],['facets','facets',['source','kind','author','harness','provider','repository','project','path','role','sessionId']]] as const){
+    if(values[flag]===undefined)continue;const selected=String(values[flag]).split(',').filter(Boolean);
+    if(selected.some(v=>!(allowed as readonly string[]).includes(v))||selected.length>allowed.length)throw new CliError('INVALID_USAGE','Invalid --'+flag+'.',64);extra[key]=selected;
+  }
+  if(values['group-by']!==undefined){if(!['none','resource','session'].includes(String(values['group-by'])))throw new CliError('INVALID_USAGE','Invalid --group-by.',64);extra.groupBy=values['group-by'];}
+  if(values['excerpt-chars']!==undefined){const n=Number(values['excerpt-chars']);if(!Number.isInteger(n)||n<100||n>2000)throw new CliError('INVALID_USAGE','--excerpt-chars must be 100–2000.',64);extra.excerptChars=n;}
+  return {query:query?.trim()||'',source,match,limit,...(values['no-dedupe']?{dedupe:false,groupBy:'none'}:{}),...(sessionId?{sessionId}:{}),...(cursor?{cursor}:{}),...(order?{order}:{}),...(Object.keys(filters).length?{filters}:{}),...extra};
 }
 
 export function fetchInput(id: string | undefined, values: Record<string, unknown>) {
@@ -39,12 +60,16 @@ export function fetchInput(id: string | undefined, values: Record<string, unknow
 export function formatFetch(data: any): string {
   return [`[${data.id}] ${data.title}`, JSON.stringify(data.provenance), data.url, data.text,
     `Characters ${data.offset}–${data.offset + data.text.length} of ${data.totalChars}.`,
-    data.nextOffset !== null ? `Continue: opencrawl fetch ${data.id} --offset ${data.nextOffset} --content-version ${data.version}` : 'End of indexed passage.'].filter(Boolean).join('\n');
+    data.nextOffset !== null ? `Continue: opencrawl fetch ${data.id} --offset ${data.nextOffset} --content-version ${data.version}` : 'End of indexed passage.',
+    data.nextId?`Next passage: opencrawl fetch ${data.nextId}`:'',data.previousId?`Previous passage: opencrawl fetch ${data.previousId}`:''].filter(Boolean).join('\n');
 }
 
 export function formatSearch(data: any): string {
-  const text = data.results.map((r: any) => `[${r.id}] ${r.title}\n${JSON.stringify(r.provenance)}\n${r.url ? r.url + '\n' : ''}${r.excerpt?.start > 0 ? '…' : ''}${r.text}${r.excerpt?.end < r.excerpt?.totalChars ? '…' : ''}${r.duplicateCount ? `\n${r.duplicateCount} additional equivalent passages grouped.` : ''}`).join('\n\n');
+  const text = data.results.map((r: any) => [`[${r.id}]${r.title?' '+r.title:''}`,r.provenance?JSON.stringify(r.provenance):'',r.url,
+    r.text!==undefined?`${r.excerpt?.start>0?'…':''}${r.text}${r.excerpt?.end<r.excerpt?.totalChars?'…':''}`:'',
+    r.duplicateCount?`${r.duplicateCount} additional equivalent passages grouped.`:'',r.groupedCount?`${r.groupedCount} other passages in this resource.`:''].filter(Boolean).join('\n')).join('\n\n');
   return [text || 'No matching indexed passages.', `Coverage: ${data.coverage.map((c: any) => `${c.source}=${c.state}${c.truncated ? ' (bounded)' : ''}`).join(', ')}`,
-    data.results.length ? 'Read more: opencrawl fetch <result-id>. Use --no-dedupe to inspect every occurrence.' : '',
+    data.facets?`Facets (${data.facetScope}): ${JSON.stringify(data.facets)}`:'',
+    data.results.length ? 'Read more: opencrawl fetch <result-id>. Use --group-by none --no-dedupe to inspect every occurrence.' : '',
     data.next ? `Next cursor: ${data.next}` : '', data.windowExhausted ? 'Candidate window exhausted. Narrow the query or source to explore further.' : '', data.partial ? 'Some sources could not be searched. These results are incomplete.' : ''].filter(Boolean).join('\n\n');
 }

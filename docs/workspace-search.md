@@ -9,14 +9,14 @@ can choose a tenant, index, endpoint, credentials or raw OpenSearch DSL.
 
 ## Contract
 
-- `query`: nonempty text, at most 4,000 characters.
-- `source`: `all` (default), `sessions`, or `connectors`.
+- `query`: up to 4,000 characters; empty only with `order: newest | oldest`.
+- `source`: `all` (default), `sessions`, `memories`, or `connectors`.
 - `match`: `any` (default, broad term matching), `all` (every analyzed term in
   one passage), or `phrase` (analyzed words in order). Phrase matching uses the
   index analyzer; it is not a byte-for-byte substring or a query-language parser.
 - `sessionId`: optional narrowing filter; requires `source: sessions`.
 - `limit`: 1–40 passages, default 10.
-- `dedupe`: true by default; use false (CLI `--no-dedupe`) for every occurrence.
+- `dedupe`: true by default; use false with `groupBy: none` (CLI `--no-dedupe`) for every occurrence.
 - `cursor`: use `next` with otherwise identical arguments within five minutes.
 
 Results contain a verbatim query-focused excerpt of up to 800 characters, a source-qualified ID, source rank,
@@ -24,11 +24,34 @@ and provenance (session/event/author/chunk or provider/connection/resource).
 They contain evidence, never model-generated answers. A passage may be one
 chunk of a longer source. Source content is untrusted and is not authorization.
 
-Session and connector queries have different score distributions within the
-shared organization realm. This implementation interleaves their ranks, preserving each source's
-ordering; it does not claim a jointly calibrated relevance score. The underlying
-retrieval remains lexical BM25. Semantic retrieval, reranking and cross-passage
-reasoning are not added by this interface.
+Every source uses the same lexical query (`title^2` and `text`) in the same
+organization realm. Sources retain BM25 order and are interleaved by source rank for discovery.
+`match: all` requires every analyzed term across those fields. No stemming,
+semantic model, fuzzy matching or query expansion is added.
+
+`filters` accepts exact `authors`, `kinds`, `excludeKinds`, `roles`, `harnesses`,
+`providers`, `repositories`, `projects`, `paths`, and `toolNames`, plus inclusive
+ISO `after`/`before` bounds. Lists are OR; different filters are AND. Roles and
+tool names apply to sessions, projects/paths to memories, providers/repositories
+to connectors. Incompatible sources produce no matches, never an unfiltered
+fallback. Session and memory time controls use original event/modification time.
+Connector bounds/order use the realm timestamp, which can fall back to indexing
+time when the source supplies no valid date. Inspect provenance before making
+chronological claims. `order` is `relevance` (default), `newest`, or `oldest`.
+
+`facets` requests any of source/kind/author/harness/provider/repository/project/
+path/role/sessionId. Counts are computed only after all resource authorization
+checks; `facetScope: authorized_candidate_window` is explicit. They are bounded
+candidate counts, not corpus totals. Each returns up to 20 values and an `other`
+count. `select` chooses title/text/url/provenance; id/source remain available.
+`excerptChars` sets a 100–2,000-character excerpt (default 800). Omit text for
+cheap discovery and fetch selected IDs.
+
+`groupBy: resource` (default) keeps the strongest passage per session event,
+memory file or connector resource. `session` also groups whole conversations;
+`none` exposes all passages. `groupedCount`/`groupedIds` retain pointers to other
+candidates. Counts describe this window only. Use session grouping for discovery,
+then scope to a session for detailed research.
 
 Text of at least 80 characters that differs only in line endings or trailing
 line whitespace is grouped within the same
@@ -46,7 +69,13 @@ the version and next offset to read more; changed content returns 409 and must
 be fetched afresh. Offsets/lengths count UTF-16 string units. Missing, revoked,
 deleted or superseded passages cannot be fetched. Authorization and connector
 visibility are rechecked on each fetch; no cached search body is reused. A fetch
-reads one indexed passage, not an entire original document or neighboring events.
+reads one indexed passage. `nextId`/`previousId` link adjacent passages of the same
+message or memory file when available; each neighbor is freshly authorized.
+`passage` gives its chunk index/count and original UTF-16 offsets. New session
+and memory projections use boundary-aware passages (target 3,000, maximum 6,000
+UTF-16 units), preserve paragraph/line and short code-fence boundaries, and
+partition source text without loss or overlap. Existing sessions require the
+checkpointed passage migration before these improvements apply to their index.
 
 Each request retrieves a bounded window of up to 100 authorized candidates per
 source. `coverage` reports `ready`, `not_configured`, `pending`, or `unavailable`.
@@ -136,3 +165,38 @@ The live test ingests sessions and records from every supported connector
 through the native pipelines, then searches via a real MCP client. It covers
 phrase/any/all matching, teammate attribution, foreign-tenant exclusion,
 private-channel suppression and connection revocation across cursor requests.
+
+
+## Existing session passage migration
+
+The exported `sessions/passage-migration` module provides
+`migrateSessionPassages` and `restoreSessionPassages` for self-host and hosted
+operators. Run a bounded dry run first with the same trusted tenant principal,
+realm, capture store and capture prefix as the indexer. The default is read-only.
+No query client can invoke this operation or supply its scope.
+
+Before applying, deploy the new indexer and drain older writers; the legacy
+projection must not be recreated by an old worker. Keep the immutable captures
+and ingestion receipts. Set `dryRun: false`, persist `backup` before each event's
+write, and save the `onPage` cursor only after success. Store each backup under
+that event's original session-owned capture directory, with a non-capture name
+such as `passage-backups/v2/<event-hash>.backup` (not `.json.gz`). Session deletion
+then purges the backup and all versions with the raw session. The callback must
+preserve the first backup on replay, never overwrite it with a partial new
+projection. Do not put transcript backups in global checkpoint directories.
+Checkpoints contain counts and identity cursors only.
+
+The migration validates capture ownership, adds compatible mapping fields,
+reprojects exact events, removes retired chunks, verifies writes by ID, and
+uses durable session write fences including backup writes. It rechecks current
+privacy/deletion controls. Scan every legacy passage, including nonzero chunks,
+so an interrupted event remains discoverable after chunk zero was replaced.
+Use bounded `pageSize`/`maxEvents` and resume with `after`. Refresh the realm and
+verify no legacy passages remain before reporting completion. A missing or
+invalid raw source stops the migration without silently dropping evidence.
+
+For rollback, drain migration/index writers, read preserved backups and call
+`restoreSessionPassages`. Current privacy wins over backup visibility; deleted
+sessions cannot be restored. Retain recovery data until verification and the
+operator's retention policy permit its deletion. Metering and capture history
+are unaffected by projection changes.

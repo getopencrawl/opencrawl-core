@@ -1,4 +1,5 @@
 import type {Mapping} from './types.mjs';
+export const passageFields={passageVersion:{type:'integer'},textStart:{type:'integer'},textEnd:{type:'integer'},chunkCount:{type:'integer'}};
 export const connectorMapping = {dynamic: 'strict', properties: {
   ...Object.fromEntries(['tenantId', 'connectionId', 'workspaceId', 'provider', 'kind', 'sourceId', 'channelId', 'threadTs', 'timestamp', 'authorId', 'contentHash', 'parentId', 'parentKind', 'resourceVersion', 'relatedId', 'discussionId', 'repository', 'state', 'speakers', 'startTime', 'endTime', 'fileId', 'extractionStatus', 'partPath'].map(key => [key, {type: 'keyword'}])),
   title: {type: 'text'}, text: {type: 'text'}, extractedAt: {type: 'long'}, deleted: {type: 'boolean'}, publicChannel: {type: 'boolean'},
@@ -15,7 +16,7 @@ export const sessionIndexMapping={dynamic:'strict',properties:{
   text:{type:'text'},sourceKey:{type:'keyword',index:false,doc_values:false},
   nativeId:{type:'keyword'},parentId:{type:'keyword'},turnId:{type:'keyword'},toolCallId:{type:'keyword'},
   toolNames:{type:'keyword'},attachments:{type:'object',enabled:false},host:{type:'keyword',ignore_above:256},
-  private:{type:'boolean'},
+  private:{type:'boolean'},...passageFields,
 }};
 
 export const boardIndexMapping = {dynamic: 'strict', properties: {
@@ -29,7 +30,7 @@ const metadata = (mapping: {properties: Record<string, Mapping>}) => ({type:'obj
   Object.entries(mapping.properties).filter(([key]) => !['tenantId','text','title','sourceKey'].includes(key)))});
 export const memoryMapping={dynamic:'strict',properties:{
   ...Object.fromEntries(['userId','installationId','harness','host','snapshotId','kind','path','project','sourceSessionId'].map(k=>[k,{type:'keyword'}])),
-  generation:{type:'long'},chunk:{type:'integer'},receivedAt:{type:'date'},modifiedAt:{type:'date'},private:{type:'boolean'},
+  generation:{type:'long'},chunk:{type:'integer'},receivedAt:{type:'date'},modifiedAt:{type:'date'},private:{type:'boolean'},...passageFields,
 }};
 export const realmMapping = {dynamic:'strict', properties:{
   schema:{type:'integer'}, tenantId:{type:'keyword'}, corpus:{type:'keyword'}, id:{type:'keyword'},

@@ -29,8 +29,9 @@ export function workspaceHit(source: string, hit: Passage, sourceRank?: number) 
     ? {sessionId: hit.sessionId, eventId: hit.eventId, userId: hit.userId, installationId: hit.installationId, harness: hit.harness, kind: hit.kind, role: hit.role, sequence: hit.sequence, chunk: hit.chunk, timestamp: hit.timestamp, receivedAt: hit.receivedAt}
     : source==='memories'?{harness:hit.harness,userId:hit.userId,installationId:hit.installationId,host:hit.host,path:hit.path,project:hit.project,
       snapshotId:hit.snapshotId,generation:hit.generation,modifiedAt:hit.modifiedAt,receivedAt:hit.receivedAt,sourceSessionId:hit.sourceSessionId,chunk:hit.chunk,kind:hit.kind}
-    : {provider: hit.provider, connectionId: hit.connectionId, workspaceId: hit.workspaceId, sourceId: hit.sourceId, kind: hit.kind, parentId: hit.parentId, parentKind: hit.parentKind, channelId: hit.channelId, authorId: hit.authorId, timestamp: hit.timestamp, sequence: hit.sequence, heading: hit.heading};
+    : {provider: hit.provider, connectionId: hit.connectionId, workspaceId: hit.workspaceId, sourceId: hit.sourceId, kind: hit.kind, parentId: hit.parentId, parentKind: hit.parentKind, channelId: hit.channelId, authorId: hit.authorId, timestamp: hit.timestamp, sequence: hit.sequence, heading: hit.heading, repository:hit.repository};
   return {id: source + ':' + hit.id, source, ...(sourceRank ? {sourceRank} : {}),
+    ...(typeof hit.chunkCount==='number'?{passage:{index:hit.chunk,count:hit.chunkCount,start:hit.textStart,end:hit.textEnd}}:{}),
     title: (hit.title || (source === 'sessions' ? `Session ${hit.sessionId}` : hit.kind) || 'Indexed passage').slice(0, 240),
     text: hit.text || '', ...(hit.url ? {url: hit.url} : {}), provenance};
 }
@@ -60,3 +61,18 @@ export function groupDuplicates(hits: WorkspaceHit[]) {
 }
 
 export type WorkspaceHit = ReturnType<typeof workspaceHit> & {duplicateCount?: number; duplicateIds?: string[]};
+
+export function groupResources(hits:WorkspaceHit[], mode:'none'|'resource'|'session') {
+  if(mode==='none')return {results:hits,suppressed:0};
+  const seen=new Map<string,WorkspaceHit&{groupedCount?:number;groupedIds?:string[]}>(),results:Array<WorkspaceHit&{groupedCount?:number;groupedIds?:string[]}>=[];
+  for(const hit of hits){
+    const p=hit.provenance;
+    const key=JSON.stringify(hit.source==='sessions'?[hit.source,p.userId,p.harness,p.sessionId,...(mode==='session'?[]:[p.eventId||hit.id])]:
+      hit.source==='memories'?[hit.source,p.userId,p.harness,p.installationId,p.path,p.snapshotId]:
+      [hit.source,p.provider,p.connectionId,p.parentKind||p.kind,p.parentId||p.sourceId||hit.id]);
+    const existing=seen.get(key);
+    if(existing){existing.groupedCount=(existing.groupedCount||0)+1;existing.groupedIds??=[];if(existing.groupedIds.length<3)existing.groupedIds.push(hit.id);}
+    else {const copy={...hit};seen.set(key,copy);results.push(copy);}
+  }
+  return {results,suppressed:hits.length-results.length};
+}
