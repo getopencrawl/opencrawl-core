@@ -24,6 +24,7 @@ export interface IdentityDirectory {
     listOrganizationMemberships(options: {userId?: string; organizationId?: string; statuses?: Array<'active' | 'inactive' | 'pending'>; limit?: number}): Promise<Listing<DirectoryMembership>>;
     listSessions(userId: string, options?: {limit?: number; order?: 'asc' | 'desc'; after?: string}): Promise<{data: DirectorySession[]; listMetadata: {after?: string | null}}>;
     updateOrganizationMembership(id: string, options: {roleSlug: string}): Promise<DirectoryMembership>;
+    deleteOrganizationMembership(id: string): Promise<void>;
     listInvitations(options: {organizationId: string; limit?: number}): Promise<{data: Array<{email: string; state: string; organizationId?: string | null; acceptInvitationUrl?:string}>}>;
     sendInvitation(options: {organizationId: string; email: string; inviterUserId: string; roleSlug: string}): Promise<{id: string; email: string; acceptInvitationUrl?: string}>;
   };

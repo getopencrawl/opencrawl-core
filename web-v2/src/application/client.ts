@@ -29,6 +29,7 @@ return {
   saveCredential:(credential:string,value:string,signal?:AbortSignal)=>write(()=>webRpc.integrations.saveCredential.mutate({credential,value},{signal}),signal),
   invite:(email:string,signal?:AbortSignal)=>write(()=>webRpc.console.invite.mutate({email},{signal}),signal),
   changeRole:(userId:string,role:WorkspaceRole,signal?:AbortSignal)=>write(()=>webRpc.console.changeRole.mutate({userId,role},{signal}),signal),
+  removeMember:(userId:string,signal?:AbortSignal)=>write(()=>webRpc.console.removeMember.mutate({userId},{signal}),signal),
   renameOrganization:(name:string,signal?:AbortSignal)=>write(()=>webRpc.console.rename.mutate({name},{signal}),signal),
   onboardingStatus:(signal?:AbortSignal)=>read(()=>webRpc.onboarding.status.query(undefined,{signal}),signal),
   onboardingSources:(signal?:AbortSignal)=>read(()=>webRpc.onboarding.sources.query(undefined,{signal}),signal),

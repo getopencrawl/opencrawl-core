@@ -3,7 +3,7 @@ import type {SourceCard, TeamReport} from './types.mjs';
 
 export type Principal = {tenantId: string; userId: string};
 export type User = {id: string; email: string; firstName?: string | null; lastName?: string | null};
-export type Membership = {userId: string; organizationId: string; status: string; role?: {slug: string}; roles?: Array<{slug: string}>};
+export type Membership = {userId: string; organizationId: string; status: string; role?: {slug: string}; roles?: Array<{slug: string}>; directoryManaged?:boolean};
 export type Organization = {id: string; name: string; metadata?: Record<string, string>};
 type Progress = {completed?: {observedAt?: string} | null};
 export interface ConsoleContext {principal: Principal; user: User; member: Membership; revalidate: () => Promise<boolean>; admitted?: boolean; cacheScope?: string}
@@ -16,6 +16,7 @@ export interface ConsoleServices {
   invitations: (user: User, id: string, member: Membership) => Promise<Array<{email: string; inviteUrl?: string}>>;
   invite: (user: User, id: string, email: string) => Promise<unknown>;
   changeRole: (user: User, id: string, userId: string, role: 'admin' | 'member') => Promise<{ok:true; userId:string; role:'admin' | 'member'}>;
+  removeMember: (user: User, id: string, userId: string) => Promise<{ok:true;userId:string}>;
   renameOrganization: (user: User, id: string, name: string) => Promise<{ok:true;name:string}>;
   sources: (principal: Principal) => Promise<SourceCard[]>;
   usage: (principal: Principal) => Promise<unknown>;
@@ -29,7 +30,7 @@ const LIBRARY = /^\/api\/console\/library\/((?:sessions|memories)\/(?:list|read|
 export const consolePages = new Set(['/', '/usage', '/sessions', '/memories', '/sources', '/integrations', '/data', '/diagnostics', '/settings', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
 export function consoleRoute(method: string, path: string) {
   if (['/api/console/bootstrap','/api/console/sources','/api/console/usage','/api/console/team'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
-  if (['/api/console/team/invite','/api/console/team/role','/api/console/team/organization'].includes(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
+  if (['/api/console/team/invite','/api/console/team/role','/api/console/team/remove','/api/console/team/organization'].includes(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
   if (['/sources','/data','/diagnostics','/settings','/sessions','/memories'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
   if (LIBRARY.test(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
   return null;
@@ -84,7 +85,7 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
         body = {items:await services.sources(principal)};
       } else if (path === '/api/console/team') {
         const [organization,members,extension,invitations] = await Promise.all([services.organization(principal.tenantId),services.members(principal.tenantId),extensions.team?.(context),admin(member) ? services.invitations(user,principal.tenantId,member) : []]);
-        const users = await Promise.all(members.map(async membership => {const person = await services.user(membership.userId); return {id:person.id,name:name(person),email:person.email,role:admin(membership) ? 'admin' as const : 'member' as const};}));
+        const users = await Promise.all(members.map(async membership => {const person = await services.user(membership.userId); return {id:person.id,name:name(person),email:person.email,role:admin(membership) ? 'admin' as const : 'member' as const,...(membership.directoryManaged?{directoryManaged:true}:{})};}));
         body = {...extension,organization:{id:organization.id,name:organization.name},viewerUserId:user.id,role:admin(member) ? 'admin' : 'member',members:users,invitations} satisfies TeamReport;
       } else if (path === '/api/console/team/invite') {
         if (!admin(member)) throw consoleFailure(403,'Only an organization admin can do that.');
@@ -97,6 +98,11 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
         if (Object.keys(payload).some(key => !['userId','role'].includes(key)) || typeof payload.userId !== 'string' || !/^user_[A-Za-z0-9]+$/.test(payload.userId) || (payload.role !== 'admin' && payload.role !== 'member')) throw consoleFailure(400,'Choose an active teammate and Admin or Member.');
         if (payload.userId === user.id) throw consoleFailure(400,'You cannot change your own role.');
         body = await services.changeRole(user,principal.tenantId,payload.userId,payload.role);
+      } else if (path === '/api/console/team/remove') {
+        if(!admin(member))throw consoleFailure(403,'Only an organization admin can do that.');
+        const payload=await input(req);
+        if(Object.keys(payload).some(key=>key!=='userId')||typeof payload.userId!=='string'||!/^user_[A-Za-z0-9]+$/.test(payload.userId))throw consoleFailure(400,'Choose an active teammate.');
+        body=await services.removeMember(user,principal.tenantId,payload.userId);
       } else if (path === '/api/console/team/organization') {
         if (!admin(member)) throw consoleFailure(403,'Only an organization admin can do that.');
         const payload = await input(req);
