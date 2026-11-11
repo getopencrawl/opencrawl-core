@@ -1,5 +1,7 @@
 name: Core continuous delivery
 on:
+  schedule:
+    - cron: '1-59/5 * * * *'
   workflow_run:
     workflows: [Core CI, Repository security, Self-host preview, Plugin packages]
     branches: [main]
@@ -14,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
-    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)
+    if: ((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main') || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     env:
@@ -39,22 +41,31 @@ jobs:
         if: steps.gate.outputs.ready == 'true'
         id: package
         run: node tools/delivery.mts prepare
-      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Reuse a completed immutable publication
         if: steps.gate.outputs.ready == 'true'
-      - run: npm ci --prefix web-v2 --ignore-scripts --no-audit --no-fund
-        if: steps.gate.outputs.ready == 'true'
-      - name: Publish or resume the exact tested source
-        if: steps.gate.outputs.ready == 'true'
+        id: existing
         env:
           VERSION: ${{ steps.package.outputs.version }}
         run: |
           set -euo pipefail
           if npm view "@getopencrawl/opencrawl-core@$VERSION" --json > metadata.json 2> registry-error.txt; then
             node -e 'const p=require("./metadata.json");if(p.opencrawlRevision!==process.env.SOURCE_REVISION)throw Error("Published source mismatch")'
+            echo 'published=true' >> "$GITHUB_OUTPUT"
           else
             grep -q E404 registry-error.txt
-            npm publish --access restricted --tag continuous-pending
+            echo 'published=false' >> "$GITHUB_OUTPUT"
           fi
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        if: steps.existing.outputs.published == 'false'
+      - run: npm ci --prefix web-v2 --ignore-scripts --no-audit --no-fund
+        if: steps.existing.outputs.published == 'false'
+      - name: Publish or resume the exact tested source
+        if: steps.existing.outputs.published == 'false'
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm publish --access restricted --tag continuous-pending
       - name: Recheck main before advancing the continuous channel
         if: steps.gate.outputs.ready == 'true'
         id: promote
