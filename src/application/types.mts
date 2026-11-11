@@ -6,6 +6,8 @@ export interface SourceCard {
   provider: string;
   name: string;
   description?: string;
+  /** Catalog-selected headline statistic; unknown connectors use their highest count. */
+  primaryMetric?: string;
   units?: [string, string];
   account?: string | null;
   state: 'disconnected' | 'connecting' | 'syncing' | 'synced' | 'connected' | 'error' | 'unavailable' | 'setup-required';
