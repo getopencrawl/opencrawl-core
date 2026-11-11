@@ -12,6 +12,40 @@ A teammate's agent investigated a failing build yesterday. OpenCrawl lets your
 agent search that captured session from another machine and fetch the commands
 and output before starting a new investigation.
 
+## Quickstart
+
+Use a **Linux x86_64** machine with **4 CPUs, 8 GiB RAM and 20 GiB free disk**.
+Ubuntu 24.04 is the tested target.
+
+```sh
+git clone https://github.com/getopencrawl/opencrawl-core.git
+cd opencrawl-core
+./dev/up --no-airbyte
+```
+
+Open **http://localhost:8092** and sign in with the login printed in your terminal.
+Onboarding gives you a setup prompt to paste into your coding agent.
+No provider keys or `.env` editing are needed. The first run downloads and builds
+images; on Ubuntu it installs Docker if missing (sudo may be needed).
+
+Keep `--no-airbyte` on each startup to run capture, memories, search and the board.
+To add external sources, omit the flag and use **16 GiB RAM, 40 GiB free disk**
+and [your connector credentials](docs/self-host.md#connect-sources).
+
+**On macOS or Windows?** The server installer currently requires Linux x86_64.
+Run it on a Linux x86_64 VM, then forward the port with
+`ssh -L 8092:localhost:8092 your-vm`. The CLI runs on macOS, Linux and Windows.
+
+For an optional synthetic demo, run `./dev/up demo --no-airbyte` and search for
+`lunar otter` in **Diagnostics → Search inspector**. This completes onboarding;
+use **Agent setup** in the sidebar to connect your agent afterward.
+
+`./dev/up stop` keeps your data; `./dev/up --no-airbyte` resumes it.
+See the [development guide](dev/README.md) for ports, reset and troubleshooting,
+and [installation checks](docs/dev-install-acceptance.md) for verification details.
+
+## What you get
+
 It collects supported agent transcripts and memory files in a shared server,
 alongside connected sources.
 
@@ -49,53 +83,6 @@ excerpts; surrounding details are summarized.
   closed unmerged; the fix shipped in CLI 0.4.22 through
   [#107](https://github.com/getopencrawl/opencrawl-core/pull/107) and
   [#108](https://github.com/getopencrawl/opencrawl-core/pull/108).
-
-## Quickstart
-
-Use **Linux x86_64, 4 CPUs, 8 GiB RAM and 20 GiB free disk**. Ubuntu 24.04 is the
-tested installer target. Internet access is required; sudo may be needed to
-install Docker. macOS, Windows and ARM are not supported by the server installer.
-
-```sh
-git clone https://github.com/getopencrawl/opencrawl-core.git
-cd opencrawl-core
-./dev/up --no-airbyte
-```
-
-The script starts the stack, creates a local account and prints the login.
-No provider keys or `.env` editing are needed for this mode. On Ubuntu it installs
-Docker if missing; on other Linux distributions Docker must already be available.
-The first run downloads and builds images. See the
-[installation checks](docs/dev-install-acceptance.md) for tested environments.
-
-Open **http://localhost:8092** and sign in. Onboarding provides a setup prompt for
-your agent. To try retrieval with synthetic data before connecting an agent:
-
-```sh
-./dev/up demo --no-airbyte
-```
-
-Search for `lunar otter` in **Diagnostics → Search inspector**. The
-[fixture](dev/seed.mts) contains this synthetic session text:
-
-> The lunar otter checks agent capture. Synthetic OpenCrawl development setup verification. No personal agent history was imported.
-
-The demo checks that this text is retrievable through the running ingestion,
-indexing and search services. It completes onboarding, so use **Agent setup**
-in the sidebar afterward. No personal agent history is needed for the demo.
-
-- Keep `--no-airbyte` on every startup and demo command to run capture, memories,
-  search and the board using Docker Compose alone. Running `./dev/up` without it
-  selects the full connector stack, adding Airbyte in a local kind Kubernetes
-  cluster: use **16 GiB RAM and 40 GiB free disk**. External sources need
-  [your connector credentials](docs/self-host.md#connect-sources).
-- On a Mac or Windows machine, run the server on a Linux x86_64 VM and forward
-  its port: `ssh -L 8092:localhost:8092 your-vm`. The CLI runs on macOS, Linux
-  and Windows; the server installer has narrower support.
-- `./dev/up stop` keeps data; `./dev/up --no-airbyte` resumes it.
-  `./dev/up reset --yes` deletes this development installation's data.
-
-The [development guide](dev/README.md) covers remote access, ports and troubleshooting.
 
 ## Connect your agent
 
