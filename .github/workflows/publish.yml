@@ -43,6 +43,12 @@ jobs:
       - run: npm test
       - run: npm ci --prefix web-v2 --ignore-scripts --no-audit --no-fund
       - run: npm run check --prefix web-v2
+      - name: Prepare the tested source for immutable publication
+        if: inputs.revision != ''
+        env:
+          RELEASE_CLI_VERSION: ${{ steps.source.outputs.cli_version }}
+        # Test the unmodified source first. npm pack rebuilds generated release pins.
+        run: node tools/delivery.mts prepare
       - name: Validate stable or isolated candidate publication
         id: publication
         env:
