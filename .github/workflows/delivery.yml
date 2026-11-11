@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           if npm view "@getopencrawl/opencrawl-core@$VERSION" --json > metadata.json 2> registry-error.txt; then
-            node -e 'const p=require("./metadata.json");if(p.opencrawlRevision!==process.env.SOURCE_REVISION)throw Error("Published source mismatch")'
+            node tools/package-provenance.mts metadata.json "$VERSION" "$SOURCE_REVISION"
             echo 'published=true' >> "$GITHUB_OUTPUT"
           else
             grep -q E404 registry-error.txt
