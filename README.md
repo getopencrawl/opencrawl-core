@@ -16,7 +16,7 @@ and output before starting a new investigation.
 
 Use **macOS or Linux, on ARM64 or x86_64**, with **4 CPUs, 8 GiB RAM and
 20 GiB free disk**. On macOS, install and start [Docker Desktop](https://docs.docker.com/desktop/setup/install/mac-install/)
-or [Colima](https://github.com/abiosoft/colima) first.
+or [Colima with Docker Compose](dev/README.md#macos-with-colima) first.
 
 ```sh
 git clone https://github.com/getopencrawl/opencrawl-core.git

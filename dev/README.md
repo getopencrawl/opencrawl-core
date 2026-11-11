@@ -35,8 +35,11 @@ architecture.
 
 The continuous checks exercise the real Linux x86_64 and ARM64 container stacks,
 including capture, search, restart and backup/restore. Separate macOS x64 and ARM64
-checks verify the real native bootstrap download. Hosted macOS CI cannot run
-Docker VMs, so those bootstrap checks alone do not prove a full macOS installation.
+checks verify the real native bootstrap download. A manual Apple silicon check
+also passed the full `--no-airbyte` stack, login, capture/search and stop/resume
+using Colima. See [acceptance evidence and limits](../docs/dev-install-acceptance.md#native-arm-and-macos-verification-november-11-2026).
+Hosted macOS CI covers bootstrap only; full Airbyte on macOS and a complete
+Intel Mac installation have not been exercised.
 
 Provide 4 CPUs, 16 GiB RAM and at least 40 GiB free disk. The first run downloads
 images and builds the shared React console and backend, so it requires internet
@@ -50,6 +53,26 @@ Your first sign-in opens the normal onboarding flow. Startup does not connect an
 agent, invent capture receipts, complete onboarding, or import demo records.
 To find the credentials later, read `.opencrawl-dev/login.txt` (use
 `sudo cat .opencrawl-dev/login.txt` if sudo created the installation).
+
+## macOS with Colima
+
+Docker Desktop includes Docker Compose. For a Homebrew-based Colima setup:
+
+```sh
+brew install colima docker docker-compose
+mkdir -p ~/.docker/cli-plugins
+# Skip this link if docker compose version already works.
+ln -s "$(brew --prefix)/bin/docker-compose" ~/.docker/cli-plugins/docker-compose
+colima start --cpu 4 --memory 8 --disk 60
+docker compose version
+./dev/up --no-airbyte
+```
+
+The link registers the Compose plugin without replacing your Docker configuration.
+If a plugin already exists, keep it and check `docker compose version` instead of
+replacing it. For Airbyte, allocate 16 GiB RAM and at least 40 GiB free disk before
+running `./dev/up` without the flag. The installer preserves your Docker context;
+use a local Linux Docker engine with the checkout available for bind mounts.
 
 ## Optional demo data
 
