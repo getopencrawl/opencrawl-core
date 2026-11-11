@@ -39,6 +39,11 @@ else from these pages, workspace search and fetch (CLI, HTTP, MCP), the board's
 recent sessions and transcript reads. Its owner still sees and searches it.
 Usage counts remain aggregate and include private activity without content.
 
+In **My sessions**, each row has an eye toggle: an open eye means shared with
+the team, and a crossed-out eye means private. Hover text names the action;
+keyboard and screen-reader users get a labelled toggle with its current sharing
+state. Visibility changes are shown only after the server confirms them.
+
 Visibility is stored as an owner control object beside the owner's capture
 objects (`<prefix>/tenants/<t>/users/<u>/controls/{sessions,memories}/...`) and
 copied onto every indexed document (`session.private`, `memory.private`). New
