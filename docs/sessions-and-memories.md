@@ -71,12 +71,40 @@ another person's resource is never confirmed.
   referenced by the deleted session are also erased, even when another session
   referenced those same bytes. Unscoped attachment uploads are refused with an
   instruction to upgrade the CLI.
-  `sessions/delete` returns `deleted: true` only after verified erasure. Otherwise
-  it returns `deleted: false, pending: true`; the session remains inaccessible,
-  and the owner's Sessions page offers **Retry deletion**, including after a
-  server/browser restart. An ambiguous remote write never expires into a claim
-  of successful deletion. Operators must reconcile unfinished writes; object
-  locks or missing permissions must be resolved before retrying.
+  `sessions/delete` authorizes the owner, persists a metadata-only deletion
+  intent, revokes access immediately, and submits `deleteSessionV1` to Temporal.
+  It returns `deleted: false, pending: true` while erasure runs. The UI removes
+  the session after acceptance; it does not claim physical erasure is complete
+  or expose storage cleanup controls. A repeated request after verified erasure
+  returns `deleted: true, pending: false`.
+
+  The durable workflow waits for fenced writers, scrubs historical archives,
+  then erases raw versions and verifies the empty index before completing the
+  permanent tombstone. Each stage retries independently with heartbeats and
+  bounded attempt timeouts; worker/API replacement cannot lose the request.
+  A separate deletion task queue prevents long archive scans from occupying
+  indexing slots. A one-minute Temporal recovery schedule picks up persisted
+  intents whose direct submission was interrupted. Intent keys and workflow IDs
+  include the storage prefix, tenant, owner, harness and native session ID.
+  Activities load the approved intent from the configured protected namespace;
+  arguments cannot supply credentials, arbitrary owners or search/storage scopes.
+  Accepted deletions continue if the owner later leaves the organization.
+
+  An ambiguous remote write never expires into a claim of successful deletion.
+  Operators inspect Temporal activity failures for unresolved writes, object locks
+  or missing permissions. No cleanup error or transcript content enters the UI;
+  Temporal history contains opaque references and sanitized error categories.
+  The low-level `library.delete` helper remains for controlled operator erasure
+  and upgrade verification; HTTP/RPC uses `library.requestDeletion` exclusively.
+
+  **Upgrade:** deploy the new workflow bundle/worker and recovery schedule with
+  the API scheduler wiring. For each known owner with a pre-upgrade pending
+  tombstone, enumerate `library.pendingDeletions(owner)` and submit each through
+  `library.requestDeletion(owner, session)`. This creates the new durable intent
+  without clearing the existing tombstone or fence. Verify all such requests
+  appear in Temporal; unresolved owner mappings must be reported, never skipped.
+  Rollback must retain a worker that understands these workflow types until all
+  accepted deletions complete. Do not roll back to a pre-fence writer.
 - Deleting a **memory** removes the file's passages from search and ignores that
   version in later snapshots. The file on the person's machine is not changed;
   if the agent writes a newer version (later modification time), it is captured
@@ -109,24 +137,3 @@ self-host console proxies them as `/api/reference/library/<operation>`.
 
 Capture-only credentials are refused. Ownership comes from the authenticated
 principal; requests cannot name another owner for a change.
-
-### Durable deletion rollout
-
-`requestDeletion` records an owner-authorized intent under the protected
-`_deletions/v1/` namespace and revokes reads before scheduling Temporal. Its
-stable workflow ID includes storage prefix, tenant, owner, harness and session.
-`deleteSessionV1` drains the write fence, purges archives, erases raw object
-versions, verifies search removal and records completion. Failed activities
-retry indefinitely with bounded backoff; a minute schedule recovers intents
-whose initial workflow submission was interrupted. History contains opaque
-references and sanitized failure types, never transcript content.
-
-Deploy the compatible core contract, then configure `scheduleDeletion` in the
-API and the separate deletion queue/worker in the shell. Only then activate
-`requestDeletion` in the public HTTP route and remove the old recovery UI.
-The current HTTP route retains synchronous deletion during this preparation.
-The operator-only `pendingDeletions` method lets an upgrade enumerate already
-requested erasures and submit them through the durable path. Previously
-authorized requests finish even if the owner subsequently leaves the workspace.
-After activation, rollback must retain a deletion-capable worker until all
-accepted requests have completed.

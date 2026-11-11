@@ -31,7 +31,7 @@ export interface MemoryDocument {memory: Omit<MemorySummary, 'description'>; tex
 export interface Authors {authors?: Record<string, string>}
 
 export interface LibraryContract {
-  'sessions/list': {input: {scope: LibraryScope; query?: string; limit?: number}; output: {sessions: SessionSummary[]; limit: number; deletions?: Array<{harness: SessionHarness; sessionId: string}>} & Authors};
+  'sessions/list': {input: {scope: LibraryScope; query?: string; limit?: number}; output: {sessions: SessionSummary[]; limit: number} & Authors};
   'sessions/read': {input: SessionRef & {cursor?: string | null; limit?: number}; output: SessionTranscript & Authors};
   'sessions/visibility': {input: {harness: SessionHarness; sessionId: string; visibility: Visibility}; output: {visibility: Visibility}};
   'sessions/delete': {input: {harness: SessionHarness; sessionId: string}; output: {deleted: boolean; pending?: boolean}};

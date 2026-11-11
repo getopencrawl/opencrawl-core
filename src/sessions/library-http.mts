@@ -1,5 +1,5 @@
 /** Release capability used by shells to verify the public deletion contract. */
-export const sessionDeletionExecution = 'inline' as const;
+export const sessionDeletionExecution = 'temporal' as const;
 import type {Principal, Authenticate, HttpHandler} from './types.mjs';
 import {parseJson, serviceError, SESSION_HARNESSES} from './types.mjs';
 import {z} from 'zod';
@@ -44,7 +44,7 @@ export function createLibraryApi({sessions, memories}: {sessions?: ReturnType<ty
     if (action === 'list') return library.list(principal, value);
     if (action === 'read') return library.read(principal, value);
     if (action === 'visibility') return library.setVisibility(principal, value);
-    return library.delete(principal, value);
+    return resource === 'sessions' ? sessions!.requestDeletion(principal, value) : memories!.delete(principal, value);
   };
 }
 /** Status and safe message for an operation failure. Unclassified failures never expose details. */
