@@ -23,6 +23,22 @@ export function cliVersion(base: string, published?: string): string {
   for (let i = 0; i < 3; i++) {if (wanted[i]! > previous[i]!) return base; if (wanted[i]! < previous[i]!) break;}
   return `${previous[0]}.${previous[1]}.${previous[2]! + 1n}`;
 }
+export const cliPackages=['@getopencrawl/cli',...['darwin-arm64','darwin-x64','linux-arm64','linux-x64','win32-x64'].map(platform=>'@getopencrawl/cli-'+platform)];
+/** A partially published platform reserves its version even when the launcher
+ * has not reached the update channel. Never allocate from that channel alone. */
+export function allocateCliVersion(base:string,published:string[]):string {
+  let highest:string|undefined;
+  for(const version of published){
+    cliVersion(version);
+    if(!highest){highest=version;continue;}
+    const candidate=version.split('.').map(BigInt),previous=highest.split('.').map(BigInt);
+    for(let i=0;i<3;i++){
+      if(candidate[i]!>previous[i]!){highest=version;break;}
+      if(candidate[i]!<previous[i]!)break;
+    }
+  }
+  return cliVersion(base,highest);
+}
 export function pinCli(source: string, version: string): string {
   cliVersion(version);
   const pattern = /@getopencrawl\/cli@\d+\.\d+\.\d+/g;
@@ -77,10 +93,15 @@ if (import.meta.main) {
     const pkg = JSON.parse(readFileSync('cli/package.json', 'utf8'));
     if (process.env.RELEASE_VERSION) pkg.version = process.env.RELEASE_VERSION;
     else if (process.env.GITHUB_EVENT_NAME === 'push') {
-      const response = await fetch('https://registry.npmjs.org/@getopencrawl%2fcli/next', {signal: AbortSignal.timeout(30_000)});
-      if (!response.ok && response.status !== 404) throw Error(`CLI registry unavailable: ${response.status}`);
-      const current = response.ok ? await response.json() as {version: string} : undefined;
-      pkg.version = cliVersion(pkg.version, current?.version);
+      const inventories=await Promise.all(cliPackages.map(async name=>{
+        const response=await fetch('https://registry.npmjs.org/'+encodeURIComponent(name),{signal:AbortSignal.timeout(30_000)});
+        if(response.status===404)return [];
+        if(!response.ok)throw Error(`CLI registry inventory unavailable: ${response.status}`);
+        const metadata=await response.json() as {versions?:Record<string,unknown>};
+        if(!metadata.versions||typeof metadata.versions!=='object'||Array.isArray(metadata.versions))throw Error('Invalid CLI registry inventory');
+        return Object.keys(metadata.versions).filter(version=>/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version));
+      }));
+      pkg.version=allocateCliVersion(pkg.version,inventories.flat());
     }
     cliVersion(pkg.version);
     pkg.opencrawlRevision = process.env.GITHUB_SHA;

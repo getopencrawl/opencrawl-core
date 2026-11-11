@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ready, continuousVersion, cliVersion, pinCli} from '../tools/delivery.mts';
+import {ready, continuousVersion, cliVersion, pinCli, allocateCliVersion} from '../tools/delivery.mts';
 const revision = 'a'.repeat(40), repository = 'example/core';
 const runs = ['ci', 'security', 'self-host', 'plugins'].map((name, i) => ({id: i + 1, path: `.github/workflows/${name}.yml`, event: 'push', head_branch: 'main', head_sha: revision, conclusion: 'success', status: 'completed', head_repository: {full_name: repository}}));
 test('publication requires the latest successful run of every trusted main gate', () => {
@@ -28,4 +28,12 @@ test('CLI merges allocate a stable patch without downgrading existing releases',
   assert.equal(cliVersion('1.0.0', '0.4.33'), '1.0.0');
   assert.equal(cliVersion('0.4.33'), '0.4.33');
   assert.throws(() => cliVersion('0.4.33', 'next'));
+});
+test('a platform-only partial release reserves its immutable version',()=>{
+  assert.equal(allocateCliVersion('0.4.33',['0.4.34','0.4.35']),'0.4.36');
+  assert.equal(allocateCliVersion('0.4.33',['0.4.35','0.4.9','0.4.34']),'0.4.36');
+  assert.equal(allocateCliVersion('0.5.0',['0.4.35']),'0.5.0');
+  assert.equal(allocateCliVersion('0.4.33',['0.5.0','0.4.99']),'0.5.1');
+  assert.equal(allocateCliVersion('0.4.33',[]),'0.4.33');
+  assert.throws(()=>allocateCliVersion('0.4.33',['next']));
 });
