@@ -41,7 +41,7 @@ export function createRecordCounts({buckets, legacyBucket, log = () => {}, now =
   const states = new Map<string, CountEntry>();
   const running = new Map<string, Promise<Record<string, number> | null>>();
 
-  const cacheKey = (record: IntegrationRecord) => JSON.stringify([record.integrationId, record.environment, record.tenantId, record.s3Bucket || legacyBucket, record.s3Prefix]);
+  const cacheKey = (record: IntegrationRecord) => JSON.stringify([record.integrationId, record.environment, record.tenantId, record.userId, record.s3Bucket || legacyBucket, record.s3Prefix]);
   const countsOf = (state: CountState) => Object.fromEntries([...Object.entries(state.ids).map(([s, ids]) => [s, ids.size]), ...Object.entries(state.full).map(([s, full]) => [s, full.count])]);
 
   const keysFor = (provider: Provider) => provider.keys || (provider.connector?.manifest ? manifestKeys(provider.connector.manifest) : {});

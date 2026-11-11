@@ -52,3 +52,15 @@ test('usage reports do not execute synthetic full-text latency probes',async()=>
     search:{usage:async()=>{usageReads++;return {people:[],lifetimeEvents:0};},search:async()=>assert.fail('Usage must not run a search benchmark')}});
   assert.equal(usageReads,1);assert.equal(report.ingestion,null);
 });
+
+test('integration cards show durable measurements without waiting for a raw-data recount', {timeout:2000}, async t=>{
+  const scan=gate();t.after(()=>scan.resolve([]));
+  const saved=gzipSync(JSON.stringify({version:1,read:[],ids:{messages:['one','two']},full:{}}));
+  const integrations=createIntegrations({environment:'production',appUrl:'https://app.example',providers:{slack:provider},
+    registry:{listTenant:async()=>[record]},oauth:{},destination:{},workspaceId:async()=>'workspace',legacyBucket:'owned',
+    airbyte:{jobs:async()=>[{jobId:1,status:'succeeded'}],streamCounts:async()=>({messages:999})},
+    buckets:{read:async()=>saved,list:async()=>scan.promise,write:async()=>{},stream:async()=>assert.fail('No objects')}});
+  const alive=setInterval(()=>{},1000);t.after(()=>clearInterval(alive));
+  // The scan remains unresolved until cleanup. The page must still return the durable count.
+  assert.equal((await integrations.list(principal))[0].synced,2);
+});

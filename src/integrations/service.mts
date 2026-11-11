@@ -70,7 +70,7 @@ export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
 export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation}: IntegrationOptions) {
   const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>}>();
   const statusCache = new Map<string, {at: number; pending: boolean; result: Promise<{jobs: AirbyteJob[]; live: Record<string, number> | null}>}>();
-  const statusKey = (record: IntegrationRecord) => JSON.stringify([environment, record.tenantId, record.integrationId, record.airbyte?.connectionId]);
+  const statusKey = (record: IntegrationRecord) => JSON.stringify([environment, record.tenantId, record.userId, record.integrationId, record.airbyte?.connectionId]);
   const provisioning = new Map<string, Promise<IntegrationRecord>>();
   const requireWritable = () => {
     if (maintenance) throw Object.assign(new Error('Integration maintenance is in progress. Please retry shortly.'), {status: 503, expose: true});
