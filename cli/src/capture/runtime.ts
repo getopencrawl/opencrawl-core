@@ -16,6 +16,7 @@ import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GR
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
+import {redactValue,redactAttachment,MAX_REDACTION_DEPTH} from './redact.ts';
 
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
@@ -126,6 +127,13 @@ function attachmentTransform(value:any, attachments:any[], cwd:string, localFile
   }
   if(bytes){
     if(bytes.length>32*1024*1024){attachments.push({status:'too_large',path,mimeType:mime});return {...value,data:undefined,image_url:undefined,captureStatus:'too_large'};}
+    const safe=redactAttachment(bytes);
+    if(safe===null){
+      const a={status:'missing',path:path??null,mimeType:mime??null,redactionReason:'secret_in_binary'};attachments.push(a);
+      return {type:'opencrawl_attachment',...a};
+    }
+    bytes=safe;
+    if(bytes.length>32*1024*1024){const a={status:'too_large',path:path??null,mimeType:mime??null};attachments.push(a);return {type:'opencrawl_attachment',...a};}
     const sha256=hash(bytes),dest=join(captureDir(),'blobs',sha256);
     atomicFile(dest,bytes);
     const a={sha256,size:bytes.length,mimeType:mime??null,path:path??null,status:'captured'};attachments.push(a);
@@ -143,10 +151,58 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   if(captureExcluded(current??config,meta))return;
   if(config.authPending)throw new CliError('CAPTURE_AUTH_PENDING','Capture identity has not been authenticated yet');
   if(!meta.sessionId)throw new CliError('CAPTURE_SESSION_UNKNOWN','Transcript has no session identity');
-  const batch={schemaVersion:1,owner:config.owner,installationId:config.installationId,host:hostname(),...meta,events:events.map(finalizeEventIdentity),attachments};
+  const batch=redactValue({schemaVersion:1,owner:config.owner,installationId:config.installationId,host:hostname(),...meta,events,attachments});
+  // Keep the original local scope for exclusions added after enqueue. Masking a
+  // credential-shaped directory name must not make an excluded project appear
+  // to be another path. The egress boundary always scrubs these fields.
+  if(meta.cwd!==undefined)batch.cwd=meta.cwd;
+  batch.sessionId=meta.sessionId;
+  batch.events=batch.events.map(finalizeEventIdentity);
   const size=Buffer.byteLength(JSON.stringify(batch));
   if(size>16*1024*1024)throw new CliError('CAPTURE_BATCH_TOO_LARGE','A capture record exceeds the upload limit; retained locally for retry');
   atomicJson(join(captureDir(),'queue',hash(JSON.stringify(batch))+'.json'),batch);
+}
+
+/** Every upload (including queues from older CLIs) crosses this local boundary.
+ * Never trust a queue's masking/version flag. Read and scrub all blobs before
+ * sending any of them. Do not rewrite original queues: exclusions still need
+ * their original local paths and retries deterministically derive the same wire
+ * bytes. A changed event gets a new identity to avoid immutable-ID conflicts.
+ */
+function prepareCaptureUpload(original:any) {
+  const replacements=new Map<string,any>();
+  for(const attachment of original.attachments)if(attachment.status==='captured') {
+    const raw=readCaptureAttachment(attachment.sha256);
+    const bytes=redactAttachment(raw);
+    if(bytes===null)replacements.set(attachment.sha256,{sha256:undefined,size:undefined,status:'missing',redactionReason:'secret_in_binary'});
+    else if(bytes.length>32*1024*1024)replacements.set(attachment.sha256,{sha256:undefined,size:undefined,status:'too_large'});
+    else {
+      const sha256=hash(bytes);
+      if(sha256!==attachment.sha256){
+        // Reuse the content-addressed spool instead of holding every attachment
+        // in memory. Normal orphan cleanup handles a crash before acknowledgement.
+        atomicFile(join(captureDir(),'blobs',sha256),bytes);
+        replacements.set(attachment.sha256,{sha256,size:bytes.length});
+      }
+    }
+  }
+  function replace(value:any,depth=0):any {
+    if(depth>MAX_REDACTION_DEPTH)throw new CliError('CAPTURE_REDACTION_TOO_DEEP','Capture content exceeds the supported masking depth; retained locally');
+    if(Array.isArray(value))return value.map(item=>replace(item,depth+1));
+    if(!value || typeof value!=='object')return value;
+    const result=Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,replace(entry,depth+1)]));
+    if(value.status==='captured' && replacements.has(value.sha256))Object.assign(result,replacements.get(value.sha256));
+    return result;
+  }
+  const batch=redactValue(replace(original));
+  batch.events=batch.events.map((event:any,index:number)=>JSON.stringify(event)===JSON.stringify(original.events[index])?event:finalizeEventIdentity(event));
+  return batch;
+}
+function readCaptureAttachment(sha256:string) {
+  if(!/^[a-f0-9]{64}$/.test(sha256))throw new CliError('CAPTURE_ATTACHMENT_INVALID','Invalid queued attachment digest');
+  const bytes=readFileSync(join(captureDir(),'blobs',sha256));
+  if(hash(bytes)!==sha256)throw new CliError('CAPTURE_ATTACHMENT_INVALID','Queued attachment does not match its digest');
+  return bytes;
 }
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
 export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false) {
@@ -638,8 +694,9 @@ export async function flushCaptures({wait=true}={}) {
     const deadline=wait?Infinity:Date.now()+10_000;
     const upload=async(name:string,batch:any)=>{
       const path=join(captureDir(),'queue',name);
+      batch=prepareCaptureUpload(batch);
       for(const a of batch.attachments)if(a.status==='captured'){
-        await request(config.api,'/api/sessions/attachments/'+a.sha256+'?'+new URLSearchParams({harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId}),{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readFileSync(join(captureDir(),'blobs',a.sha256))},await current(),renew);
+        await request(config.api,'/api/sessions/attachments/'+a.sha256+'?'+new URLSearchParams({harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId}),{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readCaptureAttachment(a.sha256)},await current(),renew);
       }
       const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(batch)},await current(),renew);
       if(receipt.batchId!==hash(JSON.stringify(batch)) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');

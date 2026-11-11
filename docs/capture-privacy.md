@@ -3,8 +3,9 @@
 Read this before enabling capture. Capture sends user/agent messages, raw tool
 arguments and results, reasoning summaries available in the transcript, and
 attachments to the selected deployment. These can contain credentials, private
-source code and personal information. There is no automatic secret redaction.
-Repeated system/developer prompts are omitted; this is not a secret filter.
+source code and personal information. The CLI masks recognized secret formats
+locally before uploading session captures; see the limits below. Repeated
+system/developer prompts are omitted.
 
 Every member of a hosted or self-hosted workspace can read its shared captured
 sessions and memories. The owner can mark a session or memory private in the
@@ -27,6 +28,36 @@ it only on your own Bot computer. See [Grok Bot capture](session-capture.md#grok
 return `consent_required` without installing hooks; use `--yes` only after the
 person approves the recording scope and destination. `--yes` does not approve
 history import. Use `--backfill skip` to skip the separate history question.
+
+## Local secret masking
+
+CLI 0.4.32 and later replace recognized credentials with `[REDACTED]` on the
+host that reads the transcript, before any session batch or attachment upload.
+The deterministic, bundled rules are adapted from
+[Gitleaks v8.30.0](https://github.com/gitleaks/gitleaks/blob/v8.30.0/config/gitleaks.toml)
+and cover common provider tokens, private keys, JWTs, authorization headers,
+credential-bearing URLs and explicitly named credential fields. No model,
+remote secret verification or downloaded rule service sees the original text.
+There is no entropy-only or generic UUID/hash rule. Ordinary identifiers, public
+keys and URLs remain useful; a UUID explicitly used as a password is masked.
+
+Masking covers messages, tool arguments/results (including serialized JSON),
+session metadata, titles, hook captures and attachment metadata. Decoded UTF-8
+text attachments are masked before hashing. A binary attachment containing a
+recognizable plaintext credential is withheld, with a `secret_in_binary` reason.
+The upload boundary rechecks older queued batches and blobs too. Changed events
+get new IDs, and receipts use the masked batch hash. Retries do not fall back to
+raw content if masking fails. Original harness files are never edited; old local
+queues/blobs remain on the host until normal acknowledgement/cleanup.
+Original local project paths and session IDs are retained in the queue so
+exclusions added later still match; they also pass through masking before upload.
+
+This is pattern recognition, not a guarantee that every secret is detected.
+Unknown credential formats, secrets split across separate records, arbitrary
+encodings, compressed/encrypted files and secrets visible only in images are not
+recognized. Native memory-file ingestion is a separate path and is not covered
+by this session filter. Previously uploaded data is not retroactively redacted.
+Use exclusions for work that must not be captured at all.
 
 ## Exclude sensitive work
 

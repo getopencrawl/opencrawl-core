@@ -209,7 +209,15 @@ event normalization. The ID covers the source record/notice identity and every
 field of the final JSON event. For the same source identity, equivalent final-event
 JSON property ordering gives the same ID; changed file bytes, attachment
 availability, or event metadata give a new ID.
-Queued batches retain their existing bytes and IDs across upgrades and retries.
+The CLI deterministically masks known credential formats in session content
+before queuing and rechecks everything before uploading. Original local paths
+and session IDs stay in the queue for exclusion matching. UUIDs, hashes and ordinary IDs are
+preserved; explicitly credential-named fields are masked even when their values
+are UUIDs. See [capture privacy](../docs/capture-privacy.md#local-secret-masking).
+Unchanged queued events retain their IDs across upgrades and retries. A legacy
+event changed by masking gets a new ID; its batch and attachment hashes describe
+the masked bytes. The original local queue remains unchanged until acknowledged,
+and every retry applies the same filter. This cannot erase earlier uploads.
 This upgrade preserves transcript cursors and does not trigger history backfill.
 Explicitly rereading history captured before this identity format, replacing or
 truncating a transcript, or recovering an older enqueue-before-checkpoint crash
