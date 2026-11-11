@@ -209,8 +209,9 @@ event normalization. The ID covers the source record/notice identity and every
 field of the final JSON event. For the same source identity, equivalent final-event
 JSON property ordering gives the same ID; changed file bytes, attachment
 availability, or event metadata give a new ID.
-Before queuing and again before uploading, the CLI deterministically masks known
-credential formats on the transcript host. UUIDs, hashes and ordinary IDs are
+The CLI deterministically masks known credential formats in session content
+before queuing and rechecks everything before uploading. Original local paths
+and session IDs stay in the queue for exclusion matching. UUIDs, hashes and ordinary IDs are
 preserved; explicitly credential-named fields are masked even when their values
 are UUIDs. See [capture privacy](../docs/capture-privacy.md#local-secret-masking).
 Unchanged queued events retain their IDs across upgrades and retries. A legacy

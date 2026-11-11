@@ -49,6 +49,8 @@ The upload boundary rechecks older queued batches and blobs too. Changed events
 get new IDs, and receipts use the masked batch hash. Retries do not fall back to
 raw content if masking fails. Original harness files are never edited; old local
 queues/blobs remain on the host until normal acknowledgement/cleanup.
+Original local project paths and session IDs are retained in the queue so
+exclusions added later still match; they also pass through masking before upload.
 
 This is pattern recognition, not a guarantee that every secret is detected.
 Unknown credential formats, secrets split across separate records, arbitrary

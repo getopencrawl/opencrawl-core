@@ -37,7 +37,9 @@ test('project and session exclusions block new bytes and queued uploads; purge i
     const config:CaptureConfig={schemaVersion:1,api,owner,installationId:'device',installedAt:new Date().toISOString(),roots:{codex:join(dir,'codex'),'claude-code':join(dir,'claude')},command:[]};
     mkdirSync(captureDir(),{recursive:true});atomicJson(join(captureDir(),'config.json'),config);
     const transcript=join(config.roots.codex,'sessions','session.jsonl');mkdirSync(join(config.roots.codex,'sessions'),{recursive:true});
-    const project=join(dir,'sensitive');mkdirSync(project);
+    // The queued local scope must still match an exclusion when its path is
+    // credential-shaped and the outgoing metadata will be masked.
+    const project=join(dir,'ghp_'+'S'.repeat(36));mkdirSync(project);
     const writeTranscript=(id:string,cwd:string)=>writeFileSync(transcript,[
       {type:'session_meta',payload:{id,cwd,source:'cli'}},
       {type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'private fixture'},{type:'input_image',image_url:'data:image/png;base64,cHJpdmF0ZQ=='}]}},

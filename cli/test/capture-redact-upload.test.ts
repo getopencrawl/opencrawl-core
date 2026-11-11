@@ -28,8 +28,9 @@ test('all capture sources and legacy retries mask locally before batch and decod
     for(const name of ['queue','blobs','notices','state','sources'])mkdirSync(join(captureDir(),name),{recursive:true});
     writeFileSync(join(captureDir(),'config.json'),JSON.stringify(config));
     const codex=join(config.roots.codex,'sessions','fixture.jsonl');mkdirSync(join(codex,'..'),{recursive:true});
+    const sensitiveProject=join(dir,secret);mkdirSync(sensitiveProject);
     const records=[
-      {type:'session_meta',payload:{id:uuid,source:'cli',cwd:dir,title:'title '+secret}},
+      {type:'session_meta',payload:{id:uuid,source:'cli',cwd:sensitiveProject,title:'title '+secret}},
       {type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'prompt '+secret+' '+uuid},{type:'input_image',image_url:'data:text/plain;base64,'+Buffer.from('attachment '+secret+' '+uuid).toString('base64')}]}},
       {type:'response_item',payload:{type:'function_call',call_id:uuid,arguments:JSON.stringify({api_key:'opaque-sensitive-value',traceId:uuid})}},
       {type:'response_item',payload:{type:'function_call_output',call_id:uuid,output:'tool result '+secret}},
@@ -46,7 +47,10 @@ test('all capture sources and legacy retries mask locally before batch and decod
     let deep:any={token:secret};for(let n=0;n<300;n++)deep={next:deep};
     writeFileSync(join(captureDir(),'notices','grok-deep.json'),JSON.stringify({id:'grok-deep',sequence:2,at:'2026-11-01T00:00:00Z',harness:'grok-bot',event:{conversation_id:uuid,hook_event_name:'postToolUse',cwd:dir,tool_name:'Shell',tool_input:{},tool_output:JSON.stringify(deep)}}));
     await drainCaptureNotices(config);
-    for(const file of readdirSync(join(captureDir(),'queue')))expect(readFileSync(join(captureDir(),'queue',file),'utf8')).not.toContain(secret);
+    for(const file of readdirSync(join(captureDir(),'queue'))) {
+      const {cwd,sessionId,...content}=JSON.parse(readFileSync(join(captureDir(),'queue',file),'utf8'));
+      expect(JSON.stringify(content)).not.toContain(secret);
+    }
     for(const file of readdirSync(join(captureDir(),'blobs')))expect(readFileSync(join(captureDir(),'blobs',file),'utf8')).not.toContain(secret);
     expect(readFileSync(codex,'utf8')).toBe(transcript);expect(readFileSync(asset,'utf8')).toBe(secret);
     // Older CLIs queued raw JSON/blobs. Recheck them regardless of any flag.

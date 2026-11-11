@@ -152,6 +152,11 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   if(config.authPending)throw new CliError('CAPTURE_AUTH_PENDING','Capture identity has not been authenticated yet');
   if(!meta.sessionId)throw new CliError('CAPTURE_SESSION_UNKNOWN','Transcript has no session identity');
   const batch=redactValue({schemaVersion:1,owner:config.owner,installationId:config.installationId,host:hostname(),...meta,events,attachments});
+  // Keep the original local scope for exclusions added after enqueue. Masking a
+  // credential-shaped directory name must not make an excluded project appear
+  // to be another path. The egress boundary always scrubs these fields.
+  if(meta.cwd!==undefined)batch.cwd=meta.cwd;
+  batch.sessionId=meta.sessionId;
   batch.events=batch.events.map(finalizeEventIdentity);
   const size=Buffer.byteLength(JSON.stringify(batch));
   if(size>16*1024*1024)throw new CliError('CAPTURE_BATCH_TOO_LARGE','A capture record exceeds the upload limit; retained locally for retry');
