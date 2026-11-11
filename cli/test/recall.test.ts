@@ -107,8 +107,9 @@ test('opencrawl recall runs locally: no sign-in, no server, the named or current
     const current = run(['cache', 'size', '--kind', 'user', '--limit', '1'], {...env, CLAUDE_CODE_SESSION_ID: t.session});
     expect(current.exit).toBe(0);
     expect(current.stdout).toBe("opencrawl recall: 2 passages matched in this session's transcript; showing 1, oldest first, verbatim. A later statement overrides an earlier one.\n\n--- [2026-01-05T08:01:05.000Z | the user said (while you were working)] ---\nChange of plan: the cache size is now 512, not 640.\n");
-    // With no session named, the newest transcript of the project the command runs in.
-    expect(run(['git tag', '--kind', 'tool', '--chars', '200'], env, join(cwd, 'src')).stdout).toContain('| you ran] ---\nBash: git tag --list');
+    // With no session named, the newest transcript of the project the command runs in. The project is named
+    // here rather than taken from the child's working directory, which the OS may report under another path.
+    expect(run(['git tag', '--kind', 'tool', '--chars', '200'], {...env, CLAUDE_PROJECT_DIR: join(cwd, 'src')}).stdout).toContain('| you ran] ---\nBash: git tag --list');
     // Every message the user sent, as the compaction hook records it.
     const record = run(['--user', '--session', t.session]);
     expect(record.exit).toBe(0);

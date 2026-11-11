@@ -246,14 +246,16 @@ function sweepPending(directory: string, now: number) {
  * its shell test found a comparison owed; where there is no such test, an
  * absent file is the common case and costs one failed open. */
 export function compactionFollowUp(payload: any, {config, directory, until = Infinity, now = Date.now(), env = process.env}: Enrollment): string {
-  // A subagent's tool result belongs to the subagent's context, not to the agent that was compacted.
-  if (payload?.hook_event_name !== 'PostToolUse' || typeof payload.agent_id === 'string') return '';
+  if (payload?.hook_event_name !== 'PostToolUse') return '';
   const session = claudeSession(payload, config), marker = session && pendingFile(directory, session, env);
   if (!session || !marker) return '';
   let since: number;
   try {since = Date.parse(JSON.parse(readFileSync(marker, 'utf8')).at);} catch {sweepPending(directory, now); return '';}
   const clear = () => {try {unlinkSync(marker);} catch {} sweepPending(directory, now);};
   if (!(now - since < PENDING_MS) || session.excluded()) {clear(); return '';}
+  // A subagent's tool result belongs to the subagent's context, not to the agent
+  // that was compacted. Its calls still end a comparison that has waited too long.
+  if (typeof payload.agent_id === 'string') return '';
   const {events} = readTranscript(session.transcript, {kinds: [...EVENT_KINDS, 'boundary'], until});
   const state = afterCompaction(events), items = userItems(events);
   // Not in the transcript yet, or still the compaction before this one: try at the next tool result.

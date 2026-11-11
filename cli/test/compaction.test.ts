@@ -242,6 +242,10 @@ test('a long record leaves a comparison owed, and the first tool result of the c
   // Nobody collected it within fifteen minutes: dropped.
   expect(compactionFollowUp(tool, {...options, now: Date.now() + 600_000 + 16 * 60_000})).toBe('');
   expect(existsSync(pending)).toBe(false);
+  // A subagent's tool results do not keep an abandoned comparison alive either.
+  owe(Date.now() - 16 * 60_000);
+  expect(compactionFollowUp({...tool, agent_id: 'a1b2c3'}, options)).toBe('');
+  expect(existsSync(pending)).toBe(false);
   owe(Date.now());
   expect(compactionFollowUp({...tool, hook_event_name: 'PreToolUse'}, options)).toBe('');
   expect(compactionFollowUp(tool, {...options, config: {exclusions: {projects: [], sessions: [t.session]}}})).toBe('');
