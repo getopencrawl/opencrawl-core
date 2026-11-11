@@ -2,6 +2,7 @@ import {readdirSync, statSync, realpathSync} from 'node:fs';
 import {join, sep} from 'node:path';
 import {createInterface} from 'node:readline/promises';
 import {CliError} from '../oauth.ts';
+import {setTimeout as pause} from 'node:timers/promises';
 import {captureTranscript, captureDir, flushCaptures, readCaptureConfig, refreshCaptureIdentity, recordError, type CaptureConfig} from './runtime.ts';
 import type {TranscriptHarness} from './parse.ts';
 import {claudeDesktopHistories} from './desktop-history.ts';
@@ -62,7 +63,17 @@ export function backfillPreview(api:string, selected:Selection='all') {
   return {status:'preview',api:config.api,owner:config.owner,sources,notice:backfillNotice,
     nextStep:'Ask the user whether to import Claude, Codex, both, or skip. Only after they choose, run opencrawl collect backfill --harness <claude-code|codex|all> --yes --api '+config.api+'. To skip during setup, use collect install --backfill skip.'};
 }
-export async function backfill(api:string, selected:Selection, approved:boolean) {
+// A long import must outlast a dropped connection or a deploy: retry transient
+// upload failures with backoff before stopping. Queued bytes stay on disk.
+const transient=(e:any)=>!(e instanceof CliError)||e.code==='NETWORK_ERROR'||e.code==='CAPTURE_UPLOAD_FAILED'&&/\((429|5\d\d)\)/.test(e.message);
+async function flushWithRetry(delays:number[]) {
+  for(let attempt=0;;attempt++){
+    try{return (await flushCaptures()).uploaded;}
+    catch(e){if(attempt>=delays.length||!transient(e))throw e;await pause(delays[attempt]);}
+  }
+}
+export async function backfill(api:string, selected:Selection, approved:boolean, options:{retryDelays?:number[]}={}) {
+  const delays=options.retryDelays??[2000,5000,15000,30000,60000];
   // Consent is required even in JSON mode, when stdin is piped, or on a retry.
   if(!approved)throw new CliError('BACKFILL_CONSENT_REQUIRED','Preview with collect backfill --dry-run. Ask the user to choose Claude, Codex, both, or skip; pass --yes only after approval.',64);
   const config=configFor(api);
@@ -76,11 +87,11 @@ export async function backfill(api:string, selected:Selection, approved:boolean)
     // Bound the retry spool to one transcript at a time; stop if the receiver is offline.
     // Completed historical files have no work to send. Keep replay local after
     // the initial authentication; queued uploads still authenticate with the server.
-    if(readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json')))uploaded+=(await flushCaptures()).uploaded;
+    if(readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json')))uploaded+=await flushWithRetry(delays);
   }
   // A competing uploader may have finished while the import was reading. This
   // foreground fence waits for its lock; success never means merely queued.
-  if(readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json')))uploaded+=(await flushCaptures()).uploaded;
+  if(readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json')))uploaded+=await flushWithRetry(delays);
   if(failures.length) {
     const error=new CliError('BACKFILL_INCOMPLETE',`Imported ${processed} of ${files.length} transcript files; ${failures.length} failed (${failures[0].code}). Fix the reported error and rerun the approved import; saved cursors prevent reimporting completed records.`);
     recordError(error);throw error;
