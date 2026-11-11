@@ -34,7 +34,7 @@ export async function migrateSessionPassages({realm,principal,store,prefix,backu
   for(;;){
     const page=await collection.search(principal,{size:Math.min(pageSize,maxEvents-report.events),track_total_hits:false,
       query:{bool:{...(eventIdRange?{filter:[{range:{[f('eventId')]:eventIdRange}}]}:{}),must_not:[{range:{[f('passageVersion')]:{gte:PASSAGE_VERSION}}}]}},
-      sort:[...['userId','harness','sessionId','eventId'].map(k=>({[f(k)]:'asc'})),{id:'asc'}],...(report.after?{search_after:report.after}:{})});
+      sort:[...['userId','harness','sessionId','eventId'].map(k=>({[f(k)]:'asc'})),{id:'asc'}],...(report.after?{search_after:report.after}:{})},{createIfMissing:false});
     if(page.timed_out||page._shards?.failed!==0)throw new Error('Incomplete passage migration scan');
     if(!page.hits.hits.length){report.complete=true;report.after=null;await onPage({...report});return report;}
     const cursor=page.hits.hits.at(-1)!.sort;
@@ -55,7 +55,7 @@ export async function migrateSessionPassages({realm,principal,store,prefix,backu
       const eventFilter={bool:{filter:[...['userId','harness','sessionId'].map(k=>({term:{[f(k)]:sample[k]}})),{terms:{[f('eventId')]:[...events.keys()]}}]}};
       const previous:DocumentItem[]=[];let eventAfter:JsonValue[]|undefined,inventoryBytes=0;
       for(;;){
-        const existing=await collection.search(principal,{size:1000,track_total_hits:true,query:eventFilter,sort:[{[f('eventId')]:'asc'},{[f('chunk')]:'asc'},{id:'asc'}],...(eventAfter?{search_after:eventAfter}:{})});
+        const existing=await collection.search(principal,{size:1000,track_total_hits:true,query:eventFilter,sort:[{[f('eventId')]:'asc'},{[f('chunk')]:'asc'},{id:'asc'}],...(eventAfter?{search_after:eventAfter}:{})},{createIfMissing:false});
         if(existing.timed_out||existing._shards?.failed!==0||existing.hits.total.relation!=='eq'||existing.hits.total.value>100000)throw new Error('Incomplete event inventory');
         inventoryBytes+=Buffer.byteLength(JSON.stringify(existing.hits.hits));
         if(inventoryBytes>64*1024*1024)throw new Error('Event inventory exceeds bounded memory; reduce pageSize');

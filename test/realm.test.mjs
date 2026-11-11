@@ -73,3 +73,11 @@ test('realm mapping verification rejects changed indexing and keyword limits', a
     await assert.rejects(realm.ensureIndex(), /mapping or tenant mismatch/);
   }
 });
+
+
+test('read-only migration scans never bootstrap a missing realm',async()=>{
+  const calls=[];
+  const realm=createRealm({endpoint:'http://search.test',tenantId:'org-a',index:'missing',fetch:async(url,options)=>{calls.push({path:url.pathname,method:options.method});return Response.json({error:{type:'index_not_found_exception'}},{status:404});}});
+  await assert.rejects(realm.collection('session').search(principal,{size:0},{createIfMissing:false}),{status:404});
+  assert.deepEqual(calls,[{path:'/missing/_search',method:'POST'}]);
+});

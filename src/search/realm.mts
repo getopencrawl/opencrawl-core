@@ -103,7 +103,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
         return {...hit,_id:d.id,_source:{...(d[corpus] as Record<string, unknown>),tenantId,...Object.fromEntries(['text','title','sourceKey'].filter(k=>d[k]!==undefined).map(k=>[k,d[k]]))}};
       }
       return {field:(field: string)=>realmField(corpus,field),encode,id:encodedId,
-        async search(principal: TenantPrincipal,body: QueryBody){
+        async search(principal: TenantPrincipal,body: QueryBody,{createIfMissing=true}: {createIfMissing?:boolean}={}){
           scope(principal);
           const query={bool:{filter:[{term:{tenantId}},{term:{corpus}}],must:[body.query||{match_all:{}}]}};
           // Scope/identity fields are always fetched, including for ID-only board snapshots.
@@ -111,7 +111,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
           const scopedBody={...body,query,...(source?{_source:source}:{})};
           let result;
           try{result=checkSearch(await request('/_search',scopedBody));}
-          catch(caught){const e=serviceError(caught);if(e.status!==404)throw e;ready=undefined;await ensureIndex();result=checkSearch(await request('/_search',scopedBody));}
+          catch(caught){const e=serviceError(caught);if(e.status!==404)throw e;ready=undefined;if(!createIfMissing)throw e;await ensureIndex();result=checkSearch(await request('/_search',scopedBody));}
           result.hits.hits=result.hits.hits.map(decode);return result;
         },
         async mget(principal: TenantPrincipal,ids: string[]){scope(principal);const result=await request('/_mget',{ids:ids.map(encodedId)});if(!Array.isArray(result.docs)||result.docs.length!==ids.length)throw fail('Incomplete realm lookup');const docs=result.docs.map(decode);if(docs.some(d=>!ids.includes(d._id))||new Set(docs.map(d=>d._id)).size!==ids.length)throw fail('Realm lookup identity mismatch');return {...result,docs};},
