@@ -8,17 +8,27 @@ import {serviceError} from '../sessions/types.mjs';
 import {createHash, createHmac, randomBytes, timingSafeEqual} from 'node:crypto';
 import {z} from 'zod';
 import {sessionScope} from '../sessions/ingest.mjs';
-import {excerpt, groupDuplicates, workspaceHit} from './presentation.mjs';
+import {excerpt, groupDuplicates, groupResources, workspaceHit} from './presentation.mjs';
+import {digest,sessionScope as ownerScope} from '../sessions/event-identity.mjs';
+import {searchFiltersSchema} from './controls.mjs';
+import {candidateFacets, facetNames} from './facets.mjs';
 
 export const workspaceSearchSchema = z.strictObject({
-  query: z.string().trim().min(1).max(4000).describe('Words to find. Start with distinctive terms; broaden or reformulate if coverage is insufficient.'),
+  query: z.string().trim().max(4000).describe('Use 2–6 distinctive keywords or an exact phrase, not a question. Start match=all; shorten or use any if needed. Empty only for time-ordered browsing.'),
   source: z.enum(['all', 'sessions', 'connectors','memories']).default('all'),
   match: z.enum(['any', 'all', 'phrase']).default('any').describe('any ranks passages matching any words; all requires every analyzed term; phrase requires the analyzed words in order.'),
   sessionId: z.string().min(1).max(200).optional().describe('Restrict to a known session; requires source=sessions.'),
   limit: z.number().int().min(1).max(40).default(10),
-  dedupe: z.boolean().default(true).describe('Group whitespace-equivalent passages within the same session/resource. Set false to inspect every occurrence.'),
+  dedupe: z.boolean().default(true).describe('Group whitespace-equivalent passages within the same session/resource. Use false with groupBy=none to inspect every occurrence.'),
   cursor: z.string().max(2048).optional(),
-}).refine(v => !v.sessionId || v.source === 'sessions', 'sessionId requires source=sessions');
+  filters: searchFiltersSchema.optional(),
+  order: z.enum(['relevance','newest','oldest']).default('relevance'),
+  facets: z.array(z.enum(facetNames)).max(10).default([]).describe('Facet counts over authorized candidates only; bounded, not exhaustive corpus totals.'),
+  select: z.array(z.enum(['title','text','url','provenance'])).max(4).default(['title','text','url','provenance']).describe('Response fields to return. id and source are always included. Omit text for cheap discovery, then fetch.'),
+  excerptChars: z.number().int().min(100).max(2000).default(800),
+  groupBy: z.enum(['none','resource','session']).default('resource').describe('resource keeps the best passage per session event, memory file, or connector document. session also groups whole sessions. none returns every passage.'),
+}).refine(v => !v.sessionId || v.source === 'sessions', 'sessionId requires source=sessions')
+  .refine(v=>Boolean(v.query)||v.order!=='relevance','Empty query requires newest or oldest order');
 export const workspaceFetchSchema = z.strictObject({
   id: z.string().regex(/^(sessions|connectors|memories):[A-Za-z0-9_:-]{1,256}$/).describe('An id returned by search. Access is checked again on every fetch.'),
   offset: z.number().int().min(0).max(10_000_000).default(0),
@@ -30,7 +40,8 @@ const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(valu
 const WINDOW = 100, TTL = 5 * 60_000;
 
 /** Adapters resolve current authorized bindings on EVERY call, including pagination.
- * Scores from independent indexes are not comparable. Interleave their ranks.
+ * Each source retains its lexical ranking. Source ranks are interleaved so
+ * a high-volume corpus cannot crowd out the other sources during discovery.
  * Cursors are bounded live windows, not snapshots or a claim of exhaustive recall.
  */
 export function createWorkspaceSearch({sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now}: WorkspaceOptions = {}) {
@@ -50,7 +61,9 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       sessionScope(principal);
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot search workspace data.');
       const parsed = workspaceSearchSchema.safeParse(input);
-      if (!parsed.success) fail(400, 'Invalid search request. Use query, source, match, sessionId, limit, dedupe and cursor only.');
+      if (!parsed.success) fail(400, 'Invalid search request. Check query, source, match, filters, order, facets, select, excerptChars, sessionId, limit, dedupe, groupBy and cursor. Empty query requires a time order.');
+      // Preserve the original dedupe=false inspection contract for older clients.
+      if(!parsed.data.dedupe&&(input as {groupBy?:unknown}).groupBy===undefined)parsed.data.groupBy='none';
       const {cursor, ...query} = parsed.data;
       const fingerprint = hash([principal.tenantId, principal.userId, query]);
       const page = cursor ? decode(cursor, fingerprint) : {offset: 0, expires: now() + TTL};
@@ -59,28 +72,37 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
         const adapter = source === 'sessions' ? sessions : source==='memories'?memories:connectors;
         if (!adapter) return {source, state: 'not_configured', hits: [], truncated: false};
         let result;
-        try {result = await adapter.search(principal, {query: query.query, match: query.match, ...(query.sessionId ? {sessionId: query.sessionId} : {}), limit: WINDOW});}
+        try {result = await adapter.search(principal, {query: query.query, match: query.match, filters:query.filters, order:query.order, ...(query.sessionId ? {sessionId: query.sessionId} : {}), limit: WINDOW});}
         catch(caught){const error=serviceError(caught);
           if ([401, 403].includes(error.status ?? 0)) throw error;
           return {source, state: error.status === 404 && error.type === 'index_not_found_exception' ? 'pending' : 'unavailable', hits: [], truncated: false};
         }
         if (!Array.isArray(result.hits) || result.hits.length > WINDOW || result.hits.some(hit => hit.tenantId !== principal.tenantId || typeof hit.id !== 'string')) throw new Error('Invalid workspace search scope');
-        return {source, state: 'ready', hits: result.hits, truncated: source === 'sessions' ? (result.total ?? 0) > result.hits.length : Boolean(result.truncated)};
+        return {source, state: 'ready', hits: result.hits, truncated: Boolean(result.truncated)||(result.total ?? 0)>result.hits.length};
       }));
       const ranked: WorkspaceHit[] = [];
       for (let rank = 0; rank < WINDOW; rank++) for (const group of groups) {
         const hit = group.hits[rank]; if (!hit) continue;
-        ranked.push(workspaceHit(group.source, hit, rank + 1));
+        const result=workspaceHit(group.source, hit, rank + 1);ranked.push(result);
       }
-      const grouped = query.dedupe ? groupDuplicates(ranked) : {results: ranked, suppressed: 0};
-      const results = grouped.results.slice(page.offset, page.offset + query.limit).map(hit => ({...hit, ...excerpt(hit.text, query.query)})), offset = page.offset + results.length;
+      if(query.order!=='relevance')ranked.sort((a,b)=>{
+        const time=(h:WorkspaceHit)=>{const raw=h.provenance.modifiedAt||h.provenance.timestamp;return typeof raw==='number'?raw:typeof raw==='string'&&/^\d{10}(\.\d+)?$/.test(raw)?Number(raw)*1000:Date.parse(String(raw||''));};
+        const at=time(a),bt=time(b);return (Number.isFinite(at)&&Number.isFinite(bt)?(at-bt)*(query.order==='newest'?-1:1):Number.isFinite(at)?-1:Number.isFinite(bt)?1:0)||a.id.localeCompare(b.id);
+      });
+      const deduped = query.dedupe ? groupDuplicates(ranked) : {results: ranked, suppressed: 0};
+      const grouped=groupResources(deduped.results,query.groupBy);
+      const results = grouped.results.slice(page.offset, page.offset + query.limit).map(hit => {
+        const {text,...rest}=hit, fields={...rest,...(query.select.includes('text')?excerpt(text,query.query,query.excerptChars):{})};
+        return Object.fromEntries(Object.entries(fields).filter(([key])=>!['title','text','url','provenance'].includes(key)||query.select.includes(key as 'title'|'text'|'url'|'provenance')));
+      }), offset = page.offset + results.length;
       const next = offset < grouped.results.length ? encode({fingerprint, offset, expires: page.expires}) : null;
       const coverage = groups.map(({source, state, hits, truncated}) => ({source, state, candidates: hits.length, truncated}));
       const partial = coverage.some(g => g.state === 'unavailable' || g.state === 'pending');
-      return {query: query.query, results, next, coverage, partial, deduplicated: grouped.suppressed,
+      return {query: query.query, results, next, coverage, partial, deduplicated: deduped.suppressed, grouped:grouped.suppressed,
         truncated: Boolean(next) || coverage.some(g => g.truncated),
         windowExhausted: !next && coverage.some(g => g.truncated),
-        pagination: 'live', ranking: 'interleaved_source_rank', candidateLimitPerSource: WINDOW};
+        ...(query.facets.length?{facets:candidateFacets(ranked,query.facets),facetScope:'authorized_candidate_window'}:{}),
+        pagination: 'live', ranking: query.order==='relevance'?'source_rank_interleave':query.order, candidateLimitPerSource: WINDOW};
     },
     async fetch(principal: Principal, input: unknown) {
       sessionScope(principal);
@@ -100,7 +122,17 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       if (version && version !== currentVersion) fail(409, 'Passage changed; fetch again from offset 0.');
       if (offset > hit.text.length) fail(400, 'Offset exceeds passage length.');
       const end = Math.min(offset + length, hit.text.length);
-      return {...hit, text: hit.text.slice(offset, end), offset, totalChars: hit.text.length, nextOffset: end < hit.text.length ? end : null, version: currentVersion};
+      const document=result.hits[0],neighbors:{previousId?:string;nextId?:string}={};
+      if(source!=='connectors'&&Number.isInteger(document.chunk)&&typeof document.chunkCount==='number'){
+        for(const [label,chunk] of [['previousId',Number(document.chunk)-1],['nextId',Number(document.chunk)+1]] as const){
+          if(chunk<0||chunk>=document.chunkCount)continue;
+          const scope=ownerScope({tenantId:principal.tenantId,userId:document.userId!});
+          const neighbor=digest(JSON.stringify(source==='sessions'?[scope,document.harness,document.sessionId,document.eventId,chunk]:[scope,document.snapshotId,document.path,chunk]));
+          const checked=await adapter.search(principal,{id:neighbor,query:'',limit:1});
+          if(checked.hits.some(d=>d.id===neighbor&&d.tenantId===principal.tenantId&&d.userId===document.userId))neighbors[label]=source+':'+neighbor;
+        }
+      }
+      return {...hit, text: hit.text.slice(offset, end), offset, totalChars: hit.text.length, nextOffset: end < hit.text.length ? end : null, version: currentVersion,...neighbors};
     },
   };
 }

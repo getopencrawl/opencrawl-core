@@ -58,6 +58,22 @@ test('Claude summaries remain searchable without recursively indexing compaction
  assert.equal(batchDocuments({prefix,key:f.key,batch:b,principal:owner}).find(item=>item.document.kind==='compaction').document.text,'Conversation compacted');
 });
 
+test('search strips recognized transport wrappers while retaining unknown tool payloads',async()=>{
+ const f=await fixture(),batch=structuredClone(f.batch);
+ batch.events=[
+  {id:'message',kind:'message',data:{role:'assistant',content:'release evidence',transportNote:'irrelevant routing metadata'}},
+  {id:'known-tool',kind:'tool_call',data:{name:'exec_command',arguments:{cmd:'verify release'},transportNote:'irrelevant routing metadata'}},
+  {id:'unknown-tool',kind:'tool_call',data:{vendorPayload:{command:'custom tool evidence'}}},
+ ];
+ const docs=batchDocuments({prefix,key:f.key,batch,principal:owner}).map(x=>x.document);
+ assert.equal(docs.find(d=>d.eventId==='message').text,'release evidence');
+ assert.ok(docs.every(d=>!d.text.includes('routing metadata')));
+ assert.ok(docs.find(d=>d.eventId==='known-tool').text.includes('verify release'));
+ assert.deepEqual(docs.find(d=>d.eventId==='known-tool').toolNames,['exec_command']);
+ assert.equal(docs.find(d=>d.eventId==='unknown-tool').text,'custom tool evidence');
+ assert.equal(batch.events[0].data.transportNote,'irrelevant routing metadata');
+});
+
 function indexFixture(f) {
  const template=f.docs[0].document,rows=new Map(f.docs.map(item=>[item.id,item.document]));
  const compaction=f.docs.find(item=>item.document.kind==='compaction');

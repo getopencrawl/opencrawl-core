@@ -1,4 +1,5 @@
 import type {Principal, CredentialProvider, JsonValue} from '../sessions/types.mjs';
+import type {SearchFilters, SearchOrder} from './controls.mjs';
 
 export type Corpus = 'connector' | 'session' | 'board' | 'memory';
 export interface SearchDocument {
@@ -44,7 +45,7 @@ export interface Mapping {
   type?: string; dynamic?: string; properties?: Record<string, Mapping>; fields?: Record<string, Mapping>;
   _meta?: {schema?: number; tenantId?: string};
 }
-export interface SearchInput {query?: string; limit?: number; raw?: boolean; match?: string; sessionId?: string; id?: string}
+export interface SearchInput {query?: string; limit?: number; raw?: boolean; match?: string; sessionId?: string; id?: string; filters?: SearchFilters; order?: SearchOrder}
 export interface Passage extends SearchDocument {id: string; score?: number}
 export interface SearchResult {hits: Passage[]; total?: number; truncated?: boolean}
 export interface SearchAdapter {search(principal: Principal, input: SearchInput & {raw?: false}): Promise<SearchResult>}

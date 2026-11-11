@@ -1,4 +1,6 @@
-import type {RealmOptions, OpenSearchResponse, IndexHit, QueryBody} from '../search/types.mjs';
+import {lexicalQuery} from '../search/lexical.mjs';
+import type {RealmOptions, OpenSearchResponse, IndexHit, QueryBody, SearchInput} from '../search/types.mjs';
+import {searchFilters,searchSort} from '../search/controls.mjs';
 import type {ConnectorBinding, ConnectorPrincipal, ConnectorDocument, DocumentItem, SuppressionIdentity} from './types.mjs';
 import {createRealm} from '../search/realm.mjs';
 import {authorize, digest, documentId, validateBinding} from './scope.mjs';
@@ -47,26 +49,26 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
       throw Object.assign(new Error('Document scope or identity mismatch'), {permanent: true});
     }
   }
-  type ConnectorSearchInput = {query?: string; limit?: number; raw?: boolean; match?: string; id?: string};
+  type ConnectorSearchInput = SearchInput;
   type NormalizedResult = {hits: (ConnectorDocument & {id: string; score: number})[]; examined: number; truncated: boolean};
   type RawResult = {responses: unknown[]; examined: number; truncated: boolean};
   function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput & {raw: true}): Promise<RawResult>;
   function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input?: ConnectorSearchInput & {raw?: false}): Promise<NormalizedResult>;
   function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput): Promise<NormalizedResult | RawResult>;
-  async function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], {query, limit = 20, raw = false, match = 'all', id}: ConnectorSearchInput = {}) {
+  async function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], {query='', limit = 20, raw = false, match = 'all', id, filters, order}: ConnectorSearchInput = {}) {
       if (!Array.isArray(bindings) || !bindings.length || bindings.length > 100) throw new Error('Authorized connections required');
       for (const binding of bindings) scoped(principal, binding);
       if (id !== undefined && (typeof id !== 'string' || !/^[A-Za-z0-9_:-]{1,256}$/.test(id))) throw new Error('Invalid passage id');
-      if (!['all','any','phrase'].includes(match) || typeof query !== 'string' || (!query.trim() && !id) || query.length > 4000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid connector query');
+      if (!['all','any','phrase'].includes(match) || typeof query !== 'string' || (!query.trim() && !id && (!order||order==='relevance')) || query.length > 4000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid connector query');
       const byConnection = new Map(bindings.map(b => [b.connectionId, b]));
       const hits: (ConnectorDocument & {id: string; score: number})[] = [], responses: unknown[] = []; let after: IndexHit['sort'], examined = 0, more = true, capped = false;
       // Bound work even when channel visibility filters most candidates.
       while (hits.length < limit && examined < 1000 && more) {
         const result = await request('/_search', {body: JSON.stringify({size: 100, track_total_hits: false,
-          query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: [...byConnection.keys()]}}, {terms: {[f('kind')]: SEARCHABLE_KINDS}}, {term: {[f('deleted')]: false}}, ...(id ? [{term:{id}}] : [])], must: query.trim() ? [{multi_match: {query, fields: ['title^2', 'text', f('heading')], ...(match === 'phrase' ? {type:'phrase'} : {operator: match === 'all' ? 'and' : 'or'})}}] : [{match_all:{}}]}},
+          query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: [...byConnection.keys()]}}, {terms: {[f('kind')]: SEARCHABLE_KINDS}}, {term: {[f('deleted')]: false}}, ...searchFilters('connector',filters), ...(id ? [{term:{id}}] : [])], must: [lexicalQuery(query,match)]}},
           // Native source IDs can collide across kinds (for example a GitHub
           // issue and review). The envelope ID makes search_after a total order.
-          sort: [{_score: 'desc'}, {[f('connectionId')]: 'asc'}, {[f('sourceId')]: 'asc'}, {id: 'asc'}], ...(after ? {search_after: after} : {})})});
+          sort: [...searchSort('connector',order),{_score: 'desc'}, {[f('connectionId')]: 'asc'}, {[f('sourceId')]: 'asc'}, {id: 'asc'}], ...(after ? {search_after: after} : {})})});
         const candidates = result?.hits?.hits;
         if (!Array.isArray(candidates)) throw new Error('Invalid connector search response');
         for (const hit of candidates) {

@@ -3,7 +3,7 @@ import {serviceError} from '../sessions/types.mjs';
 import type {Corpus, SearchDocument, DocumentItem, IndexHit, OpenSearchResponse, QueryBody, RealmOptions, IndexTransportOptions, Mapping} from './types.mjs';
 import {createHash} from 'node:crypto';
 import {signRequest} from '../sessions/s3-store.mjs';
-import {realmMapping} from './mapping.mjs';
+import {realmMapping,passageFields} from './mapping.mjs';
 export {realmMapping};
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const fail = (message: string,status=503) => Object.assign(new Error(message),{status,permanent:status===403});
@@ -53,8 +53,10 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
       let mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       // The only in-place schema upgrade is an additive normalization revision.
       // Validate ownership and every existing field before making any change.
+      const withoutPassages=(value:Mapping)=>{for(const corpus of ['session','memory'])for(const key of Object.keys(passageFields))delete value.properties?.[corpus]?.properties?.[key];return value;};
+      const legacy=withoutPassages(structuredClone(realmMapping));
       const withoutVisibility=(value: Mapping)=>{delete value.properties!.session.properties!.private;if(value.properties!.memory)delete value.properties!.memory.properties!.private;return value;};
-      const previous: Mapping=withoutVisibility(structuredClone(realmMapping));
+      const previous: Mapping=withoutVisibility(structuredClone(legacy));
       delete previous.properties!.connector.properties!.normalizerVersion;
       if(!mapping?.properties?.memory)delete previous.properties!.memory;
       if(mapping?._meta?.tenantId===tenantId && mapping?._meta?.schema===1 &&
@@ -62,16 +64,24 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
         await request('/_mapping',{properties:{connector:{properties:{normalizerVersion:{type:'integer'}}}}},'PUT');
         mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
-      const withoutMemory: Mapping=withoutVisibility(structuredClone(realmMapping));delete withoutMemory.properties!.memory;
+      const withoutMemory: Mapping=withoutVisibility(structuredClone(legacy));delete withoutMemory.properties!.memory;
       if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&!mapping.properties?.memory&&compatible(mapping,withoutMemory)) {
-        await request('/_mapping',{properties:{memory:withoutVisibility(structuredClone(realmMapping)).properties!.memory}},'PUT');
+        await request('/_mapping',{properties:{memory:withoutVisibility(structuredClone(legacy)).properties!.memory}},'PUT');
         mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
       // Owner visibility is the second additive revision: two boolean fields.
       if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&(!mapping.properties?.session?.properties?.private||!mapping.properties?.memory?.properties?.private)&&
-        compatible(mapping,withoutVisibility(structuredClone(realmMapping)))) {
+        compatible(mapping,withoutVisibility(structuredClone(legacy)))) {
         await request('/_mapping',{properties:{session:{properties:{private:{type:'boolean'}}},memory:{properties:{private:{type:'boolean'}}}}},'PUT');
         mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
+      }
+      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&compatible(mapping,legacy)&&!compatible(mapping,realmMapping)) {
+        // Add only missing fields; an existing incompatible field fails closed.
+        for(const corpus of ['session','memory'])for(const [key,expected] of Object.entries(passageFields)){
+          const actual=mapping.properties?.[corpus]?.properties?.[key];if(actual&&!compatible(actual,expected))throw fail('Incompatible passage mapping');
+        }
+        await request('/_mapping',{properties:{session:{properties:passageFields},memory:{properties:passageFields}}},'PUT');
+        mapping=(await request<Record<string,{mappings:Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
       if(mapping?._meta?.tenantId!==tenantId||mapping?._meta?.schema!==1||!compatible(mapping,realmMapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');
     })().catch(e=>{ready=undefined;throw e;});
@@ -93,7 +103,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
         return {...hit,_id:d.id,_source:{...(d[corpus] as Record<string, unknown>),tenantId,...Object.fromEntries(['text','title','sourceKey'].filter(k=>d[k]!==undefined).map(k=>[k,d[k]]))}};
       }
       return {field:(field: string)=>realmField(corpus,field),encode,id:encodedId,
-        async search(principal: TenantPrincipal,body: QueryBody){
+        async search(principal: TenantPrincipal,body: QueryBody,{createIfMissing=true}: {createIfMissing?:boolean}={}){
           scope(principal);
           const query={bool:{filter:[{term:{tenantId}},{term:{corpus}}],must:[body.query||{match_all:{}}]}};
           // Scope/identity fields are always fetched, including for ID-only board snapshots.
@@ -101,7 +111,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
           const scopedBody={...body,query,...(source?{_source:source}:{})};
           let result;
           try{result=checkSearch(await request('/_search',scopedBody));}
-          catch(caught){const e=serviceError(caught);if(e.status!==404)throw e;ready=undefined;await ensureIndex();result=checkSearch(await request('/_search',scopedBody));}
+          catch(caught){const e=serviceError(caught);if(e.status!==404)throw e;ready=undefined;if(!createIfMissing)throw e;await ensureIndex();result=checkSearch(await request('/_search',scopedBody));}
           result.hits.hits=result.hits.hits.map(decode);return result;
         },
         async mget(principal: TenantPrincipal,ids: string[]){scope(principal);const result=await request('/_mget',{ids:ids.map(encodedId)});if(!Array.isArray(result.docs)||result.docs.length!==ids.length)throw fail('Incomplete realm lookup');const docs=result.docs.map(decode);if(docs.some(d=>!ids.includes(d._id))||new Set(docs.map(d=>d._id)).size!==ids.length)throw fail('Realm lookup identity mismatch');return {...result,docs};},
