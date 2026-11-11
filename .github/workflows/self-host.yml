@@ -54,6 +54,18 @@ jobs:
           compose run --rm --no-deps --user root -e OPENCRAWL_DEV_VERIFY_ONLY=true \
             --volume "$PWD/dev:/opencrawl/dev:ro" --volume "$RUNNER_TEMP/sqlite-seed:/dev-state" \
             app node --disable-warning=ExperimentalWarning dev/seed.mts
+      - name: Verify SQLite cold backup and restore into empty disposable volumes
+        env:
+          COMPOSE_FILE: compose.yaml:compose.sqlite.yaml
+        run: |
+          compose() { docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml "$@"; }
+          node deploy/backup.mjs create "$RUNNER_TEMP/sqlite-backup"
+          compose down --volumes
+          node deploy/backup.mjs restore "$RUNNER_TEMP/sqlite-backup"
+          compose up -d --wait --wait-timeout 600
+          compose run --rm --no-deps --user root -e OPENCRAWL_DEV_VERIFY_ONLY=true \
+            --volume "$PWD/dev:/opencrawl/dev:ro" --volume "$RUNNER_TEMP/sqlite-seed:/dev-state" \
+            app node --disable-warning=ExperimentalWarning dev/seed.mts
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: application-sqlite-${{ github.sha }}
@@ -63,7 +75,9 @@ jobs:
         run: docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml logs --tail 60 app worker storage-ready s3
       - name: Remove only this job's disposable installation
         if: always()
-        run: docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml down --volumes --remove-orphans
+        run: |
+          docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml down --volumes --remove-orphans
+          rm -rf "$RUNNER_TEMP/sqlite-backup" "$RUNNER_TEMP/sqlite-seed"
   application:
     name: ${{ matrix.name }}
     strategy:

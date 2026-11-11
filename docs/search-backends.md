@@ -136,6 +136,9 @@ explicit test endpoint is supplied. CI runs both against a disposable real
 OpenSearch instance. `test/sqlite-search.test.mjs` additionally exercises a real
 MCP client, native session ingestion, connector revocation, privacy, durable
 reopening, atomic rollback, board facets and usage/library aggregations.
+Self-host CI boots the SQLite Compose profile without OpenSearch, ingests and
+searches through the real application, then repeats verification after restart
+and a cold backup/restore into empty disposable volumes.
 
 Engine references: [SQLite FTS5](https://www.sqlite.org/fts5.html) and
 [Node SQLite](https://nodejs.org/docs/latest-v24.x/api/sqlite.html).
