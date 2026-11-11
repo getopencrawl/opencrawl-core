@@ -61,7 +61,8 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
   const credentialProxy=sourceCredentials?connectorProxyHandler(sourceCredentials):null;
   const admit=singleOrganizationIdentity(directory,settings.organizationId),resolve=singleOrganizationPrincipal(directory,settings.organizationId);
   const accounts=localAuth({identity,url:settings.url,organizationId:settings.organizationId,setupToken:settings.setupToken,member:async browser=>(await admit(browser)).status===200});
-  const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(store,prefix));
+  const credentials=createCaptureCredentials({store,prefix});
+  const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(store,prefix),credentials.revokeAll);
   const onboarding=createOnboardingStatus({store,prefix}),observe=createOnboardingObserver(onboarding);
   const values=valueReports({store,prefix});
   const search=createSessionSearch(settings.search);
@@ -84,7 +85,6 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
   const fetchPassage=createWorkspaceSearchHandler({search:authorizedSearch,authenticate,operation:'fetch'});
   const boardHandler=createBoardHandler({board,authenticate});
   const mcp=createOpenCrawlMcp({origin:settings.url,revision:settings.revision,search:authorizedSearch,board,authenticate:accounts.mcpIdentity,onConnectionTest:p=>onboarding.mcpTest(p),onAuthenticated:(p,info)=>onboarding.mcp(p,info)});
-  const credentials=createCaptureCredentials({store,prefix});
   const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({store,prefix,onStored:observe.session}),authenticate:async req=>{
     const token=/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1];
     if(isCaptureCredential(token)) {
@@ -156,7 +156,7 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
       const sources=(p:Principal)=>integrations?integrations.list(p):Promise.resolve([]);
       const consoleApi=createConsoleApi({url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
-        invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
+        invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),removeMember:(u,id,target)=>organizations.removeMember(u,id,target),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
         usage:p=>usageReport({principal:p,directory,integrations,search,connectors,onboarding,values}),progress:guided.progress,next:guided.next,library,libraryFailure});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{
         if(selected.name.startsWith('/api/console/')){

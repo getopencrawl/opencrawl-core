@@ -14,6 +14,7 @@ export function workosDirectory(workos:WorkOS):IdentityDirectory {
       async listOrganizationMemberships(options){const rows=await workos.userManagement.listOrganizationMemberships(options.userId?{...options,userId:options.userId}:options.organizationId?{...options,organizationId:options.organizationId}:(()=>{throw new Error('A user or organization scope is required');})());return {data:rows.data.map(member),autoPagination:rows.autoPagination?async()=>(await rows.autoPagination()).map(member):undefined};},
       async listSessions(id,options){const rows=await workos.userManagement.listSessions(id,options);return {data:rows.data.map(s=>({id:s.id,userId:s.userId,status:s.status,endedAt:s.endedAt,expiresAt:s.expiresAt})),listMetadata:{after:rows.listMetadata.after}};},
       async updateOrganizationMembership(id,options){return member(await workos.userManagement.updateOrganizationMembership(id,options));},
+      async deleteOrganizationMembership(id){await workos.userManagement.deleteOrganizationMembership(id);},
       async listInvitations(options){const rows=await workos.userManagement.listInvitations(options);return {data:rows.data.map(i=>({email:i.email,state:i.state,organizationId:i.organizationId}))};},
       async sendInvitation(options){const i=await workos.userManagement.sendInvitation(options);return {id:i.id,email:i.email};},
     },

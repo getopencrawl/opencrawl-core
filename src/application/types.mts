@@ -32,7 +32,7 @@ export interface TeamReport {
   organization: {id: string; name: string};
   viewerUserId: string;
   role: WorkspaceRole;
-  members?: Array<{id: string; name: string | null; email: string; role: WorkspaceRole}>;
+  members?: Array<{id: string; name: string | null; email: string; role: WorkspaceRole; directoryManaged?: boolean}>;
   /** inviteUrl: self-host shares the link directly because it sends no email. */
   invitations?: Array<{email: string; state?: string; inviteUrl?: string}>;
 }

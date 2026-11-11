@@ -15,3 +15,8 @@ test('WorkOS adapter strips provider fields and local enrollment authority, pres
   assert.equal(member.id,'om_a');assert.deepEqual(member.role,{slug:'admin'});assert.equal(member.metadata,undefined);
   assert.deepEqual(await activeMemberships(directory,'user_a','org_foreign'),[]);
 });
+
+test('WorkOS membership removal calls the provider deletion operation with the resolved membership ID',async()=>{
+ const deleted=[];const directory=workosDirectory({userManagement:{deleteOrganizationMembership:async id=>{deleted.push(id);}}});
+ await directory.userManagement.deleteOrganizationMembership('om_resolved');assert.deepEqual(deleted,['om_resolved']);
+});
