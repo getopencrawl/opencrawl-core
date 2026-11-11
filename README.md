@@ -14,8 +14,9 @@ and output before starting a new investigation.
 
 ## Quickstart
 
-Use a **Linux x86_64** machine with **4 CPUs, 8 GiB RAM and 20 GiB free disk**.
-Ubuntu 24.04 is the tested target.
+Use **macOS or Linux, on ARM64 or x86_64**, with **4 CPUs, 8 GiB RAM and
+20 GiB free disk**. On macOS, install and start [Docker Desktop](https://docs.docker.com/desktop/setup/install/mac-install/)
+or [Colima](https://github.com/abiosoft/colima) first.
 
 ```sh
 git clone https://github.com/getopencrawl/opencrawl-core.git
@@ -31,10 +32,6 @@ images; on Ubuntu it installs Docker if missing (sudo may be needed).
 Keep `--no-airbyte` on each startup to run capture, memories, search and the board.
 To add external sources, omit the flag and use **16 GiB RAM, 40 GiB free disk**
 and [your connector credentials](docs/self-host.md#connect-sources).
-
-**On macOS or Windows?** The server installer currently requires Linux x86_64.
-Run it on a Linux x86_64 VM, then forward the port with
-`ssh -L 8092:localhost:8092 your-vm`. The CLI runs on macOS, Linux and Windows.
 
 For an optional synthetic demo, run `./dev/up demo --no-airbyte` and search for
 `lunar otter` in **Diagnostics → Search inspector**. This completes onboarding;
@@ -207,7 +204,7 @@ an operator to manage upgrades, access and retention.
 
 ## Current gaps
 
-- No macOS, Windows or ARM server installer; no lightweight single-process server.
+- No native Windows server installer; no lightweight single-process server.
 - No SSO or invitation emails in the self-hosted console.
 - No Google Drive indexing.
 

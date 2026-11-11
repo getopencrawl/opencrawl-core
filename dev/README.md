@@ -1,6 +1,6 @@
 # One-command development workspace
 
-On a clean Ubuntu 24.04 x86_64 machine with sudo access, clone this repository and run:
+On Linux or macOS, with an x86_64 or ARM64 processor, clone this repository and run:
 
 ```sh
 ./dev/up
@@ -19,9 +19,24 @@ operate on the whole installation without a mode flag.
 No service account, OAuth application, Node installation, `.env` editing or manual
 Airbyte setup is required. The script installs Docker/Compose from Ubuntu's signed
 package repositories when absent; sudo may ask for your system password. With
-Docker already installed and accessible, other Linux x86_64 distributions can run
-the same command. Ubuntu 24.04 is the clean-machine verification target. macOS,
-Windows and ARM are not yet verified or supported by this installer.
+Docker already installed and accessible, other Linux distributions can run the
+same command. Ubuntu 24.04 is the clean-machine verification target on both
+x86_64 and ARM64. Native Windows is not supported by this installer.
+
+On macOS (Apple silicon or Intel), install and start
+[Docker Desktop](https://docs.docker.com/desktop/setup/install/mac-install/) or
+[Colima](https://github.com/abiosoft/colima) before running the command. Allocate
+at least 4 CPUs and 8 GiB RAM to the Docker VM for `--no-airbyte`, or 16 GiB RAM
+for the full Airbyte stack. The installer uses native macOS tools and does not
+run sudo or install a Linux Docker daemon on the Mac. Docker automatically selects
+native ARM64 images on Apple silicon and Linux ARM64; x86 emulation is not needed
+for the bundled stack. External connector images must also support your server's
+architecture.
+
+The continuous checks exercise the real Linux x86_64 and ARM64 container stacks,
+including capture, search, restart and backup/restore. Separate macOS x64 and ARM64
+checks verify the real native bootstrap download. Hosted macOS CI cannot run
+Docker VMs, so those bootstrap checks alone do not prove a full macOS installation.
 
 Provide 4 CPUs, 16 GiB RAM and at least 40 GiB free disk. The first run downloads
 images and builds the shared React console and backend, so it requires internet
