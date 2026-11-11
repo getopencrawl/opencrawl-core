@@ -531,19 +531,21 @@ metrics use 20px padding, 12px gaps and 32px figures. The page title follows the
 Unavailable measurements stay distinct from measured zero, and tables scroll
 inside their own container at narrow widths.
 
-## Integrations restoration
+## Integrations
 
-Integrations uses the shared full-width page grid, with one catalog-ordered stack
-of source cards. Cards use the shared
-Night surface, 24px padding, 12px corners, inherited provider icons, and quiet
-disconnect controls. Connection status, genuine import progress and per-stream
-counts remain visible inside each card. Imported stream counts describe ingest
-progress; they do not replace Usage's indexed document-type counts.
+Integrations uses an alphabetical, responsive grid of uniform connector cards.
+Every collapsed card occupies the same space. Show the catalog-selected key metric,
+or the highest valid count when no key metric is available, with an N more caret
+button that expands the full list of stats. Keep real zero counts, per-stream
+completion, and measured progress. Use 8px solid status dots without glow and
+unframed provider icons. Search and state filters support a growing catalog.
+Shared dialogs retain setup, sign-in recovery, sync retries and confirmed deletion.
 
-The shared `oc-connection-*` patterns own this presentation. Use shared Button,
-Dialog and Icon primitives for connection, help and removal. Keep sign-in
-recovery distinct from sync and deletion retries. `/sources` and its
-`/integrations` alias share one React page and the canonical AppShell left sidebar.
+The shared `oc-connector-*` patterns own the 226px collapsed cards and their
+3/2/1-column grid. Expanding a card never stretches neighboring cards. The same
+core component and shared Button, Dialog and Icon primitives serve hosted and
+self-hosted adapters. Imported stats describe ingest progress, not Usage indexed
+document counts. `/sources` and its `/integrations` alias share one page.
 
 ## Team management
 

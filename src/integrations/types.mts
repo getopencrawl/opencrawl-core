@@ -51,6 +51,7 @@ interface ProviderBase {
   owner(record: IntegrationRecord): string; connector: ConnectorDefinition;
   streams: Array<{name: string; syncMode: string; cursorField?: string[]}>;
   progressStream: string[]; progress?: Array<{stream: string; label: string; trailing?: boolean}>;
+  primaryMetric?: string;
   units: [string, string]; schedule?: string; keys?: Record<string, string[]>;
   sourceConfiguration(input: SourceConfigurationInput): Record<string, unknown>;
 }
