@@ -1,9 +1,15 @@
 name: Private core package
 on:
   workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Optional full mainline SHA to publish on the isolated revision channel'
+        required: false
+        type: string
 permissions:
   contents: read
   packages: write
+  actions: read
 jobs:
   publish:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/core-shell-seam'
@@ -12,28 +18,43 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24.22.2
           registry-url: https://npm.pkg.github.com
           scope: '@getopencrawl'
+      - name: Select a checked immutable source
+        id: source
+        env:
+          REQUESTED_REVISION: ${{ inputs.revision }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node tools/publish-revision.mts
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - run: npm ci --prefix web-v2 --ignore-scripts --no-audit --no-fund
       - run: npm run check --prefix web-v2
       - name: Validate stable or isolated candidate publication
         id: publication
+        env:
+          REQUESTED_REVISION: ${{ inputs.revision }}
         run: |
           node --input-type=module <<'JS'
           import {readFileSync,appendFileSync} from 'node:fs';
           const {version}=JSON.parse(readFileSync('package.json','utf8'));
           const stable=process.env.GITHUB_REF==='refs/heads/main';
+          if(process.env.REQUESTED_REVISION) {
+            if(!stable || !/^\d+\.\d+\.\d+-cd\.[1-9]\d*\.g[a-f0-9]{12}$/.test(version)) throw new Error('Invalid revision publication');
+            appendFileSync(process.env.GITHUB_OUTPUT,'tag=revision\n');
+            process.exit(0);
+          }
           if(stable ? !/^\d+\.\d+\.\d+$/.test(version) : !/^\d+\.\d+\.\d+-seam\.\d+$/.test(version))
             throw new Error('Stable and candidate versions must use separate release channels');
           appendFileSync(process.env.GITHUB_OUTPUT,`tag=${stable?'latest':'seam'}\n`);
           JS
       - name: Record the source revision in the package
-        run: node -e 'require("fs").writeFileSync("revision.json", JSON.stringify({revision:process.env.GITHUB_SHA})+"\n")'
+        if: inputs.revision == ''
+        run: node -e 'require("fs").writeFileSync("revision.json", JSON.stringify({revision:require("child_process").execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim()})+"\n")'
       - name: Publish privately
         run: |
           npm pack --json > package-artifact.json
@@ -45,7 +66,7 @@ jobs:
           PACKAGE_TAG: ${{ steps.publication.outputs.tag }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: core-package-${{ github.sha }}
+          name: core-package-${{ steps.source.outputs.revision }}
           path: |
             getopencrawl-opencrawl-core-*.tgz
             package-metadata.json
