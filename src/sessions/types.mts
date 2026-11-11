@@ -29,6 +29,9 @@ export interface ObjectStore extends ConditionalStore {
   get(key: string, options?: ReadOptions): Promise<Buffer | null>;
   has?(key: string, options?: ReadOptions): Promise<boolean>;
   delete?(key: string): Promise<void>;
+  /** Permanently remove every version, including hidden versions/delete markers.
+   * Must verify absence and fail closed when version inventory is unavailable. */
+  purgePrefix?(prefix: string, options?: {select?: (key: string) => boolean; selectVersion?: (key: string, read: () => Promise<Buffer>) => Promise<boolean>; beforeDelete?: (key: string, read: () => Promise<Buffer>) => Promise<void>}): Promise<number>;
   listPage(prefix: string, options?: ListOptions): Promise<StorePage>;
 }
 /** Capture clients with their own session namespace. Memory snapshots are

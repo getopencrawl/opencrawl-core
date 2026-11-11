@@ -35,14 +35,15 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
   const [removing, setRemoving] = useState<SessionSummary | null>(null), [removal, setRemoval] = useState({busy: false, error: '', done: ''});
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => controller.current?.abort(), []);
-  async function remove(session: SessionSummary) {
+  async function remove(session: {harness: SessionHarness; sessionId: string}) {
     controller.current?.abort(); const current = new AbortController(); controller.current = current;
     setRemoval({busy: true, error: '', done: ''});
     try {
-      await mutate('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, current.signal);
+      const result = await mutate('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, current.signal);
       if (current.signal.aborted) return;
-      replace(value => value && {...value, sessions: value.sessions.filter(item => sessionPath(item) !== sessionPath(session))});
-      setRemoving(null); setRemoval({busy: false, error: '', done: session.title});
+      replace(value => value && {...value, sessions: value.sessions.filter(item => !(item.mine && item.harness === session.harness && item.sessionId === session.sessionId)),
+        deletions: [...(value.deletions ?? []).filter(item => !(item.harness === session.harness && item.sessionId === session.sessionId)), ...(!result.deleted ? [session] : [])]});
+      setRemoving(null); setRemoval({busy: false, error: '', done: result.deleted ? session.sessionId : ''});
     } catch (failure) {if (!current.signal.aborted) setRemoval({busy: false, error: failureMessage(failure, 'The session could not be deleted. Try again.'), done: ''});}
   }
   const update = (changes: Record<string, string>) => {
@@ -51,7 +52,12 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     setParams(next);
   };
   return <Page title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them." bodyClassName="oc-library">
-    {(params.get('deleted') === '1' || removal.done) && <Notice tone="success">Session deleted. It no longer appears in search for anyone.</Notice>}
+    {(params.get('deleted') === '1' || removal.done) && <Notice tone="success">Session permanently deleted from search and raw storage. Future uploads of this session will be discarded.</Notice>}
+    {removal.error && !removing && <Notice tone="danger">{removal.error}</Notice>}
+    {data?.deletions?.map(item => <Notice key={item.harness + ':' + item.sessionId} tone="warning">
+      <p>Session {item.sessionId} is hidden from everyone. Permanent storage cleanup is pending. Retry to finish; if it stays pending, ask your instance operator to check storage access or unfinished writes.</p>
+      <Button busy={removal.busy} onClick={() => void remove(item)}>Retry deletion</Button>
+    </Notice>)}
     <Tabs label="Sessions shown" value={scope} onChange={value => update({scope: value === 'mine' ? 'mine' : ''})} items={[{value: 'all', label: 'All sessions'}, {value: 'mine', label: 'My sessions'}]}/>
     <form className="query-form" role="search" onSubmit={event => {event.preventDefault(); update({q: draft.trim()});}}>
       <Field label="Search sessions"><Input type="search" value={draft} maxLength={500} onChange={event => setDraft(event.target.value)} placeholder="Search sessions…"/></Field>
@@ -71,7 +77,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     </li>)}</ol> : <EmptyState title={query ? 'No matching sessions' : scope === 'mine' ? 'You have no captured sessions yet' : 'No captured sessions yet'}
       description={query ? 'Try different words, or clear the search.' : 'Sessions appear here after an agent with OpenCrawl capture finishes a turn.'}/>)}
     <Dialog open={Boolean(removing)} onClose={() => {if (!removal.busy) setRemoving(null);}} title="Delete this session?"
-      description="OpenCrawl permanently removes the transcript and its search results for everyone in the workspace. If the session is still running, its new activity is discarded."
+      description="Permanently remove this transcript, uploaded attachments, and search results for everyone. This session cannot be captured again, including from another installation. Local files on your computer are unchanged."
       actions={<><Button disabled={removal.busy} onClick={() => setRemoving(null)}>Cancel</Button><Button variant="danger" busy={removal.busy} autoFocus onClick={() => removing && void remove(removing)}>Delete session</Button></>}>
       {removal.error ? <Notice tone="danger">{removal.error}</Notice> : <p className="oc-row-dialog-title">{removing?.title}</p>}
     </Dialog>
@@ -149,8 +155,8 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
     {back}
     <PageHeader title={session.title} actions={session.mine ? <OwnerControls noun="session" visibility={current}
       onVisibility={async (value, signal) => {await mutate('sessions/visibility', {harness: session.harness, sessionId: session.sessionId, visibility: value}, signal); setVisibility(value);}}
-      onDelete={async signal => {await mutate('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, signal); navigate('/sessions?deleted=1', {replace: true});}}
-      deleteDescription="OpenCrawl permanently removes this transcript and its search results for everyone in the workspace. If the session is still running, its new activity is discarded."/> : undefined}/>
+      onDelete={async signal => {const result = await mutate('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, signal); navigate(result.deleted ? '/sessions?deleted=1' : '/sessions', {replace: true});}}
+      deleteDescription="Permanently remove this transcript, uploaded attachments, and search results for everyone. This session cannot be captured again, including from another installation. Local files on your computer are unchanged."/> : undefined}/>
     <MetaList items={[{label: 'Status', value: current === 'private' ? <VisibilityBadge value/> : null}, {label: 'Captured by', value: authorName(session.userId, session.mine, data.authors)}, {label: 'Agent', value: harnessName(session.harness)},
       {label: 'Origin', value: session.origin}, {label: 'Events', value: data.total.toLocaleString('en-US')}, {label: 'Session ID', value: <code>{session.sessionId}</code>}]}/>
     {current === 'private' && <Notice>Only you can see this session. Teammates and their agents cannot read or search it.</Notice>}

@@ -37,7 +37,7 @@ test('receipts persist, fail closed by scope, and only follow durable accepted s
   }
   let receipts=0;
   const broken={...memorySessionStore(),put:async()=>{throw new Error('storage down');}};
-  await assert.rejects(createSessionIngest({store:broken,onStored:()=>receipts++}).putBatch(principal,batch),/storage down/);
+  await assert.rejects(createSessionIngest({store:broken,onStored:()=>receipts++}).putBatch(principal,batch),/write outcome is uncertain/);
   assert.equal(receipts,0);
 });
 

@@ -187,3 +187,46 @@ The React `SearchInspector` exported by `@getopencrawl/opencrawl-core/web-v2`
 provides a query box, readable result excerpts, and expandable item/full-response JSON. Query terms are highlighted literally in the displayed text; these highlights are a reading aid, not an OpenSearch analyzer explanation. The embedding runtime must protect
 both the page and `POST /api/debug/search`, resolve its own trusted principal,
 and provide the shared tokens and layout. This UI performs no identity selection.
+
+## Session deletion upgrade
+
+Stop capture ingress and fully drain all old receiver and indexing processes
+before exposing the upgraded console. Older processes do not acquire the new
+write fences. After activation, rollback must retain deletion controls and use
+fence-aware writers/readers. Never restore an old S3/index backup over current
+controls or expose a restored instance before reconciling later deletions.
+
+Every session search reader must receive the canonical `store` and `prefix`
+alongside its realm configuration. Missing/unavailable controls fail closed;
+search alone cannot establish current visibility. Workers need conditional
+read/write access to owner `controls/write-barriers/` objects. These barriers
+use linearizable compare-and-set and never expire unresolved remote writes.
+
+The deleting application needs S3 `ListBucketVersions`, `GetObjectVersion`,
+`DeleteObjectVersion`, current-object listing, and existing capture/control
+read/write permissions, restricted to the capture namespace. Compatible storage
+must implement complete version inventory, version deletion, conditional writes
+and strong read-after-write/list consistency. No version inventory fallback
+pretends that an ordinary DELETE permanently erased a versioned object.
+Object Lock, retention holds or denied permissions leave deletion pending and
+hidden. Operators can fix those constraints and retry from Sessions.
+
+Preserve the durable fence when diagnosing an uncertain writer. Verify the
+recorded process has terminated and the remote operation is conclusively settled
+before any operator reconciliation; time passing or a request timeout is not
+proof. Never clear a closed fence or tombstone to make a retry succeed.
+
+Attachment uploads now include `harness`, `installationId` and `sessionId`
+query parameters. Upgrade clients before enforcement: legacy unscoped uploads
+return 409 and retain the local queue. Scoped uploads to a deleted session are
+acknowledged and discarded. This operation cannot erase independently copied
+backups or unrelated records quoting the same content; operators must apply
+retention and deletion policies to those copies separately.
+
+Migration and restore writers also require the canonical store and prefix. They
+acquire the same session fences before copying index documents or making
+backups. Restoring a deleted session is refused. If an embedding runtime retains
+core migration archives, pass their explicit roots through the library
+`purgeCopies` callback using `purgeSessionArchives`; all affected versions are
+sanitized and permanently removed, preserving unrelated records under their
+own session fences. No pre-upgrade migration writer may remain running.

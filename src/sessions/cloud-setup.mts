@@ -6,7 +6,7 @@ export function cloudSetupScript(api: string) {
   // notice; the same async hook authenticates after secrets are injected.
   return `#!/bin/sh
 set -eu
-npm install --prefix "$HOME/.local/share/opencrawl-cloud" --no-audit --no-fund @getopencrawl/cli@0.4.29
+npm install --prefix "$HOME/.local/share/opencrawl-cloud" --no-audit --no-fund @getopencrawl/cli@0.4.33
 OPENCRAWL_NO_UPDATE=1 "$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl" collect install --yes --api ${quote(api)} --harness claude-code --defer-auth --backfill skip --json
 `;
 }
@@ -19,7 +19,7 @@ export function captureSetupPrompt(api: string) {
 
 1. Prepare without asking. Install/update with npm i -g @getopencrawl/cli@next. Discover local terminal and desktop agents and their existing OpenCrawl configuration. Help me create or sign into OpenCrawl at ${api} and select my workspace if needed: on this computer run opencrawl login --api ${api} --json so my browser opens; on SSH or headless machines run opencrawl login --api ${api} --no-browser --json and show me the link and code at once, because the code expires in minutes. Then preview local history with opencrawl collect backfill --dry-run --api ${api} --json.
 
-2. Ask one consent question that I can answer in a single reply. Show the destination workspace and every discovered agent, ask once about additional machines, SSH hosts, and cloud agents, and default to everything discovered. Include recording consent: capture shares user/agent messages, tool arguments/results, attachments and native agent memory files with my team, attributed to me, without automatic secret redaction and excluding system prompt snapshots. Include history: per-source counts and sizes from the preview, requesting explicit consent to import all available history. Ask again only for a choice I left unanswered or a new environment or risk; keep unanswered choices pending while continuing independent setup.
+2. Ask one consent question that I can answer in a single reply. Show the destination workspace and every discovered agent, ask once about additional machines, SSH hosts, and cloud agents, and default to everything discovered. Include recording consent: capture shares user/agent messages, tool arguments/results, attachments and native agent memory files with my team, attributed to me, with recognized session secrets masked locally before upload and system prompt snapshots excluded; unknown secret formats, image contents and native memory files are not reliably covered. Include history: per-source counts and sizes from the preview, requesting explicit consent to import all available history. Ask again only for a choice I left unanswered or a new environment or risk; keep unanswered choices pending while continuing independent setup.
 
 3. Apply and verify without routine questions. Guide only human-required steps such as browser sign-in, hook trust and restarts.
 

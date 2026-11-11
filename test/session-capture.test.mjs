@@ -14,7 +14,7 @@ test('portable capture durably stores attachments and idempotent account-scoped 
    events:[{id:'event',kind:'message',data:{role:'user',content:'fixture'}}],attachments:[{status:'captured',sha256:sha}]};
  await assert.rejects(ingest.putBatch(principal,batch),/not uploaded/);
  await assert.rejects(ingest.putAttachment(principal,'0'.repeat(64),attachment),/digest mismatch/);
- await ingest.putAttachment(principal,sha,attachment);
+ await ingest.putAttachment(principal,sha,attachment,batch);
  const receipt=await ingest.putBatch(principal,batch);
  assert.deepEqual(await ingest.putBatch(principal,batch),receipt);
  const ids={...batch,batchId:receipt.batchId};
@@ -25,6 +25,7 @@ test('portable capture durably stores attachments and idempotent account-scoped 
  await assert.rejects(ingest.putBatch({...principal,userId:'owner2'},batch),/owner/);
  await assert.rejects(ingest.putBatch(null,batch),/Authentication/);
  const odd={...batch,installationId:'..',sessionId:'..'};
+ await ingest.putAttachment(principal,sha,attachment,odd);
  const oddReceipt=await ingest.putBatch(principal,odd);
  assert.ok(await ingest.getBatch(principal,{...odd,batchId:oddReceipt.batchId}));
  assert.equal(await ingest.getBatch({...principal,userId:'owner2'},{...odd,batchId:oddReceipt.batchId}),null);

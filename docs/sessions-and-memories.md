@@ -45,16 +45,38 @@ two boolean fields through an additive in-place mapping update.
 Only the owner can delete. Other members receive "not found", so ownership of
 another person's resource is never confirmed.
 
-- Deleting a **session** first writes a tombstone, then removes every capture
-  batch and event ledger for that session from every installation, then removes
-  its search documents. Uploads of the same session that arrive later are
-  acknowledged (`stored: true, discarded: "session_deleted"`) so clients stop
-  retrying, but are never stored or indexed. Content-addressed attachments may be
-  shared with other sessions and are retained.
+- Deleting a **session** permanently revokes reads and closes its durable write
+  fence before cleanup. Search, fetch by ID, raw reads, the console and board
+  discovery check authoritative owner controls, including after source reads.
+  Failed storage or index access fails closed. Search documents are removed
+  first; completion requires drained writers, removal of every raw batch,
+  attachment and event-ledger version from every installation, and a refreshed
+  empty search result. S3 delete markers alone are not erasure.
+  Late live captures and history imports of the same tenant, owner, harness and
+  native session ID return `stored: true, discarded: "session_deleted"` without
+  storing content. Installation IDs do not reset deletion. No restore operation
+  clears a tombstone. Other owners/tenants with colliding IDs are unaffected.
+  New attachments require session identity. Legacy owner-scoped attachments
+  referenced by the deleted session are also erased, even when another session
+  referenced those same bytes. Unscoped attachment uploads are refused with an
+  instruction to upgrade the CLI.
+  `sessions/delete` returns `deleted: true` only after verified erasure. Otherwise
+  it returns `deleted: false, pending: true`; the session remains inaccessible,
+  and the owner's Sessions page offers **Retry deletion**, including after a
+  server/browser restart. An ambiguous remote write never expires into a claim
+  of successful deletion. Operators must reconcile unfinished writes; object
+  locks or missing permissions must be resolved before retrying.
 - Deleting a **memory** removes the file's passages from search and ignores that
   version in later snapshots. The file on the person's machine is not changed;
   if the agent writes a newer version (later modification time), it is captured
   again. Raw snapshot objects are immutable and retain earlier versions.
+
+The retained session control/fence contains IDs, hashes, timestamps and cleanup
+state, never transcript or attachment bytes. Local harness files and independent
+copies (including separate memory files or operator backups) are outside this
+operation. Preserve current tombstones when restoring backups; never expose an
+older backup or roll back to a pre-fence writer after deletion. See the
+[upgrade and storage requirements](session-indexing.md#session-deletion-upgrade).
 
 ## API
 

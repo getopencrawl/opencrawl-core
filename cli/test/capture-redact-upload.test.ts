@@ -63,7 +63,13 @@ test('all capture sources and legacy retries mask locally before batch and decod
     expect((await flushCaptures()).uploaded).toBe(5);
     for(const write of writes) {
       expect(write.body.toString()).not.toContain(secret);expect(write.body.toString()).not.toContain('opaque-sensitive-value');
-      if(write.url.startsWith('/api/sessions/attachments/'))expect(write.url).toBe('/api/sessions/attachments/'+hash(write.body));
+      if(write.url.startsWith('/api/sessions/attachments/')){
+        const url=new URL(write.url,api);expect(url.pathname).toBe('/api/sessions/attachments/'+hash(write.body));
+        expect(url.searchParams.get('installationId')).toBe(uuid);
+        expect(writes.filter(w=>w.url==='/api/sessions/batches').some(w=>{
+          const batch=JSON.parse(w.body.toString());return batch.harness===url.searchParams.get('harness')&&batch.sessionId===url.searchParams.get('sessionId');
+        })).toBe(true);
+      }
     }
     const batches=writes.filter(w=>w.url==='/api/sessions/batches').map(w=>w.body.toString());
     expect(batches[0]).toBe(batches[1]);
@@ -72,7 +78,7 @@ test('all capture sources and legacy retries mask locally before batch and decod
     expect(legacy.attachments[0].sha256).toBe(hash('legacy [REDACTED] '+uuid));
     expect(legacy.events[0].data.attachments).toEqual(legacy.attachments);
     expect(legacy.attachments[1]).toMatchObject({status:'missing',redactionReason:'secret_in_binary'});
-    expect(writes.some(w=>w.url.endsWith(binaryHash))).toBe(false);
+    expect(writes.some(w=>new URL(w.url,api).pathname.endsWith(binaryHash))).toBe(false);
     expect(readdirSync(join(captureDir(),'queue'))).toHaveLength(0);
     // Resolve and scan every blob before sending any body, failing closed even
     // when a preceding attachment was valid. Keep queue/cursor state for retry.

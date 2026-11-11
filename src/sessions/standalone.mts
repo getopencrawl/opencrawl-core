@@ -66,7 +66,7 @@ export async function startStandaloneCapture(env=process.env) {
   const principal={tenantId:env.OPENCRAWL_TENANT_ID||'self-hosted',userId:env.OPENCRAWL_USER_ID||'owner',
     name:env.OPENCRAWL_USER_NAME||null,email:env.OPENCRAWL_USER_EMAIL||null};
   const {store,prefix}=standaloneStorage(env);
-  const settings=searchSettings(env),search=settings?createSessionSearch(settings):null;
+  const settings=searchSettings(env),search=settings?createSessionSearch({...settings,store,prefix}):null;
   const handler=standaloneCapture({token:env.OPENCRAWL_SESSIONS_TOKEN,principal,store,prefix,search});
   await store.checkAccess();
   const server=createServer(handler);

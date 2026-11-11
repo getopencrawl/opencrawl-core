@@ -1,4 +1,4 @@
-import type {TenantPrincipal, JsonValue} from '../sessions/types.mjs';
+import type {TenantPrincipal, JsonValue, ObjectStore} from '../sessions/types.mjs';
 import type {Corpus, DocumentItem, IndexTransportOptions} from './types.mjs';
 import type {createRealm} from './realm.mjs';
 interface MigrationState {identity: string; version: string; after: JsonValue[] | null; copied: number; total: number | null; complete: boolean}
@@ -6,6 +6,7 @@ interface SourceStats {indices: Record<string, {uuid: string; shards: Record<str
 export interface MigrationSource {identity: string; version(): Promise<string>; read(after: JsonValue[] | null): Promise<{total: number; documents: DocumentItem[]; next: JsonValue[] | null}>}
 import {createHash} from 'node:crypto';
 import {createIndexTransport,realmDocument} from './realm.mjs';
+import {withSessionDocumentWrites} from '../sessions/write-barrier.mjs';
 const sorts={connector:['connectionId','workspaceId','provider','kind','sourceId'],session:['tenantId','userId','harness','installationId','sessionId','eventId','chunk']};
 const stable=(value: unknown): unknown=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,stable((value as Record<string,unknown>)[k])])):value;
 export const documentDigest=(value: unknown)=>createHash('sha256').update(JSON.stringify(stable(value))).digest('hex');
@@ -43,7 +44,7 @@ export function legacyRealmSource({corpus,tenantId,...options}: IndexTransportOp
   };
 }
 /** Checkpoint only after write+readback; interrupted pages are safe to replay while target writers are stopped. */
-export async function migrateRealmCorpus({principal,corpus,source,realm,load,save,onPage=async()=>{}}: {principal: TenantPrincipal; corpus: Corpus; source: MigrationSource; realm: ReturnType<typeof createRealm>; load(): Promise<MigrationState | null>; save(state: MigrationState): Promise<unknown>; onPage?(progress: {copied: number; total: number | null}): Promise<unknown>}){
+export async function migrateRealmCorpus({principal,corpus,source,realm,store,prefix,load,save,onPage=async()=>{}}: {principal: TenantPrincipal; corpus: Corpus; source: MigrationSource; realm: ReturnType<typeof createRealm>; store?:ObjectStore;prefix?:string;load(): Promise<MigrationState | null>; save(state: MigrationState): Promise<unknown>; onPage?(progress: {copied: number; total: number | null}): Promise<unknown>}){
   realm.scope(principal);const collection=realm.collection(corpus);
   let state=await load();const identity=JSON.stringify([source.identity,realm.identity,corpus]);
   if(state&&state.identity!==identity)throw new Error('Migration checkpoint scope mismatch');
@@ -63,6 +64,7 @@ export async function migrateRealmCorpus({principal,corpus,source,realm,load,sav
       state={...state,total:page.total,complete:true};await save(state);return state;
     }
     // Bounded batches also handle large previously stored messages without loading a corpus.
+    const copy=async()=>{
     let batch: DocumentItem[]=[],bytes=0;
     for(const item of page.documents){
       const size=Buffer.byteLength(JSON.stringify(realmDocument(corpus,item.id,item.document)));
@@ -74,6 +76,11 @@ export async function migrateRealmCorpus({principal,corpus,source,realm,load,sav
     const verified=await collection.mget(principal,page.documents.map(d=>d.id));
     const actual=new Map(verified.docs.map(h=>[h._id,h]));
     if(page.documents.some(d=>!actual.get(d.id)?.found||documentDigest(actual.get(d.id)!._source)!==documentDigest(d.document)))throw new Error('Migration document verification failed');
+    };
+    if(corpus==='session'){
+      if(!store||!prefix)throw new Error('Session migration requires authoritative deletion controls');
+      await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:page.documents},copy);
+    }else await copy();
     state={...state,total:page.total,after:page.next,copied:state.copied+page.documents.length};
     if(state.copied>page.total)throw new Error('Migration duplicated source records');
     await save(state);await onPage({copied:state.copied,total:state.total});
