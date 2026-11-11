@@ -40,6 +40,7 @@ x-runtime: &runtime
     TEMPORAL_NAMESPACE: default
     TEMPORAL_CONNECTOR_TASK_QUEUE: connector-indexing-v1
     TEMPORAL_SESSION_TASK_QUEUE: session-indexing-v1
+    TEMPORAL_SESSION_DELETION_TASK_QUEUE: session-deletion-v1
 
 services:
   app:

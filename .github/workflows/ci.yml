@@ -22,7 +22,7 @@ jobs:
       - name: Verify every connector manifest on the pinned declarative runtime
         run: OPENCRAWL_TEST_CONNECTOR_RUNTIME=1 node --test test/connector-runtime.test.mjs
       - name: Verify real Temporal scheduling, retries and replay
-        run: OPENCRAWL_TEST_TEMPORAL=1 node --test test/session-temporal.test.mjs test/slack-source-temporal.test.mjs test/connector-pagination-temporal.test.mjs
+        run: OPENCRAWL_TEST_TEMPORAL=1 node --test test/session-temporal.test.mjs test/session-deletion-temporal.test.mjs test/slack-source-temporal.test.mjs test/connector-pagination-temporal.test.mjs
       - name: Verify capture against S3-compatible storage
         env:
           OPENCRAWL_TEST_S3_ENDPOINT: http://127.0.0.1:18333

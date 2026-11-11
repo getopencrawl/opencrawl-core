@@ -109,3 +109,24 @@ self-host console proxies them as `/api/reference/library/<operation>`.
 
 Capture-only credentials are refused. Ownership comes from the authenticated
 principal; requests cannot name another owner for a change.
+
+### Durable deletion rollout
+
+`requestDeletion` records an owner-authorized intent under the protected
+`_deletions/v1/` namespace and revokes reads before scheduling Temporal. Its
+stable workflow ID includes storage prefix, tenant, owner, harness and session.
+`deleteSessionV1` drains the write fence, purges archives, erases raw object
+versions, verifies search removal and records completion. Failed activities
+retry indefinitely with bounded backoff; a minute schedule recovers intents
+whose initial workflow submission was interrupted. History contains opaque
+references and sanitized failure types, never transcript content.
+
+Deploy the compatible core contract, then configure `scheduleDeletion` in the
+API and the separate deletion queue/worker in the shell. Only then activate
+`requestDeletion` in the public HTTP route and remove the old recovery UI.
+The current HTTP route retains synchronous deletion during this preparation.
+The operator-only `pendingDeletions` method lets an upgrade enumerate already
+requested erasures and submit them through the durable path. Previously
+authorized requests finish even if the owner subsequently leaves the workspace.
+After activation, rollback must retain a deletion-capable worker until all
+accepted requests have completed.
