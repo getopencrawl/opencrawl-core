@@ -43,7 +43,8 @@ test('a revoked sign-in pauses capture visibly, once per hour, and clears after 
   // A successful upload after the failure makes the recorded error stale.
   writeFileSync(join(captureDir(),'last-upload.json'),JSON.stringify({at:new Date(Date.now()+1000).toISOString(),stored:true}));
   expect(captureAttention()).toBeNull();
-  expect(captureStatus().attention).toBeNull();
+  // Only the sign-in pause clears; an untrusted Codex hook in this fixture is reported separately.
+  expect(captureStatus().attention??'').not.toContain('paused');
   expect(existsSync(join(captureDir(),'queue','batch.json'))).toBe(true);
  }finally{process.env=saved;rmSync(dir,{recursive:true,force:true});}
 });

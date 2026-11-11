@@ -88,8 +88,14 @@ export async function pollDevice(auth: AuthConfig, device: Device, options: {fet
   while (now() + interval < deadline) {
     await sleep(interval);
     if (now() >= deadline) break;
-    const {response, body} = await form(auth.tokenEndpoint, {client_id: auth.clientId, grant_type: 'urn:ietf:params:oauth:grant-type:device_code', device_code: device.device_code}, options.fetcher);
+    let reply: Awaited<ReturnType<typeof form>>;
+    // The person may still approve: a dropped connection or a temporary service
+    // failure while polling must not abandon a valid device code.
+    try { reply = await form(auth.tokenEndpoint, {client_id: auth.clientId, grant_type: 'urn:ietf:params:oauth:grant-type:device_code', device_code: device.device_code}, options.fetcher); }
+    catch (error) { if (error instanceof CliError && error.code === 'NETWORK_ERROR') continue; throw error; }
+    const {response, body} = reply;
     if (response.ok) return tokens(body, now());
+    if (!body.error && (response.status === 429 || response.status >= 500)) continue;
     if (body.error === 'authorization_pending') continue;
     if (body.error === 'slow_down') { interval += 5000; continue; }
     if (body.error === 'access_denied') throw new CliError('AUTH_DENIED', 'Sign-in was denied in the browser.');
