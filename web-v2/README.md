@@ -61,7 +61,7 @@ queries in the background. Initial reads retain loading/error/retry states; only
 explicit server failures retain older data. Access errors clear the scoped
 workspace. Reads are single-flight, hidden reads cancel, and mutations pause
 polling and invalidate related queries. Usage keeps its one-minute cadence.
-`useConsolePrefetch` warms likely routes in the same scope without keeping hidden
-page components or polling mounted. Diagnostics readers and drafts use scoped
+Pages load on demand through independent POST requests. Opening one page does
+not start unrelated reports or block on their reads. Diagnostics readers and drafts use scoped
 model entries; unfinished reads cancel on navigation, while completed results
 and confirmed board history remain available.
