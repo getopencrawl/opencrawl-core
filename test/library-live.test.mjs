@@ -219,7 +219,8 @@ test('real Grok Bot sessions: hook-derived conversations and tool-only activity 
   t.after(async () => {for (const key of objects) await underlying.delete(key); await fetch(endpoint + '/' + realmIndex(environment, tenantId), {method: 'DELETE'});});
   const search = createSessionSearch({store,prefix,endpoint, environment}), ingest = createSessionIngest({store, prefix});
   const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
-  const api = createLibraryApi({sessions: createSessionLibrary({...options,scheduleDeletion:async()=>{}})}), workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
+  const sessions = createSessionLibrary({...options, scheduleDeletion: async () => {}});
+  const api = createLibraryApi({sessions}), workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
   const keys = () => [...objects].filter(key => key.endsWith('.json.gz'));
   async function upload(owner, sessionId, harness, events) {
     const before = new Set(keys());
