@@ -4,6 +4,9 @@ Merging into protected `main` is the release decision. Core CI, repository
 security, plugin validation and self-host checks must all succeed on the exact
 main revision before the core continuous-delivery workflow can publish it.
 Failed, cancelled, untrusted and superseded revisions cannot advance the channel.
+Callbacks evaluate the current default-branch revision. A CLI release finishing
+after a newer core merge can therefore unlock that newer revision once its own
+checks pass; the triggering job's older revision is never substituted for it.
 
 The private package uses a deterministic version such as
 `0.3.4-cd.123.g0123456789ab`, derived from the source version, main history count
