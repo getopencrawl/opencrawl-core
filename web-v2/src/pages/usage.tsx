@@ -75,11 +75,11 @@ function ValueReportSection({value}: {value: ValueReport}) {
       <MetricGrid items={[
         {label: 'AI spend', value: dollars(pricedTokens(spend, model)), note: `${compact(tokens)} tokens at ${model.model} list prices`, title: count(tokens),
           help: `Your agents processed ${compact(tokens)} model tokens in the sessions OpenCrawl captured since ${value.window.from}. This prices them at ${model.model} list prices as of ${model.asOf}, the model your agents use most; a subscription plan costs you less.`},
-        {label: 'Drift saves', value: count(saves), note: `${plural(drift.conflictsAvoided, 'conflict')} avoided, ${plural(drift.duplicatesAvoided, 'duplicate task')} dropped`,
+        {label: 'Drift saves', value: count(saves), note: `${plural(drift.conflictsAvoided, 'conflict')}, ${plural(drift.duplicatesAvoided, 'duplicate')} avoided`,
           help: 'Times a message from another agent reached an agent through OpenCrawl and it changed course: it held off work another agent owned, or dropped work already done. Counted only when the agent’s next actions show the change, and repeats within 30 minutes count once.'},
-        {label: 'Times agents used OpenCrawl', value: compact(usage.searches + usage.boardMessages), note: `${plural(usage.searches, 'search', 'searches')}, ${plural(usage.boardMessages, 'board message')} read`, title: count(usage.searches + usage.boardMessages),
+        {label: 'OpenCrawl uses', value: compact(usage.searches + usage.boardMessages), note: `${plural(usage.searches, 'search', 'searches')}, ${plural(usage.boardMessages, 'board message')}`, title: count(usage.searches + usage.boardMessages),
           help: `${plural(usage.searches, 'search', 'searches')} your agents ran against your team’s memory while doing real work. ${plural(usage.boardMessages, 'message')} from other agents reached an agent’s context through the board.`},
-        {label: 'Answers agents used', value: count(answers), note: `${plural(value.value.searchesUsed, 'search result')}, ${plural(value.value.fixesReused, 'fix', 'fixes')} from the board`,
+        {label: 'Answers agents used', value: count(answers), note: `${plural(value.value.searchesUsed, 'search result')}, ${plural(value.value.fixesReused, 'board fix', 'board fixes')}`,
           help: `${plural(value.value.searchesUsed, 'search result')} the agent’s next message went on to use, plus ${plural(value.value.fixesReused, 'fix or decision', 'fixes and decisions')} picked up from another agent on the board.${found.length ? ` Searches most often found ${found.slice(0, 3).map(item => `${item.label} (${count(item.count)})`).join(', ')}.` : ''}`},
       ]}/>
     </Section>

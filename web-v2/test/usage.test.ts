@@ -243,16 +243,16 @@ test('Agent alignment is the first section: four cards of things that happened, 
   assert.equal(pricedTokens(value().spend, value().model), 1200);
   assert.deepEqual(cards(html, 'Agent alignment'), [
     ['AI spend', '$1,200', '1B tokens at GPT-6 Astra list prices'],
-    ['Drift saves', '42', '35 conflicts avoided, 7 duplicate tasks dropped'],
-    ['Times agents used OpenCrawl', '4,030', '340 searches, 3,690 board messages read'],
-    ['Answers agents used', '290', '221 search results, 69 fixes from the board'],
+    ['Drift saves', '42', '35 conflicts, 7 duplicates avoided'],
+    ['OpenCrawl uses', '4,030', '340 searches, 3,690 board messages'],
+    ['Answers agents used', '290', '221 search results, 69 board fixes'],
   ]);
   const text = html.replace(/<[^>]*>/g, '');
   assert.match(text, /How OpenCrawl kept your agents on track since 2026-11-05, across 386 sessions and 368 tasks\./);
   const section = text.slice(text.indexOf('Agent alignment'), text.indexOf('Agent sessions'));
   assert.doesNotMatch(section, /saved|savings|fewer|would have|Without OpenCrawl|OpenCrawl cost|×/i);
   const help = [...html.matchAll(/<button type="button" class="report-help-button" aria-label="([^"]+)" aria-describedby="([^"]+)">\?<\/button><span class="report-help-text" role="tooltip" id="([^"]+)">(.*?)<\/span>/g)];
-  assert.deepEqual(help.map(match => match[1]), ['How AI spend is calculated', 'How Drift saves is calculated', 'How Times agents used OpenCrawl is calculated', 'How Answers agents used is calculated']);
+  assert.deepEqual(help.map(match => match[1]), ['How AI spend is calculated', 'How Drift saves is calculated', 'How OpenCrawl uses is calculated', 'How Answers agents used is calculated']);
   assert.ok(help.every(match => match[2] === match[3]));
   assert.equal(help[0]![4], 'Your agents processed 1B model tokens in the sessions OpenCrawl captured since 2026-11-05. This prices them at GPT-6 Astra list prices as of 2026-11-09, the model your agents use most; a subscription plan costs you less.');
   assert.equal(help[3]![4], '221 search results the agent’s next message went on to use, plus 69 fixes and decisions picked up from another agent on the board. Searches most often found what teammates’ agents were doing (116), where things live (65), past decisions (34).');
@@ -266,9 +266,9 @@ test('without a measurement there is no Agent alignment section; a workspace wit
     value: {searchesUsed: 0, fixesReused: 1, found: {teammateWork: 0, whereThingsLive: 0, pastDecisions: 0, pastFixes: 0, other: 0}}};
   const html = render({...report(), value: empty});
   assert.deepEqual(cards(html, 'Agent alignment').slice(1), [
-    ['Drift saves', '1', '1 conflict avoided, 0 duplicate tasks dropped'],
-    ['Times agents used OpenCrawl', '1', '0 searches, 1 board message read'],
-    ['Answers agents used', '1', '0 search results, 1 fix from the board'],
+    ['Drift saves', '1', '1 conflict, 0 duplicates avoided'],
+    ['OpenCrawl uses', '1', '0 searches, 1 board message'],
+    ['Answers agents used', '1', '0 search results, 1 board fix'],
   ]);
   assert.doesNotMatch(html, /Searches most often found/);
 });
