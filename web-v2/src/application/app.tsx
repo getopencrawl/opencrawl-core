@@ -88,7 +88,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/sources',label:'Integrations',icon:'sources',element:<SourcesPage adapter={api} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
     {path:'/diagnostics',label:'Diagnostics',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title="Diagnostics" description="See what your agents can retrieve and how they coordinate work.">{feedback}</PendingPage>},
-    {path:'/settings',label:'Agent setup',icon:'settings',element:<Navigate to="/onboarding" replace/>},
+    {path:'/settings',label:'Agent setup',icon:'settings',element:data ? <AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
     {path:'/team',label:'Team',icon:'team',group:'manage',element:<TeamPage adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={name => setData(current => current ? {...current, workspace: {...current.workspace, name}} : current)}/>,pending:feedback => <TeamLoadingPage>{feedback}</TeamLoadingPage>},
     ...(extensions?.routes?.({data, activated}) ?? []),
     {path:'/integrations',label:'Integrations',navigation:false,element:<Navigate to="/sources" replace/>},
@@ -98,7 +98,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   ];
   if (!data) {
     const feedback = error ? <div className="stack"><Notice tone="danger">{error}</Notice><div className="action-row"><Button onClick={() => setAttempt(value => value + 1)}>Try again</Button><LinkButton to="/auth/login" reloadDocument>Sign in</LinkButton></div></div> : undefined;
-    if (onboarding || location.pathname === '/settings') return <FocusedFrame footer={<SignOut/>}>{feedback ?? <LoadingState label="Loading your workspace"/>}</FocusedFrame>;
+    if (onboarding) return <FocusedFrame footer={<SignOut/>}>{feedback ?? <LoadingState label="Loading your workspace"/>}</FocusedFrame>;
     const route = routes.find(item => item.path === location.pathname);
     return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
   }
