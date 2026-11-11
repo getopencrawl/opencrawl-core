@@ -13,3 +13,12 @@ test('short fenced blocks remain intact and splitting is deterministic',()=>{
   const text='Introduction.\n\n'.repeat(60)+code+'\nClosing paragraphs.\n'.repeat(300);
   const chunks=passages(text);assert.ok(chunks.some(c=>c.text.includes(code)));assert.deepEqual(chunks,passages(text));
 });
+test('embedded shorter fences and apparent closers with trailing text stay inside the code block',()=>{
+  for(const marker of ['````','~~~~']){
+    const code=marker+'markdown\n'+('before\n').repeat(120)+marker.slice(0,3)+'\n'+('middle\n').repeat(120)+marker+' not a closing fence\n'+('after\n').repeat(120)+marker+'\n';
+    const text='Introduction.\n\n'.repeat(60)+code+'\nClosing paragraphs.\n'.repeat(300);
+    const chunks=passages(text);
+    assert.equal(chunks.map(c=>c.text).join(''),text);
+    assert.ok(chunks.some(c=>c.text.includes(code)));
+  }
+});

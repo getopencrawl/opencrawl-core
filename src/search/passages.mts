@@ -7,11 +7,15 @@ export function passages(text:string,target=3000,maximum=6000):TextPassage[] {
   if(!Number.isInteger(target)||!Number.isInteger(maximum)||target<100||maximum<target)throw new Error('Invalid passage bounds');
   if(!text)return [{text:'',start:0,end:0}];
   const boundaries:Array<{end:number;paragraph:boolean;inFence:boolean}>=[];
-  let fence:string|null=null;
+  let fence:{marker:string;length:number}|null=null;
   for(const m of text.matchAll(/.*(?:\n|$)/g)) {
     if(!m[0])continue;
-    const marker=/^\s{0,3}(`{3,}|~{3,})/.exec(m[0]);
-    if(marker){if(!fence)fence=marker[1]![0]!;else if(marker[1]![0]===fence)fence=null;}
+    const marker=/^[ \t]{0,3}(`{3,}|~{3,})([^\n]*)/.exec(m[0]);
+    if(marker){
+      const run=marker[1]!,tail=marker[2]!;
+      if(!fence){if(run[0]!=='`'||!tail.includes('`'))fence={marker:run[0]!,length:run.length};}
+      else if(run[0]===fence.marker&&run.length>=fence.length&&!tail.trim())fence=null;
+    }
     boundaries.push({end:m.index+m[0].length,paragraph:/^\s*$/.test(m[0]),inFence:!!fence});
   }
   const result:TextPassage[]=[];let start=0,cursor=0;
