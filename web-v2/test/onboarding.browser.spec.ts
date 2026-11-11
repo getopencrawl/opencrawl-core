@@ -464,3 +464,23 @@ test('self-host onboarding exposes private invitation links without claiming ema
   await expect(page.getByRole('button',{name:'Copy Private invitation link'})).toBeVisible();
   await expect(page.getByText('Invitation sent.')).toHaveCount(0);
 });
+
+
+for (const width of [1280,390]) test(`Team removal confirms revocation before removing the row at ${width}px`, async ({page}, testInfo) => {
+  await page.setViewportSize({width,height:844});
+  const report = {organization:{id:'org_a',name:'Workspace'},viewerUserId:'user_admin',role:'admin',members:[{id:'user_admin',name:'Admin',email:'admin@example.com',role:'admin'},{id:'user_bob',name:'Bob Member',email:'bob@example.com',role:'member'}]};
+  await page.route('**/api/console/team', route => route.fulfill({json:report}));
+  let release = () => {}; const hold = new Promise<void>(resolve => {release=resolve;});let writes=0;
+  await page.route('**/api/console/team/remove',async route => {writes++;expect(route.request().postDataJSON()).toEqual({userId:'user_bob'});await hold;report.members=report.members.filter(m=>m.id!=='user_bob');await route.fulfill({json:{ok:true,userId:'user_bob'}});});
+  await page.goto('/team-fixture');
+  const remove = page.getByRole('button',{name:'Remove bob@example.com',exact:true});
+  await expect(page.getByRole('button',{name:'Remove admin@example.com',exact:true})).toHaveCount(0);
+  await remove.click();const dialog=page.getByRole('dialog',{name:'Remove teammate?'});
+  await expect(dialog).toContainText('bob@example.com');await dialog.getByRole('button',{name:'Cancel',exact:true}).click();expect(writes).toBe(0);await expect(remove).toBeFocused();
+  await remove.press('Enter');await dialog.getByRole('button',{name:'Remove teammate',exact:true}).click();
+  await expect(dialog.getByRole('button',{name:'Remove teammate',exact:true})).toBeDisabled();await page.keyboard.press('Escape');await expect(dialog).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath(`team-removal-${width}.png`),fullPage:true});
+  release();await expect(dialog).not.toBeVisible();await expect(page.getByRole('list',{name:'Workspace members'})).not.toContainText('bob@example.com');
+  await expect(page.getByLabel('Teammate’s email',{exact:true})).toBeFocused();expect(writes).toBe(1);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});

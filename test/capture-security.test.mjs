@@ -144,3 +144,19 @@ test('unknown capture capabilities fail closed before upload or read storage acc
     await assert.rejects(onboarding.read(principal), {status: 403});
   }
 });
+
+test('capture withholds a private response if membership is revoked during its read',async t=>{
+ let active=true;
+ const handler=createCaptureHandler({ingest:{getBatch:async()=>{active=false;return {private:'must not escape'};}},authenticate:async()=>{if(!active)throw Object.assign(Error('removed'),{status:403});return owner;}});
+ const server=createServer(handler);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+ const result=await fetch('http://127.0.0.1:'+server.address().port+'/api/sessions/batches');
+ assert.equal(result.status,403);assert.doesNotMatch(await result.text(),/must not escape/);
+});
+test('a slow upload authorized before removal cannot write after its body arrives',async t=>{
+ const {request}=await import('node:http');
+ let active=true,writes=0,started;const authorized=new Promise(resolve=>{started=resolve;});
+ const handler=createCaptureHandler({ingest:{putBatch:async()=>{writes++;return {}; }},authenticate:async()=>{if(!active)throw Object.assign(Error('removed'),{status:403});started();return owner;}});
+ const server=createServer(handler);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+ let upload;const result=new Promise((resolve,reject)=>{upload=request('http://127.0.0.1:'+server.address().port+'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});upload.on('error',reject);upload.write('{');});
+ await authorized;active=false;upload.end('}');assert.equal(await result,403);assert.equal(writes,0);
+});
