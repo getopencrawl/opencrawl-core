@@ -52,7 +52,7 @@ export function searchableEventData(harness:string,event:SessionEvent):unknown {
   if(event.kind==='message'&&d.content!==undefined)return d.content;
   if(event.kind==='agent_message'&&d.content!==undefined)return d.content;
   if(event.kind==='tool_result'&&(d.output!==undefined||d.content!==undefined))return d.output??d.content;
-  if(event.kind==='tool_call')return {name:d.name,arguments:d.arguments??d.input??d.action};
+  if(event.kind==='tool_call'&&['name','arguments','input','action'].some(key=>d[key]!==undefined))return {name:d.name,arguments:d.arguments??d.input??d.action};
   return data;
 }
 export function batchDocuments({prefix,key,batch,principal,visibility='team'}: {prefix: string; key: string; batch: SessionBatch; principal: Principal; visibility?: 'team' | 'private'}): DocumentItem[] {
