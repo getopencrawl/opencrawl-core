@@ -1,3 +1,5 @@
+/** Release capability used by shells to verify the public deletion contract. */
+export const sessionDeletionExecution = 'inline' as const;
 import type {Principal, Authenticate, HttpHandler} from './types.mjs';
 import {parseJson, serviceError, SESSION_HARNESSES} from './types.mjs';
 import {z} from 'zod';

@@ -3,6 +3,7 @@ import {isSessionHarness, SESSION_HARNESSES, parseJson} from './types.mjs';
 import {gunzipSync} from 'node:zlib';
 import type {SessionBatch} from './types.mjs';
 import {sessionWriteBarrier} from './write-barrier.mjs';
+import {createSessionDeletionRequests} from './deletion-requests.mjs';
 import type {RealmOptions, QueryBody, IndexHit} from '../search/types.mjs';
 import {createRealmResolver, realmField} from '../search/realm.mjs';
 import {createSessionIngest, sessionScope, digest} from './ingest.mjs';
@@ -14,6 +15,7 @@ import {capturedTitle, TITLE_KINDS} from './titles.mjs';
 export interface SessionKey {userId: string; harness: string; sessionId: string}
 export interface SessionSummary extends SessionKey {
   title: string; private: boolean; mine: boolean; origin: string | null; host: string | null;
+  hosts: string[]; hostsTruncated: boolean;
   firstActivityAt: string | null; lastActivityAt: string | null; events: number;
 }
 export type TranscriptEntry =
@@ -25,6 +27,13 @@ export interface TranscriptEvent {eventId: string; kind: string; timestamp: stri
 
 const identity = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 const f = (field: string) => realmField('session', field);
+// Bound per-session metadata while retaining the legacy most-frequent host.
+const hostTerms = {terms: {field: f('host'), size: 20, exclude: ''}};
+type HostBuckets = {buckets: Array<{key: string}>; sum_other_doc_count?: number};
+function capturedHosts(value?: HostBuckets) {
+  const hosts = [...new Set((value?.buckets ?? []).map(bucket => bucket.key).filter(host => typeof host === 'string' && host.trim()))];
+  return {host: hosts[0] ?? null, hosts: hosts.sort(), hostsTruncated: (value?.sum_other_doc_count ?? 0) > 0};
+}
 const MAX_TEXT = 20000;
 function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 function clip(text: string) {return text.length > MAX_TEXT ? {text: text.slice(0, MAX_TEXT), truncated: true} : {text, truncated: false};}
@@ -116,7 +125,8 @@ function decodeCursor(cursor: unknown): JsonValue[] | undefined {
 /** Team members read every session that is not private to another member.
  * Only the owner changes visibility or deletes; deletion removes raw capture,
  * search documents and future uploads of the same session. */
-export function createSessionLibrary({store, prefix, purgeCopies, ...options}: RealmOptions & {store: ObjectStore; prefix: string; purgeCopies?: (principal: Principal, key: SessionKey) => Promise<number>}) {
+export interface SessionLibraryOptions extends RealmOptions {store: ObjectStore; prefix: string; purgeCopies?: (principal: Principal, key: SessionKey, store: ObjectStore) => Promise<number>; scheduleDeletion?: (key: string) => Promise<unknown>}
+export function createSessionLibrary({store, prefix, purgeCopies, scheduleDeletion, ...options}: SessionLibraryOptions) {
   const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
   const reader = (principal: Principal) => {
     sessionScope(principal);
@@ -215,6 +225,73 @@ export function createSessionLibrary({store, prefix, purgeCopies, ...options}: R
     }, () => {if (rendered.get(sourceKey) === entry) rendered.delete(sourceKey);});
     return entry.value;
   }
+  const deletionRequests = createSessionDeletionRequests({store, prefix});
+  // Provider status codes are not user authorization failures. Keep storage
+  // details out of the request response; durable accepted intents still recover.
+  async function deletionStorage<T>(operation: () => Promise<T>): Promise<T> {
+    try {return await operation();}
+    catch {fail(503, 'Session deletion is temporarily unavailable. Try again.');}
+  }
+  async function revokeDeletion(principal: Principal, key: SessionKey) {
+    reader(principal);
+    const previous = await controls.read(principal, 'sessions', key.harness, key.sessionId);
+    if (!previous?.deletedAt && !await deletionRequests.readFor(principal, key) && !await owned(principal, key)) fail(404, 'Only the person who captured a session can delete it');
+    const control = await controls.update(principal, 'sessions', key.harness, key.sessionId, current => ({
+      visibility: current?.visibility ?? 'team', deletedAt: current?.deletedAt ?? new Date().toISOString(),
+      deletion: {sessionId: key.sessionId, state: current?.deletion?.state === 'complete' ? 'complete' : 'pending'},
+    }));
+    rendered.clear(); cachedChars = 0;
+    return control;
+  }
+  async function prepareDeletion(principal: Principal, input: {harness?: unknown; sessionId?: unknown}) {
+    const key = checkKey({userId: principal.userId, harness: input.harness as string, sessionId: input.sessionId as string});
+    const control = await revokeDeletion(principal, key);
+    const fence = await sessionWriteBarrier(store, prefix, principal, key.harness, key.sessionId).close();
+    const documents = (await apply(principal, key, control)).changed;
+    if (fence.pending) throw Object.assign(new Error('Session deletion is waiting for unfinished writes'), {type: 'SessionDeletionWritesPending'});
+    if (!store.purgePrefix) throw new Error('Permanent version deletion is unavailable');
+    return {documents};
+  }
+  async function deletionControl(principal: Principal, key: SessionKey) {
+    reader(principal);
+    const control = await controls.read(principal, 'sessions', key.harness, key.sessionId);
+    if (!control?.deletedAt) fail(409, 'Session deletion has not been requested');
+    const fence = await sessionWriteBarrier(store, prefix, principal, key.harness, key.sessionId).close();
+    if (fence.pending) throw Object.assign(new Error('Session deletion is waiting for unfinished writes'), {type: 'SessionDeletionWritesPending'});
+    return control;
+  }
+  async function purgeDeletionArchives(principal: Principal, input: {harness?: unknown; sessionId?: unknown}) {
+    const key = checkKey({userId: principal.userId, harness: input.harness as string, sessionId: input.sessionId as string});
+    await deletionControl(principal, key);
+    return {objects: purgeCopies ? await purgeCopies(principal, key, store) : 0};
+  }
+  async function finishDeletion(principal: Principal, input: {harness?: unknown; sessionId?: unknown}) {
+    const key = checkKey({userId: principal.userId, harness: input.harness as string, sessionId: input.sessionId as string});
+    const control = await deletionControl(principal, key);
+    if (!store.purgePrefix) throw new Error('Permanent version deletion is unavailable');
+    let objects = 0, documents = 0;
+    const root = `${prefix}/${sessionScope(principal)}/${key.harness}/`, sessionHash = digest(key.sessionId);
+    objects += await store.purgePrefix(root, {select: object => new RegExp(`^[a-f0-9]{64}/${sessionHash}/`).test(object.slice(root.length)), beforeDelete: async (object, read) => {
+      if (!object.endsWith('.json.gz')) return;
+      const batch = parseJson<SessionBatch>(gunzipSync(await read(), {maxOutputLength: 17 * 1024 * 1024}));
+      if (batch.owner?.tenantId !== principal.tenantId || batch.owner?.userId !== principal.userId || batch.harness !== key.harness || batch.sessionId !== key.sessionId) throw new Error('Purge source scope mismatch');
+      // Old clients used owner-scoped blobs: erase all of their versions
+      // before removing the manifest needed to find them on a retry.
+      for (const attachment of batch.attachments ?? []) if (attachment.status === 'captured' && /^[a-f0-9]{64}$/.test(attachment.sha256 ?? '')) {
+        const blob = `${prefix}/${sessionScope(principal)}/attachments/${attachment.sha256}`;
+        objects += await store.purgePrefix!(blob, {select: candidate => candidate === blob});
+      }
+    }});
+    // Include unrefreshed writes completed before the fence closed.
+    await resolve(principal).refresh(principal);
+    documents += (await apply(principal, key, control)).changed;
+    if (await owned(principal, key)) throw new Error('Session search documents remain');
+    await controls.update(principal, 'sessions', key.harness, key.sessionId, current => ({
+      visibility: current?.visibility ?? 'team', deletedAt: control.deletedAt,
+      deletion: {sessionId: key.sessionId, state: 'complete'},
+    }));
+    return {...key, deleted: true as const, pending: false as const, objects, documents};
+  }
   return {
     async list(principal: Principal, {scope = 'all', query = '', limit = 50}: {scope?: unknown; query?: unknown; limit?: unknown} = {}) {
       const collection = reader(principal);
@@ -238,17 +315,17 @@ export function createSessionLibrary({store, prefix, purgeCopies, ...options}: R
       const result = await collection.search(principal, {size: 0, query: {bool: {filter}}, aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {
         lastActivity: {max: {field: 'timestamp'}}, firstActivity: {min: {field: 'timestamp'}},
         private: {filter: {term: {[f('private')]: true}}},
-        origin: {terms: {field: f('origin'), size: 1}}, host: {terms: {field: f('host'), size: 1}},
+        origin: {terms: {field: f('origin'), size: 1}}, host: hostTerms,
       }}}});
       type Bucket = {key: string[]; doc_count: number; lastActivity: {value: number | null}; firstActivity: {value: number | null}; private: {doc_count: number};
-        origin: {buckets: Array<{key: string}>}; host: {buckets: Array<{key: string}>}};
+        origin: {buckets: Array<{key: string}>}; host: HostBuckets};
       const buckets = result.aggregations?.sessions?.buckets as unknown as Bucket[] | undefined;
       if (!Array.isArray(buckets)) throw new Error('Invalid session list response');
       const sessions: SessionSummary[] = buckets.map(bucket => {
         const [userId, harness, sessionId] = bucket.key;
         if (!identity(userId) || !isSessionHarness(harness) || !identity(sessionId)) throw new Error('Invalid session list response');
         return {userId: userId!, harness: harness!, sessionId: sessionId!, title: `Session ${sessionId}`,
-          private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, host: bucket.host.buckets[0]?.key ?? null,
+          private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, ...capturedHosts(bucket.host),
           firstActivityAt: iso(bucket.firstActivity.value), lastActivityAt: iso(bucket.lastActivity.value), events: bucket.doc_count};
       });
       const names = await titles(principal, sessions);
@@ -265,6 +342,7 @@ export function createSessionLibrary({store, prefix, purgeCopies, ...options}: R
       if (!await readable(principal, key)) fail(404, 'Session not found');
       const filter = [...sessionFilter(key), {term: {[f('chunk')]: 0}}, visibleTo('session', principal)];
       const page = await collection.search(principal, {size: limit, track_total_hits: true, query: {bool: {filter, must_not: [{terms: {[f('kind')]: HIDDEN}}]}},
+        aggs: {host: hostTerms},
         sort: [{timestamp: {order: 'asc', missing: '_first'}}, {[f('sequence')]: 'asc'}, {[f('eventId')]: 'asc'}, {[f('installationId')]: 'asc'}, {id: 'asc'}],
         ...(after ? {search_after: after} : {})});
       if (!after && !page.hits.hits.length) fail(404, 'Session not found');
@@ -286,7 +364,8 @@ export function createSessionLibrary({store, prefix, purgeCopies, ...options}: R
       const first = page.hits.hits[0]?._source;
       const names = await titles(principal, [key]);
       if (!await readable(principal, key)) fail(404, 'Session not found');
-      return {session: {...key, title: names.get(JSON.stringify([key.userId, key.harness, key.sessionId])) ?? `Session ${key.sessionId}`, mine: key.userId === principal.userId, private: page.hits.hits.some(hit => hit._source?.private === true), origin: typeof first?.origin === 'string' ? first.origin : null},
+      return {session: {...key, title: names.get(JSON.stringify([key.userId, key.harness, key.sessionId])) ?? `Session ${key.sessionId}`, mine: key.userId === principal.userId, private: page.hits.hits.some(hit => hit._source?.private === true), origin: typeof first?.origin === 'string' ? first.origin : null,
+          ...capturedHosts(page.aggregations?.host as HostBuckets | undefined)},
         events, total: page.hits.total.value, next: page.hits.hits.length === limit ? encodeCursor(page.hits.hits.at(-1)!.sort) : null};
     },
 
@@ -302,49 +381,39 @@ export function createSessionLibrary({store, prefix, purgeCopies, ...options}: R
       return {...key, visibility: control.visibility};
     },
 
-    async delete(principal: Principal, input: {harness?: unknown; sessionId?: unknown}) {
+    /** Product deletion only records intent and revokes access. Temporal owns erasure. */
+    async requestDeletion(principal: Principal, input: {harness?: unknown; sessionId?: unknown}) {
       const key = checkKey({userId: principal.userId, harness: input.harness as string, sessionId: input.sessionId as string});
       reader(principal);
-      const previous = await controls.read(principal, 'sessions', key.harness, key.sessionId);
-      if (!previous?.deletedAt && !await owned(principal, key)) fail(404, 'Only the person who captured a session can delete it');
-      // Revocation precedes cleanup. Keep a durable retry record without text.
-      const control = await controls.update(principal, 'sessions', key.harness, key.sessionId, current => ({
-        visibility: current?.visibility ?? 'team', deletedAt: current?.deletedAt ?? new Date().toISOString(),
-        deletion: {sessionId: key.sessionId, state: 'pending'},
-      }));
-      rendered.clear(); cachedChars = 0;
+      if (!scheduleDeletion) fail(503, 'Session deletion worker is not configured');
+      const previous = await deletionStorage(() => controls.read(principal, 'sessions', key.harness, key.sessionId));
+      if (!previous?.deletedAt && !await deletionStorage(() => deletionRequests.readFor(principal, key)) && !await deletionStorage(() => owned(principal, key))) fail(404, 'Only the person who captured a session can delete it');
+      if (previous?.deletion?.state === 'complete') return {...key, deleted: true, pending: false};
+      // Intent precedes revocation: a crash at either boundary is recoverable by
+      // the scheduled Temporal sweep, even if the direct start was never sent.
+      const requestKey = await deletionStorage(async () => {
+        const saved = await deletionRequests.put(principal, {harness: key.harness, sessionId: key.sessionId});
+        await revokeDeletion(principal, key);
+        return saved;
+      });
+      try {await scheduleDeletion(requestKey);}
+      catch {console.error(JSON.stringify({event: 'session.deletion.submission_deferred', requestKey}));}
+      return {...key, deleted: false, pending: true};
+    },
+    pendingDeletions,
+    prepareDeletion, purgeDeletionArchives, finishDeletion,
+    /** Low-level operator erasure, also used by upgrade verification. Public
+     * HTTP/RPC deletion calls requestDeletion and never runs cleanup inline. */
+    async delete(principal: Principal, input: {harness?: unknown; sessionId?: unknown}) {
       let objects = 0, documents = 0;
       try {
-        const fence = await sessionWriteBarrier(store, prefix, principal, key.harness, key.sessionId).close();
-        documents += (await apply(principal, key, control)).changed;
-        if (fence.pending) return {...key, deleted: false, pending: true, objects, documents};
-        if (!store.purgePrefix) throw new Error('Permanent version deletion is unavailable');
-        if (purgeCopies) objects += await purgeCopies(principal, key);
-        const root = `${prefix}/${sessionScope(principal)}/${key.harness}/`, sessionHash = digest(key.sessionId);
-        objects += await store.purgePrefix(root, {select: object => new RegExp(`^[a-f0-9]{64}/${sessionHash}/`).test(object.slice(root.length)), beforeDelete: async (object, read) => {
-          if (!object.endsWith('.json.gz')) return;
-          const batch = parseJson<SessionBatch>(gunzipSync(await read(), {maxOutputLength: 17 * 1024 * 1024}));
-          if (batch.owner?.tenantId !== principal.tenantId || batch.owner?.userId !== principal.userId || batch.harness !== key.harness || batch.sessionId !== key.sessionId) throw new Error('Purge source scope mismatch');
-          // Old clients used owner-scoped blobs: erase all of their versions
-          // before removing the manifest needed to find them on a retry.
-          for (const attachment of batch.attachments ?? []) if (attachment.status === 'captured' && /^[a-f0-9]{64}$/.test(attachment.sha256 ?? '')) {
-            const blob = `${prefix}/${sessionScope(principal)}/attachments/${attachment.sha256}`;
-            objects += await store.purgePrefix!(blob, {select: candidate => candidate === blob});
-          }
-        }});
-        // Include unrefreshed writes completed before the fence closed.
-        await resolve(principal).refresh(principal);
-        documents += (await apply(principal, key, control)).changed;
-        if (await owned(principal, key)) throw new Error('Session search documents remain');
-        await controls.update(principal, 'sessions', key.harness, key.sessionId, current => ({
-          visibility: current?.visibility ?? 'team', deletedAt: control.deletedAt,
-          deletion: {sessionId: key.sessionId, state: 'complete'},
-        }));
-        return {...key, deleted: true, pending: false, objects, documents};
-      } catch {
-        // Permission failures, object locks and uncertain writes never become
-        // successful erasure. The owner can resume after restart from the UI.
-        return {...key, deleted: false, pending: true, objects, documents};
+        documents += (await prepareDeletion(principal, input)).documents;
+        objects += (await purgeDeletionArchives(principal, input)).objects;
+        const result = await finishDeletion(principal, input);
+        return {...result, objects: objects + result.objects, documents: documents + result.documents};
+      } catch (error) {
+        if ((error as {status?: number}).status === 403 || (error as {status?: number}).status === 404 || (error as {status?: number}).status === 400) throw error;
+        return {userId: principal.userId, harness: String(input.harness), sessionId: String(input.sessionId), deleted: false, pending: true, objects, documents};
       }
     },
   };
