@@ -111,10 +111,11 @@ scores are converted so higher is better. Tokenization and scoring differ from
 OpenSearch's analyzer and BM25 implementation; scores are not comparable.
 Each realm has its own FTS table, including corpus-wide term statistics.
 
-A request scores each text clause in one FTS pass and ranks on row IDs, scores
-and sort keys; stored documents are loaded only for the returned page. Scope
-and field filters are still evaluated against stored JSON, so request time
-grows with the number of documents in the corpus.
+Ranking scores each text clause in one FTS pass and sorts on row IDs, scores
+and sort keys; stored documents are loaded only for the returned rows. Each
+`top_hits` bucket is ranked separately and repeats those passes. Scope and
+field filters are still evaluated against stored JSON, so request time grows
+with the number of documents in the corpus.
 
 SQLite commits are immediately visible to later readers. WAL supports API and
 worker processes on one machine, with a five-second busy timeout and one writer
