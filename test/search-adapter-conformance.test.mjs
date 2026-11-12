@@ -83,5 +83,19 @@ for (const backend of ['sqlite', 'opensearch']) {
       await collection.byQuery(principal, 'delete', {term: {id: 'versioned'}});
       assert.equal((await collection.mget(principal, ['versioned'])).docs[0].found, false);
     });
+    await t.test('lexical deletion removes the stored document as well as its search terms', async () => {
+      await collection.bulk(principal, [
+        {id: 'remove-by-text', document: {...principal, text: 'removaltarget evidence'}},
+        {id: 'retain-by-text', document: {...principal, text: 'retaintarget evidence'}},
+      ]);
+      await realm.refresh(principal);
+      assert.equal((await collection.byQuery(principal, 'delete', lexicalQuery('removaltarget', 'all'))).changed, 1);
+      const result = await collection.mget(principal, ['remove-by-text', 'retain-by-text']);
+      assert.equal(result.docs[0].found, false);
+      assert.equal(result.docs[1].found, true);
+      await realm.refresh(principal);
+      assert.deepEqual(ids(await collection.search(principal, {query: lexicalQuery('removaltarget', 'all')})), []);
+      assert.deepEqual(ids(await collection.search(principal, {query: lexicalQuery('retaintarget', 'all')})), ['retain-by-text']);
+    });
   });
 }

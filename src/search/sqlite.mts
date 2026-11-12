@@ -191,8 +191,12 @@ export function createSqliteRealm(options: RealmOptions): SearchRealm {
           return withDatabase(true, true, db => {
             const where = and(whereScope(), new QueryCompiler(fts).query(query, false));
             if (!patch) {
-              db.prepare(`DELETE FROM ${fts} WHERE rowid IN (SELECT d.rowid FROM documents d WHERE ${where.sql})`).run(...where.args);
-              const changed = db.prepare(`DELETE FROM documents WHERE rowid IN (SELECT d.rowid FROM documents d WHERE ${where.sql})`).run(...where.args).changes;
+              // Freeze IDs in SQL before either component changes: an FTS
+              // predicate no longer matches after its index rows are removed.
+              db.prepare(`CREATE TEMP TABLE deletion_targets AS SELECT d.rowid AS target FROM documents d WHERE ${where.sql}`).run(...where.args);
+              db.exec(`DELETE FROM ${fts} WHERE rowid IN (SELECT target FROM deletion_targets)`);
+              const changed = db.prepare('DELETE FROM documents WHERE rowid IN (SELECT target FROM deletion_targets)').run().changes;
+              db.exec('DROP TABLE deletion_targets');
               return {changed: Number(changed)};
             }
             // Page by immutable rowid while updating; never retain an entire resource.
