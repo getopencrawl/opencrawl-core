@@ -10,6 +10,7 @@ import {setTimeout as pause} from 'node:timers/promises';
 import {createInterface} from 'node:readline';
 import {configDir, atomicFile, atomicJson, accessToken, readSession, withSessionLock, syncDirectory} from '../session.ts';
 import {CliError} from '../oauth.ts';
+import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
@@ -290,7 +291,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
         }
         bytes=bytes.subarray(0,end+1);
         const events:any[]=[],attachments:any[]=[];
-        let position=offset,linesSinceYield=0;
+        let position=offset,linesSinceYield=0,eventBytes=0;
         for(const line of bytes.toString('utf8').split('\n').slice(0,-1)){
           if(line.trim()){
             let record;try{record=JSON.parse(line);}catch{throw new CliError('CAPTURE_INVALID_RECORD','Invalid transcript record; cursor retained');}
@@ -298,7 +299,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
             if(desktopAudit&&auditMessage&&(!record.session_id||typeof record.session_id!=='string'))throw new CliError('CAPTURE_SESSION_UNKNOWN','Desktop audit message has no session identity');
             const priorMeta={...meta};
             if(!desktopAudit||auditMessage)metadata(record);
-            if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd))enqueue(config,{...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));
+            if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd)){enqueue(config,{...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
             const parsed=auditMessage?parseRecord(harness,record,position):null;
             if(parsed?.kind==='session_title') {
               if(parsed.data.titleType==='custom')meta.customTitle=parsed.data.title;
@@ -320,12 +321,17 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
               }
               if(parsed.kind==='message' || parsed.kind==='agent_message')blocks(parsed.data?.content);
               if(parsed.kind==='attachment' && parsed.data)localFiles.add(parsed.data);
-              events.push(attachmentTransform(parsed,attachments,meta.cwd??dirname(path),localFiles));
+              const eventAttachments:any[]=[],event=attachmentTransform(parsed,eventAttachments,meta.cwd??dirname(path),localFiles);
+              const size=Buffer.byteLength(JSON.stringify(event))+Buffer.byteLength(JSON.stringify(eventAttachments));
+              if(events.length&&(eventBytes+size>4*1024*1024||attachments.length+eventAttachments.length>1000)){
+                enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;
+              }
+              events.push(event);attachments.push(...eventAttachments);eventBytes+=size;
             }
           }
           position+=Buffer.byteLength(line)+1;
           if(++linesSinceYield===200){linesSinceYield=0;await yieldToOwner();}
-          if(events.length>=200){enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));}
+          if(events.length>=(reconcileHistory?1000:200)){enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
         }
         enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events,attachments);
         offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
@@ -661,7 +667,10 @@ export async function syncCaptures() {
   if(errors.length){recordError(errors[0]);throw errors[0];}
   return result;
 }
-export async function flushCaptures({wait=true}={}) {
+export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUploaded}: {wait?:boolean;concurrency?:number;batchDelayMs?:number;onUploaded?:()=>void}={}) {
+  const workers=concurrency??(wait?1:4);
+  if(!Number.isInteger(workers)||workers<1||workers>4)throw new CliError('INVALID_USAGE','Capture upload concurrency must be between 1 and 4.',64);
+  if(!Number.isInteger(batchDelayMs)||batchDelayMs<0||batchDelayMs>60000)throw new CliError('INVALID_USAGE','Capture batch delay must be between 0 and 60000 milliseconds.',64);
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
   ensureDirectories();
   return withSessionLock('capture:flush',async()=>{
@@ -681,7 +690,7 @@ export async function flushCaptures({wait=true}={}) {
     };
     const current=async()=>staticToken||await adopt(await accessToken(config.api));
     const renew=staticToken?undefined:async(rejected:string)=>adopt(await accessToken(config.api,rejected));
-    let uploaded=0,excluded=0,visited=0,scheduled=0,stopped=false,failure:unknown;
+    let uploaded=0,excluded=0,visited=0,scheduled=0,stopped=false,failure:unknown,nextUploadAt=0;
     let names=readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'));
     if(!wait){
       // Split capacity between draining old work and making fresh activity
@@ -701,7 +710,7 @@ export async function flushCaptures({wait=true}={}) {
       const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(batch)},await current(),renew);
       if(receipt.batchId!==hash(JSON.stringify(batch)) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
       atomicJson(join(captureDir(),'last-upload.json'),{at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId});
-      unlinkSync(path);uploaded++;
+      retryWindowsSharing(()=>unlinkSync(path));uploaded++;onUploaded?.();
     };
     const worker=async()=>{
       try {
@@ -716,13 +725,14 @@ export async function flushCaptures({wait=true}={}) {
           if(batch.owner?.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Queued capture belongs to another team. Sign back into its original destination or explicitly purge local pending data.');
           if(captureExcluded(latest??config,batch)){excluded++;continue;}
           scheduled++;
+          if(batchDelayMs){const start=Math.max(Date.now(),nextUploadAt);nextUploadAt=start+batchDelayMs;await pause(Math.max(0,start-Date.now()));if(failure)break;}
           await upload(name,batch);
         }
       }catch(error){failure??=error;}
     };
     // A background pass must return to notice processing. Always settle the
     // in-flight uploads before releasing ownership, including after a failure.
-    await Promise.all(Array.from({length:wait?1:4},worker));
+    await Promise.all(Array.from({length:workers},worker));
     if(failure)throw failure;
     const result=excluded?{uploaded,excluded}:{uploaded};
     if(visited<names.length||stopped)return result;
@@ -783,6 +793,7 @@ export function captureStatus() {
     exclusions:config?.exclusions??{projects:[],sessions:[]},
     queued:existsSync(join(captureDir(),'queue'))?readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json')).length:0,
     pendingHooks:existsSync(join(captureDir(),'notices'))?noticeNames().length:0,
+    backfill:read(join(captureDir(),'backfill-progress.json')),
     lastUpload:read(join(captureDir(),'last-upload.json')),lastError:read(join(captureDir(),'last-error.json')),
     codexHooksAwaitingReview:codexReview,attention:captureAttention()??review};
 }

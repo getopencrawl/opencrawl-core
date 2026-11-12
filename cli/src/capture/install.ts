@@ -8,6 +8,7 @@ import {HARNESSES, readsTranscript, type Harness} from './parse.ts';
 import {GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
 import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
+import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
 import {captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, codexHooksAwaitingReview, HOOK_MODE, type CaptureConfig} from './runtime.ts';
 import {captureNotice, grokBotNotice} from './policy.ts';
@@ -70,7 +71,7 @@ function replaceFile(file:string,bytes:string|Buffer) {
   const temp=file+'.opencrawl-tmp',mode=existsSync(file)?statSync(file).mode&0o777:0o600;
   writeFileSync(temp,bytes,{mode:0o600});
   chmodSync(temp,mode); // the creation mode is narrowed by the umask
-  renameSync(temp,file);
+  retryWindowsSharing(()=>renameSync(temp,file));
 }
 function enableCodex(root:string) {
   const file=join(root,'config.toml');
