@@ -184,7 +184,7 @@ Cursor's own shape, `{command, timeout}`, for `sessionStart`, `sessionEnd`,
 
 Muse Code runs command hooks from the `hooks` block of its settings file, in the
 terminal, under `muse exec`, and in sessions `muse serve` hosts for other
-programs. Capture adds `{type: "command", command}` handlers for `SessionStart`,
+programs. Capture adds `{type: "command", command, timeout}` handlers for `SessionStart`,
 `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `PostCompact`, `Stop`,
 `StopFailure` and `SessionEnd`:
 
@@ -212,6 +212,16 @@ programs. Capture adds `{type: "command", command}` handlers for `SessionStart`,
   and `PostLLMCall` would carry more, but they send the whole conversation,
   system prompt included, on every model step, and are not registered; nor are
   `PreToolUse` and `PermissionRequest`, which decide whether an action runs.
+- **Muse Code waits for a hook as long as it runs**, except at session end,
+  where it cuts hooks off within half a second (one that took 0.2 s finished,
+  one that took 0.5 s did not). Capture's hooks are therefore synchronous, so a
+  short `muse exec` is recorded before it exits (Muse Code stops an `async`
+  hook that is still running when the command ends), and each one saves its
+  payload first, ends itself at five seconds and carries a 30-second `timeout`
+  as the limit if it ever did not. The reply and the tool calls are recorded
+  by the hooks before session end, so a session-end hook that is cut off costs
+  only its own lifecycle record. Muse Code skips a handler that carries a
+  field it does not know, so only `type`, `command` and `timeout` are written.
 - **The hook's environment is cleared.** Muse Code passes a hook a short list of
   variables and a fixed `PATH`. The installed command therefore names Node and
   the collector by absolute path, and an upload-only `OPENCRAWL_SESSIONS_TOKEN`

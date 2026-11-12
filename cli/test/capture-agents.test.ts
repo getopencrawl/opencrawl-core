@@ -287,7 +287,8 @@ test('install writes Muse Code hooks into a schema_version 1 settings file and n
   expect(Object.keys(created)).toEqual(['schema_version','hooks']);expect(created.schema_version).toBe(1);
   expect(Object.keys(created.hooks).sort()).toEqual([...MUSE_HOOK_EVENTS].sort());
   const ours=created.hooks.Stop[0].hooks[0];
-  expect(Object.keys(ours).sort()).toEqual(['command','type']);expect(ours.type).toBe('command');
+  // Only fields Muse Code knows: it skips a handler that carries any other.
+  expect(Object.keys(ours).sort()).toEqual(['command','timeout','type']);expect(ours).toMatchObject({type:'command',timeout:30});
   // Muse Code clears most of a hook's environment: both paths are absolute.
   if(process.platform!=='win32')expect(ours.command).toBe(`exec '${Bun.which('node')}' '${join(captureDir(),'runner.cjs')}' collect hook --harness muse`);
   await uninstallCapture(f.dir);

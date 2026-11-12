@@ -81,9 +81,11 @@ function modifyGrokBotHooks(file:string,command:string|null,owned=grokBotOwned,e
 /** Cursor's own entries in the same file format. */
 const modifyCursorHooks=(file:string,command:string|null)=>modifyGrokBotHooks(file,command,ownedBy('cursor'),CURSOR_HOOK_EVENTS);
 /** Muse Code keeps a person's hooks in its settings file:
- * {schema_version:1,hooks:{Event:[{hooks:[{type:'command',command}]}]}}. It
- * rejects the whole file, and with it every command, when the file is not a
- * schema_version 1 document, so one that is not is left exactly as found. */
+ * {schema_version:1,hooks:{Event:[{hooks:[{type:'command',command,timeout}]}]}}.
+ * It rejects the whole file, and with it every command, when the file is not a
+ * schema_version 1 document, so one that is not is left exactly as found. It
+ * skips a handler that carries a field it does not know, so only the fields
+ * it documents are written. */
 function museSettings(file:string) {
   const config=existsSync(file)&&readFileSync(file,'utf8').trim()?readJson(file):null;
   if(config!==null&&(!config||typeof config!=='object'||Array.isArray(config)||config.schema_version!==1||
@@ -104,7 +106,10 @@ function modifyMuseHooks(file:string,command:string|null) {
     });
     if(!hooks[event].length)delete hooks[event];
   }
-  if(command)for(const event of MUSE_HOOK_EVENTS)(hooks[event]??=[]).push({hooks:[{type:'command',command}]});
+  // Muse Code waits for a hook as long as it runs. The hook ends itself at five
+  // seconds; the timeout, in seconds, is the limit if it ever did not, and
+  // leaves room for a sign-in renewal that must not be abandoned.
+  if(command)for(const event of MUSE_HOOK_EVENTS)(hooks[event]??=[]).push({hooks:[{type:'command',command,timeout:30}]});
   backup(file);
   const {hooks:_,...rest}=config??{schema_version:1};
   writeHarnessJson(file,Object.keys(hooks).length?{...rest,hooks}:rest);
