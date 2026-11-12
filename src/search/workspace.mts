@@ -8,7 +8,7 @@ import {serviceError} from '../sessions/types.mjs';
 import {createHash, createHmac, randomBytes, timingSafeEqual} from 'node:crypto';
 import {z} from 'zod';
 import {sessionScope} from '../sessions/ingest.mjs';
-import {excerpt, groupDuplicates, groupResources, workspaceHit} from './presentation.mjs';
+import {excerpt, groupDuplicates, groupResources, prioritizeEvidence, workspaceHit} from './presentation.mjs';
 import {digest,sessionScope as ownerScope} from '../sessions/event-identity.mjs';
 import {searchFiltersSchema} from './controls.mjs';
 import {candidateFacets, facetNames} from './facets.mjs';
@@ -41,8 +41,8 @@ const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(valu
 const WINDOW = 100, TTL = 5 * 60_000;
 
 /** Adapters resolve current authorized bindings on EVERY call, including pagination.
- * Each source retains its lexical ranking. Source ranks are interleaved so
- * a high-volume corpus cannot crowd out the other sources during discovery.
+ * Source ranks are interleaved for discovery. Relevance searches place narrowly
+ * recognized machine approval records after evidence, unless approvals are queried.
  * Cursors are bounded live windows, not snapshots or a claim of exhaustive recall.
  */
 export function createWorkspaceSearch({sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now}: WorkspaceOptions = {}) {
@@ -90,7 +90,8 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
         const time=(h:WorkspaceHit)=>{const raw=h.provenance.modifiedAt||h.provenance.timestamp;return typeof raw==='number'?raw:typeof raw==='string'&&/^\d{10}(\.\d+)?$/.test(raw)?Number(raw)*1000:Date.parse(String(raw||''));};
         const at=time(a),bt=time(b);return (Number.isFinite(at)&&Number.isFinite(bt)?(at-bt)*(query.order==='newest'?-1:1):Number.isFinite(at)?-1:Number.isFinite(bt)?1:0)||a.id.localeCompare(b.id);
       });
-      const deduped = query.dedupe ? groupDuplicates(ranked) : {results: ranked, suppressed: 0};
+      const prioritized = query.order === 'relevance' ? prioritizeEvidence(ranked, query.query) : {results: ranked, demoted: 0};
+      const deduped = query.dedupe ? groupDuplicates(prioritized.results) : {results: prioritized.results, suppressed: 0};
       const grouped=groupResources(deduped.results,query.groupBy,query.order==='relevance');
       const results = grouped.results.slice(page.offset, page.offset + query.limit).map(hit => {
         const {text,...rest}=hit, fields={...rest,...(query.select.includes('text')?excerpt(text,query.query,query.excerptChars):{})};
@@ -103,7 +104,7 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
         truncated: Boolean(next) || coverage.some(g => g.truncated),
         windowExhausted: !next && coverage.some(g => g.truncated),
         ...(query.facets.length?{facets:candidateFacets(ranked,query.facets),facetScope:'authorized_candidate_window'}:{}),
-        pagination: 'live', ranking: query.order==='relevance'?'source_rank_interleave':query.order, candidateLimitPerSource: WINDOW};
+        pagination: 'live', ranking: query.order==='relevance'?(prioritized.demoted?'source_rank_interleave_with_approval_demotion':'source_rank_interleave'):query.order, candidateLimitPerSource: WINDOW};
     },
     async fetch(principal: Principal, input: unknown) {
       sessionScope(principal);
