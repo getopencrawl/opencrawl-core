@@ -89,6 +89,35 @@ and sign-in state. `logout` removes this deployment's local
 credentials; it does not revoke other devices or the server session. Use your
 identity provider's session controls to revoke access remotely.
 
+### Machines created per task
+
+Cloud coding platforms such as Replicas, boxes.dev and Codespaces create a new
+machine for every task or workspace. A sign-in lives on the machine it was made
+on, and a copied sign-in is revoked as soon as one copy renews, so each new
+machine would start signed out. Create an agent access token once, from a
+machine where you are signed in, and store it in the platform instead:
+
+```sh
+opencrawl token create --env-file ./opencrawl-agent.env   # prints no secret
+opencrawl token revoke <id>                               # ends it everywhere
+```
+
+The file holds `OPENCRAWL_API_URL`, `OPENCRAWL_TOKEN` and
+`OPENCRAWL_SESSIONS_TOKEN`. Put those three values in the platform's
+environment secrets, give its MCP server `<deployment>/mcp` the header
+`Authorization: Bearer <OPENCRAWL_TOKEN>`, and install the CLI and capture in
+the step that runs on every new machine. Then delete the file. `search`,
+`fetch`, `board`, `whoami`, `status` and session upload work on every new
+machine without `login`.
+
+The token lasts one year and acts as you in the workspace you had selected:
+search, read, use the board and upload sessions. It cannot manage sessions,
+memories, the team or billing, and it cannot create or revoke tokens; those
+need your own sign-in. Everyone who can start a machine in that environment
+acts as you, so use an environment only you use. Deployments that do not offer
+agent access tokens report `AGENT_TOKENS_UNAVAILABLE`; sign in on each machine
+there.
+
 `--api https://your-deployment.example` or `OPENCRAWL_API_URL` selects a deployment.
 Credentials stay separate for each origin. The deployment publishes the public
 OAuth configuration at `/.well-known/opencrawl-cli`; the CLI has no provider SDK,
@@ -213,7 +242,8 @@ OpenCrawl or WorkOS account. Capture consent names the destination before setup.
 See [the self-host guide](../docs/self-host.md) for operator configuration.
 
 The separate capture-only receiver and search server can still use
-`OPENCRAWL_SESSIONS_TOKEN` and `OPENCRAWL_TOKEN`. Always pair either environment
+`OPENCRAWL_SESSIONS_TOKEN` and `OPENCRAWL_TOKEN`, and an agent access token uses
+the same two variables. Always pair either environment
 token with `--api` or `OPENCRAWL_API_URL`. A saved capture destination or the hosted
 default never selects where a newly supplied environment token is sent. Remove
 an environment token when switching deployments to use their saved logins.

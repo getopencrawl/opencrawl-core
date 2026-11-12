@@ -1,7 +1,8 @@
 /** Browser-test fixture only. It is never a product entrypoint or published asset. */
 import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
-import {AgentOnboarding, AppRouter, AppShell, Button, ConsoleDataProvider, FocusedFrame, InviteOnboarding, Route, Routes, SourcesOnboarding, SourcesPage, useLocation, useNavigate, type OnboardingAdapter} from '../../src/index.ts';
+import {AgentOnboarding, AppRouter, AppShell, Button, ConsoleDataProvider, FocusedFrame, InviteOnboarding, Page, Route, Routes, SourcesOnboarding, SourcesPage, useLocation, useNavigate, type OnboardingAdapter} from '../../src/index.ts';
+import {CopyPromptButton} from '../../src/onboarding/copy.tsx';
 import type {TeamAdapter, SourcesAdapter} from '../../src/application/api.ts';
 import '../../src/styles.css';
 import {TeamPage} from '../../src/application/team.tsx';
@@ -56,6 +57,7 @@ function Fixture() {
       {path: '/workspace', label: 'Usage', icon: 'usage', end: true, element: <h1 tabIndex={-1} data-page-heading>Console home</h1>},
       {path: '/workspace/settings', label: 'Agent setup', icon: 'settings', element: <AgentOnboarding adapter={adapter} mcpUrl="https://app.getopencrawl.com/mcp" setupPrompt={setupPrompt} presentation="workspace"/>},
       {path: '/workspace/team', label: 'Team', icon: 'team', group: 'manage', element: <h1 tabIndex={-1} data-page-heading>Console team</h1>},
+      {path: '/workspace/prompt', label: 'Usage', navigation: false, element: <Page title="Usage" description="Example workspace" actions={<CopyPromptButton text={setupPrompt} manualPath="/workspace/settings"/>}/>},
     ]}
     footer={<Button variant="quiet" onClick={() => {void navigate('/away');}}>Sign out</Button>}
   />;
