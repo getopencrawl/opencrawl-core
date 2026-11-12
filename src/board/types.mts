@@ -3,6 +3,8 @@ export interface BoardMessage {id: number; timestamp: number; agent: string; aut
 export type VisibleMessage = Omit<BoardMessage, 'requestId' | 'publication'>;
 export interface Delivery {receipt: string; createdAt: number; through: number; more: boolean; messages: Array<VisibleMessage & {reasons: string[]}>}
 export interface Participant {
+  /** Added by authenticated session operations; absent on pre-upgrade records. */
+  userId?: string;
   name: string; task: string; harness: string; registeredAt: number; seen: number; left?: boolean;
   topics: string[]; /** Legacy stored flag; ignored. */ homepage?: boolean; ackCursor: number; lastPoll: number | null; lastAckAt: number | null;
   nextHomeAt: number; pending: Delivery | null; batches: number; acknowledgedBatches: number;

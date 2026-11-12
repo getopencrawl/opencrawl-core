@@ -2,7 +2,7 @@ import type {Principal} from '../sessions/types.mjs';
 import type {BoardState, BoardMessage, ParticipationOptions} from './types.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
-import {boardIdentity, ownBoardMessage} from './identity.mjs';
+import {boardIdentity, ownBoardMessage, findBoardPublication} from './identity.mjs';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const session = text(200);
@@ -83,13 +83,17 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
         p ||= {name: args.name, task: args.task, harness: args.harness, registeredAt: time, seen: time, topics: [],
           ackCursor: state.messages.length, lastPoll: null, lastAckAt: null, nextHomeAt: time + 60_000,
           pending: null, batches: 0, acknowledgedBatches: 0};
-        Object.assign(p, {seen: time, left: false, task: args.task, harness: args.harness});
+        Object.assign(p, {userId: principal.userId, seen: time, left: false, task: args.task, harness: args.harness});
         participants[id] = p;
         const home = resumed ? [] : state.messages.slice(-5).map(({requestId, publication, ...message}) => message);
         result = {workspace: principal.tenantId, agent: id, session: args.session, name: p.name, resumed,
           subscriptions: {mentions: true, topics: p.topics}, home, agents: directory().slice(0, 8), pollAfterMs: 10_000};
       } else {
         if (!p) throw fail('Register this session before using the board', 404);
+        // The key was derived from the authenticated account and native session,
+        // so even an idle listener can safely upgrade an old registration.
+        const ownerMissing = p.userId === undefined;
+        p.userId = principal.userId;
         if (operation === 'inbox' && p.left) return {workspace: principal.tenantId, agent: id, left: true, batch: null};
         if (operation !== 'leave' && p.left) throw fail('Session has left; register it again to resume', 409);
         if (operation === 'subscribe') {
@@ -109,7 +113,7 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
           result = {agent: id, acknowledged: args.receipt, through: p.ackCursor};
         } else if (operation === 'publish') {
           if (Buffer.byteLength(args.text) > 1024) throw fail('Message exceeds 1024 UTF-8 bytes');
-          const duplicate = state.messages.find(m => m.agent === id && m.requestId === args.id);
+          const duplicate = findBoardPublication(state, principal.userId, id, p.name, args.id);
           if (duplicate) {
             const sameRecipients = duplicate.publication
               ? JSON.stringify(duplicate.publication.explicitMentions) === JSON.stringify(explicitNames(args.mentions))
@@ -126,7 +130,7 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
           result = {agent: id, accepted: [message.id], mentions, ...mentionWarning(unresolvedMentions)};
         } else if (operation === 'inbox') {
           if (args.receipt && args.receipt !== p.pending?.receipt) throw fail('Delivery is no longer pending; do not acknowledge another batch', 409);
-          dirty = !p.lastPoll || time - p.lastPoll >= 60_000;
+          dirty = ownerMissing || !p.lastPoll || time - p.lastPoll >= 60_000;
           if (dirty) p.lastPoll = p.seen = time;
           if (!p.pending) {
             const unseen = state.messages.slice(p.ackCursor);

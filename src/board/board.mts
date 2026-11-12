@@ -8,7 +8,7 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {boardSearchSchema} from './search.mjs';
 import {createParticipation, resolveMentions, mentionWarning} from './participation.mjs';
-import {boardIdentity, ownBoardMessage} from './identity.mjs';
+import {boardIdentity, ownBoardMessage, resolveBoardIdentity, findBoardPublication} from './identity.mjs';
 import {boardFetchSchema, preview, textPage} from './disclosure.mjs';
 export {boardFetchSchema} from './disclosure.mjs';
 
@@ -16,7 +16,7 @@ const short = (max: number) => z.string().trim().min(1).max(max);
 const topic = short(80);
 export const syncSchema = z.strictObject({
   workspace: short(200).describe('Workspace returned by board_topics; checked against your authorized scope.'),
-  agent: short(80).describe('Stable session name; display only, identity is bound to your account.'),
+  agent: short(80).describe('Registered display name, or a stable name for MCP-only use. Reuses your account-owned CLI session identity.'),
   topics: z.array(topic).max(8).default([]),
   after: z.number().int().min(0).optional().describe('Previous cursor for this exact topic selection. Omit to start now; 0 to read history.'),
   posts: z.array(z.strictObject({id: short(80), topic, text: short(512)})).max(3).default([])
@@ -133,7 +133,6 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
     async sync(principal: Principal, input: unknown) {
       const key = scope(principal), args = syncSchema.parse(input);
       if (args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
-      const agentId = boardIdentity(principal.userId, args.agent);
       const requestBytes = Buffer.byteLength(JSON.stringify(input));
       let sessions: Awaited<ReturnType<ReturnType<typeof createRecentSessions>['list']>> = [], sessionState = recentSessions ? 'ready' : 'not_configured';
       if (recentSessions) {
@@ -148,27 +147,36 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
       let start = args.after;
       for (let attempt = 0; attempt < 8; attempt++) {
         const {state, version} = await read(key), time = now();
+        const {id: agentId, name: agentName} = resolveBoardIdentity(state, principal.userId, args.agent);
         // Starting "now" is anchored to the first read. A CAS retry must still
         // deliver messages that arrived while this call was trying to commit.
         start ??= state.messages.length;
         if (start > state.messages.length) throw fail('Cursor exceeds board history');
         // Presence is a recent observation, never proof that an agent is still alive.
         for (const [id, a] of Object.entries(state.agents)) if (a.seen <= time - ttl) delete state.agents[id];
+        // Retire only this account's name-derived presence, keeping immutable
+        // messages and delivery receipts intact across the upgrade.
+        if (state.participants?.[agentId]?.userId === principal.userId) {
+          for (const [id, a] of Object.entries(state.agents)) {
+            if (id !== agentId && a.name.toLowerCase() === agentName.toLowerCase()
+              && id === boardIdentity(principal.userId, a.name)) delete state.agents[id];
+          }
+        }
         if (args.leave) delete state.agents[agentId];
         else {
           if (!state.agents[agentId] && Object.keys(state.agents).length >= 128) throw fail('Active agent limit reached', 429);
-          state.agents[agentId] = {name: args.agent, topics: args.topics, seen: time};
+          state.agents[agentId] = {name: agentName, topics: args.topics, seen: time};
         }
         const accepted = [], unresolvedMentions: string[] = [];
         for (const post of args.posts) {
           if (Buffer.byteLength(post.text) > 1024) throw fail('Message exceeds 1024 UTF-8 bytes');
-          const duplicate = state.messages.find(m => m.agent === agentId && m.requestId === post.id);
+          const duplicate = findBoardPublication(state, principal.userId, agentId, agentName, post.id);
           if (duplicate) {
             if (duplicate.topic !== post.topic || duplicate.text !== post.text) throw fail('Retry id already used for different content', 409);
             accepted.push(duplicate.id); unresolvedMentions.push(...duplicate.publication?.unresolvedMentions || []); continue;
           }
           if (!state.messages.some(m => m.topic === post.topic) && new Set(state.messages.map(m => m.topic)).size >= 128) throw fail('Topic limit reached', 429);
-          const message: BoardMessage = {id: state.messages.length + 1, timestamp: time, agent: agentId, author: principal.userId, name: args.agent,
+          const message: BoardMessage = {id: state.messages.length + 1, timestamp: time, agent: agentId, author: principal.userId, name: agentName,
             topic: post.topic, text: post.text, requestId: post.id};
           const resolution = resolveMentions(state, post.text), {mentions} = resolution;
           message.publication = {explicitMentions: [], unresolvedMentions: resolution.unresolvedMentions};
@@ -178,7 +186,7 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
         }
         const messages: Array<{id: number; ref: string; timestamp: number; name: string; topic: string; preview: string}> = []; let cursor = start, bytes = 0;
         for (const m of state.messages.slice(start)) {
-          if (args.topics.includes(m.topic) && !ownBoardMessage(m, principal.userId, agentId, args.agent, state)) {
+          if (args.topics.includes(m.topic) && !ownBoardMessage(m, principal.userId, agentId, agentName, state)) {
             const message = {id: m.id, ref: 'message:' + m.id, timestamp: m.timestamp, name: m.name, topic: m.topic, preview: preview(m.text, 160)};
             const size = Buffer.byteLength(JSON.stringify(message));
             if (messages.length >= 5 || bytes + size > 4096) break;

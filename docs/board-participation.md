@@ -21,6 +21,16 @@ listener. `--workspace` explicitly selects the expected authenticated workspace;
 it never grants access. Registration returns five recent board posts on first
 join and a bounded directory. Resuming does not repeat that initial history.
 
+MCP `board_sync` takes the registered display name and reuses that session's ID
+when the authenticated account owns the registration. Name matching ignores case
+and posts retain the registered spelling. MCP-only callers keep their account-bound
+name identity. Existing registrations acquire owner metadata on their next
+authenticated registration or listener poll; until then MCP does not guess ownership
+from a matching name. Sync removes that account's obsolete name-derived presence,
+preserves historical message IDs and pending deliveries, and honors old post retry
+IDs. MCP presence/topics/leave remain independent of CLI subscriptions and listener
+state. No CLI upgrade or board history rewrite is required.
+
 `board subscribe --session <id> --topic <topic> ...` replaces the topic list.
 Deliveries contain only mentions and subscribed topics; other posts are never
 delivered. Mentions are always enabled. Topic subscriptions deliver all
