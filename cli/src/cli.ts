@@ -128,7 +128,9 @@ function openBrowser(url: string) {
   child.unref();
 }
 
-export async function identity(api: string, fetcher = fetch, initialToken?: string) {
+export async function identity(api: string, fetcher = fetch, initialToken?: string): Promise<{
+  user: {id: string; email: string | null}; workspace?: {id: string; name: string | null};
+}> {
   let token = initialToken ?? await accessToken(api, undefined, fetcher);
   let result = await jsonRequest(`${api}/api/cli/me`, {headers: {authorization: `Bearer ${token}`}}, fetcher);
   if (result.response.status === 401 && !initialToken) {
@@ -137,12 +139,20 @@ export async function identity(api: string, fetcher = fetch, initialToken?: stri
   }
   if (result.response.status === 401) throw new CliError('AUTH_REQUIRED', 'Your session expired. Run opencrawl login again.', 2);
   if (result.response.status === 403) {
-    if (result.body.error?.code === 'ORGANIZATION_REQUIRED') throw new CliError('ORGANIZATION_REQUIRED', `Create or join a team at ${api}/organizations, then run opencrawl login again.`, 2);
+    if (result.body.schemaVersion === 1 && result.body.error?.code === 'ORGANIZATION_REQUIRED') throw new CliError('ORGANIZATION_REQUIRED', `Open ${api}/organizations in your browser to create, join or select a team, then run opencrawl whoami --api ${api}.`, 2);
     if (result.body.error?.code === 'EMAIL_VERIFICATION_REQUIRED') throw new CliError('AUTH_FORBIDDEN', 'Verify your email address before using the CLI.', 2);
     throw new CliError('AUTH_FORBIDDEN', 'This account cannot access the deployment. Open it in your browser to check access.', 2);
   }
   if (!result.response.ok || result.body.schemaVersion !== 1 || typeof result.body.data?.user?.id !== 'string') throw new CliError('INVALID_RESPONSE', 'Could not verify your session with this deployment.');
-  return {id: result.body.data.user.id, email: typeof result.body.data.user.email === 'string' ? result.body.data.user.email : null};
+  const user = {id: result.body.data.user.id, email: typeof result.body.data.user.email === 'string' ? result.body.data.user.email : null};
+  // Display only the workspace resolved by the server; older deployments may
+  // omit it, and a missing display name does not invalidate a verified ID.
+  const workspace: unknown = result.body.data.workspace;
+  if (workspace && typeof workspace === 'object' && 'id' in workspace && typeof workspace.id === 'string' && workspace.id.trim()
+    && 'name' in workspace && (typeof workspace.name === 'string' || workspace.name === null)) {
+    return {user, workspace: {id: workspace.id, name: workspace.name}};
+  }
+  return {user};
 }
 
 export async function main(args = process.argv.slice(2)) {
@@ -211,9 +221,21 @@ export async function main(args = process.argv.slice(2)) {
       process.stderr.write(`Open ${url}\nConfirm code: ${device.user_code}\nWaiting for browser approval (expires in ${device.expires_in} seconds)…\n`);
       if (!parsed.values['no-browser'] && process.stdin.isTTY && !process.env.SSH_CONNECTION && !process.env.SSH_TTY) openBrowser(url);
       const tokens = await pollDevice(auth, device);
-      const user = await identity(api, fetch, tokens.accessToken);
+      let verified: Awaited<ReturnType<typeof identity>>;
+      try { verified = await identity(api, fetch, tokens.accessToken); }
+      catch (error) {
+        // The service verifies the account and session before returning this
+        // specific setup requirement. Retain that sign-in without claiming
+        // workspace access or repeating device approval after browser setup.
+        if (error instanceof CliError && error.code === 'ORGANIZATION_REQUIRED') {
+          await saveSession(api, {auth, ...tokens});
+          throw new CliError(error.code, `Your sign-in is saved on this machine; workspace setup is still required. ${error.message}`, error.exitCode);
+        }
+        throw error;
+      }
       await saveSession(api, {auth, ...tokens});
-      emit({api, authenticated: true, user}, `Signed in${user.email ? ` as ${user.email}` : ''}. Use opencrawl search to query indexed workspace knowledge.`);
+      const {user} = verified;
+      emit({api, authenticated: true, ...verified}, `Signed in${user.email ? ` as ${user.email}` : ''}. Use opencrawl search to query indexed workspace knowledge.`);
       return 0;
     }
     // A machine created for one task has no saved sign-in, only the token its platform injected.
@@ -221,11 +243,12 @@ export async function main(args = process.argv.slice(2)) {
     let configured: string | undefined;
     try { configured = environmentToken('OPENCRAWL_TOKEN', api); } catch {}
     if (configured) {
-      let user: Awaited<ReturnType<typeof identity>> | null = null;
-      try { user = await identity(api, fetch, configured); }
+      let verified: Awaited<ReturnType<typeof identity>> | null = null;
+      try { verified = await identity(api, fetch, configured); }
       catch (error) { if (!(error instanceof CliError) || !['AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'ORGANIZATION_REQUIRED'].includes(error.code)) throw error; }
-      if (user) {
-        emit({api, version, authenticated: true, credential: 'environment-token', user, ...(command === 'status' ? {index: {available: null}} : {})},
+      if (verified) {
+        const {user} = verified;
+        emit({api, version, authenticated: true, credential: 'environment-token', ...verified, ...(command === 'status' ? {index: {available: null}} : {})},
           command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''} with OPENCRAWL_TOKEN.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
         return 0;
       }
@@ -234,8 +257,8 @@ export async function main(args = process.argv.slice(2)) {
       emit({api, version, authenticated: false, index: {available: null}}, `opencrawl ${version}\nNot signed in. Run opencrawl login.\nUse opencrawl search to check indexed workspace knowledge.`);
       return 0;
     }
-    const user = await identity(api);
-    emit({api, version, authenticated: true, user, ...(command === 'status' ? {index: {available: null}} : {})}, command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
+    const verified = await identity(api), {user} = verified;
+    emit({api, version, authenticated: true, ...verified, ...(command === 'status' ? {index: {available: null}} : {})}, command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
     return 0;
     });
   } catch (error) {
