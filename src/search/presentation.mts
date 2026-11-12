@@ -62,6 +62,31 @@ export function groupDuplicates(hits: WorkspaceHit[]) {
 
 export type WorkspaceHit = ReturnType<typeof workspaceHit> & {duplicateCount?: number; duplicateIds?: string[]};
 
+/** Recognize only complete machine approval decisions, never quoted prose or user messages. */
+export function approvalRecord(hit: WorkspaceHit) {
+  const p = hit.provenance;
+  if (hit.source !== 'sessions' || p.harness !== 'codex' || p.origin !== 'subagent' || p.kind !== 'message' || p.role !== 'assistant') return false;
+  const text = hit.text.trim();
+  if (text.length > 4000 || !text.startsWith('{') || !text.endsWith('}')) return false;
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return false; }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).length === 4
+    && typeof record.risk_level === 'string' && ['low', 'medium', 'high'].includes(record.risk_level)
+    && typeof record.user_authorization === 'string' && ['low', 'medium', 'high', 'unknown'].includes(record.user_authorization)
+    && typeof record.outcome === 'string' && ['allow', 'deny'].includes(record.outcome)
+    && typeof record.rationale === 'string' && record.rationale.trim().length > 0;
+}
+
+export function prioritizeEvidence(hits: WorkspaceHit[], query: string) {
+  // Approval questions still need these records in their original source order.
+  if (/\b(?:risk_level|user_authorization|approval|approvals|permission|permissions|authorization)\b/iu.test(query)) return {results: hits, demoted: 0};
+  const evidence: WorkspaceHit[] = [], approvals: WorkspaceHit[] = [];
+  for (const hit of hits) (approvalRecord(hit) ? approvals : evidence).push(hit);
+  return {results: [...evidence, ...approvals], demoted: approvals.length};
+}
+
 export function groupResources(hits:WorkspaceHit[], mode:'none'|'resource'|'session') {
   if(mode==='none')return {results:hits,suppressed:0};
   const seen=new Map<string,WorkspaceHit&{groupedCount?:number;groupedIds?:string[]}>(),results:Array<WorkspaceHit&{groupedCount?:number;groupedIds?:string[]}>=[];
