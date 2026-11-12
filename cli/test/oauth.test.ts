@@ -86,3 +86,11 @@ test('proxy rejection identifies the blocked host without echoing the response',
   try {await jsonRequest('https://capture.example.com/health',{},(async()=>new Response('proxy secret body',{status:403})) as unknown as unknown as typeof fetch);throw new Error('expected error');}
   catch(error:any){expect(error.code).toBe('NETWORK_BLOCKED');expect(error.message).toContain('capture.example.com');expect(error.message).not.toContain('secret body');}
 });
+
+test('refresh exposes bounded retry-after only for transient responses and preserves terminal denial',async()=>{
+ for(const status of [429,502,503]){
+  await expect(refresh(auth,'saved',(async()=>new Response('{}',{status,headers:{'retry-after':'45'}})) as any)).rejects.toMatchObject({code:'AUTH_UNAVAILABLE',retryAfterMs:45000});
+ }
+ await expect(refresh(auth,'saved',(async()=>new Response('{}',{status:429,headers:{'retry-after':'999999'}})) as any)).rejects.toMatchObject({retryAfterMs:120000});
+ await expect(refresh(auth,'saved',(async()=>response({},403)) as any)).rejects.toMatchObject({code:'AUTH_FAILED',exitCode:2});
+});

@@ -56,13 +56,53 @@ enterprise SSO for self-host. Cloud retains its existing WorkOS capabilities.
 
 CLI login uses this installation’s device authorization endpoint. MCP clients use
 PKCE, explicit consent and the installation’s `/mcp` audience. JWT access tokens
-last five minutes; rotating refresh tokens can be revoked through the advertised
-OAuth revocation endpoint. Browser logout ends the browser session; it does not
+last one hour; rotating refresh tokens can be revoked through the advertised
+OAuth revocation endpoint. Revoking a refresh token prevents renewal; already
+issued JWT access tokens remain valid until expiry. Browser logout ends the browser session; it does not
 revoke an independently consented offline grant. Removing membership denies all
 resource access immediately, including previously issued credentials. Admins remove
 other members from Team; self-removal is blocked to preserve an administrator.
 Removal preserves uploaded data and accounts; see [capture privacy](capture-privacy.md#remove-workspace-access). No browser session can
 select a second organization here. See [identity boundary](identity-seam.md).
+
+A normal restart with the same identity database, `OPENCRAWL_AUTH_SECRET` and
+`OPENCRAWL_URL` preserves OAuth grants. If Claude Code reports “Needs authentication”,
+use `/mcp` → Connect to sign in again; Reconnect alone may not renew its sign-in.
+Changing `OPENCRAWL_URL` changes the issuer and audience: every CLI and MCP client
+must sign in at the new origin. Keep the old hostname routed during the transition
+for navigation, but do not expect old tokens to authorize the new issuer.
+
+### Reverse proxy connections
+
+The app keeps idle HTTP connections for 125 seconds (plus a one-second close buffer).
+Configure the proxy to retire upstream connections sooner. For Caddy:
+
+```caddyfile
+opencrawl.example.com {
+  reverse_proxy 127.0.0.1:8092 {
+    transport http {
+      keepalive 60s
+    }
+  }
+}
+```
+
+Keep request/header deadlines bounded; increasing them is not required to keep an
+idle connection open. Bind the app to a private interface behind your proxy.
+
+### Large history imports
+
+`opencrawl collect backfill --dry-run --json` previews file counts and local sizes
+before capture installation or sign-in, without reading transcript contents or
+uploading. After recording consent, install capture and explicitly approve the
+chosen history sources. Imports use up to four concurrent uploads and batches of
+up to 1,000 events, also bounded by payload size. On a smaller server, add
+`--concurrency 1 --batch-delay-ms 250` to pace an approved import. Progress goes to stderr (JSON lines
+with `--json`); `opencrawl collect status --json` exposes the latest import progress.
+Source-byte progress counts compressed file sizes for archives, not network bytes.
+Transient auth throttling and server failures retry with bounded backoff; queued
+data and cursors remain available if retries are exhausted. Rerun the same approved
+import to resume. Membership, destination and revoked-grant failures stop immediately.
 
 Use an existing Airbyte workspace and API application. Set `AIRBYTE_URL`,
 `AIRBYTE_CLIENT_ID`, `AIRBYTE_CLIENT_SECRET`, and `AIRBYTE_WORKSPACE_ID`. The app

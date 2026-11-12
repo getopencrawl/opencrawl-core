@@ -5,7 +5,7 @@ import {homedir} from 'node:os';
 import {createHash, randomUUID} from 'node:crypto';
 import {setTimeout as pause} from 'node:timers/promises';
 import {CliError, refresh, type AuthConfig, type Tokens} from './oauth.ts';
-import {filesystemError} from './filesystem.ts';
+import {filesystemError, retryWindowsSharing} from './filesystem.ts';
 
 export type Session = Tokens & {auth: AuthConfig};
 export const configDir = () => join(process.env.OPENCRAWL_CONFIG_HOME || process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencrawl');
@@ -13,12 +13,12 @@ export const sessionFile = (api: string) => join(configDir(), createHash('sha256
 
 export function atomicFile(file: string, bytes: string|Buffer) {
   mkdirSync(dirname(file), {recursive: true, mode: 0o700});
-  chmodSync(dirname(file), 0o700);
+  retryWindowsSharing(()=>chmodSync(dirname(file), 0o700));
   const temp = `${file}.${randomUUID()}.tmp`;
   try {
     const fd = openSync(temp, 'wx', 0o600);
     try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
-    renameSync(temp, file);
+    retryWindowsSharing(()=>renameSync(temp, file));
     syncDirectory(dirname(file));
   } finally { try { unlinkSync(temp); } catch {} }
 }
@@ -77,7 +77,7 @@ async function lockedFile<T>(file: string, operation: () => Promise<T>, waitMs: 
   mkdirSync(dirname(file), {recursive: true, mode: 0o700});
   // Check write access before SQLite obscures the OS error as CANTOPEN, and
   // create the lock database privately without ever replacing its inode.
-  closeSync(openSync(database, 'a', 0o600));
+  retryWindowsSharing(()=>closeSync(openSync(database, 'a', 0o600)));
   const db=new Database(database,{create:true});
   const deadline=Date.now()+waitMs;
   let transaction=false,identity:string|undefined,released=false;
@@ -86,12 +86,12 @@ async function lockedFile<T>(file: string, operation: () => Promise<T>, waitMs: 
     try {
       // PID files remain diagnostic and compatible with older clients. Never
       // delete a replacement file; SQLite owns exclusion for current clients.
-      if(identity && lockIdentity(file)===identity && readFileSync(file,'utf8')===String(process.pid))unlinkSync(file);
+      if(identity && lockIdentity(file)===identity && readFileSync(file,'utf8')===String(process.pid))retryWindowsSharing(()=>unlinkSync(file));
     }catch(error:any){if(error.code!=='ENOENT')throw error;}
     finally{try{if(transaction)db.exec('ROLLBACK');}finally{db.close();}}
   };
   try {
-    chmodSync(database,0o600);
+    retryWindowsSharing(()=>chmodSync(database,0o600));
     db.exec('PRAGMA busy_timeout=0');
     while(!transaction) {
       signal?.throwIfAborted();
@@ -114,7 +114,7 @@ async function lockedFile<T>(file: string, operation: () => Promise<T>, waitMs: 
         const temporary=`${file}.${randomUUID()}.tmp`;
         try {
           writeFileSync(temporary,String(process.pid),{flag:'wx',mode:0o600});
-          linkSync(temporary,file);
+          retryWindowsSharing(()=>linkSync(temporary,file));
         }finally{try{unlinkSync(temporary);}catch{}}
         // Removing the temporary hard link changes ctime; record identity last.
         identity=lockIdentity(file);
