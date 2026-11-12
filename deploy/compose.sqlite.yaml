@@ -1,0 +1,27 @@
+# Opt-in for a new installation. See docs/search-backends.md before switching an existing index.
+# docker compose -f deploy/compose.yaml -f deploy/compose.sqlite.yaml up -d
+services:
+  app:
+    environment:
+      OPENCRAWL_SEARCH_URL: sqlite:///data/search.sqlite
+    depends_on: !override
+      storage-ready: {condition: service_completed_successfully}
+  worker:
+    environment:
+      OPENCRAWL_SEARCH_URL: sqlite:///data/search.sqlite
+  opensearch:
+    profiles: [opensearch]
+  # The default stack's OpenSearch startup used to mask S3 bucket initialization.
+  # Check authenticated access explicitly before starting the SQLite application.
+  storage-ready:
+    build: {context: .., dockerfile: deploy/Dockerfile}
+    image: opencrawl-core:${OPENCRAWL_IMAGE_TAG:-local}
+    restart: "no"
+    command: ["node", "deploy/wait-storage.mjs"]
+    environment:
+      OPENCRAWL_LANDING_S3_BUCKET: opencrawl
+      OPENCRAWL_LANDING_S3_REGION: us-east-1
+      OPENCRAWL_LANDING_S3_ENDPOINT: http://s3:8333
+      OPENCRAWL_LANDING_S3_ACCESS_KEY_ID: ${OPENCRAWL_S3_ACCESS_KEY_ID:?Run ./up.sh}
+      OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY: ${OPENCRAWL_S3_SECRET_ACCESS_KEY:?Run ./up.sh}
+    depends_on: {s3: {condition: service_started}}

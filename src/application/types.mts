@@ -49,7 +49,8 @@ export interface SettingsData {
   setupPrompt: string;
 }
 
-export interface Bootstrap extends SettingsData {cacheScope: string; canInvite: boolean; onboarding: {completed: boolean; next: string}}
+export interface InvitationPolicy {delivery: 'email' | 'link'; beforeAgentSetup: boolean}
+export interface Bootstrap extends SettingsData {cacheScope: string; canInvite: boolean; invitationPolicy?: InvitationPolicy; onboarding: {completed: boolean; next: string}}
 
 export type * from './reports.mjs';
 export type * from './library-types.mjs';

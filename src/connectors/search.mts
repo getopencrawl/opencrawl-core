@@ -10,22 +10,7 @@ export {connectorMapping};
 // Atomic comparison at the destination protects against retries and concurrent,
 // out-of-order files. Suppressions persist across source replay.
 export const SEARCHABLE_KINDS = ['message', 'channel', 'file', 'file_chunk', 'meeting', 'transcript', 'page', 'passage', 'database', 'comment', 'commit', 'pull_request', 'issue', 'review', 'issue_comment', 'review_comment', 'commit_comment', 'release'];
-const UPSERT = `if (ctx._source.connector == null) { ctx._source = params.doc; }
-else if (ctx._source.connector.deleted == true) { ctx.op = 'none'; }
-else if (ctx._source.connector.containsKey('sourceAuthority') && (!params.doc.connector.containsKey('sourceAuthority') || params.doc.connector.sourceAuthority < ctx._source.connector.sourceAuthority)) { ctx.op = 'none'; }
-else if (params.doc.connector.containsKey('sourceAuthority') && (!ctx._source.connector.containsKey('sourceAuthority') || params.doc.connector.sourceAuthority > ctx._source.connector.sourceAuthority)) { ctx._source = params.doc; }
-else if (params.doc.connector.extractedAt == ctx._source.connector.extractedAt && params.doc.connector.containsKey('normalizerVersion') &&
- (!ctx._source.connector.containsKey('normalizerVersion') || params.doc.connector.normalizerVersion > ctx._source.connector.normalizerVersion)) { ctx._source = params.doc; }
-else if (params.doc.connector.extractedAt == ctx._source.connector.extractedAt && ctx._source.connector.containsKey('normalizerVersion') &&
- (!params.doc.connector.containsKey('normalizerVersion') || params.doc.connector.normalizerVersion < ctx._source.connector.normalizerVersion)) { ctx.op = 'none'; }
-else if (ctx._source.connector.extractedAt == null ||
- (params.doc.connector.containsKey('versionAt') && (!ctx._source.connector.containsKey('versionAt') || params.doc.connector.versionAt > ctx._source.connector.versionAt)) ||
- ((!params.doc.connector.containsKey('versionAt') || params.doc.connector.versionAt == ctx._source.connector.versionAt) &&
- (params.doc.connector.extractedAt > ctx._source.connector.extractedAt ||
- (params.doc.connector.extractedAt == ctx._source.connector.extractedAt && ((params.doc.connector.containsKey('componentCount') && params.doc.connector.componentCount > ctx._source.connector.componentCount) ||
- ((!params.doc.connector.containsKey('componentCount') || params.doc.connector.componentCount == ctx._source.connector.componentCount) && params.doc.connector.contentHash.compareTo(ctx._source.connector.contentHash) > 0)))))) {
- ctx._source = params.doc;
-} else { ctx.op = 'none'; }`;
+
 
 export function createConnectorSearch(options: RealmOptions & {tenantId: string}) {
   const {tenantId}=options;
@@ -127,7 +112,7 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
         for (const item of documents) checkDocument(binding, item);
       } catch (error) {throw Object.assign(error as object, {writeOutcome: 'not-applied'});}
       if (!documents.length) return;
-      await collection.bulk(principal,documents.map(item=>({...item,script:UPSERT})));
+      await collection.bulk(principal,documents.map(item=>({...item,policy:'connector'})));
     },
     async suppress(principal: ConnectorPrincipal, binding: ConnectorBinding, {kind, sourceId}: SuppressionIdentity) {
       try {
@@ -136,7 +121,7 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
       } catch (error) {throw Object.assign(error as object, {writeOutcome: 'not-applied'});}
       const id = documentId(binding, kind, sourceId);
       const tombstone = {tenantId, connectionId: binding.connectionId, workspaceId: binding.workspaceId, provider: binding.provider, kind, sourceId, deleted: true};
-      await collection.update(principal,id,{script:{source:"ctx._source.connector.deleted = true; ctx._source.text = ''; ctx._source.title = '';"},upsert:tombstone});
+      await collection.update(principal,id,{patch:{'connector.deleted':true,text:'',title:''},upsert:tombstone});
     },
     search,
     /** Live source entities per kind, excluding passage revisions across authorized connections, for reporting. */

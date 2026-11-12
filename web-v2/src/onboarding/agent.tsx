@@ -1,6 +1,6 @@
 import {consoleResourceKey} from '../data.tsx';
 import {useEffect, useRef, useState, type ReactNode} from 'react';
-import {Button, Page, Textarea} from '../design/components.tsx';
+import {Button, LinkButton, Page, Textarea} from '../design/components.tsx';
 import {Icon} from '../design/icons.tsx';
 import {CommandSnippet} from './copy.tsx';
 import {deriveOnboarding, hasReceipt, promptModel} from './model.ts';
@@ -51,10 +51,11 @@ export interface AgentOnboardingProps {
   mcpUrl: string;
   setupPrompt: string;
   initialStatus?: OnboardingStatus;
+  canInviteBeforeSetup?: boolean;
   presentation?: 'focused' | 'workspace';
 }
 
-export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus, presentation = 'focused'}: AgentOnboardingProps) {
+export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus, canInviteBeforeSetup = false, presentation = 'focused'}: AgentOnboardingProps) {
   const progress = useOnboardingResource(signal => adapter.status(signal), {key:consoleResourceKey(adapter,'onboarding-status'), interval: 5000, initial: initialStatus});
   const status = progress.data ?? {};
   const derived = deriveOnboarding(status);
@@ -119,6 +120,8 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus, pr
                 {history === 'importing' ? <p className="signal-instruction">Your past sessions are being imported. You can continue setup.</p> : <><CommandSnippet text={commands.history} label="Copy history import command" /><p className="signal-instruction">Choose Claude Code, Codex, both, or skip in your terminal.</p><p className="signal-instruction">Importing uploads messages, tool activity, and available attachments.</p></>}
               </Signal>
             </ul>
+            {presentation === 'focused' && !derived.complete && <p className="focus-reassurance">CLI sign-in, a successful MCP connection test, and a new session recording are required to open your workspace.</p>}
+            {presentation === 'focused' && canInviteBeforeSetup && <div className="focus-action"><LinkButton to="/onboarding/invite" variant="quiet">Invite teammates now</LinkButton></div>}
           </section>}
     <p className="sr-only" role="status" aria-live="polite">{copied ? 'Copied' : derived.complete ? `All required checks passed.${presentation === 'focused' ? ' Next is available.' : ''}` : progress.error ? 'We couldn’t check your progress. Try again.' : ''}</p>
   </>;

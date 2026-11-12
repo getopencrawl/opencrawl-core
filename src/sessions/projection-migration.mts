@@ -82,7 +82,7 @@ export async function migrateSessionProjection({realm, principal, store, prefix,
       await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:previous},async()=>{
       await backup({previous});
       // Each replacement is at most one 16k text chunk; cap bulk size separately.
-      for(const item of writes)await sessions.bulk(principal,[{...item,script:"if (ctx._source.session == null) { ctx.op = 'none'; } else { ctx._source.text = params.doc.text; ctx._source.session.attachments = params.doc.session.attachments; ctx._source.session.toolNames = params.doc.session.toolNames; }"}]);
+      for(const item of writes)await sessions.bulk(principal,[{...item,policy:'session-projection'}]);
       if(removals.length)await sessions.delete(principal,removals);
       });
     }

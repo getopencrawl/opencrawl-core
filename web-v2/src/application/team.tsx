@@ -35,6 +35,7 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
   const [roleStatus, setRoleStatus] = useState('');
   const roleErrorId = useId();
   const [success, setSuccess] = useState('');
+  const [createdInvite, setCreatedInvite] = useState<{email:string;url:string} | null>(null);
   const emailInput = useRef<HTMLInputElement>(null);
   const organizationInput = useRef<HTMLInputElement>(null);
   const roleInput = useRef<HTMLSelectElement | null>(null);
@@ -78,7 +79,7 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
     if (!mounted.current || !data || data.role !== 'admin' || mutation.current) return null;
     const request = new AbortController();
     mutation.current = request;
-    setPending(action); setInviteError(''); setSuccess(''); setRoleError(null); setRoleStatus('');
+    setPending(action); setInviteError(''); setSuccess(''); setCreatedInvite(null); setRoleError(null); setRoleStatus('');
     setOrganizationError(''); setOrganizationSuccess('');
     return request;
   }
@@ -111,9 +112,10 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
     const request = begin({kind: 'invite'});
     if (!request) return;
     try {
-      await adapter.invite(submittedEmail, request.signal);
+      const invitation = await adapter.invite(submittedEmail, request.signal);
       if (!current(request)) return;
-      setSuccess(`Invitation sent to ${submittedEmail}. They can join using the link in their email.`);
+      setSuccess(invitation.inviteUrl ? `Invitation created for ${submittedEmail}. Share the private link with them. No email was sent.` : `Invitation sent to ${submittedEmail}. They can join using the link in their email.`);
+      if (invitation.inviteUrl) setCreatedInvite({email:submittedEmail,url:invitation.inviteUrl});
       setEmail('');
       focusInvite.current = true;
       // Automatic reads retry a failed refresh; never replay a successful invitation.
@@ -225,6 +227,7 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAd
             <div className="field-inline oc-form-measure"><div className="oc-field"><Input aria-label="Teammate’s email" ref={emailInput} type="email" name="email" autoComplete="off" maxLength={254} required disabled={pending !== null} value={email} onChange={event => setEmail(event.target.value)} placeholder="teammate@company.com" /></div><Button type="submit" variant="primary" busy={pending?.kind === 'invite'} disabled={pending !== null}>{pending?.kind === 'invite' ? 'Inviting…' : 'Invite'}</Button></div>
             {inviteError && <Notice tone="danger">{inviteError}</Notice>}
             {success && <Notice tone="success">{success}</Notice>}
+            {createdInvite && !invitations.some(item => item.email === createdInvite.email && item.inviteUrl === createdInvite.url) && <CopyField label="Private invitation link" value={createdInvite.url}/>}
           </form>
         </> : <Notice tone="info">Ask an admin to invite teammates.</Notice>}
       </Section>

@@ -19,8 +19,11 @@ in domain logic. No duplicated hosted version of a core operation.
 Core owns the complete noncommercial UI, reusable identity adapters and
 team operations, capture, board, sessions, memories, connector lifecycle,
 Airbyte clients, indexing, search, resource permissions and data lifecycle.
+Search uses a core-owned realm adapter contract. OpenSearch and opt-in SQLite
+FTS5 preserve the agent API; matching/ranking parity is not guaranteed. See
+`docs/search-backends.md` for the conformance floor and operational limits.
 Self-hosters operate local Better Auth accounts and supply Airbyte,
-OpenSearch, connector credentials and documented supporting storage/jobs.
+their selected search backend, connector credentials and documented supporting storage/jobs.
 The optional Composio adapter uses an operator-owned project for connector OAuth;
 it is not an OpenCrawl account or control-plane dependency. Missing connector
 configuration remains visible in the product catalog with setup guidance.
