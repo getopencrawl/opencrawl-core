@@ -97,6 +97,21 @@ for (const backend of ['sqlite', 'opensearch']) {
       assert.deepEqual(ids(await collection.search(principal, {query: lexicalQuery('removaltarget', 'all')})), []);
       assert.deepEqual(ids(await collection.search(principal, {query: lexicalQuery('retaintarget', 'all')})), ['retain-by-text']);
     });
+    await t.test('phrase evidence ranks ahead of scattered words without changing literal matching', async () => {
+      await collection.bulk(principal, [
+        {id: 'ranking-direct', document: {...principal, text: 'red fox monitoring reference with several additional details and explanatory examples'}},
+        {id: 'ranking-scattered', document: {...principal, text: 'red quick fox'}},
+        {id: 'ranking-partial', document: {...principal, text: 'red bird'}},
+      ]);
+      await realm.refresh(principal);
+      for(const mode of ['all','any']){
+        const result=await collection.search(principal,{query:lexicalQuery('red fox',mode),sort:['_score',{id:'asc'}]});
+        assert.equal(result.hits.hits[0]._id,'ranking-direct');
+        assert.deepEqual(ids(result),mode==='all'?['ranking-direct','ranking-scattered']:['ranking-direct','ranking-partial','ranking-scattered']);
+      }
+      assert.deepEqual(ids(await collection.search(principal,{query:lexicalQuery('red fox','phrase')})),['ranking-direct']);
+      assert.deepEqual(ids(await collection.search(principal,{query:lexicalQuery('red','all')})),['ranking-direct','ranking-partial','ranking-scattered']);
+    });
     await t.test('memory projection activation and conditional rollback preserve newer heads', async () => {
       const memories=realm.collection('memory'),head={...principal,kind:'snapshot',generation:1,snapshotId:'snapshot-one'};
       const one={...head,projectionId:'a'.repeat(64),passageVersion:2},two={...head,projectionId:'b'.repeat(64),passageVersion:3};
