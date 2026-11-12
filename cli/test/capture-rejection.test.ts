@@ -71,6 +71,13 @@ test('an invalid attachment receipt cannot suppress a later upload',async()=>fix
  f.badReceipt=false;expect(await flushCaptures()).toEqual({uploaded:1});expect(f.puts).toHaveLength(2);
 }));
 
+test('a missing attachment after storage restore invalidates its acknowledgement',async()=>fixture(async f=>{
+ f.rejection=409;f.queue('batch','rejected');
+ await expect(flushCaptures()).rejects.toMatchObject({httpStatus:409});
+ expect(f.puts).toHaveLength(1);expect(captureStatus().rejected).toBe(0);
+ f.rejection=0;expect(await flushCaptures()).toEqual({uploaded:1});expect(f.puts).toHaveLength(2);
+}));
+
 test('a rejection marker applies only to the unchanged queued payload',async()=>fixture(async f=>{
  const bad=f.queue('batch','rejected');await expect(flushCaptures()).rejects.toMatchObject({code:'CAPTURE_BATCH_REJECTED'});
  const changed=JSON.parse(bad.original);changed.sessionId='another-session';writeFileSync(bad.path,JSON.stringify(changed));
