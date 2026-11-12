@@ -16,6 +16,13 @@ without deleting connections, grants or data. External source reads and changes
 remain unavailable until Airbyte is enabled again. `stop`, `status`, and `reset --yes`
 operate on the whole installation without a mode flag.
 
+For a new installation, add `--sqlite` to select SQLite FTS5 search:
+`./dev/up --no-airbyte --sqlite`. This choice is saved for subsequent starts,
+demo, status, stop and reset. It does not start an OpenSearch container.
+Existing OpenSearch installations keep their backend; the flag refuses an
+implicit index switch. See [search backends](../docs/search-backends.md) for
+matching/ranking differences, single-host limits and migration requirements.
+
 No service account, OAuth application, Node installation, `.env` editing or manual
 Airbyte setup is required. The script installs Docker/Compose from Ubuntu's signed
 package repositories when absent; sudo may ask for your system password. With
