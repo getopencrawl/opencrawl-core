@@ -56,8 +56,11 @@ enterprise SSO for self-host. Cloud retains its existing WorkOS capabilities.
 
 CLI login uses this installation’s device authorization endpoint. MCP clients use
 PKCE, explicit consent and the installation’s `/mcp` audience. JWT access tokens
-last one hour; rotating refresh tokens can be revoked through the advertised
-OAuth revocation endpoint. Revoking a refresh token prevents renewal; already
+last one hour. CLI and MCP refresh tokens last 90 days from issuance or rotation,
+so active clients renew without signing in again. Browser sessions last 30 days
+and extend with activity at most once per day. Existing tokens keep their issued
+expiry; the new lifetime applies on sign-in or successful refresh. Rotating refresh
+tokens can be revoked through the advertised OAuth revocation endpoint. Revoking a refresh token prevents renewal; already
 issued JWT access tokens remain valid until expiry. Browser logout ends the browser session; it does not
 revoke an independently consented offline grant. Removing membership denies all
 resource access immediately, including previously issued credentials. Admins remove

@@ -36,7 +36,7 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
     rateLimit:{enabled:true,storage:'database'},
     account:{accountLinking:{enabled:false}},
     emailAndPassword:{enabled:true,minPasswordLength:10,autoSignIn:true},
-    session:{expiresIn:7*86400,updateAge:86400},
+    session:{expiresIn:30*86400,updateAge:86400},
     advanced:{ipAddress:{ipAddressHeaders:['x-opencrawl-client-ip']},database:{generateId:({model})=>(PREFIX[model]||'')+randomBytes(16).toString('hex')}},
     plugins:[
       organization(),
@@ -44,7 +44,8 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
       // MCP clients register dynamically and must show this deployment's consent page.
       // Many agents share an office IP. Keep a bounded token budget without
       // applying the provider's 20/min default to every independent MCP session.
-      oauthProvider({accessTokenExpiresIn:3600,rateLimit:{token:{window:60,max:120}},loginPage:'/auth/login',consentPage:'/auth/consent',resources:[resource],enforcePerClientResources:false,
+      // Offline CLI/MCP grants renew for 90 days; short access tokens still expire hourly.
+      oauthProvider({accessTokenExpiresIn:3600,refreshTokenExpiresIn:90*86400,rateLimit:{token:{window:60,max:120}},loginPage:'/auth/login',consentPage:'/auth/consent',resources:[resource],enforcePerClientResources:false,
         allowDynamicClientRegistration:true,allowUnauthenticatedClientRegistration:true,clientRegistrationDefaultApplicationType:'infer',scopes:['openid','profile','email','offline_access']}),
       oauthDeviceAuthorization({verificationUri:'/device'}),
     ],
