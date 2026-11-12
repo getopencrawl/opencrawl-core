@@ -24,7 +24,7 @@ export const workspaceSearchSchema = z.strictObject({
   cursor: z.string().max(2048).optional(),
   filters: searchFiltersSchema.optional(),
   order: z.enum(['relevance','newest','oldest']).default('relevance'),
-  facets: z.array(z.enum(facetNames)).max(10).default([]).describe('Facet counts over authorized candidates only; bounded, not exhaustive corpus totals.'),
+  facets: z.array(z.enum(facetNames)).max(facetNames.length).default([]).describe('Facet counts over authorized candidates only; bounded, not exhaustive corpus totals.'),
   select: z.array(z.enum(['title','text','url','provenance'])).max(4).default(['title','text','url','provenance']).describe('Response fields to return. id and source are always included. Omit text for cheap discovery, then fetch.'),
   excerptChars: z.number().int().min(100).max(2000).default(800),
   groupBy: z.enum(['none','resource','session']).default('resource').describe('resource keeps the best passage per session event, memory file, or connector document. session also groups whole sessions. none returns every passage.'),

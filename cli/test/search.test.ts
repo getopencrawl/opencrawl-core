@@ -41,6 +41,8 @@ test('self-host query returns versioned evidence, reports incomplete coverage an
 test('agent discovery controls survive the CLI with strict field validation',()=>{
   expect(searchInput(undefined,{order:'newest',facets:'role,harness',select:'title,provenance',role:'assistant',before:'2026-11-01T00:00:00Z','group-by':'session','excerpt-chars':'400'})).toMatchObject({query:'',order:'newest',facets:['role','harness'],select:['title','provenance'],filters:{roles:['assistant'],before:'2026-11-01T00:00:00Z'},groupBy:'session',excerptChars:400});
   expect(searchInput('release',{filters:'{"providers":["github"],"repositories":["org/repo"]}'})).toMatchObject({filters:{providers:['github'],repositories:['org/repo']}});
+  expect(searchInput('capture',{source:'sessions',facets:'origin',filters:'{"origins":["desktop","unknown"]}'})).toMatchObject({facets:['origin'],filters:{origins:['desktop','unknown']}});
+  for(const filters of ['{"origins":[]}','{"origins":"desktop"}'])expect(()=>searchInput('capture',{filters})).toThrow();
   for(const values of [{filters:'{"tenantId":"foreign"}'},{filters:'[]'},{filters:'{"roles":["anything"]}'},{role:'tool'},{facets:'secret'},{select:'sourceKey'},{'group-by':'tenant'},{after:'2026-12-01T00:00:00Z',before:'2026-11-01T00:00:00Z'}])expect(()=>searchInput('x',values)).toThrow();
   expect(formatSearch({results:[{id:'sessions:x',source:'sessions',title:'Discovery'}],coverage:[],partial:false})).not.toContain('undefined');
 });

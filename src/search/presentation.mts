@@ -26,7 +26,7 @@ export function excerpt(text: string, query: string, size = 800) {
 
 export function workspaceHit(source: string, hit: Passage, sourceRank?: number) {
   const provenance = source === 'sessions'
-    ? {sessionId: hit.sessionId, eventId: hit.eventId, userId: hit.userId, installationId: hit.installationId, harness: hit.harness, kind: hit.kind, role: hit.role, sequence: hit.sequence, chunk: hit.chunk, timestamp: hit.timestamp, receivedAt: hit.receivedAt}
+    ? {sessionId: hit.sessionId, eventId: hit.eventId, userId: hit.userId, installationId: hit.installationId, harness: hit.harness, origin: hit.origin, kind: hit.kind, role: hit.role, sequence: hit.sequence, chunk: hit.chunk, timestamp: hit.timestamp, receivedAt: hit.receivedAt}
     : source==='memories'?{harness:hit.harness,userId:hit.userId,installationId:hit.installationId,host:hit.host,path:hit.path,project:hit.project,
       snapshotId:hit.snapshotId,generation:hit.generation,modifiedAt:hit.modifiedAt,receivedAt:hit.receivedAt,sourceSessionId:hit.sourceSessionId,chunk:hit.chunk,kind:hit.kind}
     : {provider: hit.provider, connectionId: hit.connectionId, workspaceId: hit.workspaceId, sourceId: hit.sourceId, kind: hit.kind, parentId: hit.parentId, parentKind: hit.parentKind, channelId: hit.channelId, authorId: hit.authorId, timestamp: hit.timestamp, sequence: hit.sequence, heading: hit.heading, repository:hit.repository};

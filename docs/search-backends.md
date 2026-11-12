@@ -12,6 +12,22 @@ SQLite query operations fail explicitly instead of dropping a constraint.
 
 ## Selecting SQLite
 
+For a **new** installation, select SQLite with the startup flag:
+
+```sh
+./dev/up --no-airbyte --sqlite
+```
+
+For the operator-managed stack, use `./deploy/up.sh --sqlite --no-airbyte` on the
+first invocation, set `OPENCRAWL_URL` in the generated `deploy/.env`, then rerun
+the command. Both scripts save the choice for later starts. The operator-managed
+script saves `COMPOSE_FILE=compose.yaml:compose.sqlite.yaml` in `deploy/.env`,
+which also applies to the backup tool. Omit `--no-airbyte` when configuring
+external sources. Existing OpenSearch installations are not silently switched;
+the flag refuses an existing installation/configuration with a different backend.
+
+For independently configured runtimes, select the adapter directly:
+
 OpenSearch remains the default. For a **new**, single-host installation, set:
 
 ```sh
