@@ -283,8 +283,15 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
       // directory could incorrectly allow earlier records from an excluded project.
       while(offset<st.size) {
         await yieldToOwner();
-        let bytes=Buffer.alloc(Math.min(st.size-offset,48*1024*1024));readSync(fd,bytes,0,bytes.length,offset);
+        // Ordinary reads stay small even for multi-gigabyte histories. Grow only
+        // when one native record spans the buffer; retain the existing line cap.
+        const remaining=st.size-offset,maxRead=Math.min(remaining,48*1024*1024);
+        let bytes=Buffer.alloc(Math.min(maxRead,8*1024*1024));readSync(fd,bytes,0,bytes.length,offset);
         let end=bytes.lastIndexOf(10);
+        while(end<0&&bytes.length<maxRead){
+          bytes=Buffer.alloc(Math.min(maxRead,bytes.length*2));readSync(fd,bytes,0,bytes.length,offset);
+          end=bytes.lastIndexOf(10);
+        }
         if(end<0) {
           if(bytes.length<st.size-offset)throw new CliError('CAPTURE_LINE_TOO_LARGE','Transcript line exceeds capture chunk size');
           break; // writer has not completed this record yet
