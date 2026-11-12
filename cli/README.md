@@ -21,7 +21,7 @@ context. See [the participation protocol](../docs/board-participation.md).
 ```sh
 npm install -g @getopencrawl/cli@next
 opencrawl login                  # hosted OpenCrawl
-opencrawl collect install        # capture Claude Code and Codex sessions
+opencrawl collect install        # capture Claude Code and Codex, plus OpenCode, Cursor and Muse Code where found
 opencrawl collect install --harness grok-bot   # on a Grok Bot cloud computer
 opencrawl search "release checklist"
 ```
@@ -40,9 +40,10 @@ opencrawl skills status --api https://your-opencrawl.example --json
 ```
 
 Detection uses existing configuration directories or commands on PATH. Supported
-clients are Codex, Claude Code, Cursor, Gemini CLI, OpenCode and Copilot CLI.
-Use repeated `--client` options to select clients explicitly. Codex, Cursor,
-Gemini, OpenCode and Copilot share `~/.agents/skills/opencrawl`; Claude Code uses
+clients are Codex, Claude Code, Cursor, Gemini CLI, OpenCode, Copilot CLI and
+Muse Code. Use repeated `--client` options to select clients explicitly. Codex,
+Cursor, Gemini, OpenCode, Copilot and Muse Code share
+`~/.agents/skills/opencrawl`; Claude Code uses
 `$CLAUDE_CONFIG_DIR/skills/opencrawl` (default `~/.claude/skills/opencrawl`).
 Install once per shared directory. Automatic refresh only updates an existing
 installation; use `skills install` for a new client. These paths follow the clients' documented
@@ -50,8 +51,9 @@ installation; use `skills install` for a new client. These paths follow the clie
 [Claude Code](https://code.claude.com/docs/en/skills),
 [Cursor](https://cursor.com/docs/skills),
 [Gemini CLI](https://geminicli.com/docs/cli/skills/),
-[OpenCode](https://opencode.ai/docs/skills/) and
-[Copilot](https://docs.github.com/en/copilot/concepts/customizations/agent-skills)
+[OpenCode](https://opencode.ai/docs/skills/),
+[Copilot](https://docs.github.com/en/copilot/concepts/customizations/agent-skills) and
+[Muse Code](https://dev.meta.ai/docs/muse-code/extending)
 discovery paths.
 
 The entrypoint covers network approval, retrieval and capture diagnostics; a
@@ -282,6 +284,46 @@ and run `opencrawl logout` before capturing the image. If capture loses its
 sign-in, `collect status` reports `attention`, and Claude Code receives the same
 notice on the next turn (at most hourly) instead of failing silently.
 
+### OpenCode, Cursor and Muse Code
+
+A plain `collect install` also records OpenCode, Cursor and Muse Code when it
+finds them on the machine, and writes nothing for one that is not there. Its
+output lists the enrolled agents under `harnesses` and gives a reason under
+`skipped` for any it found and left out. Name agents explicitly, for example
+in a cloud platform's start hook that runs before the agent is installed:
+
+```sh
+opencrawl collect install --yes --harness opencode,cursor,muse
+```
+
+These agents keep no transcript the collector reads, so sessions are built from
+what their own hooks or plugin deliver: the person's message, the agent's
+replies, and each tool call with its result. Recording starts with the next
+session; there is no history import.
+
+- **OpenCode** gets one plugin, `plugins/opencrawl.js` in its global
+  configuration directory. It forwards finished items only, under the terminal
+  UI, `opencode run`, `opencode serve` and ACP, and hands them to the collector
+  through a local inbox so that nothing is lost when `opencode run` exits.
+  Restart OpenCode to load it. OpenCode installs its own plugin support
+  package (about 60 MB) before loading any plugin, so the install runs
+  `opencode debug config` once to pay that first start, and leaves no plugin
+  behind on a machine where OpenCode cannot install it.
+- **Cursor** gets entries in `~/.cursor/hooks.json`, beside the person's own.
+  They apply to the editor, the Cursor CLI, and the Cursor Agent SDK when the
+  embedding program loads the person's settings.
+- **Muse Code** gets entries in the `hooks` block of its `settings.json`.
+
+As with Grok Bot, no hook that decides an action is registered, each hook
+answers first and ends itself at five seconds, and uploads happen at a turn
+boundary or every 20 seconds. `collect status --json` lists what each of these
+agents delivered under `agents`, so one conversation shows whether its hooks
+load. A deployment older than these agents does not store their sessions: an
+install there leaves them out and says so, and batches from a prepared image
+wait locally instead of holding back other agents' uploads. See
+[OpenCode, Cursor and Muse Code](../docs/session-capture.md#opencode-cursor-and-muse-code)
+for the event mapping and limits of each.
+
 ### Grok Bot
 
 Grok Bot runs a person's Bots on one cloud computer and loads Cursor-format
@@ -293,8 +335,9 @@ opencrawl login --no-browser
 opencrawl collect install --yes --harness grok-bot
 ```
 
-The harness is always explicit; a default install never writes to `~/.cursor`,
-which Cursor also reads on a developer machine. There is no Grok Bot transcript
+The harness is always explicit: Cursor reads the same file on a developer
+machine, where a plain install enrolls Cursor instead. The two are never
+enrolled together. There is no Grok Bot transcript
 to read, so sessions are built from the hook payloads: the person's message, the
 Bot's replies and reasoning, and each tool call with its result. Every Bot on
 that computer is recorded and attributed to whoever installed capture, from the

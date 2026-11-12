@@ -8,7 +8,8 @@ import {failureMessage, useLibraryMutation, useResource} from './use-resource.js
 import {consoleResourceKey, useConsoleModel} from '../data.tsx';
 
 const PAGE = 50, MAX = 500;
-const harnessOf = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'grok-bot' ? value : null;
+const HARNESSES: readonly SessionHarness[] = ['claude-code', 'codex', 'grok-bot', 'opencode', 'cursor', 'muse'];
+const harnessOf = (value: string | null): SessionHarness | null => HARNESSES.find(harness => harness === value) ?? null;
 export function sessionPath({userId, harness, sessionId}: SessionRef) {
   return '/sessions?' + new URLSearchParams({user: userId, harness, id: sessionId}).toString();
 }

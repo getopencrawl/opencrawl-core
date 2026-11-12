@@ -125,7 +125,7 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
           {data.firstAt && <>. Capturing since {data.firstAt.slice(0, 10)}</>}
         </p>
         {data.events === 0 ? (
-          <EmptyState title="No agent sessions captured yet." description="Once teammates install the OpenCrawl CLI, their Claude Code, Codex and Grok Bot sessions appear here."/>
+          <EmptyState title="No agent sessions captured yet." description="Once teammates install the OpenCrawl CLI, their coding agent sessions appear here: Claude Code, Codex, OpenCode, Cursor, Muse Code and Grok Bot."/>
         ) : <>
           <Section className="report-panel" headingLevel={3} title="Daily agent sessions" description={busiest && busiest.sessions > 0 ? `Busiest day: ${busiest.date} with ${plural(busiest.sessions, 'session')}.` : undefined}>
             <ActivityChart daily={data.daily}/>

@@ -1,13 +1,22 @@
 import {isAbsolute, resolve, sep,dirname,basename,join} from 'node:path';
 import {realpathSync} from 'node:fs';
 import {apiOrigin} from '../oauth.ts';
+import {HARNESS_NAMES, type Harness} from './parse.ts';
 
 export type CaptureExclusions = {projects:string[], sessions:string[]};
 export const captureNotice = (api:string) => `Destination: ${apiOrigin(api)}. Capture shares user/agent messages, tool inputs/results, attachments and native agent memory files with everyone who can read your OpenCrawl team or deployment. The CLI masks recognized secret formats in session captures locally before upload. Unknown formats, images and native memory files are not covered by this filter. Active conversations are read from their beginning. Memories refresh automatically during CLI use. Inactive conversation history requires separate consent. Uninstall stops collection; it does not delete uploaded or queued data.`;
 
 /** One hooks file serves the whole cloud computer, so the scope is every Bot on it. */
 export const grokBotNotice = 'Grok Bot capture records every Bot that runs on this cloud computer, including Bots created later and anyone chatting with a Bot hosted here, attributed to the person who installs it. Recording starts when a Bot loads the hooks; earlier conversations are not read.';
-export const captureNoticeFor = (api:string,harness?:string) => harness==='grok-bot' ? captureNotice(api)+' '+grokBotNotice : captureNotice(api);
+/** OpenCode, Cursor and Muse Code keep no transcript this collector reads. */
+export const hookedAgentsNotice = 'OpenCode, Cursor and Muse Code are recorded from what their own hooks or plugin deliver, from the next session each one starts; their earlier conversations are not read and there is no history to import.';
+/** What a person agrees to: the destination and scope, and by name the agents
+ * this install covers, including the ones a plain install found on the machine. */
+export function captureNoticeFor(api:string,harnesses:readonly Harness[]) {
+  const hooked=harnesses.some(harness=>['opencode','cursor','muse'].includes(harness));
+  return [captureNotice(api),`Agents recorded on this machine: ${harnesses.map(harness=>HARNESS_NAMES[harness]??harness).join(', ')}.`,
+    ...(hooked?[hookedAgentsNotice]:[]),...(harnesses.includes('grok-bot')?[grokBotNotice]:[])].join(' ');
+}
 
 export function projectPath(value:string) {
   if(!isAbsolute(value))throw new Error('Use an absolute project directory.');

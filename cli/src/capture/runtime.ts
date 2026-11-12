@@ -1,4 +1,4 @@
-import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream, createWriteStream} from 'node:fs';
+import {readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, readdirSync, statSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream, createWriteStream} from 'node:fs';
 import {createZstdDecompress} from 'node:zlib';
 import {Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
@@ -12,8 +12,10 @@ import {configDir, atomicFile, atomicJson, accessToken, readSession, withSession
 import {CliError} from '../oauth.ts';
 import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
-import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
+import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, HARNESS_NAMES, type Harness, type TranscriptHarness} from './parse.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
+import {unsupportedPayload, isPayloadHarness, MAX_PAYLOAD_BYTES, type PayloadAdapter, type PayloadHarness} from './payload.ts';
+import {payloadAdapter} from './adapters.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
@@ -23,7 +25,7 @@ export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
 /** Bump when installed hook entries change so the next hook rewrites existing installs. */
 export const HOOK_MODE='managed-v3';
-export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:typeof HOOK_MODE|'managed-v2'|'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<TranscriptHarness,string>&{'grok-bot'?:string},claudeDesktopSessionsRoot?:string,command:string[]};
+export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:typeof HOOK_MODE|'managed-v2'|'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<TranscriptHarness,string>&{'grok-bot'?:string}&Partial<Record<PayloadHarness,string>>,claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 /** Installations made before a harness existed have no directory for it. */
 export function harnessRoot(config:CaptureConfig,harness:Harness) {
@@ -31,9 +33,27 @@ export function harnessRoot(config:CaptureConfig,harness:Harness) {
   if(!root)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install --harness '+harness);
   return root;
 }
+/** Every receiver accepts these. One that says nothing more predates the list
+ * in its identity response. */
+const BASELINE_HARNESSES=['claude-code','codex','grok-bot'];
+const harnessNames=(value:unknown)=>Array.isArray(value)?value.filter((name):name is string=>typeof name==='string'&&/^[a-z0-9-]{1,40}$/.test(name)):null;
+/** The agents whose sessions a deployment stores, from its identity response.
+ * A batch for any other is rejected there, so it is neither enrolled nor sent. */
+export const serverHarnesses=(answer:unknown)=>[...new Set([...BASELINE_HARNESSES,...(harnessNames(answer)??[])])];
+/** The same, as of the last time this installation authenticated. */
+export function acceptedHarnesses(api:string) {
+  let saved:any=null;try{saved=read(join(captureDir(),'server.json'));}catch{}
+  return serverHarnesses(saved?.api===api?saved.harnesses:null);
+}
+function rememberAccepted(api:string,answer:unknown) {
+  const file=join(captureDir(),'server.json'),harnesses=harnessNames(answer);
+  let saved:any=null;try{saved=read(file);}catch{}
+  if(saved?.api===api&&JSON.stringify(saved.harnesses??null)===JSON.stringify(harnesses))return;
+  atomicJson(file,{api,harnesses});
+}
 // Enrollment and every queued payload remain bound to their original destination.
 export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
-  const {principal}=await request(config.api,'/api/sessions/identity',{signal},token);
+  const {principal,harnesses}=await request(config.api,'/api/sessions/identity',{signal},token);
   signal?.throwIfAborted();
   if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   // Authentication may finish after uninstall or another worker initializes a
@@ -49,6 +69,7 @@ export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,
       config.authPending=false;
     }
     atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
+    rememberAccepted(config.api,harnesses);
   },20_000,signal);
   return principal;
 }
@@ -399,6 +420,34 @@ export async function refreshCapturedTitles() {
   },Infinity);
   return {updated,...await flushCaptures()};
 }
+/** What each agent's hooks or plugin have delivered on this machine. These
+ * agents have no transcript to compare against, so status reports this to tell
+ * hooks that never run from hooks that run without a conversation in them.
+ * Names and counts only: nothing a delivery contains is kept here. */
+function deliveriesSeen():Record<string,any> {
+  // A file that cannot be read starts over: it must never stop a recording.
+  let seen:any={};
+  try{seen=read(join(captureDir(),'deliveries.json'))??{};}catch{}
+  return seen&&typeof seen==='object'&&!Array.isArray(seen)?seen:{};
+}
+function countDelivery(harness:PayloadHarness,adapter:PayloadAdapter,event:any,at:string,recorded:boolean) {
+  const all=deliveriesSeen(),seen=all[harness]&&typeof all[harness]==='object'?all[harness]:{};
+  // No prototype: a delivery may be named after anything, "constructor" included.
+  const counts=(value:unknown):Record<string,number>=>Object.assign(Object.create(null),value&&typeof value==='object'?value:{});
+  const deliveries=counts(seen.deliveries),kinds=counts(seen.recorded);
+  // The name comes from the payload: keep the list short whatever it sends.
+  const name=(adapter.name(event)??'unnamed').slice(0,60),key=name in deliveries||Object.keys(deliveries).length<40?name:'other';
+  deliveries[key]=(deliveries[key]??0)+1;
+  if(recorded)for(const item of adapter.events({id:'count',at,event})) {
+    const kind=item.kind==='message'?item.data?.role==='user'?'prompts':'replies':item.kind==='tool_call'?'toolCalls':null;
+    if(kind)kinds[kind]=(kinds[kind]??0)+1;
+  }
+  // Counts are a diagnostic, not a record: replaced whole, without making the
+  // agent wait for a flush to disk on every hook.
+  const file=join(captureDir(),'deliveries.json'),temp=file+'.'+process.pid+'.tmp';
+  writeFileSync(temp,JSON.stringify({...all,[harness]:{first:typeof seen.first==='string'?seen.first:at,last:at,deliveries,recorded:kinds}})+'\n',{mode:0o600});
+  retryWindowsSharing(()=>renameSync(temp,file));
+}
 /** Hook work is only a durable local handoff. Never scan, parse or upload here. */
 export async function captureHook(harness:Harness,event:any) {
   return withSessionLock('capture:configuration',async()=>{
@@ -419,12 +468,60 @@ export async function captureHook(harness:Harness,event:any) {
     atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,sequence,harness,event:bytes>GROK_BOT_MAX_HOOK_BYTES?grokBotUnsupported(event,'too_large',bytes):event});
     return;
   }
+  const adapter=payloadAdapter(harness);
+  if(adapter) {
+    if(!event||typeof event!=='object'||Array.isArray(event))throw new CliError('CAPTURE_EVENT_INVALID','Hook payload is not an object');
+    // Prepared with --defer-auth and no credential has reached this machine:
+    // nobody has opted in, so nothing they do accumulates here. Once a token or
+    // a sign-in is present the delivery is kept, and spooled when the identity
+    // is bound, so a session's first prompt is not lost to that first request.
+    const count=(recorded:boolean)=>{try{countDelivery(harness as PayloadHarness,adapter,event,at,recorded);}catch{}};
+    if(config.authPending&&!staticCaptureToken(config.api)&&!readSession(config.api))return count(false);
+    const context=adapter.context?.(process.env)??null;
+    const session=adapter.session(event,at,context);
+    if(!session||captureExcluded(config,{sessionId:session.sessionId,cwd:session.cwd??undefined}))return count(false);
+    // Deliveries arrive from separate processes. Microseconds since the epoch
+    // keep them in the order they were recorded.
+    const sequence=Math.round((performance.timeOrigin+performance.now())*1000);
+    const bytes=Buffer.byteLength(JSON.stringify(event));
+    const kept=bytes>MAX_PAYLOAD_BYTES?unsupportedPayload(adapter,event,'too_large',bytes):event;
+    // The notice first: a delivery is only counted as recorded once it is.
+    atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,sequence,harness,...(context?{context}:{}),event:kept});
+    try{countDelivery(harness as PayloadHarness,adapter,kept,at,true);}catch{}
+    return;
+  }
   const sessionId=event?.session_id;
   if(typeof sessionId!=='string' || !/^[\w.:-]{1,200}$/.test(sessionId))throw new CliError('CAPTURE_SESSION_UNKNOWN','Hook missing session ID');
   if(captureExcluded(config,{sessionId,cwd:event.cwd}))return;
   atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,harness,event});
-  // A Bot is waiting on a Grok Bot hook: give up on a held lock rather than queue behind it.
-  },harness==='grok-bot'?2000:Infinity);
+  // The agent is waiting on these hooks: give up on a held lock rather than queue behind it.
+  },harness==='grok-bot'||isPayloadHarness(harness)?2000:Infinity);
+}
+
+const inboxDir=(harness:PayloadHarness)=>join(captureDir(),'inbox',harness);
+const inboxNames=(harness:PayloadHarness)=>{try{return readdirSync(inboxDir(harness)).filter(name=>name.endsWith('.json')&&!name.startsWith('.')).sort();}catch{return [];}};
+/** An agent's plugin leaves each finished item as a file here, named so that
+ * they sort in the order they happened. A file is removed only once its
+ * delivery has been recorded, or when it can never be read. One collector
+ * takes them at a time; another waits briefly, then looks for what is left. */
+export async function ingestInbox(harness:PayloadHarness,record:(delivery:any)=>Promise<void>) {
+  if(!inboxNames(harness).length)return 0;
+  let taken=0;
+  try {
+    await withSessionLock('capture:inbox:'+harness,async()=>{
+      for(let names=inboxNames(harness);names.length;names=inboxNames(harness))for(const name of names) {
+        const path=join(inboxDir(harness),name);
+        let delivery:any=null;try{delivery=JSON.parse(readFileSync(path,'utf8'));}catch(error:any){if(error?.code==='ENOENT')continue;}
+        if(delivery)await record(delivery);
+        retryWindowsSharing(()=>unlinkSync(path));taken++;
+      }
+    },2000);
+  }catch(error:any){if(error?.code!=='SESSION_BUSY')throw error;}
+  return taken;
+}
+/** Every enrolled agent's inbox, through the same door as a hook. */
+async function ingestInboxes(config:CaptureConfig) {
+  for(const harness of config.harnesses??[])if(payloadAdapter(harness)?.inbox)await ingestInbox(harness as PayloadHarness,delivery=>captureHook(harness,delivery));
 }
 
 // The original event is kept only until its immutable batch is spooled. Its ID
@@ -433,14 +530,26 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
   ensureDirectories();
   return withSessionLock('capture:notices',async()=>{
   let processed=0,firstError:any;
-  // Grok Bot notices are the conversation itself, not pointers to a transcript.
+  // Grok Bot notices, and those of the agents in payload.ts, are the
+  // conversation itself, not pointers to a transcript.
   // They are spooled in bounded rounds: a backlog never has to fit in memory,
   // and a hook can stop between rounds with its progress kept.
   type GrokBotNotice={path:string,notice:any};
   let round:GrokBotNotice[]=[],roundBytes=0;
   const spoolRound=async()=>{
-    const groups=new Map<string,{meta:any,title:any,notices:GrokBotNotice[]}>();
+    const groups=new Map<string,{meta:any,title:any,notices:GrokBotNotice[],adapter?:ReturnType<typeof payloadAdapter>}>();
     for(const item of round) {
+      const adapter=payloadAdapter(item.notice.harness);
+      if(adapter) {
+        const session=adapter.session(item.notice.event,item.notice.at,item.notice.context);
+        // Nothing in it names a session any more: it has nowhere to go.
+        if(!session){try{unlinkSync(item.path);processed++;}catch(error){firstError??=error;}continue;}
+        const key=JSON.stringify([item.notice.harness,session.sessionId,session.cwd]);
+        const group=groups.get(key)??{adapter,title:null,notices:[],meta:{harness:item.notice.harness,sessionId:session.sessionId,origin:session.origin,originEvidence:session.originEvidence,
+          parentSessionId:session.parentSessionId,...(session.cwd?{cwd:session.cwd}:{}),...(session.version?{harnessVersion:session.version}:{}),captureMode:'live'}};
+        group.notices.push(item);groups.set(key,group);
+        continue;
+      }
       const session=grokBotSession(item.notice.event,item.notice.at),key=JSON.stringify([session.sessionId,session.cwd]);
       const group=groups.get(key)??{meta:{harness:'grok-bot',sessionId:session.sessionId,origin:'cloud',
         originEvidence:session.identified?'Grok Bot cloud computer hook':'Grok Bot hook without a conversation ID; grouped by workspace and UTC day',
@@ -455,17 +564,19 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
       // that is cut off still delivered the batches before it.
       type Chunk={events:any[],attachments:any[],paths:string[]};
       const chunks:Chunk[]=[];let chunk:Chunk={events:[],attachments:[],paths:[]},bytes=0;
+      const derive=(notice:any)=>group.adapter?group.adapter.events(notice):grokBotEvents(notice);
+      const marker=(event:any,size:number)=>group.adapter?unsupportedPayload(group.adapter,event,'unsupported',size):grokBotUnsupported(event,'unsupported',size);
       for(const {path,notice} of group.notices) {
         let extracted:any[]=[],next:any[],size=0;
         try {
-          next=grokBotEvents(notice).map(event=>attachmentTransform(event,extracted,group.meta.cwd??homedir()));
+          next=derive(notice).map(event=>attachmentTransform(event,extracted,group.meta.cwd??homedir()));
           // Reject here what the receiver or the batch format never accepts.
           next.forEach(finalizeEventIdentity);size=Buffer.byteLength(JSON.stringify(next));
           if(extracted.length>500||size>12*1024*1024)throw new CliError('CAPTURE_EVENT_INVALID','Hook payload exceeds what one batch can carry');
         } catch(error:any) {
           // A filesystem or other passing failure: leave the notice for a later pass.
           if(!['CAPTURE_EVENT_TOO_DEEP','CAPTURE_EVENT_INVALID'].includes(error?.code)){firstError??=error;continue;}
-          extracted=[];next=grokBotEvents({...notice,event:grokBotUnsupported(notice.event,'unsupported',statSync(path).size)});
+          extracted=[];next=derive({...notice,event:marker(notice.event,statSync(path).size)});
           size=Buffer.byteLength(JSON.stringify(next));
         }
         if(chunk.paths.length&&(chunk.paths.length>=100||bytes+size>1024*1024||chunk.attachments.length+extracted.length>8)){chunks.push(chunk);chunk={events:[],attachments:[],paths:[]};bytes=0;}
@@ -488,7 +599,7 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
     if(Date.now()>=until)break;
     const path=join(captureDir(),'notices',name),notice=read(path);
     if(!notice)continue;
-    if(notice.harness==='grok-bot') {
+    if(notice.harness==='grok-bot'||isPayloadHarness(notice.harness)) {
       round.push({path,notice});roundBytes+=statSync(path).size;
       if(round.length>=200||roundBytes>=16*1024*1024)await spoolRound();
       continue;
@@ -567,6 +678,9 @@ export async function captureWorker({idleMs=30_000,pollMs=1000}={}) {
   const config=readCaptureConfig();if(!config||config.disabled)return;
   ensureDirectories();
   let observedNotices:string[]=[];
+  // Batches the last pass left queued on purpose: excluded, or for an agent the
+  // deployment does not accept yet. They are not work to stay awake for.
+  let parked=0;
   for(;;) {
   try {
     await withSessionLock('capture:worker',async()=>{
@@ -580,13 +694,13 @@ export async function captureWorker({idleMs=30_000,pollMs=1000}={}) {
           if(processed||changed)activeAt=Date.now();
         }catch(error){captureError=error;}
         try {
-          if(queuedNames().length){const result=await flushCaptures({wait:false});if(result.uploaded)activeAt=Date.now();}
+          if(queuedNames().length>parked){const result=await flushCaptures({wait:false});parked=(result.excluded??0)+(result.held??0);if(result.uploaded)activeAt=Date.now();}
         }catch(error){captureError??=error;}
         if(captureError){recordError(captureError);failures++;}
         else {
           failures=0;
           observedNotices=noticeNames();
-          if(!observedNotices.length&&!queuedNames().length&&Date.now()-activeAt>=idleMs)break;
+          if(!observedNotices.length&&queuedNames().length<=parked&&Date.now()-activeAt>=idleMs)break;
         }
         // Retry while there is durable work, with bounded resource use. A later
         // invocation also recovers it if the host kills this process.
@@ -596,14 +710,14 @@ export async function captureWorker({idleMs=30_000,pollMs=1000}={}) {
   } catch(error:any) {if(error?.code!=='SESSION_BUSY')throw error;return;}
   // Release-before-recheck closes the idle-exit lost-wakeup race. Hooks arriving
   // before release are seen here; hooks arriving later can acquire the lock.
-  if(!readCaptureConfig() || readCaptureConfig()!.disabled || (!queuedNames().length && !noticeNames().some(n=>!observedNotices.includes(n))))return;
+  if(!readCaptureConfig() || readCaptureConfig()!.disabled || (queuedNames().length<=parked && !noticeNames().some(n=>!observedNotices.includes(n))))return;
   // Reacquire in this same owned process; never spawn a replacement.
   }
 }
 /** Explicit flush waits for capture and upload ownership, then fences current sources. */
 export async function flushCaptureWork() {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
-  if(!config.disabled){if(config.authPending)await refreshCaptureIdentity(config);await drainCaptureNotices(config);await reconcileSources(config,new Map());}
+  if(!config.disabled){if(config.authPending)await refreshCaptureIdentity(config);await ingestInboxes(config);await drainCaptureNotices(config);await reconcileSources(config,new Map());}
   return flushCaptures();
 }
 
@@ -612,11 +726,11 @@ export async function flushCaptureWork() {
  * one pass in the hook's own process, which the hook command cuts off at its
  * deadline. A failed or cut-off pass backs off: one minute, doubling to fifteen.
  * Unsent notices and batches stay queued for the next pass. */
-async function hookPass(event:any,now:()=>number,work:(config:CaptureConfig)=>Promise<void>) {
+async function hookPass(event:any,now:()=>number,work:(config:CaptureConfig)=>Promise<void>,boundary=GROK_BOT_BOUNDARIES.includes(event?.hook_event_name)) {
   const config=readCaptureConfig();if(!config||config.disabled)return;
   ensureDirectories();
   const marker=join(captureDir(),'hook-flush.json'),last=read(marker),failures=last?.ok===false?last.failures??1:0;
-  const gap=failures?Math.min(60_000*2**(failures-1),900_000):GROK_BOT_BOUNDARIES.includes(event?.hook_event_name)?0:20_000;
+  const gap=failures?Math.min(60_000*2**(failures-1),900_000):boundary?0:20_000;
   if(last?.at&&now()-Date.parse(last.at)<gap)return;
   try {
     await withSessionLock('capture:worker',async()=>{
@@ -635,20 +749,20 @@ async function hookPass(event:any,now:()=>number,work:(config:CaptureConfig)=>Pr
 }
 /** With --defer-auth nothing is recorded until an identity is bound. Signing in
  * later starts capture on the next hook, without reinstalling. */
-export async function bindHookIdentity(event:any,{now=Date.now}={}) {
+export async function bindHookIdentity(event:any,{now=Date.now,boundary}:{now?:()=>number,boundary?:boolean}={}) {
   const config=readCaptureConfig();if(!config||config.disabled||!config.authPending)return;
   // Nobody has signed in on this computer. That is a local fact, not a failing
   // receiver: look again on every hook, quietly.
   if(!staticCaptureToken(config.api)&&!readSession(config.api))return;
-  return hookPass(event,now,async pending=>{await refreshCaptureIdentity(pending);});
+  return hookPass(event,now,async pending=>{await refreshCaptureIdentity(pending);},boundary);
 }
-export const hookFlush=(event:any,{now=Date.now}={})=>readCaptureConfig()?.authPending?Promise.resolve():hookPass(event,now,async config=>{
+export const hookFlush=(event:any,{now=Date.now,boundary}:{now?:()=>number,boundary?:boolean}={})=>readCaptureConfig()?.authPending?Promise.resolve():hookPass(event,now,async config=>{
   let failure:any;
   // Leave half the hook's five seconds for the uploads themselves.
   try{await drainCaptureNotices(config,{until:Date.now()+2500});}catch(error){failure=error;}
   try{if(queuedNames().length)await flushCaptures({wait:false});}catch(error){failure??=error;}
   if(failure)throw failure;
-});
+},boundary);
 
 export async function syncCaptures() {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
@@ -667,7 +781,10 @@ export async function syncCaptures() {
   if(errors.length){recordError(errors[0]);throw errors[0];}
   return result;
 }
-export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUploaded}: {wait?:boolean;concurrency?:number;batchDelayMs?:number;onUploaded?:()=>void}={}) {
+/** Batches left queued on purpose are counted, not hidden: excluded ones, and
+ * ones held for an agent the deployment does not accept yet. */
+export type FlushResult={uploaded:number,excluded?:number,held?:number};
+export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUploaded}: {wait?:boolean;concurrency?:number;batchDelayMs?:number;onUploaded?:()=>void}={}):Promise<FlushResult> {
   const workers=concurrency??(wait?1:4);
   if(!Number.isInteger(workers)||workers<1||workers>4)throw new CliError('INVALID_USAGE','Capture upload concurrency must be between 1 and 4.',64);
   if(!Number.isInteger(batchDelayMs)||batchDelayMs<0||batchDelayMs>60000)throw new CliError('INVALID_USAGE','Capture batch delay must be between 0 and 60000 milliseconds.',64);
@@ -690,6 +807,8 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     };
     const current=async()=>staticToken||await adopt(await accessToken(config.api));
     const renew=staticToken?undefined:async(rejected:string)=>adopt(await accessToken(config.api,rejected));
+    // Read after the identity check above refreshed it.
+    const accepted=acceptedHarnesses(config.api),held=new Map<string,number>();
     let uploaded=0,excluded=0,visited=0,scheduled=0,stopped=false,failure:unknown,nextUploadAt=0;
     let names=readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'));
     if(!wait){
@@ -724,6 +843,9 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
           if(batch.owner?.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Queued capture belongs to another user. Sign back in as its author to upload it; queued data is retained.');
           if(batch.owner?.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Queued capture belongs to another team. Sign back into its original destination or explicitly purge local pending data.');
           if(captureExcluded(latest??config,batch)){excluded++;continue;}
+          // Sent, it would be rejected on every pass and stop the batches behind
+          // it. It stays queued and uploads once the deployment accepts its agent.
+          if(!accepted.includes(batch.harness)){held.set(batch.harness,(held.get(batch.harness)??0)+1);continue;}
           scheduled++;
           if(batchDelayMs){const start=Math.max(Date.now(),nextUploadAt);nextUploadAt=start+batchDelayMs;await pause(Math.max(0,start-Date.now()));if(failure)break;}
           await upload(name,batch);
@@ -734,7 +856,11 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     // in-flight uploads before releasing ownership, including after a failure.
     await Promise.all(Array.from({length:workers},worker));
     if(failure)throw failure;
-    const result=excluded?{uploaded,excluded}:{uploaded};
+    const waiting=[...held.values()].reduce((sum,count)=>sum+count,0);
+    const result:FlushResult={uploaded,...(excluded?{excluded}:{}),...(waiting?{held:waiting}:{})};
+    // Status explains held batches; a pass that saw the whole queue clears the note.
+    if(waiting)atomicJson(join(captureDir(),'held.json'),{at:new Date().toISOString(),harnesses:Object.fromEntries(held)});
+    else if(visited>=names.length&&!stopped)try{unlinkSync(join(captureDir(),'held.json'));}catch{}
     if(visited<names.length||stopped)return result;
     const referenced=new Set<string>();
     for(const name of readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'))) {
@@ -785,15 +911,45 @@ export function codexHooksAwaitingReview(config:CaptureConfig|null=readCaptureCo
   });
   return pending;
 }
+/** One entry per enrolled agent that is recorded from its hooks or plugin. */
+function agentStatus(config:CaptureConfig|null) {
+  if(!config||config.disabled)return null;
+  const enrolled=(config.harnesses??[]).filter(isPayloadHarness);
+  if(!enrolled.length)return null;
+  const all=deliveriesSeen();
+  return Object.fromEntries(enrolled.map(harness=>{
+    const seen=typeof all[harness]?.first==='string'?all[harness]:null,name=HARNESS_NAMES[harness];
+    const deliveries:Record<string,number>=seen?.deliveries??{},recorded={prompts:0,replies:0,toolCalls:0,...seen?.recorded};
+    const received=Object.entries(deliveries).map(([event,count])=>`${event} x${count}`).join(', ');
+    const note=config.authPending?null
+      :!seen?`Nothing from ${name} has reached capture on this machine yet. It loads capture when a session starts: send a message in a new ${name} session, then check collect status again.`
+      :!recorded.prompts&&!recorded.replies&&!recorded.toolCalls?`${name} runs capture here but nothing it delivered carried a prompt, a reply or a tool call (received: ${received}).`
+      :!recorded.replies?`${name} has delivered ${recorded.prompts?'prompts':'tool calls'} but no reply (received: ${received}). Once a turn has finished, that means its runtime is not sending replies to capture here.`:null;
+    return [harness,{firstDelivery:seen?.first??null,lastDelivery:seen?.last??null,deliveries,recorded,note}];
+  }));
+}
+/** Batches the deployment would reject, kept here until it accepts their agent. */
+function heldNotice(config:CaptureConfig|null) {
+  if(!config||config.disabled)return null;
+  let held:any=null;try{held=read(join(captureDir(),'held.json'));}catch{}
+  const harnesses=held?.harnesses&&typeof held.harnesses==='object'?Object.entries(held.harnesses as Record<string,number>):[];
+  if(!harnesses.length)return null;
+  const total=harnesses.reduce((sum,[,count])=>sum+(Number(count)||0),0);
+  return `This deployment does not store ${harnesses.map(([harness])=>HARNESS_NAMES[harness as Harness]??harness).join(', ')} sessions yet: ${total} batch${total===1?' is':'es are'} kept on this machine and upload once the OpenCrawl server is updated.`;
+}
 export function captureStatus() {
   const config=readCaptureConfig();
   const codexReview=codexHooksAwaitingReview(config);
+  const agents=agentStatus(config);
   const review=codexReview?`Codex will not run ${codexReview} OpenCrawl capture hook${codexReview===1?'':'s'} until you trust them: open Codex, run /hooks (or desktop Settings > Hooks) and trust "OpenCrawl session capture", then start a new session.`:null;
   return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.authPending?null:config?.owner,authenticationPending:Boolean(config?.authPending),installationId:config?.installationId,
     exclusions:config?.exclusions??{projects:[],sessions:[]},
     queued:existsSync(join(captureDir(),'queue'))?readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json')).length:0,
-    pendingHooks:existsSync(join(captureDir(),'notices'))?noticeNames().length:0,
+    pendingHooks:(existsSync(join(captureDir(),'notices'))?noticeNames().length:0)+(config?.harnesses??[]).reduce((count,harness)=>count+(payloadAdapter(harness)?.inbox?inboxNames(harness as PayloadHarness).length:0),0),
     backfill:read(join(captureDir(),'backfill-progress.json')),
     lastUpload:read(join(captureDir(),'last-upload.json')),lastError:read(join(captureDir(),'last-error.json')),
-    codexHooksAwaitingReview:codexReview,attention:captureAttention()??review};
+    codexHooksAwaitingReview:codexReview,...(agents?{agents}:{}),
+    // A paused capture comes first and alone. The other notes ask for different
+    // things, so neither hides the other.
+    attention:captureAttention()??([review,heldNotice(config)].filter(Boolean).join(' ')||null)};
 }
