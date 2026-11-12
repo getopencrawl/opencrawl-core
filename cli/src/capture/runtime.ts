@@ -213,10 +213,14 @@ function readCaptureAttachment(sha256:string) {
   return bytes;
 }
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
-export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false) {
+export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false,onEnqueued?:()=>Promise<void>) {
   return withSessionLock('capture:spool',async()=>{
   if(readCaptureConfig()?.disabled)throw new CliError('CAPTURE_DISABLED','Capture is uninstalled. Reinstall before importing transcripts.');
   ensureDirectories();
+  const spool=async(meta:any,events:any[],attachments:any[])=>{
+    enqueue(config,meta,events,attachments);
+    await onEnqueued?.();
+  };
   const path=transcriptAllowed(file,config,harness,reconcileHistory);
   const desktopAudit=harness==='claude-code'&&basename(path)==='audit.jsonl'&&isClaudeDesktopTranscript(path,config);
   const stateFile=join(captureDir(),'state',hash(harness+path)+'.json');
@@ -313,7 +317,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
             if(desktopAudit&&auditMessage&&(!record.session_id||typeof record.session_id!=='string'))throw new CliError('CAPTURE_SESSION_UNKNOWN','Desktop audit message has no session identity');
             const priorMeta={...meta};
             if(!desktopAudit||auditMessage)metadata(record);
-            if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd)){enqueue(config,{...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
+            if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd)){await spool({...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
             const parsed=auditMessage?parseRecord(harness,record,position):null;
             if(parsed?.kind==='session_title') {
               if(parsed.data.titleType==='custom')meta.customTitle=parsed.data.title;
@@ -338,16 +342,16 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
               const eventAttachments:any[]=[],event=attachmentTransform(parsed,eventAttachments,meta.cwd??dirname(path),localFiles);
               const size=Buffer.byteLength(JSON.stringify(event))+Buffer.byteLength(JSON.stringify(eventAttachments));
               if(events.length&&(eventBytes+size>4*1024*1024||attachments.length+eventAttachments.length>1000)){
-                enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;
+                await spool({...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;
               }
               events.push(event);attachments.push(...eventAttachments);eventBytes+=size;
             }
           }
           position+=Buffer.byteLength(line)+1;
           if(++linesSinceYield===200){linesSinceYield=0;await yieldToOwner();}
-          if(events.length>=(reconcileHistory?1000:200)){enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
+          if(events.length>=(reconcileHistory?1000:200)){await spool({...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
         }
-        enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events,attachments);
+        await spool({...meta,captureMode:reconcileHistory?'history':'live'},events,attachments);
         offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
       }
     } finally{closeSync(fd);if(compressed)try{unlinkSync(readPath);}catch{}}
