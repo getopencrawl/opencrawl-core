@@ -6,7 +6,7 @@ const principal={tenantId:'org',userId:'owner'};
 const hit=(id,extra={})=>({id,tenantId:'org',userId:'owner',text:'deployment rollback evidence',sessionId:'s',kind:'message',role:'assistant',timestamp:'2026-01-01T00:00:00Z',...extra});
 test('exact filters constrain the correct corpus and never widen an incompatible source',()=>{
   assert.deepEqual(searchFilters('session',{roles:['user'],authors:['alice'],before:'2026-01-02T00:00:00Z'}),[
-    {terms:{'session.userId':['alice']}},{terms:{'session.role':['user']}},{range:{'session.timestamp':{lte:'2026-01-02T00:00:00Z'}}}]);
+    {terms:{'session.userId':['alice']}},{terms:{'session.role':['user']}},{range:{'session.timestamp':{lte:Date.parse('2026-01-02T00:00:00Z')}}}]);
   assert.deepEqual(searchFilters('connector',{roles:['user']}),[{match_none:{}}]);
   assert.deepEqual(searchFilters('session',{origins:['desktop','unknown']}),[{terms:{'session.origin':['desktop','unknown']}}]);
   for(const corpus of ['connector','memory'])assert.deepEqual(searchFilters(corpus,{origins:['desktop']}),[{match_none:{}}]);
