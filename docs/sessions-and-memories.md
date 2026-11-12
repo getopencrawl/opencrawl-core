@@ -9,6 +9,12 @@ agents captured and control who else can.
   Thinking blocks, encrypted content and token accounting are never shown.
   Order and paging come from the index; text comes from the verified original
   capture batch.
+  The Hostname column identifies the machine that captured the transcript, not
+  necessarily where imported history originally ran. Missing hostnames appear
+  as `—`. Sessions with more than one recorded hostname show **Multiple hosts**;
+  the row tooltip and transcript metadata list the captured names. Up to 20
+  names are returned, with an ellipsis when additional names exist. This uses
+  existing indexed capture metadata and requires no backfill or new collection.
 - **Memories** lists the current memory files agents keep (the newest copy per
   person, agent and path) with a readable title, and shows the full file.
   Titles use an explicit frontmatter title/name, a meaningful opening Markdown
@@ -32,6 +38,11 @@ memory can mark it **private**. A private resource is excluded for everyone
 else from these pages, workspace search and fetch (CLI, HTTP, MCP), the board's
 recent sessions and transcript reads. Its owner still sees and searches it.
 Usage counts remain aggregate and include private activity without content.
+
+In **My sessions**, each row has an eye toggle: an open eye means shared with
+the team, and a crossed-out eye means private. Hover text names the action;
+keyboard and screen-reader users get a labelled toggle with its current sharing
+state. Visibility changes are shown only after the server confirms them.
 
 Visibility is stored as an owner control object beside the owner's capture
 objects (`<prefix>/tenants/<t>/users/<u>/controls/{sessions,memories}/...`) and
@@ -60,12 +71,40 @@ another person's resource is never confirmed.
   referenced by the deleted session are also erased, even when another session
   referenced those same bytes. Unscoped attachment uploads are refused with an
   instruction to upgrade the CLI.
-  `sessions/delete` returns `deleted: true` only after verified erasure. Otherwise
-  it returns `deleted: false, pending: true`; the session remains inaccessible,
-  and the owner's Sessions page offers **Retry deletion**, including after a
-  server/browser restart. An ambiguous remote write never expires into a claim
-  of successful deletion. Operators must reconcile unfinished writes; object
-  locks or missing permissions must be resolved before retrying.
+  `sessions/delete` authorizes the owner, persists a metadata-only deletion
+  intent, revokes access immediately, and submits `deleteSessionV1` to Temporal.
+  It returns `deleted: false, pending: true` while erasure runs. The UI removes
+  the session after acceptance; it does not claim physical erasure is complete
+  or expose storage cleanup controls. A repeated request after verified erasure
+  returns `deleted: true, pending: false`.
+
+  The durable workflow waits for fenced writers, scrubs historical archives,
+  then erases raw versions and verifies the empty index before completing the
+  permanent tombstone. Each stage retries independently with heartbeats and
+  bounded attempt timeouts; worker/API replacement cannot lose the request.
+  A separate deletion task queue prevents long archive scans from occupying
+  indexing slots. A one-minute Temporal recovery schedule picks up persisted
+  intents whose direct submission was interrupted. Intent keys and workflow IDs
+  include the storage prefix, tenant, owner, harness and native session ID.
+  Activities load the approved intent from the configured protected namespace;
+  arguments cannot supply credentials, arbitrary owners or search/storage scopes.
+  Accepted deletions continue if the owner later leaves the organization.
+
+  An ambiguous remote write never expires into a claim of successful deletion.
+  Operators inspect Temporal activity failures for unresolved writes, object locks
+  or missing permissions. No cleanup error or transcript content enters the UI;
+  Temporal history contains opaque references and sanitized error categories.
+  The low-level `library.delete` helper remains for controlled operator erasure
+  and upgrade verification; HTTP/RPC uses `library.requestDeletion` exclusively.
+
+  **Upgrade:** deploy the new workflow bundle/worker and recovery schedule with
+  the API scheduler wiring. For each known owner with a pre-upgrade pending
+  tombstone, enumerate `library.pendingDeletions(owner)` and submit each through
+  `library.requestDeletion(owner, session)`. This creates the new durable intent
+  without clearing the existing tombstone or fence. Verify all such requests
+  appear in Temporal; unresolved owner mappings must be reported, never skipped.
+  Rollback must retain a worker that understands these workflow types until all
+  accepted deletions complete. Do not roll back to a pre-fence writer.
 - Deleting a **memory** removes the file's passages from search and ignores that
   version in later snapshots. The file on the person's machine is not changed;
   if the agent writes a newer version (later modification time), it is captured

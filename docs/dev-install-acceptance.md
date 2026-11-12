@@ -1,6 +1,6 @@
 # Development installer acceptance
 
-Run `./dev/up` from a clean clone of `codex/core-shell-seam`. See
+Run `./dev/up` from a clean clone of this repository. See
 [development setup](../dev/README.md) for the supported machine, generated login,
 ports and lifecycle commands. This acceptance covers the development distribution;
 it does not replace the production self-host checklist.
@@ -8,6 +8,35 @@ it does not replace the production self-host checklist.
 Normal `./dev/up` preserves first-run onboarding. `./dev/up demo` explicitly
 runs the synthetic ingestion and onboarding exercise. It never imports personal
 agent history.
+
+## Native ARM and macOS verification (November 11, 2026)
+
+Implementation `4560536a6f127276505fbe1bafde0454c474bae7` passed native Linux
+ARM64 and x86_64 installation, synthetic capture, authenticated MCP/search and
+board checks, stop/resume without reingestion, and self-host backup/restore.
+The full Airbyte demo passed on both Linux architectures: two synthetic rows
+were ingested, and disabling/re-enabling Airbyte preserved the organization,
+workspace, connection and completed job. Bundled services ran as native images.
+
+An actual Apple silicon Mac passed `./dev/up --no-airbyte`, first-run onboarding,
+synthetic capture/search, stop/resume without reingestion, and host-side HTTP
+login, console bootstrap and JavaScript asset checks. All six services ran native
+ARM64 code. This used Colima 0.10.1, Docker 29.3.0 and Compose 5.7.1 with 6 CPUs
+and 8 GiB RAM. Both macOS architectures also passed real pinned Node download
+and execution checks in CI.
+
+See the [identifier-free verification summary](evidence/dev-arm-20261111/verification-summary.json),
+[native stack and macOS bootstrap checks](https://github.com/getopencrawl/opencrawl-core/actions/runs/43102818823),
+[full Airbyte checks](https://github.com/getopencrawl/opencrawl-core/actions/runs/43102873455)
+and [Core CI](https://github.com/getopencrawl/opencrawl-core/actions/runs/43102818811).
+Core CI includes the shared React/browser regression suite.
+
+Limits: the Mac already had Colima and Docker; Compose was installed for this
+check. Full Airbyte on macOS and a complete Intel Mac installation were not
+exercised. Hosted macOS CI covers bootstrap only. The Mac checks used HTTP,
+not a graphical browser. All fixtures were synthetic; these checks do not prove
+external provider OAuth, 32-bit ARM support or minimum-memory tuning. Earlier
+receipts below retain their original revision and platform scope.
 
 ## First-run UI and integrations
 

@@ -8,9 +8,11 @@ if [[ "$arg" == --help || "$arg" == -h ]]; then
 Usage: ./dev/up [up|demo] [--no-airbyte]
        ./dev/up [status|stop|reset --yes]
 
-Development only. Ubuntu 24.04 x86_64, 4 CPUs, 16 GiB RAM, 40 GiB free disk.
+Development only. Linux or macOS, x64 or ARM64.
+Full stack: 4 CPUs, 16 GiB RAM, 40 GiB free disk.
 With --no-airbyte: 4 CPUs, 8 GiB RAM, 20 GiB free disk; Docker Compose only.
-The first run installs Docker if absent (using sudo), downloads pinned tools,
+On macOS, install and start Docker Desktop or Colima first.
+On Ubuntu 24.04, the first run installs Docker if absent (using sudo). It downloads pinned tools,
 starts a private Airbyte kind cluster and the normal OpenCrawl Compose stack,
 generates a local login, and leaves first-run onboarding ready for you.
 Use ./dev/up demo to load synthetic data and automatically complete onboarding.
@@ -30,10 +32,21 @@ case "$arg" in up|demo|status|stop|reset|--yes|--no-airbyte) ;; *) echo "Unknown
 done
 MIN_DISK_KIB=41943040
 for arg in "$@"; do [[ "$arg" != --no-airbyte ]] || MIN_DISK_KIB=20971520; done
-[[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || {
-  echo 'This installer currently supports Linux x86_64; use a disposable Ubuntu 24.04 VM.' >&2; exit 1;
-}
+case "$(uname -s)" in
+  Linux) NODE_OS=linux; NODE_EXT=tar.xz ;;
+  Darwin) NODE_OS=darwin; NODE_EXT=tar.gz ;;
+  *) echo 'This installer supports Linux and macOS on x64 or ARM64.' >&2; exit 1 ;;
+esac
+case "$(uname -m)" in
+  x86_64|amd64) NODE_ARCH=x64 ;;
+  arm64|aarch64) NODE_ARCH=arm64 ;;
+  *) echo 'This installer supports x64 and ARM64 processors.' >&2; exit 1 ;;
+esac
 if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  if [[ "$NODE_OS" == darwin ]]; then
+    echo 'Install and start Docker Desktop or Colima, then retry. Allocate at least 4 CPUs and 8 GiB RAM (16 GiB with Airbyte).' >&2
+    exit 1
+  fi
   if [[ $EUID -ne 0 ]]; then
     echo 'Docker installation/access needs administrator privileges; requesting sudo.'
     exec sudo -- env "OPENCRAWL_DEV_PORT=${OPENCRAWL_DEV_PORT:-8092}" \
@@ -61,14 +74,30 @@ STATE="$ROOT/.opencrawl-dev"
 mkdir -p "$STATE/bin"
 chmod 700 "$STATE"
 NODE="$STATE/bin/node"
+NODE_VERSION=24.22.2
+NODE_DIST="node-v$NODE_VERSION-$NODE_OS-$NODE_ARCH"
 if [[ ! -x "$NODE" ]]; then
-  echo 'Downloading the pinned Node.js runtime for development tooling.'
+  ARCHIVE="$NODE_DIST.$NODE_EXT"
+  EXPECTED=$(awk -v name="$ARCHIVE" '$2 == name {print $1}' "$ROOT/dev/node-checksums.txt")
+  [[ "$EXPECTED" =~ ^[a-f0-9]{64}$ ]] || { echo "No pinned checksum for $ARCHIVE" >&2; exit 1; }
+  DOWNLOAD=$(mktemp -d "$STATE/node-install.XXXXXX")
+  trap 'rm -rf -- "$DOWNLOAD"' EXIT
+  echo "Downloading the pinned Node.js runtime for $NODE_OS $NODE_ARCH."
   curl --fail --silent --show-error --location --retry 3 \
-    https://nodejs.org/dist/v24.22.2/node-v24.22.2-linux-x64.tar.xz -o "$STATE/node.tar.xz"
-  echo '48cc0e21e048790e54c0cf5749c2725005313d652651c40b7a21feb9697aaf75'"  $STATE/node.tar.xz" | sha256sum --check --status
-  tar -xJf "$STATE/node.tar.xz" -C "$STATE" node-v24.22.2-linux-x64/bin/node
-  mv "$STATE/node-v24.22.2-linux-x64/bin/node" "$NODE"
-  rmdir "$STATE/node-v24.22.2-linux-x64/bin" "$STATE/node-v24.22.2-linux-x64"
-  rm "$STATE/node.tar.xz"
+    "https://nodejs.org/dist/v$NODE_VERSION/$ARCHIVE" -o "$DOWNLOAD/$ARCHIVE"
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL=$(sha256sum "$DOWNLOAD/$ARCHIVE" | awk '{print $1}')
+  else
+    ACTUAL=$(shasum -a 256 "$DOWNLOAD/$ARCHIVE" | awk '{print $1}')
+  fi
+  [[ "$ACTUAL" == "$EXPECTED" ]] || { echo 'Node.js download checksum mismatch; existing data is preserved.' >&2; exit 1; }
+  tar -xf "$DOWNLOAD/$ARCHIVE" -C "$DOWNLOAD" "$NODE_DIST/bin/node"
+  mv "$DOWNLOAD/$NODE_DIST/bin/node" "$NODE"
+  rm -rf -- "$DOWNLOAD"
+  trap - EXIT
+fi
+if [[ "$("$NODE" -p 'process.version+"-"+process.platform+"-"+process.arch' 2>/dev/null)" != "v$NODE_VERSION-$NODE_OS-$NODE_ARCH" ]]; then
+  echo 'Cached Node.js runtime does not match this host/version. Remove only .opencrawl-dev/bin/node and retry; keep the rest of your data.' >&2
+  exit 1
 fi
 exec "$NODE" --disable-warning=ExperimentalWarning "$ROOT/dev/installer.mts" "$@"

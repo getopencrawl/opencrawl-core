@@ -11,9 +11,82 @@ on:
 permissions:
   contents: read
 jobs:
-  application:
-    name: Application without Airbyte
+  sqlite:
+    name: Application with SQLite FTS5
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: ocdev-0123456789ab
+      OPENCRAWL_IMAGE_TAG: sqlite-ci
+      OPENCRAWL_URL: http://localhost:8092
+      OPENCRAWL_AIRBYTE_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - name: Install the documented SQLite profile without OpenSearch
+        run: |
+          ./deploy/up.sh
+          compose() { docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml "$@"; }
+          compose up -d --build --wait --wait-timeout 600
+          test -z "$(docker ps -aq --filter label=com.docker.compose.project="$COMPOSE_PROJECT_NAME" --filter label=com.docker.compose.service=opensearch)"
+          mkdir -p "$RUNNER_TEMP/sqlite-seed"
+          node --input-type=module <<'JS'
+          import {readFileSync,writeFileSync} from 'node:fs';
+          import {randomBytes} from 'node:crypto';
+          const env=Object.fromEntries(readFileSync('deploy/.env','utf8').split('\n').filter(l=>l&&!l.startsWith('#')).map(l=>{const i=l.indexOf('=');return [l.slice(0,i),l.slice(i+1)];}));
+          writeFileSync(process.env.RUNNER_TEMP+'/sqlite-seed/seed-input.json',JSON.stringify({
+            format:1,project:process.env.COMPOSE_PROJECT_NAME,origin:process.env.OPENCRAWL_URL,connectOrigin:'http://app:8092',
+            organization:env.OPENCRAWL_ORGANIZATION_ID,setupToken:env.OPENCRAWL_SETUP_TOKEN,
+            email:'sqlite@example.com',password:randomBytes(24).toString('hex'),airbyteEnabled:false,
+          }),{mode:0o600});
+          JS
+          compose run --rm --no-deps --user root --volume "$PWD/dev:/opencrawl/dev:ro" \
+            --volume "$RUNNER_TEMP/sqlite-seed:/dev-state" app node --disable-warning=ExperimentalWarning dev/seed.mts
+      - name: Verify durable SQLite capture, search and board after restart
+        run: |
+          compose() { docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml "$@"; }
+          compose stop app worker
+          compose up -d --wait --wait-timeout 600 app worker
+          compose run --rm --no-deps --user root -e OPENCRAWL_DEV_VERIFY_ONLY=true \
+            --volume "$PWD/dev:/opencrawl/dev:ro" --volume "$RUNNER_TEMP/sqlite-seed:/dev-state" \
+            app node --disable-warning=ExperimentalWarning dev/seed.mts
+      - name: Verify SQLite cold backup and restore into empty disposable volumes
+        env:
+          COMPOSE_FILE: compose.yaml:compose.sqlite.yaml
+        run: |
+          compose() { docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml "$@"; }
+          node deploy/backup.mjs create "$RUNNER_TEMP/sqlite-backup"
+          compose down --volumes
+          node deploy/backup.mjs restore "$RUNNER_TEMP/sqlite-backup"
+          compose up -d --wait --wait-timeout 600
+          compose run --rm --no-deps --user root -e OPENCRAWL_DEV_VERIFY_ONLY=true \
+            --volume "$PWD/dev:/opencrawl/dev:ro" --volume "$RUNNER_TEMP/sqlite-seed:/dev-state" \
+            app node --disable-warning=ExperimentalWarning dev/seed.mts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: application-sqlite-${{ github.sha }}
+          path: ${{ runner.temp }}/sqlite-seed/verification.json
+      - name: Show SQLite installation diagnostics on failure
+        if: failure()
+        run: docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml logs --tail 60 app worker storage-ready s3
+      - name: Remove only this job's disposable installation
+        if: always()
+        run: |
+          docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml down --volumes --remove-orphans
+          rm -rf "$RUNNER_TEMP/sqlite-backup" "$RUNNER_TEMP/sqlite-seed"
+  application:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: Application without Airbyte, runner: blacksmith-4vcpu-ubuntu-2404, arch: amd64}
+          - {name: Application without Airbyte (ARM64), runner: blacksmith-4vcpu-ubuntu-2404-arm, arch: arm64}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -32,6 +105,14 @@ jobs:
           test ! -e .opencrawl-dev/bin/airbyte.tgz
           test ! -e .opencrawl-dev/kubeconfig
           test -z "$(docker ps -aq --filter label=io.x-k8s.kind.cluster)"
+      - name: Require native images for every running service
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          project=$(node -p "require('./.opencrawl-dev/state.json').project")
+          for image in $(docker compose --project-name "$project" --env-file .opencrawl-dev/compose.env -f deploy/compose.yaml -f .opencrawl-dev/compose.json images -q | sort -u); do
+            test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "$EXPECTED_ARCH"
+          done
       - name: Verify persisted capture, search and board after stop/resume without reingestion
         run: |
           ./dev/up stop
@@ -44,15 +125,21 @@ jobs:
             app node --disable-warning=ExperimentalWarning dev/seed.mts
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: application-without-airbyte-${{ github.sha }}
+          name: application-without-airbyte-${{ matrix.arch }}-${{ github.sha }}
           path: .opencrawl-dev/seed/verification.json
       - name: Remove only this job's disposable installation
         if: always()
         run: ./dev/up reset --yes
   airbyte:
-    name: Full Airbyte and mode switching
+    name: Full Airbyte and mode switching (${{ matrix.arch }})
     if: github.event_name == 'workflow_dispatch' && inputs.full_airbyte
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: blacksmith-4vcpu-ubuntu-2404, arch: amd64}
+          - {runner: blacksmith-8vcpu-ubuntu-2404-arm, arch: arm64}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -79,14 +166,20 @@ jobs:
           JS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: application-full-airbyte-${{ github.sha }}
+          name: application-full-airbyte-${{ matrix.arch }}-${{ github.sha }}
           path: .opencrawl-dev/verification.json
       - name: Remove only this job's disposable installation
         if: always()
         run: ./dev/up reset --yes
   self-host:
-    name: Self-host smoke
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: Self-host smoke, runner: blacksmith-4vcpu-ubuntu-2404, arch: amd64}
+          - {name: Self-host smoke (ARM64), runner: blacksmith-4vcpu-ubuntu-2404-arm, arch: arm64}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     env:
       COMPOSE_PROJECT_NAME: opencrawl-smoke
@@ -126,3 +219,23 @@ jobs:
         run: |
           docker compose -f deploy/compose.capture.yaml down -v --remove-orphans
           rm -rf "$RUNNER_TEMP/opencrawl-backup"
+
+  macos-bootstrap:
+    name: macOS bootstrap (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      # Hosted macOS runners cannot start Docker VMs. This exercises the real
+      # native runtime download; Linux ARM jobs above verify the container stack.
+      - name: Verify the native runtime and portable installer errors
+        run: OPENCRAWL_TEST_BOOTSTRAP_DOWNLOAD=1 node --test test/dev-bootstrap.test.mjs

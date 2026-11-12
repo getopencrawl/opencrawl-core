@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
@@ -40,6 +40,8 @@
     "./connectors/slack-source-messages": "./dist/src/connectors/slack-source-messages.mjs",
     "./search": "./dist/src/search/workspace.mjs",
     "./search/realm": "./dist/src/search/realm.mjs",
+    "./search/types": "./dist/src/search/types.mjs",
+    "./search/sqlite": "./dist/src/search/sqlite.mjs",
     "./search/migration": "./dist/src/search/migration.mjs",
     "./connectors/slack-source-message-references": "./dist/src/connectors/slack-source-message-references.mjs",
     "./onboarding/state": "./dist/src/onboarding-state.mjs",
@@ -89,7 +91,9 @@
     "./integrations/single-organization-storage": "./dist/src/integrations/single-organization-storage.mjs",
     "./integrations/purge": "./dist/src/integrations/purge.mjs",
     "./application/value-report": "./dist/src/application/value-report.mjs",
-    "./sessions/passage-migration": "./dist/src/sessions/passage-migration.mjs"
+    "./sessions/passage-migration": "./dist/src/sessions/passage-migration.mjs",
+    "./sessions/deletion-requests": "./dist/src/sessions/deletion-requests.mjs",
+    "./memories/projection-migration": "./dist/src/memories/projection-migration.mjs"
   },
   "files": [
     "dist/src",

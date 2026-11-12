@@ -6,7 +6,14 @@ export const capturePageSchema = z.object({kind:z.literal('capture'),api:z.url()
 export const authPageSchema = z.object({kind:z.literal('auth'),view:z.enum(['login','setup','join','consent','device']),error:z.string().optional(),
   email:z.string().optional(),setup:z.string().optional(),invitation:z.string().optional(),oauthQuery:z.string().optional(),next:z.string().optional(),
   clientName:z.string().optional(),resource:z.string().optional(),scopes:z.array(z.string()).optional(),code:z.string().optional()});
-export const oauthReturnSchema = z.object({kind:z.literal('oauth-return'),url:z.url().refine(value=>['http:','https:'].includes(new URL(value).protocol))});
+// This is a rendering guard, not OAuth authorization. Better Auth must first
+// validate the registered redirect URI, signed consent request and PKCE grant.
+export const oauthReturnUrlSchema = z.url().refine(value=>{
+  const url=new URL(value);
+  if(url.username||url.password||value.includes('#')||/[\u0000-\u0020\u007f]/.test(value))return false;
+  return ['http:','https:'].includes(url.protocol)||url.protocol==='claude:'&&Boolean(url.hostname)&&url.pathname.startsWith('/');
+});
+export const oauthReturnSchema = z.object({kind:z.literal('oauth-return'),url:oauthReturnUrlSchema});
 export const productPageSchema = z.discriminatedUnion('kind',[messagePageSchema,callbackPageSchema,capturePageSchema,authPageSchema,oauthReturnSchema]);
 export type AuthPage = z.infer<typeof authPageSchema>;
 export type ProductPage = z.infer<typeof productPageSchema>;

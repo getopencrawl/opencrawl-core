@@ -13,6 +13,7 @@ import {excerpt, groupDuplicates, groupResources, workspaceHit} from './presenta
 import {digest,sessionScope as ownerScope} from '../sessions/event-identity.mjs';
 import {searchFiltersSchema} from './controls.mjs';
 import {candidateFacets, facetNames} from './facets.mjs';
+import {memoryPassageId} from '../memories/projection.mjs';
 
 export const workspaceSearchSchema = z.strictObject({
   query: z.string().trim().max(4000).describe('Use 2–6 distinctive keywords or an exact phrase, not a question. Start match=all; shorten or use any if needed. Empty only for time-ordered browsing.'),
@@ -153,7 +154,8 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
         for(const [label,chunk] of [['previousId',Number(document.chunk)-1],['nextId',Number(document.chunk)+1]] as const){
           if(chunk<0||chunk>=document.chunkCount)continue;
           const scope=ownerScope({tenantId:principal.tenantId,userId:document.userId!});
-          const neighbor=digest(JSON.stringify(source==='sessions'?[scope,document.harness,document.sessionId,document.eventId,chunk]:[scope,document.snapshotId,document.path,chunk]));
+          const neighbor=source==='sessions'?digest(JSON.stringify([scope,document.harness,document.sessionId,document.eventId,chunk])):
+            memoryPassageId({tenantId:principal.tenantId,userId:document.userId!},document.snapshotId!,document.path!,chunk,document.projectionId);
           const checked=await adapter.search(principal,{id:neighbor,query:'',limit:1});
           if(checked.hits.some(d=>d.id===neighbor&&d.tenantId===principal.tenantId&&d.userId===document.userId))neighbors[label]=source+':'+neighbor;
         }

@@ -48,6 +48,11 @@ to understand, build, test or operate the open distribution.
 All searchable corpora use the core organization realm: one tenant/environment
 namespace, common document envelope, shared mapping and transport. Keep
 source-specific metadata and resource visibility checks inside that contract.
+Implementations satisfy the core-owned SearchRealm contract and the shared
+adapter conformance suite. Agent API compatibility does not promise matching or
+ranking parity. Keep engine-specific scripts inside adapters; product indexing
+uses named write policies and field patches. SQLite FTS5 is opt-in for smaller
+single-host deployments; cloud continues using OpenSearch.
 Do not introduce per-feature index routing. Existing data requires verified
 migration and rollback coverage before switching runtime reads or writes.
 

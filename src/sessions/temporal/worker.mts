@@ -1,3 +1,6 @@
+import type {SessionDeletionResolver} from './deletion.mjs';
+import {sessionDeletionActivities} from './deletion.mjs';
+export type {SessionDeletionResolver, SessionDeletionBinding} from './deletion.mjs';
 import type {NativeConnectionOptions} from '@temporalio/worker';
 import type {SessionPipelineOptions} from '../indexer.mjs';
 import type {SourceCheckpoint, SourcePage} from '../../connectors/workflow.mjs';
@@ -40,12 +43,12 @@ export function sessionActivities({resolve}: {resolve: SessionResolver}) {
   return {listSessionPage:(input: SessionTaskInput)=>operation(input,'listPage') as Promise<SourcePage>,indexSessionObject:(input: SessionTaskInput & {key: string})=>operation(input,'processObject') as Promise<{records: number; skipped: boolean}>};
 }
 /** Operator-supplied SDK connectionOptions support TLS/auth; callers own key rotation. */
-export async function createSessionWorker({address,namespace,taskQueue,bundlePath,resolve,maxConcurrentActivityTaskExecutions=2,connectionOptions={}}: {address: string; namespace: string; taskQueue: string; bundlePath: string; resolve: SessionResolver; maxConcurrentActivityTaskExecutions?: number; connectionOptions?: NativeConnectionOptions}) {
+export async function createSessionWorker({address,namespace,taskQueue,bundlePath,resolve,resolveDeletion,maxConcurrentActivityTaskExecutions=2,connectionOptions={}}: {address: string; namespace: string; taskQueue: string; bundlePath: string; resolve: SessionResolver; resolveDeletion?: SessionDeletionResolver; maxConcurrentActivityTaskExecutions?: number; connectionOptions?: NativeConnectionOptions}) {
   if(!address||!namespace||!taskQueue||!bundlePath)throw new Error('Explicit Temporal worker configuration required');
   if(!connectionOptions||typeof connectionOptions!=='object'||Array.isArray(connectionOptions)||connectionOptions.address!==undefined&&connectionOptions.address!==address)throw new Error('Invalid Temporal connection options');
   const connection=await NativeConnection.connect({...connectionOptions,address});
   try {
-    const worker=await Worker.create({connection,namespace,taskQueue,workflowBundle:{codePath:bundlePath},activities:sessionActivities({resolve}),
+    const worker=await Worker.create({connection,namespace,taskQueue,workflowBundle:{codePath:bundlePath},activities:{...sessionActivities({resolve}), ...(resolveDeletion ? sessionDeletionActivities(resolveDeletion) : {})},
       maxConcurrentActivityTaskExecutions,maxConcurrentWorkflowTaskExecutions:2,shutdownGraceTime:'30 seconds'});
     return {worker,connection};
   } catch(caught){const error=serviceError(caught);await connection.close();throw error;}

@@ -14,6 +14,45 @@ import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
 import {createIndexTransport, realmIndex, realmMapping} from '../dist/src/search/realm.mjs';
 const endpoint = process.env.OPENCRAWL_TEST_OPENSEARCH_URL, s3 = process.env.OPENCRAWL_TEST_S3_ENDPOINT;
 
+test('session hostnames cover the whole authorized session across search and transcript pages', {skip: !endpoint}, async t => {
+  const environment = 'hosts-' + randomUUID().slice(0, 8), prefix = 'sessions/hosts', store = deletionTestStore();
+  const alice = {tenantId: 'one', userId: 'alice'}, bob = {tenantId: 'one', userId: 'bob'}, outsider = {tenantId: 'two', userId: 'alice'};
+  const options = {endpoint, environment, store, prefix};
+  const ingest = createSessionIngest({store, prefix}), search = createSessionSearch(options), library = createSessionLibrary(options);
+  const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
+  t.after(async () => {for (const tenant of ['one', 'two']) await fetch(endpoint + '/' + realmIndex(environment, tenant), {method: 'DELETE'});});
+  async function capture(owner, sessionId, host, sequence) {
+    const before = new Set(store.data.keys());
+    await ingest.putBatch(owner, {schemaVersion: 1, owner, installationId: 'device-' + sequence, sessionId, harness: 'codex', host, origin: 'cli', attachments: [],
+      events: [{id: 'event-' + sequence, kind: 'message', sequence, timestamp: new Date(1794384000000 + sequence * 1000).toISOString(), data: {role: 'user', content: sequence === 1 ? 'needle' : 'Continue work'}}]});
+    for (const key of store.data.keys()) if (!before.has(key) && key.endsWith('.json.gz')) await pipeline.processObject({key});
+  }
+  await capture(alice, 'shared', 'laptop.local', 1);
+  await capture(alice, 'shared', 'runner-42', 2);
+  await capture(alice, 'missing', undefined, 3);
+  await capture(bob, 'shared', 'other-owner', 4);
+  await capture(outsider, 'shared', 'other-tenant', 5);
+  for (let index = 0; index < 21; index++) await capture(alice, 'many', 'runner-' + String(index).padStart(2, '0'), index + 10);
+  await search.refresh(alice); await search.refresh(outsider);
+
+  const list = await library.list(alice);
+  const shared = list.sessions.find(session => session.userId === 'alice' && session.sessionId === 'shared');
+  assert.deepEqual(shared.hosts, ['laptop.local', 'runner-42']); assert.equal(shared.hostsTruncated, false);
+  assert.deepEqual((await library.list(alice, {query: 'needle'})).sessions.map(session => session.hosts), [['laptop.local', 'runner-42']], 'matching one event still summarizes all capture machines');
+  const missing = list.sessions.find(session => session.sessionId === 'missing');
+  assert.equal(missing.host, null); assert.deepEqual(missing.hosts, []); assert.equal(missing.hostsTruncated, false);
+  const many = list.sessions.find(session => session.sessionId === 'many');
+  assert.equal(many.hosts.length, 20); assert.equal(many.hostsTruncated, true);
+  assert.ok(list.sessions.every(session => !session.hosts.includes('other-tenant')));
+  const reference = {userId: 'alice', harness: 'codex', sessionId: 'shared', limit: 1};
+  const first = await library.read(bob, reference), second = await library.read(bob, {...reference, cursor: first.next});
+  assert.deepEqual(first.session.hosts, shared.hosts); assert.deepEqual(second.session.hosts, shared.hosts);
+  await library.setVisibility(alice, {harness: 'codex', sessionId: 'shared', visibility: 'private'});
+  assert.ok((await library.list(bob)).sessions.every(session => session.userId !== 'alice' || session.sessionId !== 'shared'));
+  await assert.rejects(library.read(bob, reference), {status: 404});
+  assert.deepEqual((await library.read(alice, reference)).session.hosts, shared.hosts);
+});
+
 before(async () => {
   if (!endpoint || !s3) return;
   // CI starts OpenSearch alongside the object store. These legacy-mapping
@@ -39,7 +78,7 @@ test('real session and memory library: viewer, private visibility, owner-only co
   const options = {endpoint, environment, store, prefix};
   const search = createSessionSearch({store,prefix,endpoint, environment}), ingest = createSessionIngest({store, prefix});
   const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
-  const sessions = createSessionLibrary(options), memories = createMemoryLibrary(options), api = createLibraryApi({sessions, memories});
+  const sessions = createSessionLibrary({...options,scheduleDeletion:async()=>{}}), memories = createMemoryLibrary(options), api = createLibraryApi({sessions, memories});
   const workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
   const keys = () => [...objects].filter(key => key.endsWith('.json.gz'));
   async function upload(owner, sessionId, harness, events, installationId = 'laptop') {
@@ -106,7 +145,9 @@ test('real session and memory library: viewer, private visibility, owner-only co
 
   // Deleting removes raw capture from every installation and the index, and
   // future uploads of the session are accepted but discarded.
-  const deleted = await api(alice, 'sessions/delete', {harness: 'claude-code', sessionId: 'alpha'});
+  const accepted = await api(alice, 'sessions/delete', {harness: 'claude-code', sessionId: 'alpha'});
+  assert.equal(accepted.pending,true);
+  const deleted = await sessions.delete(alice,{harness:'claude-code',sessionId:'alpha'});
   assert.equal(deleted.objects, 4); // Two batches and two event ledgers.
   for (const key of objects) if (key.includes('/claude-code/') && !key.includes('/controls/')) assert.equal(await underlying.get(key), null, key);
   assert.deepEqual((await api(alice, 'sessions/list', {})).sessions.map(s => s.sessionId), ['gamma', 'beta']);
@@ -162,7 +203,7 @@ test('visibility changes upgrade a realm no indexer has touched since the releas
   const store = createObjectStore({endpoint: s3, bucket: 'capture-test', credentials: {accessKeyId: 'capture-test', secretAccessKey: 'capture-test-secret'}});
   const prefix = 'sessions/visibility-test/' + run, options = {endpoint, environment, store, prefix};
   t.after(async () => {for (const key of (await store.list(prefix + '/')).keys) await store.delete(key);});
-  const api = createLibraryApi({sessions: createSessionLibrary(options), memories: createMemoryLibrary(options)});
+  const api = createLibraryApi({sessions: createSessionLibrary({...options,scheduleDeletion:async()=>{}}), memories: createMemoryLibrary(options)});
   assert.equal((await api(owner, 'sessions/visibility', {harness: 'codex', sessionId: 'legacy', visibility: 'private'})).visibility, 'private');
   assert.equal((await api(owner, 'memories/visibility', {harness: 'codex', path: 'memories/a.md', visibility: 'private'})).visibility, 'private');
   const stored = await transport('/_doc/session:one', undefined, 'GET');
@@ -178,7 +219,8 @@ test('real Grok Bot sessions: hook-derived conversations and tool-only activity 
   t.after(async () => {for (const key of objects) await underlying.delete(key); await fetch(endpoint + '/' + realmIndex(environment, tenantId), {method: 'DELETE'});});
   const search = createSessionSearch({store,prefix,endpoint, environment}), ingest = createSessionIngest({store, prefix});
   const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
-  const api = createLibraryApi({sessions: createSessionLibrary(options)}), workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
+  const sessions = createSessionLibrary({...options, scheduleDeletion: async () => {}});
+  const api = createLibraryApi({sessions}), workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
   const keys = () => [...objects].filter(key => key.endsWith('.json.gz'));
   async function upload(owner, sessionId, harness, events) {
     const before = new Set(keys());
@@ -248,7 +290,9 @@ test('real Grok Bot sessions: hook-derived conversations and tool-only activity 
   await api(alice, 'sessions/visibility', {harness: 'grok-bot', sessionId: activity, visibility: 'private'});
   assert.deepEqual((await api(bob, 'sessions/list', {})).sessions.map(s => s.sessionId), ['bob-chat', 'bot-conversation']);
   assert.equal((await workspace.search(bob, {query: 'quayside', source: 'sessions'})).results.filter(r => r.provenance.harness === 'grok-bot').length, 0);
-  const deleted = await api(alice, 'sessions/delete', {harness: 'grok-bot', sessionId: 'bot-conversation'});
+  const accepted = await api(alice, 'sessions/delete', {harness: 'grok-bot', sessionId: 'bot-conversation'});
+  assert.equal(accepted.pending,true);
+  const deleted = await sessions.delete(alice,{harness:'grok-bot',sessionId:'bot-conversation'});
   assert.equal(deleted.objects, 2); // One batch and its event ledger.
   assert.deepEqual((await api(alice, 'sessions/list', {})).sessions.map(s => s.sessionId), ['bob-chat', activity]);
   assert.equal((await workspace.search(alice, {query: 'conference', source: 'sessions'})).results.length, 0);

@@ -1,0 +1,146 @@
+{
+  "sourceRevision": "4560536a6f127276505fbe1bafde0454c474bae7",
+  "linuxARM64": {
+    "captureAndRestart": {
+      "ok": true,
+      "syntheticFixture": true,
+      "verifyOnly": true,
+      "identity": "better-auth-local",
+      "board": true,
+      "onboardingCompleted": true,
+      "deviceGrant": true,
+      "refreshGrant": true,
+      "anonymousDenied": true,
+      "forgedScopeDenied": true,
+      "foreignOriginDenied": true,
+      "retrieval": {
+        "authenticated": true,
+        "found": true,
+        "mcp": true
+      },
+      "airbyte": {
+        "enabled": false
+      },
+      "reindex": false
+    },
+    "airbyte": {
+      "ok": true,
+      "syntheticFixture": true,
+      "verifyOnly": false,
+      "identity": "better-auth-local",
+      "board": true,
+      "onboardingCompleted": true,
+      "deviceGrant": true,
+      "refreshGrant": true,
+      "anonymousDenied": true,
+      "forgedScopeDenied": true,
+      "foreignOriginDenied": true,
+      "retrieval": {
+        "authenticated": true,
+        "found": true,
+        "mcp": true
+      },
+      "airbyte": {
+        "status": "succeeded",
+        "rows": 2
+      }
+    }
+  },
+  "macOSARM64": {
+    "accountCreated": true,
+    "onboardingInitiallyCompleted": false,
+    "capture": {
+      "ok": true,
+      "syntheticFixture": true,
+      "verifyOnly": false,
+      "identity": "better-auth-local",
+      "board": true,
+      "onboardingCompleted": true,
+      "deviceGrant": true,
+      "refreshGrant": true,
+      "anonymousDenied": true,
+      "forgedScopeDenied": true,
+      "foreignOriginDenied": true,
+      "retrieval": {
+        "authenticated": true,
+        "found": true,
+        "mcp": true
+      },
+      "airbyte": {
+        "enabled": false
+      }
+    },
+    "restart": {
+      "ok": true,
+      "syntheticFixture": true,
+      "verifyOnly": true,
+      "identity": "better-auth-local",
+      "board": true,
+      "onboardingCompleted": true,
+      "deviceGrant": true,
+      "refreshGrant": true,
+      "anonymousDenied": true,
+      "forgedScopeDenied": true,
+      "foreignOriginDenied": true,
+      "retrieval": {
+        "authenticated": true,
+        "found": true,
+        "mcp": true
+      },
+      "airbyte": {
+        "enabled": false
+      },
+      "reindex": false
+    },
+    "hostHTTP": {
+      "loginStatus": 303,
+      "consoleStatus": 200,
+      "javascriptAssetStatus": 200,
+      "onboardingCompleted": true
+    },
+    "services": [
+      {
+        "service": "worker",
+        "architecture": "arm64",
+        "running": true,
+        "healthy": true
+      },
+      {
+        "service": "app",
+        "architecture": "arm64",
+        "running": true,
+        "healthy": true
+      },
+      {
+        "service": "temporal",
+        "architecture": "arm64",
+        "running": true,
+        "healthy": true
+      },
+      {
+        "service": "temporal-db",
+        "architecture": "arm64",
+        "running": true,
+        "healthy": true
+      },
+      {
+        "service": "s3",
+        "architecture": "arm64",
+        "running": true,
+        "healthy": null
+      },
+      {
+        "service": "opensearch",
+        "architecture": "arm64",
+        "running": true,
+        "healthy": true
+      }
+    ]
+  },
+  "coverageLimits": [
+    "macOS full Airbyte stack not exercised",
+    "Intel macOS bootstrap only",
+    "Synthetic fixtures; no personal history or external provider OAuth",
+    "Mac HTTP checks; graphical rendering covered by shared Core CI browser tests"
+  ]
+}
