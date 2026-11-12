@@ -67,7 +67,23 @@ export function createSqliteRealm(options: RealmOptions): SearchRealm {
         } catch (error) {db.exec('ROLLBACK'); throw error;}
       }
       if (Number(db.prepare('PRAGMA user_version').get()!.user_version) !== VERSION) throw fail('Unsupported SQLite search schema; upgrade or rebuild into a new file');
-      db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL');
+      // Concurrent initializers can return SQLITE_BUSY immediately while
+      // upgrading journal locks, without invoking SQLite's busy handler.
+      // Retry only this idempotent setup step, before any document mutation.
+      const deadline = performance.now() + 5000, pause = new Int32Array(new SharedArrayBuffer(4));
+      db.exec('PRAGMA busy_timeout=0');
+      try {
+        for (;;) {
+          try {
+            if (db.prepare('PRAGMA journal_mode=WAL').get()!.journal_mode !== 'wal') throw fail('SQLite search requires WAL mode');
+            break;
+          } catch (error) {
+            if ((Number((error as {errcode?: number}).errcode) & 255) !== 5 || performance.now() >= deadline) throw error;
+            Atomics.wait(pause, 0, 0, Math.min(20, deadline - performance.now()));
+          }
+        }
+      } finally {db.exec('PRAGMA busy_timeout=5000');}
+      db.exec('PRAGMA synchronous=FULL');
       db.function('epoch', {deterministic: true}, value => {
         const n = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
         return Number.isFinite(n) ? n : null;

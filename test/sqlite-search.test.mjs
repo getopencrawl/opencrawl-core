@@ -143,6 +143,32 @@ test('SQLite memory snapshots activate, replace removed files and reject stale r
   assert.equal((await workspace.search(principal, {query: 'newmemory', source: 'memories'})).results.length, 0);
 });
 
+test('SQLite waits for a competing initializer when enabling WAL', async t => {
+  const {path, endpoint, principal} = await fixture(t);
+  const realm = createRealm({endpoint, tenantId: principal.tenantId});
+  await realm.ensureIndex();
+  const db = new DatabaseSync(path);
+  let release;
+  try {
+    db.exec('PRAGMA journal_mode=DELETE; BEGIN IMMEDIATE');
+    const module = new URL('../dist/src/search/realm.mjs', import.meta.url).href;
+    const code = `import {createRealm} from ${JSON.stringify(module)};
+      const realm=createRealm({endpoint:process.argv[1],tenantId:'org_sqlite'});
+      process.stdout.write('ready'); await realm.ensureIndex();`;
+    await new Promise((resolve, reject) => {
+      const child = execFile(process.execPath, ['--input-type=module', '-e', code, endpoint], {timeout: 15000}, error => error ? reject(error) : resolve());
+      child.stdout.once('data', () => {release = setTimeout(() => db.exec('COMMIT'), 200);});
+    });
+  } finally {
+    clearTimeout(release);
+    if (db.isTransaction) db.exec('ROLLBACK');
+    db.close();
+  }
+  const reopened = new DatabaseSync(path);
+  try {assert.equal(reopened.prepare('PRAGMA journal_mode').get().journal_mode, 'wal');}
+  finally {reopened.close();}
+});
+
 test('SQLite coordinates independent indexer processes and preserves the newest replay', async t => {
   const {endpoint, principal} = await fixture(t);
   const module = new URL('../dist/src/search/realm.mjs', import.meta.url).href;
