@@ -1,6 +1,37 @@
 import {useEffect, useRef, useState} from 'react';
 import {Button} from '../design/components.tsx';
 import {Icon} from '../design/icons.tsx';
+import {useNavigate} from '../router.tsx';
+
+/** Resolves false when the browser has no clipboard or refuses the write. */
+export async function copyText(text: string, clipboard: Pick<Clipboard, 'writeText'> | undefined = globalThis.navigator?.clipboard): Promise<boolean> {
+  try {
+    if (!clipboard?.writeText) return false;
+    await clipboard.writeText(text);
+    return true;
+  } catch {return false;}
+}
+
+/** The setup prompt from a page header. Agent setup keeps the manual copy path for browsers that cannot copy. */
+export function CopyPromptButton({text, label = 'Copy onboarding prompt', manualPath = '/settings'}: {text: string; label?: string; manualPath?: string}) {
+  const navigate = useNavigate();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {mounted.current = true; return () => {mounted.current = false; if (timer.current) clearTimeout(timer.current);};}, []);
+  async function copy() {
+    if (timer.current) clearTimeout(timer.current);
+    const done = await copyText(text);
+    if (!mounted.current) return;
+    if (!done) {void navigate(manualPath); return;}
+    setCopied(true);
+    timer.current = setTimeout(() => setCopied(false), 1500);
+  }
+  return <>
+    <Button onClick={() => void copy()}><Icon name={copied ? 'check' : 'copy'}/>{copied ? 'Copied' : label}</Button>
+    <span className="sr-only" role="status">{copied ? 'Copied' : ''}</span>
+  </>;
+}
 
 export function CommandSnippet({text, label}: {text: string; label: string}) {
   const [feedback, setFeedback] = useState<'copied' | 'selected' | null>(null);

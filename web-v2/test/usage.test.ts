@@ -7,6 +7,7 @@ import {SourcesSummary, UsagePage, UsageReportView} from '../src/pages/usage.tsx
 import type {ConsoleDataAdapter, UsageReport} from '../src/pages/types.ts';
 import {ago, compact, count, harnessName, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
 import {harnessName as libraryHarnessName} from '../src/pages/library-controls.tsx';
+import {copyText} from '../src/onboarding/copy.tsx';
 import type {ValueReport} from '../src/pages/types.ts';
 
 const now = Date.parse('2026-11-07T20:00:00Z');
@@ -286,4 +287,33 @@ test('Agent sessions shows tokens captured when metered and OpenCrawl calls inst
   assert.deepEqual(cards(render({...report(), capture: {tokens: 142_500_000, since: '2026-11-01T00:00:00.000Z'}}), 'Agent sessions')[2], ['Tokens captured', '143M', 'since 2026-11-01, from agent sessions']);
   assert.deepEqual(cards(render(), 'Agent sessions').map(card => card[0]), ['Sessions', 'Messages', 'Tool calls', 'OpenCrawl calls']);
   assert.match(render().replace(/<[^>]*>/g, ''), /Machines capturing: 2\. Last capture/);
+});
+
+test('Usage offers the onboarding prompt in its header only when the workspace supplies one', () => {
+  const adapter: ConsoleDataAdapter = {usage: async () => report(), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
+  const prompt = 'Set up OpenCrawl across all coding agents and environments I use.';
+  const page = (setupPrompt?: string) => renderToStaticMarkup(createElement(MemoryRouter, null, createElement(UsagePage, {adapter, setupPrompt})));
+  const header = (html: string) => html.slice(html.indexOf('<header'), html.indexOf('</header>'));
+  const offered = header(page(prompt));
+  // One shared button to the right of the title, with a status region for the confirmation.
+  assert.match(offered, /<h1[^>]*>Usage<\/h1>.*<div class="actions"><button type="button" class="oc-button secondary[^"]*">(?:<svg.*?<\/svg>)?Copy onboarding prompt<\/button><span class="sr-only" role="status"><\/span><\/div>$/s);
+  // The prompt is copied on request; it is not printed into the page.
+  assert.doesNotMatch(page(prompt), /Set up OpenCrawl across/);
+  for (const html of [page(), page('')]) {
+    assert.match(header(html), /<h1[^>]*>Usage<\/h1>/);
+    assert.doesNotMatch(html, /Copy onboarding prompt|class="actions"/);
+  }
+});
+
+test('copying writes the exact prompt and reports when the browser cannot copy', async () => {
+  const prompt = 'Set up OpenCrawl.\n\n1. Prepare without asking: run opencrawl whoami --api https://app.example.test --json “once”.';
+  const written: string[] = [];
+  assert.equal(await copyText(prompt, {writeText: async text => {written.push(text);}}), true);
+  assert.deepEqual(written, [prompt]);
+  // A refused or failing write, or no clipboard at all, reports false: the button then opens Agent setup, which has the manual copy path.
+  assert.equal(await copyText(prompt, {writeText: async () => {throw new Error('Clipboard denied');}}), false);
+  assert.equal(await copyText(prompt, {writeText: () => {throw new Error('Clipboard unavailable');}}), false);
+  assert.equal(await copyText(prompt, {} as Pick<Clipboard, 'writeText'>), false);
+  assert.equal(await copyText(prompt), false);
+  assert.deepEqual(written, [prompt]);
 });

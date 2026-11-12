@@ -11,7 +11,8 @@ import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest, DEF
 import {readSession, saveSession, accessToken, logout} from './session.ts';
 import {filesystemError} from './filesystem.ts';
 import {agentSkills} from './skills.ts';
-import {withEnvironmentTokenOrigin} from './environment-token.ts';
+import {withEnvironmentTokenOrigin, environmentToken} from './environment-token.ts';
+import {tokenCommand} from './token.ts';
 
 declare const OPENCRAWL_VERSION: string;
 const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.2.0-dev';
@@ -21,13 +22,14 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
 
   login       Sign in with a browser approval and device code
   logout      Remove this deployment's credentials from this machine
-  whoami      Verify your saved session with the service
+  whoami      Verify your saved session or environment token with the service
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
   fetch       Read the indexed passage behind a search result
   collect     Install and manage Claude Code, Codex and Grok Bot session capture
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
+  token       Create or revoke an agent access token for machines created per task
   update      Install the latest CLI for your next invocation
 
 Options:
@@ -79,6 +81,13 @@ Search returns compact verbatim excerpts. Expand with opencrawl fetch <result-id
   --content-version VERSION         Detect changes between fetch pages
 Environment tokens use OpenCrawl cloud by default. Use --api or OPENCRAWL_API_URL
 to send them to a self-hosted deployment. Without a token, the CLI uses saved login.
+
+Machines created per task (cloud agent platforms):
+  token create [--env-file PATH]     One-year token for search, the board, MCP and uploads
+  token revoke ID                    End a token; needs your own sign-in, like create
+Store OPENCRAWL_API_URL, OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN in the platform's
+environment secrets instead of signing in on every new machine. --env-file writes them
+to a new private file and prints no secret.
 Updates are checked opportunistically every 3–6 hours, including capture hooks and workers.
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
 
@@ -145,7 +154,7 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
@@ -153,10 +162,10 @@ export async function main(args = process.argv.slice(2)) {
     // Metadata-only recovery and a history preview must not start an unrelated
     // memory upload while the foreground operation is inspecting local state.
     const localCollect=command==='collect'&&(['uninstall','titles'].includes(parsed.positionals[1]??'')||parsed.positionals[1]==='backfill'&&!parsed.values.yes);
-    if (parsed.positionals.length > (['collect','search','fetch','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    if (parsed.positionals.length > (command === 'token' ? 3 : ['collect','search','fetch','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
-    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','board','skills'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (parsed.values.client && command !== 'skills') throw new CliError('INVALID_USAGE', 'Use --client with skills install or skills status.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL
@@ -189,6 +198,11 @@ export async function main(args = process.argv.slice(2)) {
       if(data!==null)emit(data,JSON.stringify(data,null,2));
       return 0;
     }
+    if (command === 'token') {
+      const result = await tokenCommand(parsed.positionals[1], api, parsed.positionals[2], parsed.values);
+      emit(result.data, result.human);
+      return 0;
+    }
     if (command === 'logout') { await logout(api); emit({api, authenticated: false, localCredentialsRemoved: true}, 'Removed saved credentials from this machine.'); return 0; }
     if (command === 'login') {
       const auth = await discover(api);
@@ -201,6 +215,20 @@ export async function main(args = process.argv.slice(2)) {
       await saveSession(api, {auth, ...tokens});
       emit({api, authenticated: true, user}, `Signed in${user.email ? ` as ${user.email}` : ''}. Use opencrawl search to query indexed workspace knowledge.`);
       return 0;
+    }
+    // A machine created for one task has no saved sign-in, only the token its platform injected.
+    // A token the service does not accept here leaves the saved sign-in to decide, as before.
+    let configured: string | undefined;
+    try { configured = environmentToken('OPENCRAWL_TOKEN', api); } catch {}
+    if (configured) {
+      let user: Awaited<ReturnType<typeof identity>> | null = null;
+      try { user = await identity(api, fetch, configured); }
+      catch (error) { if (!(error instanceof CliError) || !['AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'ORGANIZATION_REQUIRED'].includes(error.code)) throw error; }
+      if (user) {
+        emit({api, version, authenticated: true, credential: 'environment-token', user, ...(command === 'status' ? {index: {available: null}} : {})},
+          command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''} with OPENCRAWL_TOKEN.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
+        return 0;
+      }
     }
     if (command === 'status' && !readSession(api)) {
       emit({api, version, authenticated: false, index: {available: null}}, `opencrawl ${version}\nNot signed in. Run opencrawl login.\nUse opencrawl search to check indexed workspace knowledge.`);

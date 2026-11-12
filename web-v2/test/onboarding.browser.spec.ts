@@ -261,6 +261,44 @@ test('receipts, manual copy, and the three-step flow preserve one browser docume
   expect(state.requests.invite).toBe(1);
 });
 
+for (const width of [1280, 320]) {
+  test(`the page-header prompt button copies the Agent setup prompt, and opens Agent setup when the browser cannot copy, at ${width}px`, async ({page, request}) => {
+    await request.post('/__test/state', {data: {status: complete}});
+    await page.setViewportSize({width, height: 844});
+    await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {writeText: async (text: string) => {
+      if (sessionStorage.getItem('clipboard-denied')) throw new Error('Clipboard denied');
+      sessionStorage.setItem('clipboard-text', text);
+    }}}));
+    await page.goto('/workspace/prompt');
+    let documents = 0;
+    page.on('request', request => {if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documents++;});
+    const copy = page.getByRole('button', {name: 'Copy onboarding prompt', exact: true});
+    await expect(copy).toBeVisible();
+    // The action sits in the shared header, right of the title when there is room, and never widens the page.
+    const title = page.getByRole('heading', {name: 'Usage', level: 1, exact: true});
+    const [heading, button] = await Promise.all([title.boundingBox(), copy.boundingBox()]);
+    if (width > 600) {expect(button!.x).toBeGreaterThan(heading!.x + heading!.width); expect(Math.abs(button!.y - heading!.y)).toBeLessThan(12);}
+    else expect(button!.y).toBeGreaterThan(heading!.y + heading!.height);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await copy.click();
+    await expect(page.getByRole('button', {name: 'Copied', exact: true})).toBeVisible();
+    await expect(page.getByRole('status').filter({hasText: 'Copied'})).toHaveCount(1);
+    const copied = await page.evaluate(() => sessionStorage.getItem('clipboard-text'));
+    await expect(copy).toBeVisible();
+    await expect(page.getByRole('status').filter({hasText: 'Copied'})).toHaveCount(0);
+
+    await page.evaluate(() => sessionStorage.setItem('clipboard-denied', '1'));
+    await copy.click();
+    await expect(page).toHaveURL(/\/workspace\/settings$/);
+    await expect(page.getByRole('heading', {name: 'Agent setup', exact: true})).toBeVisible();
+    await page.getByRole('button', {name: 'Show setup prompt'}).click();
+    // The header button copied exactly the prompt that Agent setup offers for manual copying.
+    expect(copied).toBe(await page.locator('#connect-preview p').textContent());
+    expect(copied?.length).toBeGreaterThan(100);
+    expect(documents).toBe(0);
+  });
+}
+
 test('sources are optional: Skip for now reaches teammates and finishes without a connection', async ({page, request}) => {
   let documentLoads = 0;
   page.on('request', request => {if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documentLoads++;});

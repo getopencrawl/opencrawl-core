@@ -42,6 +42,9 @@ test('shared setup prompt covers consent, every environment, startup awareness a
  const api='https://capture.example.com',prompt=captureSetupPrompt(api),script=cloudSetupScript(api);
  for(const text of ['all coding agents and environments','human-required steps','fresh session','stored receipt','recording consent',api+'/capture/cloud',api+'/mcp',api+' --no-browser --json','global instructions','opencrawl board instructions','stable session identity','native context-notification','automatic transport receipts','explicit consent to import all available history','Skip only declined sources'])assert.ok(prompt.includes(text),text);
  assert.ok(prompt.includes('collect install --yes --backfill skip'));
+ // Platforms that create a machine per task are configured once, with a token and no per-machine sign-in.
+ for(const text of ['creates a new machine for every task','opencrawl token create --env-file','OPENCRAWL_API_URL, OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN','Authorization: Bearer <OPENCRAWL_TOKEN>','--defer-auth --api '+api,'replicas env vars set','never print the token','an environment only I use','opencrawl token revoke','report that as pending until a newly created machine confirms it','each new machine needs opencrawl login'])assert.ok(prompt.includes(text),text);
+ assert.ok(prompt.indexOf('copied sign-ins are revoked')<prompt.indexOf('opencrawl token create')&&prompt.indexOf('opencrawl token create')<prompt.indexOf('For Grok Bot'));
  for(const text of ['at most 60 seconds','Do not publish board test messages','not tested during onboarding','History import is separate from setup readiness','Only if sign-in is required'])assert.ok(prompt.includes(text),text);
  assert.ok(!prompt.includes('a mention and a subscribed-topic message reach context'));
  assert.ok(!prompt.includes('enable its code_mode feature'));

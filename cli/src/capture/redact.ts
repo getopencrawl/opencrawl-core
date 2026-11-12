@@ -31,6 +31,8 @@ const credentials:RegExp[] = [
   /\b(?:dop_v1_|doo_v1_|dor_v1_)[a-f0-9]{64}\b/g,
   /\b(?:hf_[A-Za-z0-9]{34}|AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58})\b/g,
   /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}={0,2}/g,
+  // OpenCrawl's own capture credentials and agent access tokens.
+  /\boc[ac]1_[a-f0-9]{64}\b/g,
 ];
 
 // Context permits otherwise opaque credentials, including a UUID deliberately
