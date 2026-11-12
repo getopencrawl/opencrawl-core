@@ -46,7 +46,9 @@ test('MCP and CLI grants survive a process restart and expired access tokens wit
     body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'restart-test',version:'1'}}})});
   const me=token=>request('/api/cli/me',{headers:{authorization:'Bearer '+token}});
   const signup={setup:config.setup,workspace:'Restart test',name:'Restart Admin',email:'restart@example.com',password:'a long disposable password'};
-  assert.equal((await form('/auth/signup',signup,true)).status,303);
+  const signedUp=await form('/auth/signup',signup,true);
+  assert.equal(signedUp.status,303);
+  assert.match(signedUp.headers.getSetCookie().find(line=>line.includes('session_token=')),/Max-Age=2592000(?:;|$)/);
   const callback='claude://claude.ai/mcp-auth-callback/sdk';
   const client=await json(await request('/api/auth/oauth2/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
     client_name:'Restart test',redirect_uris:[callback],token_endpoint_auth_method:'none',grant_types:['authorization_code','refresh_token'],response_types:['code'],
@@ -91,9 +93,25 @@ test('MCP and CLI grants survive a process restart and expired access tokens wit
   assert.equal((await form('/api/auth/oauth2/revoke',{client_id:client.client_id,token:refreshedNative.refresh_token,token_type_hint:'refresh_token'})).status,200);
 
   await stop(third.child);
-  await start({port:first.port,now:afterExpiry+1000});
+  const fourth=await start({port:first.port,now:afterExpiry+1000});
   // JWT access remains valid until expiry; revocation denies the persisted refresh grant.
   assert.equal((await mcp(refreshedNative.access_token)).status,200);
   assert.equal((await form('/api/auth/oauth2/token',{grant_type:'refresh_token',client_id:client.client_id,refresh_token:refreshedNative.refresh_token,resource:origin+'/mcp'})).status,400);
   assert.equal((await me(refreshedCli.access_token)).status,200,'revoking MCP does not revoke an independent CLI grant');
+
+  await stop(fourth.child);
+  const day=86400_000;
+  const fifth=await start({port:first.port,now:afterExpiry+89*day});
+  assert.equal((await request('/api/console/bootstrap',{},true)).status,401,'browser session expires after 30 days without activity');
+  const activeCli=await json(await form('/api/cli/token',{grant_type:'refresh_token',client_id:'opencrawl-cli',refresh_token:refreshedCli.refresh_token}));
+  assert.equal((await me(activeCli.access_token)).status,200,'device grant survives 89 days of inactivity and an expired browser session');
+
+  await stop(fifth.child);
+  const sixth=await start({port:first.port,now:afterExpiry+91*day});
+  const renewedCli=await json(await form('/api/cli/token',{grant_type:'refresh_token',client_id:'opencrawl-cli',refresh_token:activeCli.refresh_token}));
+  assert.equal((await me(renewedCli.access_token)).status,200,'rotation extends the device grant beyond its original 90-day lifetime');
+
+  await stop(sixth.child);
+  await start({port:first.port,now:afterExpiry+182*day});
+  assert.equal((await form('/api/cli/token',{grant_type:'refresh_token',client_id:'opencrawl-cli',refresh_token:renewedCli.refresh_token})).status,400,'device grant expires after 90 days without refresh');
 });
