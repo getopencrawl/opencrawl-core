@@ -58,6 +58,33 @@ test('discovery skips indexed objects without an activity each, and retries unfi
  assert.equal(processed.length,0);
 });
 
+test('large discovery pages bound receipt reads, retain pagination order, and settle failures',async()=>{
+ const store=memoryStore(),prefix='sessions/discovery/v1',search={identity:'discovery-test'};
+ const base=`${prefix}/${sessionScope(owner)}/codex/${digest('device')}/${digest('session')}/`;
+ const keys=Array.from({length:240},(_,i)=>base+digest(String(i))+'.json.gz').sort();
+ for(const key of keys)store.data.set(key,Buffer.from('unread source'));
+ const worker=createSessionPipeline({store,prefix,search,principal:owner});
+ const indexed=new Set(keys.filter((_,i)=>i%3===0).map(key=>digest(key)+'.json'));
+ let active=0,peak=0,reads=0,deny=false;
+ store.get=async key=>{
+  assert.ok(key.includes('/_index/'));active++;peak=Math.max(peak,active);const read=++reads;
+  try{
+   await new Promise(resolve=>setImmediate(resolve));
+   if(deny&&read===1)throw new Error('receipt unavailable');
+   return indexed.has(key.split('/').at(-1))?Buffer.from('{"status":"indexed"}'):null;
+  }finally{active--;}
+ };
+ const first=await worker.listPage();
+ assert.equal(first.cursor,keys[199]);assert.equal(reads,200);assert.equal(peak,32);assert.equal(active,0);
+ assert.deepEqual(first.keys,keys.slice(0,200).filter(key=>!indexed.has(digest(key)+'.json')));
+ const second=await worker.listPage({cursor:first.cursor});
+ assert.equal(second.cursor,null);assert.deepEqual(second.keys,keys.slice(200).filter(key=>!indexed.has(digest(key)+'.json')));
+ deny=true;reads=0;peak=0;
+ await assert.rejects(worker.listPage(),/receipt unavailable/);
+ assert.equal(active,0);assert.equal(reads,32);assert.equal(peak,32);
+ deny=false;assert.deepEqual((await worker.listPage()).keys,first.keys);
+});
+
 test('bulk item errors are failures even with HTTP 200; search binds the team and retains human attribution',async()=>{
  const requests=[];
  const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async(url,options)=>{
@@ -117,9 +144,9 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, t
  await ingest.putBatch(owner,later);assert.equal((await sweep(restarted)).indexed,1);for(const principal of owners)await search.refresh(principal);
  assert.equal((await search.search(owner,{query:'indigo'})).total,1);
  // Exercise S3 continuation tokens while successful work items are deleted.
- for(let i=0;i<55;i++){const value=batch(owner,'paginated receipt item');value.sessionId='page-'+i;await ingest.putBatch(owner,value);}
- assert.equal((await sweep(restarted)).indexed,55);
- for(const principal of owners)await search.refresh(principal);assert.equal((await search.search(owner,{query:'paginated'})).total,55);
+ for(let i=0;i<220;i++){const value=batch(owner,'paginated receipt item');value.sessionId='page-'+i;await ingest.putBatch(owner,value);}
+ assert.equal((await sweep(restarted)).indexed,220);
+ for(const principal of owners)await search.refresh(principal);assert.equal((await search.search(owner,{query:'paginated'})).total,220);
  assert.equal((await search.search(owners[1],{query:'paginated'})).total,0);
  // Real S3 conditional claims and OpenSearch chunk writes enforce immutable IDs.
  const original=batch(owner,'violet '.repeat(2600)+'immutable_tail_sentinel');original.sessionId='immutable-identity';

@@ -128,12 +128,23 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
     async listPage({cursor=null}: {cursor?: string | null}={}) {
       if(cursor!==null&&(typeof cursor!=='string'||cursor.length>8192))throw Object.assign(new Error('Invalid session cursor'),{permanent:true});
       await checkActive();
-      const page=await store.listPage(sourcePrefix,{continuationToken:cursor,maxKeys:50});
+      // Larger bounded pages amortize listing/Temporal overhead across metadata
+      // and already-indexed keys. Five pages still cap a segment at 1,000 objects;
+      // workflow commands and opaque continuation-token semantics are unchanged.
+      const page=await store.listPage(sourcePrefix,{continuationToken:cursor,maxKeys:200});
       const keys=page.keys.filter(key=>sourceBatchIdentity(prefix,key)||memorySourceIdentity(prefix,key));
-      // Every run rereads the whole prefix. Drop already-indexed objects here with
-      // concurrent receipt reads rather than one serialized activity per object,
-      // so new uploads are not queued behind a full replay of history.
-      const pending=await Promise.all(keys.map(async key=>await indexed(key)?null:key));
+      // Keep receipt reads bounded independently of page size, preserve source
+      // order, and settle every read before returning an activity failure.
+      const pending:(string|null)[]=Array(keys.length).fill(null);
+      let next=0,failed=false,failure:unknown;
+      await Promise.all(Array.from({length:Math.min(32,keys.length)},async()=>{
+        while(!failed){
+          const offset=next++;if(offset>=keys.length)return;
+          try{if(!await indexed(keys[offset]!))pending[offset]=keys[offset]!;}
+          catch(error){failed=true;failure=error;}
+        }
+      }));
+      if(failed)throw failure;
       return {keys:pending.filter((key): key is string=>key!==null),cursor:page.nextToken||null};
     },
     async processObject({key}: {key: string}) {
