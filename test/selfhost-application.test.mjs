@@ -200,10 +200,16 @@ test('CLI device sign-in requires a member’s approval and yields refreshable t
   await new Promise(resolve=>setTimeout(resolve,device.interval*1000+200));
   const tokens=await (await poll()).json();
   assert.ok(tokens.access_token&&tokens.refresh_token);
+  const claims=JSON.parse(Buffer.from(tokens.access_token.split('.')[1],'base64url').toString());assert.equal(claims.exp-claims.iat,3600);
   const me=await f.request('/api/cli/me',null,{headers:{authorization:'Bearer '+tokens.access_token}});
   assert.equal(me.status,200);assert.equal((await me.json()).data.user.email,'ada@example.com');
   assert.equal((await f.request('/api/cli/me',null,{headers:{authorization:'Bearer '+tokens.access_token,origin:'https://foreign.example'}})).status,403);
-  const refreshed=await (await f.request('/api/cli/token',null,form({client_id:'opencrawl-cli',grant_type:'refresh_token',refresh_token:tokens.refresh_token}))).json();
+  let refreshed=await (await f.request('/api/cli/token',null,form({client_id:'opencrawl-cli',grant_type:'refresh_token',refresh_token:tokens.refresh_token}))).json();
+  // More than the provider's default 20/min token budget must work behind one IP.
+  for(let i=0;i<24;i++){
+    const response=await f.request('/api/cli/token',null,form({client_id:'opencrawl-cli',grant_type:'refresh_token',refresh_token:refreshed.refresh_token}));
+    assert.equal(response.status,200);refreshed=await response.json();
+  }
   assert.equal((await f.request('/api/cli/me',null,{headers:{authorization:'Bearer '+refreshed.access_token}})).status,200);
   assert.equal((await f.request('/api/cli/me',null,{headers:{authorization:'Bearer '+tokens.access_token.slice(0,-4)+'AAAA'}})).status,401);
   await f.identity.recoverPassword('ada@example.com','recovered long password');
