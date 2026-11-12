@@ -66,10 +66,10 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   const signal=init.signal??undefined;
   signal?.throwIfAborted();
   let token=staticToken || await accessToken(api,undefined,fetch,signal);
-  const method=init.method??'GET';
+  const method=init.method??'GET',pathname=new URL(path,api).pathname;
   // Only retry operations whose payloads are read-only or content-addressed.
   // A lost response after storage must resend the same batch/blob, not lose it.
-  const retryable=method==='GET'||method==='POST'&&['/api/sessions/batches','/api/sessions/memories'].includes(path)||method==='PUT'&&/^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(path);
+  const retryable=method==='GET'||method==='POST'&&['/api/sessions/batches','/api/sessions/memories'].includes(pathname)||method==='PUT'&&/^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(pathname);
   const send=async()=>{
     for(let attempt=0;;attempt++){
       let response:Response;
@@ -86,6 +86,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   };
   let res=await send();
   if(res.status===401 && (renew || !staticToken)){token=renew?await renew(token):await accessToken(api,token,fetch,signal);res=await send();}
+  if(res.status===413){await res.body?.cancel();throw Object.assign(new CliError('CAPTURE_UPLOAD_FAILED','Capture request failed (413): payload or session capacity exceeded'),{httpStatus:413});}
   const body=await res.json().catch(()=>{throw res.status>=500||res.status===429
     ?new CliError('CAPTURE_RETRY_EXHAUSTED',`Capture endpoint ${new URL(api).hostname} is temporarily unavailable (HTTP ${res.status}). Queued data is retained; retry the approved import.`)
     :new CliError('CAPTURE_NETWORK_BLOCKED',`Capture endpoint ${new URL(api).hostname} returned HTTP ${res.status} without JSON. Check this host in your cloud environment network allowlist.`);});
@@ -100,7 +101,7 @@ export function recordError(error:any) {
   // Status only: never include transcript content, credentials, or a provider response.
   atomicJson(join(captureDir(),'last-error.json'),{at:new Date().toISOString(),code:error?.code || 'CAPTURE_FAILED'});
 }
-function ensureDirectories() {for(const dir of ['queue','state','blobs','notices','sources'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});}
+function ensureDirectories() {for(const dir of ['queue','state','blobs','notices','sources','rejected','uploads'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});}
 const under = (file:string,dir:string) => file.startsWith(dir+sep);
 function transcriptAllowed(file:string, config:CaptureConfig, harness:TranscriptHarness, approvedHistory=false) {
   const path=realpathSync(file);
@@ -555,7 +556,18 @@ async function reconcileSources(config:CaptureConfig,seen:Map<string,string>) {
   return changed;
 }
 
-const queuedNames=()=>readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'));
+// Rejected bytes stay in the original queue for recovery and blob retention.
+// A content-bound marker removes only that exact payload from automatic retries.
+function rejectedCapture(name:string) {
+  const marker=read(join(captureDir(),'rejected',name));
+  if(marker?.status!==413)return false;
+  try{return marker.digest===hash(readFileSync(join(captureDir(),'queue',name)));}
+  catch(error:any){if(error.code==='ENOENT')return false;throw error;}
+}
+const queuedNames=(includeRejected=false)=>readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json')&&(includeRejected||!rejectedCapture(n)));
+const rejectedNames=()=>existsSync(join(captureDir(),'queue'))?queuedNames(true).filter(rejectedCapture):[];
+const rejectedNotice=(count:number)=>`${count} capture batch${count===1?' was':'es were'} rejected with HTTP 413 and held locally without automatic retries. Other sessions can continue uploading. Resolve the receiver payload/session limit, then run \`opencrawl collect flush --retry-rejected\`. Original queued data and attachments are retained.`;
+
 const noticeNames=()=>readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json'));
 const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
 /** Bound the CLI process, including blocked locks, HTTP retries and large queues.
@@ -619,10 +631,10 @@ export async function captureWorker({idleMs=30_000,pollMs=1000}={}) {
   }
 }
 /** Explicit flush waits for capture and upload ownership, then fences current sources. */
-export async function flushCaptureWork() {
+export async function flushCaptureWork({retryRejected=false}: {retryRejected?:boolean}={}) {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
   if(!config.disabled){if(config.authPending)await refreshCaptureIdentity(config);await drainCaptureNotices(config);await reconcileSources(config,new Map());}
-  return flushCaptures();
+  return flushCaptures({retryRejected});
 }
 
 /** Cursor-format hooks block the agent while they run, so they cannot host the
@@ -685,7 +697,7 @@ export async function syncCaptures() {
   if(errors.length){recordError(errors[0]);throw errors[0];}
   return result;
 }
-export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUploaded}: {wait?:boolean;concurrency?:number;batchDelayMs?:number;onUploaded?:()=>void}={}) {
+export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUploaded,retryRejected=false}: {wait?:boolean;concurrency?:number;batchDelayMs?:number;onUploaded?:()=>void;retryRejected?:boolean}={}) {
   const workers=concurrency??(wait?1:4);
   if(!Number.isInteger(workers)||workers<1||workers>4)throw new CliError('INVALID_USAGE','Capture upload concurrency must be between 1 and 4.',64);
   if(!Number.isInteger(batchDelayMs)||batchDelayMs<0||batchDelayMs>60000)throw new CliError('INVALID_USAGE','Capture batch delay must be between 0 and 60000 milliseconds.',64);
@@ -711,7 +723,8 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     const current=async()=>staticToken||await adopt(await accessToken(config.api));
     const renew=staticToken?undefined:async(rejected:string)=>adopt(await accessToken(config.api,rejected));
     let uploaded=0,excluded=0,visited=0,scheduled=0,stopped=false,failure:unknown,nextUploadAt=0;
-    let names=readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'));
+    if(retryRejected)for(const name of rejectedNames())retryWindowsSharing(()=>unlinkSync(join(captureDir(),'rejected',name)));
+    let names=queuedNames();
     if(!wait){
       // Split capacity between draining old work and making fresh activity
       // visible. Filename hashes have no useful chronological ordering.
@@ -734,16 +747,31 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     const upload=async(name:string,batch:any)=>{
       const path=join(captureDir(),'queue',name);
       batch=prepareCaptureUpload(batch);
-      for(const a of batch.attachments)if(a.status==='captured'){
-        await request(config.api,'/api/sessions/attachments/'+a.sha256+'?'+new URLSearchParams({harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId}),{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readCaptureAttachment(a.sha256)},await current(),renew);
-      }
       const serialized=JSON.stringify(batch),size=Buffer.byteLength(serialized);
+      // Bind acknowledgements to the destination and exact scrubbed wire batch.
+      // Never reuse an acknowledgement across owners, sessions or changed bytes.
+      const checkpoint=join(captureDir(),'uploads',hash(JSON.stringify([config.api,hash(serialized)]))+'.json');
+      const saved=read(checkpoint),acknowledged=new Set<string>(Array.isArray(saved?.attachments)?saved.attachments:[]);
+      for(const a of batch.attachments)if(a.status==='captured'&&!acknowledged.has(a.sha256)){
+        const bytes=readCaptureAttachment(a.sha256);
+        const receipt=await request(config.api,'/api/sessions/attachments/'+a.sha256+'?'+new URLSearchParams({harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId}),{method:'PUT',headers:{'content-type':'application/octet-stream'},body:bytes},await current(),renew);
+        if(receipt?.sha256!==a.sha256||receipt.size!==bytes.length)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm the attachment digest and size');
+        acknowledged.add(a.sha256);atomicJson(checkpoint,{attachments:[...acknowledged]});
+      }
       let body:string|Uint8Array<ArrayBuffer>=serialized,compressed=false;
       if(useGzip&&size>=32*1024){
         const bytes=await compressBatch(serialized,{level:1});
         if(bytes.length<size*0.95){body=new Uint8Array(bytes);compressed=true;}
       }
-      const sendBatch=async()=>request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json',...(compressed?{'content-encoding':'gzip'}:{})},body},await current(),renew);
+      const sendBatch=async()=>{
+        try{return await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json',...(compressed?{'content-encoding':'gzip'}:{})},body},await current(),renew);}
+        catch(error){
+          // Restored storage can lose a blob acknowledged before the restore.
+          // Clear its checkpoint so a later attempt can repair that absence.
+          if(error instanceof CliError&&error.httpStatus===409&&existsSync(checkpoint))retryWindowsSharing(()=>unlinkSync(checkpoint));
+          throw error;
+        }
+      };
       let receipt;
       try{receipt=await sendBatch();}
       catch(error){
@@ -755,7 +783,10 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
       if(receipt.batchId!==hash(serialized) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
       pendingReceipt={at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId};
       if(performance.now()-lastReceiptWrite>=1000)checkpointReceipt();
-      retryWindowsSharing(()=>unlinkSync(path));uploaded++;onUploaded?.();
+      retryWindowsSharing(()=>unlinkSync(path));
+      if(existsSync(checkpoint))retryWindowsSharing(()=>unlinkSync(checkpoint));
+      const rejection=join(captureDir(),'rejected',name);if(existsSync(rejection))retryWindowsSharing(()=>unlinkSync(rejection));
+      uploaded++;onUploaded?.();
     };
     const worker=async()=>{
       try {
@@ -771,7 +802,11 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
           if(captureExcluded(latest??config,batch)){excluded++;continue;}
           scheduled++;
           if(batchDelayMs){const start=Math.max(Date.now(),nextUploadAt);nextUploadAt=start+batchDelayMs;await pause(Math.max(0,start-Date.now()));if(failure)break;}
-          await upload(name,batch);
+          try{await upload(name,batch);}
+          catch(error){
+            if(!(error instanceof CliError)||error.httpStatus!==413)throw error;
+            atomicJson(join(captureDir(),'rejected',name),{status:413,digest:hash(readFileSync(join(captureDir(),'queue',name))),at:new Date().toISOString()});
+          }
         }
       }catch(error){failure??=error;}
     };
@@ -780,8 +815,9 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     await Promise.all(Array.from({length:workers},worker));
     checkpointReceipt();
     if(failure)throw failure;
+    const rejected=rejectedNames().length;
     const result=excluded?{uploaded,excluded}:{uploaded};
-    if(visited<names.length||stopped)return result;
+    if(visited<names.length||stopped){if(rejected)throw new CliError('CAPTURE_BATCH_REJECTED',rejectedNotice(rejected));return result;}
     const referenced=new Set<string>();
     for(const name of readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'))) {
       for(const a of read(join(captureDir(),'queue',name),{attachments:[]}).attachments)if(a.sha256)referenced.add(a.sha256);
@@ -791,6 +827,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
       const path=join(captureDir(),'blobs',name);
       if(!referenced.has(name)&&Date.now()-statSync(path).mtimeMs>86400000)unlinkSync(path);
     }
+    if(rejected)throw new CliError('CAPTURE_BATCH_REJECTED',rejectedNotice(rejected));
     try{unlinkSync(join(captureDir(),'last-error.json'));}catch{}
     return result;
   },wait?Infinity:0).catch(error=>{if(!wait&&error?.code==='SESSION_BUSY')return {uploaded:0};throw error;});
@@ -799,6 +836,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
  * the recorded error make it stale; queued data is retained either way. */
 export function captureAttention():string|null {
   const config=readCaptureConfig();if(!config||config.disabled)return null;
+  const rejected=rejectedNames().length;if(rejected)return rejectedNotice(rejected);
   const error=read(join(captureDir(),'last-error.json')),upload=read(join(captureDir(),'last-upload.json'));
   if(error?.code!=='AUTH_REQUIRED' || upload?.at && Date.parse(upload.at)>=Date.parse(error.at))return null;
   const queued=existsSync(join(captureDir(),'queue'))?queuedNames().length:0;
@@ -838,6 +876,7 @@ export function captureStatus() {
   return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.authPending?null:config?.owner,authenticationPending:Boolean(config?.authPending),installationId:config?.installationId,
     exclusions:config?.exclusions??{projects:[],sessions:[]},
     queued:existsSync(join(captureDir(),'queue'))?readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json')).length:0,
+    rejected:rejectedNames().length,
     pendingHooks:existsSync(join(captureDir(),'notices'))?noticeNames().length:0,
     backfill:read(join(captureDir(),'backfill-progress.json')),
     lastUpload:read(join(captureDir(),'last-upload.json')),lastError:read(join(captureDir(),'last-error.json')),

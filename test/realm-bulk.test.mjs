@@ -26,13 +26,29 @@ test('session passage batches fit the search limit including scripts and UTF-8 f
  assert.ok(f.calls.length>1);
  assert.deepEqual(f.calls.flatMap(c=>c.ids),documents.map(d=>'session:'+d.id));
 });
+test('realm callers split on exact UTF-8 framing and preserve response order',async()=>{
+ const f=fixture(),collection=createRealm({tenantId:principal.tenantId,endpoint:'http://localhost:9200',fetch:f.fetch}).collection('session');
+ const result=await collection.bulk(principal,documents.map(d=>({...d,policy:'session'})));
+ assert.ok(f.calls.length>1);assert.equal(result.items.length,documents.length);
+ assert.deepEqual(f.calls.flatMap(c=>c.ids),documents.map(d=>'session:'+d.id));
+});
 test('bulk preflight rejects a late foreign scope or oversized item before sending any chunk',async()=>{
  const f=fixture(),collection=createRealm({tenantId:principal.tenantId,endpoint:'http://localhost:9200',fetch:f.fetch}).collection('session');
  const items=documents.map(d=>({...d,policy:'session'}));
  await assert.rejects(collection.bulk(principal,[...items,{id:'foreign',document:{tenantId:'other'}}]),{status:403,writeOutcome:'not-applied'});
  assert.equal(f.calls.length,0);
- await assert.rejects(collection.bulk(principal,[...items,{id:'oversized',document:{...principal,text:'界'.repeat(2*1024*1024)}}]),{status:400,writeOutcome:'not-applied'});
+ await assert.rejects(collection.bulk(principal,[...items,{id:'oversized',document:{...principal,text:'界'.repeat(2*1024*1024)}}]),{status:400,writeOutcome:'not-applied',permanent:true,code:'BULK_TOO_LARGE'});
  assert.equal(f.calls.length,0);
+});
+test('a later realm chunk rejection cannot claim that the whole call was not applied',async()=>{
+ let calls=0;
+ const collection=createRealm({tenantId:principal.tenantId,endpoint:'http://localhost:9200',fetch:async(_url,init)=>{
+  if(++calls===2)return Response.json({error:{type:'security_exception'}},{status:403});
+  const body=init.headers['content-encoding']==='gzip'?gunzipSync(init.body).toString():init.body;
+  return Response.json({errors:false,items:Array.from({length:body.trimEnd().split('\n').length/2},()=>({update:{status:200}}))});
+ }}).collection('session');
+ await assert.rejects(collection.bulk(principal,documents.map(d=>({...d,policy:'session'}))),error=>{assert.equal(error.httpStatus,403);assert.equal(error.writeOutcome,undefined);return true;});
+ assert.equal(calls,2);
 });
 test('a later chunk failure retains partial-write uncertainty and retry repeats stable identities',async()=>{
  const f=fixture(),search=createSessionSearch({store:memorySessionStore(),prefix:'capture-v1',endpoint:'http://localhost:9200',fetch:f.fetch});

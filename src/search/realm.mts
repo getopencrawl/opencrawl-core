@@ -114,15 +114,29 @@ export function createOpenSearchRealm({endpoint,index,tenantId,environment='self
         },
         async mget(principal: TenantPrincipal,ids: string[]){scope(principal);const result=await request('/_mget',{ids:ids.map(encodedId)});if(!Array.isArray(result.docs)||result.docs.length!==ids.length)throw fail('Incomplete realm lookup');const docs=result.docs.map(decode);if(docs.some(d=>!ids.includes(d._id))||new Set(docs.map(d=>d._id)).size!==ids.length)throw fail('Realm lookup identity mismatch');return {...result,docs};},
         async bulk(principal: TenantPrincipal,items: DocumentItem[],{refresh=false}={}){
-          let body;
+          const chunks:Array<{body:string;count:number}>=[];
           try {
             scope(principal);if(!items.length)return {items:[]};
-            body=items.map(item=>bulkItemLine(item,{encode,id:encodedId})).join('');
-            if(Buffer.byteLength(body)>MAX_BULK_BYTES)throw fail('Realm bulk exceeds limit',400);
-          } catch(caught){const error=serviceError(caught);throw Object.assign(serviceError(error),{writeOutcome:'not-applied'});}
-          const result=await request('/_bulk'+(refresh?'?refresh=wait_for':''),body,'POST','application/x-ndjson');
-          if(result.errors||!Array.isArray(result.items)||result.items.length!==items.length||result.items.some(item=>{const op=item.index||item.update;return !op||op.status<200||op.status>=300;}))throw fail('Realm bulk contained failed or missing items');
-          return result;
+            let lines:string[]=[],bytes=0;
+            // Validate the entire call before sending anything, including a
+            // foreign scope or one unshippable item late in the input.
+            for(const item of items){
+              const line=bulkItemLine(item,{encode,id:encodedId}),size=Buffer.byteLength(line);
+              if(size>MAX_BULK_BYTES)throw Object.assign(fail('Realm bulk item exceeds limit',400),{code:'BULK_TOO_LARGE',permanent:true});
+              if(bytes+size>MAX_BULK_BYTES){chunks.push({body:lines.join(''),count:lines.length});lines=[];bytes=0;}
+              lines.push(line);bytes+=size;
+            }
+            if(lines.length)chunks.push({body:lines.join(''),count:lines.length});
+          } catch(caught){const error=serviceError(caught);throw Object.assign(error,{writeOutcome:'not-applied'});}
+          const results:OpenSearchResponse['items']=[];let wrote=false;
+          for(const chunk of chunks){
+            try{
+              const result=await request('/_bulk'+(refresh?'?refresh=wait_for':''),chunk.body,'POST','application/x-ndjson');
+              if(result.errors||!Array.isArray(result.items)||result.items.length!==chunk.count||result.items.some(item=>{const op=item.index||item.update;return !op||op.status<200||op.status>=300;}))throw fail('Realm bulk contained failed or missing items');
+              results.push(...result.items);wrote=true;
+            }catch(caught){const error=serviceError(caught);if(wrote)delete error.writeOutcome;throw error;}
+          }
+          return {items:results};
         },
         /** Removes documents of this corpus by ID. Missing IDs are already removed. */
         async delete(principal: TenantPrincipal,ids: string[]){

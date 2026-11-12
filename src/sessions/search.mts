@@ -76,7 +76,7 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
         if(item.document?.tenantId!==principal.tenantId||item.document?.userId!==principal.userId)fail(403,'Session document owner does not match its authorized scope');
         const prepared={...item,policy:'session' as const};
         const size=Buffer.byteLength(bulkItemLine(prepared,collection));
-        if(size>MAX_BULK_BYTES)throw new Error('Search document exceeds bulk limit');
+        if(size>MAX_BULK_BYTES)throw Object.assign(new Error('Search document exceeds bulk limit'),{code:'BULK_TOO_LARGE',permanent:true});
         if(bytes+size>MAX_BULK_BYTES)await flush();
         if(typeof item.document?.receivedAt!=='string'||!Number.isFinite(Date.parse(item.document.receivedAt)))throw new Error('Session capture timestamp required');
         batch.push(prepared);bytes+=size;
