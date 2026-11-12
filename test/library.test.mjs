@@ -104,7 +104,9 @@ test('search title lookup scopes original names, bounds time, and rechecks priva
   const library=createSessionLibrary({store,prefix,endpoint:'http://localhost:9200',fetch:async(_url,request)=>{
     const body=JSON.parse(request.body);queries++;
     assert.equal(body.size,0);assert.ok(JSON.stringify(body.query).includes('session.sessionId'));
-    const bounded=JSON.stringify(body.query).includes(before);
+    const bound=body.query.bool.must[0].bool.filter.find(item=>item.range?.['session.timestamp'])?.range['session.timestamp'].lte;
+    const bounded=bound!==undefined;
+    if(bounded)assert.equal(bound,Date.parse(before));
     if(mode==='revoke')await controls.update(owner,'sessions','codex','session',()=>({visibility:'private',deletedAt:null}));
     const hit=structuredClone(envelope);if(mode==='foreign')hit._source.tenantId='different-team';
     const records=values=>({records:{hits:{hits:values}}});

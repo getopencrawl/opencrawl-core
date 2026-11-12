@@ -155,7 +155,7 @@ export function createSessionLibrary({store, prefix, purgeCopies, scheduleDeleti
     const allowed = new Set(keys.map(keyOf));
     const result = await reader(principal).search(principal, {size: 0, query: {bool: {filter: [
       {term: {[f('chunk')]: 0}}, visibleTo('session', principal),
-      ...(before ? [{range: {[f('timestamp')]: {lte: before}}}] : []),
+      ...(before ? [{range: {[f('timestamp')]: {lte: Date.parse(before)}}}] : []),
       {bool: {minimum_should_match: 1, should: keys.map(key => ({bool: {filter: sessionFilter(key)}}))}},
       {bool: {minimum_should_match: 1, should: [userText, {terms: {[f('kind')]: TITLE_KINDS}}]}},
     ]}}, aggs: {titles: {multi_terms: {terms: ['userId', 'harness', 'sessionId'].map(field => ({field: f(field)})), size: keys.length}, aggs: {
