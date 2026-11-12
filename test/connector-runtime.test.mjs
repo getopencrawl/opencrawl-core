@@ -19,6 +19,7 @@ test('the development Airbyte and the GitHub connector image pin the same declar
 
 test('real runtime image: Drive continues past excluded pages and emits complete permission-bearing records',{skip:!process.env.OPENCRAWL_TEST_CONNECTOR_RUNTIME},async t=>{
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-drive-runtime-'));
+  await chmod(dir,0o755); // The runtime reads the mounted fixture as its non-root user.
   t.after(()=>rm(dir,{recursive:true,force:true}));
   const seen=[],document={id:'shared_doc',name:'Shared document',mimeType:'text/plain',version:'1',modifiedTime:'2026-11-12T00:00:00Z',text:'Full body including the distant suffix',extractionStatus:'extracted',access:{policy:'workspace-members-v1',contentHash:'receipt-preserved'}};
   const server=createServer(async(req,res)=>{
