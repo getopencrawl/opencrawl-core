@@ -16,7 +16,7 @@ export interface SessionKey {userId: string; harness: string; sessionId: string}
 export interface SessionSummary extends SessionKey {
   title: string; private: boolean; mine: boolean; origin: string | null; host: string | null;
   hosts: string[]; hostsTruncated: boolean;
-  firstActivityAt: string | null; lastActivityAt: string | null; events: number;
+  firstActivityAt: string | null; lastActivityAt: string | null; events: number; capturedTokens?: number | null;
 }
 export type TranscriptEntry =
   | {type: 'message'; role: 'user' | 'assistant'; text: string}
@@ -328,6 +328,28 @@ export function createSessionLibrary({store, prefix, purgeCopies, scheduleDeleti
           private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, ...capturedHosts(bucket.host),
           firstActivityAt: iso(bucket.firstActivity.value), lastActivityAt: iso(bucket.lastActivity.value), events: bucket.doc_count};
       });
+      // Summarize all event kinds, including tools, once per event. Missing
+      // historical counts must never turn a partial sum into a session total.
+      if (sessions.length) {
+        const counts = await collection.search(principal, {size: 0, query: {bool: {filter: [
+          {term: {[f('chunk')]: 0}}, visibleTo('session', principal),
+          {bool: {minimum_should_match: 1, should: sessions.map(key => ({bool: {filter: sessionFilter(key)}}))}},
+        ]}}, aggs: {tokenCounts: {multi_terms: {terms: fields, size: sessions.length}, aggs: {
+          tokens: {sum: {field: f('capturedTokens')}}, counted: {value_count: {field: f('capturedTokens')}},
+        }}}});
+        type Count = {key: string[]; doc_count: number; tokens: {value: number}; counted: {value: number}};
+        const values = counts.aggregations?.tokenCounts?.buckets as unknown as Count[] | undefined;
+        if (!Array.isArray(values)) throw new Error('Invalid session token response');
+        const selected = new Set(sessions.map(key => JSON.stringify([key.userId, key.harness, key.sessionId])));
+        const totals = new Map<string, number | null>();
+        for (const value of values) {
+          const key = JSON.stringify(value.key);
+          if (!selected.has(key) || totals.has(key) || !Number.isSafeInteger(value.tokens?.value) || value.tokens.value < 0 ||
+            !Number.isSafeInteger(value.doc_count) || value.doc_count < 1 || !Number.isSafeInteger(value.counted?.value) || value.counted.value < 0 || value.counted.value > value.doc_count) throw new Error('Invalid session token response');
+          totals.set(key, value.counted.value === value.doc_count ? value.tokens.value : null);
+        }
+        for (const session of sessions) session.capturedTokens = totals.get(JSON.stringify([session.userId, session.harness, session.sessionId])) ?? null;
+      }
       const names = await titles(principal, sessions);
       for (const session of sessions) session.title = names.get(JSON.stringify([session.userId, session.harness, session.sessionId])) ?? session.title;
       const allowed = await Promise.all(sessions.map(session => readable(principal, session)));

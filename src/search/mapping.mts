@@ -1,6 +1,7 @@
 import type {Mapping} from './types.mjs';
 export const passageFields={passageVersion:{type:'integer'},textStart:{type:'integer'},textEnd:{type:'integer'},chunkCount:{type:'integer'}};
 export const memoryProjectionFields={projectionId:{type:'keyword'}};
+export const sessionTokenFields={capturedTokens:{type:'long'}};
 export const connectorMapping = {dynamic: 'strict', properties: {
   ...Object.fromEntries(['tenantId', 'connectionId', 'workspaceId', 'provider', 'kind', 'sourceId', 'channelId', 'threadTs', 'timestamp', 'authorId', 'contentHash', 'parentId', 'parentKind', 'resourceVersion', 'relatedId', 'discussionId', 'repository', 'state', 'speakers', 'startTime', 'endTime', 'fileId', 'extractionStatus', 'partPath'].map(key => [key, {type: 'keyword'}])),
   title: {type: 'text'}, text: {type: 'text'}, extractedAt: {type: 'long'}, deleted: {type: 'boolean'}, publicChannel: {type: 'boolean'},
@@ -17,7 +18,7 @@ export const sessionIndexMapping={dynamic:'strict',properties:{
   text:{type:'text'},sourceKey:{type:'keyword',index:false,doc_values:false},
   nativeId:{type:'keyword'},parentId:{type:'keyword'},turnId:{type:'keyword'},toolCallId:{type:'keyword'},
   toolNames:{type:'keyword'},attachments:{type:'object',enabled:false},host:{type:'keyword',ignore_above:256},
-  private:{type:'boolean'},...passageFields,
+  private:{type:'boolean'},...passageFields,...sessionTokenFields,
 }};
 
 export const boardIndexMapping = {dynamic: 'strict', properties: {

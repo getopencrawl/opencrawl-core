@@ -73,6 +73,7 @@ test('library titles prefer verified native names, use original prompt text, and
   let mode='native', reads=0;
   const library=createSessionLibrary({store,prefix,endpoint:'http://localhost:9200',fetch:async(_url,request)=>{
     const body=JSON.parse(request.body);reads++;
+    if(body.aggs.tokenCounts)return Response.json({...empty,aggregations:{tokenCounts:{buckets:[{key:['alice','codex','session'],doc_count:2,tokens:{value:2},counted:{value:2}}]}}});
     if(body.aggs.titles) {
       const title=structuredClone(hits[1]);
       if(mode==='forged')title._source.session.userId='bob';
