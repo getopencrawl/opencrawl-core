@@ -60,9 +60,8 @@ test('operator broker enables OAuth connectors without exposing its key in the c
   assert.equal(cards.find(c=>c.provider==='github').state,'setup-required');
   assert.ok(!JSON.stringify(cards).includes('operator-private-key'));
   const drive=cards.find(card=>card.provider==='googledrive');
-  assert.equal(drive.state,'setup-required');assert.equal(drive.setup.requirement,'Indexing not available');
-  assert.equal(drive.setup.credential,undefined);
-  await assert.rejects(service.integrations.connect(principal,'googledrive'),error=>error.status===503&&/not.*searchable/.test(error.message));
+  assert.equal(drive.state,'disconnected');
+  assert.equal(drive.setup,undefined);
   assert.equal((await service.registry.listTenant(principal.tenantId)).length,0);
 });
 
@@ -96,7 +95,7 @@ async function broker(t,respond=()=>({status:200,data:{ok:true},headers:{}})){
   const registry=createSingleOrganizationRegistry({path:join(dir,'registry.sqlite'),organizationId:'org_team'});
   t.after(async()=>{registry.close();await rm(dir,{recursive:true,force:true});});
   const calls=[];
-  const oauth=createComposioOAuth({apiKey:OPERATOR_KEY,organizationId:'org_team',proxyUrl:APP_FOR_AIRBYTE,proxyKey:Buffer.alloc(32,7),registry,fetch:async(url,options)=>{
+  const oauth=createComposioOAuth({apiKey:OPERATOR_KEY,organizationId:'org_team',proxyUrl:APP_FOR_AIRBYTE,proxyKey:Buffer.alloc(32,7),registry,driveAudience:async()=>['a@example.com'],fetch:async(url,options)=>{
     const body=options.body?JSON.parse(options.body):undefined;calls.push({url,options,body});
     if(url.endsWith('/tools/execute/proxy'))return Response.json(respond(body));
     throw new Error('Unexpected request');
@@ -160,15 +159,16 @@ test('the operator’s own Slack app receives the configuration its registered c
 });
 
 test('a brokered source capability reads only its own provider’s listed endpoints while connected',async t=>{
-  const f=await broker(t);
+  const f=await broker(t,body=>({status:200,data:body.endpoint.endsWith('/drives')?{drives:[]}:body.endpoint.endsWith('/about')?{user:{emailAddress:'a@gmail.com'}}:{files:[]}}));
   const drive=await f.connect('googledrive','ca_drive'),config=await f.oauth.sourceConfiguration(drive,f.providers.googledrive);
   const call=(input,{secret=config.credential_proxy_api_key,id='ca_drive',user=config.user_id}={})=>f.oauth.proxyCredential(id,secret,user,input);
-  const files={endpoint:'https://www.googleapis.com/drive/v3/files',query:{pageSize:'100'}};
+  const files={endpoint:'opencrawl://googledrive/workspace-documents'};
   assert.equal((await call(files)).status,200);
-  const sent=f.calls.at(-1);
-  assert.equal(sent.url,'https://backend.composio.dev/api/v3.1/tools/execute/proxy');assert.equal(sent.options.headers['x-api-key'],OPERATOR_KEY);
-  assert.deepEqual(sent.body,{connected_account_id:'ca_drive',user_id:'selfhost:org_team:user_a',endpoint:files.endpoint,method:'GET',parameters:[{name:'pageSize',value:'100',type:'query'}]});
-  assert.equal((await call({endpoint:'https://www.googleapis.com/drive/v3/files/file_1-x/export',query:{mimeType:'text/markdown'}})).status,200);
+  for(const sent of f.calls){
+    assert.equal(sent.url,'https://backend.composio.dev/api/v3.1/tools/execute/proxy');
+    assert.equal(sent.options.headers['x-api-key'],OPERATOR_KEY);
+    assert.equal(sent.body.connected_account_id,'ca_drive');assert.equal(sent.body.user_id,'selfhost:org_team:user_a');
+  }
   const upstream=f.calls.length;
   await assert.rejects(call(files,{secret:'wrong'}),{status:403});
   await assert.rejects(call(files,{secret:''}),{status:403});
@@ -263,7 +263,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
   const composio=await brokerService(t),f=await installation(t,{COMPOSIO_BASE_URL:composio.url}),service=f.open();
   const before=await service.integrations.list(principal),notion=before.find(card=>card.provider==='notion');
   assert.equal(notion.state,'setup-required');assert.equal(notion.setup.requirement,'Needs a Composio key');
-  assert.deepEqual({id:notion.setup.credential.id,unlocks:notion.setup.credential.unlocks},{id:'composio',unlocks:['Notion','Circleback','Slack']});
+  assert.deepEqual({id:notion.setup.credential.id,unlocks:notion.setup.credential.unlocks},{id:'composio',unlocks:['Google Drive','Notion','Circleback','Slack']});
   assert.match(notion.setup.credential.url,/^https:\/\/dashboard\.composio\.dev\//);
   const github=before.find(card=>card.provider==='github');
   assert.equal(github.setup.requirement,'Needs a GitHub App');assert.equal(github.setup.credential,undefined);
@@ -278,7 +278,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
 
   await service.connectorSettings.save('composio','  good-project-key\n',by);
   assert.deepEqual(composio.seen.at(-1),{method:'GET',url:'/api/v3.1/auth_configs?limit=1',key:'good-project-key'});
-  assert.deepEqual(await states(service),{googledrive:'setup-required',slack:'disconnected',granola:'disconnected',circleback:'disconnected',notion:'disconnected',github:'setup-required'});
+  assert.deepEqual(await states(service),{googledrive:'disconnected',slack:'disconnected',granola:'disconnected',circleback:'disconnected',notion:'disconnected',github:'setup-required'});
   const sealed=await f.store.get('connector-settings/v1/org_team/settings.enc');
   assert.ok(sealed.length>40);assert.ok(!sealed.includes(Buffer.from('good-project-key')));
   assert.ok(!JSON.stringify(await service.integrations.list(principal)).includes('good-project-key'));
@@ -289,7 +289,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
 test('a broker key from the server environment cannot be replaced in the product; without a connector key nothing is stored',async t=>{
   const composio=await brokerService(t);
   const managed=(await installation(t,{COMPOSIO_BASE_URL:composio.url,COMPOSIO_API_KEY:'good-project-key'})).open();
-  assert.equal((await states(managed)).googledrive,'setup-required');
+  assert.equal((await states(managed)).googledrive,'disconnected');
   await assert.rejects(managed.connectorSettings.save('composio','another-project-key',{userId:'user_a'}),{status:409,expose:true});
   const bare=(await installation(t,{COMPOSIO_BASE_URL:composio.url,OPENCRAWL_CONNECTOR_KEY:''})).open();
   const card=(await bare.integrations.list(principal)).find(c=>c.provider==='notion');

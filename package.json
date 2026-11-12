@@ -93,7 +93,10 @@
     "./application/value-report": "./dist/src/application/value-report.mjs",
     "./sessions/passage-migration": "./dist/src/sessions/passage-migration.mjs",
     "./sessions/deletion-requests": "./dist/src/sessions/deletion-requests.mjs",
-    "./memories/projection-migration": "./dist/src/memories/projection-migration.mjs"
+    "./memories/projection-migration": "./dist/src/memories/projection-migration.mjs",
+    "./integrations/google-drive-access": "./dist/src/integrations/google-drive-access.mjs",
+    "./integrations/google-drive-source": "./dist/src/integrations/google-drive-source.mjs",
+    "./integrations/proxy-http": "./dist/src/integrations/proxy-http.mjs"
   },
   "files": [
     "dist/src",

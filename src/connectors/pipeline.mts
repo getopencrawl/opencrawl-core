@@ -3,6 +3,8 @@ import {authorize, objectStream, receiptKey, selectedObject, validateBinding} fr
 import {normalizeSlackFile} from './slack-files.mjs';
 import {normalizeSlack} from './slack.mjs';
 import {normalizeGitHub} from './github.mjs';
+import {normalizeGoogleDrive} from './google-drive.mjs';
+import type {DriveDocumentRecord} from '../integrations/google-drive-source.mjs';
 import {readRecords} from './records.mjs';
 import {createWorkspacePipeline} from './workspace-pipeline.mjs';
 import {pipelineVersion} from './scope.mjs';
@@ -35,6 +37,19 @@ export function createConnectorPipeline({binding, store, search, checkActive = a
         heartbeat({records});
       }
       const result = await readRecords(store, key, async envelope => {
+        if (binding.provider === 'googledrive') {
+          // Source receipts prove collection-time permission. Retrieval separately
+          // checks current ACLs; replaying an old object never grants live access.
+          const documents = normalizeGoogleDrive(binding, stream, envelope as AirbyteEnvelope<DriveDocumentRecord>, key);
+          await flush();
+          for (let offset = 0; offset < documents.length - 1; offset += 100) {
+            await active();
+            await search.putDocuments(principal, binding, documents.slice(offset, Math.min(offset + 100, documents.length - 1)));
+          }
+          await active();
+          await search.putDocuments(principal, binding, documents.slice(-1));
+          records += documents.length; heartbeat({records}); return;
+        }
         if(binding.provider==='slack' && stream==='file_documents') {
           await flush();
           const file=await normalizeSlackFile(binding,envelope as AirbyteEnvelope<SlackFileRecord>,key,{store});

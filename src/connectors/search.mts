@@ -35,17 +35,19 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
     }
   }
   type ConnectorSearchInput = SearchInput;
+  type ResourceAccess = (binding: ConnectorBinding, sourceId: string) => Promise<boolean>;
   type NormalizedResult = {hits: (ConnectorDocument & {id: string; score: number})[]; examined: number; truncated: boolean};
   type RawResult = {responses: unknown[]; examined: number; truncated: boolean};
-  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput & {raw: true}): Promise<RawResult>;
-  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input?: ConnectorSearchInput & {raw?: false}): Promise<NormalizedResult>;
-  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput): Promise<NormalizedResult | RawResult>;
-  async function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], {query='', limit = 20, raw = false, match = 'all', id, filters, order}: ConnectorSearchInput = {}) {
+  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput & {raw: true}, resourceAccess?: ResourceAccess): Promise<RawResult>;
+  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input?: ConnectorSearchInput & {raw?: false}, resourceAccess?: ResourceAccess): Promise<NormalizedResult>;
+  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput, resourceAccess?: ResourceAccess): Promise<NormalizedResult | RawResult>;
+  async function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], {query='', limit = 20, raw = false, match = 'all', id, filters, order}: ConnectorSearchInput = {}, resourceAccess?: ResourceAccess) {
       if (!Array.isArray(bindings) || !bindings.length || bindings.length > 100) throw new Error('Authorized connections required');
       for (const binding of bindings) scoped(principal, binding);
       if (id !== undefined && (typeof id !== 'string' || !/^[A-Za-z0-9_:-]{1,256}$/.test(id))) throw new Error('Invalid passage id');
       if (!['all','any','phrase'].includes(match) || typeof query !== 'string' || (!query.trim() && !id && (!order||order==='relevance')) || query.length > 4000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid connector query');
       const byConnection = new Map(bindings.map(b => [b.connectionId, b]));
+      const driveAccess = new Map<string, Promise<boolean>>();
       const hits: (ConnectorDocument & {id: string; score: number})[] = [], responses: unknown[] = []; let after: IndexHit['sort'], examined = 0, more = true, capped = false;
       // Bound work even when channel visibility filters most candidates.
       while (hits.length < limit && examined < 1000 && more) {
@@ -88,7 +90,13 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
           const parentVisible = !d.parentId || (typeof d.resourceVersion==='string' && current.get(documentId(binding!, d.parentKind!, d.parentId)) === d.resourceVersion);
           const visibleResource = parentVisible && (d.kind!=='file' || d.available===true) &&
             (d.provider!=='slack' || allowed.has(documentId(binding!, 'channel', d.channelId!)));
-          if (visibleResource) {
+          let providerVisible = visibleResource;
+          if (providerVisible && d.provider === 'googledrive') {
+            const sourceId = d.parentId || d.sourceId, key = binding!.connectionId + ':' + sourceId;
+            if (!driveAccess.has(key)) driveAccess.set(key, resourceAccess ? resourceAccess(binding!, sourceId) : Promise.resolve(false));
+            providerVisible = await driveAccess.get(key)!;
+          }
+          if (providerVisible) {
             visible.push(hit); hits.push({id: hit._id, score: hit._score, ...hit._source});
           }
         }

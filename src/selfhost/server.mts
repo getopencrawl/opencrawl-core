@@ -11,7 +11,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   await store.checkAccess();
   const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,databasePath:settings.identityPath,organizationId:settings.organizationId});
   await identity.ready();
-  const services=selfhostServices(settings,store,env);
+  const services=selfhostServices(settings,store,env,identity.directory);
   const scheduleSessionDeletion=sessionDeletionScheduler({address:env.TEMPORAL_ADDRESS||'',namespace:env.TEMPORAL_NAMESPACE||'',taskQueue:env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1',sourceId:'sessions-'+settings.organizationId+'-v1'});
   const {server,shutdown}=createDrainableServer(selfhostApplication({settings,store,prefix,identity,...services,scheduleSessionDeletion}),{analytics:{async close(){services.close();identity.close();}}});
   server.requestTimeout=60000;server.headersTimeout=10000;
