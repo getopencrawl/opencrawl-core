@@ -8,10 +8,22 @@ test('exact filters constrain the correct corpus and never widen an incompatible
   assert.deepEqual(searchFilters('session',{roles:['user'],authors:['alice'],before:'2026-01-02T00:00:00Z'}),[
     {terms:{'session.userId':['alice']}},{terms:{'session.role':['user']}},{range:{'session.timestamp':{lte:'2026-01-02T00:00:00Z'}}}]);
   assert.deepEqual(searchFilters('connector',{roles:['user']}),[{match_none:{}}]);
+  assert.deepEqual(searchFilters('session',{origins:['desktop','unknown']}),[{terms:{'session.origin':['desktop','unknown']}}]);
+  for(const corpus of ['connector','memory'])assert.deepEqual(searchFilters(corpus,{origins:['desktop']}),[{match_none:{}}]);
   assert.deepEqual(searchFilters('memory',{projects:['p'],paths:['notes.md']}),[{terms:{'memory.project':['p']}},{terms:{'memory.path':['notes.md']}}]);
   assert.deepEqual(searchFilters('connector',{repositories:['org/repo'],providers:['github']}),[{terms:{'connector.provider':['github']}},{terms:{'connector.repository':['org/repo']}}]);
   assert.throws(()=>searchFilters('session',{after:'2026-02-01T00:00:00Z',before:'2026-01-01T00:00:00Z'}),/Invalid/);
   assert.deepEqual(searchSort('memory','oldest'),[{'memory.modifiedAt':{order:'asc',missing:'_last'}}]);
+});
+test('session origins remain visible in discovery and fetch, and bind pagination',async()=>{
+  const hits=[hit('a',{origin:'desktop'}),hit('b',{origin:'subagent',eventId:'other',text:'different deployment evidence'})];
+  const service=createWorkspaceSearch({sessions:{search:async(p,q)=>({hits:q.id?hits.filter(h=>h.id===q.id):hits,total:hits.length})}});
+  const input={query:'deployment',facets:['origin'],filters:{origins:['desktop','subagent']},limit:1};
+  const result=await service.search(principal,input);
+  assert.deepEqual(result.facets.origin.values,[{value:'desktop',count:1},{value:'subagent',count:1}]);
+  assert.equal(result.results[0].provenance.origin,'desktop');
+  assert.equal((await service.fetch(principal,{id:'sessions:a'})).provenance.origin,'desktop');
+  await assert.rejects(service.search(principal,{...input,filters:{origins:['desktop']},cursor:result.next}),/cursor/);
 });
 test('facets use authorized candidates, projections omit content, all controls bind pagination',async()=>{
   const calls=[], service=createWorkspaceSearch({sessions:{search:async(p,q)=>{calls.push(q);return {hits:[hit('a'),hit('b',{role:'user'})],total:120};}},connectors:{search:async()=>({hits:[]})}});
