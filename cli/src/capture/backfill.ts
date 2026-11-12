@@ -103,7 +103,7 @@ export async function backfill(api:string, selected:Selection, approved:boolean,
     }
   };
   const flush=()=>retry(()=>flushCaptures({concurrency,batchDelayMs,onUploaded:()=>{uploaded++;progress();}}));
-  const pending=()=>readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json'));
+  const pending=()=>readdirSync(join(captureDir(),'queue')).filter(name=>name.endsWith('.json')).length;
   const failures:{code:string}[]=[];
   progress('importing',true);
   try {
@@ -111,9 +111,9 @@ export async function backfill(api:string, selected:Selection, approved:boolean,
     for(const file of files) {
       try{await captureTranscript(config,file.harness,file.path,{},true);processed++;processedBytes+=file.bytes;}
       catch(e){failures.push({code:e instanceof CliError?e.code:'CAPTURE_FAILED'});recordError(e);}
-      // Bound the spool to one transcript. Within it, four uploads share one
-      // exclusive flush owner and retain every batch until its durable receipt.
-      if(pending())await flush();
+      // Fill a worker group across small transcripts too. Flush after the
+      // current file once enough batches exist; retain every batch until receipt.
+      if(pending()>=concurrency)await flush();
       progress();
     }
     if(pending())await flush();

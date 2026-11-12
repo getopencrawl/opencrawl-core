@@ -82,6 +82,10 @@ test('large approved import survives refresh throttling, uploads four at a time,
   for(let i=first+1;i<starts.length;i++)expect(starts[i]-starts[i-1]).toBeGreaterThanOrEqual(100);
   await expect(backfill(api,'codex',true,{concurrency:0})).rejects.toMatchObject({code:'INVALID_USAGE'});
   await expect(backfill(api,'codex',true,{batchDelayMs:-1})).rejects.toMatchObject({code:'INVALID_USAGE'});
+  // Small files also fill all workers instead of serializing on one receipt each.
+  rmSync(join(source,'large.jsonl'));rmSync(paced);peak=0;const smallStart=accepted.length;
+  for(let i=0;i<4;i++)writeFileSync(join(source,`small-${i}.jsonl`),JSON.stringify({type:'session_meta',payload:{id:`small-${i}`,source:'cli'}})+'\n'+JSON.stringify(records[1])+'\n');
+  expect((await backfill(api,'codex',true)).uploaded).toBe(4);expect(peak).toBe(4);expect(accepted.length-smallStart).toBe(4);
   denied=true;await saveSession(api,{auth,accessToken:'expired',refreshToken:'revoked',expiresAt:0});
   const before=refreshes;
   await expect(backfill(api,'codex',true,{retryDelays:[0,0]})).rejects.toMatchObject({code:'AUTH_REQUIRED'});
