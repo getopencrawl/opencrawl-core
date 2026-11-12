@@ -17,6 +17,40 @@ import {migrateSessionPassages,restoreSessionPassages} from '../dist/src/session
 import {memorySessionStore} from './session-store-fixture.mjs';
 
 const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
+for(const backend of ['sqlite','opensearch'])test(`${backend}: multi-session discovery intersects filters and preserves current access`,{skip:backend==='opensearch'&&!endpoint},async t=>{
+  const directory=await mkdtemp(join(tmpdir(),'opencrawl-session-scope-'));
+  const target=backend==='sqlite'?pathToFileURL(join(directory,'search.sqlite')).href.replace('file:','sqlite:'):endpoint;
+  const run=randomUUID(),principal={tenantId:'session-scope-'+run,userId:'alice'},peer={...principal,userId:'bob'},outsider={tenantId:'session-scope-outside-'+run,userId:'bob'};
+  const store=memorySessionStore(),prefix='capture-session-scope',sessions=createSessionSearch({endpoint:target,store,prefix}),workspace=createWorkspaceSearch({sessions});
+  const ingest=createSessionIngest({store,prefix});
+  t.after(async()=>{try{if(backend==='opensearch')for(const p of [principal,outsider])await fetch(target+'/'+createRealm({endpoint:target,tenantId:p.tenantId}).index,{method:'DELETE'});}finally{await rm(directory,{recursive:true,force:true});}});
+  for(const [owner,sessionId,text] of [[peer,'chat-a','scope evidence first'],[peer,'chat-b','scope evidence second'],[peer,'chat-c','scope evidence outside selection'],[outsider,'chat-a','scope evidence foreign marker']]){
+    const events=[{id:'same-event',kind:'message',timestamp:'2026-11-01T00:00:00Z',data:{role:'assistant',content:text}}];
+    if(owner===peer&&sessionId==='chat-a')events.push({id:'detail-event',kind:'message',timestamp:'2026-11-01T00:00:01Z',data:{role:'assistant',content:'detail needle'}});
+    const receipt=await ingest.putBatch(owner,{schemaVersion:1,owner,harness:'codex',origin:'desktop',installationId:'fixture',sessionId,attachments:[],events});
+    const key=[...store.data.keys()].find(k=>k.endsWith(receipt.batchId+'.json.gz')),batch=JSON.parse(gunzipSync(store.data.get(key)));
+    await sessions.ensureIndex(owner);await sessions.putDocuments(batchDocuments({prefix,key,batch,principal:owner}),owner);await sessions.refresh(owner);
+  }
+  const input={query:'scope evidence',match:'all',source:'sessions',filters:{sessionIds:['chat-a','chat-b']},facets:['sessionId']};
+  const selected=await workspace.search(principal,input);
+  assert.deepEqual(selected.results.map(h=>h.provenance.sessionId).sort(),['chat-a','chat-b']);
+  assert.ok(selected.results.every(h=>!h.text.includes('foreign marker')&&!h.text.includes('outside selection')));
+  assert.deepEqual(selected.facets.sessionId.values,[{value:'chat-a',count:1},{value:'chat-b',count:1}]);
+  assert.equal((await workspace.search(principal,{...input,sessionId:'chat-a'})).results.length,1);
+  assert.equal((await workspace.search(principal,{...input,sessionId:'chat-c'})).results.length,0);
+  // Terms in different messages never combine; scope supplies context while the
+  // follow-up query names the detail that actually occurs in a passage.
+  assert.equal((await workspace.search(principal,{...input,query:'scope needle',groupBy:'session'})).results.length,0);
+  assert.equal((await workspace.search(principal,{...input,query:'needle'})).results[0].provenance.sessionId,'chat-a');
+  assert.equal((await workspace.search(principal,{...input,filters:{...input.filters,roles:['user']}})).results.length,0);
+  await createControls({store,prefix}).update(peer,'sessions','codex','chat-b',()=>({visibility:'private',deletedAt:null}));
+  const hidden=await workspace.search(principal,input);
+  assert.deepEqual(hidden.results.map(h=>h.provenance.sessionId),['chat-a']);
+  assert.deepEqual(hidden.facets.sessionId.values,[{value:'chat-a',count:1}]);
+  await assert.rejects(workspace.fetch(principal,{id:selected.results.find(h=>h.provenance.sessionId==='chat-b').id}),{status:404});
+  assert.equal((await workspace.search(peer,input)).results.length,2);
+  const foreign=await workspace.search(outsider,input);assert.equal(foreign.results.length,1);assert.match(foreign.results[0].text,/foreign marker/);
+});
 for(const backend of ['sqlite','opensearch'])test(`${backend}: origin filters and facets preserve tenant and current privacy boundaries`,{skip:backend==='opensearch'&&!endpoint},async t=>{
   const directory=await mkdtemp(join(tmpdir(),'opencrawl-origin-filter-'));
   const target=backend==='sqlite'?pathToFileURL(join(directory,'search.sqlite')).href.replace('file:','sqlite:'):endpoint;

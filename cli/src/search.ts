@@ -33,9 +33,9 @@ export function searchInput(query: string | undefined, values: Record<string, un
   if(!filters||typeof filters!=='object'||Array.isArray(filters))throw new CliError('INVALID_USAGE','--filters requires a JSON object.',64);
   for(const key of ['after','before'])if(values[key]!==undefined)filters[key]=values[key];
   if(values.role!==undefined)filters.roles=[values.role];
-  const arrays=['authors','kinds','excludeKinds','roles','harnesses','origins','providers','repositories','projects','paths','toolNames'];
+  const arrays=['authors','kinds','excludeKinds','roles','harnesses','origins','sessionIds','providers','repositories','projects','paths','toolNames'];
   for(const [key,value] of Object.entries(filters)){
-    const valid=arrays.includes(key)?Array.isArray(value)&&value.length>0&&value.length<=20&&value.every(x=>typeof x==='string'&&x.length>0&&x.length<=500):
+    const valid=arrays.includes(key)?Array.isArray(value)&&value.length>0&&value.length<=20&&value.every(x=>typeof x==='string'&&x.length>0&&x.length<=(key==='sessionIds'?200:500)):
       ['after','before'].includes(key)&&typeof value==='string'&&/^\d{4}-\d\d-\d\dT/.test(value)&&Number.isFinite(Date.parse(value));
     if(!valid)throw new CliError('INVALID_USAGE','Invalid search filter '+key+'.',64);
   }

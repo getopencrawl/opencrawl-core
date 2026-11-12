@@ -67,7 +67,9 @@ select a second organization here. See [identity boundary](identity-seam.md).
 
 A normal restart with the same identity database, `OPENCRAWL_AUTH_SECRET` and
 `OPENCRAWL_URL` preserves OAuth grants. If Claude Code reports “Needs authentication”,
-use `/mcp` → Connect to sign in again; Reconnect alone may not renew its sign-in.
+use the authentication action in `/mcp` (Connect or Re-authenticate, depending on
+your version), or `claude mcp login <name>` where supported. Reconnect alone may
+not renew its sign-in.
 Changing `OPENCRAWL_URL` changes the issuer and audience: every CLI and MCP client
 must sign in at the new origin. Keep the old hostname routed during the transition
 for navigation, but do not expect old tokens to authorize the new issuer.
