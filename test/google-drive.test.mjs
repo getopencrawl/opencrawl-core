@@ -132,6 +132,16 @@ test('Drive binary exports reject unsafe origins before any download',async()=>{
   assert.equal(downloads,0);
 });
 
+test('Drive detects cursor cycles across independent source requests, including empty excluded pages',async()=>{
+  const fixture=sourceFixture();let pages=0;
+  const request=async input=>input.endpoint===DRIVE_API+'/files'?{status:200,data:{files:[],nextPageToken:++pages%2?'A':'B'}}:fixture.request(input);
+  let pageToken;
+  await assert.rejects(async()=>{
+    for(let i=0;i<10;i++)pageToken=(await createGoogleDriveSource({...fixture.options,request}).read({endpoint:DRIVE_SOURCE_ENDPOINT,query:{pageToken}})).data.nextPageToken;
+  },/cursor cycle/);
+  assert.ok(pages<10);
+});
+
 test('Sheets ingestion includes every worksheet and cell notes, not only the first CSV tab',async()=>{
   const fixture=sourceFixture({metadata:{...file,mimeType:'application/vnd.google-apps.spreadsheet'}});
   const request=async input=>input.endpoint.startsWith('https://sheets.googleapis.com/')?{status:200,data:{spreadsheetId:file.id,sheets:[
@@ -169,6 +179,19 @@ for (const engine of ['sqlite', 'opensearch']) test(`${engine}: permission-beari
   await assert.rejects(workspace.fetch(principal,{id:found.id}));
   source.state.permissions=grants;
   await assert.rejects(resolver.search({tenantId:'org_other',userId:'user_x'},{query:'tailword'}),/scope/);
+  const pendingText='A pending replacement paragraph.\n'.repeat(400)+'unpublishedword';
+  const pending={...first,text:pendingText,version:'13',modifiedTime:new Date(at+500).toISOString(),access:{...first.access,checkedAt:at+500,contentHash:digest(pendingText)}};
+  const pendingKey=binding.rawPrefix+'stream=workspace_documents/date=2026-11-12/sync=test/interrupted.jsonl.gz';
+  objects.set(pendingKey,gzipSync(JSON.stringify({_airbyte_extracted_at:at+500,_airbyte_data:pending})+'\n'));
+  const interrupted=createConnectorPipeline({binding,store,search:{...search,putDocuments:async(p,b,documents)=>{
+    if(documents.some(item=>!item.document.parentId))throw new Error('simulated parent write failure');
+    return search.putDocuments(p,b,documents);
+  }}});
+  await assert.rejects(interrupted.processObject({key:pendingKey}),/parent write failure/);await search.refresh();
+  assert.equal((await resolver.search(principal,{query:'unpublishedword'})).hits.length,0);
+  assert.equal((await resolver.search(principal,{query:'tailword'})).hits.length,1);
+  assert.equal((await pipeline.processObject({key:pendingKey})).status,'indexed');await search.refresh();
+  assert.equal((await resolver.search(principal,{query:'unpublishedword'})).hits.length,1);
   const shorter={...first,text:'Short replacement',version:'13',modifiedTime:new Date(at+1000).toISOString(),access:{...first.access,checkedAt:at+1000,contentHash:digest('Short replacement')}};
   await put(shorter,'new',at+1000);await put(first,'late-old');
   assert.equal((await resolver.search(principal,{query:'tailword'})).hits.length,0);
