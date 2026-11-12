@@ -159,9 +159,9 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   if(meta.cwd!==undefined)batch.cwd=meta.cwd;
   batch.sessionId=meta.sessionId;
   batch.events=batch.events.map(finalizeEventIdentity);
-  const size=Buffer.byteLength(JSON.stringify(batch));
+  const serialized=JSON.stringify(batch),size=Buffer.byteLength(serialized);
   if(size>16*1024*1024)throw new CliError('CAPTURE_BATCH_TOO_LARGE','A capture record exceeds the upload limit; retained locally for retry');
-  atomicJson(join(captureDir(),'queue',hash(JSON.stringify(batch))+'.json'),batch);
+  atomicFile(join(captureDir(),'queue',hash(serialized)+'.json'),serialized+'\n');
 }
 
 /** Every upload (including queues from older CLIs) crosses this local boundary.
@@ -195,7 +195,9 @@ function prepareCaptureUpload(original:any) {
     if(value.status==='captured' && replacements.has(value.sha256))Object.assign(result,replacements.get(value.sha256));
     return result;
   }
-  const batch=redactValue(replace(original));
+  // Redaction already clones and depth-checks the entire value. Only walk a
+  // second time when an attachment digest or status actually changed.
+  const batch=redactValue(replacements.size?replace(original):original);
   batch.events=batch.events.map((event:any,index:number)=>JSON.stringify(event)===JSON.stringify(original.events[index])?event:finalizeEventIdentity(event));
   return batch;
 }
@@ -714,8 +716,9 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
       for(const a of batch.attachments)if(a.status==='captured'){
         await request(config.api,'/api/sessions/attachments/'+a.sha256+'?'+new URLSearchParams({harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId}),{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readCaptureAttachment(a.sha256)},await current(),renew);
       }
-      const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(batch)},await current(),renew);
-      if(receipt.batchId!==hash(JSON.stringify(batch)) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
+      const serialized=JSON.stringify(batch);
+      const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:serialized},await current(),renew);
+      if(receipt.batchId!==hash(serialized) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
       atomicJson(join(captureDir(),'last-upload.json'),{at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId});
       retryWindowsSharing(()=>unlinkSync(path));uploaded++;onUploaded?.();
     };
