@@ -213,10 +213,12 @@ OpenCrawl or WorkOS account. Capture consent names the destination before setup.
 See [the self-host guide](../docs/self-host.md) for operator configuration.
 
 The separate capture-only receiver and search server can still use
-`OPENCRAWL_SESSIONS_TOKEN` and `OPENCRAWL_TOKEN`. Always pair either environment
-token with `--api` or `OPENCRAWL_API_URL`. A saved capture destination or the hosted
-default never selects where a newly supplied environment token is sent. Remove
-an environment token when switching deployments to use their saved logins.
+`OPENCRAWL_SESSIONS_TOKEN` and `OPENCRAWL_TOKEN`. Both default to OpenCrawl cloud
+(`https://app.getopencrawl.com`); cloud capture needs no API URL environment
+variable. Use `--api` or `OPENCRAWL_API_URL` to send an environment token to a
+self-hosted deployment. A saved capture destination cannot redirect a newly
+supplied environment token to another server. Remove an environment token when
+switching deployments to use their saved logins.
 
 Newly spooled events receive a versioned ID after attachment extraction and all
 event normalization. The ID covers the source record/notice identity and every
