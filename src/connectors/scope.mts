@@ -7,8 +7,9 @@ export const PROVIDER_STREAMS: Record<Provider, string[]> = {
   granola: ['notes', 'transcripts'], circleback: ['meetings', 'transcripts'],
   notion: ['pages', 'page_markdown', 'data_sources', 'comments'],
   github: ['commits', 'pull_requests', 'issues', 'issue_comments', 'review_comments', 'commit_comments', 'releases'],
+  googledrive: ['workspace_documents'],
 };
-export const pipelineVersion = (binding: ConnectorBinding) => binding.provider === 'slack' ? PIPELINE_VERSION : binding.provider === 'circleback' ? 'workspace-v2' : 'workspace-v1';
+export const pipelineVersion = (binding: ConnectorBinding) => binding.provider === 'slack' ? PIPELINE_VERSION : binding.provider === 'googledrive' ? 'drive-workspace-v1' : binding.provider === 'circleback' ? 'workspace-v2' : 'workspace-v1';
 export const digest = (value: unknown) => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 function fail(message: string): never { throw Object.assign(new Error(message), {permanent: true}); }
 export function validateBinding(binding: ConnectorBinding) {
@@ -16,6 +17,7 @@ export function validateBinding(binding: ConnectorBinding) {
   for (const field of ['tenantId', 'connectionId', 'workspaceId'] as const) {
     if (typeof binding[field] !== 'string' || !/^[A-Za-z0-9_:-]{1,200}$/.test(binding[field])) fail('Invalid connector scope');
   }
+  if (binding.provider === 'googledrive' && binding.workspaceId !== binding.tenantId) fail('Drive workspace must match its authorized team');
   const prefix = `raw/v1/source=${binding.provider}/workspace=${binding.workspaceId}/connection=${binding.connectionId}/`;
   if (binding.rawPrefix !== prefix) fail('Connector prefix does not match its authorized scope');
   return binding;

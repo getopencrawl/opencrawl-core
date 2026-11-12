@@ -1,5 +1,5 @@
 /** Portable connector contracts. Provider payloads are validated by their adapters. */
-export type Provider = 'slack' | 'granola' | 'circleback' | 'notion' | 'github';
+export type Provider = 'slack' | 'granola' | 'circleback' | 'notion' | 'github' | 'googledrive';
 export interface ConnectorBinding {
   tenantId: string; connectionId: string; workspaceId: string; provider: Provider;
   access: 'team-public' | 'workspace-global'; rawPrefix: string;

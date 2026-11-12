@@ -12,7 +12,7 @@ export function connectorProxyHandler(oauth:SourceCredentialProxy){
     if(req.method!=='POST')return reply(405,{error:'METHOD_NOT_ALLOWED'});
     if(req.headers.origin)return reply(403,{error:'BROWSER_REQUEST_DENIED'});
     try{
-      const secret=req.headers['x-api-key'];if(typeof secret!=='string'||secret.length>256)return reply(401,{error:'SOURCE_CREDENTIAL_REQUIRED'});
+      const secret=req.headers['x-api-key'];if(typeof secret!=='string'||secret.length>2048)return reply(401,{error:'SOURCE_CREDENTIAL_REQUIRED'});
       const input=await smallJson(req,65536);
       if(Object.keys(input).some(k=>!['connected_account_id','user_id','method','endpoint','parameters','body'].includes(k))||typeof input.connected_account_id!=='string'||typeof input.user_id!=='string'||typeof input.endpoint!=='string'||input.method!==undefined&&input.method!=='GET'&&input.method!=='POST'||input.parameters!==undefined&&!Array.isArray(input.parameters))return reply(400,{error:'INVALID_REQUEST'});
       const query:Record<string,string>={},headers:Record<string,string>={};

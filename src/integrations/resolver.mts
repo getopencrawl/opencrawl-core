@@ -4,7 +4,8 @@ import type {IntegrationRegistry} from './ports.mjs';
 import type {createObjectStore} from '../sessions/s3-store.mjs';
 import {createConnectorSearch} from '../connectors/search.mjs';
 import {validateBinding} from '../connectors/scope.mjs';
-export const INDEXED_PROVIDERS = Object.freeze(['slack', 'granola', 'circleback', 'notion', 'github'] as const);
+import type {createDriveAccess} from './google-drive-access.mjs';
+export const INDEXED_PROVIDERS = Object.freeze(['slack', 'granola', 'circleback', 'notion', 'github', 'googledrive'] as const);
 export const eligible = (record: IntegrationRecord): record is IntegrationRecord & {provider: typeof INDEXED_PROVIDERS[number]} => record.scope === 'team' && INDEXED_PROVIDERS.some(provider => provider === record.provider);
 
 export function denied(): never {throw Object.assign(new Error('Connector is inactive or outside authorized scope'), {permanent: true, status: 403});}
@@ -17,10 +18,11 @@ export interface ConnectorResolverOptions {
   /** Host policy authorizes the existing storage binding. Never provisions storage. */
   storage(record: IntegrationRecord): Promise<ReturnType<typeof createObjectStore>>;
   search(tenantId: string): ReturnType<typeof createConnectorSearch>;
+  driveAccess?(record: IntegrationRecord): ReturnType<typeof createDriveAccess>;
 }
 interface ConnectionCount {total: number; kinds: Record<string, number>}
 export interface CountSummary extends ConnectionCount {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}
-export function createConnectorResolver({environment, generation, registry, storage, search: searchFor}: ConnectorResolverOptions) {
+export function createConnectorResolver({environment, generation, registry, storage, search: searchFor, driveAccess}: ConnectorResolverOptions) {
   if (!['staging', 'production', 'selfhost'].includes(environment) || !/^v[1-9][0-9]*$/.test(generation)) throw new Error('Invalid connector configuration');
   function reference(value: ConnectorReferenceInput): asserts value is HostedConnectorReference {
     if (!value || !/^(org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(typeof value.tenantId === 'string' ? value.tenantId : '') || !/^user_[A-Za-z0-9]+$/.test(typeof value.userId === 'string' ? value.userId : '') || !/^int_[a-f0-9]{26}$/.test(typeof value.connectionId === 'string' ? value.connectionId : '') || (value.generation && value.generation !== generation)) denied();
@@ -33,7 +35,8 @@ export function createConnectorResolver({environment, generation, registry, stor
       provider: record.provider, access: record.provider === 'slack' ? 'team-public' : 'workspace-global', rawPrefix: record.s3Prefix + '/'});
     const store = await storage(record);
     const search = searchFor(binding.tenantId);
-    return {binding, store, search};
+    const drive = record.provider === 'googledrive' ? driveAccess?.(record) : undefined;
+    return {binding, store, search, ...(drive ? {drive, resourceAccess: async (sourceId: string) => {const permitted = await drive.inspect(sourceId); await drive.validateAudience(); return Boolean(permitted);}} : {})};
   }
   type CoreSearch = ReturnType<typeof createConnectorSearch>['search'];
   type ConnectorQuery = Parameters<CoreSearch>[2];
@@ -47,9 +50,16 @@ export function createConnectorResolver({environment, generation, registry, stor
       const records = (await registry.listTenant(principal.tenantId)).filter(record => eligible(record) && record.status === 'active' && record.environment === environment);
       if (!records.length) return query.raw ? {responses: [], examined: 0, truncated: false} : {hits: [], examined: 0, truncated: false};
       const resolved = await Promise.all(records.map(record => resolve({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation})));
-      const result = await resolved[0].search.search(principal, resolved.map(r => r.binding), query);
+      const accessed = new Set<string>();
+      const result = await resolved[0].search.search(principal, resolved.map(r => r.binding), query, async (binding, sourceId) => {
+        const match = resolved.find(item => item.binding.connectionId === binding.connectionId);
+        if (!match?.resourceAccess) return false;
+        accessed.add(binding.connectionId);
+        return match.resourceAccess(sourceId);
+      });
       // A concurrent disconnect must not return results after we observe it.
       for (const record of records) await resolve({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation});
+      for (const item of resolved) if (accessed.has(item.binding.connectionId)) await item.drive?.validateAudience();
       return result;
     }
   return {

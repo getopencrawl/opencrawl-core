@@ -59,13 +59,13 @@ export interface OAuthProvider extends ProviderBase {
   auth?: 'oauth'; toolkit: string; authConfig: {name: string; scheme?: string; credentials: Record<string, string>};
   keyHelp?: undefined;
   account(proxy: Proxy, principal: Pick<Principal, 'tenantId' | 'userId'>): Promise<AccountInfo>;
-  total(proxy: Proxy, input: CountInput): Promise<number>;
+  total(proxy: Proxy, input: CountInput): Promise<number | null>;
 }
 export interface KeyProvider extends ProviderBase {
   auth: 'api-key'; toolkit?: undefined; authConfig?: undefined;
   keyHelp: {title: string; body: string; label: string; placeholder?: string; pattern: string};
   account(proxy: Proxy, principal: Pick<Principal, 'tenantId' | 'userId'>): Promise<AccountInfo>;
-  total(proxy: Proxy, input: CountInput): Promise<number>;
+  total(proxy: Proxy, input: CountInput): Promise<number | null>;
 }
 export interface GithubProvider extends ProviderBase {
   auth: 'github-app'; toolkit?: undefined; authConfig?: undefined; keyHelp?: undefined;

@@ -11,77 +11,36 @@ export function nextCursor(headers: Record<string, string> = {}) {
   const link = Object.entries(headers || {}).find(([name]) => name.toLowerCase() === 'link')?.[1] || '';
   return /[?&]cursor=([^&>]+)[^>]*>;\s*rel="?next/.exec(link)?.[1] || undefined;
 }
-/** Shared drives the connected Google account belongs to (never My Drive). */
-async function sharedDrives(proxy: Proxy) {
-  const drives: Array<{id: string; name?: string}> = [];
-  let pageToken: string | undefined;
-  do {
-    const {status, data} = await proxy({endpoint: `${DRIVE}/drives`, query: {pageSize: 100, fields: 'nextPageToken,drives(id,name)', pageToken}});
-    if (status >= 400) throw new Error(`Google Drive returned ${status} while listing shared drives`);
-    drives.push(...(data?.drives || []));
-    pageToken = data?.nextPageToken;
-  } while (pageToken);
-  return drives;
-}
 // Data sources and page markdown require this Notion API version.
 export const NOTION_VERSION = '2026-03-11';
 // The connector stops listing ten minutes before now so Gmail's search index has caught up.
 // const SETTLE_MS = 10 * 60_000;
 
-export function createProviderCatalog(connectors: Record<string,ConnectorDefinition>): ProviderCatalog {
+export function createProviderCatalog(connectors: Record<string,ConnectorDefinition>, {driveWorkspaceAccess = false}: {driveWorkspaceAccess?: boolean} = {}): ProviderCatalog {
 const providers:ProviderCatalog = {
   googledrive: {
-    id: 'googledrive',
-    primaryMetric: 'Files',
-    name: 'Google Drive',
-    unavailableReason: 'Google Drive indexing is not available in this release. Connecting an account would not make its files searchable. Use another source for now.',
-    description: 'Files in your team’s shared drives.',
-    toolkit: 'googledrive',
-    // Per team, shared drives only. The connector lists each shared drive the signer belongs to
-    // (corpora=drive) and never reads My Drive or files merely shared with them. Google exposes
-    // no Workspace ID to Drive, so it is stored under workspace=<OpenCrawl team>.
-    scope: 'team',
-    teamOnly: true,
-    help: 'Google Drive indexing is not available in this release. The source adapter is retained for development, but new connections are disabled until files can be indexed and retrieved.',
+    id: 'googledrive', primaryMetric: 'Files', name: 'Google Drive',
+    // Older runtime adapters must not enable the source before installing its
+    // permission-enforcing proxy and live retrieval policy.
+    ...(!driveWorkspaceAccess ? {unavailableReason: 'Google Drive requires the workspace permission adapter. Upgrade the application runtime to enable this source.'} : {}),
+    description: 'Documents everyone in your workspace can access.',
+    toolkit: 'googledrive', scope: 'team', teamOnly: true,
+    help: 'Imports Google Docs, every Sheets tab, Slides text, PDFs and text files only when every current workspace member has access. Private files and unverified group-only permissions are excluded. Permissions are checked again for search.',
     owner: record => `workspace=${record.workspace}`,
     authConfig: {name: 'OpenCrawl Google Drive shared read', credentials: {scopes: 'https://www.googleapis.com/auth/drive.readonly'}},
     connector: connectors.googledrive,
-    streams: [
-      {name: 'drives', syncMode: 'full_refresh_append'},
-      {name: 'files', syncMode: 'incremental_append', cursorField: ['modifiedTime']},
-      // Docs as markdown, Sheets as CSV (first sheet), Slides as text, for files that changed.
-      {name: 'contents', syncMode: 'incremental_append', cursorField: ['modifiedTime']},
-    ],
-    progressStream: ['files'],
-    progress: [
-      {stream: 'drives', label: 'Shared drives'},
-      {stream: 'files', label: 'Files'},
-      {stream: 'contents', label: 'Documents read'},
-    ],
-    units: ['file', 'files'],
-    // Everything in the shared drives, whatever its age: Drive is a knowledge base, not a feed.
-    sourceConfiguration: () => ({start_date: '2000-01-01T00:00:00Z', num_workers: 3, requests_per_minute: 600}),
-    /** The shared drives this connection can read, shown on the card. */
+    streams: [{name: 'workspace_documents', syncMode: 'full_refresh_append'}],
+    progressStream: ['workspace_documents'],
+    progress: [{stream: 'workspace_documents', label: 'Files read'}],
+    keys: {workspace_documents: ['id']}, units: ['file', 'files'],
+    sourceConfiguration: () => ({}),
     async account(proxy, {tenantId}) {
-      const drives = await sharedDrives(proxy);
-      const names = drives.map(d => d.name).filter(Boolean);
-      return {label: names.length ? `Shared drives: ${names.join(', ')}` : 'No shared drives yet', workspace: tenantId};
+      const result = await proxy<{user?: {emailAddress?: string}}>({endpoint: `${DRIVE}/about`, query: {fields: 'user(emailAddress)'}});
+      if (result.status !== 200 || !result.data?.user?.emailAddress) throw new Error('Google Drive account is unavailable');
+      return {label: result.data.user.emailAddress, workspace: tenantId};
     },
-    /** Files in every shared drive, listed the way the connector lists them. */
-    async total(proxy, {maxPages = 200} = {}) {
-      let count = 0;
-      for (const drive of await sharedDrives(proxy)) {
-        let pageToken: string | undefined;
-        for (let page = 0; page < maxPages; page++) {
-          const {status, data} = await proxy({endpoint: `${DRIVE}/files`, query: {corpora: 'drive', driveId: drive.id, includeItemsFromAllDrives: true,
-            supportsAllDrives: true, pageSize: 1000, q: 'trashed = false', fields: 'nextPageToken,files(id,driveId)', pageToken}});
-          if (status >= 400) throw new Error(`Google Drive returned ${status} while counting files`);
-          count += (data?.files || []).filter(f => f.driveId === drive.id).length;
-          if (!(pageToken = data?.nextPageToken)) break;
-        }
-      }
-      return count;
-    },
+    // The signer-visible file count is not the workspace-visible denominator.
+    total: async () => null,
   },
   slack: {
     id: 'slack',
