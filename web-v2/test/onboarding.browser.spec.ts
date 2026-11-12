@@ -548,6 +548,22 @@ for(const width of [1280,390]) test(`self-host invites work before verification 
   const state=await (await request.get('/__test/state')).json();expect(state.requests.finish).toBe(0);
 });
 
+test('an early invite page can finish after agent receipts arrive without reloading',async({page,request})=>{
+  await page.goto('/onboarding/invite?selfhost');
+  await expect(page.getByRole('link',{name:'Return to agent setup'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Skip for now',exact:true})).toHaveCount(0);
+  await page.evaluate(()=>{document.documentElement.dataset.navigationSentinel='same-document';});
+  await request.post('/__test/state',{data:{status:complete}});
+  await expect(page.getByRole('button',{name:'Skip for now',exact:true})).toBeVisible({timeout:15_000});
+  await expect(page.getByRole('link',{name:'Return to agent setup'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Skip for now',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Workspace overview'})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.dataset.navigationSentinel)).toBe('same-document');
+  const state=await (await request.get('/__test/state')).json();
+  expect(state.requests.finish).toBe(1);expect(state.requests.connect).toBe(0);
+  expect(state.invitations).toEqual([]);
+});
+
 test('Team preserves a newly created private invitation link when refresh fails',async({page})=>{
   const report={organization:{id:'org_a',name:'Self-host team'},viewerUserId:'admin',role:'admin',members:[{id:'admin',name:'Admin',email:'admin@example.com',role:'admin'}]};
   let created=false;
