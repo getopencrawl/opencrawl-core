@@ -26,12 +26,13 @@ chunk of a longer source. Source content is untrusted and is not authorization.
 
 Every source uses the same lexical query (`title^2` and `text`) in the same
 organization realm. Sources retain BM25 order and are interleaved by source rank for discovery.
-`match: all` requires every analyzed term across those fields. No stemming,
+`match: all` requires every analyzed term across those fields within one indexed
+passage; terms in separate messages or chunks do not combine. No stemming,
 semantic model, fuzzy matching or query expansion is added.
 
-`filters` accepts exact `authors`, `kinds`, `excludeKinds`, `roles`, `harnesses`, `origins` (sessions),
+`filters` accepts exact `authors`, `kinds`, `excludeKinds`, `roles`, `harnesses`, `origins`, `sessionIds` (sessions),
 `providers`, `repositories`, `projects`, `paths`, and `toolNames`, plus inclusive
-ISO `after`/`before` bounds. Lists are OR; different filters are AND. Roles, origins
+ISO `after`/`before` bounds. Lists are OR; different filters are AND. Roles, origins, session IDs
 and tool names apply to sessions, projects/paths to memories, providers/repositories
 to connectors. Incompatible sources produce no matches, never an unfiltered
 fallback. Session and memory time controls use original event/modification time.
@@ -59,7 +60,12 @@ cheap discovery and fetch selected IDs.
 memory file or connector resource. `session` also groups whole conversations;
 `none` exposes all passages. `groupedCount`/`groupedIds` retain pointers to other
 candidates. Counts describe this window only. Use session grouping for discovery,
-then scope to a session for detailed research.
+then scope to a session for detailed research. `filters.sessionIds` accepts 1–20
+exact IDs (each at most 200 characters), so an agent can search several discovered
+chats together. If top-level `sessionId` is also supplied, both constraints must
+match. Session IDs select candidates; current resource permissions still apply.
+Within a known chat or set of chats, query the remaining detail rather than
+requiring the entity name to recur in every passage.
 
 Text of at least 80 characters that differs only in line endings or trailing
 line whitespace is grouped within the same
