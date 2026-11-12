@@ -178,15 +178,18 @@ const engine = (session, name) => { if (!state.engines.has(session)) remember(st
 function poke() {
   if (state.timer) { clearTimeout(state.timer); state.timer = null; }
   if (state.running) { state.again = true; return; }
-  if (!existsSync(COMMAND[1])) return;
+  if (state.broken || !existsSync(COMMAND[1])) return;
   state.running = true; state.again = false;
   const done = () => { if (!state.running) return; state.running = false; if (state.again) poke(); };
+  // A collector that cannot be started will not start later in this process
+  // either: stop filling an inbox nobody empties.
+  const failed = () => { state.broken = true; state.running = false; };
   try {
     // Never awaited: the collector ends itself within five seconds, and
     // OpenCode may exit before it does.
     const child = spawn(COMMAND[0], COMMAND.slice(1), {stdio: "ignore", windowsHide: true});
-    child.on("error", done); child.on("exit", done); child.unref();
-  } catch { done(); }
+    child.on("error", failed); child.on("exit", done); child.unref();
+  } catch { failed(); }
 }
 function soon() {
   if (state.timer) return;
@@ -195,7 +198,7 @@ function soon() {
 }
 // On disk before this returns, so an exit right after a turn loses nothing.
 function deliver(directory, sessionID, event, extra) {
-  if (!existsSync(COMMAND[1])) return;
+  if (state.broken || !existsSync(COMMAND[1])) return;
   const known = state.sessions.get(sessionID), session = {id: sessionID, directory: known?.directory ?? directory, parentID: known?.parentID, version: known?.version};
   const name = String(Date.now()).padStart(15, "0") + "-" + String(++state.counter).padStart(8, "0") + "-" + process.pid + ".json";
   mkdirSync(INBOX, {recursive: true, mode: 0o700});

@@ -459,6 +459,17 @@ test('the OpenCode plugin forwards what is finished, once, and nothing while it 
     rmSync(runner);const before=delivered().length;
     await send('session.idle',{sessionID:sid});
     expect(delivered()).toHaveLength(before);
+    // A collector that cannot be started at all stops the plugin for the rest
+    // of the process, instead of filling an inbox nobody empties.
+    const lost=join(dir,'lost.js'),lostInbox=join(dir,'lost-inbox');
+    writeFileSync(runner,'');
+    writeFileSync(lost,openCodePlugin([join(dir,'no-such-node'),runner,'collect','hook','--harness','opencode'],lostInbox).replace('opencrawl.capture.opencode','opencrawl.capture.opencode.lost'));
+    const broken=await (await import(pathToFileURL(lost).href)).OpenCrawlCapture({directory:'/home/dev/shop'});
+    await broken.event({event:{type:'session.idle',properties:{sessionID:'ses_lost'}}});
+    expect(readdirSync(lostInbox)).toHaveLength(1);
+    await Bun.sleep(300);
+    await broken.event({event:{type:'session.idle',properties:{sessionID:'ses_lost'}}});
+    expect(readdirSync(lostInbox)).toHaveLength(1);
   } finally {rmSync(dir,{recursive:true,force:true});}
 },20_000);
 

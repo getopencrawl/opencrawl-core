@@ -10,9 +10,9 @@ Capture uses command hooks and incremental reads of native JSONL transcripts. Th
 
 These three keep no transcript file the collector reads, so a session is
 assembled from what each agent's own hooks or plugin deliver, in the event
-shapes used for Claude Code and Codex. Everything below was observed on the
-shipped clients: OpenCode 1.19.5, Cursor's CLI 2026.11.11 and Agent SDK 1.3.1,
-and Muse Code 1.4.15.
+shapes used for Claude Code and Codex. What follows was observed on the shipped
+clients (OpenCode 1.19.5, Cursor's CLI 2026.11.11 and Agent SDK 1.3.1, Muse
+Code 1.4.15), except where it names a vendor's documentation as the source.
 
 ### Which agents an install records
 
@@ -38,7 +38,7 @@ replaces the other's entries and says so, and naming both is refused.
 | Agent | What capture writes | Loaded |
 | --- | --- | --- |
 | OpenCode | A plugin of its own, `plugins/opencrawl.js` in OpenCode's global configuration directory (`$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`) | When OpenCode starts: restart running sessions and servers |
-| Cursor | Entries in `~/.cursor/hooks.json`, beside the person's own | By new conversations; Cursor reloads the file when it changes |
+| Cursor | Entries in `~/.cursor/hooks.json`, beside the person's own | By new conversations; Cursor's documentation says the editor reloads the file when it changes |
 | Muse Code | Entries in the `hooks` block of `settings.json` (`$XDG_CONFIG_HOME/muse`, else `~/.config/muse`), beside the person's own | When a session starts |
 
 Existing entries and settings are preserved, changed files are backed up, a
@@ -155,7 +155,8 @@ Cursor's own shape, `{command, timeout}`, for `sessionStart`, `sessionEnd`,
   the option omitted it runs no hooks at all. A cloud workspace that runs
   Cursor through the SDK therefore records only if it passes that option, and
   `collect status` after one conversation shows whether it does. Cursor's own
-  cloud agents do not read the user-level file.
+  cloud agents do not read the user-level file, according to Cursor's
+  documentation.
 - **One conversation is one session**, with the ID `conversation_id`. The
   session's directory is the workspace root, not a tool call's own directory,
   so a project exclusion names the workspace.
