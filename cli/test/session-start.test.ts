@@ -1,5 +1,5 @@
 import {test, expect} from 'bun:test';
-import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, statSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, statSync, chmodSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {PassThrough} from 'node:stream';
@@ -62,6 +62,7 @@ test('startup installation preserves capture and user hooks, is idempotent, and 
   const file=join(root,'settings.json');
   const existing={permissions:{allow:['Read']},hooks:{SessionStart:[{matcher:'startup',hooks:[{type:'command',command:'capture',async:true,statusMessage:'OpenCrawl session capture'}]}],Stop:[{hooks:[{type:'command',command:'user'}]}]}};
   writeFileSync(file,JSON.stringify(existing,null,4),{mode:0o640});
+  if(process.platform!=='win32')chmodSync(file,0o640); // Creation mode is narrowed by the host umask.
   expect(startupHooks(['claude-code'],'install',options)[0]!.status).toBe('installed');
   const config=JSON.parse(readFileSync(file,'utf8'));
   expect(config.hooks.SessionStart[0]).toEqual(existing.hooks.SessionStart[0]);
