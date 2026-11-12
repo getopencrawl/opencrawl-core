@@ -19,7 +19,7 @@ test('freshness breaks close lexical matches, with bounded influence and no inpu
 
 test('only original source dates count; absent, invalid and future dates are neutral', () => {
   const old = hit('old', 10, 3650);
-  for (const timestamp of [undefined, null, '', 'not-a-date', '4', date(-1)]) {
+  for (const timestamp of [undefined, null, '', 'not-a-date', '4', '2026-02-30T12:00:00Z', date(-1)]) {
     const undated = hit('undated', 10, 0, {timestamp, receivedAt:date(0), extractedAt:now, generation:now});
     assert.deepEqual(recencyRank('sessions', [old, undated], now).map(h=>h.id), ['old','undated']);
   }
@@ -44,4 +44,13 @@ test('workspace recency stays inside authorized source windows and pins its cloc
   const historical=await service.search(p,{query:'evidence',source:'sessions',order:'oldest'});
   assert.deepEqual(historical.results.map(h=>h.id),['sessions:old','sessions:fresh']);
   revoked=true;await assert.rejects(service.search(p,{...input,cursor:first.next}),/denied/);
+
+  // Without a pinned clock, a future-dated hit becomes eligible on page two,
+  // moves to the front, and repeats the first page's result at offset one.
+  clock=now;
+  const crossing=createWorkspaceSearch({now:()=>clock,sessions:{search:async()=>({hits:[hit('old',10.1,3650),hit('future',10,0,{timestamp:new Date(now+1000).toISOString()}),hit('fresh',9,0)]})}});
+  const a=await crossing.search(p,{...input,source:'sessions'});
+  assert.equal(a.results[0].id,'sessions:fresh');clock+=299000;
+  const b=await crossing.search(p,{...input,source:'sessions',cursor:a.next});
+  assert.equal(b.results[0].id,'sessions:old');
 });

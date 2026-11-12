@@ -1,10 +1,12 @@
 import type {Passage} from './types.mjs';
+import {z} from 'zod';
 
 // A bounded adjustment within each source's authorized lexical candidate window.
 // Older evidence keeps its full lexical score; freshness only adds a small bonus.
 export const RECENCY_WEIGHT = 0.2;
 export const RECENCY_HALF_LIFE_DAYS = 7;
 const DAY = 86_400_000;
+const sourceDate = z.iso.datetime({offset: true});
 
 export function originalTime(source: string, hit: Passage): number {
   const raw = source === 'memories' ? hit.modifiedAt : hit.timestamp;
@@ -12,7 +14,7 @@ export function originalTime(source: string, hit: Passage): number {
   if (typeof raw !== 'string') return NaN;
   // Slack stores original message time as epoch seconds, including fractions.
   if (/^\d{10}(\.\d+)?$/.test(raw)) return Number(raw) * 1000;
-  if (!/^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$/.test(raw)) return NaN;
+  if (!sourceDate.safeParse(raw).success) return NaN;
   return Date.parse(raw);
 }
 
