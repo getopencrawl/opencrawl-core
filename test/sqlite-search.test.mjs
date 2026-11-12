@@ -10,6 +10,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {createRealm} from '../dist/src/search/realm.mjs';
+import {lexicalQuery} from '../dist/src/search/lexical.mjs';
 import {createSessionSearch, searchSettings} from '../dist/src/sessions/search.mjs';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
@@ -118,6 +119,91 @@ test('SQLite supports board ranking/facets and library/usage aggregations', asyn
   const groups = await realm.collection('session').search(principal, {size: 0, aggs: {sessions: {multi_terms: {terms: [{field: 'session.userId'}, {field: 'session.sessionId'}], order: [{last: 'desc'}, {_key: 'asc'}]}, aggs: {last: {max: {field: 'timestamp'}}, records: {top_hits: {size: 1}}}}}});
   assert.deepEqual(groups.aggregations.sessions.buckets[0].key, ['alice', 'session']);
   assert.equal(groups.aggregations.sessions.buckets[0].records.hits.hits[0]._source.corpus, 'session');
+});
+
+test('SQLite single-pass scores equal the per-row BM25 formula with the same matches, order and totals', async t => {
+  const {path, endpoint, principal} = await fixture(t), realm = createRealm({endpoint, tenantId: principal.tenantId});
+  await realm.ensureIndex();
+  const collection = realm.collection('session');
+  // A shared, skewed vocabulary: the first words occur in most documents and
+  // the numbered ones in few, so each query matches many documents with different
+  // term counts and lengths. Nine exact copies tie on every score.
+  let seed = 7;
+  const next = () => (seed = seed * 48271 % 2147483647) / 2147483647;
+  const base = ('orion launch release checklist approved pending review deploy rollback metrics cache index search sqlite token budget ' +
+    'alert owner draft final notes agenda risk plan scope audit merge branch queue retry').split(' ');
+  const vocabulary = Array.from({length: 210}, (_, i) => base[i % 30] + (i < 30 ? '' : Math.floor(i / 30)));
+  const words = (count, skew = 2, range = vocabulary.length) => Array.from({length: count}, () => vocabulary[Math.floor(next() ** skew * range)]).join(' ');
+  const documents = Array.from({length: 300}, (_, i) => ({id: 'doc-' + String(i).padStart(3, '0'),
+    document: {...principal, kind: ['message', 'tool_result', 'tool_call'][i % 3], sequence: i, ...(i % 2 ? {title: words(2 + i % 4, 4, 12)} : {}), text: words(10 + i % 90)}}));
+  for (let i = 291; i < 300; i++) documents[i].document = {...documents[i - 6].document};
+  await collection.bulk(principal, documents);
+  // Another corpus shares the FTS table, its term statistics and these words.
+  await realm.collection('memory').bulk(principal, Array.from({length: 40}, (_, i) => ({id: 'memory-' + i, document: {...principal, text: words(40)}})));
+  const db = new DatabaseSync(path, {readOnly: true});
+  t.after(() => db.close());
+  const fts = db.prepare("SELECT name FROM sqlite_master WHERE sql LIKE 'CREATE VIRTUAL TABLE%'").get().name;
+  // The reference is the formula used before scoring became one pass per clause:
+  // every clause is looked up again, in its own MATCH context, for each document,
+  // and a clause that misses adds nothing. `only` marks a clause that never scores.
+  const reference = (clauses, matches) => db.prepare(`SELECT d.id, json_extract(d.document, '$.session.kind') AS kind${clauses.map((clause, i) =>
+    `, (SELECT -bm25(${fts}, 2.0, 1.0, 2.0) * ${clause.boost ?? 1} FROM ${fts} WHERE ${fts} MATCH ? AND rowid=d.rowid) AS s${i}`).join('')} FROM documents d WHERE d.realm=? AND d.corpus='session'`)
+    .all(...clauses.map(clause => clause.match), realm.index)
+    .map(row => ({id: row.id, kind: row.kind, hit: clauses.map((_, i) => row['s' + i] !== null), score: clauses.reduce((sum, clause, i) => sum + (clause.only ? 0 : row['s' + i] ?? 0), 0)}))
+    .filter(matches).sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
+  const same = (hits, expected) => {
+    assert.deepEqual(hits.map(hit => hit._id), expected.map(row => row.id));
+    hits.forEach((hit, i) => assert.ok(Math.abs(hit._score - expected[i].score) <= 1e-9 * expected[i].score, `${hit._id}: ${hit._score} is not ${expected[i].score}`));
+  };
+  const check = async ({query, clauses, matches}) => {
+    const expected = reference(clauses, matches), result = await collection.search(principal, {query, size: 10000, sort: ['_score', {id: 'asc'}]});
+    assert.ok(expected.length > 50 && expected.length < 300 && new Set(expected.map(row => row.score)).size > 40);
+    assert.equal(result.hits.total.value, expected.length);
+    same(result.hits.hits, expected);
+    return expected;
+  };
+  const quoted = text => text.split(' ').map(word => '"' + word + '"');
+  const any = (text, columns = 'title text') => `{${columns}} : (${quoted(text).join(' OR ')})`;
+  const all = (text, columns = 'title text') => `{${columns}} : (${quoted(text).join(' AND ')})`;
+  const phrase = (text, columns = 'title text') => `{${columns}} : ("${text}")`;
+  const first = row => row.hit[0], fields = ['title^2', 'text'];
+  await check({query: lexicalQuery('release checklist', 'any'), clauses: [{match: any('release checklist')}, {match: phrase('release checklist'), boost: 2}], matches: first});
+  await check({query: lexicalQuery('orion launch release', 'all'), clauses: [{match: all('orion launch release')}, {match: phrase('orion launch release'), boost: 2}], matches: first});
+  await check({query: lexicalQuery('orion launch', 'phrase'), clauses: [{match: phrase('orion launch')}], matches: first});
+  // Boosts and single columns; any one clause selects a document.
+  await check({query: {bool: {minimum_should_match: 1, should: [{multi_match: {query: 'cache index search', fields, type: 'cross_fields', operator: 'or', boost: 3}},
+    {match: {text: {query: 'orion launch', operator: 'and', boost: 0.5}}}, {match_phrase: {title: {query: 'orion launch', boost: 4}}}]}},
+  clauses: [{match: any('cache index search'), boost: 3}, {match: all('orion launch', 'text'), boost: 0.5}, {match: phrase('orion launch', 'title'), boost: 4}], matches: row => row.hit.some(Boolean)});
+  // Optional clauses only score: filtered documents without them stay, at zero.
+  await check({query: {bool: {filter: [{match: {text: 'orion'}}], must_not: [{match: {title: 'launch'}}], should: [{match: {text: 'audit merge'}}, {match_phrase: {text: {query: 'release checklist', boost: 2}}}]}},
+    clauses: [{match: any('orion', 'text'), only: true}, {match: any('launch', 'title'), only: true}, {match: any('audit merge', 'text')}, {match: phrase('release checklist', 'text'), boost: 2}], matches: row => row.hit[0] && !row.hit[1]});
+  // A clause scores wherever it matches, even inside an optional group that does not.
+  await check({query: {bool: {must: [{match: {text: 'orion'}}], should: [{bool: {must: [{match: {text: 'launch'}}, {match: {title: 'release'}}]}}]}},
+    clauses: [{match: any('orion', 'text')}, {match: any('launch', 'text')}, {match: any('release', 'title')}], matches: first});
+  // The request session search sends: a kind filter around a many-word query,
+  // here the opening of a stored passage so that the phrase clause scores too.
+  const long = documents[285].document.text.split(' ', 12).join(' ');
+  const session = {query: {bool: {filter: [{terms: {'session.kind': ['message', 'tool_result']}}], must: [lexicalQuery(long, 'any')]}}, sort: ['_score', {id: 'asc'}]};
+  const expected = await check({query: session.query, clauses: [{match: any(long)}, {match: phrase(long), boost: 2}], matches: row => row.kind !== 'tool_call' && row.hit[0]});
+  // Continuation over scores, an offset, an empty page and a count-only request
+  // return the same ranking and keep the exact total.
+  const paged = [];
+  for (let after; ;) {
+    const page = await collection.search(principal, {...session, size: 25, ...(after ? {search_after: after} : {})});
+    assert.equal(page.hits.total.value, expected.length);
+    if (!page.hits.hits.length) break;
+    paged.push(...page.hits.hits); after = page.hits.hits.at(-1).sort;
+  }
+  same(paged, expected);
+  same((await collection.search(principal, {...session, size: 5, from: 3})).hits.hits, expected.slice(3, 8));
+  const grouped = await collection.search(principal, {...session, size: 0, aggs: {kinds: {terms: {field: 'session.kind'}, aggs: {best: {top_hits: {size: 3}}}}}});
+  assert.equal(grouped.hits.total.value, expected.length); assert.equal(grouped.hits.hits.length, 0);
+  assert.deepEqual(grouped.aggregations.kinds.buckets.map(bucket => bucket.key).sort(), ['message', 'tool_result']);
+  for (const bucket of grouped.aggregations.kinds.buckets) {
+    const rows = expected.filter(row => row.kind === bucket.key);
+    assert.equal(bucket.best.hits.total.value, rows.length);
+    same(bucket.best.hits.hits.map(hit => ({...hit, _id: hit._id.replace('session:', '')})), rows.slice(0, 3));
+  }
 });
 
 test('SQLite memory snapshots activate, replace removed files and reject stale replay', async t => {

@@ -156,9 +156,9 @@ export function createSqliteRealm(options: RealmOptions): SearchRealm {
           if (duration && !Number.isSafeInteger(timeout)) unsupported('timeout');
           const result = withDatabase(false, createIfMissing, db => {
             const compiler = new QueryCompiler(fts), where = and(whereScope(), compiler.query(body.query ?? {match_all: {}}));
-            const score = compiler.score(), output = response();
-            output.hits.total.value = Number(db.prepare('SELECT count(*) AS n FROM documents d WHERE ' + where.sql).get(...where.args)!.n);
-            output.hits.hits = readHits(db, where, score, body).map(decode);
+            const score = compiler.score(), output = response(), page = readHits(db, where, score, body);
+            output.hits.total.value = page.total;
+            output.hits.hits = page.hits.map(decode);
             if (Array.isArray(body._source)) {
               for (const hit of output.hits.hits) hit._source = Object.fromEntries(Object.entries(hit._source).filter(([key]) => key === 'tenantId' || (body._source as string[]).includes(key))) as SearchDocument;
             } else if (body._source === false) unsupported('_source=false; ownership fields are required');

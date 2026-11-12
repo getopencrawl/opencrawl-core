@@ -1,10 +1,10 @@
 import type {DatabaseSync} from 'node:sqlite';
-import {and, field, integer, keys, literal, object, QueryCompiler, readHits, unsupported} from './sqlite-query.mjs';
-import type {Sql} from './sqlite-query.mjs';
+import {and, count, field, integer, keys, literal, object, QueryCompiler, readHits, unsupported} from './sqlite-query.mjs';
+import type {Score, Sql} from './sqlite-query.mjs';
 
 /** Aggregations used by the product's board, library and usage views. SQL does
  * the filtering/grouping; no whole-corpus materialization in application memory. */
-export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql, input: unknown, budget = {buckets: 10000}, depth = 0): Record<string, unknown> {
+export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Score, input: unknown, budget = {buckets: 10000}, depth = 0): Record<string, unknown> {
   if (depth > 12) return unsupported('aggregation depth');
   const result: Record<string, unknown> = {};
   for (const [name, raw] of Object.entries(object(input))) {
@@ -12,13 +12,13 @@ export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql,
     if (types.length !== 1) return unsupported('aggregation');
     const type = types[0], option = spec[type];
     const children = (filter: Sql) => spec.aggs ? aggregate(db, fts, filter, score, spec.aggs, budget, depth + 1) : {};
-    const count = (filter: Sql) => Number(db.prepare('SELECT count(*) AS n FROM documents d WHERE ' + filter.sql).get(...filter.args)!.n);
     if (type === 'filter') {
       const filter = and(where, new QueryCompiler(fts).query(option, false));
-      result[name] = {doc_count: count(filter), ...children(filter)};
+      result[name] = {doc_count: count(db, filter), ...children(filter)};
     } else if (type === 'top_hits') {
       const opts = object(option); keys(opts, ['size', 'sort', '_source']);
-      result[name] = {hits: {hits: readHits(db, where, score, opts), total: {value: count(where), relation: 'eq'}}};
+      const page = readHits(db, where, score, opts);
+      result[name] = {hits: {hits: page.hits, total: {value: page.total, relation: 'eq'}}};
     } else if (['min', 'max', 'cardinality', 'value_count'].includes(type)) {
       const opts = object(option); keys(opts, ['field', 'precision_threshold']); const f = field(opts.field);
       const value = f.date ? 'epoch(j.value)' : 'j.value';
