@@ -121,9 +121,6 @@ test('whoami and status accept an environment token on a machine with no saved s
     expect(rejected.code).toBe(2); expect(rejected.body.error.code).toBe('AUTH_REQUIRED');
     const signedOut = await run(['status'], {OPENCRAWL_TOKEN: 'oca1_' + 'd'.repeat(64), OPENCRAWL_API_URL: origin});
     expect(signedOut.code).toBe(0); expect(signedOut.body.data).toMatchObject({authenticated: false});
-    // Without a named destination the token is sent nowhere, and whoami reports the missing sign-in as before.
-    const unbound = await run(['whoami'], {OPENCRAWL_TOKEN: token});
-    expect(unbound.code).toBe(2); expect(unbound.body.error.code).toBe('AUTH_REQUIRED');
     const usage = await run(['token'], {});
     expect(usage.code).toBe(64); expect(usage.body.error.code).toBe('INVALID_USAGE');
   } finally { await server.stop(true); }

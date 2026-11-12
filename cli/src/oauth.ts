@@ -1,3 +1,5 @@
+export const DEFAULT_API_ORIGIN = 'https://app.getopencrawl.com';
+
 export class CliError extends Error {
   retryAfterMs?: number;
   httpStatus?: number;

@@ -7,7 +7,7 @@ import {scheduleMemoryRefresh} from './capture/memory.ts';
 import {scheduleCliUpdate} from './update.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs} from 'node:util';
-import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest} from './oauth.ts';
+import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest, DEFAULT_API_ORIGIN} from './oauth.ts';
 import {readSession, saveSession, accessToken, logout} from './session.ts';
 import {filesystemError} from './filesystem.ts';
 import {agentSkills} from './skills.ts';
@@ -79,9 +79,8 @@ Search: opencrawl search "words" --json
 Search returns compact verbatim excerpts. Expand with opencrawl fetch <result-id>.
   --offset N --length 1..16000       Read a passage in parts (default length: 6000)
   --content-version VERSION         Detect changes between fetch pages
-Use OPENCRAWL_TOKEN with an explicit --api or OPENCRAWL_API_URL for an agent access
-token or a self-hosted bearer token; otherwise uses saved login. Environment tokens
-never use a default server.
+Environment tokens use OpenCrawl cloud by default. Use --api or OPENCRAWL_API_URL
+to send them to a self-hosted deployment. Without a token, the CLI uses saved login.
 
 Machines created per task (cloud agent platforms):
   token create [--env-file PATH]     One-year token for search, the board, MCP and uploads
@@ -171,7 +170,7 @@ export async function main(args = process.argv.slice(2)) {
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL
       ?? readCaptureConfig()?.api
-      ?? 'https://app.getopencrawl.com');
+      ?? DEFAULT_API_ORIGIN);
     if (command === 'skills') {
       const data = await agentSkills(parsed.positionals[1] ?? 'status', api, {clients: parsed.values.client as string[] | undefined});
       emit(data, JSON.stringify(data, null, 2));
