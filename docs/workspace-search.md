@@ -64,8 +64,6 @@ then scope to a session for detailed research. `filters.sessionIds` accepts 1–
 exact IDs (each at most 200 characters), so an agent can search several discovered
 chats together. If top-level `sessionId` is also supplied, both constraints must
 match. Session IDs select candidates; current resource permissions still apply.
-Within a known chat or set of chats, query the remaining detail rather than
-requiring the entity name to recur in every passage.
 
 Text of at least 80 characters that differs only in line endings or trailing
 line whitespace is grouped within the same
