@@ -1,11 +1,13 @@
 import {readdirSync, statSync, realpathSync} from 'node:fs';
 import {join, sep} from 'node:path';
+import {homedir} from 'node:os';
+import {atomicJson} from '../session.ts';
 import {createInterface} from 'node:readline/promises';
 import {CliError} from '../oauth.ts';
 import {setTimeout as pause} from 'node:timers/promises';
 import {captureTranscript, captureDir, flushCaptures, readCaptureConfig, refreshCaptureIdentity, recordError, type CaptureConfig} from './runtime.ts';
 import type {TranscriptHarness} from './parse.ts';
-import {claudeDesktopHistories} from './desktop-history.ts';
+import {claudeDesktopHistories,defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 
 export const backfillNotice = 'Import local Claude Code and Codex history, including desktop coding sessions and host-mirrored Claude Desktop transcripts. Messages, tool arguments/results and available attachments will be shared with your signed-in OpenCrawl team and attributed to you. Cloud-only chats and VM-only records are not included.';
 type Selection = 'all'|TranscriptHarness;
@@ -20,7 +22,7 @@ function configFor(api:string) {
   return config;
 }
 /** File metadata only: preview never reads transcript contents, spools data, or contacts the server. */
-export function inventory(config:CaptureConfig, selected:Selection) {
+export function inventory(config:Pick<CaptureConfig,'roots'|'claudeDesktopSessionsRoot'>, selected:Selection) {
   const files:{harness:TranscriptHarness,path:string,bytes:number}[]=[];
   const sources:{harness:TranscriptHarness,files:number,bytes:number}[]=[];
   for(const harness of ['claude-code','codex'] as TranscriptHarness[]) {
@@ -59,44 +61,66 @@ export function inventory(config:CaptureConfig, selected:Selection) {
   return {files,sources};
 }
 export function backfillPreview(api:string, selected:Selection='all') {
-  const config=configFor(api), {sources}=inventory(config,selected);
-  return {status:'preview',api:config.api,owner:config.owner,sources,notice:backfillNotice,
-    nextStep:'Ask the user whether to import Claude, Codex, both, or skip. Only after they choose, run opencrawl collect backfill --harness <claude-code|codex|all> --yes --api '+config.api+'. To skip during setup, use collect install --backfill skip.'};
+  const config=readCaptureConfig();
+  if(config&&config.api!==api)throw new CliError('CAPTURE_API_MISMATCH','Use the installed collector’s --api URL, or run collect install with the new URL first.');
+  // Metadata discovery is useful before consent and must not install hooks,
+  // create capture state, authenticate, or read transcript contents.
+  const roots=config??{roots:{'claude-code':process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),codex:process.env.CODEX_HOME||join(homedir(),'.codex')},claudeDesktopSessionsRoot:defaultClaudeDesktopSessionsRoot()};
+  const {sources}=inventory(roots,selected);
+  return {status:'preview',api,owner:config?.authPending?null:config?.owner??null,sources,notice:backfillNotice,
+    nextStep:'Ask the user whether to import Claude, Codex, both, or skip. Only after they choose, run opencrawl collect backfill --harness <claude-code|codex|all> --yes --api '+api+'. Install capture with the approved recording scope before importing. To skip during setup, use collect install --backfill skip.'};
 }
-// A long import must outlast a dropped connection or a deploy: retry transient
-// upload failures with backoff before stopping. Queued bytes stay on disk.
-const transient=(e:any)=>!(e instanceof CliError)||e.code==='NETWORK_ERROR'||e.code==='CAPTURE_UPLOAD_FAILED'&&/\((429|5\d\d)\)/.test(e.message);
-async function flushWithRetry(delays:number[]) {
-  for(let attempt=0;;attempt++){
-    try{return (await flushCaptures()).uploaded;}
-    catch(e){if(attempt>=delays.length||!transient(e))throw e;await pause(delays[attempt]);}
-  }
-}
-export async function backfill(api:string, selected:Selection, approved:boolean, options:{retryDelays?:number[]}={}) {
+// Retry transient auth and transport failures without discarding credentials or
+// cursors. Terminal authorization/scope errors must fail immediately.
+const transient=(e:unknown)=>!(e instanceof CliError)||['NETWORK_ERROR','AUTH_UNAVAILABLE','SESSION_BUSY','CAPTURE_RETRY_EXHAUSTED'].includes(e.code)||e.code==='CAPTURE_UPLOAD_FAILED'&&/\((429|5\d\d)\)/.test(e.message);
+export type BackfillProgress={status:'importing'|'retrying'|'complete'|'failed';processed:number;totalFiles:number;processedBytes:number;totalBytes:number;uploaded:number;retryInMs?:number};
+export const reportBackfillProgress=(json=false)=>(progress:BackfillProgress)=>process.stderr.write(json
+  ?JSON.stringify({schemaVersion:1,type:'backfill.progress',...progress})+'\n'
+  :`History ${progress.status}: ${progress.processed}/${progress.totalFiles} files, ${progress.processedBytes}/${progress.totalBytes} source bytes, ${progress.uploaded} batches uploaded${progress.retryInMs===undefined?'':`; retry in ${Math.ceil(progress.retryInMs/1000)}s`}.\n`);
+export async function backfill(api:string, selected:Selection, approved:boolean, options:{retryDelays?:number[];concurrency?:number;batchDelayMs?:number;onProgress?:(progress:BackfillProgress)=>void}={}) {
+  const concurrency=options.concurrency??4,batchDelayMs=options.batchDelayMs??0;
+  if(!Number.isInteger(concurrency)||concurrency<1||concurrency>4||!Number.isInteger(batchDelayMs)||batchDelayMs<0||batchDelayMs>60000)throw new CliError('INVALID_USAGE','Use --concurrency 1..4 and --batch-delay-ms 0..60000.',64);
   const delays=options.retryDelays??[2000,5000,15000,30000,60000];
-  // Consent is required even in JSON mode, when stdin is piped, or on a retry.
   if(!approved)throw new CliError('BACKFILL_CONSENT_REQUIRED','Preview with collect backfill --dry-run. Ask the user to choose Claude, Codex, both, or skip; pass --yes only after approval.',64);
-  const config=configFor(api);
-  await refreshCaptureIdentity(config);
-  const {files,sources}=inventory(config,selected);
-  let processed=0,uploaded=0;
+  const config=configFor(api),{files,sources}=inventory(config,selected);
+  let processed=0,processedBytes=0,uploaded=0,lastProgress=0;
+  const totalBytes=sources.reduce((sum,source)=>sum+source.bytes,0);
+  const progress=(status:BackfillProgress['status']='importing',force=false,retryInMs?:number)=>{
+    if(!force&&Date.now()-lastProgress<1000)return;
+    lastProgress=Date.now();
+    const value={status,processed,totalFiles:files.length,processedBytes,totalBytes,uploaded,...(retryInMs===undefined?{}:{retryInMs})};
+    atomicJson(join(captureDir(),'backfill-progress.json'),{...value,updatedAt:new Date().toISOString()});
+    options.onProgress?.(value);
+  };
+  const retry=async<T>(run:()=>Promise<T>):Promise<T>=>{
+    for(let attempt=0;;attempt++) {
+      try{return await run();}
+      catch(error) {
+        if(attempt>=delays.length||!transient(error))throw error;
+        const delay=Math.max(delays[attempt],error instanceof CliError?error.retryAfterMs??0:0);
+        progress('retrying',true,delay);await pause(delay);
+      }
+    }
+  };
+  const flush=()=>retry(()=>flushCaptures({concurrency,batchDelayMs,onUploaded:()=>{uploaded++;progress();}}));
+  const pending=()=>readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json'));
   const failures:{code:string}[]=[];
-  for(const file of files) {
-    try{await captureTranscript(config,file.harness,file.path,{},true);processed++;}
-    catch(e:any){failures.push({code:e instanceof CliError?e.code:'CAPTURE_FAILED'});recordError(e);}
-    // Bound the retry spool to one transcript at a time; stop if the receiver is offline.
-    // Completed historical files have no work to send. Keep replay local after
-    // the initial authentication; queued uploads still authenticate with the server.
-    if(readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json')))uploaded+=await flushWithRetry(delays);
-  }
-  // A competing uploader may have finished while the import was reading. This
-  // foreground fence waits for its lock; success never means merely queued.
-  if(readdirSync(join(captureDir(),'queue')).some(name=>name.endsWith('.json')))uploaded+=await flushWithRetry(delays);
-  if(failures.length) {
-    const error=new CliError('BACKFILL_INCOMPLETE',`Imported ${processed} of ${files.length} transcript files; ${failures.length} failed (${failures[0].code}). Fix the reported error and rerun the approved import; saved cursors prevent reimporting completed records.`);
-    recordError(error);throw error;
-  }
-  return {status:'complete',sources,processed,uploaded,notice:'Uploaded counts batches, not sessions. Already captured records are skipped. Only locally available records can be imported.'};
+  progress('importing',true);
+  try {
+    await retry(()=>refreshCaptureIdentity(config));
+    for(const file of files) {
+      try{await captureTranscript(config,file.harness,file.path,{},true);processed++;processedBytes+=file.bytes;}
+      catch(e){failures.push({code:e instanceof CliError?e.code:'CAPTURE_FAILED'});recordError(e);}
+      // Bound the spool to one transcript. Within it, four uploads share one
+      // exclusive flush owner and retain every batch until its durable receipt.
+      if(pending())await flush();
+      progress();
+    }
+    if(pending())await flush();
+    if(failures.length)throw new CliError('BACKFILL_INCOMPLETE',`Imported ${processed} of ${files.length} transcript files; ${failures.length} failed (${failures[0].code}). Fix the reported error and rerun the approved import; saved cursors prevent reimporting completed records.`);
+    progress('complete',true);
+    return {status:'complete',sources,processed,processedBytes,uploaded,notice:'Uploaded counts batches, not sessions. Source bytes count local files (compressed when archived), not network bytes. Already captured records are skipped. Only locally available records can be imported.'};
+  }catch(error){progress('failed',true);recordError(error);throw error;}
 }
 export async function chooseBackfill(ask:(prompt:string)=>Promise<string>) {
   const answer=(await ask('Import history? [c] Claude, [x] Codex, [b] both, [s] skip (default): ')).trim().toLowerCase();
@@ -106,15 +130,15 @@ export async function chooseBackfill(ask:(prompt:string)=>Promise<string>) {
   if(['','s','skip','n','no'].includes(answer))return 'skip' as const;
   throw new CliError('INVALID_USAGE','No history imported. Choose Claude, Codex, both, or skip.',64);
 }
-export async function setupBackfill(api:string, mode:string, json=false) {
+export async function setupBackfill(api:string, mode:string, json=false, options:{concurrency?:number;batchDelayMs?:number}={}) {
   if(mode==='skip')return {status:'skipped'};
-  if(mode!=='ask')return backfill(api,selection(mode),true);
+  if(mode!=='ask')return backfill(api,selection(mode),true,{...options,onProgress:reportBackfillProgress(json)});
   const preview=backfillPreview(api);
   if(json || !process.stdin.isTTY || !process.stderr.isTTY)return {...preview,status:'decision_required'};
-  process.stderr.write(backfillNotice+'\nDestination: '+preview.api+' ('+preview.owner.userId+')\n'+preview.sources.map(s=>s.harness+': '+s.files+' transcript files, '+s.bytes+' bytes').join('\n')+'\n');
+  process.stderr.write(backfillNotice+'\nDestination: '+preview.api+' ('+(preview.owner?.userId??'sign in and install capture before importing')+')\n'+preview.sources.map(s=>s.harness+': '+s.files+' transcript files, '+s.bytes+' bytes').join('\n')+'\n');
   const readline=createInterface({input:process.stdin,output:process.stderr});
   try {
     const chosen=await chooseBackfill(prompt=>readline.question(prompt));
-    return chosen==='skip'?{status:'skipped'}:await backfill(api,chosen,true);
+    return chosen==='skip'?{status:'skipped'}:await backfill(api,chosen,true,{...options,onProgress:reportBackfillProgress(json)});
   } finally{readline.close();}
 }

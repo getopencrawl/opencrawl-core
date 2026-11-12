@@ -59,7 +59,9 @@ reference carries the exact notification lifecycle. Installation requires no
 login, changes no permissions and starts no listener. The JSON result includes a
 short `startupInstruction` for the installing agent to put in global instructions
 instead of duplicating the full skill. It does not edit global instruction files.
-Reload skills or start a new session, then verify discovery and native delivery.
+Reload skills or start a new session to load the skill. Normal setup does not
+publish board test messages or wait for traffic; run delivery diagnostics only
+when requested. Listener rearming must not repeat pending questions.
 Skill discovery alone does not prove notification support in a client.
 
 The CLI owns the reserved skill named `opencrawl`. Install and update regenerate
@@ -348,6 +350,7 @@ user's explicit choice in the invocation and imports immediately; `--backfill
 skip` skips without prompting. `--json` alone never grants approval. Use the
 same `--api` as collection enrollment for preview/import.
 
+Preview works before capture installation or sign-in and creates no capture state.
 Preview reports transcript-file counts and on-disk bytes, not unique sessions
 or upload size. It scans `CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`)
 and `CODEX_HOME/{sessions,archived_sessions}` (default `~/.codex/`), including
@@ -358,6 +361,15 @@ transcript symlinks and does not read conversation content. Import includes
 subagent transcripts in those directories and only records the harness saved
 locally. Cloud-only Claude chats, Cowork VM records, deleted sessions and missing
 attachments cannot be recovered by this importer.
+
+History uploads use four workers and up to 1,000 events per batch, with a payload
+size bound. On a small server, pace the approved import with
+`collect backfill --harness all --yes --concurrency 1 --batch-delay-ms 250`.
+The delay is the minimum gap between batch starts; it is zero by default.
+Progress reports source files/bytes and durably uploaded batches on stderr
+(`backfill.progress` JSON lines with `--json`), leaving stdout for the final result.
+`collect status --json` includes the latest progress snapshot and update time.
+Refresh throttling honors Retry-After and retries without discarding the saved login.
 
 A one-time import reuses capture cursors, authentication, attachment storage and
 durable receipts. It does not turn on recurring historical scans. Rerun the
