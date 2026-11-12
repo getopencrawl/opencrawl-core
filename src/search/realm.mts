@@ -1,3 +1,5 @@
+import {gzip as gzipCallback} from 'node:zlib';
+import {promisify} from 'node:util';
 import type {TenantPrincipal} from '../sessions/types.mjs';
 import {serviceError} from '../sessions/types.mjs';
 import type {Corpus, SearchDocument, DocumentItem, IndexHit, OpenSearchResponse, QueryBody, RealmOptions, IndexTransportOptions, Mapping, SearchRealm} from './types.mjs';
@@ -9,6 +11,7 @@ export {realmIndex,realmField,realmDocument};
 import {createSqliteRealm} from './sqlite.mjs';
 import {patchScript} from './mutations.mjs';
 import {bulkItemLine,MAX_BULK_BYTES} from './bulk.mjs';
+const gzip=promisify(gzipCallback);
 const fail = (message: string,status=503) => Object.assign(new Error(message),{status,permanent:status===403});
 const corpora = new Set(['connector','session','board','memory']);
 function compatible(actual: Mapping | undefined,expected: Mapping): boolean {
@@ -174,21 +177,44 @@ export function createRealmResolver(options: RealmOptions) {
 export function createIndexTransport({endpoint,index,username,password,credentials,region='us-east-1',fetch:send=globalThis.fetch,allowIndexPattern=false}: IndexTransportOptions) {
   const base=new URL(endpoint);
   if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!(allowIndexPattern?/^[a-z][a-z0-9_*-]{0,150}$/:/^[a-z][a-z0-9_-]{0,150}$/).test(index))throw fail('Invalid index transport',400);
+  let gzipSupported=true;
   return async function request<T = OpenSearchResponse>(path: string,body?: unknown,method='POST',contentType='application/json'): Promise<T> {
     if(allowIndexPattern && !(method==='POST'&&path==='/_search'))throw fail('Index patterns are read-only migration inventory',403);
-    let url: URL,headers: Record<string, string>;
-    let serialized: string | undefined;
+    let url:URL,plain:string|undefined,wire:string|Uint8Array<ArrayBuffer>|undefined,compressed=false;
     try {
       url=new URL(base.href.replace(/\/$/,'')+'/'+index.replaceAll('*','%2A')+path);
-      serialized=body===undefined?undefined:typeof body==='string'?body:JSON.stringify(body);
-      headers={'content-type':contentType};
-      if(username)headers.authorization='Basic '+Buffer.from(username+':'+password).toString('base64');
-      if(credentials){const c=await credentials();if(c.sessionToken)headers['x-amz-security-token']=c.sessionToken;headers=signRequest({method,url,body:serialized,headers,region,service:'es',...c});}
-    } catch(caught){const error=serviceError(caught);throw Object.assign(serviceError(error),{writeOutcome:'not-applied'});}
-    const response=await send(url,{method,body:serialized,headers,signal:AbortSignal.timeout(30000),redirect:'error'});
-    let data: OpenSearchResponse;try{data=await response.json() as OpenSearchResponse;}catch{throw fail('Invalid realm response');}
-    if(!response.ok)throw Object.assign(fail('Realm request failed ('+response.status+')',response.status),{httpStatus:response.status,type:data?.error?.type,
-      ...([401,403].includes(response.status)&&['security_exception','authentication_exception','authorization_exception'].includes(data?.error?.type ?? '')?{writeOutcome:'not-applied'}:{})});
-    return data as T;
+      plain=body===undefined?undefined:typeof body==='string'?body:JSON.stringify(body);wire=plain;
+      // The caller has already enforced the uncompressed bulk limit. Compress
+      // large NDJSON bodies only when it saves bytes; sign the actual wire bytes.
+      if(gzipSupported&&contentType==='application/x-ndjson'&&plain!==undefined&&Buffer.byteLength(plain)>=32*1024){
+        const bytes=await gzip(plain,{level:1});
+        if(bytes.length<Buffer.byteLength(plain)*0.95){wire=new Uint8Array(bytes);compressed=true;}
+      }
+    }catch(caught){throw Object.assign(serviceError(caught),{writeOutcome:'not-applied'});}
+    for(let attempt=0;;attempt++){
+      let headers:Record<string,string>={'content-type':contentType,...(compressed?{'content-encoding':'gzip'}:{})};
+      try {
+        if(username)headers.authorization='Basic '+Buffer.from(username+':'+password).toString('base64');
+        if(credentials){const c=await credentials();if(c.sessionToken)headers['x-amz-security-token']=c.sessionToken;headers=signRequest({method,url,body:wire,headers,region,service:'es',...c});}
+      }catch(caught){throw Object.assign(serviceError(caught),{writeOutcome:'not-applied'});}
+      const response=await send(url,{method,body:wire,headers,signal:AbortSignal.timeout(30000),redirect:'error'});
+      let data:OpenSearchResponse|undefined;try{data=await response.json() as OpenSearchResponse;}catch{ /* A proxy can reject encoding with a non-JSON 415. */ }
+      // Retry only an explicit pre-application encoding rejection. Never replay
+      // an ambiguous failure, a document error, or an authentication denial here.
+      if(compressed&&attempt===0&&unsupportedCompression(response.status,data)){
+        gzipSupported=false;compressed=false;wire=plain;continue;
+      }
+      if(!data)throw fail('Invalid realm response');
+      if(!response.ok)throw Object.assign(fail('Realm request failed ('+response.status+')',response.status),{httpStatus:response.status,type:data?.error?.type,
+        ...([401,403].includes(response.status)&&['security_exception','authentication_exception','authorization_exception'].includes(data?.error?.type ?? '')?{writeOutcome:'not-applied'}:{})});
+      return data as T;
+    }
   };
+}
+function unsupportedCompression(status:number,data:unknown):boolean {
+  if(status===415)return true;
+  if(status!==400||!data||typeof data!=='object')return false;
+  const value=data as Record<string,unknown>,error=value.error;
+  const reason=error&&typeof error==='object'?(error as Record<string,unknown>).reason:error;
+  return [value.Message,value.message,reason].some(text=>typeof text==='string'&&/content[-_ ]encoding|gzip|compression/i.test(text)&&/unsupported|not supported|disabled|not enabled/i.test(text));
 }

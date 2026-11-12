@@ -92,3 +92,14 @@ test('session ID collisions cannot replace another uploader while team reads rem
  const result=await sessions.search(other);
  assert.equal(result.total,1);assert.equal(result.hits[0].userId,owner.userId);assert.equal(result.hits[0].text,document.text);
 });
+
+
+test('real OpenSearch accepts compressed bulk requests and retains every document',{skip:!endpoint},async t=>{
+ const owner={tenantId:'compressed-'+randomUUID(),userId:'author'},index=realmIndex('test',owner.tenantId);let compressed=0;
+ const realm=createRealm({endpoint,index,tenantId:owner.tenantId,fetch:async(url,init)=>{if(init.headers?.['content-encoding']==='gzip')compressed++;return fetch(url,init);}});
+ t.after(()=>fetch(endpoint+'/'+index,{method:'DELETE'}));await realm.ensureIndex();
+ const documents=Array.from({length:128},(_,i)=>({id:'event-'+i,document:{...owner,harness:'codex',sessionId:'large',receivedAt:'2026-11-12T00:00:00Z',text:'界🙂 searchable compressed evidence '.repeat(50)}}));
+ const collection=realm.collection('session');await collection.bulk(owner,documents,{refresh:true});assert.equal(compressed,1);
+ const result=await collection.mget(owner,documents.map(d=>d.id));assert.equal(result.docs.length,documents.length);
+ for(let i=0;i<documents.length;i++){assert.equal(result.docs[i]._id,documents[i].id);assert.deepEqual(result.docs[i]._source,documents[i].document);}
+});
