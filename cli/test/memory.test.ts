@@ -103,11 +103,20 @@ test('project or session exclusions pause consolidated memory before network or 
 });
 test('ordinary CLI invocation refreshes opportunistically; help returns immediately during an unavailable receiver',async()=>{
   const f=fixture(),received:any[]=[];let blocked=false;
+  let uploadsComplete=()=>{};
+  const uploadsReady=new Promise<void>(resolve=>{uploadsComplete=resolve;});
   const server=createServer(async(req,res)=>{
     if(blocked)return;
     let data:any={principal:f.config.owner};
-    if(req.url==='/api/cli/me'){await new Promise(r=>setTimeout(r,250));data={user:{id:'author',email:'fixture@example.test'}};}
-    if(req.method==='POST'){let body='';for await(const part of req)body+=part;const s=JSON.parse(body);received.push(s);data={stored:true,snapshotId:createHash('sha256').update(body).digest('hex'),generation:s.generation};}
+    if(req.url==='/api/cli/me'){
+      // Foreground completion cancels opportunistic work. Wait for receipts,
+      // not an assumed filesystem/network speed on the runner.
+      let deadline:ReturnType<typeof setTimeout>|undefined;
+      try{await Promise.race([uploadsReady,new Promise<void>(resolve=>{deadline=setTimeout(resolve,3000);})]);}
+      finally{clearTimeout(deadline);}
+      data={user:{id:'author',email:'fixture@example.test'}};
+    }
+    if(req.method==='POST'){let body='';for await(const part of req)body+=part;const s=JSON.parse(body);received.push(s);if(received.length===2)uploadsComplete();data={stored:true,snapshotId:createHash('sha256').update(body).digest('hex'),generation:s.generation};}
     res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({schemaVersion:1,data}));
   });await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
   try {

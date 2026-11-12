@@ -9,7 +9,7 @@ export const searchFiltersSchema = z.strictObject({
   kinds: values.optional().describe('Exact record kinds; e.g. message, tool_result, commit, passage.'),
   excludeKinds: values.optional(),
   roles: z.array(z.enum(['user','assistant','system','developer'])).min(1).max(4).optional().describe('Session message roles; excludes other sources and records without this role.'),
-  harnesses: values.optional(), providers: values.optional(), repositories: values.optional(),
+  harnesses: values.optional(), origins: values.optional().describe('Exact recorded session origins from provenance/facets: cli, desktop, cloud, subagent or unknown. An origin is not an authority or quality label.'), providers: values.optional(), repositories: values.optional(),
   projects: values.optional(), paths: values.optional(), toolNames: values.optional(),
   after: instant.optional(), before: instant.optional(),
 }).refine(f=>!f.after||!f.before||Date.parse(f.after)<=Date.parse(f.before),'after must not exceed before');
@@ -26,7 +26,7 @@ export function searchFilters(corpus: Corpus, input: SearchFilters = {}): unknow
   terms(field('kind'),f.kinds);
   if(f.excludeKinds)clauses.push({bool:{must_not:[{terms:{[field('kind')]:f.excludeKinds}}]}});
   for(const [key,value,allowed] of [
-    ['role',f.roles,['session']],['harness',f.harnesses,['session','memory']],
+    ['role',f.roles,['session']],['origin',f.origins,['session']],['harness',f.harnesses,['session','memory']],
     ['provider',f.providers,['connector']],['repository',f.repositories,['connector']],
     ['project',f.projects,['memory']],['path',f.paths,['memory']],['toolNames',f.toolNames,['session']],
   ] as const)if(value){if(!allowed.some(c=>c===corpus))clauses.push({match_none:{}});else terms(field(key),value);}
