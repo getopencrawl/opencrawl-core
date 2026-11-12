@@ -186,7 +186,7 @@ export async function agentSkills(action: string, api: string, options: Options 
       }
     });
     return {api, results, startupInstruction: startupInstruction(),
-      ...(results.some(result => result.startupHooks?.some(hook => hook.client === 'codex' && hook.status !== 'disabled'))
+      ...(results.some(result => 'startupHooks' in result && result.startupHooks?.some(hook => hook.client === 'codex' && hook.status !== 'disabled'))
         ? {hookReview: 'Codex requires review of new or changed hooks in /hooks (desktop Settings > Hooks). Trust OpenCrawl session startup there, then start a new session. Installation does not grant hook trust.'} : {}),
       ...(targets.length ? {} : {message: 'No supported client detected. Use --client to select a client explicitly.'})};
   };
