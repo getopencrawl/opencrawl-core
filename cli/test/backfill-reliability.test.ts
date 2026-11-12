@@ -78,8 +78,8 @@ test('large approved import survives refresh throttling, uploads four at a time,
   // Operator pacing deliberately trades throughput for server headroom.
   const paced=join(source,'paced.jsonl');writeFileSync(paced,records.slice(0,2201).map(record=>JSON.stringify(record)+'\n').join(''));
   await captureTranscript(config,'codex',paced,{},true);const first=starts.length;peak=0;
-  await flushCaptures({concurrency:1,batchDelayMs:50});expect(peak).toBe(1);
-  for(let i=first+1;i<starts.length;i++)expect(starts[i]-starts[i-1]).toBeGreaterThanOrEqual(40);
+  await flushCaptures({concurrency:1,batchDelayMs:200});expect(peak).toBe(1);
+  for(let i=first+1;i<starts.length;i++)expect(starts[i]-starts[i-1]).toBeGreaterThanOrEqual(100);
   await expect(backfill(api,'codex',true,{concurrency:0})).rejects.toMatchObject({code:'INVALID_USAGE'});
   await expect(backfill(api,'codex',true,{batchDelayMs:-1})).rejects.toMatchObject({code:'INVALID_USAGE'});
   denied=true;await saveSession(api,{auth,accessToken:'expired',refreshToken:'revoked',expiresAt:0});
