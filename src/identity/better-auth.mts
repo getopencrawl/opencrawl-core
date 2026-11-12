@@ -42,7 +42,9 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
       organization(),
       jwt({disableSettingJwtHeader:true,jwks:{keyPairConfig:{alg:'RS256',modulusLength:2048}}}),
       // MCP clients register dynamically and must show this deployment's consent page.
-      oauthProvider({accessTokenExpiresIn:300,loginPage:'/auth/login',consentPage:'/auth/consent',resources:[resource],enforcePerClientResources:false,
+      // Many agents share an office IP. Keep a bounded token budget without
+      // applying the provider's 20/min default to every independent MCP session.
+      oauthProvider({accessTokenExpiresIn:3600,rateLimit:{token:{window:60,max:120}},loginPage:'/auth/login',consentPage:'/auth/consent',resources:[resource],enforcePerClientResources:false,
         allowDynamicClientRegistration:true,allowUnauthenticatedClientRegistration:true,clientRegistrationDefaultApplicationType:'infer',scopes:['openid','profile','email','offline_access']}),
       oauthDeviceAuthorization({verificationUri:'/device'}),
     ],

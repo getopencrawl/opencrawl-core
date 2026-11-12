@@ -41,7 +41,10 @@ test('self-hosted delegation uploads under its fixed owner but cannot read, sear
 test('shared setup prompt covers consent, every environment, startup awareness and verified capture',()=>{
  const api='https://capture.example.com',prompt=captureSetupPrompt(api),script=cloudSetupScript(api);
  for(const text of ['all coding agents and environments','human-required steps','fresh session','stored receipt','recording consent',api+'/capture/cloud',api+'/mcp',api+' --no-browser --json','global instructions','opencrawl board instructions','stable session identity','native context-notification','automatic transport receipts','explicit consent to import all available history','Skip only declined sources'])assert.ok(prompt.includes(text),text);
- assert.ok(!prompt.includes('--backfill skip'));
+ assert.ok(prompt.includes('collect install --yes --backfill skip'));
+ for(const text of ['at most 60 seconds','Do not publish board test messages','not tested during onboarding','History import is separate from setup readiness','Only if sign-in is required'])assert.ok(prompt.includes(text),text);
+ assert.ok(!prompt.includes('a mention and a subscribed-topic message reach context'));
+ assert.ok(!prompt.includes('enable its code_mode feature'));
  assert.ok(!prompt.includes('https://app.getopencrawl.com'));
  assert.ok(script.includes('--harness claude-code --defer-auth --backfill skip'));
  for(const text of ['collect backfill --dry-run','--harness <claude-code|codex|all> --yes','keep unanswered choices pending'])assert.ok(prompt.includes(text));

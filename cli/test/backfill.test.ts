@@ -91,7 +91,7 @@ test('optional backfill: four local surfaces, archives, consent, retry, receipts
   expect(batches.every(b=>b.owner.tenantId==='current-team')).toBe(true);
   expect(batches.map(b=>b.harness)).toEqual(['claude-code','claude-code']);
   phase='offline-auth';offline=true;await expect(backfill(api,'codex',true,{retryDelays:[0]})).rejects.toThrow();offline=false;
-  phase='offline-upload';failUpload=true;await expect(backfill(api,'codex',true,{retryDelays:[0,0]})).rejects.toThrow();expect(captureStatus().queued).toBe(1);failUpload=false;
+  phase='offline-upload';failUpload=true;await expect(backfill(api,'codex',true,{retryDelays:[0,0]})).rejects.toThrow();expect(captureStatus().queued).toBe(2);failUpload=false;
   // One outage longer than the request's own retries (a deploy) must not end the import.
   phase='resume';failNext=6;expect((await backfill(api,'codex',true,{retryDelays:[0,0]})).processed).toBe(2);expect(failNext).toBe(0);
   expect(new Set(batches.map(b=>b.harness+'/'+b.origin))).toEqual(new Set(['claude-code/cli','claude-code/desktop','codex/cli','codex/desktop']));

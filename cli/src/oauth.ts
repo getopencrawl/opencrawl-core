@@ -1,4 +1,5 @@
 export class CliError extends Error {
+  retryAfterMs?: number;
   constructor(public code: string, message: string, public exitCode = 1) { super(message); }
 }
 
@@ -112,6 +113,13 @@ export async function refresh(auth: AuthConfig, token: string, fetcher = fetch):
   // Refresh tokens rotate on every use. A sign-in copied to another machine
   // (image, snapshot, synced home) is revoked as soon as either copy renews.
   if (response.status === 400 || response.status === 401) throw new CliError('AUTH_REQUIRED', signInRevoked, 2);
-  if (!response.ok) throw new CliError('AUTH_UNAVAILABLE', 'Session refresh is temporarily unavailable. Retry later.');
+  if (!response.ok) {
+    if (response.status !== 429 && response.status < 500) throw new CliError('AUTH_FAILED', 'Session refresh was denied. Check this deployment’s sign-in configuration.', 2);
+    const error = new CliError('AUTH_UNAVAILABLE', 'Session refresh is temporarily unavailable. Queued data and saved sign-in are retained.');
+    const value=response.headers.get('retry-after');
+    const delay=value===null?NaN:/^\d+(?:\.\d+)?$/.test(value)?Number(value)*1000:Date.parse(value)-Date.now();
+    if(Number.isFinite(delay))error.retryAfterMs=Math.max(0,Math.min(120_000,delay));
+    throw error;
+  }
   return tokens(body, Date.now());
 }

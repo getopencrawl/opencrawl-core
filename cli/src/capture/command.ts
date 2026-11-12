@@ -3,7 +3,7 @@ import {installCapture,uninstallCapture,upgradeCaptureHooks} from './install.ts'
 import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush,bindHookIdentity} from './runtime.ts';
 import {credentialRotation} from '../session.ts';
 import {grokBotResponse} from './grok-bot.ts';
-import {backfill,backfillPreview,selection,setupBackfill} from './backfill.ts';
+import {backfill,backfillPreview,selection,setupBackfill,reportBackfillProgress} from './backfill.ts';
 import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
 import {captureNoticeFor} from './policy.ts';
 import {agentSkills} from '../skills.ts';
@@ -50,6 +50,7 @@ async function grokBotHook() {
 export async function collectCommand(action:string,api:string,values:any) {
   if((values.backfill!==undefined || values['defer-auth']) && action!=='install' || values['dry-run'] && action!=='backfill' || values.yes && !['backfill','install','purge'].includes(action))throw new CliError('INVALID_USAGE','Use --backfill with install; --dry-run with backfill; --yes with install, backfill or purge.',64);
   if(values.project!==undefined && action!=='exclude' || values['session-id']!==undefined && action!=='exclude')throw new CliError('INVALID_USAGE','Use --project or --session-id with collect exclude.',64);
+  if((values.concurrency!==undefined||values['batch-delay-ms']!==undefined)&&(action!=='backfill'||values['dry-run']))throw new CliError('INVALID_USAGE','Upload pacing options apply only to collect backfill imports.',64);
   switch(action) {
     case 'install': {
       // Grok Bot keeps no local history to import.
@@ -64,10 +65,11 @@ export async function collectCommand(action:string,api:string,values:any) {
     }
     case 'backfill': {
       const selected=selection(values.harness);
+      const pacing={concurrency:values.concurrency===undefined?undefined:Number(values.concurrency),batchDelayMs:values['batch-delay-ms']===undefined?undefined:Number(values['batch-delay-ms'])};
       if(values['dry-run'] && values.yes)throw new CliError('INVALID_USAGE','Use either --dry-run or --yes, not both.',64);
       try{
-        if(!values['dry-run'] && !values.yes && values.harness===undefined)return await setupBackfill(api,'ask',values.json);
-        return values['dry-run']?backfillPreview(api,selected):await backfill(api,selected,values.yes===true);
+        if(!values['dry-run'] && !values.yes && values.harness===undefined)return await setupBackfill(api,'ask',values.json,pacing);
+        return values['dry-run']?backfillPreview(api,selected):await backfill(api,selected,values.yes===true,{onProgress:reportBackfillProgress(values.json),...pacing});
       }
       catch(e){if(values.yes)recordError(e);throw e;}
     }
