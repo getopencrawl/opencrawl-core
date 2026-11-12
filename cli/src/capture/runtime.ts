@@ -1,5 +1,6 @@
 import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream, createWriteStream} from 'node:fs';
-import {createZstdDecompress} from 'node:zlib';
+import {createZstdDecompress,gzip} from 'node:zlib';
+import {promisify} from 'node:util';
 import {Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {join, dirname, resolve, sep, basename} from 'node:path';
@@ -19,6 +20,7 @@ import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
 import {redactValue,redactAttachment,MAX_REDACTION_DEPTH} from './redact.ts';
 
+const compressBatch=promisify(gzip);
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
 /** Bump when installed hook entries change so the next hook rewrites existing installs. */
@@ -32,8 +34,8 @@ export function harnessRoot(config:CaptureConfig,harness:Harness) {
   return root;
 }
 // Enrollment and every queued payload remain bound to their original destination.
-export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
-  const {principal}=await request(config.api,'/api/sessions/identity',{signal},token);
+async function captureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
+  const {principal,capabilities}=await request(config.api,'/api/sessions/identity',{signal},token);
   signal?.throwIfAborted();
   if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   // Authentication may finish after uninstall or another worker initializes a
@@ -50,7 +52,10 @@ export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,
     }
     atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
   },20_000,signal);
-  return principal;
+  return {principal,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip')};
+}
+export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
+  return (await captureIdentity(config,token,signal)).principal;
 }
 function staticCaptureToken(api:string) {
   const saved=read(join(captureDir(),'receiver-token.json'));
@@ -84,7 +89,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   const body=await res.json().catch(()=>{throw res.status>=500||res.status===429
     ?new CliError('CAPTURE_RETRY_EXHAUSTED',`Capture endpoint ${new URL(api).hostname} is temporarily unavailable (HTTP ${res.status}). Queued data is retained; retry the approved import.`)
     :new CliError('CAPTURE_NETWORK_BLOCKED',`Capture endpoint ${new URL(api).hostname} returned HTTP ${res.status} without JSON. Check this host in your cloud environment network allowlist.`);});
-  if(!res.ok)throw new CliError('CAPTURE_UPLOAD_FAILED',`Capture request failed (${res.status}): ${body.error?.code ?? 'unknown'}`);
+  if(!res.ok)throw Object.assign(new CliError('CAPTURE_UPLOAD_FAILED',`Capture request failed (${res.status}): ${body.error?.code ?? 'unknown'}`),{httpStatus:res.status});
   return body.data;
 }
 export function commandForSelf() {
@@ -687,12 +692,14 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     // and blob writes. If this credential expires, retain the queue for a retry.
     const staticToken=staticCaptureToken(config.api);
     let token=staticToken||await accessToken(config.api);
-    const principal=await refreshCaptureIdentity(config,token);
+    const identity=await captureIdentity(config,token),principal=identity.principal;
+    let useGzip=identity.gzip;
     // A long flush outlives a short-lived sign-in token. Renew before each request
     // and after a rejection, re-verifying identity whenever the token changes.
     const adopt=async(next:string)=>{
       if(next===token)return token;
-      const current=await refreshCaptureIdentity(config,next);
+      const refreshed=await captureIdentity(config,next),current=refreshed.principal;
+      useGzip=refreshed.gzip;
       if(current.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Signed-in user changed during upload. Sign back in as the queued author; queued data is retained.');
       if(current.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Signed-in team changed during upload. Sign back into the original destination; queued data is retained.');
       return token=next;
@@ -716,8 +723,21 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
       for(const a of batch.attachments)if(a.status==='captured'){
         await request(config.api,'/api/sessions/attachments/'+a.sha256+'?'+new URLSearchParams({harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId}),{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readCaptureAttachment(a.sha256)},await current(),renew);
       }
-      const serialized=JSON.stringify(batch);
-      const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:serialized},await current(),renew);
+      const serialized=JSON.stringify(batch),size=Buffer.byteLength(serialized);
+      let body:string|Uint8Array<ArrayBuffer>=serialized,compressed=false;
+      if(useGzip&&size>=32*1024){
+        const bytes=await compressBatch(serialized,{level:1});
+        if(bytes.length<size*0.95){body=new Uint8Array(bytes);compressed=true;}
+      }
+      const sendBatch=async()=>request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json',...(compressed?{'content-encoding':'gzip'}:{})},body},await current(),renew);
+      let receipt;
+      try{receipt=await sendBatch();}
+      catch(error){
+        // A rolling deployment can route the upload to an older replica. Retry
+        // the identical JSON once; receipts always identify uncompressed bytes.
+        if(!compressed||!(error instanceof CliError)||![400,415].includes(error.httpStatus??0))throw error;
+        useGzip=false;compressed=false;body=serialized;receipt=await sendBatch();
+      }
       if(receipt.batchId!==hash(serialized) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
       atomicJson(join(captureDir(),'last-upload.json'),{at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId});
       retryWindowsSharing(()=>unlinkSync(path));uploaded++;onUploaded?.();
