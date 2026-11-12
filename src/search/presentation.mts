@@ -4,21 +4,28 @@ import {createHash} from 'node:crypto';
 /** Excerpts are verbatim slices, never summaries. Offsets refer to JS string units. */
 export function excerpt(text: string, query: string, size = 800) {
   if (text.length <= size) return {text, excerpt: {start: 0, end: text.length, totalChars: text.length}};
-  const terms = [...new Set(query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) || [])].slice(0, 24);
+  const terms = [...new Set(query.toLowerCase().match(/[\p{L}\p{N}\p{M}_]+/gu) || [])].slice(0, 24);
+  // A keyword inside another word is not evidence of that keyword. Keep source
+  // offsets, including combining marks, so snippets remain exact fetch pointers.
+  const occurrences = terms.map(term => [...text.matchAll(new RegExp(`(?<![\\p{L}\\p{N}\\p{M}_])${term}(?![\\p{L}\\p{N}\\p{M}_])`, 'giu'))]
+    .map(match => ({start: match.index, end: match.index + match[0].length})));
   const positions = [0];
   // Budget matches per term so repeated navigation cannot consume all anchors
   // before a rarer term that appears near the end of a long tool result.
-  for (const term of terms) {
-    let matches = 0;
-    for (const match of text.matchAll(new RegExp(term, 'giu'))) {
-      positions.push(Math.max(0, Math.min(text.length - size, match.index - 120)));
-      if (++matches >= 4) break;
-    }
+  for (const matches of occurrences) {
+    for (const match of matches.slice(0, 4)) positions.push(Math.max(0, Math.min(text.length - size, match.start - 120)));
   }
+  const contains = (matches: {start: number; end: number}[], start: number, end: number) => {
+    let low = 0, high = matches.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (matches[middle]!.start < start) low = middle + 1; else high = middle;
+    }
+    return low < matches.length && matches[low]!.end <= end;
+  };
   let start = 0, best = -1;
   for (const position of positions) {
-    const window = text.slice(position, position + size).toLowerCase();
-    const score = terms.reduce((sum, term) => sum + Number(window.includes(term)), 0);
+    const score = occurrences.reduce((sum, matches) => sum + Number(contains(matches, position, position + size)), 0);
     if (score > best) {best = score; start = position;}
   }
   return {text: text.slice(start, start + size), excerpt: {start, end: start + size, totalChars: text.length}};
