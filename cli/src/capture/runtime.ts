@@ -721,6 +721,16 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
       for(let lo=0,hi=dated.length-1;lo<=hi;){names.push(dated[lo++].name);if(lo<=hi)names.push(dated[hi--].name);}
     }
     const deadline=wait?Infinity:Date.now()+10_000;
+    // This file is a status snapshot. Event durability comes from the queue,
+    // cursor and verified remote receipt, whose write ordering stays unchanged.
+    // Coalesce status-only fsyncs to once per second and always checkpoint the
+    // latest success after settling the flush, including a partially failed pass.
+    let pendingReceipt:Record<string,unknown>|undefined,lastReceiptWrite=-Infinity;
+    const checkpointReceipt=()=>{
+      if(!pendingReceipt)return;
+      atomicJson(join(captureDir(),'last-upload.json'),pendingReceipt);
+      pendingReceipt=undefined;lastReceiptWrite=performance.now();
+    };
     const upload=async(name:string,batch:any)=>{
       const path=join(captureDir(),'queue',name);
       batch=prepareCaptureUpload(batch);
@@ -743,7 +753,8 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
         useGzip=false;compressed=false;body=serialized;receipt=await sendBatch();
       }
       if(receipt.batchId!==hash(serialized) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
-      atomicJson(join(captureDir(),'last-upload.json'),{at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId});
+      pendingReceipt={at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId};
+      if(performance.now()-lastReceiptWrite>=1000)checkpointReceipt();
       retryWindowsSharing(()=>unlinkSync(path));uploaded++;onUploaded?.();
     };
     const worker=async()=>{
@@ -767,6 +778,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     // A background pass must return to notice processing. Always settle the
     // in-flight uploads before releasing ownership, including after a failure.
     await Promise.all(Array.from({length:workers},worker));
+    checkpointReceipt();
     if(failure)throw failure;
     const result=excluded?{uploaded,excluded}:{uploaded};
     if(visited<names.length||stopped)return result;

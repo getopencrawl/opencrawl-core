@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
 import {backfill} from '../src/capture/backfill.ts';
-import {captureDir,flushCaptures,type CaptureConfig} from '../src/capture/runtime.ts';
+import {captureDir,captureStatus,flushCaptures,type CaptureConfig} from '../src/capture/runtime.ts';
 import {atomicJson} from '../src/session.ts';
 import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
 import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
@@ -47,6 +47,7 @@ for(const fail of [false,true])test('backfill bounds parsing ahead of blocked up
   expect(await flushCaptures({wait:false})).toEqual({uploaded:0});
   release();const result=await pending;
   expect(active).toBe(0);expect(peak).toBe(4);
+  const last=captureStatus().lastUpload;expect(last.stored).toBe(true);expect(batches.has(last.batchId)).toBe(true);
   if(fail){expect(result.error?.code).toBe('CAPTURE_UPLOAD_FAILED');expect(queued()).toBeGreaterThan(0);deny=false;expect((await backfill(api,'codex',true,{retryDelays:[]})).status).toBe('complete');}
   else expect(result.value.status).toBe('complete');
   const ids=[...batches.values()].flatMap(batch=>batch.events.map((event:any)=>event.id));
