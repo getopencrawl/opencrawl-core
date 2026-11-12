@@ -7,7 +7,8 @@ export {realmMapping};
 import {realmIndex,realmField,realmDocument} from './realm-format.mjs';
 export {realmIndex,realmField,realmDocument};
 import {createSqliteRealm} from './sqlite.mjs';
-import {writeScript,patchScript} from './mutations.mjs';
+import {patchScript} from './mutations.mjs';
+import {bulkItemLine,MAX_BULK_BYTES} from './bulk.mjs';
 const fail = (message: string,status=503) => Object.assign(new Error(message),{status,permanent:status===403});
 const corpora = new Set(['connector','session','board','memory']);
 function compatible(actual: Mapping | undefined,expected: Mapping): boolean {
@@ -108,12 +109,8 @@ export function createOpenSearchRealm({endpoint,index,tenantId,environment='self
           let body;
           try {
             scope(principal);if(!items.length)return {items:[]};
-            body=items.map(({id,document,script:legacyScript,policy})=>{
-              const script=policy?writeScript(policy):legacyScript;
-              const doc=encode(id,document);
-              return JSON.stringify({[script?'update':'index']:{_id:encodedId(id),...(script?{retry_on_conflict:5}:{})}})+'\n'+JSON.stringify(script?{scripted_upsert:true,script:{lang:'painless',source:script,params:{doc}},upsert:{}}:doc)+'\n';
-            }).join('');
-            if(Buffer.byteLength(body)>4*1024*1024)throw fail('Realm bulk exceeds limit',400);
+            body=items.map(item=>bulkItemLine(item,{encode,id:encodedId})).join('');
+            if(Buffer.byteLength(body)>MAX_BULK_BYTES)throw fail('Realm bulk exceeds limit',400);
           } catch(caught){const error=serviceError(caught);throw Object.assign(serviceError(error),{writeOutcome:'not-applied'});}
           const result=await request('/_bulk'+(refresh?'?refresh=wait_for':''),body,'POST','application/x-ndjson');
           if(result.errors||!Array.isArray(result.items)||result.items.length!==items.length||result.items.some(item=>{const op=item.index||item.update;return !op||op.status<200||op.status>=300;}))throw fail('Realm bulk contained failed or missing items');

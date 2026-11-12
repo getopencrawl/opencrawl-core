@@ -1,5 +1,7 @@
 import {lexicalQuery} from '../search/lexical.mjs';
 import type {Principal, ObjectStore} from './types.mjs';
+import {serviceError} from './types.mjs';
+import {bulkItemLine,MAX_BULK_BYTES} from '../search/bulk.mjs';
 import type {RealmOptions, DocumentItem, SearchInput, SearchResult, OpenSearchResponse, Passage} from '../search/types.mjs';
 interface TermsAggregation {buckets: Array<{key: string; doc_count: number}>}
 interface SessionCount {count: {value: number}}
@@ -63,16 +65,23 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
     async putDocuments(documents: DocumentItem[],principal: Principal){
       sessionScope(principal);
       const collection=resolve(principal).collection('session');
-      let batch: DocumentItem[]=[],bytes=0;
+      let batch: DocumentItem[]=[],bytes=0,wrote=false;
+      const flush=async()=>{
+        if(!batch.length)return;
+        try{await collection.bulk(principal,batch);wrote=true;}
+        catch(caught){const error=serviceError(caught);if(wrote)delete error.writeOutcome;throw error;}
+        batch=[];bytes=0;
+      };
       for(const item of documents){
         if(item.document?.tenantId!==principal.tenantId||item.document?.userId!==principal.userId)fail(403,'Session document owner does not match its authorized scope');
-        const size=Buffer.byteLength(JSON.stringify(item));
-        if(size>3*1024*1024)throw new Error('Search document exceeds bulk limit');
-        if(bytes+size>3*1024*1024){await collection.bulk(principal,batch);batch=[];bytes=0;}
+        const prepared={...item,policy:'session' as const};
+        const size=Buffer.byteLength(bulkItemLine(prepared,collection));
+        if(size>MAX_BULK_BYTES)throw new Error('Search document exceeds bulk limit');
+        if(bytes+size>MAX_BULK_BYTES)await flush();
         if(typeof item.document?.receivedAt!=='string'||!Number.isFinite(Date.parse(item.document.receivedAt)))throw new Error('Session capture timestamp required');
-        batch.push({...item,policy:'session'});bytes+=size;
+        batch.push(prepared);bytes+=size;
       }
-      await collection.bulk(principal,batch);
+      await flush();
     },
     search,
     /** Activity within the requested UTC calendar-day window, plus lifetimeEvents for
