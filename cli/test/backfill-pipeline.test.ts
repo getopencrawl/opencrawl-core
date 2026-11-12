@@ -23,8 +23,9 @@ for(const fail of [false,true])test('backfill bounds parsing ahead of blocked up
    const chunks=[];for await(const chunk of req)chunks.push(chunk);const batch=JSON.parse(Buffer.concat(chunks).toString());
    if(number<=4)await gate;
    if(deny&&number===1){res.writeHead(403);res.end(JSON.stringify({error:{code:'DENIED'}}));return;}
+   if(!fail&&number===1){res.writeHead(503);res.end(JSON.stringify({error:{code:'TEST_BUSY'}}));return;}
    const receipt=await ingest.putBatch(owner,batch);batches.set(receipt.batchId,batch);res.end(JSON.stringify({data:receipt}));
-  }finally{active--;}
+  }catch(error:any){res.writeHead(error.status??500);res.end(JSON.stringify({error:{code:'TEST_INGEST_ERROR'}}));}finally{active--;}
  });
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
  let pending:Promise<any>|undefined;
@@ -50,6 +51,7 @@ for(const fail of [false,true])test('backfill bounds parsing ahead of blocked up
   else expect(result.value.status).toBe('complete');
   const ids=[...batches.values()].flatMap(batch=>batch.events.map((event:any)=>event.id));
   expect(ids).toHaveLength(20001);expect(new Set(ids).size).toBe(20001);expect(queued()).toBe(0);
+  if(!fail)expect(requests).toBeGreaterThan(batches.size);
   expect((await backfill(api,'codex',true)).uploaded).toBe(0);
  }finally{
   release();await pending;server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));
