@@ -8,9 +8,9 @@ Capture uses command hooks and incremental reads of native JSONL transcripts. Th
 
 ## Grok Bot
 
-Grok Bot runs a person's Bots on one cloud computer and loads Cursor-format
-command hooks from `~/.cursor/hooks.json` there. Install on that computer, from a
-Bot's shell, not on the device that shows the chat:
+Grok Bot runs a person's Bots on one cloud computer, and command hooks on that
+computer see what the Bots do. Install there, from a Bot's shell, not on the
+device that shows the chat:
 
 ```sh
 npm i -g @getopencrawl/cli@next
@@ -18,10 +18,27 @@ opencrawl login --no-browser          # or an upload-only OPENCRAWL_SESSIONS_TOK
 opencrawl collect install --yes --harness grok-bot
 ```
 
+Two engines deliver hooks, and one install registers with both:
+
+| Engine | Hook file | What it runs |
+| --- | --- | --- |
+| Cursor's | `~/.cursor/hooks.json` | Entries written straight under an event: `{"command": ..., "timeout": 30}` |
+| Grok's own | `~/.grok/hooks/opencrawl.json` (`$GROK_HOME/hooks` when set) | Matcher groups: `{"hooks": [{"type": "command", ...}]}` |
+
+Grok's engine reads `~/.cursor/hooks.json` too, but does not run entries in
+Cursor's shape, so the first file alone records nothing there. Where both
+registrations name the same command it runs the command once. The second file
+is OpenCrawl's own. If the home directory refuses it, the install still
+succeeds with the Cursor entries, and `collect status` shows `engineHooks: null`.
+An install made before this file existed gains it the next time a hook or
+`collect status` runs. That step copies the command already installed for
+Cursor's engine, writes no other file, and is tried once: if it cannot write
+the file it records that and never holds up an upload.
+
 `--harness grok-bot` is never implied. Cursor reads the same `~/.cursor/hooks.json`
-on a developer machine, so installing there would record Cursor sessions under
-the Grok Bot name. Existing entries in the file are preserved; uninstall removes
-only OpenCrawl's.
+on a developer machine, and Grok Build reads both files, so installing there
+would record those sessions under the Grok Bot name. Existing entries in either
+file are preserved; uninstall removes only OpenCrawl's.
 
 The setup prompt is the same for every agent and names this command. As a
 second line of defence, a plain `collect install` that finds neither Claude Code
@@ -31,14 +48,36 @@ agent that ran the plain one on a Bot's computer corrects itself.
 The collector reads no Grok Bot transcript. A session is built from the hook
 payloads, in the event shapes used for Claude Code and Codex:
 
-| Hook | Captured as |
-| --- | --- |
-| `beforeSubmitPrompt` | The person's message, with paths of attached files and rules (never their bytes) |
-| `afterAgentResponse` | The Bot's reply |
-| `afterAgentThought` | A reasoning summary |
-| `postToolUse`, `postToolUseFailure` | The tool call and its result or error, paired by `tool_use_id` |
-| `preCompact` | A compaction marker |
-| `sessionStart`, `sessionEnd`, `stop` | Lifecycle evidence, stored but not indexed |
+| Cursor's engine | Grok's engine | Captured as |
+| --- | --- | --- |
+| `beforeSubmitPrompt` | `UserPromptSubmit` | The person's message, with paths of attached files and rules (never their bytes) |
+| `afterAgentResponse` | `Stop` and `StopCancelled`, in `lastAssistantMessage` | The Bot's reply |
+| `afterAgentThought` | not sent | A reasoning summary |
+| `postToolUse`, `postToolUseFailure` | `PostToolUse`, `PostToolUseFailure` | The tool call and its result or error, paired by its tool-use ID |
+| `preCompact` | `PreCompact` | A compaction marker |
+| `sessionStart`, `sessionEnd`, `stop` | `SessionStart`, `SessionEnd`, `StopFailure`, the session's closing `Stop` | Lifecycle evidence, stored but not indexed |
+
+The engines spell things differently. Cursor sends `hook_event_name:
+"postToolUse"` with snake_case fields. Grok sends `hook_event_name:
+"PostToolUse"` beside `hookEventName: "post_tool_use"`, with camelCase fields
+(`sessionId`, `toolName`, `toolInput`, `toolResult`) and some repeated under
+Claude Code's names. Either is read. Two things follow from Grok's envelope:
+
+- **The reply is the turn's final answer.** Grok's engine has no reply hook. The
+  answer arrives when the turn ends, so text the Bot wrote before a tool call
+  is not in it. A turn that was interrupted reports what it had already said; a
+  turn that failed carries the error text in that field, which is not recorded
+  as a reply.
+- **Events carry the runtime's own time.** Grok stamps every dispatch to the
+  nanosecond. The stamp orders the events, and a dispatch that reaches the
+  collector twice, through both registrations, is recorded once. A stamp
+  coarser than a microsecond still dates an event, but order then follows
+  arrival, as it does for Cursor's payloads, which carry no time.
+- **A project exclusion covers every directory an event names.** Grok reports
+  the workspace root, which for a session started inside a repository is the
+  repository, beside the directory the session or the tool call ran in. An
+  exclusion of either keeps the event on the computer, including one added
+  while the event is still waiting to upload.
 
 What differs from transcript capture:
 
@@ -49,7 +88,8 @@ What differs from transcript capture:
   to one blocks the action; `postToolUse` already carries the tool input. The
   process never exits with the blocking code 2.
 - **Uploads are bounded.** A hook uploads at a turn boundary (`stop`,
-  `sessionStart`, `sessionEnd`) or when 20 seconds have passed since the last
+  `sessionStart`, `sessionEnd`, and Grok's `StopCancelled` and `StopFailure`)
+  or when 20 seconds have passed since the last
   pass, and the process ends at five seconds. The one exception is a sign-in
   renewal already in flight, which is allowed to finish and be saved, because
   abandoning it would lose the sign-in; the installed hook timeout is thirty
@@ -61,7 +101,10 @@ What differs from transcript capture:
   demand.
 - **Capture starts when a Bot loads the hooks.** Nothing earlier is read and
   there is no history import. Bots that are already running may keep the hook
-  configuration they loaded; verify from a newly created Bot.
+  configuration they loaded: Grok's engine loads hooks when a session starts.
+  Verify by sending a message to a newly created Bot and reading
+  `collect status` (below). Running the hook command by hand proves nothing
+  about what the runtime delivers.
 - **One installation covers the whole computer.** Every Bot the person runs
   there is recorded and attributed to the person who installed capture. Do not
   install on a shared Bot's computer.
@@ -76,29 +119,48 @@ What differs from transcript capture:
   the session.
 - **Origin is `cloud`.** Memory files, native session names, subagent linkage
   and the board listener are not available for Grok Bot.
-- **Other harness hooks stand aside.** Cursor-format runtimes also load Claude
-  Code hook files and wait on them. OpenCrawl's Claude Code and Codex hooks
-  recognise such a run by its `cursor_version` field and do nothing, so a
-  computer with several harnesses installed neither records a Bot twice nor
-  holds it while an uploader runs.
+- **Other harness hooks stand aside.** Both engines also load Claude Code hook
+  files and wait on them. OpenCrawl's Claude Code and Codex hooks recognise
+  such a run by Cursor's `cursor_version` field or Grok's `hookEventName` field
+  and do nothing, so a computer with several harnesses installed neither
+  records a Bot twice nor holds it while an uploader runs.
 
 Grok Bot gives a Bot one conversation ID for its whole life, so a session is one
-Bot's work on one UTC day, with the ID `<conversation_id>:<date>`. That keeps a
-session readable and far below the per-session event limit an endless
-conversation would reach. `collect exclude --session-id <conversation_id>`
-excludes every day of that Bot.
+Bot's work on one UTC day, with the ID `<conversation_id>:<date>`; under Grok's
+engine the ID is its `sessionId`. That keeps a session readable and far below
+the per-session event limit an endless conversation would reach.
+`collect exclude --session-id <conversation_id>` excludes every day of that Bot.
 
 Grok Bot is in beta, and some runtimes have been reported to emit only the tool
 hooks and leave the IDs blank. Capture then records tool activity only and
 groups it into one activity log per workspace and UTC day, named `Grok Bot
 activity in <workspace> on <date>`; this keeps the work searchable without
-presenting it as a conversation. `opencrawl collect status --json` on the Bot's
-computer shows what actually arrives.
+presenting it as a conversation.
 
-xAI does not document command hooks for Grok Bot. The hooks file location
-follows a third-party integration's reported setup, and the payloads follow
-Cursor's published hook reference. Neither has been confirmed by OpenCrawl on a
-live Bot computer; check `collect status` there before relying on coverage.
+`opencrawl collect status --json` on the Bot's computer shows what actually
+arrives, in a `grokBot` section:
+
+| Field | Meaning |
+| --- | --- |
+| `hooks` | How many hooks the runtime has delivered since the install, by name |
+| `recorded` | How many of them carried a prompt, a reply or a tool call |
+| `firstHook`, `lastHook` | When the first and the latest arrived |
+| `engineHooks` | The hook file written for Grok's engine, or `null` |
+
+Only names, counts and times are kept for this. `attention` says so in words
+when no hook has run since the install (and whether Grok's hook file is
+missing, since that engine runs nothing without it), when hooks run without
+carrying any of the three, and when the runtime has reported tool activity
+only. It appears beside the Codex trust note when both apply; a paused capture
+is reported first and alone.
+
+xAI does not document command hooks for Grok Bot. The Cursor file location
+follows a third-party integration's reported setup and Cursor's published hook
+reference. Grok's side was confirmed by running Grok 1.0.77 and 1.0.83 locally
+against a stub model: its hook names and envelope, that it runs matcher groups
+from `~/.grok/hooks`, and that it does not run entries in Cursor's shape. Which
+engine a given Bot computer runs has not been confirmed by OpenCrawl on a live
+Bot computer; check `collect status` there before relying on coverage.
 
 Enterprise teams can prepare every member's computer with a Team Setup manifest
 that carries no credential:

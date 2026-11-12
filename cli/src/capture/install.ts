@@ -5,7 +5,7 @@ import {spawnSync} from 'node:child_process';
 import {removeLegacyService} from './legacy-service.ts';
 import {randomUUID} from 'node:crypto';
 import {HARNESSES, readsTranscript, type Harness} from './parse.ts';
-import {GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
+import {GROK_BOT_HOOK_EVENTS, GROK_ENGINE_HOOK_EVENTS} from './grok-bot.ts';
 import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {retryWindowsSharing} from '../filesystem.ts';
@@ -66,6 +66,57 @@ function modifyGrokBotHooks(file:string,command:string|null) {
   if(command)for(const event of GROK_BOT_HOOK_EVENTS)(hooks[event]??=[]).push({command,timeout:30});
   backup(file);replaceFile(file,JSON.stringify({...config,version:1,hooks},null,2)+'\n');
 }
+/** Grok's engine keeps a person's own hooks in its home directory. */
+const grokEngineHookFile=(config:CaptureConfig)=>join(process.env.GROK_HOME||join(dirname(harnessRoot(config,'grok-bot')),'.grok'),'hooks','opencrawl.json');
+/** A Grok Bot install from before the engine's own hook file was written. */
+const grokEnginePending=(config:CaptureConfig)=>Boolean(config.harnesses?.includes('grok-bot'))&&config.grokEngineHooks===undefined;
+/** Grok's engine does not run the Cursor entries above. It runs matcher groups:
+ * {hooks:{Event:[{hooks:[{type:'command',command,timeout}]}]}}. The file is
+ * this collector's own: one it cannot read is replaced. */
+function modifyGrokEngineHooks(file:string,command:string|null) {
+  if(!command&&!existsSync(file))return;
+  let config:any={};
+  try{config=readJson(file);}catch{}
+  if(!config||typeof config!=='object'||Array.isArray(config))config={};
+  const hooks:Record<string,any[]>=config.hooks&&typeof config.hooks==='object'&&!Array.isArray(config.hooks)?config.hooks:{};
+  for(const [event,groups] of Object.entries(hooks)) {
+    hooks[event]=(Array.isArray(groups)?groups:[]).flatMap((group:any)=>{
+      if(!Array.isArray(group?.hooks))return [group];
+      const remaining=group.hooks.filter((handler:any)=>!grokBotOwned(handler));
+      return remaining.length?[{...group,hooks:remaining}]:[];
+    });
+    if(!hooks[event].length)delete hooks[event];
+  }
+  // Grok cuts most hooks off at five seconds by default, the hook's own limit.
+  if(command)for(const event of GROK_ENGINE_HOOK_EVENTS)(hooks[event]??=[]).push({hooks:[{type:'command',command,timeout:30}]});
+  backup(file);
+  if(!command&&!Object.keys(hooks).length&&Object.keys(config).every(key=>key==='hooks')){unlinkSync(file);return;}
+  mkdirSync(dirname(file),{recursive:true,mode:0o700});
+  replaceFile(file,JSON.stringify({...config,hooks},null,2)+'\n');
+}
+/** The one change an up-to-date Grok Bot install still needs. It reuses the
+ * command installed for Cursor's engine, so the two registrations stay one
+ * handler to Grok; it touches no other file; and it settles the configuration
+ * whatever happens, so it is attempted once and can never hold up a hook. */
+function addGrokEngineHooks(config:CaptureConfig) {
+  let written:string|null=null;
+  try {
+    const entries=readJson(hookFile(config,'grok-bot')).hooks;
+    const ours=Object.values(entries&&typeof entries==='object'?entries:{}).flatMap(list=>Array.isArray(list)?list:[]).find(grokBotOwned);
+    if(ours) {
+      const file=grokEngineHookFile(config);
+      mkdirSync(join(captureDir(),'backups'),{recursive:true,mode:0o700});
+      modifyGrokEngineHooks(file,ours.command);
+      written=file;
+    }
+  } catch {}
+  atomicJson(join(captureDir(),'config.json'),{...config,grokEngineHooks:written});
+}
+/** The engine file as it was, for rollback. It is this collector's own, so a
+ * path that is not a readable file is simply treated as absent. */
+function grokEngineOriginal(file:string) {
+  try{return statSync(file).isFile()?readFileSync(file):null;}catch{return null;}
+}
 /** For a file in another program's directory: new contents, same permissions,
  * and the directory left as it is. */
 function replaceFile(file:string,bytes:string|Buffer) {
@@ -91,7 +142,10 @@ function enableCodex(root:string) {
   // Atomic replacement without changing unrelated TOML settings or permissions.
   replaceFile(file,after);
 }
-function configureHooks(config:CaptureConfig,harnesses:Harness[]) {
+/** Returns the file written for Grok's engine, or null when it could not be.
+ * A home directory that refuses this second file does not fail the install:
+ * the Cursor entries are in place by then, and status reports the gap. */
+function configureHooks(config:CaptureConfig,harnesses:Harness[]):{grokEngineHooks?:string|null} {
   const runner=join(captureDir(),'runner.cjs');
   const node=process.env.OPENCRAWL_NODE || Bun.which('node');
   if(!node)throw new CliError('NODE_REQUIRED','Install Node 22.15 or newer to run capture hooks');
@@ -121,27 +175,37 @@ else {const r=require('node:child_process').spawnSync(file,args,{stdio:'inherit'
   // Cursor does not document a shell for hook commands. Quote only when needed
   // so the command also survives being split on spaces.
   const plain=(s:string)=>/^[\w@%+=:,./-]+$/.test(s)?s:quote(s);
-  if(harnesses.includes('grok-bot'))modifyGrokBotHooks(hookFile(config,'grok-bot'),[plain(node),plain(runner),'collect','hook','--harness','grok-bot'].join(' '));
+  if(harnesses.includes('grok-bot')) {
+    const command=[plain(node),plain(runner),'collect','hook','--harness','grok-bot'].join(' ');
+    modifyGrokBotHooks(hookFile(config,'grok-bot'),command);
+    const file=grokEngineHookFile(config);
+    try{modifyGrokEngineHooks(file,command);return {grokEngineHooks:file};}catch{return {grokEngineHooks:null};}
+  }
+  return {};
 }
 /** Upgrade existing installations without authentication or changing their queue. */
 export async function upgradeCaptureHooks() {
-  const config=readCaptureConfig();if(!config||config.disabled||config.hookMode===HOOK_MODE)return;
+  const config=readCaptureConfig();if(!config||config.disabled||config.hookMode===HOOK_MODE&&!grokEnginePending(config))return;
   try {await withSessionLock('capture:configuration',async()=>{
-    const current=readCaptureConfig();if(!current||current.disabled||current.hookMode===HOOK_MODE)return;
+    const current=readCaptureConfig();if(!current||current.disabled)return;
+    // An up-to-date install only gains the file Grok's engine reads. No other
+    // hook file, and not the runner, is rewritten for it.
+    if(current.hookMode===HOOK_MODE){if(grokEnginePending(current))addGrokEngineHooks(current);return;}
     const harnesses=current.harnesses??['claude-code','codex'];
     for(const harness of harnesses)mkdirSync(harnessRoot(current,harness),{recursive:true,mode:0o700});
     mkdirSync(join(captureDir(),'backups'),{recursive:true,mode:0o700});
     const files=[join(captureDir(),'config.json'),join(captureDir(),'runner.cjs'),
       ...harnesses.map(h=>hookFile(current,h))];
     const originals=new Map(files.map(file=>[file,existsSync(file)?readFileSync(file):null]));
+    const engine=harnesses.includes('grok-bot')?grokEngineHookFile(current):null;
+    if(engine)originals.set(engine,grokEngineOriginal(engine));
     try {
-      configureHooks(current,harnesses);
-      atomicJson(join(captureDir(),'config.json'),{...current,hookMode:HOOK_MODE});
+      atomicJson(join(captureDir(),'config.json'),{...current,hookMode:HOOK_MODE,...configureHooks(current,harnesses)});
     } catch(error) {
       for(const [file,bytes] of originals) {
         if(bytes===null){try{unlinkSync(file);}catch{}}
         // Harness configs keep their permissions; only our own files use atomicFile.
-        else if(harnesses.some(h=>file===hookFile(current,h)))replaceFile(file,bytes);
+        else if(harnesses.some(h=>file===hookFile(current,h))||file===engine)replaceFile(file,bytes);
         else atomicFile(file,bytes);
       }
       throw error;
@@ -184,10 +248,12 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
     join(config.roots['claude-code'],'settings.json'),join(config.roots.codex,'hooks.json'),toml,
     ...(enrolled.includes('grok-bot')?[hookFile(config,'grok-bot')]:[])];
   const originals=new Map(affected.map(path=>[path,existsSync(path)?readFileSync(path):null]));
+  if(enrolled.includes('grok-bot'))originals.set(grokEngineHookFile(config),grokEngineOriginal(grokEngineHookFile(config)));
   try {
   atomicJson(join(captureDir(),'config.json'),config);
   if(receiverToken)atomicJson(join(captureDir(),'receiver-token.json'),{api,token:receiverToken});
-  configureHooks(config,enrolled);
+  Object.assign(config,configureHooks(config,enrolled));
+  atomicJson(join(captureDir(),'config.json'),config);
   if(harnesses.includes('codex'))enableCodex(config.roots.codex);
   } catch(error) {
     for(const [path,bytes] of originals) {
@@ -204,7 +270,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
     ...(harnesses.some(readsTranscript)?[process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':[...(codexHooksAwaitingReview(config)?['Codex needs you to trust the new hooks: open Codex, run /hooks (or desktop Settings > Hooks), trust "OpenCrawl session capture" and start a new session. collect status reports any hook still awaiting review.']:[]),'Restart existing Claude sessions if hooks have not reloaded.'].join(' ')]:[]),
     // An agent that ran the plain command on a Bot's computer reads this and corrects itself.
     ...(absent&&!deferAuth&&!enrolled.includes('grok-bot')&&process.env.CLAUDE_CODE_REMOTE!=='true'?['Neither Claude Code nor Codex was found on this machine. If it is a Grok Bot cloud computer, capture it with opencrawl collect install --yes --harness grok-bot.']:[]),
-    ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${hookFile(config,'grok-bot')}. Bots that are already running may keep the hooks they loaded earlier: from a newly created Bot, run a command, then check collect status for a stored receipt.`]:[])];
+    ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${[hookFile(config,'grok-bot'),...(config.grokEngineHooks?[config.grokEngineHooks]:[])].join(' and ')}. Bots that are already running may keep the hooks they loaded earlier: send a message to a newly created Bot, then run collect status, which lists the hooks this computer has delivered and what they recorded.`]:[])];
   return {notice:enrolled.includes('grok-bot')?captureNotice(api)+' '+grokBotNotice:captureNotice(api),exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
     nextStep:steps.join(' ')};
   });
@@ -217,7 +283,10 @@ export async function uninstallCapture(home=homedir()) {
   removeLegacyService(home);
   if((config.harnesses??['claude-code','codex']).includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),[],null);
   if((config.harnesses??['claude-code','codex']).includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),[],null);
-  if(config.harnesses?.includes('grok-bot'))modifyGrokBotHooks(hookFile(config,'grok-bot'),null);
+  if(config.harnesses?.includes('grok-bot')) {
+    modifyGrokBotHooks(hookFile(config,'grok-bot'),null);
+    try{modifyGrokEngineHooks(config.grokEngineHooks??grokEngineHookFile(config),null);}catch{}
+  }
   // Stopping collection preserves queued data for an authenticated retry.
   atomicJson(join(captureDir(),'config.json'),{...config,disabled:true});
   return {installed:false,queuedDataPreserved:true};

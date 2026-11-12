@@ -38,7 +38,8 @@ async function grokBotHook() {
     answer(event);
     await bindHookIdentity(event);
     await captureHook('grok-bot',event);
-    await upgradeCaptureHooks();
+    // Bringing hook files up to date must never keep a recording from uploading.
+    try{await upgradeCaptureHooks();}catch(e){try{recordError(e);}catch{}}
     await hookFlush(event);
   }catch(e){answer(null);try{recordError(e);}catch{}}
   clearTimeout(deadline);
@@ -77,7 +78,9 @@ export async function collectCommand(action:string,api:string,values:any) {
     case 'exclude': return excludeCapture(values.project,values['session-id']);
     case 'purge': return purgeLocalCapture(values.yes===true);
     case 'uninstall': return uninstallCapture();
-    case 'status': return captureStatus();
+    // Status is where a person or an agent looks when capture seems quiet, so it
+    // first brings an older install's hook files up to date.
+    case 'status': try{await upgradeCaptureHooks();}catch{} return captureStatus();
     case 'sync': try{return await syncCaptures();}catch(e){recordError(e);throw e;}
     case 'titles': try{return await refreshCapturedTitles();}catch(e){recordError(e);throw e;}
     case 'flush': try{return await flushCaptureWork({retryRejected:values['retry-rejected']===true});}catch(e){recordError(e);throw e;}
@@ -88,16 +91,18 @@ export async function collectCommand(action:string,api:string,values:any) {
       try {
         if(!['claude-code','codex'].includes(values.harness))throw new Error('Invalid harness');
         const event=await hookInput();
-        // Cursor-format runtimes, Grok Bot included, also load Claude Code hook
-        // files and wait on every hook. That is not a Claude Code or Codex
-        // session: record nothing and never start the uploader there.
-        if(typeof event?.cursor_version==='string')return null;
+        // Cursor's and Grok's engines, Grok Bot included, also load Claude Code
+        // hook files and wait on every hook. That is not a Claude Code or Codex
+        // session: record nothing and never start the uploader there. Only
+        // Cursor sends cursor_version, and only Grok the camelCase event name.
+        if(typeof event?.cursor_version==='string'||typeof event?.hookEventName==='string')return null;
         await captureHook(values.harness,event);
         // Async Claude Code hooks deliver this JSON on the next turn, so a
         // paused capture is visible to the person instead of failing silently.
         const notice=values.harness==='claude-code'&&['SessionStart','UserPromptSubmit'].includes(event?.hook_event_name)?captureAttentionNotice():null;
         if(notice)process.stdout.write(JSON.stringify({systemMessage:notice,hookSpecificOutput:{hookEventName:event.hook_event_name,additionalContext:notice}})+'\n');
-        await upgradeCaptureHooks();
+        // Bringing hook files up to date must never keep a recording from uploading.
+        try{await upgradeCaptureHooks();}catch(e){try{recordError(e);}catch{}}
         if(values.managed)await ownedCaptureWorker();
       }catch(e){try{recordError(e);}catch{}}
       return null;

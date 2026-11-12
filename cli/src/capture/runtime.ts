@@ -15,7 +15,7 @@ import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
 import {workspaceIdentityEnabled, workspaceToken} from '../workspace-identity.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
-import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
+import {grokBotEvents, grokBotHookName, grokBotPaths, grokBotSession, grokBotStamp, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
@@ -29,7 +29,9 @@ export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
 /** Bump when installed hook entries change so the next hook rewrites existing installs. */
 export const HOOK_MODE='managed-v3';
-export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:typeof HOOK_MODE|'managed-v2'|'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<TranscriptHarness,string>&{'grok-bot'?:string},claudeDesktopSessionsRoot?:string,command:string[]};
+export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:typeof HOOK_MODE|'managed-v2'|'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<TranscriptHarness,string>&{'grok-bot'?:string},
+  /** The hook file written for Grok's own engine; null when its directory refused it. */
+  grokEngineHooks?:string|null,claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 /** Installations made before a harness existed have no directory for it. */
 export function harnessRoot(config:CaptureConfig,harness:Harness) {
@@ -456,6 +458,40 @@ export async function refreshCapturedTitles() {
   },Infinity);
   return {updated,...await flushCaptures()};
 }
+/** What this computer's runtime has delivered since capture was installed.
+ * Status reads it to tell hooks that never run from hooks that run without
+ * carrying a conversation. Counts and dispatch digests only: no payload
+ * content is kept here. */
+const grokBotHooksSeen=()=>{
+  const file=join(captureDir(),'grok-bot-hooks.json');
+  // A file that cannot be read starts over: it must never stop a recording.
+  let seen:any={};
+  try{seen=read(file)??{};}catch{}
+  if(!seen||typeof seen!=='object'||Array.isArray(seen))seen={};
+  return {file,seen,recent:(Array.isArray(seen.recent)?seen.recent.filter((id:unknown)=>typeof id==='string'):[]) as string[]};
+};
+function countGrokBotHook(event:any,at:string,dispatch:string|null) {
+  const {file,seen,recent}=grokBotHooksSeen();
+  // No prototype: a hook may be named after anything, "constructor" included.
+  const counts=(value:unknown):Record<string,number>=>Object.assign(Object.create(null),value&&typeof value==='object'?value:{});
+  const hooks=counts(seen.hooks),recorded=counts(seen.recorded);
+  // The name comes from the payload: keep the list short whatever it sends.
+  const name=(grokBotHookName(event)??'unnamed').slice(0,60),key=name in hooks||Object.keys(hooks).length<40?name:'other';
+  hooks[key]=(hooks[key]??0)+1;
+  for(const item of grokBotEvents({id:'count',at,event})) {
+    const kind=item.kind==='message'?item.data?.role==='user'?'prompts':'replies':item.kind==='tool_call'?'toolCalls':null;
+    if(kind)recorded[kind]=(recorded[kind]??0)+1;
+  }
+  atomicJson(file,{first:typeof seen.first==='string'?seen.first:at,last:at,hooks,recorded,recent:dispatch?[...recent,dispatch].slice(-64):recent});
+}
+/** A project exclusion covers a Grok Bot event when it names any directory the
+ * payload carries. Grok's engine sends the workspace root, which for a session
+ * launched inside a repository is the repository, beside the directory the
+ * session or the tool call actually ran in. */
+function grokBotExcluded(config:CaptureConfig,event:any,session:{sessionId:string,cwd:string|null}) {
+  const paths=[...new Set([session.cwd,...grokBotPaths(event)])];
+  return paths.some(cwd=>captureExcluded(config,{sessionId:session.sessionId,cwd:cwd??undefined}));
+}
 /** Hook work is only a durable local handoff. Never scan, parse or upload here. */
 export async function captureHook(harness:Harness,event:any) {
   return withSessionLock('capture:configuration',async()=>{
@@ -467,13 +503,24 @@ export async function captureHook(harness:Harness,event:any) {
     // Prepared with --defer-auth and nobody has signed in: a computer whose
     // owner never opts in must not accumulate what their Bots do.
     if(config.authPending)return;
-    const session=grokBotSession(event,at);
-    if(captureExcluded(config,{sessionId:session.sessionId,cwd:session.cwd??undefined}))return;
-    // Hook payloads carry no time or order. Microseconds since the epoch keep
-    // events from separate hook processes in the order they were recorded.
-    const sequence=Math.round((performance.timeOrigin+performance.now())*1000);
-    const bytes=Buffer.byteLength(JSON.stringify(event));
-    atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,sequence,harness,event:bytes>GROK_BOT_MAX_HOOK_BYTES?grokBotUnsupported(event,'too_large',bytes):event});
+    // Grok's engine says when it dispatched the hook. Cursor's payloads carry
+    // no time or order, and a stamp to the second cannot order a turn:
+    // microseconds since the epoch then keep events from separate hook
+    // processes in the order they were recorded.
+    const stamp=grokBotStamp(event),when=stamp?.at??at;
+    const session=grokBotSession(event,when);
+    if(grokBotExcluded(config,event,session))return;
+    const sequence=stamp?.precise?stamp.sequence:Math.round((performance.timeOrigin+performance.now())*1000);
+    const payload=JSON.stringify(event),bytes=Buffer.byteLength(payload);
+    // One dispatch can reach this collector through more than one registration.
+    // The stamped payload names it, so a repeat is dropped here; one that comes
+    // after the list of recent dispatches has moved on is still the same event.
+    const dispatch=stamp?'dispatch-'+hash(payload).slice(0,40):null;
+    const recorded=bytes>GROK_BOT_MAX_HOOK_BYTES?grokBotUnsupported(event,'too_large',bytes):event;
+    if(dispatch&&grokBotHooksSeen().recent.includes(dispatch))return;
+    // The notice first: a dispatch is only remembered once it is safely recorded.
+    atomicJson(join(captureDir(),'notices',(dispatch??id)+'.json'),{id:dispatch??id,at:when,sequence,harness,event:recorded});
+    try{countGrokBotHook(recorded,when,dispatch);}catch{}
     return;
   }
   const sessionId=event?.session_id;
@@ -497,8 +544,11 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
   let round:GrokBotNotice[]=[],roundBytes=0;
   const spoolRound=async()=>{
     const groups=new Map<string,{meta:any,title:any,notices:GrokBotNotice[]}>();
+    const current=readCaptureConfig()??config;
     for(const item of round) {
       const session=grokBotSession(item.notice.event,item.notice.at),key=JSON.stringify([session.sessionId,session.cwd]);
+      // An exclusion added since the hook ran covers what it left here too.
+      if(grokBotExcluded(current,item.notice.event,session)){try{unlinkSync(item.path);processed++;}catch(error){firstError??=error;}continue;}
       const group=groups.get(key)??{meta:{harness:'grok-bot',sessionId:session.sessionId,origin:'cloud',
         originEvidence:session.identified?'Grok Bot cloud computer hook':'Grok Bot hook without a conversation ID; grouped by workspace and UTC day',
         parentSessionId:null,...(session.conversationId?{conversationId:session.conversationId}:{}),...(session.cwd?{cwd:session.cwd}:{}),...(session.version?{harnessVersion:session.version}:{}),captureMode:'live'},
@@ -697,7 +747,7 @@ async function hookPass(event:any,now:()=>number,work:(config:CaptureConfig)=>Pr
   const config=readCaptureConfig();if(!config||config.disabled)return;
   ensureDirectories();
   const marker=join(captureDir(),'hook-flush.json'),last=read(marker),failures=last?.ok===false?last.failures??1:0;
-  const gap=failures?Math.min(60_000*2**(failures-1),900_000):GROK_BOT_BOUNDARIES.includes(event?.hook_event_name)?0:20_000;
+  const gap=failures?Math.min(60_000*2**(failures-1),900_000):GROK_BOT_BOUNDARIES.includes(grokBotHookName(event)??'')?0:20_000;
   if(last?.at&&now()-Date.parse(last.at)<gap)return;
   try {
     await withSessionLock('capture:worker',async()=>{
@@ -933,9 +983,25 @@ export function codexHooksAwaitingReview(config:CaptureConfig|null=readCaptureCo
   });
   return pending;
 }
+/** Grok Bot has no transcript to compare against, so status reports what the
+ * hooks themselves delivered. */
+function grokBotStatus(config:CaptureConfig|null) {
+  if(!config||config.disabled||!config.harnesses?.includes('grok-bot'))return null;
+  const {seen:state}=grokBotHooksSeen(),seen=typeof state.first==='string'?state:null;
+  const hooks:Record<string,number>=seen?.hooks??{},recorded={prompts:0,replies:0,toolCalls:0,...seen?.recorded};
+  const received=Object.entries(hooks).map(([name,count])=>`${name} x${count}`).join(', ');
+  const engineHooks=config.grokEngineHooks&&existsSync(config.grokEngineHooks)?config.grokEngineHooks:null;
+  const note=config.authPending?null
+    :!seen?'No Grok Bot hook has run on this computer since capture was installed. A Bot loads its hooks when it starts: send a message to a newly created Bot, then check collect status again.'
+      +(engineHooks?'':" Grok's own engine runs hooks only from its hook file, which is not in place here: opencrawl collect install --yes --harness grok-bot writes it.")
+    :!recorded.prompts&&!recorded.replies&&!recorded.toolCalls?`Grok Bot hooks run here but none has carried a prompt, a reply or a tool call (received: ${received}).`
+    :!recorded.prompts&&!recorded.replies?`This Grok Bot runtime has reported tool activity only (received: ${received}). Prompts and replies are recorded when it sends them.`:null;
+  return {firstHook:seen?.first??null,lastHook:seen?.last??null,hooks,recorded,engineHooks,note};
+}
 export function captureStatus() {
   const config=readCaptureConfig();
   const codexReview=codexHooksAwaitingReview(config);
+  const grokBot=grokBotStatus(config);
   const review=codexReview?`Codex will not run ${codexReview} OpenCrawl capture hook${codexReview===1?'':'s'} until you trust them: open Codex, run /hooks (or desktop Settings > Hooks) and trust "OpenCrawl session capture", then start a new session.`:null;
   return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.authPending?null:config?.owner,authenticationPending:Boolean(config?.authPending),installationId:config?.installationId,
     exclusions:config?.exclusions??{projects:[],sessions:[]},
@@ -944,5 +1010,8 @@ export function captureStatus() {
     pendingHooks:existsSync(join(captureDir(),'notices'))?noticeNames().length:0,
     backfill:read(join(captureDir(),'backfill-progress.json')),
     lastUpload:read(join(captureDir(),'last-upload.json')),lastError:read(join(captureDir(),'last-error.json')),
-    codexHooksAwaitingReview:codexReview,attention:captureAttention()??review};
+    codexHooksAwaitingReview:codexReview,...(grokBot?{grokBot:{firstHook:grokBot.firstHook,lastHook:grokBot.lastHook,hooks:grokBot.hooks,recorded:grokBot.recorded,engineHooks:grokBot.engineHooks}}:{}),
+    // A paused capture comes first and alone. The two setup notes ask for
+    // different things on different harnesses, so neither hides the other.
+    attention:captureAttention()??([review,grokBot?.note].filter(Boolean).join(' ')||null)};
 }

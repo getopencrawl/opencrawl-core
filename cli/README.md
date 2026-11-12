@@ -224,6 +224,12 @@ bun scripts/build.ts --current   # local smoke
 bun scripts/build.ts             # all five platform packages
 ```
 
+The tests install capture and edit harness hook files, so `bunfig.toml` (here
+and at the repository root) loads `cli/test/isolate.ts` first. It points the
+capture configuration and every harness directory at a throwaway directory for
+the whole run. Start the tests from the repository root or from `cli/`;
+`isolation.test.ts` fails anywhere else.
+
 The `next` dist-tag keeps this new client separate from the existing v1 `latest`
 release. Publishing must never move that v1 tag. The dedicated CLI workflow builds and signs on macOS, tests those same
 binaries on macOS/Linux/Windows, then publishes the five platform packages first.
@@ -344,8 +350,8 @@ notice on the next turn (at most hourly) instead of failing silently.
 
 ### Grok Bot
 
-Grok Bot runs a person's Bots on one cloud computer and loads Cursor-format
-hooks from `~/.cursor/hooks.json` there. Ask a Bot to run, on its computer:
+Grok Bot runs a person's Bots on one cloud computer, where command hooks see
+what the Bots do. Ask a Bot to run, on its computer:
 
 ```sh
 npm i -g @getopencrawl/cli@next
@@ -353,10 +359,13 @@ opencrawl login --no-browser
 opencrawl collect install --yes --harness grok-bot
 ```
 
-The harness is always explicit; a default install never writes to `~/.cursor`,
-which Cursor also reads on a developer machine. There is no Grok Bot transcript
-to read, so sessions are built from the hook payloads: the person's message, the
-Bot's replies and reasoning, and each tool call with its result. Every Bot on
+The install registers with both engines that deliver hooks there: Cursor's, in
+`~/.cursor/hooks.json`, and Grok's own, which does not run entries in Cursor's
+shape, in `~/.grok/hooks/opencrawl.json`. The harness is always explicit; a
+default install never writes to either directory, which Cursor and Grok Build
+also read on a developer machine. There is no Grok Bot transcript to read, so
+sessions are built from the hook payloads: the person's message, the Bot's
+replies and reasoning, and each tool call with its result. Every Bot on
 that computer is recorded and attributed to whoever installed capture, from the
 moment a Bot loads the hooks; there is no history import. A Bot keeps one
 conversation ID for life, so a session is one Bot's work on one UTC day.
@@ -367,7 +376,9 @@ happen inside a hook at a turn boundary or every 20 seconds, and the process end
 at five seconds whatever the receiver does; only a sign-in renewal already in
 flight is allowed to finish, so the sign-in is never lost. With `--defer-auth`
 nothing is recorded until someone signs in. `collect status` reports pending
-hooks and queued batches; `collect flush` uploads them on demand. See
+hooks and queued batches, and in its `grokBot` section which hooks the runtime
+has delivered and how many carried a prompt, a reply or a tool call;
+`collect flush` uploads on demand. See
 [Grok Bot capture](../docs/session-capture.md#grok-bot) for the event mapping,
 limits and the Team Setup manifest.
 
