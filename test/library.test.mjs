@@ -9,7 +9,7 @@ import {memorySessionStore} from './session-store-fixture.mjs';
 import {gunzipSync} from 'node:zlib';
 import {memoryDescription} from '../dist/src/memories/library.mjs';
 import {createLibraryApi, createLibraryHandler} from '../dist/src/sessions/library-http.mjs';
-import {visibleTo} from '../dist/src/sessions/controls.mjs';
+import {visibleTo, createControls} from '../dist/src/sessions/controls.mjs';
 
 test('transcripts keep messages and tool activity, never thinking or injected context as prompts', () => {
   assert.deepEqual(transcriptEntries({id: 'e', kind: 'message', data: {role: 'assistant', content: [{type: 'thinking', thinking: 'secret'}, {type: 'redacted_thinking', data: 'x'}, {type: 'text', text: 'Done'}]}}), [{type: 'message', role: 'assistant', text: 'Done'}]);
@@ -52,6 +52,8 @@ test('library HTTP requires authentication, rejects browsers, unknown operations
 test('Codex IDE and attached-file headers never become the prompt or title', () => {
   const wrapped = '# Files mentioned by the user:\n\n## shot.png: /tmp/shot.png\n\n## My request for Codex:\nMove the nav to a left sidebar\n';
   assert.equal(promptText(wrapped), 'Move the nav to a left sidebar');
+  assert.equal(promptText('# Files pasted by the user:\n\n## Design.txt: /tmp/Design.txt\n\n## My request:\nImplement the capture flow'), 'Implement the capture flow');
+  assert.equal(promptText('# Files pasted by the user:\n\n## Design.txt: /tmp/Design.txt'), null);
   assert.equal(promptText('# Context from my IDE setup:\n\n## Open tabs:\n- a.ts'), null);
   assert.equal(promptText('<environment_context>cwd</environment_context>'), null);
   assert.equal(promptText('  plain ask '), 'plain ask');
@@ -86,4 +88,40 @@ test('library titles prefer verified native names, use original prompt text, and
   mode='forged';await assert.rejects(library.list(principal),/title scope/);
   mode='source';await assert.rejects(library.list(principal),/title source/);
   const before=reads;await assert.rejects(library.list({...principal,captureAccess:'write'}),{status:403});assert.equal(reads,before);
+});
+
+test('search title lookup scopes original names, bounds time, and rechecks privacy and deletion', async () => {
+  const owner={tenantId:'team',userId:'alice'}, viewer={tenantId:'team',userId:'bob'}, store=memorySessionStore(), prefix='sessions/search-titles';
+  const ingest=createSessionIngest({store,prefix}), controls=createControls({store,prefix}), key={userId:'alice',harness:'codex',sessionId:'session'}, encoded=JSON.stringify(['alice','codex','session']);
+  const at='2026-11-09T10:00:00Z', before='2026-11-08T10:00:00Z';
+  await ingest.putBatch(owner,{schemaVersion:1,owner,installationId:'device',harness:'codex',sessionId:'session',origin:'desktop',attachments:[],events:[
+    {id:'title',kind:'session_title',timestamp:at,sequence:1,data:{title:'Verified original title'}},
+  ]});
+  const sourceKey=[...store.data.keys()].find(k=>k.endsWith('.json.gz')), batch=JSON.parse(gunzipSync(store.data.get(sourceKey)));
+  const [{id,document}]=batchDocuments({prefix,key:sourceKey,batch,principal:owner});
+  const envelope={_id:'session:'+id,_source:realmDocument('session',id,document)};
+  let mode='normal',queries=0;
+  const library=createSessionLibrary({store,prefix,endpoint:'http://localhost:9200',fetch:async(_url,request)=>{
+    const body=JSON.parse(request.body);queries++;
+    assert.equal(body.size,0);assert.ok(JSON.stringify(body.query).includes('session.sessionId'));
+    const bound=body.query.bool.must[0].bool.filter.find(item=>item.range?.['session.timestamp'])?.range['session.timestamp'].lte;
+    const bounded=bound!==undefined;
+    if(bounded)assert.equal(bound,Date.parse(before));
+    if(mode==='revoke')await controls.update(owner,'sessions','codex','session',()=>({visibility:'private',deletedAt:null}));
+    const hit=structuredClone(envelope);if(mode==='foreign')hit._source.tenantId='different-team';
+    const records=values=>({records:{hits:{hits:values}}});
+    return Response.json({hits:{total:{value:0,relation:'eq'},hits:[]},timed_out:false,_shards:{failed:0},aggregations:{titles:{buckets:bounded?[]:[{key:['alice','codex','session'],metadata:records([hit]),prompts:records([])}]}}});
+  }});
+  assert.equal((await library.titles(viewer,[key,key])).get(encoded),'Verified original title');assert.equal(queries,1);
+  assert.equal((await library.titles(viewer,[key],{before})).get(encoded),'Session session');
+  mode='foreign';await assert.rejects(library.titles(viewer,[key]),/title scope/);
+  mode='revoke';assert.equal((await library.titles(viewer,[key])).size,0);
+  mode='normal';const reads=queries;assert.equal((await library.titles(viewer,[key])).size,0);assert.equal(queries,reads);
+  assert.equal((await library.titles(owner,[key])).get(encoded),'Verified original title');
+  await controls.update(owner,'sessions','codex','session',()=>({visibility:'team',deletedAt:at}));
+  assert.equal((await library.titles(owner,[key])).size,0);
+  await assert.rejects(library.titles({...viewer,captureAccess:'write'},[key]),{status:403});
+  await assert.rejects(library.titles(viewer,Array(41).fill(key)),{status:400});
+  await assert.rejects(library.titles(viewer,[key],{before:'not a date'}),{status:400});
+  await assert.rejects(library.titles(viewer,[{...key,harness:'../codex'}]),{status:400});
 });

@@ -42,12 +42,13 @@ function iso(value: unknown) {return typeof value === 'string' && Number.isFinit
 // Codex stores injected context and notifications as user-role records.
 const INJECTED = /^(?:# AGENTS\.md instructions\b|<(?:environment_context|external_codex_apps_\w+|subagent_notification|turn_aborted|user_instructions|system-reminder)\b)/;
 // Codex prefixes IDE context and attached files before the person's request.
-const CODEX_REQUEST = /^# (?:Context from my IDE setup|Files mentioned by the user):[\s\S]*?## My request for Codex:\s*/;
+const CODEX_CONTEXT = /^# (?:Context from my IDE setup|Files (?:mentioned|pasted) by the user):/;
+const CODEX_REQUEST = /^# (?:Context from my IDE setup|Files (?:mentioned|pasted) by the user):[\s\S]*?## My request(?: for Codex)?:\s*/;
 /** The person's own words from a prompt, or null for injected context. */
 export function promptText(text: string) {
   const trimmed = text.trimStart(), request = trimmed.replace(CODEX_REQUEST, '');
   if (request !== trimmed) return request.trim() || null;
-  return INJECTED.test(trimmed) || /^# (?:Context from my IDE setup|Files mentioned by the user):/.test(trimmed) ? null : trimmed.trim() || null;
+  return INJECTED.test(trimmed) || CODEX_CONTEXT.test(trimmed) ? null : trimmed.trim() || null;
 }
 // Readable conversation kinds, and bookkeeping kinds that never render.
 const CONVERSATION = ['message', 'user_message', 'agent_message'];
@@ -148,12 +149,13 @@ export function createSessionLibrary({store, prefix, purgeCopies, scheduleDeleti
   const userText = {bool: {minimum_should_match: 1, should: [{term: {[f('kind')]: 'user_message'}}, {bool: {filter: [{term: {[f('kind')]: 'message'}}, {term: {[f('role')]: 'user'}}]}}]}};
   /** One scoped query for all displayed titles. Read the originals, since indexed
    * text also contains native IDs, channels and tool-result strings. */
-  async function titles(principal: Principal, keys: SessionKey[]) {
+  async function titles(principal: Principal, keys: SessionKey[], before?: string) {
     const values = new Map<string, string>(), keyOf = (key: SessionKey) => JSON.stringify([key.userId, key.harness, key.sessionId]);
     if (!keys.length) return values;
     const allowed = new Set(keys.map(keyOf));
     const result = await reader(principal).search(principal, {size: 0, query: {bool: {filter: [
       {term: {[f('chunk')]: 0}}, visibleTo('session', principal),
+      ...(before ? [{range: {[f('timestamp')]: {lte: Date.parse(before)}}}] : []),
       {bool: {minimum_should_match: 1, should: keys.map(key => ({bool: {filter: sessionFilter(key)}}))}},
       {bool: {minimum_should_match: 1, should: [userText, {terms: {[f('kind')]: TITLE_KINDS}}]}},
     ]}}, aggs: {titles: {multi_terms: {terms: ['userId', 'harness', 'sessionId'].map(field => ({field: f(field)})), size: keys.length}, aggs: {
@@ -293,6 +295,24 @@ export function createSessionLibrary({store, prefix, purgeCopies, scheduleDeleti
     return {...key, deleted: true as const, pending: false as const, objects, documents};
   }
   return {
+    /** Names for a displayed search page. Recheck controls around the original
+     * source reads; absence from the map means the resource is no longer visible. */
+    async titles(principal: Principal, input: SessionKey[], {before}: {before?: string} = {}) {
+      reader(principal);
+      if (!Array.isArray(input) || input.length > 40 || before !== undefined && !Number.isFinite(Date.parse(before))) fail(400, 'Invalid title lookup');
+      const keyOf = (key: SessionKey) => JSON.stringify([key.userId, key.harness, key.sessionId]);
+      const keys = [...new Map(input.map(value => {const key = checkKey(value); return [keyOf(key), key] as const;})).values()];
+      const visible: SessionKey[] = [];
+      for (let start = 0; start < keys.length; start += TITLE_FETCH_CONCURRENCY) {
+        const page = keys.slice(start, start + TITLE_FETCH_CONCURRENCY), allowed = await Promise.all(page.map(key => readable(principal, key)));
+        visible.push(...page.filter((_, i) => allowed[i]));
+      }
+      const names = await titles(principal, visible, before), result = new Map<string, string>();
+      for (let start = 0; start < visible.length; start += TITLE_FETCH_CONCURRENCY) await Promise.all(visible.slice(start, start + TITLE_FETCH_CONCURRENCY).map(async key => {
+        if (await readable(principal, key)) result.set(keyOf(key), (names.get(keyOf(key)) ?? `Session ${key.sessionId}`).slice(0, 240));
+      }));
+      return result;
+    },
     async list(principal: Principal, {scope = 'all', query = '', limit = 50}: {scope?: unknown; query?: unknown; limit?: unknown} = {}) {
       const collection = reader(principal);
       if (!['all', 'mine'].includes(String(scope)) || typeof query !== 'string' || query.length > 500 || !Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 500) fail(400, 'Invalid session list');

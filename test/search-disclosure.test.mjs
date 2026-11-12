@@ -64,6 +64,12 @@ test('session ID fetch constrains both the corpus and tenant in the realm', asyn
   const sessions=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://example.test',tenantId:'team',fetch:async(url,init)=>{
     const body=JSON.parse(init.body);assert.ok(body.query.bool.filter.some(f=>f.term?.tenantId==='team'));
     assert.ok(body.query.bool.filter.some(f=>f.term?.corpus==='session'));
+    if(body.aggs?.titles){
+      const filters=body.query.bool.must[0].bool.filter;
+      const selected=filters.find(f=>f.bool?.should?.some(s=>s.bool?.filter?.some(t=>t.term?.['session.sessionId']==='s')));
+      assert.deepEqual(selected.bool.should,[{bool:{filter:[{term:{'session.userId':'author'}},{term:{'session.harness':'codex'}},{term:{'session.sessionId':'s'}}]}}]);
+      return Response.json({hits:{total:{value:0,relation:'eq'},hits:[]},aggregations:{titles:{buckets:[]}},timed_out:false,_shards:{failed:0}});
+    }
     assert.ok(body.query.bool.must[0].bool.filter.some(f=>f.term?.id==='specific'));
     return realmResponse('session',{hits:{total:{value:1},hits:[{_id:'specific',_source:{tenantId:'team',userId:'author',harness:'codex',sessionId:'s',text:'source'}}]}});
   }});

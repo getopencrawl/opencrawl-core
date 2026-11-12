@@ -39,3 +39,22 @@ test('legacy dedupe=false inspects all chunks and connector counters are not pas
   assert.equal((await s.search(principal,{query:'x',source:'sessions',dedupe:false})).results.length,2);
   assert.equal((await s.search(principal,{query:'x',source:'connectors'})).results[0].passage,undefined);
 });
+
+test('session names are loaded only for the displayed page and requested projection',async()=>{
+  const calls=[],before='2026-01-02T00:00:00Z';let title='Investigate deployment rollback',denied=false;
+  const sessions={
+    search:async(_p,q)=>({hits:[hit(q.id??'a',{harness:'codex',sessionId:'first'}),...(!q.id?[hit('b',{harness:'codex',sessionId:'second'})]:[])]}),
+    titles:async(p,keys,options)=>{assert.deepEqual(p,principal);calls.push({keys,options});return new Map(denied?[]:keys.map(k=>[JSON.stringify([k.userId,k.harness,k.sessionId]),title]));},
+  };
+  const service=createWorkspaceSearch({sessions}),query={query:'rollback',limit:1,filters:{before},select:['title']};
+  const first=await service.search(principal,query);
+  assert.equal(first.results[0].title,title);assert.equal(first.results[0].text,undefined);
+  assert.deepEqual(calls[0],{keys:[{userId:'owner',harness:'codex',sessionId:'first'}],options:{before}});
+  await service.search(principal,{...query,cursor:first.next});assert.equal(calls[1].keys[0].sessionId,'second');
+  await service.search(principal,{...query,select:['text']});assert.equal(calls.length,2);
+  const fetched=await service.fetch(principal,{id:'sessions:a',length:4});assert.equal(fetched.title,title);
+  title='Renamed after the first page';await assert.rejects(service.fetch(principal,{id:'sessions:a',offset:4,version:fetched.version}),{status:409});
+  denied=true;
+  await assert.rejects(service.search(principal,{...query,facets:['sessionId']}),{status:409});
+  await assert.rejects(service.fetch(principal,{id:'sessions:a'}),{status:404});
+});

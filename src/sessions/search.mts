@@ -9,7 +9,7 @@ import {sessionScope} from './ingest.mjs';
 import {createMemorySearch} from '../memories/search.mjs';
 import {visibleTo, createControls} from './controls.mjs';
 import type {ResourceControl} from './controls.mjs';
-import {applySessionControl} from './library.mjs';
+import {applySessionControl, createSessionLibrary} from './library.mjs';
 import {searchFilters,searchSort} from '../search/controls.mjs';
 
 import {sessionIndexMapping} from '../search/mapping.mjs';
@@ -19,6 +19,7 @@ function fail(status: number,message: string): never {throw Object.assign(new Er
 export function createSessionSearch(options: RealmOptions & {store?: ObjectStore; prefix?: string}) {
   const resolve=createRealmResolver(options), f=(field: string)=>realmField('session',field);
   const controls=options.store && options.prefix ? createControls({store:options.store,prefix:options.prefix}) : null;
+  const library=options.store && options.prefix ? createSessionLibrary({...options,store:options.store,prefix:options.prefix}) : null;
   function search(principal: Principal, input: SearchInput & {raw: true}): Promise<OpenSearchResponse>;
   function search(principal: Principal, input?: SearchInput & {raw?: false}): Promise<SearchResult>;
   function search(principal: Principal, input: SearchInput): Promise<SearchResult | OpenSearchResponse>;
@@ -57,6 +58,7 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       return {total:result.hits.total?.value??0,...(filtered?{truncated:true}:{}),hits:result.hits.hits.map(hit=>({id:hit._id,score:hit._score,...hit._source} as Passage))};
     }
   return {
+    ...(library ? {titles: library.titles} : {}),
     memories:createMemorySearch(options),
     identity:resolve.identity,
     ensureIndex:(principal: Principal)=>resolve(principal).ensureIndex(),
