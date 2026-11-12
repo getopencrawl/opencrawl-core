@@ -39,6 +39,22 @@ test('compact excerpts preserve exact source text and find evidence beyond navig
   assert.equal(excerpt('short', 'short').text, 'short');
 });
 
+test('whole keyword evidence outranks repeated substring navigation', () => {
+  const text = 'Latest author navigation.\n'.repeat(300) + 'The AUTH test passed: verified checkpoint.\n' + 'Footer\n'.repeat(100);
+  const result = excerpt(text, 'test auth', 300);
+  assert.match(result.text, /verified checkpoint/);
+  assert.equal(result.text, text.slice(result.excerpt.start, result.excerpt.end));
+  assert.ok(result.text.length <= 300);
+});
+
+test('combining marks remain part of excerpt keywords and offsets stay verbatim', () => {
+  const word = 'cafe\u0301';
+  const text = 'cafeteria navigation.\n'.repeat(300) + `The ${word} record contains the approved detail.\n` + 'Footer\n'.repeat(100);
+  const result = excerpt(text, word, 300);
+  assert.match(result.text, /approved detail/);
+  assert.equal(result.text, text.slice(result.excerpt.start, result.excerpt.end));
+});
+
 test('duplicate groups preserve changed values, distinct resources and roles, and count the candidate window', () => {
   const text = 'Original evidence about the rollout. '.repeat(5);
   const hit = (id, extra={}) => ({id, source:'sessions', text, provenance:{sessionId:'s',userId:'u',kind:'message',role:'user'}, ...extra});
