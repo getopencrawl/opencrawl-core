@@ -15,6 +15,7 @@ interface State {
   s3Key:string;s3Secret:string;temporalPassword:string;airbytePassword:string;airbyteClientId:string;
   airbyteClientSecret:string;airbyteDbPassword:string;airbyteStorageSecret:string;
   workspaceId?:string;airbyteInstalled?:boolean;airbyteConfigHash?:string;airbyteEnabled?:boolean;verifiedAt?:string;startedAt?:string;
+  searchBackend?:'opensearch'|'sqlite';
 }
 const root=realpathSync(resolve(dirname(fileURLToPath(import.meta.url)),'..'));
 const stateDir=join(root,'.opencrawl-dev'),stateFile=join(stateDir,'state.json'),bin=join(stateDir,'bin');
@@ -22,8 +23,8 @@ const pins=JSON.parse(readFileSync(join(root,'dev/pins.json'),'utf8')) as Pins;
 const toolPins=pins.platforms[process.platform+'-'+process.arch];
 if(!toolPins)throw new Error('Development tools support Linux and macOS on x64 or ARM64');
 const args=process.argv.slice(2),actions=args.filter(x=>!x.startsWith('--')),action=actions[0]||'up',airbyteEnabled=!args.includes('--no-airbyte');
-if(actions.length>1||!['up','demo','status','stop','reset'].includes(action)||args.some(x=>!['up','demo','status','stop','reset','--yes','--no-airbyte'].includes(x))
-  ||args.includes('--yes')&&action!=='reset'||!airbyteEnabled&&!['up','demo'].includes(action))throw new Error('Use ./dev/up [up|demo] [--no-airbyte], or ./dev/up [status|stop|reset --yes]');
+if(actions.length>1||!['up','demo','status','stop','reset'].includes(action)||args.some(x=>!['up','demo','status','stop','reset','--yes','--no-airbyte','--sqlite'].includes(x))
+  ||args.includes('--yes')&&action!=='reset'||(!airbyteEnabled||args.includes('--sqlite'))&&!['up','demo'].includes(action))throw new Error('Use ./dev/up [up|demo] [--no-airbyte] [--sqlite], or ./dev/up [status|stop|reset --yes]');
 process.umask(0o077);
 mkdirSync(stateDir,{recursive:true,mode:0o700});
 if(lstatSync(stateDir).isSymbolicLink())throw new Error('Refusing symlinked state');
@@ -58,20 +59,23 @@ if(existsSync(stateFile)){
   state=JSON.parse(readFileSync(stateFile,'utf8')) as State;
   if(state.format!==1||state.root!==root||!/^ocdev-[a-f0-9]{12}$/.test(state.project)||!/^org_[a-f0-9]{24}$/.test(state.organization))throw new Error('Development state belongs to another clone or has an unsupported format');
   if(state.port!==port(String(state.port),8092)||state.airbytePort!==port(String(state.airbytePort),8000))throw new Error('Invalid saved ports');
+  if(state.searchBackend!==undefined&&!['opensearch','sqlite'].includes(state.searchBackend))throw new Error('Invalid saved search backend');
+  if(args.includes('--sqlite')&&state.searchBackend!=='sqlite')throw new Error('This installation uses OpenSearch. Use --sqlite for a fresh installation; changing an existing index requires a migration. See docs/search-backends.md. Existing data is preserved.');
 }else{
   if(!['up','demo'].includes(action))throw new Error('No development installation exists in this clone');
   const p=port(process.env.OPENCRAWL_DEV_PORT,8092),ap=port(process.env.OPENCRAWL_DEV_AIRBYTE_PORT,8000);
   if(p===ap)throw new Error('Application and Airbyte ports must differ');
   const origin=process.env.OPENCRAWL_DEV_ORIGIN||`http://localhost:${p}`,u=new URL(origin);
   if(u.origin!==origin||!(u.protocol==='https:'||u.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(u.hostname)))throw new Error('Dev origin must be loopback HTTP or an HTTPS origin you control');
-  state={format:1,root,project:'ocdev-'+randomBytes(6).toString('hex'),createdAt:new Date().toISOString(),port:p,airbytePort:ap,origin,
+  state={format:1,root,project:'ocdev-'+randomBytes(6).toString('hex'),createdAt:new Date().toISOString(),port:p,airbytePort:ap,origin,searchBackend:args.includes('--sqlite')?'sqlite':'opensearch',
     organization:'org_'+randomBytes(12).toString('hex'),email:'developer@opencrawl.example',password:secret(),authSecret:secret(),setupToken:secret(),connectorKey:randomBytes(32).toString('base64'),
     s3Key:'dev'+randomBytes(10).toString('hex'),s3Secret:secret(),temporalPassword:secret(),airbytePassword:secret(),airbyteClientId:randomUUID(),airbyteClientSecret:secret(),airbyteDbPassword:secret(),airbyteStorageSecret:secret()};
   privateFile(stateFile,state);
 }
 function save(){privateFile(stateFile,state);}
 const node=state.project+'-control-plane',kubeconfig=join(stateDir,'kubeconfig'),envFile=join(stateDir,'compose.env'),override=join(stateDir,'compose.json');
-const compose=(args:string[],options:Parameters<typeof run>[2]={})=>run('docker',['compose','--project-name',state.project,'--env-file',envFile,'-f',join(root,'deploy/compose.yaml'),'-f',override,...args],options);
+const sqlite=state.searchBackend==='sqlite';
+const compose=(args:string[],options:Parameters<typeof run>[2]={})=>run('docker',['compose','--project-name',state.project,'--env-file',envFile,'-f',join(root,'deploy/compose.yaml'),...(sqlite?['-f',join(root,'deploy/compose.sqlite.yaml')]:[]),'-f',override,...args],options);
 const kubectl=(args:string[],options:Parameters<typeof run>[2]={})=>run(join(bin,'kubectl'),['--kubeconfig',kubeconfig,'--cache-dir',join(stateDir,'kube-cache'),'--context','kind-'+state.project,...args],options);
 const helm=(args:string[],options:Parameters<typeof run>[2]={})=>run(join(bin,'helm'),['--kubeconfig',kubeconfig,'--kube-context','kind-'+state.project,...args],options);
 function ownedNode(){
@@ -94,7 +98,7 @@ async function publishApp(address:string){
     ['-n','airbyte','exec','airbyte-db-0','--','wget','-q','-T','5','-O','-',appForAirbyte+'/health'],{capture:true,allowFailure:true}).includes('"ok":true'),2);
 }
 function summary(){
-  console.log(`\nOpenCrawl development workspace: ${state.origin}\nAirbyte: ${state.airbyteEnabled===false?'disabled':`http://localhost:${state.airbytePort}`}\nPrivate login details: ${join(stateDir,'login.txt')}\nLast startup check: ${state.startedAt||'not yet started'}\nOptional demo ingestion check: ${state.verifiedAt||'not run'}\nResume: ./dev/up${state.airbyteEnabled===false?' --no-airbyte':''}\nStop without deleting data: ./dev/up stop\nDelete this development installation: ./dev/up reset --yes`);
+  console.log(`\nOpenCrawl development workspace: ${state.origin}\nSearch: ${sqlite?'SQLite FTS5':'OpenSearch'}\nAirbyte: ${state.airbyteEnabled===false?'disabled':`http://localhost:${state.airbytePort}`}\nPrivate login details: ${join(stateDir,'login.txt')}\nLast startup check: ${state.startedAt||'not yet started'}\nOptional demo ingestion check: ${state.verifiedAt||'not run'}\nResume: ./dev/up${state.airbyteEnabled===false?' --no-airbyte':''}\nStop without deleting data: ./dev/up stop\nDelete this development installation: ./dev/up reset --yes`);
 }
 if(action==='status'){
   if(composeExists())compose(['ps']);
@@ -182,7 +186,7 @@ async function up(){
   }
   writeCompose();
   console.log('Starting the normal storage and workflow dependencies...');
-  compose(['up','-d','--wait','--wait-timeout','600','s3','opensearch','temporal',...(airbyteEnabled?['fixture']:[])]);
+  compose(['up','-d','--wait','--wait-timeout','600','s3',...(sqlite?[]:['opensearch']),'temporal',...(airbyteEnabled?['fixture']:[])]);
   console.log('Building the shared product runtime and React console...');compose(['build','app']);
   if(airbyteEnabled)await startAirbyte(existing);
   console.log('Starting the normal authenticated application and indexing worker...');compose(['up','-d','--wait','--wait-timeout','600','app','worker']);
@@ -191,7 +195,7 @@ async function up(){
     airbyteEnabled,...(airbyteEnabled?{fixtureUrl:`http://${ip('fixture')}:8080`}:{})};
   const seedDir=join(stateDir,'seed');mkdirSync(seedDir,{recursive:true,mode:0o700});
   privateFile(join(seedDir,'seed-input.json'),credentials);
-  console.log(action==='demo'?`Loading demo data and verifying ${airbyteEnabled?'Airbyte → ':''}S3 → Temporal → OpenSearch ingestion...`:'Creating the local account and preserving first-run onboarding...');
+  console.log(action==='demo'?`Loading demo data and verifying ${airbyteEnabled?'Airbyte → ':''}S3 → Temporal → ${sqlite?'SQLite FTS5':'OpenSearch'} ingestion...`:'Creating the local account and preserving first-run onboarding...');
   compose(['run','--rm','--no-deps','--user','root','--volume',`${join(root,'dev')}:/opencrawl/dev:ro`,'--volume',`${seedDir}:/dev-state`,'app','node','--disable-warning=ExperimentalWarning',action==='demo'?'dev/seed.mts':'dev/bootstrap.mts']);
   if(state.airbyteEnabled!==airbyteEnabled)delete state.verifiedAt;
   if(action==='demo'){

@@ -30,7 +30,10 @@ No provider keys or `.env` editing are needed. The first run downloads and build
 images; on Ubuntu it installs Docker if missing (sudo may be needed).
 
 Keep `--no-airbyte` on each startup to run capture, memories, search and the board.
-To add external sources, omit the flag and use **16 GiB RAM, 40 GiB free disk**
+For a new installation with SQLite FTS5 search, run
+`./dev/up --no-airbyte --sqlite` on the first start. The search backend is saved;
+subsequent starts can omit `--sqlite`. See [search backends](docs/search-backends.md).
+To add external sources, omit `--no-airbyte` and use **16 GiB RAM, 40 GiB free disk**
 and [your connector credentials](docs/self-host.md#connect-sources).
 
 For an optional synthetic demo, run `./dev/up demo --no-airbyte` and search for
