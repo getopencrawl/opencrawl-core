@@ -7,6 +7,7 @@ import type {Integrations} from '../integrations/service.mjs';
 import type {teamService} from '../identity/team.mjs';
 import type {SourceCard} from './types.mjs';
 interface GuidedOptions {
+  inviteBeforeSetup?: boolean;
   onboarding: ReturnType<typeof createOnboardingStatus> | null; integrations?: Pick<Integrations, 'list'>;
   organizations: ReturnType<typeof teamService>; authorizedSearch?: ReturnType<typeof createWorkspaceSearch>;
   track?: (name: string, principal: Principal, properties?: Record<string, unknown>) => unknown; smallJson(req: IncomingMessage, limit?: number): Promise<Record<string, unknown>>;
@@ -15,7 +16,7 @@ interface GuidedContext {route: {name: string}; principal: Principal; identity: 
 import {deriveOnboarding,hasReceipt} from '../onboarding-state.mjs';
 
 /** Product onboarding uses persisted receipts; the runtime owns request admission. */
-export function createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,track = () => {},smallJson}: GuidedOptions) {
+export function createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,inviteBeforeSetup=false,track = () => {},smallJson}: GuidedOptions) {
   const progress = async (principal: Principal) => onboarding ? onboarding.read(principal) : null;
   const sourceCards = async (principal: Principal) => integrations ? integrations.list(principal) : [];
   const connected = (card: SourceCard) => ['syncing','synced','connected'].includes(card.state);
@@ -32,7 +33,7 @@ export function createGuidedOnboarding({onboarding,integrations,organizations,au
       const json = (status: number,value: unknown) => respond(status,JSON.stringify(value),'application/json');
       if (!onboarding) return json(503,{error:'Setup status is temporarily unavailable.'});
       const state = (await progress(principal))!;
-      if (!deriveOnboarding(state).complete && !hasReceipt(state.completed)) {
+      if (!deriveOnboarding(state).complete && !hasReceipt(state.completed) && !(inviteBeforeSetup && route.name === '/api/onboarding/invites')) {
         return json(409,{error:'Complete agent setup first.',onboardingUrl:'/onboarding'});
       }
       if (route.name === '/api/onboarding/sources') {

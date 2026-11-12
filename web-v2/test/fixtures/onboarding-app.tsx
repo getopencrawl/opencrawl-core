@@ -31,6 +31,7 @@ const adapter: OnboardingAdapter = {
   finish: signal => request('/api/onboarding/finish', signal, {}),
 };
 const never = new AbortController().signal;
+const selfhostSetup = new URLSearchParams(window.location.search).has('selfhost');
 const libraryAdapter: LibraryAdapter = (operation, input, signal) => request('/api/library/' + operation, signal, input);
 /** The Integrations page against the same fixture state as the onboarding step. */
 const sourcesAdapter: SourcesAdapter = {
@@ -39,7 +40,7 @@ const sourcesAdapter: SourcesAdapter = {
   retry: async () => ({ok: true}), disconnect: async () => ({ok: true}),
   saveCredential: (id, value, signal) => request(`/api/integrations/credentials/${encodeURIComponent(id)}`, signal ?? never, {value}),
 };
-const teamAdapter: TeamAdapter = {team: signal => request('/api/console/team', signal ?? never), invite: async () => ({ok:true}), changeRole: async (userId,role) => ({ok:true,userId,role}), renameOrganization: async name => ({ok:true,name}), removeMember: (userId,signal) => request('/api/console/team/remove',signal ?? never,{userId})};
+const teamAdapter: TeamAdapter = {team: signal => request('/api/console/team', signal ?? never), invite: (email,signal) => request('/api/console/team/invite',signal ?? never,{email}), changeRole: async (userId,role) => ({ok:true,userId,role}), renameOrganization: async name => ({ok:true,name}), removeMember: (userId,signal) => request('/api/console/team/remove',signal ?? never,{userId})};
 export const setupPrompt = 'Set up OpenCrawl across all coding agents and environments I use. Inspect existing setup, reuse valid configuration and authentication, and complete what is missing. Keep credentials out of chats and repositories. Confirm recording and history import consent, then verify a newly recorded session.';
 const account = <form className="header-account" method="post" action="/auth/logout"><Button variant="quiet" type="submit">Sign out</Button></form>;
 
@@ -60,14 +61,15 @@ function Fixture() {
   />;
   return <Routes>
     <Route path="/team-fixture" element={<ConsoleDataProvider scopeKey="team-fixture" onAccessFailure={() => {}}><TeamPage adapter={teamAdapter}/></ConsoleDataProvider>} />
+    <Route path="/auth-fixture/claude-return" element={<DocumentFrame signedIn><ProductDocument page={{kind:'oauth-return',url:'claude://claude.ai/mcp-auth-callback/sdk?code=example&state=bound'}}/></DocumentFrame>}/>
     <Route path="/auth-fixture/setup" element={<DocumentFrame signedIn={false}><ProductDocument page={{kind:'auth',view:'setup',setup:'private-once-only'}}/></DocumentFrame>}/>
     <Route path="/auth-fixture/consent" element={<DocumentFrame signedIn><ProductDocument page={{kind:'auth',view:'consent',clientName:'Example MCP client',oauthQuery:'signed-consent-query',resource:'https://oss.example/mcp',scopes:['openid','offline_access']}}/></DocumentFrame>}/>
 
     <Route path="/callback-selection" element={<CallbackChoices model={readContinuation(JSON.stringify({name:'GitHub',returnTo:'/onboarding/sources',actions:[{label:'Connect first account',url:'https://github.com/login/oauth/authorize?client_id=owned&state=bound.42'},{label:'Connect second account',url:'https://github.com/login/oauth/authorize?client_id=owned&state=bound.43'},{label:'Install for another account',url:'https://github.com/apps/owned-app/installations/new?state=bound'}]}))}/>} />
-    <Route path="/onboarding" element={<FocusedFrame footer={account}><AgentOnboarding adapter={adapter} mcpUrl="https://app.getopencrawl.com/mcp" setupPrompt={setupPrompt} /></FocusedFrame>} />
+    <Route path="/onboarding" element={<FocusedFrame footer={account}><AgentOnboarding adapter={adapter} mcpUrl="https://app.getopencrawl.com/mcp" setupPrompt={setupPrompt} canInviteBeforeSetup={selfhostSetup} /></FocusedFrame>} />
     <Route path="/onboarding/sources" element={<FocusedFrame footer={account}><SourcesOnboarding adapter={adapter} canConfigure={!location.search.includes('role=member')} /></FocusedFrame>} />
 
-    <Route path="/onboarding/invite" element={<FocusedFrame footer={account}><InviteOnboarding adapter={adapter} canInvite /></FocusedFrame>} />
+    <Route path="/onboarding/invite" element={<FocusedFrame footer={account}><InviteOnboarding adapter={adapter} canInvite returnToAgent={selfhostSetup} invitationDelivery={selfhostSetup?'link':'email'} /></FocusedFrame>} />
     <Route path="/" element={<h1>Workspace overview</h1>} />
     <Route path="/away" element={<h1>Different route</h1>} />
   </Routes>;
