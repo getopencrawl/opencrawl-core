@@ -51,6 +51,7 @@ export async function collectCommand(action:string,api:string,values:any) {
   if((values.backfill!==undefined || values['defer-auth']) && action!=='install' || values['dry-run'] && action!=='backfill' || values.yes && !['backfill','install','purge'].includes(action))throw new CliError('INVALID_USAGE','Use --backfill with install; --dry-run with backfill; --yes with install, backfill or purge.',64);
   if(values.project!==undefined && action!=='exclude' || values['session-id']!==undefined && action!=='exclude')throw new CliError('INVALID_USAGE','Use --project or --session-id with collect exclude.',64);
   if((values.concurrency!==undefined||values['batch-delay-ms']!==undefined)&&(action!=='backfill'||values['dry-run']))throw new CliError('INVALID_USAGE','Upload pacing options apply only to collect backfill imports.',64);
+  if(values['retry-rejected']&&action!=='flush')throw new CliError('INVALID_USAGE','Use --retry-rejected only with collect flush after resolving the receiver limit.',64);
   switch(action) {
     case 'install': {
       // Grok Bot keeps no local history to import.
@@ -79,7 +80,7 @@ export async function collectCommand(action:string,api:string,values:any) {
     case 'status': return captureStatus();
     case 'sync': try{return await syncCaptures();}catch(e){recordError(e);throw e;}
     case 'titles': try{return await refreshCapturedTitles();}catch(e){recordError(e);throw e;}
-    case 'flush': try{return await flushCaptureWork();}catch(e){recordError(e);throw e;}
+    case 'flush': try{return await flushCaptureWork({retryRejected:values['retry-rejected']===true});}catch(e){recordError(e);throw e;}
     case 'worker': {try{await ownedCaptureWorker();}catch(e){try{recordError(e);}catch{}}return null;}
     case 'hook': {
       if(values.harness==='grok-bot')return grokBotHook();

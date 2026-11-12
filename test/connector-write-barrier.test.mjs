@@ -199,11 +199,11 @@ test('reference S3 rejects authorization and validation without stranding a writ
 });
 
 test('reference search settles preflight and definite auth rejection but not partial bulk or uncertain responses', async () => {
-  for (const scenario of ['invalid-document', 'oversized-body', 'auth-denied', 'unknown-forbidden', 'partial-bulk', 'bad-response']) {
-    const h = fixture(), binding = connectorBinding(h), documents = connectorDocuments(binding, scenario === 'oversized-body' ? 100 : 1);
+  for (const scenario of ['invalid-document', 'oversized-item', 'auth-denied', 'unknown-forbidden', 'partial-bulk', 'bad-response']) {
+    const h = fixture(), binding = connectorBinding(h), documents = connectorDocuments(binding, 1);
     let sent = 0;
     if (scenario === 'invalid-document') documents[0].document.connectionId = 'other';
-    if (scenario === 'oversized-body') for (const item of documents) item.document.text = 'x'.repeat(50000);
+    if (scenario === 'oversized-item') documents[0].document.text = 'x'.repeat(5*1024*1024);
     const search = createConnectorSearch({endpoint: 'http://search.test', tenantId: binding.tenantId, fetch: async () => {
       sent++;
       if (scenario === 'auth-denied') return Response.json({error: {type: 'security_exception'}}, {status: 403});
@@ -213,7 +213,7 @@ test('reference search settles preflight and definite auth rejection but not par
     }});
     const guarded = guardConnectorWrites({binding, store: h.store, search});
     await assert.rejects(guarded.search.putDocuments({tenantId: binding.tenantId}, binding, documents));
-    assert.equal(sent, ['invalid-document', 'oversized-body'].includes(scenario) ? 0 : 1);
-    assert.equal((await guarded.writeBarrier.close()).pending, ['invalid-document', 'oversized-body', 'auth-denied'].includes(scenario) ? 0 : 1, scenario);
+    assert.equal(sent, ['invalid-document', 'oversized-item'].includes(scenario) ? 0 : 1);
+    assert.equal((await guarded.writeBarrier.close()).pending, ['invalid-document', 'oversized-item', 'auth-denied'].includes(scenario) ? 0 : 1, scenario);
   }
 });

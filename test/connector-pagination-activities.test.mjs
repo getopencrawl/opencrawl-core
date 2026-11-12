@@ -5,6 +5,12 @@ import {connectorActivities} from '../dist/src/connectors/temporal/worker.mjs';
 import {sessionActivities} from '../dist/src/sessions/temporal/worker.mjs';
 import {paginationFixture} from './fixtures/connector-pagination-paths.mjs';
 
+test('an unshippable session document reports a safe nonretryable bulk cause',async()=>{
+ const env=new MockActivityEnvironment();
+ const resolve=async()=>{throw Object.assign(new Error('private provider body'),{code:'BULK_TOO_LARGE',permanent:true});};
+ await assert.rejects(env.run(sessionActivities({resolve}).indexSessionObject,{key:'private-object-key'}),error=>error.type==='BULK_TOO_LARGE'&&error.nonRetryable===true&&!error.message.includes('private'));
+});
+
 test('both real list activities reject pending pagination failures before source resolution or provider access', async () => {
   const resolve = async () => assert.fail('pending pagination failure must not resolve credentials or fetch provider');
   const lists = [connectorActivities({resolve}).listPage, sessionActivities({resolve}).listSessionPage];
