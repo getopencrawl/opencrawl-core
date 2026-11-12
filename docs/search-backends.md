@@ -12,6 +12,22 @@ SQLite query operations fail explicitly instead of dropping a constraint.
 
 ## Selecting SQLite
 
+For a **new** installation, select SQLite with the startup flag:
+
+```sh
+./dev/up --no-airbyte --sqlite
+```
+
+For the operator-managed stack, use `./deploy/up.sh --sqlite --no-airbyte` on the
+first invocation, set `OPENCRAWL_URL` in the generated `deploy/.env`, then rerun
+the command. Both scripts save the choice for later starts. The operator-managed
+script saves `COMPOSE_FILE=compose.yaml:compose.sqlite.yaml` in `deploy/.env`,
+which also applies to the backup tool. Omit `--no-airbyte` when configuring
+external sources. Existing OpenSearch installations are not silently switched;
+the flag refuses an existing installation/configuration with a different backend.
+
+For independently configured runtimes, select the adapter directly:
+
 OpenSearch remains the default. For a **new**, single-host installation, set:
 
 ```sh
@@ -67,6 +83,10 @@ OpenSearch-shaped requests, **not an OpenSearch protocol emulator**.
   index initialization and a search-visibility barrier (`refresh`).
 - Named `session`, `connector`, `memory-head` and `session-projection` write
   policies preserve ownership, replay ordering and connector tombstones.
+  Memory heads can atomically advance the passage format of the same snapshot.
+  The `memory-projection-rollback` policy includes an expected projection ID and
+  restores a retained head only when its owner, snapshot and generation still
+  match. A newer capture or projection remains authoritative.
   OpenSearch compiles them to its existing Painless scripts; SQLite evaluates
   them within a writer transaction. Ordinary product callers use policies and
   field patches. Legacy raw scripts remain OpenSearch-only.
