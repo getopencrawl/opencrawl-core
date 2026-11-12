@@ -19,7 +19,7 @@ test('recognized approval records follow evidence while remaining discoverable a
   assert.equal(first.facets.kind.values[0].count,2);
   const next=await service.search(principal,{query:'WorkOS Better Auth',limit:1,facets:['kind'],cursor:first.next});assert.equal(next.results[0].id,'sessions:approval');
   assert.equal((await service.fetch(principal,{id:'sessions:approval'})).text,text);
-  for(const query of [{query:'approval WorkOS'},{query:'risk_level'},{query:'WorkOS',order:'newest'}])assert.equal((await service.search(principal,query)).results[0].id,'sessions:approval');
+  for(const query of [{query:'approval WorkOS'},{query:'approved WorkOS'},{query:'deny deletion'},{query:'authorized command'},{query:'risk_level'},{query:'WorkOS',order:'newest'}])assert.equal((await service.search(principal,query)).results[0].id,'sessions:approval');
   const foreign=createWorkspaceSearch({sessions:{search:async()=>({hits:[{...approval,tenantId:'other'}],total:1})}});
   await assert.rejects(foreign.search(principal,{query:'WorkOS'}),/scope/);
 });

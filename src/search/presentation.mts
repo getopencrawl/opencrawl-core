@@ -81,7 +81,7 @@ export function approvalRecord(hit: WorkspaceHit) {
 
 export function prioritizeEvidence(hits: WorkspaceHit[], query: string) {
   // Approval questions still need these records in their original source order.
-  if (/\b(?:risk_level|user_authorization|approval|approvals|permission|permissions|authorization)\b/iu.test(query)) return {results: hits, demoted: 0};
+  if (/\b(?:risk_level|user_authorization|approval|approvals|approve|approved|deny|denied|permission|permissions|authorization|authorize|authorized)\b/iu.test(query)) return {results: hits, demoted: 0};
   const evidence: WorkspaceHit[] = [], approvals: WorkspaceHit[] = [];
   for (const hit of hits) (approvalRecord(hit) ? approvals : evidence).push(hit);
   return {results: [...evidence, ...approvals], demoted: approvals.length};
