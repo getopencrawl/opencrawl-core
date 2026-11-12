@@ -92,7 +92,8 @@
     "./integrations/purge": "./dist/src/integrations/purge.mjs",
     "./application/value-report": "./dist/src/application/value-report.mjs",
     "./sessions/passage-migration": "./dist/src/sessions/passage-migration.mjs",
-    "./sessions/deletion-requests": "./dist/src/sessions/deletion-requests.mjs"
+    "./sessions/deletion-requests": "./dist/src/sessions/deletion-requests.mjs",
+    "./memories/projection-migration": "./dist/src/memories/projection-migration.mjs"
   },
   "files": [
     "dist/src",

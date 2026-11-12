@@ -69,3 +69,47 @@ Existing session and connector documents are preserved.
 Rolling back to the prior CLI stops new scans; prior server code ignores the new
 object paths and mapping fields. Retain source objects and indexing receipts.
 The memory mapping adds no index, cluster, daemon or infrastructure service.
+
+## Rebuilding memory passages
+
+Passage identities now include a projection ID derived from the immutable
+snapshot hash and passage format version. Existing heads without a projection ID
+continue selecting only legacy passages. A reindex stages separate documents,
+checks bulk completion and refresh, then atomically switches the head. Partial
+writes remain invisible. A newer captured generation wins over an older reindex,
+including when it arrives between the head read and activation. Snapshot bytes,
+generation, received time and capture receipts do not change.
+
+The portable `memories/projection-migration` export provides
+`migrateMemoryProjection` and `rollbackMemoryProjection`. Supply an explicitly
+tenant-bound realm, trusted tenant principal, object store and prefix. Process
+one head per call; both operations default to dry run. The migration validates
+the head identity, immutable object namespace, snapshot hash and capture time
+before writing. Before applying, persist the provided backup under the same
+tenant's operator recovery policy. Key it by head and replacement projection and
+retain the first value on retries. It contains the old head, compressed source
+hash and retained passage count, without another copy of memory text.
+
+An applied migration returns `activated`, `superseded` by a newer capture, or
+`already-current`. Check the active head and search/fetch results after each
+bounded batch. Keep old passages and source objects until the rollback window
+closes. Rollback validates the backup, immutable source and retained passage
+count, then conditionally restores the pointer only while that exact replacement
+projection remains active. A newer capture cannot be overwritten, including if
+it publishes during rollback. Owner deletion can remove retained passages and
+make rollback unavailable; deletion takes precedence over recovery.
+
+Search, fetch and library reads recheck current owner visibility and deletion
+controls, so stale staged or restored passages cannot undo a later privacy change
+or deletion. A deleted file becomes readable again only after a later file
+modification, following the existing memory contract. The library reads one
+complete active file and rejects missing chunks rather than returning a
+truncated file.
+
+This rollback restores a projection using the projection-aware reader. It does
+not make an older binary safe: readers predating projection IDs select all
+passages for a snapshot and can mix retained and replacement chunks. Keep a
+projection-aware runtime during recovery. Before any downgrade to an older
+reader, stop memory writers and reconcile every active snapshot and retained
+projection to that reader's format; validate complete file reads before serving
+traffic. An image rollback alone is insufficient after projection activation.
