@@ -1,7 +1,7 @@
-import type {WritePolicy} from './types.mjs';
+import type {NamedWritePolicy, WritePolicy} from './types.mjs';
 import type {SearchDocument} from './types.mjs';
 
-const scripts: Record<WritePolicy,string> = {
+const scripts: Record<NamedWritePolicy,string> = {
   'session': "if (ctx._source.session != null && (ctx._source.tenantId != params.doc.tenantId || ctx._source.session.userId != params.doc.session.userId)) { throw new IllegalArgumentException('Session document ownership mismatch'); } if (ctx._source.session == null || ctx._source.session.receivedAt == null || (params.doc.session.containsKey('passageVersion') && (!ctx._source.session.containsKey('passageVersion') || params.doc.session.passageVersion > ctx._source.session.passageVersion)) || params.doc.session.receivedAt.compareTo(ctx._source.session.receivedAt) > 0) { ctx._source = params.doc; } else { ctx.op = 'none'; }",
   'connector': `if (ctx._source.connector == null) { ctx._source = params.doc; }
 else if (ctx._source.connector.deleted == true) { ctx.op = 'none'; }
@@ -19,10 +19,14 @@ else if (ctx._source.connector.extractedAt == null ||
  ((!params.doc.connector.containsKey('componentCount') || params.doc.connector.componentCount == ctx._source.connector.componentCount) && params.doc.connector.contentHash.compareTo(ctx._source.connector.contentHash) > 0)))))) {
  ctx._source = params.doc;
 } else { ctx.op = 'none'; }`,
-  'memory-head': "if (ctx._source.memory == null || params.doc.memory.generation > ctx._source.memory.generation) { ctx._source = params.doc; } else if (params.doc.memory.generation == ctx._source.memory.generation && params.doc.memory.snapshotId != ctx._source.memory.snapshotId) { throw new IllegalArgumentException('Memory generation conflict'); } else { ctx.op = 'none'; }",
+  'memory-head': "if (ctx._source.memory == null || params.doc.memory.generation > ctx._source.memory.generation) { ctx._source = params.doc; } else if (params.doc.memory.generation == ctx._source.memory.generation) { if (params.doc.memory.snapshotId != ctx._source.memory.snapshotId) { throw new IllegalArgumentException('Memory generation conflict'); } if (!ctx._source.memory.containsKey('projectionId') || (params.doc.memory.containsKey('passageVersion') && ctx._source.memory.containsKey('passageVersion') && params.doc.memory.passageVersion > ctx._source.memory.passageVersion)) { ctx._source = params.doc; } else { ctx.op = 'none'; } } else { ctx.op = 'none'; }",
   'session-projection': "if (ctx._source.session == null) { ctx.op = 'none'; } else { ctx._source.text = params.doc.text; ctx._source.session.attachments = params.doc.session.attachments; ctx._source.session.toolNames = params.doc.session.toolNames; }",
 };
 export function writeScript(policy:WritePolicy):string {
+  if(typeof policy!=='string'){
+    if(policy?.name!=='memory-projection-rollback'||!/^[a-f0-9]{64}$/.test(policy.expectedProjectionId))throw new Error('Invalid memory projection rollback policy');
+    return `if (ctx._source.memory != null && ctx._source.tenantId == params.doc.tenantId && ctx._source.memory.userId == params.doc.memory.userId && ctx._source.memory.snapshotId == params.doc.memory.snapshotId && ctx._source.memory.generation == params.doc.memory.generation && ctx._source.memory.projectionId == ${JSON.stringify(policy.expectedProjectionId)}) { ctx._source = params.doc; } else { ctx.op = 'none'; }`;
+  }
   if(!Object.hasOwn(scripts,policy))throw new Error('Unsupported index write policy');
   return scripts[policy];
 }
@@ -37,11 +41,12 @@ export function patchScript(set:Record<string,unknown>) {
 export function applyWrite(policy: WritePolicy | undefined, previous: SearchDocument | undefined, next: SearchDocument): SearchDocument | null {
   if (!policy) return next;
   writeScript(policy); // Reject unknown policies even on an empty index.
-  const corpus = policy === 'connector' ? 'connector' : policy === 'memory-head' ? 'memory' : 'session';
+  const corpus = policy === 'connector' ? 'connector' : typeof policy!=='string'||policy === 'memory-head' ? 'memory' : 'session';
   if (next.corpus !== corpus) throw new Error('Index write policy corpus mismatch');
   const before = previous?.[corpus] as Record<string, unknown> | undefined;
   const after = next[corpus] as Record<string, unknown>;
   const number = (d: Record<string, unknown>, key: string) => typeof d[key] === 'number' ? d[key] as number : -Infinity;
+  if(typeof policy!=='string')return previous&&before&&previous.tenantId===next.tenantId&&before.userId===after.userId&&before.snapshotId===after.snapshotId&&before.generation===after.generation&&before.projectionId===policy.expectedProjectionId?next:null;
   if (policy === 'session-projection') {
     if (!previous || !before) return null;
     return {...previous, text: next.text, session: {...before, attachments: after.attachments, toolNames: after.toolNames}};
@@ -54,6 +59,7 @@ export function applyWrite(policy: WritePolicy | undefined, previous: SearchDocu
   if (policy === 'memory-head') {
     if (number(after, 'generation') > number(before, 'generation')) return next;
     if (after.generation === before.generation && after.snapshotId !== before.snapshotId) throw new Error('Memory generation conflict');
+    if(after.generation===before.generation&&(!Object.hasOwn(before,'projectionId')||typeof after.passageVersion==='number'&&typeof before.passageVersion==='number'&&after.passageVersion>before.passageVersion))return next;
     return null;
   }
   if (before.deleted === true) return null;
