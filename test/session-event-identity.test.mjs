@@ -175,3 +175,10 @@ test('ever-advancing empty inventories are bounded, and deeply nested legacy con
  const key=await legacy(raw,batch([event('deep',data)])),p=pipeline(raw);
  await assert.rejects(p.worker.processObject({key}),{status:400,permanent:true});assert.equal(p.writes,0);assert.equal(ledgerKeys(raw).length,0);
 });
+
+test('canonical ledger hashes remain compatible across bounded hash buffers',async()=>{
+ const value={id:'native-record',kind:'message',sequence:7,data:{unicode:'中文🦉\ud800',many:Array.from({length:3000},(_,n)=>({n,text:'tool result '+n})),long:'x'.repeat(20000)}};
+ const store=memorySessionStore();await createSessionIngest({store,prefix}).putBatch(owner,batch([value]));
+ const ledger=JSON.parse(store.data.get(ledgerKeys(store)[0]).toString());
+ assert.equal(ledger.events[digest(value.id)],'481aca89944b5fed7861594722c7aa2f99fb9f9d2c526a9a02d98168454b4146');
+});

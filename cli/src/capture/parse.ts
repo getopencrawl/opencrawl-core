@@ -16,15 +16,23 @@ export function finalizeEventIdentity(event:any) {
   const wire=JSON.parse(JSON.stringify(event));
   if(!wire||typeof wire.id!=='string'||!wire.id)throw new CliError('CAPTURE_EVENT_INVALID','Capture event has no source identity');
   const digest=createHash('sha256').update('opencrawl-wire-event-v1\n');
+  // Buffer small canonical fragments to avoid one native hash call per key
+  // or separator. Large strings go directly to the hash; extra space is bounded.
+  let pieces:string[]=[],characters=0;
+  const flush=()=>{if(characters){digest.update(pieces.join(''));pieces=[];characters=0;}};
+  const write=(text:string)=>{
+   if(text.length>=16384){flush();digest.update(text);return;}
+   pieces.push(text);characters+=text.length;if(characters>=16384)flush();
+  };
   function visit(value:any,depth=0) {
     if(depth>128)throw new CliError('CAPTURE_EVENT_TOO_DEEP','Capture event exceeds the supported nesting depth');
-    if(value===null||typeof value!=='object'){digest.update(JSON.stringify(value));return;}
-    if(Array.isArray(value)){digest.update('[');for(let i=0;i<value.length;i++){if(i)digest.update(',');visit(value[i],depth+1);}digest.update(']');return;}
-    digest.update('{');let first=true;
-    for(const key of Object.keys(value).sort()){if(!first)digest.update(',');first=false;digest.update(JSON.stringify(key)+':');visit(value[key],depth+1);}
-    digest.update('}');
+    if(value===null||typeof value!=='object'){write(JSON.stringify(value));return;}
+    if(Array.isArray(value)){write('[');for(let i=0;i<value.length;i++){if(i)write(',');visit(value[i],depth+1);}write(']');return;}
+    write('{');let first=true;
+    for(const key of Object.keys(value).sort()){if(!first)write(',');first=false;write(JSON.stringify(key)+':');visit(value[key],depth+1);}
+    write('}');
   }
-  visit(wire);
+  visit(wire);flush();
   wire.id='wire1:'+digest.digest('hex');
   return wire;
 }

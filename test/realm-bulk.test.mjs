@@ -1,3 +1,4 @@
+import {gunzipSync} from 'node:zlib';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRealm} from '../dist/src/search/realm.mjs';
@@ -9,7 +10,8 @@ const documents=Array.from({length:1800},(_,i)=>({id:'item-'+i,document:{...prin
 function fixture(){
  const calls=[];let rejectAt=0;
  const fetch=async(_url,init)=>{
-  const bytes=Buffer.byteLength(init.body),lines=init.body.trimEnd().split('\n');
+  const body=init.headers['content-encoding']==='gzip'?gunzipSync(init.body).toString():init.body;
+  const bytes=Buffer.byteLength(body),lines=body.trimEnd().split('\n');
   assert.ok(bytes<=4*1024*1024);assert.equal(lines.length%2,0);
   const ids=[];for(let i=0;i<lines.length;i+=2)ids.push(JSON.parse(lines[i]).update?._id??JSON.parse(lines[i]).index?._id);
   calls.push({bytes,ids});const rejected=calls.length===rejectAt;
@@ -44,7 +46,8 @@ test('a definite rejection after an earlier session chunk cannot erase partial-w
  let calls=0;
  const search=createSessionSearch({store:memorySessionStore(),prefix:'capture-v1',endpoint:'http://localhost:9200',fetch:async(_url,init)=>{
   if(++calls===2)return Response.json({error:{type:'security_exception'}},{status:403});
-  const count=init.body.trimEnd().split('\n').length/2;
+  const body=init.headers['content-encoding']==='gzip'?gunzipSync(init.body).toString():init.body;
+  const count=body.trimEnd().split('\n').length/2;
   return Response.json({errors:false,items:Array.from({length:count},()=>({update:{status:200}}))});
  }});
  await assert.rejects(search.putDocuments(documents,principal),error=>{assert.equal(error.httpStatus,403);assert.equal(error.writeOutcome,undefined);return true;});

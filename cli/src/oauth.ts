@@ -1,5 +1,6 @@
 export class CliError extends Error {
   retryAfterMs?: number;
+  httpStatus?: number;
   constructor(public code: string, message: string, public exitCode = 1) { super(message); }
 }
 

@@ -103,24 +103,43 @@ export async function backfill(api:string, selected:Selection, approved:boolean,
     }
   };
   const flush=()=>retry(()=>flushCaptures({concurrency,batchDelayMs,onUploaded:()=>{uploaded++;progress();}}));
-  const pending=()=>readdirSync(join(captureDir(),'queue')).filter(name=>name.endsWith('.json')).length;
+  const pending=()=>{
+    try{return readdirSync(join(captureDir(),'queue')).filter(name=>name.endsWith('.json')).length;}
+    catch(error:any){if(error.code==='ENOENT')return 0;throw error;}
+  };
+  let draining:Promise<void>|undefined,drainFailure:unknown;
+  // Keep parsing while a bounded worker group waits for durable receipts.
+  // Pause the producer at 16 queued batches (four groups at the default),
+  // including within a large transcript. Queues stay durable until acknowledged.
+  const pump=async(finish=false)=>{
+    if(drainFailure)throw drainFailure;
+    const count=pending();
+    if(!draining&&count>=concurrency){
+      draining=flush().then(()=>{}).catch(error=>{drainFailure=error;}).finally(()=>{draining=undefined;});
+    }
+    if(draining&&(finish||count>=concurrency*4))await draining;
+    if(drainFailure)throw drainFailure;
+  };
   const failures:{code:string}[]=[];
   progress('importing',true);
   try {
     await retry(()=>refreshCaptureIdentity(config));
+    await pump();
     for(const file of files) {
-      try{await captureTranscript(config,file.harness,file.path,{},true);processed++;processedBytes+=file.bytes;}
-      catch(e){failures.push({code:e instanceof CliError?e.code:'CAPTURE_FAILED'});recordError(e);}
-      // Fill a worker group across small transcripts too. Flush after the
-      // current file once enough batches exist; retain every batch until receipt.
-      if(pending()>=concurrency)await flush();
-      progress();
+      if(drainFailure)throw drainFailure;
+      try{await captureTranscript(config,file.harness,file.path,{},true,pump);processed++;processedBytes+=file.bytes;}
+      catch(e){if(drainFailure)throw drainFailure;failures.push({code:e instanceof CliError?e.code:'CAPTURE_FAILED'});recordError(e);}
+      await pump();progress();
     }
+    await pump(true);
     if(pending())await flush();
     if(failures.length)throw new CliError('BACKFILL_INCOMPLETE',`Imported ${processed} of ${files.length} transcript files; ${failures.length} failed (${failures[0].code}). Fix the reported error and rerun the approved import; saved cursors prevent reimporting completed records.`);
     progress('complete',true);
     return {status:'complete',sources,processed,processedBytes,uploaded,notice:'Uploaded counts batches, not sessions. Source bytes count local files (compressed when archived), not network bytes. Already captured records are skipped. Only locally available records can be imported.'};
-  }catch(error){progress('failed',true);recordError(error);throw error;}
+  }catch(error){
+    // Never return while a parallel upload still owns or mutates the queue.
+    await draining;progress('failed',true);recordError(error);throw error;
+  }
 }
 export async function chooseBackfill(ask:(prompt:string)=>Promise<string>) {
   const answer=(await ask('Import history? [c] Claude, [x] Codex, [b] both, [s] skip (default): ')).trim().toLowerCase();

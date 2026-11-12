@@ -1,3 +1,4 @@
+import {gunzipSync} from 'node:zlib';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
@@ -147,7 +148,8 @@ test('maximum valid connector bulk retains bounded durable metadata and complete
     const state = await h.barrier().inspect();
     target = JSON.parse(state.writers[0].target);
     assert.ok(Buffer.byteLength(state.writers[0].target) < 200);
-    const lines = options.body.trim().split('\n');
+    const body = options.headers['content-encoding']==='gzip' ? gunzipSync(options.body).toString() : options.body;
+    const lines = body.trim().split('\n');
     assert.equal(lines.length, 200);
     assert.equal(new Set(lines.filter((_, i) => i % 2 === 0).map(line => JSON.parse(line).update._id)).size, 100);
     return Response.json({errors: false, items: documents.map(() => ({update: {status: 200}}))});

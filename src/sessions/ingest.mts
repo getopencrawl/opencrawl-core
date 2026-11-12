@@ -7,7 +7,8 @@ import type {IncomingMessage} from 'node:http';
 export interface SessionIngestOptions {store: ObjectStore; prefix?: string; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
 export interface SessionBatchReceipt {harness: string; installationId: string; sessionId: string; batchId: string; userId?: string}
 import {serviceError} from './types.mjs';
-import {gzipSync, gunzipSync} from 'node:zlib';
+import {gzipSync, gunzipSync, gunzip} from 'node:zlib';
+import {promisify} from 'node:util';
 import {digest,sessionScope,reserveSessionEvents} from './event-identity.mjs';
 import {createMemoryIngest,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
 import {createControls} from './controls.mjs';
@@ -21,6 +22,7 @@ export const MAX_BATCH_BYTES = 16 * 1024 * 1024;
 export const sessionDeletionVersion = 1;
 export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const MAX_STORED_BATCH_BYTES = MAX_BATCH_BYTES + 1024 * 1024;
+const decompressBatch = promisify(gunzip);
 
 export function createSessionIngest({store, prefix = 'capture-v1', onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
@@ -150,7 +152,7 @@ export function createCaptureHandler({ingest, authenticate, search=undefined, cr
       if(credentials && req.method==='POST' && url.pathname==='/api/sessions/credentials') return await privateResult(200,{data:await credentials.issue(principal)});
       const credential=/^\/api\/sessions\/credentials\/([a-f0-9]{64})$/.exec(url.pathname);
       if(credentials && req.method==='DELETE' && credential) return send(200,{data:await credentials.revoke(principal,credential[1])});
-      if (req.method === 'GET' && url.pathname === '/api/sessions/identity') return await privateResult(200, {data:{principal}});
+      if (req.method === 'GET' && url.pathname === '/api/sessions/identity') return await privateResult(200, {data:{principal,capabilities:{batchEncodings:['gzip']}}});
       if(req.method==='GET' && url.pathname==='/api/sessions/search') {
         if(!search)return send(503,{error:{code:'SEARCH_NOT_CONFIGURED'}});
         return await privateResult(200,{data:await search.search(principal,{query:url.searchParams.get('q')??'',limit:Number(url.searchParams.get('limit')??20)})});
@@ -162,7 +164,7 @@ export function createCaptureHandler({ingest, authenticate, search=undefined, cr
         return send(200, {data:await ingest.putAttachment(principal, attachment[1], bytes, session)});
       }
       if (url.pathname === '/api/sessions/batches' && req.method === 'POST') {
-        let batch; try {batch = parseJson<SessionBatch>(await readBody(req, MAX_BATCH_BYTES));} catch(caught){const e=serviceError(caught);if(e.status)throw e;fail(400,'Invalid JSON');}
+        let batch; try {batch = parseJson<SessionBatch>(await readBatchBody(req));} catch(caught){const e=serviceError(caught);if(e.status)throw e;fail(400,'Invalid JSON');}
         await revalidate();
         return send(200, {data:await ingest.putBatch(principal,batch)});
       }
@@ -183,4 +185,19 @@ async function readBody(req: IncomingMessage, max: number) {
   const chunks=[];let size=0;
   for await(const chunk of req){size+=chunk.length;if(size>max)fail(413,'Payload exceeds limit');chunks.push(chunk);}
   return Buffer.concat(chunks);
+}
+
+/** Bound both the wire body and its expansion before parsing or storage. */
+async function readBatchBody(req: IncomingMessage) {
+  const header=req.headers['content-encoding'];
+  if(Array.isArray(header))fail(415,'Unsupported capture encoding');
+  const encoding=(header??'identity').trim().toLowerCase();
+  if(!['identity','gzip'].includes(encoding))fail(415,'Unsupported capture encoding');
+  const bytes=await readBody(req,MAX_BATCH_BYTES);
+  if(encoding==='identity')return bytes;
+  try{return await decompressBatch(bytes,{maxOutputLength:MAX_BATCH_BYTES});}
+  catch(error){
+    if(error instanceof Error && 'code' in error && error.code==='ERR_BUFFER_TOO_LARGE')fail(413,'Expanded payload exceeds limit');
+    fail(400,'Invalid compressed capture JSON');
+  }
 }

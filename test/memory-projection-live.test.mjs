@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID, createHash} from 'node:crypto';
-import {gunzipSync} from 'node:zlib';
+import {gunzipSync,gzipSync} from 'node:zlib';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -60,8 +60,10 @@ for(const backend of ['sqlite','opensearch'])test(`${backend}: memory projection
   const partial = createSessionSearch({...options, fetch: async (url, request) => {
     if (!interrupted && String(url).endsWith('/_bulk')) {
       interrupted = true;
-      const lines = request.body.trimEnd().split('\n');
-      return fetch(url, {...request, body: lines.slice(0, 4).join('\n') + '\n'});
+      const compressed = request.headers?.['content-encoding']==='gzip';
+      const body = compressed ? gunzipSync(request.body).toString() : request.body;
+      const partial = body.trimEnd().split('\n').slice(0, 4).join('\n') + '\n';
+      return fetch(url, {...request, body: compressed ? gzipSync(partial) : partial});
     }
     return fetch(url, request);
   }});

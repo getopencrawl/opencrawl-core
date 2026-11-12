@@ -1,5 +1,6 @@
 import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream, createWriteStream} from 'node:fs';
-import {createZstdDecompress} from 'node:zlib';
+import {createZstdDecompress,gzip} from 'node:zlib';
+import {promisify} from 'node:util';
 import {Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {join, dirname, resolve, sep, basename} from 'node:path';
@@ -19,6 +20,7 @@ import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
 import {redactValue,redactAttachment,MAX_REDACTION_DEPTH} from './redact.ts';
 
+const compressBatch=promisify(gzip);
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
 /** Bump when installed hook entries change so the next hook rewrites existing installs. */
@@ -32,8 +34,8 @@ export function harnessRoot(config:CaptureConfig,harness:Harness) {
   return root;
 }
 // Enrollment and every queued payload remain bound to their original destination.
-export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
-  const {principal}=await request(config.api,'/api/sessions/identity',{signal},token);
+async function captureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
+  const {principal,capabilities}=await request(config.api,'/api/sessions/identity',{signal},token);
   signal?.throwIfAborted();
   if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   // Authentication may finish after uninstall or another worker initializes a
@@ -50,7 +52,10 @@ export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,
     }
     atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
   },20_000,signal);
-  return principal;
+  return {principal,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip')};
+}
+export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
+  return (await captureIdentity(config,token,signal)).principal;
 }
 function staticCaptureToken(api:string) {
   const saved=read(join(captureDir(),'receiver-token.json'));
@@ -84,7 +89,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   const body=await res.json().catch(()=>{throw res.status>=500||res.status===429
     ?new CliError('CAPTURE_RETRY_EXHAUSTED',`Capture endpoint ${new URL(api).hostname} is temporarily unavailable (HTTP ${res.status}). Queued data is retained; retry the approved import.`)
     :new CliError('CAPTURE_NETWORK_BLOCKED',`Capture endpoint ${new URL(api).hostname} returned HTTP ${res.status} without JSON. Check this host in your cloud environment network allowlist.`);});
-  if(!res.ok)throw new CliError('CAPTURE_UPLOAD_FAILED',`Capture request failed (${res.status}): ${body.error?.code ?? 'unknown'}`);
+  if(!res.ok)throw Object.assign(new CliError('CAPTURE_UPLOAD_FAILED',`Capture request failed (${res.status}): ${body.error?.code ?? 'unknown'}`),{httpStatus:res.status});
   return body.data;
 }
 export function commandForSelf() {
@@ -159,9 +164,9 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   if(meta.cwd!==undefined)batch.cwd=meta.cwd;
   batch.sessionId=meta.sessionId;
   batch.events=batch.events.map(finalizeEventIdentity);
-  const size=Buffer.byteLength(JSON.stringify(batch));
+  const serialized=JSON.stringify(batch),size=Buffer.byteLength(serialized);
   if(size>16*1024*1024)throw new CliError('CAPTURE_BATCH_TOO_LARGE','A capture record exceeds the upload limit; retained locally for retry');
-  atomicJson(join(captureDir(),'queue',hash(JSON.stringify(batch))+'.json'),batch);
+  atomicFile(join(captureDir(),'queue',hash(serialized)+'.json'),serialized+'\n');
 }
 
 /** Every upload (including queues from older CLIs) crosses this local boundary.
@@ -195,7 +200,9 @@ function prepareCaptureUpload(original:any) {
     if(value.status==='captured' && replacements.has(value.sha256))Object.assign(result,replacements.get(value.sha256));
     return result;
   }
-  const batch=redactValue(replace(original));
+  // Redaction already clones and depth-checks the entire value. Only walk a
+  // second time when an attachment digest or status actually changed.
+  const batch=redactValue(replacements.size?replace(original):original);
   batch.events=batch.events.map((event:any,index:number)=>JSON.stringify(event)===JSON.stringify(original.events[index])?event:finalizeEventIdentity(event));
   return batch;
 }
@@ -206,10 +213,14 @@ function readCaptureAttachment(sha256:string) {
   return bytes;
 }
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
-export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false) {
+export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false,onEnqueued?:()=>Promise<void>) {
   return withSessionLock('capture:spool',async()=>{
   if(readCaptureConfig()?.disabled)throw new CliError('CAPTURE_DISABLED','Capture is uninstalled. Reinstall before importing transcripts.');
   ensureDirectories();
+  const spool=async(meta:any,events:any[],attachments:any[])=>{
+    enqueue(config,meta,events,attachments);
+    await onEnqueued?.();
+  };
   const path=transcriptAllowed(file,config,harness,reconcileHistory);
   const desktopAudit=harness==='claude-code'&&basename(path)==='audit.jsonl'&&isClaudeDesktopTranscript(path,config);
   const stateFile=join(captureDir(),'state',hash(harness+path)+'.json');
@@ -283,8 +294,15 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
       // directory could incorrectly allow earlier records from an excluded project.
       while(offset<st.size) {
         await yieldToOwner();
-        let bytes=Buffer.alloc(Math.min(st.size-offset,48*1024*1024));readSync(fd,bytes,0,bytes.length,offset);
+        // Ordinary reads stay small even for multi-gigabyte histories. Grow only
+        // when one native record spans the buffer; retain the existing line cap.
+        const remaining=st.size-offset,maxRead=Math.min(remaining,48*1024*1024);
+        let bytes=Buffer.alloc(Math.min(maxRead,8*1024*1024));readSync(fd,bytes,0,bytes.length,offset);
         let end=bytes.lastIndexOf(10);
+        while(end<0&&bytes.length<maxRead){
+          bytes=Buffer.alloc(Math.min(maxRead,bytes.length*2));readSync(fd,bytes,0,bytes.length,offset);
+          end=bytes.lastIndexOf(10);
+        }
         if(end<0) {
           if(bytes.length<st.size-offset)throw new CliError('CAPTURE_LINE_TOO_LARGE','Transcript line exceeds capture chunk size');
           break; // writer has not completed this record yet
@@ -299,7 +317,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
             if(desktopAudit&&auditMessage&&(!record.session_id||typeof record.session_id!=='string'))throw new CliError('CAPTURE_SESSION_UNKNOWN','Desktop audit message has no session identity');
             const priorMeta={...meta};
             if(!desktopAudit||auditMessage)metadata(record);
-            if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd)){enqueue(config,{...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
+            if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd)){await spool({...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
             const parsed=auditMessage?parseRecord(harness,record,position):null;
             if(parsed?.kind==='session_title') {
               if(parsed.data.titleType==='custom')meta.customTitle=parsed.data.title;
@@ -324,16 +342,16 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
               const eventAttachments:any[]=[],event=attachmentTransform(parsed,eventAttachments,meta.cwd??dirname(path),localFiles);
               const size=Buffer.byteLength(JSON.stringify(event))+Buffer.byteLength(JSON.stringify(eventAttachments));
               if(events.length&&(eventBytes+size>4*1024*1024||attachments.length+eventAttachments.length>1000)){
-                enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;
+                await spool({...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;
               }
               events.push(event);attachments.push(...eventAttachments);eventBytes+=size;
             }
           }
           position+=Buffer.byteLength(line)+1;
           if(++linesSinceYield===200){linesSinceYield=0;await yieldToOwner();}
-          if(events.length>=(reconcileHistory?1000:200)){enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
+          if(events.length>=(reconcileHistory?1000:200)){await spool({...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
         }
-        enqueue(config,{...meta,captureMode:reconcileHistory?'history':'live'},events,attachments);
+        await spool({...meta,captureMode:reconcileHistory?'history':'live'},events,attachments);
         offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
       }
     } finally{closeSync(fd);if(compressed)try{unlinkSync(readPath);}catch{}}
@@ -678,12 +696,14 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     // and blob writes. If this credential expires, retain the queue for a retry.
     const staticToken=staticCaptureToken(config.api);
     let token=staticToken||await accessToken(config.api);
-    const principal=await refreshCaptureIdentity(config,token);
+    const identity=await captureIdentity(config,token),principal=identity.principal;
+    let useGzip=identity.gzip;
     // A long flush outlives a short-lived sign-in token. Renew before each request
     // and after a rejection, re-verifying identity whenever the token changes.
     const adopt=async(next:string)=>{
       if(next===token)return token;
-      const current=await refreshCaptureIdentity(config,next);
+      const refreshed=await captureIdentity(config,next),current=refreshed.principal;
+      useGzip=refreshed.gzip;
       if(current.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Signed-in user changed during upload. Sign back in as the queued author; queued data is retained.');
       if(current.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Signed-in team changed during upload. Sign back into the original destination; queued data is retained.');
       return token=next;
@@ -701,15 +721,40 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
       for(let lo=0,hi=dated.length-1;lo<=hi;){names.push(dated[lo++].name);if(lo<=hi)names.push(dated[hi--].name);}
     }
     const deadline=wait?Infinity:Date.now()+10_000;
+    // This file is a status snapshot. Event durability comes from the queue,
+    // cursor and verified remote receipt, whose write ordering stays unchanged.
+    // Coalesce status-only fsyncs to once per second and always checkpoint the
+    // latest success after settling the flush, including a partially failed pass.
+    let pendingReceipt:Record<string,unknown>|undefined,lastReceiptWrite=-Infinity;
+    const checkpointReceipt=()=>{
+      if(!pendingReceipt)return;
+      atomicJson(join(captureDir(),'last-upload.json'),pendingReceipt);
+      pendingReceipt=undefined;lastReceiptWrite=performance.now();
+    };
     const upload=async(name:string,batch:any)=>{
       const path=join(captureDir(),'queue',name);
       batch=prepareCaptureUpload(batch);
       for(const a of batch.attachments)if(a.status==='captured'){
         await request(config.api,'/api/sessions/attachments/'+a.sha256+'?'+new URLSearchParams({harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId}),{method:'PUT',headers:{'content-type':'application/octet-stream'},body:readCaptureAttachment(a.sha256)},await current(),renew);
       }
-      const receipt=await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(batch)},await current(),renew);
-      if(receipt.batchId!==hash(JSON.stringify(batch)) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
-      atomicJson(join(captureDir(),'last-upload.json'),{at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId});
+      const serialized=JSON.stringify(batch),size=Buffer.byteLength(serialized);
+      let body:string|Uint8Array<ArrayBuffer>=serialized,compressed=false;
+      if(useGzip&&size>=32*1024){
+        const bytes=await compressBatch(serialized,{level:1});
+        if(bytes.length<size*0.95){body=new Uint8Array(bytes);compressed=true;}
+      }
+      const sendBatch=async()=>request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json',...(compressed?{'content-encoding':'gzip'}:{})},body},await current(),renew);
+      let receipt;
+      try{receipt=await sendBatch();}
+      catch(error){
+        // A rolling deployment can route the upload to an older replica. Retry
+        // the identical JSON once; receipts always identify uncompressed bytes.
+        if(!compressed||!(error instanceof CliError)||![400,415].includes(error.httpStatus??0))throw error;
+        useGzip=false;compressed=false;body=serialized;receipt=await sendBatch();
+      }
+      if(receipt.batchId!==hash(serialized) || receipt.stored!==true)throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm durable capture');
+      pendingReceipt={at:new Date().toISOString(),...receipt,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId};
+      if(performance.now()-lastReceiptWrite>=1000)checkpointReceipt();
       retryWindowsSharing(()=>unlinkSync(path));uploaded++;onUploaded?.();
     };
     const worker=async()=>{
@@ -733,6 +778,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     // A background pass must return to notice processing. Always settle the
     // in-flight uploads before releasing ownership, including after a failure.
     await Promise.all(Array.from({length:workers},worker));
+    checkpointReceipt();
     if(failure)throw failure;
     const result=excluded?{uploaded,excluded}:{uploaded};
     if(visited<names.length||stopped)return result;

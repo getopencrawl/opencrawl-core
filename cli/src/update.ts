@@ -3,6 +3,7 @@ import {join,dirname,basename} from 'node:path';
 import {createHash,timingSafeEqual} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {withFileLock} from './session.ts';
+import {retryWindowsSharing} from './filesystem.ts';
 import {readCaptureConfig} from './capture/runtime.ts';
 
 const PACKAGE='@getopencrawl/cli',REGISTRY='https://registry.npmjs.org';
@@ -76,8 +77,11 @@ export async function installNativeRelease(version:string,{launcher,signal,regis
     signal?.throwIfAborted();
     // Explicit npm updates can race us. They publish only complete directories;
     // the launcher chooses and validates the highest complete version afterward.
-    try{renameSync(stage,destination);}catch(error){if(!existsSync(destination))throw error;}
-  }finally{rmSync(stage,{recursive:true,force:true});stages.delete(stage);}
+    retryWindowsSharing(()=>{
+      signal?.throwIfAborted();
+      try{renameSync(stage,destination);}catch(error){if(!existsSync(destination))throw error;}
+    });
+  }finally{retryWindowsSharing(()=>rmSync(stage,{recursive:true,force:true}));stages.delete(stage);}
 }
 
 export async function refreshCli({signal,launcher=installedLauncher(),install}: {signal?:AbortSignal;launcher?:Launcher;install?:(version:string)=>Promise<void>}={}) {
