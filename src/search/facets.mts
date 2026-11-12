@@ -1,5 +1,5 @@
 import type {WorkspaceHit} from './presentation.mjs';
-export const facetNames=['source','kind','author','harness','provider','repository','project','path','role','sessionId'] as const;
+export const facetNames=['source','kind','author','harness','origin','provider','repository','project','path','role','sessionId'] as const;
 export type FacetName=typeof facetNames[number];
 export function facetValue(hit: WorkspaceHit, name: FacetName): string | undefined {
   const p=hit.provenance;

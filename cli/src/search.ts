@@ -33,7 +33,7 @@ export function searchInput(query: string | undefined, values: Record<string, un
   if(!filters||typeof filters!=='object'||Array.isArray(filters))throw new CliError('INVALID_USAGE','--filters requires a JSON object.',64);
   for(const key of ['after','before'])if(values[key]!==undefined)filters[key]=values[key];
   if(values.role!==undefined)filters.roles=[values.role];
-  const arrays=['authors','kinds','excludeKinds','roles','harnesses','providers','repositories','projects','paths','toolNames'];
+  const arrays=['authors','kinds','excludeKinds','roles','harnesses','origins','providers','repositories','projects','paths','toolNames'];
   for(const [key,value] of Object.entries(filters)){
     const valid=arrays.includes(key)?Array.isArray(value)&&value.length>0&&value.length<=20&&value.every(x=>typeof x==='string'&&x.length>0&&x.length<=500):
       ['after','before'].includes(key)&&typeof value==='string'&&/^\d{4}-\d\d-\d\dT/.test(value)&&Number.isFinite(Date.parse(value));
@@ -42,7 +42,7 @@ export function searchInput(query: string | undefined, values: Record<string, un
   if(filters.roles&&(!(filters.roles as string[]).every(r=>['user','assistant','system','developer'].includes(r))||(filters.roles as string[]).length>4))throw new CliError('INVALID_USAGE','Invalid roles filter.',64);
   if(filters.after&&filters.before&&Date.parse(String(filters.after))>Date.parse(String(filters.before)))throw new CliError('INVALID_USAGE','after must not exceed before.',64);
   const extra:Record<string,unknown>={};
-  for(const [flag,key,allowed] of [['select','select',['title','text','url','provenance']],['facets','facets',['source','kind','author','harness','provider','repository','project','path','role','sessionId']]] as const){
+  for(const [flag,key,allowed] of [['select','select',['title','text','url','provenance']],['facets','facets',['source','kind','author','harness','origin','provider','repository','project','path','role','sessionId']]] as const){
     if(values[flag]===undefined)continue;const selected=String(values[flag]).split(',').filter(Boolean);
     if(selected.some(v=>!(allowed as readonly string[]).includes(v))||selected.length>allowed.length)throw new CliError('INVALID_USAGE','Invalid --'+flag+'.',64);extra[key]=selected;
   }
