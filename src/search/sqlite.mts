@@ -1,4 +1,5 @@
-import {DatabaseSync} from 'node:sqlite';
+import type {DatabaseSync} from 'node:sqlite';
+import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {mkdirSync, openSync, closeSync, existsSync} from 'node:fs';
 import {dirname} from 'node:path';
@@ -33,6 +34,9 @@ export function createSqliteRealm(options: RealmOptions): SearchRealm {
   if (options.credentials || options.username || options.password || options.replicas) throw fail('SQLite does not support remote credentials or replicas', 400);
   const path = sqlitePath(endpoint), index = options.index || realmIndex(environment, tenantId, generation);
   if (!/^[a-z][a-z0-9_-]{0,150}$/.test(index)) throw fail('Invalid realm index', 400);
+  // Capture and OpenSearch consumers also import this module under Bun. Load
+  // the Node-only runtime only when the operator actually selects SQLite.
+  const {DatabaseSync} = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
   const fts = 'fts_' + createHash('sha256').update(index).digest('hex');
   const scope = (principal: TenantPrincipal) => {if (principal?.tenantId !== tenantId || principal.captureAccess !== undefined) throw fail('Realm scope denied', 403);};
   function withDatabase<T>(write: boolean, create: boolean, run: (db: DatabaseSync) => T): T {
@@ -63,7 +67,23 @@ export function createSqliteRealm(options: RealmOptions): SearchRealm {
         } catch (error) {db.exec('ROLLBACK'); throw error;}
       }
       if (Number(db.prepare('PRAGMA user_version').get()!.user_version) !== VERSION) throw fail('Unsupported SQLite search schema; upgrade or rebuild into a new file');
-      db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL');
+      // Concurrent initializers can return SQLITE_BUSY immediately while
+      // upgrading journal locks, without invoking SQLite's busy handler.
+      // Retry only this idempotent setup step, before any document mutation.
+      const deadline = performance.now() + 5000, pause = new Int32Array(new SharedArrayBuffer(4));
+      db.exec('PRAGMA busy_timeout=0');
+      try {
+        for (;;) {
+          try {
+            if (db.prepare('PRAGMA journal_mode=WAL').get()!.journal_mode !== 'wal') throw fail('SQLite search requires WAL mode');
+            break;
+          } catch (error) {
+            if ((Number((error as {errcode?: number}).errcode) & 255) !== 5 || performance.now() >= deadline) throw error;
+            Atomics.wait(pause, 0, 0, Math.min(20, deadline - performance.now()));
+          }
+        }
+      } finally {db.exec('PRAGMA busy_timeout=5000');}
+      db.exec('PRAGMA synchronous=FULL');
       db.function('epoch', {deterministic: true}, value => {
         const n = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
         return Number.isFinite(n) ? n : null;
