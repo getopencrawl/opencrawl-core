@@ -10,6 +10,9 @@ test('exact filters constrain the correct corpus and never widen an incompatible
   assert.deepEqual(searchFilters('connector',{roles:['user']}),[{match_none:{}}]);
   assert.deepEqual(searchFilters('session',{origins:['desktop','unknown']}),[{terms:{'session.origin':['desktop','unknown']}}]);
   for(const corpus of ['connector','memory'])assert.deepEqual(searchFilters(corpus,{origins:['desktop']}),[{match_none:{}}]);
+  assert.deepEqual(searchFilters('session',{sessionIds:['chat-a','chat-b'],roles:['assistant']}),[{terms:{'session.sessionId':['chat-a','chat-b']}},{terms:{'session.role':['assistant']}}]);
+  for(const corpus of ['connector','memory'])assert.deepEqual(searchFilters(corpus,{sessionIds:['chat-a']}),[{match_none:{}}]);
+  for(const sessionIds of [[],['x'.repeat(201)],Array(21).fill('chat')])assert.throws(()=>searchFilters('session',{sessionIds}),/Invalid/);
   assert.deepEqual(searchFilters('memory',{projects:['p'],paths:['notes.md']}),[{terms:{'memory.project':['p']}},{terms:{'memory.path':['notes.md']}}]);
   assert.deepEqual(searchFilters('connector',{repositories:['org/repo'],providers:['github']}),[{terms:{'connector.provider':['github']}},{terms:{'connector.repository':['org/repo']}}]);
   assert.throws(()=>searchFilters('session',{after:'2026-02-01T00:00:00Z',before:'2026-01-01T00:00:00Z'}),/Invalid/);
@@ -33,7 +36,7 @@ test('facets use authorized candidates, projections omit content, all controls b
   assert.equal(r.facetScope,'authorized_candidate_window');assert.equal(r.coverage[0].truncated,true);
   assert.deepEqual(r.facets.source.values,[{value:'sessions',count:2}]);
   assert.equal(r.results[0].text,undefined);assert.equal(r.results[0].provenance,undefined);assert.ok(r.results[0].id);
-  for(const change of [{select:['text']},{facets:['source']},{filters:{roles:['user']}},{order:'newest'},{excerptChars:100}])
+  for(const change of [{select:['text']},{facets:['source']},{filters:{roles:['user']}},{filters:{sessionIds:['another-chat']}},{order:'newest'},{excerptChars:100}])
     await assert.rejects(service.search(principal,{...input,...change,cursor:r.next}),/cursor/);
   const denied=createWorkspaceSearch({connectors:{search:async()=>{throw Object.assign(new Error('forbidden'),{status:403});}}});
   await assert.rejects(denied.search(principal,{query:'x',facets:['author']}),/forbidden/);

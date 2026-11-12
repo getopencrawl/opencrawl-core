@@ -17,7 +17,7 @@ import {memoryPassageId} from '../memories/projection.mjs';
 export const workspaceSearchSchema = z.strictObject({
   query: z.string().trim().max(4000).describe('Use 2–6 distinctive keywords or an exact phrase, not a question. Start match=all; shorten or use any if needed. Empty only for time-ordered browsing.'),
   source: z.enum(['all', 'sessions', 'connectors','memories']).default('all'),
-  match: z.enum(['any', 'all', 'phrase']).default('any').describe('any ranks passages matching any words; all requires every analyzed term; phrase requires the analyzed words in order.'),
+  match: z.enum(['any', 'all', 'phrase']).default('any').describe('any ranks passages matching any words; all requires every analyzed term in one indexed passage, across its title/text fields. Terms do not combine across a chat. phrase requires analyzed words in order.'),
   sessionId: z.string().min(1).max(200).optional().describe('Restrict to a known session; requires source=sessions.'),
   limit: z.number().int().min(1).max(40).default(10),
   dedupe: z.boolean().default(true).describe('Group whitespace-equivalent passages within the same session/resource. Use false with groupBy=none to inspect every occurrence.'),

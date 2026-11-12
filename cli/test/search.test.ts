@@ -43,6 +43,8 @@ test('agent discovery controls survive the CLI with strict field validation',()=
   expect(searchInput('release',{filters:'{"providers":["github"],"repositories":["org/repo"]}'})).toMatchObject({filters:{providers:['github'],repositories:['org/repo']}});
   expect(searchInput('capture',{source:'sessions',facets:'origin',filters:'{"origins":["desktop","unknown"]}'})).toMatchObject({facets:['origin'],filters:{origins:['desktop','unknown']}});
   for(const filters of ['{"origins":[]}','{"origins":"desktop"}'])expect(()=>searchInput('capture',{filters})).toThrow();
+  expect(searchInput('receipts',{source:'sessions','session-id':'chat-a',filters:'{"sessionIds":["chat-a","chat-b"]}'})).toMatchObject({sessionId:'chat-a',filters:{sessionIds:['chat-a','chat-b']}});
+  for(const sessionIds of [[],['x'.repeat(201)],Array(21).fill('chat'),'chat'])expect(()=>searchInput('receipts',{filters:JSON.stringify({sessionIds})})).toThrow();
   for(const values of [{filters:'{"tenantId":"foreign"}'},{filters:'[]'},{filters:'{"roles":["anything"]}'},{role:'tool'},{facets:'secret'},{select:'sourceKey'},{'group-by':'tenant'},{after:'2026-12-01T00:00:00Z',before:'2026-11-01T00:00:00Z'}])expect(()=>searchInput('x',values)).toThrow();
   expect(formatSearch({results:[{id:'sessions:x',source:'sessions',title:'Discovery'}],coverage:[],partial:false})).not.toContain('undefined');
 });
