@@ -69,7 +69,7 @@ test('device-approved sign-in survives workspace setup and whoami succeeds witho
   expect(existsSync(file)).toBe(true);
   expect(pending.body.error?.message).toContain('saved on this machine');
   expect(pending.body.error?.message).toContain(`${api}/organizations`);
-  expect(pending.body.error?.message).toContain('create, join or select a team');
+  expect(pending.body.error?.message).toContain('create or join a team');
   expect(pending.body.error?.message).toContain('opencrawl whoami');
   expect(pending.body.error?.message).not.toContain('login again');
   expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({accessToken, refreshToken});

@@ -3,6 +3,7 @@ export const DEFAULT_API_ORIGIN = 'https://app.getopencrawl.com';
 export class CliError extends Error {
   retryAfterMs?: number;
   httpStatus?: number;
+  workspaces?: Array<{id: string; name: string | null}>;
   constructor(public code: string, message: string, public exitCode = 1) { super(message); }
 }
 
@@ -111,8 +112,12 @@ export async function pollDevice(auth: AuthConfig, device: Device, options: {fet
 
 export const signInRevoked = 'The saved sign-in on this machine is no longer valid. Sign-ins expire after inactivity and are revoked when the same sign-in is copied to another machine (an image, snapshot or synced home directory) and renewed there. Run opencrawl login on this machine. For machine images, give capture an upload-only OPENCRAWL_SESSIONS_TOKEN instead of a copied sign-in.';
 
-export async function refresh(auth: AuthConfig, token: string, fetcher = fetch): Promise<Tokens> {
-  const {response, body} = await form(auth.tokenEndpoint, {client_id: auth.clientId, grant_type: 'refresh_token', refresh_token: token}, fetcher);
+export async function refresh(auth: AuthConfig, token: string, fetcher = fetch, organizationId?: string): Promise<Tokens> {
+  const {response, body} = await form(auth.tokenEndpoint, {client_id: auth.clientId, grant_type: 'refresh_token', refresh_token: token,
+    ...(organizationId ? {organization_id: organizationId} : {})}, fetcher);
+  if (organizationId && [400, 403].includes(response.status) && body.error !== 'invalid_grant') {
+    throw new CliError('ORGANIZATION_SELECTION_DENIED', 'The service did not authorize that workspace. Check your membership and complete any required sign-in in your browser before retrying workspace selection.', 2);
+  }
   // Refresh tokens rotate on every use. A sign-in copied to another machine
   // (image, snapshot, synced home) is revoked as soon as either copy renews.
   if (response.status === 400 || response.status === 401) throw new CliError('AUTH_REQUIRED', signInRevoked, 2);
