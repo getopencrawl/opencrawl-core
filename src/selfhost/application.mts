@@ -99,7 +99,7 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
     if(req.method==='GET'&&req.url==='/api/sessions/identity')await observe.cli(principal);
     return principal;
   }});
-  const guided=createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,smallJson});
+  const guided=createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,smallJson,inviteBeforeSetup:true});
   const library=createLibraryApi({sessions:createSessionLibrary({store,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion}),memories:createMemoryLibrary({store,prefix,...settings.search})});
   const members=async(organizationId:string)=>{
     if(organizationId!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
@@ -156,7 +156,7 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
       if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
       const sources=(p:Principal)=>integrations?integrations.list(p):Promise.resolve([]);
-      const consoleApi=createConsoleApi({url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
+      const consoleApi=createConsoleApi({invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),removeMember:(u,id,target)=>organizations.removeMember(u,id,target),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
         usage:p=>usageReport({principal:p,directory,integrations,search,connectors,onboarding,values}),progress:guided.progress,next:guided.next,library,libraryFailure});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{
@@ -167,8 +167,8 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
         if(request.method==='GET'&&consolePages.has(target.pathname)){
           const progress=await guided.progress(principal);
           if(!target.pathname.startsWith('/onboarding')&&!hasReceipt(progress?.completed))return redirect(await guided.next(principal));
-          // Sources and Invite open once agent setup is complete; Sources can be skipped, so it never gates Invite.
-          if(target.pathname.startsWith('/onboarding/')&&!hasReceipt(progress?.completed)&&!(progress&&deriveOnboarding(progress).complete))return redirect('/onboarding');
+          // An admin can invite teammates while connecting their own agent. Other setup and workspace gates remain receipt-based.
+          if(target.pathname.startsWith('/onboarding/')&&!(target.pathname==='/onboarding/invite'&&isAdmin(member))&&!hasReceipt(progress?.completed)&&!(progress&&deriveOnboarding(progress).complete))return redirect('/onboarding');
           return reply(200,consoleDocument(),'text/html; charset=utf-8');
         }
         if(guided.handles(selected.name))return guided.handle(request,{route:selected,principal,identity:{user},member,respond:reply});

@@ -485,3 +485,45 @@ for (const width of [1280,390]) test(`Team removal confirms revocation before re
   await expect(page.getByLabel('Teammate’s email',{exact:true})).toBeFocused();expect(writes).toBe(1);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
+
+for(const width of [1280,390]) test(`self-host invites work before verification and return to setup at ${width}px`,async({page,request},testInfo)=>{
+  await page.setViewportSize({width,height:844});
+  await page.route('**/api/onboarding/invites',route=>route.fulfill({json:route.request().method()==='POST'?{items:[{email:'teammate@example.com',inviteUrl:'https://oss.example/auth/signup?invitation=private-grant'}],addedCount:1}:{items:[]}}));
+  await page.goto('/onboarding?selfhost');
+  await expect(page.getByText('CLI sign-in, a successful MCP connection test, and a new session recording are required to open your workspace.')).toBeVisible();
+  await page.evaluate(()=>{document.documentElement.dataset.navigationSentinel='same-document';});
+  await page.getByRole('link',{name:'Invite teammates now'}).focus();await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/onboarding\/invite$/);
+  await expect(page.getByText(/No email is sent; they choose their own password/)).toBeVisible();
+  await page.getByLabel('Email address',{exact:true}).fill('teammate@example.com');
+  await page.getByRole('button',{name:'Invite',exact:true}).click();
+  await expect(page.getByLabel('Private invitation link',{exact:true})).toHaveValue('https://oss.example/auth/signup?invitation=private-grant');
+  await expect(page.getByText('Share the private invitation link with your teammate.',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Open workspace',exact:true})).toHaveCount(0);
+  await page.screenshot({path:testInfo.outputPath(`early-invites-${width}.png`),fullPage:true});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.goBack();await expect(page.getByRole('heading',{name:'Connect your primary coding agent'})).toBeVisible();
+  await page.goForward();await expect(page.getByRole('heading',{name:'Invite your teammates'})).toBeVisible();
+  await page.getByRole('link',{name:'Return to agent setup'}).click();
+  await expect(page.getByRole('heading',{name:'Connect your primary coding agent'})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.dataset.navigationSentinel)).toBe('same-document');
+  const state=await (await request.get('/__test/state')).json();expect(state.requests.finish).toBe(0);
+});
+
+test('Team preserves a newly created private invitation link when refresh fails',async({page})=>{
+  const report={organization:{id:'org_a',name:'Self-host team'},viewerUserId:'admin',role:'admin',members:[{id:'admin',name:'Admin',email:'admin@example.com',role:'admin'}]};
+  let created=false;
+  await page.route('**/api/console/team',route=>created?route.fulfill({status:503,json:{error:'Unavailable'}}):route.fulfill({json:report}));
+  await page.route('**/api/console/team/invite',route=>{created=true;return route.fulfill({json:{ok:true,inviteUrl:'https://oss.example/auth/signup?invitation=private-grant'}});});
+  await page.goto('/team-fixture');await page.getByLabel('Teammate’s email',{exact:true}).fill('teammate@example.com');await page.getByRole('button',{name:'Invite',exact:true}).click();
+  await expect(page.getByText('Invitation created for teammate@example.com. Share the private link with them. No email was sent.')).toBeVisible();
+  await expect(page.getByLabel('Private invitation link',{exact:true})).toHaveValue('https://oss.example/auth/signup?invitation=private-grant');
+  await expect(page.getByText(/Team information couldn’t update/)).toBeVisible();
+  await expect(page.getByText(/They can join using the link in their email/)).toHaveCount(0);
+});
+
+test('React OAuth return renders the Claude native callback and a manual continuation',async({page})=>{
+  await page.goto('/auth-fixture/claude-return');
+  await expect(page.getByRole('heading',{name:'Returning to your app'})).toBeVisible();
+  await expect(page.getByRole('link',{name:'Continue',exact:true})).toHaveAttribute('href','claude://claude.ai/mcp-auth-callback/sdk?code=example&state=bound');
+});

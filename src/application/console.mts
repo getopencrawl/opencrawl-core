@@ -1,5 +1,5 @@
 import type {IncomingMessage} from 'node:http';
-import type {SourceCard, TeamReport} from './types.mjs';
+import type {SourceCard, TeamReport, InvitationPolicy} from './types.mjs';
 
 export type Principal = {tenantId: string; userId: string};
 export type User = {id: string; email: string; firstName?: string | null; lastName?: string | null};
@@ -10,6 +10,7 @@ export interface ConsoleContext {principal: Principal; user: User; member: Membe
 export interface ConsoleServices {
   url: string;
   setupPrompt: string;
+  invitationPolicy?: InvitationPolicy;
   organization: (id: string) => Promise<Organization>;
   members: (id: string) => Promise<Membership[]>;
   user: (id: string) => Promise<User>;
@@ -78,7 +79,7 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
       if (path === '/api/console/bootstrap') {
         const [organization, progress, extension] = await Promise.all([services.organization(principal.tenantId), services.progress(principal), extensions.bootstrap?.(context)]);
         const completed = Boolean(progress?.completed?.observedAt);
-        body = {...extension,cacheScope:context.cacheScope || [principal.tenantId,principal.userId,admin(member)?'admin':'member'].join(':'),workspace:{name:organization.name,userName:name(user),email:user.email,role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
+        body = {...extension,...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope:context.cacheScope || [principal.tenantId,principal.userId,admin(member)?'admin':'member'].join(':'),workspace:{name:organization.name,userName:name(user),email:user.email,role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
       } else if (path === '/api/console/usage') {
         body = await services.usage(principal);
       } else if (path === '/api/console/sources') {
@@ -91,7 +92,9 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
         if (!admin(member)) throw consoleFailure(403,'Only an organization admin can do that.');
         const payload = await input(req);
         if (Object.keys(payload).some(key => key !== 'email') || typeof payload.email !== 'string') throw consoleFailure(400,'Enter a teammate email address.');
-        await services.invite(user,principal.tenantId,payload.email); body = {ok:true};
+        const invitation=await services.invite(user,principal.tenantId,payload.email);
+        const inviteUrl=services.invitationPolicy?.delivery==='link'&&invitation&&typeof invitation==='object'&&'acceptInvitationUrl' in invitation&&typeof invitation.acceptInvitationUrl==='string'?invitation.acceptInvitationUrl:undefined;
+        body = {ok:true,...(inviteUrl?{inviteUrl}:{})};
       } else if (path === '/api/console/team/role') {
         if (!admin(member)) throw consoleFailure(403,'Only an organization admin can do that.');
         const payload = await input(req);

@@ -11,12 +11,14 @@ import type {InvitationList, OnboardingAdapter} from './types.ts';
 export interface InviteOnboardingProps {
   adapter: OnboardingAdapter;
   canInvite: boolean;
+  returnToAgent?: boolean;
+  invitationDelivery?: 'email' | 'link';
   initialInvitations?: InvitationList;
   /** Refresh the application's authoritative admission state after finishing. */
   onComplete?: (workspaceUrl: string) => void | Promise<void>;
 }
 
-export function InviteOnboarding({adapter, canInvite, initialInvitations, onComplete}: InviteOnboardingProps) {
+export function InviteOnboarding({adapter, canInvite, initialInvitations, onComplete, returnToAgent=false, invitationDelivery='email'}: InviteOnboardingProps) {
   const invitations = useOnboardingResource(signal => adapter.invitations(signal), {key:consoleResourceKey(adapter,'onboarding-invitations'), enabled: canInvite, initial: initialInvitations});
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
@@ -70,8 +72,9 @@ export function InviteOnboarding({adapter, canInvite, initialInvitations, onComp
     }
   }
   const items = invitations.data?.items ?? [];
-  return <OnboardingShell step="invite" backUrl="/onboarding/sources" nextVisible nextLabel={items.length ? 'Open workspace' : 'Skip for now'} nextPrimary={items.length > 0} busy={finishing || busy} onNext={() => void finish()}>
-    <section aria-labelledby="invite-title"><h1 id="invite-title" tabIndex={-1}>Invite your teammates</h1><p className="focus-description">Share this workspace with your team. You can also invite them later.</p>
+  return <OnboardingShell step="invite" backUrl={returnToAgent ? '/onboarding' : '/onboarding/sources'} nextVisible nextUrl={returnToAgent ? '/onboarding' : undefined} nextLabel={returnToAgent ? 'Return to agent setup' : items.length ? 'Open workspace' : 'Skip for now'} nextPrimary={returnToAgent || items.length > 0} busy={finishing || busy} onNext={returnToAgent ? undefined : () => void finish()}>
+    <section aria-labelledby="invite-title"><h1 id="invite-title" tabIndex={-1}>Invite your teammates</h1><p className="focus-description">{invitationDelivery === 'link' ? 'Create a private invitation link and share it with your teammate. No email is sent; they choose their own password.' : 'Share this workspace with your team. You can also invite them later.'}</p>
+      {returnToAgent && <p className="focus-reassurance">Your teammates can connect their own agents while you finish your setup.</p>}
       {canInvite ? <>
         <div className="invite-editor">
           {items.length > 0 && <ul className="invitation-list" aria-label="Invitations">{items.map(invitation => <li key={invitation.email}><Icon name="check" className="signal-mark" /><div className="invitation-email">{invitation.email}{invitation.inviteUrl && <CopyField label="Private invitation link" value={invitation.inviteUrl}/>}</div></li>)}</ul>}

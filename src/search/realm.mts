@@ -1,34 +1,15 @@
 import type {TenantPrincipal} from '../sessions/types.mjs';
 import {serviceError} from '../sessions/types.mjs';
-import type {Corpus, SearchDocument, DocumentItem, IndexHit, OpenSearchResponse, QueryBody, RealmOptions, IndexTransportOptions, Mapping} from './types.mjs';
-import {createHash} from 'node:crypto';
+import type {Corpus, SearchDocument, DocumentItem, IndexHit, OpenSearchResponse, QueryBody, RealmOptions, IndexTransportOptions, Mapping, SearchRealm} from './types.mjs';
 import {signRequest} from '../sessions/s3-store.mjs';
-import {realmMapping,passageFields} from './mapping.mjs';
+import {realmMapping,passageFields,memoryProjectionFields} from './mapping.mjs';
 export {realmMapping};
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+import {realmIndex,realmField,realmDocument} from './realm-format.mjs';
+export {realmIndex,realmField,realmDocument};
+import {createSqliteRealm} from './sqlite.mjs';
+import {writeScript,patchScript} from './mutations.mjs';
 const fail = (message: string,status=503) => Object.assign(new Error(message),{status,permanent:status===403});
 const corpora = new Set(['connector','session','board','memory']);
-export function realmIndex(environment: string,tenantId: string,generation='v1') {
-  if (!/^[a-z][a-z0-9-]{0,24}$/.test(environment) || !/^v[1-9][0-9]*$/.test(generation) || typeof tenantId!=='string' || !tenantId) throw fail('Invalid realm scope',403);
-  return `opencrawl-${environment}-realm-${hash(tenantId)}-${generation}`;
-}
-export function realmField(corpus: string,field: string) {
-  if(!corpora.has(corpus)) throw fail('Invalid corpus',400);
-  return ['tenantId','text','title','sourceKey'].includes(field)?field:corpus+'.'+field;
-}
-export function realmDocument(corpus: string,id: string,document: SearchDocument) {
-  if(!corpora.has(corpus)||typeof id!=='string'||!/^[A-Za-z0-9_:-]{1,256}$/.test(id)||typeof document?.tenantId!=='string'||!document.tenantId) throw fail('Document realm scope required',403);
-  const {tenantId,text,title,sourceKey,...metadata}=document;
-  const raw=document.timestamp;
-  let timestamp= typeof raw==='number'?raw:typeof raw==='string'&&/^\d{10}(\.\d+)?$/.test(raw)?Number(raw)*1000:Date.parse(String(raw));
-  if(!Number.isFinite(timestamp)) timestamp=Date.parse(document.receivedAt ?? '')||(document.extractedAt ?? NaN);
-  const author=document.author??document.authorId??document.userId;
-  const source=corpus==='connector'?document.provider:['session','memory'].includes(corpus)?document.harness:'board';
-  return {schema:1,tenantId,corpus,id,source,kind:document.kind||'message',
-    ...(Number.isFinite(timestamp)?{timestamp:new Date(timestamp).toISOString()}:{}),
-    ...(author?{author}:{}),
-    ...(text!==undefined?{text}:{}),...(title!==undefined?{title}:{}),...(sourceKey!==undefined?{sourceKey}:{}),[corpus]:metadata};
-}
 function compatible(actual: Mapping | undefined,expected: Mapping): boolean {
   if(expected.type && (actual?.type||(actual?.properties?'object':undefined))!==expected.type) return false;
   if(expected.dynamic && actual?.dynamic!==expected.dynamic) return false;
@@ -37,7 +18,10 @@ function compatible(actual: Mapping | undefined,expected: Mapping): boolean {
   return true;
 }
 /** One tenant-bound index, mapping and transport for every searchable corpus. */
-export function createRealm({endpoint,index,tenantId,environment='selfhost',generation='v1',username,password,credentials,region='us-east-1',replicas=0,fetch:send=globalThis.fetch}: RealmOptions) {
+export function createRealm(options: RealmOptions): SearchRealm {
+  return new URL(options.endpoint).protocol === 'sqlite:' ? createSqliteRealm(options) : createOpenSearchRealm(options);
+}
+export function createOpenSearchRealm({endpoint,index,tenantId,environment='selfhost',generation='v1',username,password,credentials,region='us-east-1',replicas=0,fetch:send=globalThis.fetch}: RealmOptions): SearchRealm {
   if(typeof tenantId!=='string'||!tenantId)throw fail('Realm tenant required',403);
   index ||= realmIndex(environment,tenantId,generation);
   const base=new URL(endpoint);
@@ -53,7 +37,8 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
       let mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       // The only in-place schema upgrade is an additive normalization revision.
       // Validate ownership and every existing field before making any change.
-      const withoutPassages=(value:Mapping)=>{for(const corpus of ['session','memory'])for(const key of Object.keys(passageFields))delete value.properties?.[corpus]?.properties?.[key];return value;};
+      const withoutProjection=(value:Mapping)=>{for(const key of Object.keys(memoryProjectionFields))delete value.properties?.memory?.properties?.[key];return value;};
+      const withoutPassages=(value:Mapping)=>{for(const corpus of ['session','memory'])for(const key of Object.keys(passageFields))delete value.properties?.[corpus]?.properties?.[key];return withoutProjection(value);};
       const legacy=withoutPassages(structuredClone(realmMapping));
       const withoutVisibility=(value: Mapping)=>{delete value.properties!.session.properties!.private;if(value.properties!.memory)delete value.properties!.memory.properties!.private;return value;};
       const previous: Mapping=withoutVisibility(structuredClone(legacy));
@@ -83,6 +68,10 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
         await request('/_mapping',{properties:{session:{properties:passageFields},memory:{properties:passageFields}}},'PUT');
         mapping=(await request<Record<string,{mappings:Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
+      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&compatible(mapping,withoutProjection(structuredClone(realmMapping)))&&!mapping.properties?.memory?.properties?.projectionId){
+        await request('/_mapping',{properties:{memory:{properties:memoryProjectionFields}}},'PUT');
+        mapping=(await request<Record<string,{mappings:Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
+      }
       if(mapping?._meta?.tenantId!==tenantId||mapping?._meta?.schema!==1||!compatible(mapping,realmMapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');
     })().catch(e=>{ready=undefined;throw e;});
     return ready;
@@ -91,7 +80,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
     if(result?.timed_out!==false||result?._shards?.failed!==0||!Array.isArray(result?.hits?.hits))throw fail('Realm search incomplete');
     return result;
   };
-  return {index,tenantId,identity:base.origin+base.pathname+'/'+index,ensureIndex,scope,
+  return {backend:'opensearch',index,tenantId,identity:base.origin+base.pathname+'/'+index,ensureIndex,scope,
     collection(corpus: Corpus){
       if(!corpora.has(corpus))throw fail('Invalid corpus',400);
       const encodedId=(id: string)=>corpus+':'+id;
@@ -119,7 +108,8 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
           let body;
           try {
             scope(principal);if(!items.length)return {items:[]};
-            body=items.map(({id,document,script})=>{
+            body=items.map(({id,document,script:legacyScript,policy})=>{
+              const script=policy?writeScript(policy):legacyScript;
               const doc=encode(id,document);
               return JSON.stringify({[script?'update':'index']:{_id:encodedId(id),...(script?{retry_on_conflict:5}:{})}})+'\n'+JSON.stringify(script?{scripted_upsert:true,script:{lang:'painless',source:script,params:{doc}},upsert:{}}:doc)+'\n';
             }).join('');
@@ -143,6 +133,7 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
          * no matching document was skipped. */
         async byQuery(principal: TenantPrincipal,operation: 'update' | 'delete',query: unknown,script?: unknown){
           scope(principal);
+          if(script && typeof script==='object' && 'set' in script)script=patchScript((script as {set:Record<string,unknown>}).set);
           if(operation==='update'&&!script)throw fail('Update script required',400);
           const body={query:{bool:{filter:[{term:{tenantId}},{term:{corpus}}],must:[query]}},...(operation==='update'?{script}:{})};
           let changed=0;
@@ -157,9 +148,9 @@ export function createRealm({endpoint,index,tenantId,environment='selfhost',gene
           }
           throw fail('Realm '+operation+' by query kept conflicting; retry');
         },
-        async update(principal: TenantPrincipal,id: string,{script,upsert}: {script: unknown; upsert: SearchDocument}){
+        async update(principal: TenantPrincipal,id: string,{script,patch,upsert}: {script?: unknown; patch?: Record<string,unknown>; upsert: SearchDocument}){
           let body;
-          try {scope(principal);body={script,upsert:encode(id,upsert)};}
+          try {scope(principal);body={script:patch?patchScript(patch):script,upsert:encode(id,upsert)};}
           catch(caught){const error=serviceError(caught);throw Object.assign(serviceError(error),{writeOutcome:'not-applied'});}
           return request('/_update/'+encodedId(id),body);
         },

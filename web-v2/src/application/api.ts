@@ -14,7 +14,7 @@ export interface SourcesAdapter {
 }
 export interface TeamAdapter {
   team(signal?: AbortSignal): Promise<TeamReport>;
-  invite(email: string, signal?: AbortSignal): Promise<{ok: true}>;
+  invite(email: string, signal?: AbortSignal): Promise<{ok: true; inviteUrl?: string}>;
   changeRole(userId: string, role: WorkspaceRole, signal?: AbortSignal): Promise<{ok: true; userId: string; role: WorkspaceRole}>;
   removeMember(userId: string, signal?: AbortSignal): Promise<{ok: true; userId: string}>;
   renameOrganization(name: string, signal?: AbortSignal): Promise<{ok: true; name: string}>;
