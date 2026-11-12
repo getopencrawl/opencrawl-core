@@ -3,6 +3,7 @@ import type {SessionEvent} from './types.mjs';
 
 const AS_TEXT = {disallowedSpecial: new Set<string>()};
 const OMIT = new Set(['id', 'type', 'role', 'call_id', 'tool_use_id', 'encrypted_content', 'signature', 'image_url']);
+export const hasCapturedText = (harness: string, kind: string) => ['message', 'agent_message', 'tool_call', 'tool_result', 'exec_command_end'].includes(kind) || kind === 'user_message' && harness !== 'codex';
 /** A stable size measure, independent of model usage and commercial metering.
  * Count message text and tool inputs/results, including imported history. */
 export function capturedEventTokens(harness: string, event: SessionEvent): number {

@@ -2,7 +2,7 @@ import type {TenantPrincipal, ObjectStore, JsonValue} from './types.mjs';
 import type {SearchRealm, DocumentItem, IndexHit} from '../search/types.mjs';
 import {createSessionIngest, digest} from './ingest.mjs';
 import {sourceBatchIdentity} from './event-identity.mjs';
-import {capturedEventTokens} from './token-count.mjs';
+import {capturedEventTokens, hasCapturedText} from './token-count.mjs';
 import {createControls} from './controls.mjs';
 import {withSessionDocumentWrites} from './write-barrier.mjs';
 
@@ -43,39 +43,53 @@ export async function migrateSessionTokens({realm, principal, store, prefix, dry
         source.installationHash !== digest(d.installationId) || source.sessionHash !== digest(d.sessionId)) throw new Error('Token migration source scope denied');
       const group = groups.get(key!) ?? []; group.push(hit); groups.set(key!, group);
     }
-    for (const [key, hits] of groups) {
+    const sources = [...groups], updates: DocumentItem[] = [];
+    // Bound source reads independently from numeric writes. Most old events are
+    // bookkeeping with a defined zero count and need no transcript download.
+    async function prepare([key, hits]: [string, IndexHit[]]) {
       const sample = hits[0]!._source, owner = {tenantId: principal.tenantId, userId: sample.userId!};
       const deleted = async () => Boolean((await controls.read(owner, 'sessions', sample.harness!, sample.sessionId!))?.deletedAt);
-      if (await deleted()) {report.skippedDeleted += hits.length; continue;}
+      if (await deleted()) {report.skippedDeleted += hits.length; return;}
       const source = sourceBatchIdentity(prefix, key)!;
       let events = batches.get(key);
-      if (!events) {
+      if (!events && hits.some(hit => hasCapturedText(hit._source.harness!, hit._source.kind!))) {
         const batch = await ingest.getBatch(owner, {harness: sample.harness!, installationId: sample.installationId!, sessionId: sample.sessionId!, batchId: source.batchId});
         if (!batch) {
-          if (await deleted()) {report.skippedDeleted += hits.length; continue;}
+          if (await deleted()) {report.skippedDeleted += hits.length; return;}
           throw new Error('Missing immutable token source');
         }
         events = new Map(batch.events.map(event => [event.id, {kind: event.kind, tokens: capturedEventTokens(batch.harness, event)}]));
       }
-      batches.delete(key); batches.set(key, events);
-      if (batches.size > 64) batches.delete(batches.keys().next().value!);
-      const updates: DocumentItem[] = hits.map(hit => {
-        const event = events.get(hit._source.eventId!);
-        if (!event || event.kind !== hit._source.kind) throw new Error('Token source does not contain indexed event');
-        return {id: hit._id, document: {...hit._source, capturedTokens: event.tokens}, policy: 'session-tokens'};
-      });
-      if (!dryRun) {
+      if (events) {
+        batches.delete(key); batches.set(key, events);
+        if (batches.size > 64) batches.delete(batches.keys().next().value!);
+      }
+      for (const hit of hits) {
+        let tokens = 0;
+        if (hasCapturedText(hit._source.harness!, hit._source.kind!)) {
+          const event = events?.get(hit._source.eventId!);
+          if (!event || event.kind !== hit._source.kind) throw new Error('Token source does not contain indexed event');
+          tokens = event.tokens;
+        }
+        updates.push({id: hit._id, document: {...hit._source, capturedTokens: tokens}, policy: 'session-tokens'});
+      }
+    }
+    for (let start = 0; start < sources.length; start += 4) {
+      const results = await Promise.allSettled(sources.slice(start, start + 4).map(prepare));
+      for (const result of results) if (result.status === 'rejected') throw result.reason;
+    }
+    if (!dryRun && updates.length) {
         await withSessionDocumentWrites({store, prefix, tenantId: principal.tenantId, documents: updates}, async () => {
-          await collection.bulk(owner, updates);
-          const actual = await collection.mget(owner, updates.map(item => item.id));
+          await collection.bulk(principal, updates);
+          const actual = await collection.mget(principal, updates.map(item => item.id));
           const byId = new Map(actual.docs.map(hit => [hit._id, hit]));
-          if (updates.some(item => !byId.get(item.id)?.found || byId.get(item.id)!._source.capturedTokens !== item.document.capturedTokens)) {
-            if (!await deleted()) throw new Error('Token migration readback mismatch');
+          for (const item of updates) if (!byId.get(item.id)?.found || byId.get(item.id)!._source.capturedTokens !== item.document.capturedTokens) {
+            const d = item.document;
+            if (!(await controls.read({tenantId: principal.tenantId, userId: d.userId!}, 'sessions', d.harness!, d.sessionId!))?.deletedAt) throw new Error('Token migration readback mismatch');
           }
         });
-      }
-      report.events += hits.length;
     }
+    report.events += updates.length;
     report.after = cursor; await onPage({...report});
     if (report.events + report.skippedDeleted >= maxEvents) return report;
   }
