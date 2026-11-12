@@ -239,14 +239,17 @@ const providers:ProviderCatalog = {
       {stream: 'transcripts', label: 'Transcript lines'},
     ],
     units: ['meeting', 'meetings'],
-    // Circleback returns numeric folder IDs; the connector's configuration takes a string.
+    // Circleback folder IDs are strings; a record saved from an earlier response may hold a number. The connector's configuration takes a string.
     sourceConfiguration: ({startDate, record}) => ({start_date: startDate, folder_id: record!.settings?.folderId === undefined ? undefined : String(record!.settings.folderId), num_workers: 2}),
     /** The signed-in account and the workspace's shared Workspace folder, the only one read. */
     async account(proxy) {
-      const [me, folders] = await Promise.all([proxy({endpoint: `${CIRCLEBACK}/oauth/test`}), proxy<Array<{id: string | number; type: string; workspaceId: string | number; name?: string}>>({endpoint: `${CIRCLEBACK}/folder`})]);
+      const [me, folders] = await Promise.all([proxy({endpoint: `${CIRCLEBACK}/oauth/test`}), proxy<Array<{id: string | number; visibility?: string | null; type?: string; workspaceId: string | number; name?: string}>>({endpoint: `${CIRCLEBACK}/folder`})]);
       if (me.status >= 400 || !me.data?.email) throw new Error(`Circleback account lookup failed with ${me.status}`);
       if (folders.status >= 400 || !Array.isArray(folders.data)) throw new Error(`Circleback returned ${folders.status} while listing folders`);
-      const shared = folders.data.find(folder => folder.type === 'Workspace');
+      // The folder list marks the built-in Workspace folder with `visibility: null`. "Workspace" and "Hidden" are
+      // ordinary shared folders, which can be limited to some members and are never read. A folder without the
+      // field is not a match; `type` is an earlier response shape.
+      const shared = folders.data.find(folder => folder.visibility === null || folder.type === 'Workspace');
       if (!shared?.id || !shared.workspaceId) throw Object.assign(new Error('Your Circleback account isn’t in a workspace, so it has no meetings shared with the team.'), {status: 400, expose: true});
       return {label: `${me.data.email}, ${shared.name || 'Workspace'} folder`, workspace: String(shared.workspaceId), settings: {folderId: shared.id}};
     },
