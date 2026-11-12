@@ -24,6 +24,17 @@ function CaptureHostname({session, expanded = false}: {session: SessionHosts; ex
   </span>;
 }
 
+const compactTokens = new Intl.NumberFormat('en-US', {notation: 'compact', maximumFractionDigits: 1});
+function CapturedTokens({value}: {value?: number | null}) {
+  const known = typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+  const description = known
+    ? `${value.toLocaleString('en-US')} captured tokens. Message text and tool inputs/results, counted once with o200k_base. Includes imported history. Model usage and billing are separate.`
+    : 'Captured token count is not available yet.';
+  return <span className="oc-row-tokens" title={description} aria-label={description}>
+    {known ? compactTokens.format(value).replace('K', 'k') : '—'}<span className="oc-row-tokens-label"> tokens</span>
+  </span>;
+}
+
 /** Captured agent sessions: a searchable list and a transcript viewer. */
 export function SessionsPage({adapter}: {adapter: LibraryAdapter}) {
   const [params] = useSearchParams();
@@ -91,7 +102,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     {error && <Notice tone="danger">{error}</Notice>}
     {error && <div className="actions"><Button onClick={retry}>Try again</Button></div>}
     {!data && loading && <LoadingState label="Loading sessions"/>}
-    {data && (data.sessions.length ? <><div className="oc-row-item oc-row-heading" aria-hidden="true"><div className="oc-row oc-row-with-host"><span>Session</span><span className="oc-row-optional">Captured by</span><span className="oc-row-optional">Agent</span><span className="oc-row-host" title="The machine that captured the transcript. Imported history may have originated elsewhere.">Hostname</span><span className="oc-row-end">Updated</span></div><span className="oc-row-actions">{scope === 'mine' && <span className="oc-row-visibility"/>}<span className="oc-row-action"/></span></div>
+    {data && (data.sessions.length ? <><div className="oc-row-item oc-row-heading" aria-hidden="true"><div className="oc-row oc-row-with-host"><span>Session</span><span className="oc-row-optional">Captured by</span><span className="oc-row-optional">Agent</span><span className="oc-row-host" title="The machine that captured the transcript. Imported history may have originated elsewhere.">Hostname</span><span className="oc-row-tokens">Captured tokens</span><span className="oc-row-end">Updated</span></div><span className="oc-row-actions">{scope === 'mine' && <span className="oc-row-visibility"/>}<span className="oc-row-action"/></span></div>
     <ol className="oc-row-groups" aria-busy={loading || undefined}>{byDay(data.sessions, session => session.lastActivityAt).map(([day, items]) => <li key={day}>
       <h2 className="oc-row-group-label">{day}</h2>
       <ul className="oc-rows">{items.map(session => <li key={sessionPath(session)} className="oc-row-item"><Link to={sessionPath(session)} className="oc-row oc-row-with-host">
@@ -99,6 +110,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
         <span className="oc-row-optional">{authorName(session.userId, session.mine, data.authors)}</span>
         <span className="oc-row-optional">{harnessName(session.harness)}</span>
         <CaptureHostname session={session}/>
+        <CapturedTokens value={session.capturedTokens}/>
         <span className="oc-row-end"><When value={session.lastActivityAt}/></span>
       </Link><span className="oc-row-actions">
         {scope === 'mine' && session.mine && <Button variant="quiet" className="oc-icon-button oc-row-visibility"

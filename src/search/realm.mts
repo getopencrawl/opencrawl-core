@@ -4,7 +4,7 @@ import type {TenantPrincipal} from '../sessions/types.mjs';
 import {serviceError} from '../sessions/types.mjs';
 import type {Corpus, SearchDocument, DocumentItem, IndexHit, OpenSearchResponse, QueryBody, RealmOptions, IndexTransportOptions, Mapping, SearchRealm} from './types.mjs';
 import {signRequest} from '../sessions/s3-store.mjs';
-import {realmMapping,passageFields,memoryProjectionFields} from './mapping.mjs';
+import {realmMapping,passageFields,memoryProjectionFields,sessionTokenFields} from './mapping.mjs';
 export {realmMapping};
 import {realmIndex,realmField,realmDocument} from './realm-format.mjs';
 export {realmIndex,realmField,realmDocument};
@@ -41,7 +41,8 @@ export function createOpenSearchRealm({endpoint,index,tenantId,environment='self
       let mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       // The only in-place schema upgrade is an additive normalization revision.
       // Validate ownership and every existing field before making any change.
-      const withoutProjection=(value:Mapping)=>{for(const key of Object.keys(memoryProjectionFields))delete value.properties?.memory?.properties?.[key];return value;};
+      const withoutTokens=(value:Mapping)=>{delete value.properties?.session?.properties?.capturedTokens;return value;};
+      const withoutProjection=(value:Mapping)=>{for(const key of Object.keys(memoryProjectionFields))delete value.properties?.memory?.properties?.[key];return withoutTokens(value);};
       const withoutPassages=(value:Mapping)=>{for(const corpus of ['session','memory'])for(const key of Object.keys(passageFields))delete value.properties?.[corpus]?.properties?.[key];return withoutProjection(value);};
       const legacy=withoutPassages(structuredClone(realmMapping));
       const withoutVisibility=(value: Mapping)=>{delete value.properties!.session.properties!.private;if(value.properties!.memory)delete value.properties!.memory.properties!.private;return value;};
@@ -74,6 +75,10 @@ export function createOpenSearchRealm({endpoint,index,tenantId,environment='self
       }
       if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&compatible(mapping,withoutProjection(structuredClone(realmMapping)))&&!mapping.properties?.memory?.properties?.projectionId){
         await request('/_mapping',{properties:{memory:{properties:memoryProjectionFields}}},'PUT');
+        mapping=(await request<Record<string,{mappings:Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
+      }
+      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&compatible(mapping,withoutTokens(structuredClone(realmMapping)))&&!mapping.properties?.session?.properties?.capturedTokens){
+        await request('/_mapping',{properties:{session:{properties:sessionTokenFields}}},'PUT');
         mapping=(await request<Record<string,{mappings:Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
       if(mapping?._meta?.tenantId!==tenantId||mapping?._meta?.schema!==1||!compatible(mapping,realmMapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');

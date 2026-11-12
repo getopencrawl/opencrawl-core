@@ -19,12 +19,12 @@ export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql,
     } else if (type === 'top_hits') {
       const opts = object(option); keys(opts, ['size', 'sort', '_source']);
       result[name] = {hits: {hits: readHits(db, where, score, opts), total: {value: count(where), relation: 'eq'}}};
-    } else if (['min', 'max', 'cardinality', 'value_count'].includes(type)) {
+    } else if (['min', 'max', 'sum', 'cardinality', 'value_count'].includes(type)) {
       const opts = object(option); keys(opts, ['field', 'precision_threshold']); const f = field(opts.field);
       const value = f.date ? 'epoch(j.value)' : 'j.value';
       const expression = type === 'cardinality' ? 'count(DISTINCT ' + value + ')' : type === 'value_count' ? 'count(' + value + ')' : type + '(' + value + ')';
       const row = db.prepare(`SELECT ${expression} AS value FROM documents d, json_each(d.document, '${f.path}') j WHERE ${where.sql}`).get(...where.args)!;
-      result[name] = {value: row.value, ...(f.date && row.value !== null ? {value_as_string: new Date(Number(row.value)).toISOString()} : {})};
+      result[name] = {value: type === 'sum' ? row.value ?? 0 : row.value, ...(f.date && row.value !== null ? {value_as_string: new Date(Number(row.value)).toISOString()} : {})};
     } else if (type === 'terms' || type === 'multi_terms') {
       const opts = object(option); keys(opts, ['field', 'terms', 'size', 'order', 'shard_size', 'show_term_doc_count_error', 'min_doc_count', 'exclude']);
       if (opts.min_doc_count !== undefined && opts.min_doc_count !== 1) unsupported('terms min_doc_count');

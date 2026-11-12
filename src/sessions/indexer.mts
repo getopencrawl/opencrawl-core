@@ -12,6 +12,7 @@ import {createControls} from './controls.mjs';
 import {sessionWriteBarrier, sessionWriteStore} from './write-barrier.mjs';
 import {memoryControls} from '../memories/library.mjs';
 import {passages,PASSAGE_VERSION} from '../search/passages.mjs';
+import {capturedEventTokens} from './token-count.mjs';
 export {sourceBatchIdentity} from './event-identity.mjs';
 export {memorySourceIdentity} from '../memories/snapshot.mjs';
 
@@ -84,12 +85,12 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
     const texts: string[]=[],attachments: Attachment[]=[],names=new Set<string>();collect(data,texts,attachments,names);
     if(event.kind==='tool_call'&&typeof event.data?.name==='string')names.add(event.data.name);
     const text=texts.join('\n');
-    const chunks=passages(text);
+    const chunks=passages(text),capturedTokens=capturedEventTokens(batch.harness,event);
     for(let chunk=0;chunk<chunks.length;chunk++){
       const document={tenantId:principal.tenantId,userId:principal.userId,installationId:batch.installationId,sessionId:batch.sessionId,
         harness:batch.harness,origin:batch.origin,eventId:event.id,kind:event.kind,role:event.data?.role??(event.kind==='agent_message'&&event.data?.author==='assistant'?'assistant':null),
         timestamp:typeof event.timestamp==='string'?event.timestamp:null,receivedAt:batch.receivedAt,
-        sequence:Number.isSafeInteger(event.sequence)?event.sequence:0,chunk,text:chunks[chunk]!.text,sourceKey:key,
+        sequence:Number.isSafeInteger(event.sequence)?event.sequence:0,chunk,...(chunk===0?{capturedTokens}:{}),text:chunks[chunk]!.text,sourceKey:key,
         passageVersion:PASSAGE_VERSION,textStart:chunks[chunk]!.start,textEnd:chunks[chunk]!.end,chunkCount:chunks.length,
         ...(batch.title?{title:batch.title}:{}),
         nativeId:typeof event.nativeId==='string'?event.nativeId:null,parentId:event.parentId??null,turnId:event.turnId??null,
