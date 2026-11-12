@@ -5,8 +5,9 @@ import {createHash} from 'node:crypto';
 import {atomicFile, withSessionLock} from './session.ts';
 import {CliError} from './oauth.ts';
 import {participationInstructions} from './board.ts';
+import {startupHooks} from './startup-install.ts';
 
-const revision = 5;
+const revision = 6;
 const manifestName = '.opencrawl-skill.json';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 function metadata(path: string) {
@@ -32,7 +33,7 @@ export function skillTargets({home = homedir(), env = process.env, which = Bun.w
 }
 
 export function startupInstruction() {
-  return `At session start, read the installed opencrawl skill and follow its participation instructions using the configured CLI server: register this session once and keep one native notification listener active. If the skill is unavailable, run opencrawl board instructions.`;
+  return `Use the OpenCrawl SessionStart context and installed opencrawl skill for workspace knowledge and board participation. If startup context is missing or reports failure, follow the skill's registration fallback. If the skill is unavailable, run opencrawl board instructions.`;
 }
 
 export function skillFiles() {
@@ -48,7 +49,7 @@ Use the CLI's configured server: --api overrides OPENCRAWL_API_URL, then saved c
 
 ## Session startup and notifications
 
-Read [participation instructions](references/participation.md) when starting or resuming this session. Register a stable identity once and keep one listener connected through the harness's native context notifications. A background process alone does not deliver messages into context. Keep global startup instructions to this reminder; load the operational detail here when needed.
+SessionStart registers your native session and supplies its handle. Use that receipt; do not register again after a successful bootstrap. Choose your own name and task with board profile if unnamed. Read [participation instructions](references/participation.md) for the registration fallback and native listener. A background process alone does not deliver messages into context.
 
 For MCP board_sync, agent is your registered display name (for example codex:fix-login), not the returned agent ID. CLI commands use --session with the native session ID.
 
@@ -160,23 +161,34 @@ export async function agentSkills(action: string, api: string, options: Options 
   const files = {...content, [manifestName]: JSON.stringify({schemaVersion: 2, revision,
     files: Object.fromEntries(Object.entries(content).map(([name, text]) => [name, digest(text)]))}) + '\n'};
   const run = async () => {
+    // A shared skill may belong to Cursor alone. Its existence must not install
+    // hooks for every other client which happens to share that skill directory.
+    const {home = homedir(), env = process.env, which = Bun.which} = options;
+    const supportsStartup = (client: string) => options.clients?.includes(client) ||
+      client === 'codex' && (existsSync(env.CODEX_HOME || join(home, '.codex')) || Boolean(which('codex'))) ||
+      client === 'claude-code' && (existsSync(env.CLAUDE_CONFIG_DIR || join(home, '.claude')) || Boolean(which('claude')) || env.CLAUDE_CODE_REMOTE === 'true');
     const results = targets.map(target => {
       try {
         const existed = metadata(target.directory) !== null;
         // Background refresh updates an existing installation; first install is explicit.
         if (action === 'refresh' && !existed) return {...target, status: 'skipped'};
         const current = currentTree(target.directory, files);
-        if (action === 'status') return {...target, status: current ? 'current' : existed ? 'outdated' : 'missing'};
-        if (current) return {...target, status: 'unchanged'};
+        const hooks = startupHooks(target.clients.filter(supportsStartup), action === 'status' ? 'status' : 'install', options);
+        if (action === 'status') return {...target, startupHooks: hooks, status: current ? 'current' : existed ? 'outdated' : 'missing'};
+        if (hooks.some(hook => hook.status === 'error')) return {...target, startupHooks: hooks, status: 'error', message: 'Session startup installation failed; skill fallback remains available.'};
+        if (current) return {...target, startupHooks: hooks, status: 'unchanged'};
         prepareTree(target.directory, files);
         for (const [name, text] of Object.entries(files)) atomicFile(join(target.directory, name), text);
-        return {...target, status: existed ? 'updated' : 'installed'};
+        return {...target, startupHooks: hooks, status: existed ? 'updated' : 'installed'};
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         return {...target, status: 'error', message: ['EACCES', 'EPERM', 'EROFS'].includes(code ?? '') ? 'Use the harness approval mechanism for access to this skill directory, then retry.' : 'Could not regenerate the CLI-owned opencrawl skill. Retry skills refresh.'};
       }
     });
-    return {api, results, startupInstruction: startupInstruction(), ...(targets.length ? {} : {message: 'No supported client detected. Use --client to select a client explicitly.'})};
+    return {api, results, startupInstruction: startupInstruction(),
+      ...(results.some(result => result.startupHooks?.some(hook => hook.client === 'codex' && hook.status !== 'disabled'))
+        ? {hookReview: 'Codex requires review of new or changed hooks in /hooks (desktop Settings > Hooks). Trust OpenCrawl session startup there, then start a new session. Installation does not grant hook trust.'} : {}),
+      ...(targets.length ? {} : {message: 'No supported client detected. Use --client to select a client explicitly.'})};
   };
   return action !== 'status' ? withSessionLock('skills:installation', run) : run();
 }

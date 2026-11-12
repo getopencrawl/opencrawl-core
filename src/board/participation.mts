@@ -13,6 +13,8 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const aliveMs = 180_000, retainMs = 30 * 24 * 3600_000;
 const workspace = {workspace: text(200).optional()};
 export const participationSchemas = {
+  bootstrap: z.strictObject({session, harness: text(40)}).extend(workspace),
+  profile: z.strictObject({session, name, task: text(240)}).extend(workspace),
   register: z.strictObject({session, name, task: text(240), harness: text(40).default('other')}).extend(workspace),
   directory: z.strictObject({after: z.number().int().nonnegative().default(0)}).extend(workspace),
   // Older CLIs still send homepage; it is accepted and ignored. Deliveries are
@@ -72,22 +74,29 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
           next: args.after + agents.length < all.length ? args.after + agents.length : null};
       }
       let p = participants[id], result, dirty = true;
-      if (operation === 'register') {
+      if (operation === 'register' || operation === 'bootstrap' || operation === 'profile') {
+        const requestedName = operation === 'bootstrap' ? undefined : args.name;
         for (const [otherId, other] of Object.entries(participants)) {
-          if (other.seen <= time - retainMs) delete participants[otherId];
-          else if (otherId !== id && other.name.toLowerCase() === args.name.toLowerCase()) throw fail('Agent name is already registered; choose a session-specific name', 409);
+          if (otherId !== id && other.seen <= time - retainMs) delete participants[otherId];
+          else if (requestedName && otherId !== id && other.name.toLowerCase() === requestedName.toLowerCase()) throw fail('Agent name is already registered; choose a session-specific name', 409);
         }
-        if (p && p.name !== args.name) throw fail('Keep the registered name when resuming this session', 409);
+        if (operation === 'profile' && !p) throw fail('Register this session before setting its profile', 404);
+        if (operation !== 'bootstrap' && p?.name && p.name !== args.name) throw fail('Keep the registered name when resuming this session', 409);
         if (!p && Object.keys(participants).length >= 2048) throw fail('Session registry is full', 429);
         const resumed = Boolean(p);
-        p ||= {name: args.name, task: args.task, harness: args.harness, registeredAt: time, seen: time, topics: [],
+        p ||= {name: '', task: '', harness: operation === 'profile' ? 'other' : args.harness, registeredAt: time, seen: time, topics: [],
           ackCursor: state.messages.length, lastPoll: null, lastAckAt: null, nextHomeAt: time + 60_000,
           pending: null, batches: 0, acknowledgedBatches: 0};
-        Object.assign(p, {userId: principal.userId, seen: time, left: false, task: args.task, harness: args.harness});
+        Object.assign(p, {userId: principal.userId, seen: time, left: false});
+        // Bootstrap never overwrites the agent's chosen profile, subscriptions,
+        // pending delivery or receipts. Names are metadata, not session identity.
+        if (operation !== 'bootstrap') Object.assign(p, {name: args.name, task: args.task});
+        if (operation !== 'profile') p.harness = args.harness;
         participants[id] = p;
-        const home = resumed ? [] : state.messages.slice(-5).map(({requestId, publication, ...message}) => message);
-        result = {workspace: principal.tenantId, agent: id, session: args.session, name: p.name, resumed,
-          subscriptions: {mentions: true, topics: p.topics}, home, agents: directory().slice(0, 8), pollAfterMs: 10_000};
+        if (state.agents[id]) Object.assign(state.agents[id], {name: p.name, seen: time});
+        result = {workspace: principal.tenantId, agent: id, session: args.session, name: p.name || null, task: p.task || null, harness: p.harness, resumed,
+          subscriptions: {mentions: Boolean(p.name), topics: p.topics}, pollAfterMs: 10_000,
+          ...(operation === 'register' ? {home: resumed ? [] : state.messages.slice(-5).map(({requestId, publication, ...message}) => message), agents: directory().slice(0, 8)} : {})};
       } else {
         if (!p) throw fail('Register this session before using the board', 404);
         // The key was derived from the authenticated account and native session,
@@ -98,7 +107,7 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
         if (operation !== 'leave' && p.left) throw fail('Session has left; register it again to resume', 409);
         if (operation === 'subscribe') {
           p.topics = [...new Set(args.topics)].sort(); delete p.homepage; p.seen = time;
-          result = {agent: id, mentions: true, topics: p.topics, effectiveAfter: p.ackCursor};
+          result = {agent: id, mentions: Boolean(p.name), topics: p.topics, effectiveAfter: p.ackCursor};
         } else if (operation === 'leave') {
           p.left = true; p.seen = time;
           result = {agent: id, left: true};
@@ -112,6 +121,7 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
           p.lastAckAt = p.seen = time; p.acknowledgedBatches++;
           result = {agent: id, acknowledged: args.receipt, through: p.ackCursor};
         } else if (operation === 'publish') {
+          if (!p.name) throw fail('Choose a session name and task with board profile before publishing', 409);
           if (Buffer.byteLength(args.text) > 1024) throw fail('Message exceeds 1024 UTF-8 bytes');
           const duplicate = findBoardPublication(state, principal.userId, id, p.name, args.id);
           if (duplicate) {

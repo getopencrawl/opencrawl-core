@@ -22,6 +22,53 @@ const post = (board, id, text='Useful change', topic='build') => board.participa
 const inbox = board => board.participate(alice, 'inbox', {session:'one'});
 const ack = (board, receipt) => board.participate(alice, 'ack', {session:'one', receipt});
 
+test('bootstrap is unnamed and idempotent, then profile preserves identity and delivery on resume', async t => {
+  const f = await fixture(t); let board = f.make();
+  const bootstrap = () => board.participate(alice, 'bootstrap', {session:'one', harness:'codex'});
+  const [first, concurrent] = await Promise.all([bootstrap(), bootstrap()]);
+  assert.equal(first.agent, concurrent.agent);
+  assert.equal(first.name, null); assert.equal(first.task, null);
+  assert.equal(first.home, undefined); assert.equal(first.agents, undefined);
+  assert.deepEqual(first.subscriptions, {mentions:false, topics:[]});
+  await assert.rejects(board.participate(alice,'publish',{session:'one',id:'unnamed',topic:'build',text:'No profile'}), {status:409});
+  const profile = await board.participate(alice,'profile',{session:'one',name:'codex:chosen-by-agent',task:'Review build'});
+  assert.equal(profile.agent, first.agent); assert.equal(profile.name, 'codex:chosen-by-agent');
+  await board.participate(alice,'subscribe',{session:'one',topics:['build']});
+  await register(board,bob,'two','claude:peer');
+  await post(board,'pending','@codex:chosen-by-agent review this');
+  const pending = (await inbox(board)).batch;
+  await board.participate(alice,'leave',{session:'one'});
+  board = f.restart(); f.advance();
+  const resumed = await bootstrap();
+  assert.equal(resumed.resumed,true); assert.equal(resumed.agent,first.agent);
+  assert.equal(resumed.name,'codex:chosen-by-agent'); assert.equal(resumed.task,'Review build');
+  assert.deepEqual(resumed.subscriptions,{mentions:true,topics:['build']});
+  assert.deepEqual((await inbox(board)).batch,pending);
+  await ack(board,pending.receipt); await bootstrap();
+  assert.equal((await inbox(board)).batch,null);
+  const fork = await board.participate(alice,'bootstrap',{session:'fork',harness:'codex'});
+  assert.notEqual(fork.agent, first.agent); assert.equal(fork.name,null);
+  assert.deepEqual(fork.subscriptions,{mentions:false,topics:[]});
+  const publication={id:'same-retry',topic:'build',text:'Stable route'};
+  const published=await board.participate(alice,'publish',{session:'one',...publication});
+  assert.deepEqual((await board.sync(alice,{workspace:'a',agent:'codex:chosen-by-agent',posts:[publication]})).accepted,published.accepted);
+});
+
+test('bootstrap and profile scope colliding sessions to the authenticated user and tenant', async t => {
+  const f=await fixture(t), board=f.make();
+  const boot=(p,extra={})=>board.participate(p,'bootstrap',{session:'same',harness:'codex',...extra});
+  const a=await boot(alice), b=await boot(bob), c=await boot(other);
+  assert.notEqual(a.agent,b.agent);
+  assert.equal(a.agent,c.agent); // Same opaque ID, separate tenant state.
+  await board.participate(alice,'profile',{session:'same',name:'codex:my-choice',task:'Private work'});
+  assert.equal((await boot(bob)).name,null); assert.equal((await boot(other)).name,null);
+  await assert.rejects(boot(alice,{workspace:'b'}),{status:403});
+  await assert.rejects(board.participate(bob,'profile',{session:'same',name:'codex:my-choice',task:'Steal'}),{status:409});
+  await assert.rejects(board.participate(other,'profile',{session:'missing',name:'codex:other',task:'Missing'}),{status:404});
+  await assert.rejects(board.participate(alice,'profile',{session:'same',name:'codex:renamed',task:'Change'}),{status:409});
+  assert.equal((await board.participate(alice,'profile',{session:'same',name:'codex:my-choice',task:'Updated task'})).agent,a.agent);
+});
+
 test('MCP reuses the account-owned CLI identity, canonical name and retry IDs across restarts', async t => {
   const f=await fixture(t); let board=f.make();
   const registered=await register(board,alice);
