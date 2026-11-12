@@ -2,13 +2,37 @@ import {memorySessionStore as deletionTestStore} from './session-store-fixture.m
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
-import {excerpt, groupDuplicates} from '../dist/src/search/presentation.mjs';
+import {approvalRecord, excerpt, groupDuplicates} from '../dist/src/search/presentation.mjs';
 import {createSessionSearch} from '../dist/src/sessions/search.mjs';
 import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
 import {documentId} from '../dist/src/connectors/scope.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 
 const principal = {tenantId:'team', userId:'reader'};
+test('recognized approval records follow evidence while remaining discoverable and fetchable', async () => {
+  const text=JSON.stringify({risk_level:'low',user_authorization:'high',outcome:'allow',rationale:'Read-only WorkOS Better Auth inspection.'});
+  const approval={id:'approval',tenantId:'team',userId:'author',sessionId:'s',eventId:'a',harness:'codex',origin:'subagent',kind:'message',role:'assistant',text,timestamp:'2026-11-10T10:00:00Z'};
+  const evidence={...approval,id:'evidence',eventId:'b',text:'WorkOS provides hosted identity; Better Auth runs locally.',timestamp:'2026-11-09T10:00:00Z'};
+  const hits=[approval,evidence], service=createWorkspaceSearch({sessions:{search:async(p,q)=>({hits:q.id?hits.filter(h=>h.id===q.id):hits,total:q.id?1:2})}});
+  const first=await service.search(principal,{query:'WorkOS Better Auth',limit:1,facets:['kind']});
+  assert.equal(first.results[0].id,'sessions:evidence');assert.equal(first.ranking,'source_rank_interleave_with_approval_demotion');
+  assert.equal(first.facets.kind.values[0].count,2);
+  const next=await service.search(principal,{query:'WorkOS Better Auth',limit:1,facets:['kind'],cursor:first.next});assert.equal(next.results[0].id,'sessions:approval');
+  assert.equal((await service.fetch(principal,{id:'sessions:approval'})).text,text);
+  for(const query of [{query:'approval WorkOS'},{query:'approved WorkOS'},{query:'deny deletion'},{query:'authorized command'},{query:'risk_level'},{query:'WorkOS',order:'newest'}])assert.equal((await service.search(principal,query)).results[0].id,'sessions:approval');
+  const foreign=createWorkspaceSearch({sessions:{search:async()=>({hits:[{...approval,tenantId:'other'}],total:1})}});
+  await assert.rejects(foreign.search(principal,{query:'WorkOS'}),/scope/);
+});
+
+test('approval classification preserves user text, other sources and incomplete lookalikes', () => {
+  const record={risk_level:'low',user_authorization:'high',outcome:'allow',rationale:'Read-only inspection.'};
+  const hit={source:'sessions',text:JSON.stringify(record),provenance:{harness:'codex',origin:'subagent',kind:'message',role:'assistant'}};
+  assert.equal(approvalRecord(hit),true);
+  for(const changed of [{...hit,source:'connectors'},{...hit,provenance:{...hit.provenance,role:'user'}},{...hit,provenance:{...hit.provenance,origin:'desktop'}},
+    {...hit,text:'Quoted decision: '+hit.text},{...hit,text:hit.text+' broken'},
+    {...hit,text:JSON.stringify({...record,detail:'substantive extra content'})},{...hit,text:JSON.stringify({...record,risk_level:['low']})}])assert.equal(approvalRecord(changed),false);
+});
+
 test('compact excerpts preserve exact source text and find evidence beyond navigation', () => {
   const text = 'Navigation\n'.repeat(400) + 'The largest SSD is 500GB [add $300.00].\n' + 'Footer\n'.repeat(200);
   const result = excerpt(text, '500GB SSD');
