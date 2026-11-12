@@ -29,17 +29,25 @@ organization realm. Sources retain BM25 order and are interleaved by source rank
 `match: all` requires every analyzed term across those fields. No stemming,
 semantic model, fuzzy matching or query expansion is added.
 
-`filters` accepts exact `authors`, `kinds`, `excludeKinds`, `roles`, `harnesses`,
+`filters` accepts exact `authors`, `kinds`, `excludeKinds`, `roles`, `harnesses`, `origins` (sessions),
 `providers`, `repositories`, `projects`, `paths`, and `toolNames`, plus inclusive
-ISO `after`/`before` bounds. Lists are OR; different filters are AND. Roles and
-tool names apply to sessions, projects/paths to memories, providers/repositories
+ISO `after`/`before` bounds. Lists are OR; different filters are AND. Roles, origins
+and tool names apply to sessions, projects/paths to memories, providers/repositories
 to connectors. Incompatible sources produce no matches, never an unfiltered
 fallback. Session and memory time controls use original event/modification time.
 Connector bounds/order use the realm timestamp, which can fall back to indexing
 time when the source supplies no valid date. Inspect provenance before making
 chronological claims. `order` is `relevance` (default), `newest`, or `oldest`.
 
-`facets` requests any of source/kind/author/harness/provider/repository/project/
+Session provenance includes the recorded `origin`: `cli`, `desktop`, `cloud`,
+`subagent`, or `unknown`. If review or worker chats crowd a query, inspect the
+`origin` facet and select relevant values explicitly with `filters.origins`.
+Origin describes capture context, not authority or answer quality; useful
+evidence can come from subagents. Search includes every origin by default.
+The field already exists in session projections, so this control needs no
+mapping change or additional backfill.
+
+`facets` requests any of source/kind/author/harness/origin/provider/repository/project/
 path/role/sessionId. Counts are computed only after all resource authorization
 checks; `facetScope: authorized_candidate_window` is explicit. They are bounded
 candidate counts, not corpus totals. Each returns up to 20 values and an `other`

@@ -26,8 +26,12 @@ function fixture(t,{os='Linux',arch='aarch64',docker=true,checksum=true,native=f
     writeFileSync(join(dir,'fake-node'),`#!/bin/sh\nif [ "$1" = -p ]; then echo v24.22.2-${hostOs}-${hostArch}; else printf 'INSTALLER %s\\n' "$*"; fi\n`,{mode:0o755});
   }
   const env={...process.env,PATH:bin+':'+(native?process.env.PATH:'/usr/bin:/bin'),TEST_LOG:join(dir,'calls.log'),TEST_CHECKSUMS:join(dev,'node-checksums.txt'),TEST_NODE:join(dir,'fake-node')};
-  return {dir,run:()=>spawnSync('/bin/bash',[join(dev,'up'),'demo','--no-airbyte'],{env,encoding:'utf8',timeout:native?120000:10000}),log:()=>existsSync(env.TEST_LOG)?readFileSync(env.TEST_LOG,'utf8'):''};
+  return {dir,run:(args=['demo','--no-airbyte'])=>spawnSync('/bin/bash',[join(dev,'up'),...args],{env,encoding:'utf8',timeout:native?120000:10000}),log:()=>existsSync(env.TEST_LOG)?readFileSync(env.TEST_LOG,'utf8'):''};
 }
+test('bootstrap forwards SQLite with the existing startup modes',t=>{
+  const f=fixture(t);const r=f.run(['--sqlite','demo','--no-airbyte']);
+  assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/installer\.mts --sqlite demo --no-airbyte/);
+});
 for(const [os,arch,dist] of [['Linux','x86_64','linux-x64.tar.xz'],['Linux','aarch64','linux-arm64.tar.xz'],['Darwin','x86_64','darwin-x64.tar.gz'],['Darwin','arm64','darwin-arm64.tar.gz']]){
   test(`bootstrap chooses the verified ${dist} archive and preserves mode flags`,t=>{
     const f=fixture(t,{os,arch});const r=f.run();assert.equal(r.status,0,r.stderr);

@@ -5,7 +5,7 @@ ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 for arg in "$@"; do
 if [[ "$arg" == --help || "$arg" == -h ]]; then
   cat <<'HELP'
-Usage: ./dev/up [up|demo] [--no-airbyte]
+Usage: ./dev/up [up|demo] [--no-airbyte] [--sqlite]
        ./dev/up [status|stop|reset --yes]
 
 Development only. Linux or macOS, x64 or ARM64.
@@ -19,6 +19,9 @@ Use ./dev/up demo to load synthetic data and automatically complete onboarding.
 Use ./dev/up --no-airbyte for capture, memories, search and board without external
 sources. Repeat the flag on every up/demo invocation; omit it to enable Airbyte.
 Existing Airbyte data is retained when disabling it.
+Use --sqlite on the first run to use SQLite FTS5 instead of OpenSearch.
+The search backend is saved for future starts, status, stop and reset.
+Existing OpenSearch installations require an explicit index migration.
 No service credentials or .env editing. Internet is needed to download images.
 
 OPENCRAWL_DEV_PORT=8092 and OPENCRAWL_DEV_AIRBYTE_PORT=8000 select loopback ports
@@ -28,7 +31,7 @@ only this clone's development installation. Production deploy/ is independent.
 HELP
   exit 0
 fi
-case "$arg" in up|demo|status|stop|reset|--yes|--no-airbyte) ;; *) echo "Unknown argument: $arg. See ./dev/up --help." >&2; exit 1 ;; esac
+case "$arg" in up|demo|status|stop|reset|--yes|--no-airbyte|--sqlite) ;; *) echo "Unknown argument: $arg. See ./dev/up --help." >&2; exit 1 ;; esac
 done
 MIN_DISK_KIB=41943040
 for arg in "$@"; do [[ "$arg" != --no-airbyte ]] || MIN_DISK_KIB=20971520; done
