@@ -173,7 +173,9 @@ test('real MCP clients exchange scoped messages and revoked credentials cannot r
     assert.ok(!result.isError, JSON.stringify(result));
     return JSON.parse(result.content[0].text);
   };
-  await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'codex', posts: [post('mcp')]});
+  const registered=await f.make().participate(a,'register',{session:'native-session',name:'codex',task:'Cross-transport identity'});
+  const synced=await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'codex', posts: [post('mcp')]});
+  assert.equal(synced.agent,registered.agent);
   assert.equal((await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'claude', topics: ['auth'], after: 0})).messages.length, 1);
   assert.equal((await call(clients[0], 'board_fetch', {workspace: a.tenantId, id: 'message:1'})).text, 'Taking auth refresh');
   assert.equal((await clients[1].callTool({name: 'board_fetch', arguments: {workspace: b.tenantId, id: 'message:1'}})).isError, true);

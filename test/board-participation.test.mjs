@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -14,12 +15,112 @@ async function fixture(t) {
   let store = createLocalBoardStore(join(dir, 'board.sqlite')), time = 1_000_000;
   t.after(async () => {store.close(); await rm(dir, {recursive:true, force:true});});
   const make = () => createBoard({store, prefix:'test', now:() => time});
-  return {make, advance:(ms = 60_000) => {time += ms;}, restart:() => {store.close(); store = createLocalBoardStore(join(dir, 'board.sqlite')); return make();}};
+  return {make, get store() {return store;}, advance:(ms = 60_000) => {time += ms;}, restart:() => {store.close(); store = createLocalBoardStore(join(dir, 'board.sqlite')); return make();}};
 }
 const register = (board, principal, session='one', name='codex:one') => board.participate(principal, 'register', {session, name, task:'Test work', harness:'codex'});
 const post = (board, id, text='Useful change', topic='build') => board.participate(bob, 'publish', {session:'two', id:String(id), text, topic});
 const inbox = board => board.participate(alice, 'inbox', {session:'one'});
 const ack = (board, receipt) => board.participate(alice, 'ack', {session:'one', receipt});
+
+test('MCP reuses the account-owned CLI identity, canonical name and retry IDs across restarts', async t => {
+  const f=await fixture(t); let board=f.make();
+  const registered=await register(board,alice);
+  await board.participate(alice,'subscribe',{session:'one',topics:['build']});
+  const post={id:'shared',topic:'build',text:'One logical publication'};
+  const args={workspace:'a',agent:'CODEX:ONE',topics:['build'],posts:[post]};
+  const synced=await board.sync(alice,args);
+  assert.equal(synced.agent,registered.agent);
+  assert.deepEqual(synced.accepted,[1]);
+  assert.equal((await board.read(alice)).messages[0].name,'codex:one');
+  assert.equal((await board.read(alice)).messages[0].agent,registered.agent);
+  board=f.restart();
+  assert.deepEqual((await board.participate(alice,'publish',{session:'one',...post})).accepted,[1]);
+  const cliPost={...post,id:'from-cli',text:'CLI publication reused by MCP'};
+  await board.participate(alice,'publish',{session:'one',...cliPost});
+  assert.deepEqual((await board.sync(alice,{...args,posts:[cliPost]})).accepted,[2]);
+  assert.deepEqual((await board.sync(alice,args)).accepted,[1]);
+  await assert.rejects(board.sync(alice,{...args,posts:[{...post,text:'Different content'}]}),{status:409});
+  await assert.rejects(board.participate(alice,'publish',{session:'one',...post,text:'Different content'}),{status:409});
+  assert.deepEqual((await board.topics(alice)).topics[0].active.map(p=>p.id),[registered.agent]);
+  assert.equal((await board.sync(alice,{workspace:'a',agent:'codex:one',leave:true})).agent,registered.agent);
+  assert.deepEqual((await board.topics(alice)).topics[0].active,[]);
+  const participant=(await board.participate(alice,'directory')).agents[0];
+  assert.deepEqual(participant.topics,['build']);
+  assert.equal(participant.left,false);
+});
+
+test('existing listeners establish ownership without guessing from names or changing receipts and history', async t => {
+  const f=await fixture(t); let board=f.make();
+  const registered=await register(board,alice);
+  await register(board,bob,'two','claude:two');
+  await post(board,'peer','@codex:one review this change');
+  const pending=(await inbox(board)).batch;
+  const key='test/tenants/'+createHash('sha256').update('a').digest('hex')+'.json';
+  const before=await f.store.readVersion(key), state=JSON.parse(before.data);
+  delete state.participants[registered.agent].userId; // Persisted pre-upgrade registration.
+  assert.equal(await f.store.compareAndSet(key,before.version,Buffer.from(JSON.stringify(state))),true);
+  const publication={id:'legacy',topic:'build',text:'Legacy publication remains immutable'};
+  const args={workspace:'a',agent:'codex:one',topics:['build'],posts:[publication]};
+  const legacy=await board.sync(alice,args);
+  assert.notEqual(legacy.agent,registered.agent); // An unverified name cannot select a session.
+  const historical=await board.fetch(alice,{workspace:'a',id:'message:2'});
+  const foreign=await board.sync(bob,{...args,posts:[]});
+  assert.notEqual(foreign.agent,registered.agent);
+  assert.notEqual(foreign.agent,legacy.agent);
+  // lastPoll is still fresh: owner backfill must commit even during an idle poll.
+  assert.deepEqual((await inbox(board)).batch,pending);
+  board=f.restart();
+  const synced=await board.sync(alice,args);
+  assert.equal(synced.agent,registered.agent);
+  assert.deepEqual(synced.accepted,[2]);
+  assert.deepEqual((await board.participate(alice,'publish',{session:'one',...publication})).accepted,[2]);
+  assert.deepEqual(await board.fetch(alice,{workspace:'a',id:'message:2'}),historical);
+  assert.deepEqual((await inbox(board)).batch,pending);
+  const ids=(await board.topics(alice)).topics.find(p=>p.topic==='build').active.map(p=>p.id).sort();
+  assert.deepEqual(ids,[registered.agent,foreign.agent].sort());
+  await ack(board,pending.receipt);
+  assert.equal((await inbox(board)).batch,null);
+  const next=await board.sync(alice,{...args,posts:[{...publication,id:'new'}]});
+  assert.deepEqual(next.accepted,[3]);
+  assert.equal((await board.read(alice)).messages[0].agent,registered.agent);
+  await assert.rejects(board.sync(alice,{...args,posts:[{...publication,text:'Changed'}]}),{status:409});
+});
+
+test('name resolution stays account- and tenant-scoped and cannot overwrite another registration', async t => {
+  const f=await fixture(t), board=f.make();
+  const owner=await register(board,alice), tenantOwner=await register(board,other,'different');
+  const args={workspace:'a',agent:'codex:one',posts:[{id:'one',topic:'build',text:'Useful update'}]};
+  const own=await board.sync(alice,args), foreign=await board.sync(bob,args);
+  assert.equal(own.agent,owner.agent);
+  assert.notEqual(foreign.agent,owner.agent);
+  assert.equal((await board.sync(other,{...args,workspace:'b'})).agent,tenantOwner.agent);
+  assert.deepEqual((await board.read(alice)).messages.map(m=>m.author),['bob','alice']);
+  assert.equal((await board.read(other)).messages.length,1);
+  assert.equal((await board.participate(alice,'directory')).agents[0].agent,owner.agent);
+  await assert.rejects(board.sync(bob,{...args,workspace:'b'}),{status:403});
+});
+
+test('sync resolves a registration committed during its CAS retry', async t => {
+  const f=await fixture(t); let first=true, registered;
+  const board=createBoard({prefix:'test',store:{...f.store,compareAndSet:async(...args)=>{
+    if(first) {first=false; registered=await register(f.make(),alice);}
+    return f.store.compareAndSet(...args);
+  }}});
+  const synced=await board.sync(alice,{workspace:'a',agent:'codex:one',topics:['build'],posts:[{id:'race',topic:'build',text:'Concurrent update'}]});
+  assert.equal(synced.agent,registered.agent);
+  assert.deepEqual(synced.accepted,[1]);
+  assert.equal((await board.read(alice)).messages[0].agent,registered.agent);
+  assert.deepEqual((await board.topics(alice)).topics[0].active.map(p=>p.id),[registered.agent]);
+});
+
+test('MCP-only names retain their separate retry namespaces until registration', async t => {
+  const board=(await fixture(t)).make();
+  const args={workspace:'a',agent:'codex:one',posts:[{id:'same',topic:'build',text:'Lowercase session'}]};
+  const lower=await board.sync(alice,args);
+  const upper=await board.sync(alice,{...args,agent:'CODEX:ONE',posts:[{...args.posts[0],text:'Uppercase session'}]});
+  assert.notEqual(lower.agent,upper.agent);
+  assert.deepEqual(lower.accepted,[1]); assert.deepEqual(upper.accepted,[2]);
+});
 
 test('participation fails closed; same session IDs remain tenant- and user-scoped', async t => {
   const f=await fixture(t), board=f.make();
