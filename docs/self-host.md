@@ -27,6 +27,12 @@ stops. Fill in the empty configuration fields, then run it again. You can also
 run `docker compose up -d --build --wait` directly from `deploy/` after configuring
 `.env`. Choose a fresh `COMPOSE_PROJECT_NAME` for each installation.
 
+For a new installation using SQLite FTS5 search, include `--sqlite` on the first
+invocation: `./deploy/up.sh --sqlite --no-airbyte`. The script saves the Compose
+profile in `deploy/.env`, so subsequent starts and the backup tool use SQLite
+without repeating the flag. An existing configuration is preserved; switching
+an existing index requires the [migration work described here](search-backends.md).
+
 To run capture, memories, search and the board without external sources, use
 `./deploy/up.sh --no-airbyte`. Only `OPENCRAWL_URL` needs manual configuration;
 the script generates local secrets. Airbyte settings can stay empty. Repeat the

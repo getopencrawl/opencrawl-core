@@ -29,9 +29,9 @@ jobs:
           node-version: 24.22.2
       - name: Install the documented SQLite profile without OpenSearch
         run: |
-          ./deploy/up.sh
+          ./deploy/up.sh --sqlite --no-airbyte
+          ./deploy/up.sh --no-airbyte
           compose() { docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml "$@"; }
-          compose up -d --build --wait --wait-timeout 600
           test -z "$(docker ps -aq --filter label=com.docker.compose.project="$COMPOSE_PROJECT_NAME" --filter label=com.docker.compose.service=opensearch)"
           mkdir -p "$RUNNER_TEMP/sqlite-seed"
           node --input-type=module <<'JS'
@@ -50,13 +50,11 @@ jobs:
         run: |
           compose() { docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml "$@"; }
           compose stop app worker
-          compose up -d --wait --wait-timeout 600 app worker
+          ./deploy/up.sh --no-airbyte
           compose run --rm --no-deps --user root -e OPENCRAWL_DEV_VERIFY_ONLY=true \
             --volume "$PWD/dev:/opencrawl/dev:ro" --volume "$RUNNER_TEMP/sqlite-seed:/dev-state" \
             app node --disable-warning=ExperimentalWarning dev/seed.mts
       - name: Verify SQLite cold backup and restore into empty disposable volumes
-        env:
-          COMPOSE_FILE: compose.yaml:compose.sqlite.yaml
         run: |
           compose() { docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml "$@"; }
           node deploy/backup.mjs create "$RUNNER_TEMP/sqlite-backup"
@@ -84,8 +82,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: Application without Airbyte, runner: blacksmith-4vcpu-ubuntu-2404, arch: amd64}
-          - {name: Application without Airbyte (ARM64), runner: blacksmith-4vcpu-ubuntu-2404-arm, arch: arm64}
+          - {name: Application without Airbyte, runner: blacksmith-4vcpu-ubuntu-2404, arch: amd64, backend: opensearch, flag: '', suffix: ''}
+          - {name: Application without Airbyte (ARM64), runner: blacksmith-4vcpu-ubuntu-2404-arm, arch: arm64, backend: opensearch, flag: '', suffix: ''}
+          - {name: Development with SQLite FTS5, runner: blacksmith-4vcpu-ubuntu-2404, arch: amd64, backend: sqlite, flag: '--sqlite', suffix: '-sqlite'}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     steps:
@@ -96,9 +95,16 @@ jobs:
         with:
           node-version: 24.22.2
       - name: Install without Airbyte, then verify the real product
+        env:
+          EXPECTED_SEARCH: ${{ matrix.backend }}
         run: |
-          ./dev/up --no-airbyte
+          ./dev/up --no-airbyte ${{ matrix.flag }}
           ./dev/up --no-airbyte demo
+          node -e "if(require('./.opencrawl-dev/state.json').searchBackend!==process.env.EXPECTED_SEARCH)process.exit(1)"
+          if [ "$EXPECTED_SEARCH" = sqlite ]; then
+            project=$(node -p "require('./.opencrawl-dev/state.json').project")
+            test -z "$(docker ps -aq --filter label=com.docker.compose.project="$project" --filter label=com.docker.compose.service=opensearch)"
+          fi
           test ! -e .opencrawl-dev/bin/kind
           test ! -e .opencrawl-dev/bin/kubectl
           test ! -e .opencrawl-dev/bin/helm
@@ -110,7 +116,10 @@ jobs:
           EXPECTED_ARCH: ${{ matrix.arch }}
         run: |
           project=$(node -p "require('./.opencrawl-dev/state.json').project")
-          for image in $(docker compose --project-name "$project" --env-file .opencrawl-dev/compose.env -f deploy/compose.yaml -f .opencrawl-dev/compose.json images -q | sort -u); do
+          files=(-f deploy/compose.yaml)
+          if [ '${{ matrix.backend }}' = sqlite ]; then files+=(-f deploy/compose.sqlite.yaml); fi
+          files+=(-f .opencrawl-dev/compose.json)
+          for image in $(docker compose --project-name "$project" --env-file .opencrawl-dev/compose.env "${files[@]}" images -q | sort -u); do
             test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "$EXPECTED_ARCH"
           done
       - name: Verify persisted capture, search and board after stop/resume without reingestion
@@ -118,14 +127,17 @@ jobs:
           ./dev/up stop
           ./dev/up --no-airbyte
           project=$(node -p "require('./.opencrawl-dev/state.json').project")
-          compose() { docker compose --project-name "$project" --env-file .opencrawl-dev/compose.env -f deploy/compose.yaml -f .opencrawl-dev/compose.json "$@"; }
+          files=(-f deploy/compose.yaml)
+          if [ '${{ matrix.backend }}' = sqlite ]; then files+=(-f deploy/compose.sqlite.yaml); fi
+          files+=(-f .opencrawl-dev/compose.json)
+          compose() { docker compose --project-name "$project" --env-file .opencrawl-dev/compose.env "${files[@]}" "$@"; }
           compose exec -T worker node -e "const fs=require('fs'),s=JSON.parse(fs.readFileSync('/tmp/opencrawl-worker-ready.json'));if(s.airbyteEnabled!==false||s.taskQueue||fs.existsSync('/tmp/opencrawl-workflows/connectors.cjs'))process.exit(1)"
           compose run --rm --no-deps --user root -e OPENCRAWL_DEV_VERIFY_ONLY=true \
             --volume "$PWD/dev:/opencrawl/dev:ro" --volume "$PWD/.opencrawl-dev/seed:/dev-state" \
             app node --disable-warning=ExperimentalWarning dev/seed.mts
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: application-without-airbyte-${{ matrix.arch }}-${{ github.sha }}
+          name: application-without-airbyte-${{ matrix.arch }}${{ matrix.suffix }}-${{ github.sha }}
           path: .opencrawl-dev/seed/verification.json
       - name: Remove only this job's disposable installation
         if: always()
