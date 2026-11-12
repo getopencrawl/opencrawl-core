@@ -2,6 +2,10 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {gunzipSync} from 'node:zlib';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {createRealm} from '../dist/src/search/realm.mjs';
 import {createSessionSearch} from '../dist/src/sessions/search.mjs';
 import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
@@ -13,11 +17,13 @@ import {migrateSessionPassages,restoreSessionPassages} from '../dist/src/session
 import {memorySessionStore} from './session-store-fixture.mjs';
 
 const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
-test('real engine origin filters and facets preserve tenant and current privacy boundaries',{skip:!endpoint},async t=>{
+for(const backend of ['sqlite','opensearch'])test(`${backend}: origin filters and facets preserve tenant and current privacy boundaries`,{skip:backend==='opensearch'&&!endpoint},async t=>{
+  const directory=await mkdtemp(join(tmpdir(),'opencrawl-origin-filter-'));
+  const target=backend==='sqlite'?pathToFileURL(join(directory,'search.sqlite')).href.replace('file:','sqlite:'):endpoint;
   const run=randomUUID(),principal={tenantId:'origin-'+run,userId:'alice'},peer={...principal,userId:'bob'},outsider={tenantId:'origin-outside-'+run,userId:'bob'};
-  const store=memorySessionStore(),prefix='capture-origins',sessions=createSessionSearch({endpoint,store,prefix}),workspace=createWorkspaceSearch({sessions});
+  const store=memorySessionStore(),prefix='capture-origins',sessions=createSessionSearch({endpoint:target,store,prefix}),workspace=createWorkspaceSearch({sessions});
   const ingest=createSessionIngest({store,prefix});
-  t.after(async()=>{for(const p of [principal,outsider])await fetch(endpoint+'/'+createRealm({endpoint,tenantId:p.tenantId}).index,{method:'DELETE'});});
+  t.after(async()=>{try{if(backend==='opensearch')for(const p of [principal,outsider])await fetch(target+'/'+createRealm({endpoint:target,tenantId:p.tenantId}).index,{method:'DELETE'});}finally{await rm(directory,{recursive:true,force:true});}});
   for(const [owner,sessionId,origin,text] of [[peer,'discussion','desktop','origin evidence from the conversation'],[peer,'worker','subagent','origin evidence from a useful worker'],[outsider,'discussion','desktop','origin evidence foreign marker']]){
     const receipt=await ingest.putBatch(owner,{schemaVersion:1,owner,harness:'codex',origin,installationId:'fixture',sessionId,attachments:[],events:[{id:'same-event',kind:'message',timestamp:'2026-11-01T00:00:00Z',data:{role:'assistant',content:text}}]});
     const key=[...store.data.keys()].find(k=>k.endsWith(receipt.batchId+'.json.gz')),batch=JSON.parse(gunzipSync(store.data.get(key)));
