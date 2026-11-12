@@ -234,7 +234,7 @@ both pieces where the platform applies them to every machine it creates:
    environment:
 
    ```sh
-   npm i -g @getopencrawl/cli@next && opencrawl collect install --yes --defer-auth --api https://your-opencrawl.example --json
+   npm i -g @getopencrawl/cli@next && opencrawl collect install --yes --backfill skip --defer-auth --api https://your-opencrawl.example --json
    ```
 
    Add `--harness` with the agents the platform runs if they are not installed

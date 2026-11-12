@@ -446,7 +446,7 @@ function countDelivery(harness:PayloadHarness,adapter:PayloadAdapter,event:any,a
   // agent wait for a flush to disk on every hook.
   const file=join(captureDir(),'deliveries.json'),temp=file+'.'+process.pid+'.tmp';
   writeFileSync(temp,JSON.stringify({...all,[harness]:{first:typeof seen.first==='string'?seen.first:at,last:at,deliveries,recorded:kinds}})+'\n',{mode:0o600});
-  renameSync(temp,file);
+  retryWindowsSharing(()=>renameSync(temp,file));
 }
 /** Hook work is only a durable local handoff. Never scan, parse or upload here. */
 export async function captureHook(harness:Harness,event:any) {
@@ -513,7 +513,7 @@ export async function ingestInbox(harness:PayloadHarness,record:(delivery:any)=>
         const path=join(inboxDir(harness),name);
         let delivery:any=null;try{delivery=JSON.parse(readFileSync(path,'utf8'));}catch(error:any){if(error?.code==='ENOENT')continue;}
         if(delivery)await record(delivery);
-        unlinkSync(path);taken++;
+        retryWindowsSharing(()=>unlinkSync(path));taken++;
       }
     },2000);
   }catch(error:any){if(error?.code!=='SESSION_BUSY')throw error;}

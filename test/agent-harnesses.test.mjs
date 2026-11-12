@@ -97,11 +97,12 @@ test('the capture identity response lists the agents this deployment stores',asy
 
 test('setup guidance covers the agents a plain install finds, naming one, and machines a cloud platform creates',()=>{
  const api='https://capture.example.com',prompt=captureSetupPrompt(api);
- for(const text of ['OpenCode, Cursor and Muse Code','--harness opencode, cursor or muse','harnesses in its output','skipped says why','lists what each one delivered under agents','not Cursor\'s own cloud agents',
-  'such as Replicas or Codespaces','opencrawl collect install --yes --defer-auth --api '+api+' --json','start hook, setup script or postCreateCommand','from a brand-new machine'])assert.ok(prompt.includes(text),text);
+ for(const text of ['OpenCode, Cursor and Muse Code wherever it finds them','--harness opencode, cursor or muse','harnesses in its output','skipped says why','not Cursor\'s own cloud agents','These three have no local history to import',
+  'such as Replicas or Codespaces','opencrawl collect install --yes --backfill skip --defer-auth --api '+api+' --json','start hook, setup script or postCreateCommand','with the token in that step\'s environment'])assert.ok(prompt.includes(text),text);
  // The cloud credential sentences stay together; "that" token is the one from /capture/cloud.
  assert.ok(prompt.includes(api+'/capture/cloud for Claude cloud setup. For machine images, templates or snapshots, use that upload-only OPENCRAWL_SESSIONS_TOKEN'));
  assert.ok(prompt.indexOf('store that token as my personal secret')>prompt.indexOf('use that upload-only OPENCRAWL_SESSIONS_TOKEN'));
- // History stays a consent choice: no command in the prompt skips it.
- assert.ok(!prompt.includes('--backfill skip'));
+ // Setup stays short: what cannot be proven now is reported as pending, not waited for.
+ for(const text of ['Only a brand-new machine proves that step; report it as pending rather than waiting for one','report what agents in that output says each one has delivered','nothing delivered yet is pending until a new session of that agent runs, never a pass'])assert.ok(prompt.includes(text),text);
+ assert.ok(prompt.indexOf('report what agents in that output')>prompt.indexOf('Finish with one bounded verification pass'));
 });
