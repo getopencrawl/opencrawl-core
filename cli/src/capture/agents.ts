@@ -1,5 +1,6 @@
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
+import {spawnSync} from 'node:child_process';
 import type {PayloadHarness} from './payload.ts';
 
 /** Where each agent keeps the configuration this collector writes into. The
@@ -8,7 +9,10 @@ import type {PayloadHarness} from './payload.ts';
 export function agentRoots(home: string, env: NodeJS.ProcessEnv = process.env): Record<PayloadHarness, string> {
   const config = env.XDG_CONFIG_HOME || join(home, '.config');
   return {
-    opencode: env.OPENCODE_CONFIG_DIR || join(config, 'opencode'),
+    // OpenCode's global directory. OPENCODE_CONFIG_DIR only adds a second one,
+    // read by the processes started with it; the global one is always read.
+    opencode: join(config, 'opencode'),
+    // Cursor reads this path whatever CURSOR_CONFIG_DIR or XDG_CONFIG_HOME say.
     cursor: join(home, '.cursor'),
     muse: join(config, 'muse'),
   };
@@ -34,4 +38,24 @@ export function detectAgents({home, env = process.env, which = (name: string) =>
   const roots = agentRoots(home, env);
   return (Object.keys(roots) as PayloadHarness[]).filter(harness =>
     existsSync(roots[harness]) || TRACES[harness](home, env).some(path => existsSync(path)) || COMMANDS[harness].some(command => Boolean(which(command))));
+}
+
+/** OpenCode installs its plugin support package, about 60 MB, into its
+ * configuration directory before it loads any plugin: a few seconds the first
+ * time when it can reach the npm registry, and about a minute on every start
+ * when it cannot. Capture must not cost a locked-down machine that minute, so
+ * the install pays the first-time cost itself and learns whether it works.
+ *
+ * `ready`: the package is there. `unavailable`: OpenCode ran and could not
+ * install it. `unknown`: OpenCode's command is not on this machine yet. */
+export type OpenCodeSupport = 'ready' | 'unavailable' | 'unknown';
+export function prepareOpenCode(root: string, {env = process.env, timeoutMs = 45_000}: {env?: NodeJS.ProcessEnv; timeoutMs?: number} = {}): OpenCodeSupport {
+  const installed = () => existsSync(join(root, 'node_modules', '@opencode-ai', 'plugin', 'package.json'));
+  if (installed()) return 'ready';
+  const command = agentCommands.which('opencode', env);
+  if (!command) return 'unknown';
+  // Reads the configuration and installs what the plugins in it need. It
+  // starts no session and calls no model.
+  spawnSync(command, ['debug', 'config'], {stdio: 'ignore', timeout: timeoutMs, env, windowsHide: true});
+  return installed() ? 'ready' : 'unavailable';
 }

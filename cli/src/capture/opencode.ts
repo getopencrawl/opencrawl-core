@@ -100,8 +100,10 @@ function events(notice: PayloadNotice) {
     return evidence();
   }
 
-  // The newer session engine: one event per finished thing.
-  const at = p.timestamp?.epochMilliseconds, turnId = text(p.assistantMessageID) ?? text(p.messageID);
+  // The newer session engine: one event per finished thing. Its timestamp is
+  // an instant object inside OpenCode and ISO text once the plugin has written it.
+  const stamp = typeof p.timestamp === 'string' ? Date.parse(p.timestamp) : p.timestamp?.epochMilliseconds;
+  const at = finite(stamp) ? stamp : undefined, turnId = text(p.assistantMessageID) ?? text(p.messageID);
   if (type === 'session.next.prompted') {
     const prompt = text(p.prompt?.text);
     const files = Array.isArray(p.prompt?.files) ? p.prompt.files.filter((file: any) => file && typeof file === 'object').map(fileBlock) : [];
@@ -145,9 +147,10 @@ export const openCodeAdapter: PayloadAdapter = {
 
 /** The plugin file, written into OpenCode's plugins directory. `command` is the
  * collector's hook command as an argument list; `inbox` the directory the
- * collector reads. Dependency-free: OpenCode loads it without installing
- * anything. Bump HOOK_MODE when this text changes, so existing installations
- * are rewritten. */
+ * collector reads. It imports only Node built-ins and exports only the plugin
+ * function: OpenCode fails the load of a plugin file with any other export.
+ * Bump HOOK_MODE when this text changes, so existing installations are
+ * rewritten. */
 export function openCodePlugin(command: string[], inbox: string) {
   return `// OpenCrawl session capture for OpenCode.
 // Written by \`opencrawl collect install\`; \`opencrawl collect uninstall\` removes it.
@@ -236,7 +239,7 @@ function handle(directory, event) {
   if (FINISHED.has(type)) {
     if (!p.sessionID || !engine(p.sessionID, "next")) return;
     if (type === "session.next.tool.called") remember(state.tools, p.callID, p.tool);
-    if (!once(type + ":" + p.sessionID + ":" + (p.callID ?? p.messageID ?? "") + ":" + (p.assistantMessageID ?? "") + ":" + (p.textID ?? p.reasoningID ?? "") + ":" + (p.timestamp?.epochMilliseconds ?? ""))) return;
+    if (!once(type + ":" + p.sessionID + ":" + (p.callID ?? p.messageID ?? "") + ":" + (p.assistantMessageID ?? "") + ":" + (p.textID ?? p.reasoningID ?? "") + ":" + String(p.timestamp?.epochMilliseconds ?? p.timestamp ?? ""))) return;
     deliver(directory, p.sessionID, {type, properties: p}, type === "session.next.tool.success" || type === "session.next.tool.failed" ? {tool: state.tools.get(p.callID)} : undefined);
     return type === "session.next.step.failed" || type === "session.next.step.ended" && p.finish !== "tool-calls" ? poke() : soon();
   }

@@ -17,7 +17,7 @@ import {cursorAdapter,CURSOR_HOOK_EVENTS} from '../src/capture/cursor.ts';
 import {museAdapter,MUSE_HOOK_EVENTS} from '../src/capture/muse.ts';
 import {openCodeAdapter,openCodePlugin} from '../src/capture/opencode.ts';
 import {payloadAdapter} from '../src/capture/adapters.ts';
-import {agentRoots,detectAgents} from '../src/capture/agents.ts';
+import {agentRoots,detectAgents,prepareOpenCode} from '../src/capture/agents.ts';
 import {HARNESSES,HARNESS_NAMES,hash} from '../src/capture/parse.ts';
 import {skillTargets} from '../src/skills.ts';
 
@@ -63,7 +63,7 @@ async function fixture(run:(f:any)=>Promise<void>) {
     // A CLI started by a test resolves every agent's directory under this home.
     Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),OPENCRAWL_SESSIONS_TOKEN:token,CLAUDE_CONFIG_DIR:join(dir,'.claude'),CODEX_HOME:join(dir,'.codex'),OPENCRAWL_NO_UPDATE:'1',HOME:dir,USERPROFILE:dir});
     delete process.env.CLAUDE_CODE_REMOTE;
-    const install=(harnesses?:any[],options:Record<string,unknown>={})=>installCapture(api,{home:dir,command:[process.execPath,'-e',''],detect:()=>[],...(harnesses?{harnesses}:{}),...options});
+    const install=(harnesses?:any[],options:Record<string,unknown>={})=>installCapture(api,{home:dir,command:[process.execPath,'-e',''],detect:()=>[],prepare:()=>'ready',...(harnesses?{harnesses}:{}),...options});
     await run({dir,api,principal,token,ingest,batches,install,roots:agentRoots(dir),
       hook:async(harness:string,event:any)=>{
         const child=Bun.spawn(['bun',cli,'collect','hook','--harness',harness],{stdin:event===undefined?'ignore':Buffer.from(JSON.stringify(event)),stdout:'pipe',stderr:'pipe',env:{...process.env}});
@@ -350,8 +350,10 @@ test('install writes the OpenCode plugin as the collector\'s own file; uninstall
   expect(first.harnesses).toEqual(['opencode']);expect(first.nextStep).toContain('OpenCode capture plugin installed at '+file);expect(first.nextStep).toContain('restart running OpenCode sessions and servers');
   const source=readFileSync(file,'utf8');
   expect(source).toBe(openCodePlugin([Bun.which('node')!,join(captureDir(),'runner.cjs'),'collect','hook','--harness','opencode'],join(captureDir(),'inbox','opencode')));
-  // Dependency-free, so OpenCode loads it without installing anything.
+  // Only Node built-ins, and only the plugin function exported: OpenCode
+  // fails the load of a plugin file that exports anything else.
   expect([...source.matchAll(/^import .* from "([^"]+)";$/gm)].map(match=>match[1])).toEqual(['node:fs','node:path','node:child_process']);
+  expect([...source.matchAll(/^export (?:const|function|default|let|var|class|\{)\s*(\w*)/gm)].map(match=>match[1])).toEqual(['OpenCrawlCapture']);
   // OpenCode's own configuration and other plugins are not touched.
   expect(readFileSync(join(f.roots.opencode,'opencode.json'),'utf8')).toBe('{"model":"anthropic/claude"}');
   const stamp=statSync(file).mtimeMs;
@@ -361,9 +363,36 @@ test('install writes the OpenCode plugin as the collector\'s own file; uninstall
   writeFileSync(file,'// edited');await f.install(['opencode']);expect(readFileSync(file,'utf8')).toBe(source);
   await uninstallCapture(f.dir);
   expect(existsSync(file)).toBe(false);expect(readFileSync(other,'utf8')).toContain('TeamNotify');
-  // OPENCODE_CONFIG_DIR moves OpenCode's directory, and the plugin with it.
-  expect(agentRoots(f.dir,{OPENCODE_CONFIG_DIR:'/srv/opencode'}).opencode).toBe('/srv/opencode');
-  expect(agentRoots(f.dir,{XDG_CONFIG_HOME:'/srv/config'})).toMatchObject({opencode:join('/srv/config','opencode'),muse:join('/srv/config','muse'),cursor:join(f.dir,'.cursor')});
+  // OpenCode always reads its global directory; OPENCODE_CONFIG_DIR only adds
+  // another for the processes started with it. Cursor's path never moves.
+  expect(agentRoots(f.dir,{OPENCODE_CONFIG_DIR:'/srv/opencode'}).opencode).toBe(join(f.dir,'.config','opencode'));
+  expect(agentRoots(f.dir,{XDG_CONFIG_HOME:'/srv/config',CURSOR_CONFIG_DIR:'/srv/cursor'})).toEqual({opencode:join('/srv/config','opencode'),muse:join('/srv/config','muse'),cursor:join(f.dir,'.cursor')});
+}));
+
+test('OpenCode\'s plugin support package is installed up front, and no plugin is left where it cannot be',async()=>fixture(async f=>{
+  const file=join(f.roots.opencode,'plugins','opencrawl.js'),support=join(f.roots.opencode,'node_modules','@opencode-ai','plugin','package.json');
+  // OpenCode is not on this machine yet: the plugin is written and the output says what its first start will do.
+  const early=await f.install(['opencode'],{prepare:()=>'unknown'});
+  expect(early.harnesses).toEqual(['opencode']);expect(existsSync(file)).toBe(true);
+  expect(early.nextStep).toContain('installs OpenCode\'s plugin support package, about 60 MB');expect(early.nextStep).toContain('every start waits about a minute');
+  await uninstallCapture(f.dir);
+  // OpenCode ran and could not install it. Named: an error, and nothing written.
+  rmSync(join(captureDir()),{recursive:true,force:true});
+  await expect(f.install(['opencode'],{prepare:()=>'unavailable'})).rejects.toMatchObject({code:'CAPTURE_OPENCODE_SUPPORT',message:expect.stringContaining('could not install its plugin support package')});
+  expect(existsSync(file)).toBe(false);expect(readCaptureConfig()).toBeNull();
+  // Found by a plain install: left out with the reason, and the other agents are enrolled.
+  const plain=await f.install(undefined,{detect:()=>['opencode','muse'],prepare:()=>'unavailable'});
+  expect(plain.harnesses).toEqual(['claude-code','codex','muse']);
+  expect(plain.skipped).toEqual([{harness:'opencode',reason:expect.stringContaining('so OpenCode capture was not installed')}]);
+  expect(plain.nextStep).not.toContain('OpenCode capture plugin installed');expect(plain.notice).toContain('Agents recorded on this machine: Claude Code, Codex, Muse Code.');
+  expect(existsSync(file)).toBe(false);expect(readCaptureConfig()!.harnesses).toEqual(['claude-code','codex','muse']);
+  // The real check: present when OpenCode has installed it, otherwise it asks
+  // OpenCode's own command, which is not on this machine.
+  expect(prepareOpenCode(f.roots.opencode)).toBe('unknown');
+  mkdirSync(join(support,'..'),{recursive:true});writeFileSync(support,'{"name":"@opencode-ai/plugin"}');
+  expect(prepareOpenCode(f.roots.opencode)).toBe('ready');
+  const ready=await f.install(['opencode'],{prepare:prepareOpenCode});
+  expect(ready.harnesses).toEqual(['claude-code','codex','muse','opencode']);expect(ready.nextStep).not.toContain('about 60 MB');expect(existsSync(file)).toBe(true);
 }));
 
 test('the OpenCode plugin forwards what is finished, once, and nothing while it streams',async()=>{
@@ -467,6 +496,8 @@ test('OpenCode deliveries become the same events from either session engine, and
   expect(events(notice(opencode({type:'session.next.tool.failed',properties:{sessionID:ocSession.id,timestamp:stamp,callID:'call_x',error:{message:'permission denied'}}})))[0].data).toMatchObject({output:'permission denied',is_error:true});
   expect(events(notice(opencode({type:'session.next.text.ended',properties:{sessionID:ocSession.id,assistantMessageID:'msg_n3',timestamp:stamp,textID:'text-0',text:'DONE after tool.'}},{model:'lab-model'})))[0]).toMatchObject({kind:'message',data:{role:'assistant',content:[{type:'text',text:'DONE after tool.'}],model:'lab-model'}});
   expect(events(notice(opencode({type:'session.next.reasoning.ended',properties:{sessionID:ocSession.id,assistantMessageID:'msg_n3',timestamp:stamp,text:'Considering.'}})))[0]).toMatchObject({kind:'reasoning_summary'});
+  // Inside OpenCode the timestamp is an instant object; written by the plugin it is ISO text.
+  expect(events(notice(opencode({type:'session.next.text.ended',properties:{sessionID:ocSession.id,assistantMessageID:'msg_n4',timestamp:'2026-11-12T09:26:38.846Z',textID:'text-0',text:'From the plugin.'}})))[0]).toMatchObject({timestamp:'2026-11-12T09:26:38.846Z',sequence:Date.parse('2026-11-12T09:26:38.846Z')*1000});
   // Boundaries are evidence, and the cue to upload.
   for(const event of [{type:'session.idle',properties:{sessionID:ocSession.id}},{type:'session.next.step.ended',properties:{sessionID:ocSession.id,finish:'stop'}},{type:'session.next.step.failed',properties:{sessionID:ocSession.id}}]) {
     expect(events(notice(opencode(event))).map(e=>e.kind)).toEqual(['hook']);expect(boundary(opencode(event))).toBe(true);

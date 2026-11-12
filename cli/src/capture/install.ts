@@ -10,7 +10,7 @@ import {CURSOR_HOOK_EVENTS} from './cursor.ts';
 import {MUSE_HOOK_EVENTS} from './muse.ts';
 import {openCodePlugin} from './opencode.ts';
 import {isPayloadHarness, type PayloadHarness} from './payload.ts';
-import {agentRoots, detectAgents} from './agents.ts';
+import {agentRoots, detectAgents, prepareOpenCode} from './agents.ts';
 import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {retryWindowsSharing} from '../filesystem.ts';
@@ -211,8 +211,8 @@ const names=(harnesses:readonly Harness[])=>harnesses.map(harness=>HARNESS_NAMES
 /** Grok Bot and Cursor both read ~/.cursor/hooks.json. Entries for both would
  * record every conversation twice, so the file has one owner at a time. */
 const SHARED:Partial<Record<Harness,Harness>>={cursor:'grok-bot','grok-bot':'cursor'};
-export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses:chosen,detect=detectAgents}:
-  {background?:boolean,deferAuth?:boolean,home?:string,command?:string[],harnesses?:Harness[],detect?:typeof detectAgents}={}) {
+export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses:chosen,detect=detectAgents,prepare=prepareOpenCode}:
+  {background?:boolean,deferAuth?:boolean,home?:string,command?:string[],harnesses?:Harness[],detect?:typeof detectAgents,prepare?:typeof prepareOpenCode}={}) {
   const receiverToken=environmentToken('OPENCRAWL_SESSIONS_TOKEN',api);
   if(chosen&&(!chosen.length||chosen.some(h=>!HARNESSES.includes(h))))throw new CliError('INVALID_USAGE','Use --harness '+HARNESSES.join(', ')+'; separate several with commas.',64);
   if(chosen?.some(h=>SHARED[h]&&chosen.includes(SHARED[h]!)))throw new CliError('INVALID_USAGE','Grok Bot and Cursor share one hooks file. Choose --harness grok-bot on a Bot\'s cloud computer, or --harness cursor anywhere else.',64);
@@ -271,11 +271,27 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
     join(config.roots['claude-code'],'settings.json'),join(config.roots.codex,'hooks.json'),toml,
     ...enrolled.filter(h=>!readsTranscript(h)).map(h=>hookFile(config,h))])];
   const originals=new Map(affected.map(path=>[path,existsSync(path)?readFileSync(path):null]));
+  let openCodeSupport:ReturnType<typeof prepareOpenCode>|null=null;
   try {
   atomicJson(join(captureDir(),'config.json'),config);
   if(receiverToken)atomicJson(join(captureDir(),'receiver-token.json'),{api,token:receiverToken});
   configureHooks(config,enrolled);
   if(harnesses.includes('codex'))enableCodex(config.roots.codex);
+  // OpenCode installs its plugin support package before it loads a plugin, and
+  // where it cannot it waits about a minute on every start. Pay that first
+  // start here, and leave no plugin behind on a machine where it fails.
+  if(harnesses.includes('opencode')) {
+    openCodeSupport=prepare(harnessRoot(config,'opencode'));
+    if(openCodeSupport==='unavailable') {
+      const reason=`OpenCode could not install its plugin support package into ${harnessRoot(config,'opencode')}, which it does before loading any plugin; it usually means the npm registry is out of reach. With the capture plugin in place OpenCode would retry on every start, for about a minute each time, so OpenCode capture was not installed. Run collect install again once OpenCode can install it.`;
+      if(chosen)throw new CliError('CAPTURE_OPENCODE_SUPPORT',reason);
+      writeOpenCodePlugin(hookFile(config,'opencode'),null);
+      skipped.push({harness:'opencode',reason});
+      harnesses.splice(harnesses.indexOf('opencode'),1);
+      config.harnesses=enrolled.filter(h=>h!=='opencode');
+      atomicJson(join(captureDir(),'config.json'),config);
+    }
+  }
   } catch(error) {
     for(const [path,bytes] of originals) {
       if(bytes===null){try{unlinkSync(path);}catch{}}
@@ -293,13 +309,14 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
     // An agent that ran the plain command on a Bot's computer reads this and corrects itself.
     ...(absent&&!deferAuth&&!enrolled.includes('grok-bot')&&process.env.CLAUDE_CODE_REMOTE!=='true'?['Neither Claude Code nor Codex was found on this machine. If it is a Grok Bot cloud computer, capture it with opencrawl collect install --yes --harness grok-bot.']:[]),
     ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${hookFile(config,'grok-bot')}. Bots that are already running may keep the hooks they loaded earlier: from a newly created Bot, run a command, then check collect status for a stored receipt.`]:[]),
-    ...(harnesses.includes('opencode')?[`OpenCode capture plugin installed at ${hookFile(config,'opencode')}. OpenCode loads plugins when it starts: restart running OpenCode sessions and servers.`]:[]),
+    ...(harnesses.includes('opencode')?[`OpenCode capture plugin installed at ${hookFile(config,'opencode')}. OpenCode loads plugins when it starts: restart running OpenCode sessions and servers.`
+      +(openCodeSupport==='unknown'?' The first start with a plugin installs OpenCode\'s plugin support package, about 60 MB, into its configuration directory: a few seconds with access to the npm registry. Where OpenCode cannot reach the registry every start waits about a minute for it; on such a machine remove the plugin file.':'')]:[]),
     ...(harnesses.includes('cursor')?[`Cursor hooks installed in ${hookFile(config,'cursor')}. They apply to conversations in the editor, the Cursor CLI and the Cursor Agent SDK on this machine; Cursor's own cloud agents do not read this file.`]:[]),
     ...(harnesses.includes('muse')?[`Muse Code hooks installed in ${hookFile(config,'muse')}. Muse Code reads hooks when a session starts: start a new session.`]:[]),
     ...(added.length?[`To confirm ${names(added)}: send a message in a new session of each, then check collect status for a stored receipt.`]:[]),
     ...(replaced.length?[`${names(replaced)} capture was removed from this machine: it reads the same hooks file as ${names(replaced.map(h=>SHARED[h]!))}.`]:[]),
     ...skipped.map(item=>item.reason)];
-  return {notice:captureNoticeFor(api,enrolled),exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
+  return {notice:captureNoticeFor(api,config.harnesses!),exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
     ...(skipped.length?{skipped}:{}),nextStep:steps.join(' ')};
   });
 }

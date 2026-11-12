@@ -37,7 +37,7 @@ replaces the other's entries and says so, and naming both is refused.
 
 | Agent | What capture writes | Loaded |
 | --- | --- | --- |
-| OpenCode | A plugin of its own, `plugins/opencrawl.js` in OpenCode's configuration directory (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`) | When OpenCode starts: restart running sessions and servers |
+| OpenCode | A plugin of its own, `plugins/opencrawl.js` in OpenCode's global configuration directory (`$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`) | When OpenCode starts: restart running sessions and servers |
 | Cursor | Entries in `~/.cursor/hooks.json`, beside the person's own | By new conversations; Cursor reloads the file when it changes |
 | Muse Code | Entries in the `hooks` block of `settings.json` (`$XDG_CONFIG_HOME/muse`, else `~/.config/muse`), beside the person's own | When a session starts |
 
@@ -95,6 +95,14 @@ OpenCode 1.19 has two session engines with different event families, the
 use. A session is recorded from whichever engine reports it first, never both.
 Text OpenCode injects itself (`synthetic` parts) is not recorded.
 
+OpenCode 1.19.5 starts its plugins from the first engine only. A server driven
+solely through the newer `/api/session` routes imports plugin files without
+ever starting them, so nothing is delivered until something in that process
+uses the `message.*` engine, which any `/session` request does; from then on
+sessions of both engines are recorded. The terminal UI, `opencode run`, ACP and
+the `/session` routes all start plugins. Capture cannot change this from
+inside a plugin; `collect status` shows it as nothing delivered.
+
 The plugin writes each finished item as a file in
 `~/.config/opencrawl/capture/inbox/opencode/` before it returns, then starts the
 collector without waiting for it. `opencode run` exits as soon as a turn ends,
@@ -112,12 +120,25 @@ pending hooks, `collect flush` takes them, and `collect purge` deletes them.
 - Origin is `cli` under `opencode run` and the terminal UI. A server or an ACP
   peer is driven by another program the plugin cannot name, so origin stays
   `unknown` there.
-- The plugin is dependency-free, so OpenCode loads it without installing
-  anything, and it stays thin on purpose: an installed plugin is rewritten only
-  when capture is reinstalled or its hook settings are upgraded, while the
-  collector that interprets the events updates itself. The file belongs to the
-  collector; local edits are replaced.
-- OpenCode started with plugins disabled loads none, capture included.
+- The plugin imports nothing but Node built-ins and stays thin on purpose: an
+  installed plugin is rewritten only when capture is reinstalled or its hook
+  settings are upgraded, while the collector that interprets the events updates
+  itself. The file belongs to the collector; local edits are replaced.
+- **OpenCode installs its own plugin support package before it loads any
+  plugin**: `@opencode-ai/plugin`, about 60 MB, into its configuration
+  directory. That takes a few seconds the first time when OpenCode can reach
+  the npm registry, and about a minute on every start when it cannot. Capture
+  must not cost a locked-down machine that minute, so `collect install` runs
+  `opencode debug config` once, which performs that install without starting a
+  session, and checks the result. Where OpenCode could not install the package,
+  no plugin is left behind: naming OpenCode fails with
+  `CAPTURE_OPENCODE_SUPPORT`, and a plain install leaves OpenCode out and says
+  why under `skipped`. Where OpenCode's command is not on the machine yet, the
+  plugin is written and the output says what its first start will do.
+- The plugin is written to the global directory, which OpenCode always reads.
+  `OPENCODE_CONFIG_DIR` only adds a second directory for the processes started
+  with it. OpenCode started with `--pure` or `OPENCODE_PURE=1` loads no plugin,
+  capture included.
 
 ### Cursor
 

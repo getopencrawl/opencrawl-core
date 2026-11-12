@@ -301,11 +301,14 @@ what their own hooks or plugin deliver: the person's message, the agent's
 replies, and each tool call with its result. Recording starts with the next
 session; there is no history import.
 
-- **OpenCode** gets one dependency-free plugin, `plugins/opencrawl.js` in its
+- **OpenCode** gets one plugin, `plugins/opencrawl.js` in its global
   configuration directory. It forwards finished items only, under the terminal
   UI, `opencode run`, `opencode serve` and ACP, and hands them to the collector
   through a local inbox so that nothing is lost when `opencode run` exits.
-  Restart OpenCode to load it.
+  Restart OpenCode to load it. OpenCode installs its own plugin support
+  package (about 60 MB) before loading any plugin, so the install runs
+  `opencode debug config` once to pay that first start, and leaves no plugin
+  behind on a machine where OpenCode cannot install it.
 - **Cursor** gets entries in `~/.cursor/hooks.json`, beside the person's own.
   They apply to the editor, the Cursor CLI, and the Cursor Agent SDK when the
   embedding program loads the person's settings.
