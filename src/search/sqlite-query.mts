@@ -44,6 +44,11 @@ function dateParam(value: unknown): SQLInputValue {
   return Date.parse(value);
 }
 
+/** `tables` holds one scored FTS pass per scoring text clause; `sql` sums, for
+ * the document row `d`, the passes that matched it. SQLite's automatic index
+ * over each pass serves these row lookups. */
+export interface Score {tables: Sql; sql: string}
+
 /** Deliberately bounded query vocabulary, compatible with the existing realm
  * callers. Values are bound parameters; arbitrary SQL/FTS syntax is never input. */
 export class QueryCompiler {
@@ -119,13 +124,18 @@ export class QueryCompiler {
       if (scoring) {
         const boost = v.boost ?? 1;
         if (typeof boost !== 'number' || !Number.isFinite(boost) || boost <= 0) return unsupported('boost');
-        this.scores.push({sql: `COALESCE((SELECT -bm25(${this.fts}, 2.0, 1.0, 2.0) * ${boost} FROM ${this.fts} WHERE ${this.fts} MATCH ? AND rowid=d.rowid),0)`, args: [expression]});
+        // MATERIALIZED is required. Otherwise SQLite pushes each candidate rowid
+        // into this subquery and repeats the whole MATCH, with its statistics, per row.
+        this.scores.push({sql: `c${this.scores.length} AS MATERIALIZED (SELECT rowid AS r, -bm25(${this.fts}, 2.0, 1.0, 2.0) * ${boost} AS s FROM ${this.fts} WHERE ${this.fts} MATCH ?)`, args: [expression]});
       }
       return {sql: `d.rowid IN (SELECT rowid FROM ${this.fts} WHERE ${this.fts} MATCH ?)`, args: [expression]};
     }
     return unsupported('query ' + name);
   }
-  score(): Sql {return this.scores.length ? join(this.scores, ' + ') : literal('0');}
+  /** A clause adds its weighted BM25 to the rows it matches and nothing to the rest. */
+  score(): Score {
+    return {tables: join(this.scores, ', '), sql: this.scores.map((_, i) => `COALESCE((SELECT s FROM c${i} WHERE c${i}.r = d.rowid), 0)`).join(' + ') || '0'};
+  }
 }
 
 interface Sort {expression: string; descending: boolean; first: boolean}
@@ -141,26 +151,38 @@ export function sorts(input: unknown): Sort[] {
   });
 }
 
-export function readHits(db: DatabaseSync, where: Sql, score: Sql, body: QueryBody): IndexHit[] {
+export const count = (db: DatabaseSync, where: Sql): number => Number(db.prepare('SELECT count(*) AS n FROM documents d WHERE ' + where.sql).get(...where.args)!.n);
+
+/** One page and the exact number of matching documents. Ranking reads only row
+ * IDs, scores and sort keys; stored documents are loaded for the returned rows. */
+export function readHits(db: DatabaseSync, where: Sql, score: Score, body: QueryBody): {hits: IndexHit[]; total: number} {
   const order = sorts(body.sort), size = integer(body.size, 10), after = body.search_after;
   if (!order.length) unsupported('empty sort');
   const offset = integer(body.from, 0);
-  const columns = order.map((s, i) => s.expression + ' AS s' + i).join(',');
-  // Materializing computes FTS scores in their valid MATCH context once.
-  const base = `WITH matched AS MATERIALIZED (SELECT d.*, (${score.sql}) AS score FROM documents d WHERE ${where.sql}), ranked AS (SELECT d.*, ${columns} FROM matched d)`;
+  const names = order.map((s, i) => s.expression === 'score' ? 'score' : 's' + i);
   let continuation = literal('1');
   if (after !== undefined) {
     if (!Array.isArray(after) || after.length !== order.length) return unsupported('search_after');
     const choices: Sql[] = [];
     for (let i = 0; i < order.length; i++) {
       const s = order[i], value = param(after[i]);
-      const equal = order.slice(0, i).map((_, j) => ({sql: `s${j} IS ?`, args: [param(after[j])]}));
-      const comparison = value === null ? literal(s.first ? `s${i} IS NOT NULL` : '0') : {sql: `(s${i} ${s.descending ? '<' : '>'} ?${s.first ? '' : ` OR s${i} IS NULL`})`, args: [value]};
+      const equal = order.slice(0, i).map((_, j) => ({sql: `${names[j]} IS ?`, args: [param(after[j])]}));
+      const comparison = value === null ? literal(s.first ? `${names[i]} IS NOT NULL` : '0') : {sql: `(${names[i]} ${s.descending ? '<' : '>'} ?${s.first ? '' : ` OR ${names[i]} IS NULL`})`, args: [value]};
       choices.push(and(...equal, comparison));
     }
     continuation = join(choices, ' OR ');
   }
-  const ordering = order.map((s, i) => `s${i} ${s.descending ? 'DESC' : 'ASC'} NULLS ${s.first ? 'FIRST' : 'LAST'}`).join(',');
-  const rows = db.prepare(`${base} SELECT * FROM ranked WHERE ${continuation.sql} ORDER BY ${ordering}, rowid LIMIT ? OFFSET ?`).all(...score.args, ...where.args, ...continuation.args, size, offset);
-  return rows.map(row => ({_id: String(row.corpus) + ':' + String(row.id), _source: JSON.parse(String(row.document)) as SearchDocument, _score: Number(row.score), sort: order.map((_, i) => row['s' + i] as string | number | null)}));
+  if (!size) return {hits: [], total: count(db, where)};
+  const ordering = order.map((s, i) => `${names[i]} ${s.descending ? 'DESC' : 'ASC'} NULLS ${s.first ? 'FIRST' : 'LAST'}`).join(',') + ',r';
+  const columns = ['d.rowid AS r', score.sql + ' AS score', ...order.flatMap((s, i) => names[i] === 'score' ? [] : [s.expression + ' AS s' + i])].join(',');
+  const tables = [...(score.tables.sql ? [score.tables.sql] : []), `matched AS MATERIALIZED (SELECT ${columns} FROM documents d WHERE ${where.sql})`].join(', ');
+  // The count is the outer row, so the total arrives even when the page is empty.
+  const rows = db.prepare(`WITH ${tables} SELECT t.total, p.* FROM (SELECT count(*) AS total FROM matched) t LEFT JOIN (SELECT * FROM matched WHERE ${continuation.sql} ORDER BY ${ordering} LIMIT ? OFFSET ?) p ON 1 ORDER BY ${ordering}`)
+    .all(...score.tables.args, ...where.args, ...continuation.args, size, offset);
+  const load = db.prepare('SELECT corpus, id, document FROM documents WHERE rowid=?');
+  const hits = rows.filter(row => row.r !== null).map(row => {
+    const stored = load.get(row.r)!;
+    return {_id: String(stored.corpus) + ':' + String(stored.id), _source: JSON.parse(String(stored.document)) as SearchDocument, _score: Number(row.score), sort: names.map(name => row[name] as string | number | null)};
+  });
+  return {hits, total: Number(rows[0].total)};
 }

@@ -111,6 +111,12 @@ scores are converted so higher is better. Tokenization and scoring differ from
 OpenSearch's analyzer and BM25 implementation; scores are not comparable.
 Each realm has its own FTS table, including corpus-wide term statistics.
 
+Ranking scores each text clause in one FTS pass and sorts on row IDs, scores
+and sort keys; stored documents are loaded only for the returned rows. Each
+`top_hits` bucket is ranked separately and repeats those passes. Scope and
+field filters are still evaluated against stored JSON, so request time grows
+with the number of documents in the corpus.
+
 SQLite commits are immediately visible to later readers. WAL supports API and
 worker processes on one machine, with a five-second busy timeout and one writer
 at a time. Each operation closes its connection. Bulk writes are atomic in
@@ -155,10 +161,21 @@ The conformance suite runs SQLite unconditionally and OpenSearch when that
 explicit test endpoint is supplied. CI runs both against a disposable real
 OpenSearch instance. `test/sqlite-search.test.mjs` additionally exercises a real
 MCP client, native session ingestion, connector revocation, privacy, durable
-reopening, atomic rollback, board facets and usage/library aggregations.
+reopening, atomic rollback, board facets and usage/library aggregations, and
+checks SQLite scores, order and totals against a per-row BM25 reference.
 Self-host CI boots the SQLite Compose profile without OpenSearch, ingests and
 searches through the real application, then repeats verification after restart
 and a cold backup/restore into empty disposable volumes.
+
+The SQLite timing run is opt-in and asserts no duration. It times the ordinary
+lexical request on 8,000 generated documents; with a results file it also
+compares the ranked IDs and scores of two commits on the same corpus:
+
+```sh
+OPENCRAWL_TEST_SQLITE_BENCHMARK=1 \
+  OPENCRAWL_TEST_SQLITE_BENCHMARK_RESULTS=/tmp/sqlite-benchmark.json \
+  node --test test/sqlite-search-benchmark.test.mjs
+```
 
 Engine references: [SQLite FTS5](https://www.sqlite.org/fts5.html) and
 [Node SQLite](https://nodejs.org/docs/latest-v24.x/api/sqlite.html).
