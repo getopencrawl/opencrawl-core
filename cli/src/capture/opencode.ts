@@ -27,14 +27,15 @@ function session(delivery: any): PayloadSession | null {
   const native = text(delivery?.session?.id);
   if (!native) return null;
   const parent = text(delivery.session.parentID);
-  // `run` and the terminal UI are a person at a terminal. A server or an ACP
-  // peer is driven by another program, which this collector cannot name.
-  const mode = text(delivery.mode), terminal = mode === 'run' || mode === 'tui';
+  // The opencode command in every mode, as a headless Claude Code or Codex run
+  // is. The evidence keeps the mode: a server or an ACP peer is driven by
+  // another program, which the plugin cannot name.
+  const mode = text(delivery.mode);
   return {
     sessionId: sessionKey(native, hash),
     cwd: text(delivery.session.directory),
     version: text(delivery.session.version),
-    origin: parent ? 'subagent' : terminal ? 'cli' : 'unknown',
+    origin: parent ? 'subagent' : 'cli',
     originEvidence: parent ? 'OpenCode session with a parent session' : `OpenCode plugin (${mode ?? 'unknown mode'})`,
     parentSessionId: parent ? sessionKey(parent, hash) : null,
   };

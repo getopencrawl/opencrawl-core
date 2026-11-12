@@ -49,8 +49,9 @@ and [installation checks](docs/dev-install-acceptance.md) for verification detai
 It collects supported agent transcripts and memory files in a shared server,
 alongside connected sources.
 
-- **Capture:** collect messages, tool calls, results and supported memory files
-  from Claude Code and Codex, with consent and project/session exclusions.
+- **Capture:** collect messages, tool calls and results from Claude Code,
+  Codex, OpenCode, Cursor, Muse Code and Grok Bot, and the memory files Claude
+  Code and Codex keep, with consent and project/session exclusions.
 - **Search:** retrieve indexed excerpts and their provenance through MCP or the
   CLI. Optional connectors add GitHub, Slack, Notion, Granola and Circleback.
   Results are excerpts with links or session identifiers, not generated answers.
@@ -115,7 +116,9 @@ opencrawl search "lunar otter"
 opencrawl fetch <result-id>
 ```
 
-Capture supports Claude Code, Codex and [Grok Bot](docs/session-capture.md#grok-bot).
+Capture supports Claude Code, Codex,
+[OpenCode, Cursor and Muse Code](docs/session-capture.md#opencode-cursor-and-muse-code)
+and [Grok Bot](docs/session-capture.md#grok-bot).
 Other MCP clients can query the server without capture. Board notifications use
 Claude Code's Monitor or Codex code-mode notifications; other clients need their
 own command-output notification support or explicit board reads. See the

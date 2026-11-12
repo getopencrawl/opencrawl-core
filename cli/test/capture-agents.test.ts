@@ -503,9 +503,9 @@ test('OpenCode deliveries become the same events from either session engine, and
     expect(events(notice(opencode(event))).map(e=>e.kind)).toEqual(['hook']);expect(boundary(opencode(event))).toBe(true);
   }
   expect(boundary(opencode({type:'session.next.step.ended',properties:{finish:'tool-calls'}}))).toBe(false);expect(boundary(ocPart({type:'text',id:'x'}))).toBe(false);
-  // A person at a terminal, another program driving a server, or a subagent of either.
+  // The opencode command in any mode, with the mode kept as evidence, or a subagent of it.
   expect(session(opencode({type:'session.idle'}),'')).toEqual({sessionId:ocSession.id,cwd:'/home/dev/shop',version:'1.19.5',origin:'cli',originEvidence:'OpenCode plugin (run)',parentSessionId:null});
-  expect(session({...opencode({type:'session.idle'}),mode:'serve'},'')).toMatchObject({origin:'unknown',originEvidence:'OpenCode plugin (serve)'});
+  expect(session({...opencode({type:'session.idle'}),mode:'serve'},'')).toMatchObject({origin:'cli',originEvidence:'OpenCode plugin (serve)'});
   expect(session({...opencode({type:'session.idle'}),session:{...ocSession,id:'ses_child',parentID:ocSession.id}},'')).toMatchObject({sessionId:'ses_child',origin:'subagent',parentSessionId:ocSession.id});
   expect(session({hook_event_name:'opencode',event:{type:'session.idle'}},'')).toBeNull();
   expect(transcriptEntries(call)).toEqual([{type:'tool_call',name:'bash',input:'{\n  "command": "echo lab-marker-70 && pwd",\n  "description": "Print a marker"\n}',truncated:false}]);

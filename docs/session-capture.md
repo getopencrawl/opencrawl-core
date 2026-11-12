@@ -117,9 +117,9 @@ pending hooks, `collect flush` takes them, and `collect purge` deletes them.
   the order it happened, and an item delivered twice is the same event.
 - A subagent's session is recorded as its own session with origin `subagent`
   and the parent's ID; the parent records the `task` call and what it returned.
-- Origin is `cli` under `opencode run` and the terminal UI. A server or an ACP
-  peer is driven by another program the plugin cannot name, so origin stays
-  `unknown` there.
+- Origin is `cli` in every mode, as it is for a headless Claude Code or Codex
+  run; the origin evidence records the mode (`run`, `serve`, `acp`, the
+  terminal UI).
 - The plugin imports nothing but Node built-ins and stays thin on purpose: an
   installed plugin is rewritten only when capture is reinstalled or its hook
   settings are upgraded, while the collector that interprets the events updates
