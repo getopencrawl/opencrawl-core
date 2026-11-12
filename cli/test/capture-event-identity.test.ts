@@ -88,3 +88,8 @@ test('upgrade leaves legacy queued bytes and IDs intact, including lost-acknowle
   expect(JSON.parse(readFileSync(join(captureDir(),'state','legacy.json'),'utf8'))).toEqual(checkpoint);
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));if(token===undefined)delete process.env.OPENCRAWL_SESSIONS_TOKEN;else process.env.OPENCRAWL_SESSIONS_TOKEN=token;}
 }));
+
+test('canonical identity remains compatible across bounded hash buffers',()=>{
+ const value={id:'native-record',kind:'message',sequence:7,data:{unicode:'中文🦉\ud800',many:Array.from({length:3000},(_,n)=>({n,text:'tool result '+n})),long:'x'.repeat(20000)}};
+ expect(finalizeEventIdentity(value).id).toBe('wire1:bba86e8451b291576924cc01c12a333403daf30adc5cf71df4fec664e39095fd');
+});

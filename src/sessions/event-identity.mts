@@ -33,15 +33,23 @@ function location({prefix,principal,harness,installationId,sessionId}: SessionId
 function eventHash(event: SessionEvent) {
  if(!event||!id(event.id)||typeof event.kind!=='string')fail(400,'Invalid events');
  const hash=createHash('sha256');
+ // Buffer small canonical fragments to avoid one native hash call per key
+ // or separator. Large strings go directly to the hash; extra space is bounded.
+ let pieces:string[]=[],characters=0;
+ const flush=()=>{if(characters){hash.update(pieces.join(''));pieces=[];characters=0;}};
+ const write=(text:string)=>{
+  if(text.length>=16384){flush();hash.update(text);return;}
+  pieces.push(text);characters+=text.length;if(characters>=16384)flush();
+ };
  function visit(value: unknown,depth=0): void {
   if(depth>128)fail(400,'Event structure exceeds supported depth');
-  if(value===null||typeof value!=='object'){hash.update(JSON.stringify(value));return;}
-  if(Array.isArray(value)){hash.update('[');for(let i=0;i<value.length;i++){if(i)hash.update(',');visit(value[i],depth+1);}hash.update(']');return;}
-  hash.update('{');let first=true;
-  for(const key of Object.keys(value).sort()){if(!first)hash.update(',');first=false;hash.update(JSON.stringify(key)+':');visit((value as Record<string, unknown>)[key],depth+1);}
-  hash.update('}');
+  if(value===null||typeof value!=='object'){write(JSON.stringify(value));return;}
+  if(Array.isArray(value)){write('[');for(let i=0;i<value.length;i++){if(i)write(',');visit(value[i],depth+1);}write(']');return;}
+  write('{');let first=true;
+  for(const key of Object.keys(value).sort()){if(!first)write(',');first=false;write(JSON.stringify(key)+':');visit((value as Record<string, unknown>)[key],depth+1);}
+  write('}');
  }
- visit(event);return hash.digest('hex');
+ visit(event);flush();return hash.digest('hex');
 }
 function fingerprints(events: SessionEvent[],conflicts=new Set<string>()) {
  if(!Array.isArray(events)||!events.length||events.length>1000)fail(400,'Invalid events');
