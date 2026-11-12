@@ -14,7 +14,7 @@ import {searchFilters,searchSort} from '../search/controls.mjs';
 
 import {sessionIndexMapping} from '../search/mapping.mjs';
 export {sessionIndexMapping};
-const UPSERT="if (ctx._source.session != null && (ctx._source.tenantId != params.doc.tenantId || ctx._source.session.userId != params.doc.session.userId)) { throw new IllegalArgumentException('Session document ownership mismatch'); } if (ctx._source.session == null || ctx._source.session.receivedAt == null || (params.doc.session.containsKey('passageVersion') && (!ctx._source.session.containsKey('passageVersion') || params.doc.session.passageVersion > ctx._source.session.passageVersion)) || params.doc.session.receivedAt.compareTo(ctx._source.session.receivedAt) > 0) { ctx._source = params.doc; } else { ctx.op = 'none'; }";
+
 function fail(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
 export function createSessionSearch(options: RealmOptions & {store?: ObjectStore; prefix?: string}) {
   const resolve=createRealmResolver(options), f=(field: string)=>realmField('session',field);
@@ -70,7 +70,7 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
         if(size>3*1024*1024)throw new Error('Search document exceeds bulk limit');
         if(bytes+size>3*1024*1024){await collection.bulk(principal,batch);batch=[];bytes=0;}
         if(typeof item.document?.receivedAt!=='string'||!Number.isFinite(Date.parse(item.document.receivedAt)))throw new Error('Session capture timestamp required');
-        batch.push({...item,script:UPSERT});bytes+=size;
+        batch.push({...item,policy:'session'});bytes+=size;
       }
       await collection.bulk(principal,batch);
     },
@@ -114,7 +114,8 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
   };
 }
 export function searchSettings(env=process.env) {
-  if(!env.OPENCRAWL_OPENSEARCH_URL)return null;
-  return {endpoint:env.OPENCRAWL_OPENSEARCH_URL,index:env.OPENCRAWL_OPENSEARCH_INDEX||undefined,environment:env.OPENCRAWL_SEARCH_ENVIRONMENT||'selfhost',
+  const endpoint=env.OPENCRAWL_SEARCH_URL||env.OPENCRAWL_OPENSEARCH_URL;
+  if(!endpoint)return null;
+  return {endpoint,index:env.OPENCRAWL_OPENSEARCH_INDEX||undefined,environment:env.OPENCRAWL_SEARCH_ENVIRONMENT||'selfhost',
     username:env.OPENCRAWL_OPENSEARCH_USERNAME,password:env.OPENCRAWL_OPENSEARCH_PASSWORD};
 }

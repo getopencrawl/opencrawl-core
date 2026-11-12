@@ -11,7 +11,7 @@ import {passages,PASSAGE_VERSION} from '../search/passages.mjs';
 
 const f=(field: string)=>realmField('memory',field);
 function fail(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
-const HEAD="if (ctx._source.memory == null || params.doc.memory.generation > ctx._source.memory.generation) { ctx._source = params.doc; } else if (params.doc.memory.generation == ctx._source.memory.generation && params.doc.memory.snapshotId != ctx._source.memory.snapshotId) { throw new IllegalArgumentException('Memory generation conflict'); } else { ctx.op = 'none'; }";
+
 export function createMemorySearch(options: RealmOptions) {
   const resolve=createRealmResolver(options);
   async function heads(principal: Principal) {
@@ -50,7 +50,7 @@ export function createMemorySearch(options: RealmOptions) {
       const refreshed=await realm.refresh(principal);
       if(refreshed?._shards?.failed!==0)throw new Error('Memory snapshot refresh incomplete');
       const headId=digest(JSON.stringify([sessionScope(principal),snapshot.harness,snapshot.installationId,'head']));
-      await collection.bulk(principal,[{id:headId,document:{...common,kind:'snapshot'},script:HEAD}],{refresh:true});
+      await collection.bulk(principal,[{id:headId,document:{...common,kind:'snapshot'},policy:'memory-head'}],{refresh:true});
       return count;
     },
     async search(principal: Principal,{query='',limit=20,match='all',id,filters,order}: SearchInput={}) {

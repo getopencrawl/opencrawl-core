@@ -1,5 +1,7 @@
 # Self-host OpenCrawl
 
+For an opt-in SQLite FTS5 search index on a single host, see [search backends](search-backends.md). OpenSearch remains the default.
+
 For a disposable development preview with all services installed automatically,
 use [`./dev/up`](../dev/README.md). It generates local credentials and verifies a
 sample import. The configuration below remains the independent operator-managed
