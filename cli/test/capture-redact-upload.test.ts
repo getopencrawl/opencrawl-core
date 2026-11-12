@@ -16,6 +16,7 @@ test('all capture sources and legacy retries mask locally before batch and decod
     if(req.url==='/api/sessions/identity'){res.end(JSON.stringify({data:{principal:owner}}));return;}
     const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);
     const body=Buffer.concat(chunks);writes.push({url:req.url!,body});
+    if(req.method==='PUT'){res.end(JSON.stringify({data:{sha256:hash(body),size:body.length}}));return;}
     if(req.url==='/api/sessions/batches' && lostAck){lostAck=false;res.writeHead(502);res.end(JSON.stringify({error:{code:'LOST_ACK'}}));return;}
     res.end(JSON.stringify({data:{stored:true,batchId:hash(body)}}));
   });
