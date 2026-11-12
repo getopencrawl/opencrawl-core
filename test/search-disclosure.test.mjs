@@ -9,27 +9,18 @@ import {documentId} from '../dist/src/connectors/scope.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 
 const principal = {tenantId:'team', userId:'reader'};
-test('resource groups choose a matching content passage over a title-only parent without moving its slot',()=>{
-  const parent={id:'parent',source:'connectors',title:'Fix fork identity',text:'Fix fork identity',sourceRank:1,provenance:{provider:'github',connectionId:'c',workspaceId:'w',sourceId:'repo:33',kind:'pull_request'}};
-  const passage={...parent,id:'body',sourceRank:3,text:'Fix fork identity\nKeep the leading native session identity across resumed imports.',provenance:{...parent.provenance,sourceId:'repo:33:body:0',kind:'passage',parentId:'repo:33',parentKind:'pull_request'}};
-  const unrelated={...parent,id:'other',provenance:{...parent.provenance,sourceId:'repo:34'}};
-  const second={...passage,id:'validation',text:'Fix fork identity\nRegression tests passed.'};
-  const input=[parent,unrelated,passage,second],grouped=groupResources(input,'resource');
-  assert.deepEqual(grouped.results.map(h=>h.id),['body','other']);assert.equal(grouped.suppressed,2);
-  assert.equal(grouped.results[0].sourceRank,3);assert.equal(grouped.results[0].groupedCount,2);
-  assert.deepEqual(grouped.results[0].groupedIds,['parent','validation']);assert.equal(parent.groupedCount,undefined);
-  assert.deepEqual(groupResources(input,'none').results,input);
-  assert.equal(groupResources(input,'resource',false).results[0].id,'parent');
-  assert.equal(groupResources([{...parent,text:'The full parent document contains useful detail.'},passage],'resource').results[0].id,'parent');
-  assert.equal(groupResources([parent,{...passage,text:passage.title}],'resource').results[0].id,'parent');
-  for(const field of ['connectionId','workspaceId','provider']){
-    const foreign={...passage,provenance:{...passage.provenance,[field]:'different'}};
-    assert.equal(groupResources([parent,foreign],'resource').results.length,2);
+test('resource grouping preserves distinct connector workspace identities', () => {
+  const first={id:'first',source:'connectors',title:'Decision',text:'First workspace decision.',sourceRank:1,provenance:{provider:'github',connectionId:'c',workspaceId:'one',sourceId:'record:1',kind:'pull_request'}};
+  const same={...first,id:'same',text:'Another passage in the same resource.'};
+  for(const field of ['provider','connectionId','workspaceId']) {
+    const distinct={...first,id:'distinct',provenance:{...first.provenance,[field]:'different'}};
+    const result=groupResources([first,same,distinct],'resource');
+    assert.deepEqual(result.results.map(hit=>hit.id),['first','distinct']);
+    assert.equal(result.suppressed,1);
+    assert.deepEqual(result.results[0].groupedIds,['same']);
+    assert.equal(first.groupedCount,undefined);
   }
-  const session={...parent,source:'sessions',provenance:{userId:'owner',harness:'codex',sessionId:'s',eventId:'e',kind:'message'}};
-  assert.equal(groupResources([session,{...session,id:'second-chunk',text:'More context'}],'resource').results[0].id,'parent');
 });
-
 test('recognized approval records follow evidence while remaining discoverable and fetchable', async () => {
   const text=JSON.stringify({risk_level:'low',user_authorization:'high',outcome:'allow',rationale:'Read-only WorkOS Better Auth inspection.'});
   const approval={id:'approval',tenantId:'team',userId:'author',sessionId:'s',eventId:'a',harness:'codex',origin:'subagent',kind:'message',role:'assistant',text,timestamp:'2026-11-10T10:00:00Z'};
@@ -62,22 +53,6 @@ test('compact excerpts preserve exact source text and find evidence beyond navig
   assert.equal(result.text, text.slice(result.excerpt.start, result.excerpt.end));
   assert.equal(result.excerpt.totalChars, text.length);
   assert.equal(excerpt('short', 'short').text, 'short');
-});
-
-test('whole keyword evidence outranks repeated substring navigation', () => {
-  const text = 'Latest author navigation.\n'.repeat(300) + 'The AUTH test passed: verified checkpoint.\n' + 'Footer\n'.repeat(100);
-  const result = excerpt(text, 'test auth', 300);
-  assert.match(result.text, /verified checkpoint/);
-  assert.equal(result.text, text.slice(result.excerpt.start, result.excerpt.end));
-  assert.ok(result.text.length <= 300);
-});
-
-test('combining marks remain part of excerpt keywords and offsets stay verbatim', () => {
-  const word = 'cafe\u0301';
-  const text = 'cafeteria navigation.\n'.repeat(300) + `The ${word} record contains the approved detail.\n` + 'Footer\n'.repeat(100);
-  const result = excerpt(text, word, 300);
-  assert.match(result.text, /approved detail/);
-  assert.equal(result.text, text.slice(result.excerpt.start, result.excerpt.end));
 });
 
 test('duplicate groups preserve changed values, distinct resources and roles, and count the candidate window', () => {

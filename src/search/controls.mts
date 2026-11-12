@@ -34,7 +34,8 @@ export function searchFilters(corpus: Corpus, input: SearchFilters = {}): unknow
   ] as const)if(value){if(!allowed.some(c=>c===corpus))clauses.push({match_none:{}});else terms(field(key),value);}
   // Never substitute upload time for the time of an agent message or memory.
   const time=corpus==='session'?field('timestamp'):corpus==='memory'?field('modifiedAt'):'timestamp';
-  if(f.after||f.before)clauses.push({range:{[time]:{...(f.after?{gte:f.after}:{}),...(f.before?{lte:f.before}:{})}}});
+  // Numeric instants prevent engine date parsing from widening omitted fractions.
+  if(f.after||f.before)clauses.push({range:{[time]:{...(f.after?{gte:Date.parse(f.after)}:{}),...(f.before?{lte:Date.parse(f.before)}:{})}}});
   return clauses;
 }
 export function searchSort(corpus: Corpus, order: SearchOrder = 'relevance'): unknown[] {
