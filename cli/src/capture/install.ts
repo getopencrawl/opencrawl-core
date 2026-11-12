@@ -7,7 +7,7 @@ import {randomUUID} from 'node:crypto';
 import {HARNESSES, readsTranscript, type Harness} from './parse.ts';
 import {GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
 import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts';
-import {CliError} from '../oauth.ts';
+import {CliError, apiOrigin} from '../oauth.ts';
 import {environmentToken} from '../environment-token.ts';
 import {captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, codexHooksAwaitingReview, HOOK_MODE, type CaptureConfig} from './runtime.ts';
 import {captureNotice, grokBotNotice} from './policy.ts';
@@ -107,7 +107,10 @@ args.push(...process.argv.slice(2));
 if(process.platform!=='win32')process.execve(file,[file,...args],env);
 else {const r=require('node:child_process').spawnSync(file,args,{stdio:'inherit',windowsHide:true,env});process.exitCode=r.status??1;}
 `);
-  const hook=(...args:string[])=>(process.platform==='win32'?'':'exec ')+[quote(node),quote(runner),'collect','hook',...args].join(' ');
+  // An environment token is only sent to a deployment the invocation names.
+  // Hooks installed without a sign-in get theirs from the environment later,
+  // so they carry the deployment their install was told to use.
+  const hook=(...args:string[])=>(process.platform==='win32'?'':'exec ')+[quote(node),quote(runner),'collect','hook',...args,...(config.hookApi?['--api',quote(config.hookApi)]:[])].join(' ');
   const managed=(harness:Harness)=>():HookEntry=>({command:hook('--managed','--harness',harness),async:true,timeout:120});
   if(harnesses.includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),
     ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','Stop','SubagentStop','SessionEnd'],managed('claude-code'));
@@ -119,7 +122,7 @@ else {const r=require('node:child_process').spawnSync(file,args,{stdio:'inherit'
   // Cursor does not document a shell for hook commands. Quote only when needed
   // so the command also survives being split on spaces.
   const plain=(s:string)=>/^[\w@%+=:,./-]+$/.test(s)?s:quote(s);
-  if(harnesses.includes('grok-bot'))modifyGrokBotHooks(hookFile(config,'grok-bot'),[plain(node),plain(runner),'collect','hook','--harness','grok-bot'].join(' '));
+  if(harnesses.includes('grok-bot'))modifyGrokBotHooks(hookFile(config,'grok-bot'),[plain(node),plain(runner),'collect','hook','--harness','grok-bot',...(config.hookApi?['--api',plain(config.hookApi)]:[])].join(' '));
 }
 /** Upgrade existing installations without authentication or changing their queue. */
 export async function upgradeCaptureHooks() {
@@ -146,7 +149,7 @@ export async function upgradeCaptureHooks() {
     }
   },0);}catch(error:any){if(error?.code!=='SESSION_BUSY')throw error;}
 }
-export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
+export async function installCapture(api:string,{background=false,deferAuth=false,namedApi=false,home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
   const receiverToken=environmentToken('OPENCRAWL_SESSIONS_TOKEN',api);
   if(!harnesses.length||harnesses.some(h=>!HARNESSES.includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code, codex or grok-bot',64);
   // Image preparation cannot access runtime secrets. First worker authenticates
@@ -167,7 +170,9 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
       'claude-code':!harnesses.includes('claude-code')&&previous?.roots['claude-code']||process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),
       codex:!harnesses.includes('codex')&&previous?.roots.codex||process.env.CODEX_HOME||join(home,'.codex'),
       'grok-bot':!harnesses.includes('grok-bot')&&previous?.roots['grok-bot']||join(home,'.cursor')},
-    claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
+    claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command,
+    // Only where the person named the deployment, and kept while it stays the same one.
+    ...(deferAuth&&namedApi?{hookApi:apiOrigin(api)}:previous?.hookApi&&previous.api===api?{hookApi:previous.hookApi}:{})};
   const enrolled=config.harnesses!;
   // Checked before the directories below are created.
   const absent=harnesses.every(readsTranscript)&&!harnesses.some(harness=>existsSync(harnessRoot(config,harness))||Bun.which(harness==='codex'?'codex':'claude',{PATH:process.env.PATH}));

@@ -57,7 +57,9 @@ export async function collectCommand(action:string,api:string,values:any) {
       if(!['ask','skip','all','claude-code','codex'].includes(mode))throw new CliError('INVALID_USAGE','Use --backfill ask, skip, all, claude-code, or codex.',64);
       const notice=captureNoticeFor(api,values.harness);
       if(!await approveCapture(values.yes===true,values.json,notice))return {status:'consent_required',notice,nextStep:'Confirm the destination and recording scope with the user, then run collect install --yes. This does not approve history import.'};
-      const installed=await installCapture(api,{deferAuth:values['defer-auth']===true,...(values.harness?{harnesses:[values.harness]}:{})});
+      // Whether the person said where to send capture, rather than the CLI falling back to a saved or default server.
+      const namedApi=values.api!==undefined||Boolean(process.env.OPENCRAWL_API_URL);
+      const installed=await installCapture(api,{deferAuth:values['defer-auth']===true,namedApi,...(values.harness?{harnesses:[values.harness]}:{})});
       // Skill setup must not undo working capture or hide its installed state.
       const skills=await agentSkills('install',api).catch(()=>({status:'error',nextStep:`Capture is installed. Run opencrawl skills install --api ${api} with approved access to agent skill directories.`}));
       return {...installed,skills,backfill:await setupBackfill(api,mode,values.json)};

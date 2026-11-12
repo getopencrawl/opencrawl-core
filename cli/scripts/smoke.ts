@@ -56,6 +56,16 @@ try {
     if (skillStatus.data.results[0].status !== 'current') throw new Error('Replaceable runtime could not read the installed skill');
     const fail = Bun.spawnSync([...command, 'whoami', '--json'], {env: {...process.env, OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config')}, stdout: 'pipe', stderr: 'pipe'});
     if (fail.exitCode !== 2 || JSON.parse(fail.stdout.toString()).error.code !== 'AUTH_REQUIRED') throw new Error('Invalid authentication exit code');
+    // The CLI runs inside other people's projects. Their .env files configure
+    // those projects: they must not name this program's server or supply its
+    // credentials. With either file read, the token below would be found
+    // without a destination and the search would fail on that instead.
+    const project = join(scratch, 'project');
+    mkdirSync(project);
+    writeFileSync(join(project, '.env'), 'OPENCRAWL_TOKEN=from-the-working-directory\n');
+    writeFileSync(join(project, '.env.local'), 'OPENCRAWL_TOKEN=from-the-working-directory\nOPENCRAWL_SESSIONS_TOKEN=from-the-working-directory\n');
+    const inProject = Bun.spawnSync([...command, 'search', 'evidence', '--json'], {cwd: project, env: {...process.env, OPENCRAWL_NO_UPDATE: '1', OPENCRAWL_CONFIG_HOME: join(scratch, 'config'), OPENCRAWL_TOKEN: undefined, OPENCRAWL_API_URL: undefined}, stdout: 'pipe', stderr: 'pipe'});
+    if (JSON.parse(inProject.stdout.toString()).error?.code !== 'AUTH_REQUIRED') throw new Error('The packaged CLI read an environment file from its working directory: ' + inProject.stdout.toString());
     const requests: string[] = [];
     const api = Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request) {
       if(request.headers.get('authorization')!=='Bearer smoke-search-token')return new Response('',{status:401});

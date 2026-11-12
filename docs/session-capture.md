@@ -241,3 +241,7 @@ the message fallback until the capturing client supplies a name.
 Cloud image setup prepares hooks with --defer-auth and --backfill skip without
 runtime secrets. Authentication and the per-runtime installation ID are established
 by the first harness-managed async hook before capture. The agent does not wait for authentication.
+An environment token is only ever sent to a deployment the invocation names, and
+a hook is invoked by the harness, so these hooks carry the deployment the setup
+command was given with `--api`. The upload-only token then needs no second
+variable beside it.

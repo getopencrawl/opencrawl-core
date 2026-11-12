@@ -216,6 +216,16 @@ token with `--api` or `OPENCRAWL_API_URL`. A saved capture destination or the ho
 default never selects where a newly supplied environment token is sent. Remove
 an environment token when switching deployments to use their saved logins.
 
+Capture hooks run with no arguments of the person's choosing, so an install made
+without a sign-in (`--defer-auth`) that was given `--api` or `OPENCRAWL_API_URL`
+writes that deployment into its hook commands. The token a cloud environment
+supplies later as a secret then has a named destination, with nothing else to
+configure. An install that names no deployment, or signs in, writes none.
+
+The CLI takes these variables from its real environment only. It runs inside
+other people's projects, from agent hooks, and does not read `.env` files or
+`bunfig.toml` from the directory it is started in.
+
 Newly spooled events receive a versioned ID after attachment extraction and all
 event normalization. The ID covers the source record/notice identity and every
 field of the final JSON event. For the same source identity, equivalent final-event
@@ -268,9 +278,12 @@ loss. Harness teardown may cancel an async hook; no delivery is possible after
 a sandbox destroys unsent files. An idle interval is not a final-session receipt.
 `collect status` reports pending hooks separately from queued batches.
 
-Cloud image setup uses `collect install --yes --harness claude-code --defer-auth
---backfill skip` without a runtime credential or identity lookup. The first async
-hook binds identity before parsing or uploading, without blocking the agent.
+Cloud image setup uses `collect install --yes --api <deployment> --harness
+claude-code --defer-auth --backfill skip` without a runtime credential or
+identity lookup. The hooks it writes name that deployment, so the
+`OPENCRAWL_SESSIONS_TOKEN` secret the environment supplies at run time is all
+they need. The first async hook binds identity before parsing or uploading,
+without blocking the agent.
 
 Never image or snapshot a signed-in CLI. Sign-in refresh tokens rotate on every
 renewal, so when one machine renews a copied sign-in, every other copy is revoked.
