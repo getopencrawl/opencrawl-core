@@ -19,4 +19,9 @@ test('capture setup covers Claude cloud and Grok Bot from the page data, without
   // The Grok Bot steps come after the Claude setup and before revoking a credential.
   assert.ok(html.indexOf('Capture Grok Bot sessions') > html.indexOf('Setup script'));
   assert.ok(html.indexOf('Capture Grok Bot sessions') < html.indexOf('Credential ID to revoke'));
+  // Platforms that create a machine per task get the install that runs on each one,
+  // built from the same API origin, with every supported agent named.
+  for (const text of ['Capture on a cloud coding platform', 'Replicas or Codespaces', `opencrawl collect install --yes --defer-auth --api ${api} --json`, '--harness opencode,cursor,muse', 'OpenCode, Cursor and Muse Code', 'brand-new machine']) assert.ok(html.includes(text), text);
+  assert.ok(html.indexOf('Capture on a cloud coding platform') > html.indexOf('Capture Grok Bot sessions'));
+  assert.ok(html.indexOf('Capture on a cloud coding platform') < html.indexOf('Credential ID to revoke'));
 });

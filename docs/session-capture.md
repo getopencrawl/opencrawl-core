@@ -2,9 +2,226 @@
 
 Read [capture privacy and controls](capture-privacy.md) before enabling collection.
 
-The CLI installs capture for local Claude Code and Codex sessions, including sessions run by their desktop apps, and for [Grok Bot](#grok-bot) on a Bot's cloud computer. Run `opencrawl login`, then `opencrawl collect install`. Codex requires reviewing/trusting the installed commands in `/hooks` or desktop Settings > Hooks. Existing sessions may need a restart.
+The CLI installs capture for local Claude Code and Codex sessions, including sessions run by their desktop apps; for [OpenCode, Cursor and Muse Code](#opencode-cursor-and-muse-code) wherever it finds them; and for [Grok Bot](#grok-bot) on a Bot's cloud computer. Run `opencrawl login`, then `opencrawl collect install`. Codex requires reviewing/trusting the installed commands in `/hooks` or desktop Settings > Hooks. Existing sessions may need a restart.
 
 Capture uses command hooks and incremental reads of native JSONL transcripts. The harness supervises asynchronous hooks. Each hook durably saves its event, then attempts a nonblocking uploader lock; the winner uploads in that same process, and competing hooks exit. Unix dispatch uses exec to preserve the harness-owned PID. Capture never starts detached children. Each uploader has a 90-second process deadline and exits on detected parent loss (checked every second), including while waiting for locks or network responses. Durable unacknowledged bytes remain for the next hook. Foreground flush/backfill is unaffected. If the harness itself dies, reaping adopted children remains the host’s responsibility. The same mechanism runs on macOS, Linux and Windows without an init service. Legacy OpenCrawl LaunchAgents/user timers are removed during installation. The installer preserves existing hook groups, backs up changed files, and rolls back configuration writes if installation fails. It uses absolute executable paths so desktop launch environments do not need the interactive shell's PATH.
+
+## OpenCode, Cursor and Muse Code
+
+These three keep no transcript file the collector reads, so a session is
+assembled from what each agent's own hooks or plugin deliver, in the event
+shapes used for Claude Code and Codex. Everything below was observed on the
+shipped clients: OpenCode 1.19.5, Cursor's CLI 2026.11.11 and Agent SDK 1.3.1,
+and Muse Code 1.4.15.
+
+### Which agents an install records
+
+A plain `opencrawl collect install` records Claude Code and Codex, as it always
+has, and each of OpenCode, Cursor and Muse Code it finds on the machine: by the
+agent's configuration or data directory, or by its command on `PATH`. It writes
+nothing for an agent that is not there. `harnesses` in its output lists what is
+enrolled, and `skipped` gives the reason for any agent it found and left out.
+
+```sh
+opencrawl collect install --yes                       # Claude Code, Codex, and what is found
+opencrawl collect install --yes --harness opencode    # one agent by name
+opencrawl collect install --yes --harness opencode,cursor,muse
+```
+
+Name an agent when it is not on the machine yet, for example in the step a cloud
+platform runs before the agent is installed. Grok Bot is only ever enrolled by
+name. Grok Bot and Cursor read the same `~/.cursor/hooks.json`, and entries for
+both would record every conversation twice, so the file has one owner at a time:
+an install that merely finds Cursor never displaces Grok Bot, naming either one
+replaces the other's entries and says so, and naming both is refused.
+
+| Agent | What capture writes | Loaded |
+| --- | --- | --- |
+| OpenCode | A plugin of its own, `plugins/opencrawl.js` in OpenCode's configuration directory (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`) | When OpenCode starts: restart running sessions and servers |
+| Cursor | Entries in `~/.cursor/hooks.json`, beside the person's own | By new conversations; Cursor reloads the file when it changes |
+| Muse Code | Entries in the `hooks` block of `settings.json` (`$XDG_CONFIG_HOME/muse`, else `~/.config/muse`), beside the person's own | When a session starts |
+
+Existing entries and settings are preserved, changed files are backed up, a
+failed install is rolled back, and uninstall removes only what capture added.
+
+### What they share
+
+- **Capture cannot block or deny.** No hook that decides an action is
+  registered. Each hook answers as soon as its payload has arrived with the
+  answer that changes nothing, saves the payload locally and returns; the
+  process never exits with the blocking code 2 and ends itself at five seconds.
+- **Uploads are bounded.** A hook uploads when a turn or session ends, or when
+  20 seconds have passed since the last pass, exactly as for
+  [Grok Bot](#grok-bot). Unsent work stays in the local spool and
+  `collect flush` drains it on demand.
+- **Recording starts with the next session.** Nothing earlier is read and there
+  is no history import for these agents.
+- **A prepared machine records nothing until a credential is there.** With
+  `--defer-auth` and neither a sign-in nor an upload token on the machine,
+  deliveries are counted and discarded. Once either is present they are kept,
+  and uploaded when the identity is bound, so a new machine's first prompt is
+  not lost to that first request.
+- **Status says what each agent delivered.** These agents have no transcript to
+  compare against, so `opencrawl collect status --json` lists, under `agents`,
+  the deliveries each one made by name and how many prompts, replies and tool
+  calls were recorded from them, with a `note` when an enrolled agent has
+  delivered nothing or nothing useful. One conversation is enough to tell hooks
+  that never load from hooks that load without a conversation in them. Only
+  names and counts are kept there.
+- **Other harness hooks stand aside.** Cursor also runs Claude Code hook files
+  when one of their groups has a `matcher`. OpenCrawl's Claude Code and Codex
+  hooks recognise such a run by its `cursor_version` field and do nothing.
+
+### OpenCode
+
+OpenCode has no command hooks. It loads plugins in every mode: the terminal UI,
+`opencode run`, `opencode serve` and ACP, which is how editors and cloud
+workspaces drive it. The plugin forwards what OpenCode's event stream reports as
+finished, and nothing while it is streaming:
+
+| OpenCode reports | Captured as |
+| --- | --- |
+| A user message's text part (`message.part.updated`), or `session.next.prompted` | The person's message |
+| A finished assistant text part, or `session.next.text.ended` | The agent's reply |
+| A finished reasoning part, or `session.next.reasoning.ended` | A reasoning summary |
+| A tool part that completed or failed, or `session.next.tool.called` with `.success`/`.failed` | The tool call and its result or error, paired by call ID |
+| A file part on a user message | An attachment when it is inline, otherwise a reference |
+| `session.updated` with a new title | The session name; OpenCode's `New session - …` placeholder is skipped |
+| `session.compacted`, a compaction summary message, `session.next.compaction.ended` | A compaction marker |
+| `session.idle`, `session.next.step.ended`, `session.next.step.failed` | Lifecycle evidence, stored but not indexed, and the cue to upload |
+
+OpenCode 1.19 has two session engines with different event families, the
+`message.*` one and the newer `session.next.*` one its `/api/session` routes
+use. A session is recorded from whichever engine reports it first, never both.
+Text OpenCode injects itself (`synthetic` parts) is not recorded.
+
+The plugin writes each finished item as a file in
+`~/.config/opencrawl/capture/inbox/opencode/` before it returns, then starts the
+collector without waiting for it. `opencode run` exits as soon as a turn ends,
+and by then its last reply is already on disk. The collector reads the inbox
+through the same hook command as every other agent, in the order the items
+happened, and removes a file only once its delivery is recorded. It is started
+at most once at a time per OpenCode process, about once a second while a turn
+runs and immediately when one ends. `collect status` counts inbox files as
+pending hooks, `collect flush` takes them, and `collect purge` deletes them.
+
+- Each item carries the time OpenCode says it finished, so a session reads in
+  the order it happened, and an item delivered twice is the same event.
+- A subagent's session is recorded as its own session with origin `subagent`
+  and the parent's ID; the parent records the `task` call and what it returned.
+- Origin is `cli` under `opencode run` and the terminal UI. A server or an ACP
+  peer is driven by another program the plugin cannot name, so origin stays
+  `unknown` there.
+- The plugin is dependency-free, so OpenCode loads it without installing
+  anything, and it stays thin on purpose: an installed plugin is rewritten only
+  when capture is reinstalled or its hook settings are upgraded, while the
+  collector that interprets the events updates itself. The file belongs to the
+  collector; local edits are replaced.
+- OpenCode started with plugins disabled loads none, capture included.
+
+### Cursor
+
+Cursor runs command hooks from `~/.cursor/hooks.json`. Capture adds entries in
+Cursor's own shape, `{command, timeout}`, for `sessionStart`, `sessionEnd`,
+`beforeSubmitPrompt`, `afterAgentResponse`, `afterAgentThought`, `postToolUse`,
+`postToolUseFailure`, `preCompact` and `stop`. The payloads are the ones
+[Grok Bot's table](#grok-bot) describes and map to the same events.
+
+- **Where it applies.** The editor, the Cursor CLI, and the Cursor Agent SDK
+  when the embedding program asks for the person's settings. The SDK's local
+  runtime loads `~/.cursor/hooks.json` only when its `settingSources` include
+  `user` or `all`, which is also what makes it read `~/.cursor/mcp.json`; with
+  the option omitted it runs no hooks at all. A cloud workspace that runs
+  Cursor through the SDK therefore records only if it passes that option, and
+  `collect status` after one conversation shows whether it does. Cursor's own
+  cloud agents do not read the user-level file.
+- **One conversation is one session**, with the ID `conversation_id`. The
+  session's directory is the workspace root, not a tool call's own directory,
+  so a project exclusion names the workspace.
+- **Replies, thoughts and tool hooks come when Cursor's service asks for them.**
+  The client reports which hooks are configured and the service requests them
+  during a turn. The session, prompt and turn-end hooks were recorded from a
+  live SDK run and every payload shape was taken from the SDK's own hook
+  runner; a complete model turn needs a Cursor account and has not been run by
+  OpenCrawl.
+- **Under the SDK a payload over about 128 KB never reaches a hook.** The SDK
+  passes the payload on the hook's command line, so a tool call whose result is
+  larger is silently not delivered, and not recorded. The CLI pipes payloads
+  and has no such limit.
+- **The event list is fixed on purpose.** Cursor ignores the whole hooks file,
+  the person's own hooks included, when it holds an event name it does not know
+  or an entry in another tool's shape. Capture writes only long-established
+  event names in Cursor's shape.
+- Cursor waits for a hook's output to close, so each hook costs it the tens of
+  milliseconds of a local save, and an upload pass at a turn boundary.
+- Origin is `unknown`: nothing in a payload tells the editor, the CLI and the
+  SDK apart. Cursor writes its own transcript under `~/.cursor/projects/`, but
+  it has no tool results, IDs or times, so capture does not read it.
+
+### Muse Code
+
+Muse Code runs command hooks from the `hooks` block of its settings file, in the
+terminal, under `muse exec`, and in sessions `muse serve` hosts for other
+programs. Capture adds `{type: "command", command}` handlers for `SessionStart`,
+`UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `PostCompact`, `Stop`,
+`StopFailure` and `SessionEnd`:
+
+| Hook | Captured as |
+| --- | --- |
+| `UserPromptSubmit` | The person's message |
+| `PostToolUse`, `PostToolUseFailure` | The tool call and its result or error, paired by `tool_use_id` |
+| `Stop` | The reply that ended the turn (`last_assistant_message`) |
+| `PostCompact` | A compaction marker |
+| `SessionStart`, `SessionEnd`, `StopFailure` | Lifecycle evidence, stored but not indexed |
+
+- **The settings file must already be one Muse Code accepts.** Muse Code rejects
+  a settings file that is not a `schema_version: 1` document, and every command
+  with it. Capture creates `{"schema_version": 1, "hooks": …}` when there is no
+  file, adds to one that is valid, and leaves any other exactly as found with an
+  error that says so.
+- **Only the chat is a session.** Muse Code runs helper agents beside every
+  chat, and their hooks arrive with a session of their own. It names the
+  top-level chat in the hook's environment (`MUSE_SESSION_ID`), and capture
+  records only deliveries that belong to it. A delegated subagent's own steps
+  are therefore not recorded either; what it returned reaches the chat as the
+  result of the tool call that started it, and is recorded there.
+- **Text between tool calls is not delivered.** Hooks carry the prompt, each
+  tool call with its result, and the reply that ended the turn. `PreLLMCall`
+  and `PostLLMCall` would carry more, but they send the whole conversation,
+  system prompt included, on every model step, and are not registered; nor are
+  `PreToolUse` and `PermissionRequest`, which decide whether an action runs.
+- **The hook's environment is cleared.** Muse Code passes a hook a short list of
+  variables and a fixed `PATH`. The installed command therefore names Node and
+  the collector by absolute path, and an upload-only `OPENCRAWL_SESSIONS_TOKEN`
+  is not visible to it: have it in the environment when `collect install` runs,
+  which saves it for later hooks.
+- Hook payloads carry no transcript path. Muse Code journals a session under
+  `~/.local/share/muse/sessions/`, but that journal is its internal record, so
+  capture reads the documented hook payloads instead. Origin is `cli`.
+
+### Cloud coding platforms
+
+A platform that starts each task on a new machine, such as Replicas or
+Codespaces, loses anything installed by hand when the machine is replaced. Put
+both pieces where the platform applies them to every machine it creates:
+
+1. Create an upload-only credential at `/capture/cloud` and store it as
+   `OPENCRAWL_SESSIONS_TOKEN` in your own secrets on the platform. It belongs to
+   one person: every session uploaded with it is attributed to its owner.
+2. Add this to the step the platform runs for each new machine (a start hook,
+   setup script or `postCreateCommand`), with the token in that step's
+   environment:
+
+   ```sh
+   npm i -g @getopencrawl/cli@next && opencrawl collect install --yes --defer-auth --api https://your-opencrawl.example --json
+   ```
+
+   Add `--harness` with the agents the platform runs if they are not installed
+   yet when the step runs. `--defer-auth` installs without contacting the
+   server; the first hook binds the identity.
+3. Start a brand-new machine, send one message with each agent, and read
+   `opencrawl collect status --json` there. The machine you set up on cannot
+   prove that new ones capture.
 
 ## Grok Bot
 
@@ -20,8 +237,10 @@ opencrawl collect install --yes --harness grok-bot
 
 `--harness grok-bot` is never implied. Cursor reads the same `~/.cursor/hooks.json`
 on a developer machine, so installing there would record Cursor sessions under
-the Grok Bot name. Existing entries in the file are preserved; uninstall removes
-only OpenCrawl's.
+the Grok Bot name; a plain install that finds Cursor enrolls
+[Cursor](#cursor) instead, and leaves the file alone where Grok Bot is already
+enrolled. Existing entries in the file are preserved; uninstall removes only
+OpenCrawl's.
 
 The setup prompt is the same for every agent and names this command. As a
 second line of defence, a plain `collect install` that finds neither Claude Code

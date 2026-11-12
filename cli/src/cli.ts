@@ -25,7 +25,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
   fetch       Read the indexed passage behind a search result
-  collect     Install and manage Claude Code, Codex and Grok Bot session capture
+  collect     Install and manage session capture for your coding agents
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
   update      Install the latest CLI for your next invocation
@@ -39,7 +39,11 @@ Options:
 
 Capture controls:
   collect install [--yes]              Review recording scope before enabling
+                                       Records Claude Code and Codex, and OpenCode,
+                                       Cursor and Muse Code where they are found
+  collect install --harness opencode,cursor,muse   Name the agents to record
   collect install --harness grok-bot   Capture Grok Bot; run on the Bot's cloud computer
+  collect status                       Installation, pending work and what each agent delivered
   collect titles                      Refresh names of already captured sessions
   collect exclude --project /path     Block a project and its subdirectories
   collect exclude --session-id ID     Block a session and its subagents
@@ -106,7 +110,7 @@ Skills: skills install [--client NAME] [--json]
   skills status                 Inspect without changing skill files
   skills refresh                Regenerate the CLI-owned opencrawl skill
   --client NAME                 Select explicitly; repeat for multiple clients
-  Clients: codex, claude-code, cursor, gemini, opencode, copilot
+  Clients: codex, claude-code, cursor, gemini, opencode, copilot, muse
 Default: detect installed clients and install once per shared skill directory.
 CLI updates regenerate opencrawl, replacing local edits and stale files. Other named skills are separate.
 No authentication is required.

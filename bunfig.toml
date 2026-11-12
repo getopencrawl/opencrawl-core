@@ -1,0 +1,4 @@
+[test]
+# The CLI's tests run from here as `bun test cli`. This keeps a run away from
+# the developer's own capture configuration; see cli/test/isolate.ts.
+preload = ["./cli/test/isolate.ts"]

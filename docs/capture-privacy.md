@@ -24,6 +24,14 @@ computer. All of it is attributed to the person who installed capture. Recording
 starts when a Bot loads the hooks; earlier conversations are not read. Install
 it only on your own Bot computer. See [Grok Bot capture](session-capture.md#grok-bot).
 
+A plain install also records OpenCode, Cursor and Muse Code when it finds them
+on the machine, and its output names every agent it enrolled. For these three
+it records every conversation the agent runs for this OS user from its next
+session on, through the agent's own hooks or plugin; earlier conversations are
+not read. Muse Code's built-in helper agents and its subagents are not recorded
+as sessions. See
+[OpenCode, Cursor and Muse Code](session-capture.md#opencode-cursor-and-muse-code).
+
 `opencrawl collect install` asks before enabling capture. Noninteractive installs
 return `consent_required` without installing hooks; use `--yes` only after the
 person approves the recording scope and destination. `--yes` does not approve

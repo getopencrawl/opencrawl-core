@@ -140,7 +140,7 @@ test('Agent sessions retains measured activity, breakdowns and contextual facts 
   }
   assert.match(agents, /Agent sessions per day/);
   // Every captured agent has a readable name on Usage and in the session library.
-  for (const [harness, name] of [['claude-code', 'Claude Code'], ['codex', 'Codex'], ['grok-bot', 'Grok Bot']] as const) {
+  for (const [harness, name] of [['claude-code', 'Claude Code'], ['codex', 'Codex'], ['grok-bot', 'Grok Bot'], ['opencode', 'OpenCode'], ['cursor', 'Cursor'], ['muse', 'Muse Code']] as const) {
     assert.equal(harnessName(harness), name); assert.equal(libraryHarnessName(harness), name);
   }
   assert.doesNotMatch(agents, /\bturns?\b|analytics come next/i);

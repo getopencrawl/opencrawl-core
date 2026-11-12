@@ -54,6 +54,13 @@ function CaptureDocument({page}: {page:CapturePage}) {
       <li>Sign in on that computer with <code>{'opencrawl login --no-browser --api '+page.api}</code> and approve it in your browser. To keep the computer upload-only instead, create the credential above and enter it as <code>OPENCRAWL_SESSIONS_TOKEN</code> in the secure secret card the Bot shows you, never in the chat.</li>
       <li>Bots that are already running may keep their earlier hooks. From a newly created Bot, run a command, then ask it for <code>opencrawl collect status</code>: a stored receipt confirms upload.</li>
     </ol>
+    <h2>Capture on a cloud coding platform</h2>
+    <p>A platform that starts each task on a new machine, such as Replicas or Codespaces, loses anything installed by hand when the machine is replaced. Put the credential and the install where the platform applies them to every machine it creates. This records Claude Code and Codex, and OpenCode, Cursor and Muse Code where the machine has them.</p>
+    <ol className="oc-document-steps">
+      <li>Store the credential above as <code>OPENCRAWL_SESSIONS_TOKEN</code> in your own secrets on the platform, never in a shared environment: every session uploaded with it is attributed to you.</li>
+      <li>Add this to the step the platform runs for each new machine (a start hook, setup script or <code>postCreateCommand</code>), with the credential in that step’s environment: <code>{'npm i -g @getopencrawl/cli@next && opencrawl collect install --yes --defer-auth --api '+page.api+' --json'}</code>. If an agent is installed only after that step runs, name it, for example <code>--harness opencode,cursor,muse</code>.</li>
+      <li>Start a brand-new machine, send one message with each agent, and ask for <code>opencrawl collect status --json</code> there: <code>agents</code> lists what each one delivered, and a stored receipt confirms upload. The machine you set up on cannot prove that new ones capture.</li>
+    </ol>
     <form method="post" action="/capture/cloud/revoke" className="stack"><Field label="Credential ID to revoke"><Input name="id" pattern="[a-f0-9]{64}" required defaultValue={page.credential?.id ?? ''}/></Field><div><Button type="submit">Revoke credential</Button></div></form>
   </Page>;
 }

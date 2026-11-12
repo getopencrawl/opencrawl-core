@@ -17,6 +17,7 @@ test('source-specific result context uses actual fields and safe URLs only', () 
   assert.equal(session.timestamp, '1970-01-01T00:00:00.000Z');
   assert.ok(session.context.every(item => !['Harness', 'Type'].includes(item.label)), 'fallback title already includes those details');
   assert.equal(searchHit({_source: {harness: 'grok-bot', kind: 'tool_call', sessionId: 's2', timestamp: 0, text: 'body'}}, 'sessions').title, 'Grok Bot Tool call');
+  for (const [harness, name] of [['opencode', 'OpenCode'], ['cursor', 'Cursor'], ['muse', 'Muse Code']]) assert.equal(searchHit({_source: {harness, role: 'user', kind: 'message', sessionId: 's3', timestamp: 0, text: 'body'}}, 'sessions').title, name + ' User Message');
   const source = searchHit({_source: {provider: 'slack', title: 'Deployment', channelId: 'C123', url: 'https://example.com/thread?q=one', timestamp: 'not-a-date'}}, 'connectors');
   assert.equal(source.title, 'Deployment'); assert.equal(source.url, 'https://example.com/thread?q=one');
   assert.equal(source.timestamp, undefined);

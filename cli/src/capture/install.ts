@@ -4,14 +4,19 @@ import {homedir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {removeLegacyService} from './legacy-service.ts';
 import {randomUUID} from 'node:crypto';
-import {HARNESSES, readsTranscript, type Harness} from './parse.ts';
+import {HARNESSES, HARNESS_NAMES, readsTranscript, type Harness} from './parse.ts';
 import {GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
+import {CURSOR_HOOK_EVENTS} from './cursor.ts';
+import {MUSE_HOOK_EVENTS} from './muse.ts';
+import {openCodePlugin} from './opencode.ts';
+import {isPayloadHarness, type PayloadHarness} from './payload.ts';
+import {agentRoots, detectAgents} from './agents.ts';
 import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
-import {captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, codexHooksAwaitingReview, HOOK_MODE, type CaptureConfig} from './runtime.ts';
-import {captureNotice, grokBotNotice} from './policy.ts';
+import {captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, codexHooksAwaitingReview, serverHarnesses, HOOK_MODE, type CaptureConfig} from './runtime.ts';
+import {captureNoticeFor} from './policy.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 const marker='OpenCrawl session capture';
 const quote=(s:string)=>process.platform==='win32'?'"'+s.replace(/"/g,'""')+'"':"'"+s.replace(/'/g,"'\\''")+"'";
@@ -44,11 +49,19 @@ function modifyHooks(file:string,events:string[],entry:((event:string)=>HookEntr
   if(entry)for(const event of events)(hooks[event]??=[]).push({hooks:[{type:'command',...entry(event),statusMessage:marker}]});
   backup(file);writeHarnessJson(file,{...config,hooks});
 }
-const hookFile=(config:CaptureConfig,harness:Harness)=>join(harnessRoot(config,harness),harness==='claude-code'?'settings.json':'hooks.json');
+/** The one file capture writes for each agent. OpenCode's is a plugin of its
+ * own; the others are the agent's hook configuration, shared with the person. */
+const hookFile=(config:CaptureConfig,harness:Harness)=>join(harnessRoot(config,harness),
+  harness==='claude-code'||harness==='muse'?'settings.json':harness==='opencode'?join('plugins','opencrawl.js'):'hooks.json');
 // Cursor-format entries have no label field; the command itself marks ownership.
-const grokBotOwned=(entry:any)=>typeof entry?.command==='string'&&/[\\/]capture[\\/]runner\.cjs\b.* collect hook .*--harness grok-bot\b/.test(entry.command);
-/** Grok Bot loads ~/.cursor/hooks.json: {version:1,hooks:{event:[{command,timeout}]}}. */
-function modifyGrokBotHooks(file:string,command:string|null) {
+const ownedBy=(harness:Harness)=>{
+  const pattern=new RegExp(String.raw`[\\/]capture[\\/]runner\.cjs\b.* collect hook .*--harness ${harness}\b`);
+  return (entry:any)=>typeof entry?.command==='string'&&pattern.test(entry.command);
+};
+const grokBotOwned=ownedBy('grok-bot');
+/** Grok Bot loads ~/.cursor/hooks.json: {version:1,hooks:{event:[{command,timeout}]}}.
+ * Cursor itself reads the same file, so the two are never enrolled together. */
+function modifyGrokBotHooks(file:string,command:string|null,owned=grokBotOwned,events:readonly string[]=GROK_BOT_HOOK_EVENTS) {
   if(!command&&!existsSync(file))return;
   const config=readJson(file);
   if(!config||typeof config!=='object'||Array.isArray(config)||config.version!==undefined&&config.version!==1||
@@ -56,14 +69,53 @@ function modifyGrokBotHooks(file:string,command:string|null) {
   const hooks=config.hooks??{};
   for(const [event,entries] of Object.entries(hooks)) {
     if(!Array.isArray(entries))throw new CliError('CAPTURE_INVALID_CONFIG','Existing hook entries are invalid');
-    hooks[event]=entries.filter(entry=>!grokBotOwned(entry));
+    hooks[event]=entries.filter(entry=>!owned(entry));
     if(!hooks[event].length)delete hooks[event];
   }
   // Every hook is passive, so a failure or the timeout never blocks the Bot. The
   // hook ends itself at five seconds; the timeout leaves room for a sign-in
   // renewal that must not be abandoned.
-  if(command)for(const event of GROK_BOT_HOOK_EVENTS)(hooks[event]??=[]).push({command,timeout:30});
+  if(command)for(const event of events)(hooks[event]??=[]).push({command,timeout:30});
   backup(file);replaceFile(file,JSON.stringify({...config,version:1,hooks},null,2)+'\n');
+}
+/** Cursor's own entries in the same file format. */
+const modifyCursorHooks=(file:string,command:string|null)=>modifyGrokBotHooks(file,command,ownedBy('cursor'),CURSOR_HOOK_EVENTS);
+/** Muse Code keeps a person's hooks in its settings file:
+ * {schema_version:1,hooks:{Event:[{hooks:[{type:'command',command}]}]}}. It
+ * rejects the whole file, and with it every command, when the file is not a
+ * schema_version 1 document, so one that is not is left exactly as found. */
+function museSettings(file:string) {
+  const config=existsSync(file)&&readFileSync(file,'utf8').trim()?readJson(file):null;
+  if(config!==null&&(!config||typeof config!=='object'||Array.isArray(config)||config.schema_version!==1||
+    config.hooks!==undefined&&(!config.hooks||typeof config.hooks!=='object'||Array.isArray(config.hooks))))throw new CliError('CAPTURE_INVALID_CONFIG','Existing Muse Code settings are not a schema_version 1 settings file');
+  return config;
+}
+function modifyMuseHooks(file:string,command:string|null) {
+  const config=museSettings(file);
+  if(!command&&!config)return;
+  const owned=ownedBy('muse'),hooks:Record<string,any>={...config?.hooks};
+  for(const [event,groups] of Object.entries(hooks)) {
+    // Only handler groups are ours to read; anything else under hooks stays.
+    if(!Array.isArray(groups))continue;
+    hooks[event]=groups.flatMap((group:any)=>{
+      if(!Array.isArray(group?.hooks))return [group];
+      const remaining=group.hooks.filter((handler:any)=>!owned(handler));
+      return remaining.length?[{...group,hooks:remaining}]:[];
+    });
+    if(!hooks[event].length)delete hooks[event];
+  }
+  if(command)for(const event of MUSE_HOOK_EVENTS)(hooks[event]??=[]).push({hooks:[{type:'command',command}]});
+  backup(file);
+  const {hooks:_,...rest}=config??{schema_version:1};
+  writeHarnessJson(file,Object.keys(hooks).length?{...rest,hooks}:rest);
+}
+/** OpenCode loads every plugin file in its plugins directory. This one is the
+ * collector's own, so it is written whole and removed whole. */
+function writeOpenCodePlugin(file:string,source:string|null) {
+  if(source===null){try{unlinkSync(file);}catch(error:any){if(error?.code!=='ENOENT')throw error;}return;}
+  if(existsSync(file)&&readFileSync(file,'utf8')===source)return;
+  mkdirSync(dirname(file),{recursive:true});
+  backup(file);replaceFile(file,source);
 }
 /** For a file in another program's directory: new contents, same permissions,
  * and the directory left as it is. */
@@ -120,7 +172,15 @@ else {const r=require('node:child_process').spawnSync(file,args,{stdio:'inherit'
   // Cursor does not document a shell for hook commands. Quote only when needed
   // so the command also survives being split on spaces.
   const plain=(s:string)=>/^[\w@%+=:,./-]+$/.test(s)?s:quote(s);
-  if(harnesses.includes('grok-bot'))modifyGrokBotHooks(hookFile(config,'grok-bot'),[plain(node),plain(runner),'collect','hook','--harness','grok-bot'].join(' '));
+  const waited=(harness:Harness)=>[plain(node),plain(runner),'collect','hook','--harness',harness].join(' ');
+  // Grok Bot and Cursor read one hooks file, and only one of them is enrolled:
+  // whichever it is also clears the other's entries from it.
+  if(harnesses.includes('grok-bot')){modifyCursorHooks(hookFile(config,'grok-bot'),null);modifyGrokBotHooks(hookFile(config,'grok-bot'),waited('grok-bot'));}
+  if(harnesses.includes('cursor')){modifyGrokBotHooks(hookFile(config,'cursor'),null);modifyCursorHooks(hookFile(config,'cursor'),waited('cursor'));}
+  // Muse Code runs a hook's command through the shell, with most of the
+  // environment cleared: both paths are absolute and the runner sets its own.
+  if(harnesses.includes('muse'))modifyMuseHooks(hookFile(config,'muse'),hook('--harness','muse'));
+  if(harnesses.includes('opencode'))writeOpenCodePlugin(hookFile(config,'opencode'),openCodePlugin([node,runner,'collect','hook','--harness','opencode'],join(captureDir(),'inbox','opencode')));
 }
 /** Upgrade existing installations without authentication or changing their queue. */
 export async function upgradeCaptureHooks() {
@@ -147,15 +207,38 @@ export async function upgradeCaptureHooks() {
     }
   },0);}catch(error:any){if(error?.code!=='SESSION_BUSY')throw error;}
 }
-export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
+const names=(harnesses:readonly Harness[])=>harnesses.map(harness=>HARNESS_NAMES[harness]).join(', ');
+/** Grok Bot and Cursor both read ~/.cursor/hooks.json. Entries for both would
+ * record every conversation twice, so the file has one owner at a time. */
+const SHARED:Partial<Record<Harness,Harness>>={cursor:'grok-bot','grok-bot':'cursor'};
+export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses:chosen,detect=detectAgents}:
+  {background?:boolean,deferAuth?:boolean,home?:string,command?:string[],harnesses?:Harness[],detect?:typeof detectAgents}={}) {
   const receiverToken=environmentToken('OPENCRAWL_SESSIONS_TOKEN',api);
-  if(!harnesses.length||harnesses.some(h=>!HARNESSES.includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code, codex or grok-bot',64);
+  if(chosen&&(!chosen.length||chosen.some(h=>!HARNESSES.includes(h))))throw new CliError('INVALID_USAGE','Use --harness '+HARNESSES.join(', ')+'; separate several with commas.',64);
+  if(chosen?.some(h=>SHARED[h]&&chosen.includes(SHARED[h]!)))throw new CliError('INVALID_USAGE','Grok Bot and Cursor share one hooks file. Choose --harness grok-bot on a Bot\'s cloud computer, or --harness cursor anywhere else.',64);
   // Image preparation cannot access runtime secrets. First worker authenticates
   // before parsing/spooling; hooks only persist notices even on first launch.
-  const {principal}=deferAuth?{principal:{tenantId:'pending',userId:'pending'}}:await request(api,'/api/sessions/identity');
+  const {principal,harnesses:answer}=deferAuth?{principal:{tenantId:'pending',userId:'pending'},harnesses:undefined}:await request(api,'/api/sessions/identity');
   if(!principal?.tenantId || !principal?.userId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
+  // A deployment stores sessions only for the agents it knows. Enrolling
+  // another here would queue sessions it rejects, so an agent it does not list
+  // is not enrolled. A prepared image has not asked yet: its batches wait.
+  const accepted=deferAuth?null:serverHarnesses(answer);
+  const refused=(list:Harness[])=>accepted?list.filter(h=>!accepted.includes(h)):[];
+  if(chosen&&refused(chosen).length)throw new CliError('CAPTURE_HARNESS_UNSUPPORTED',`This deployment does not store ${names(refused(chosen))} sessions yet. Update the OpenCrawl server, then run collect install again.`);
   return withSessionLock('capture:configuration',async()=>{
   const previous=readCaptureConfig();
+  const skipped:{harness:Harness,reason:string}[]=[];
+  // A plain install records Claude Code and Codex, as it always has, and every
+  // other supported agent found on this machine. It leaves Grok Bot's hooks
+  // file to Grok Bot, which is only ever enrolled by name.
+  const found=chosen||process.env.CLAUDE_CODE_REMOTE==='true'?[]:detect({home}).filter(harness=>{
+    const owner=SHARED[harness];
+    if(owner&&previous?.harnesses?.includes(owner)){skipped.push({harness,reason:`${HARNESS_NAMES[owner]} capture owns the hooks file ${HARNESS_NAMES[harness]} reads. Run collect install --harness ${harness} to record ${HARNESS_NAMES[harness]} instead.`});return false;}
+    if(refused([harness]).length){skipped.push({harness,reason:`This deployment does not store ${HARNESS_NAMES[harness]} sessions yet. Update the OpenCrawl server, then run collect install again.`});return false;}
+    return true;
+  });
+  const harnesses:Harness[]=chosen??[...(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[],...found];
   // Re-running cloud preparation has no authenticated replacement identity.
   // Preserve a bound destination, including ownership of unprocessed notices.
   const preserveOwner=deferAuth && previous?.api===api && !previous.authPending;
@@ -163,24 +246,30 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   const changed=previous && (previous.api!==api || !deferAuth && (previous.owner.userId!==principal.userId || previous.owner.tenantId!==principal.tenantId));
   if(changed && ['queue','notices'].some(dir=>existsSync(join(captureDir(),dir)) && readdirSync(join(captureDir(),dir)).length))throw new CliError('CAPTURE_PENDING_DESTINATION','Pending capture belongs to the previous destination. Upload it there or uninstall and explicitly purge local pending data before changing destination.');
   for(const dir of ['', 'backups','queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});
+  // Choosing one owner of the shared hooks file by name retires the other.
+  const replaced=(previous?.harnesses??[]).filter(h=>harnesses.some(now=>SHARED[now]===h));
+  const agents=agentRoots(home);
   const config:CaptureConfig={schemaVersion:1,exclusions:previous?.exclusions,hookMode:HOOK_MODE,api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:preserveOwner?previous.owner:principal,...(authPending?{authPending:true}:{}),
-    harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
+    harnesses:[...new Set([...(previous?.harnesses??[]).filter(h=>!replaced.includes(h)),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
       'claude-code':!harnesses.includes('claude-code')&&previous?.roots['claude-code']||process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),
       codex:!harnesses.includes('codex')&&previous?.roots.codex||process.env.CODEX_HOME||join(home,'.codex'),
-      'grok-bot':!harnesses.includes('grok-bot')&&previous?.roots['grok-bot']||join(home,'.cursor')},
+      'grok-bot':!harnesses.includes('grok-bot')&&previous?.roots['grok-bot']||join(home,'.cursor'),
+      ...Object.fromEntries((Object.keys(agents) as PayloadHarness[]).map(h=>[h,!harnesses.includes(h)&&previous?.roots[h]||agents[h]]))},
     claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
   const enrolled=config.harnesses!;
   // Checked before the directories below are created.
-  const absent=harnesses.every(readsTranscript)&&!harnesses.some(harness=>existsSync(harnessRoot(config,harness))||Bun.which(harness==='codex'?'codex':'claude',{PATH:process.env.PATH}));
+  const transcripts=harnesses.filter(readsTranscript);
+  const absent=transcripts.length>0&&!transcripts.some(harness=>existsSync(harnessRoot(config,harness))||Bun.which(harness==='codex'?'codex':'claude',{PATH:process.env.PATH}));
   for(const harness of enrolled)mkdirSync(harnessRoot(config,harness),{recursive:true,mode:0o700});
   // Validate every existing config before changing any of them.
   if(enrolled.includes('claude-code'))readJson(join(config.roots['claude-code'],'settings.json'));
   if(enrolled.includes('codex'))readJson(join(config.roots.codex,'hooks.json'));
-  if(enrolled.includes('grok-bot'))readJson(hookFile(config,'grok-bot'));
+  for(const harness of ['grok-bot','cursor'] as const)if(enrolled.includes(harness))readJson(hookFile(config,harness));
+  if(enrolled.includes('muse'))museSettings(hookFile(config,'muse'));
   const toml=join(config.roots.codex,'config.toml');if(harnesses.includes('codex')&&existsSync(toml))Bun.TOML.parse(readFileSync(toml,'utf8'));
-  const affected=[join(captureDir(),'config.json'),join(captureDir(),'receiver-token.json'),join(captureDir(),'runner.cjs'),
+  const affected=[...new Set([join(captureDir(),'config.json'),join(captureDir(),'receiver-token.json'),join(captureDir(),'runner.cjs'),
     join(config.roots['claude-code'],'settings.json'),join(config.roots.codex,'hooks.json'),toml,
-    ...(enrolled.includes('grok-bot')?[hookFile(config,'grok-bot')]:[])];
+    ...enrolled.filter(h=>!readsTranscript(h)).map(h=>hookFile(config,h))])];
   const originals=new Map(affected.map(path=>[path,existsSync(path)?readFileSync(path):null]));
   try {
   atomicJson(join(captureDir(),'config.json'),config);
@@ -198,13 +287,20 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   // Retire only legacy OpenCrawl services. Collection itself needs no init system.
   removeLegacyService(home);
   const backgroundStatus='harness-managed';
+  const added=harnesses.filter(isPayloadHarness);
   const steps=[
     ...(harnesses.some(readsTranscript)?[process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':[...(codexHooksAwaitingReview(config)?['Codex needs you to trust the new hooks: open Codex, run /hooks (or desktop Settings > Hooks), trust "OpenCrawl session capture" and start a new session. collect status reports any hook still awaiting review.']:[]),'Restart existing Claude sessions if hooks have not reloaded.'].join(' ')]:[]),
     // An agent that ran the plain command on a Bot's computer reads this and corrects itself.
     ...(absent&&!deferAuth&&!enrolled.includes('grok-bot')&&process.env.CLAUDE_CODE_REMOTE!=='true'?['Neither Claude Code nor Codex was found on this machine. If it is a Grok Bot cloud computer, capture it with opencrawl collect install --yes --harness grok-bot.']:[]),
-    ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${hookFile(config,'grok-bot')}. Bots that are already running may keep the hooks they loaded earlier: from a newly created Bot, run a command, then check collect status for a stored receipt.`]:[])];
-  return {notice:enrolled.includes('grok-bot')?captureNotice(api)+' '+grokBotNotice:captureNotice(api),exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
-    nextStep:steps.join(' ')};
+    ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${hookFile(config,'grok-bot')}. Bots that are already running may keep the hooks they loaded earlier: from a newly created Bot, run a command, then check collect status for a stored receipt.`]:[]),
+    ...(harnesses.includes('opencode')?[`OpenCode capture plugin installed at ${hookFile(config,'opencode')}. OpenCode loads plugins when it starts: restart running OpenCode sessions and servers.`]:[]),
+    ...(harnesses.includes('cursor')?[`Cursor hooks installed in ${hookFile(config,'cursor')}. They apply to conversations in the editor, the Cursor CLI and the Cursor Agent SDK on this machine; Cursor's own cloud agents do not read this file.`]:[]),
+    ...(harnesses.includes('muse')?[`Muse Code hooks installed in ${hookFile(config,'muse')}. Muse Code reads hooks when a session starts: start a new session.`]:[]),
+    ...(added.length?[`To confirm ${names(added)}: send a message in a new session of each, then check collect status for a stored receipt.`]:[]),
+    ...(replaced.length?[`${names(replaced)} capture was removed from this machine: it reads the same hooks file as ${names(replaced.map(h=>SHARED[h]!))}.`]:[]),
+    ...skipped.map(item=>item.reason)];
+  return {notice:captureNoticeFor(api,enrolled),exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
+    ...(skipped.length?{skipped}:{}),nextStep:steps.join(' ')};
   });
 }
 export async function uninstallCapture(home=homedir()) {
@@ -216,6 +312,9 @@ export async function uninstallCapture(home=homedir()) {
   if((config.harnesses??['claude-code','codex']).includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),[],null);
   if((config.harnesses??['claude-code','codex']).includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),[],null);
   if(config.harnesses?.includes('grok-bot'))modifyGrokBotHooks(hookFile(config,'grok-bot'),null);
+  if(config.harnesses?.includes('cursor'))modifyCursorHooks(hookFile(config,'cursor'),null);
+  if(config.harnesses?.includes('muse'))modifyMuseHooks(hookFile(config,'muse'),null);
+  if(config.harnesses?.includes('opencode'))writeOpenCodePlugin(hookFile(config,'opencode'),null);
   // Stopping collection preserves queued data for an authenticated retry.
   atomicJson(join(captureDir(),'config.json'),{...config,disabled:true});
   return {installed:false,queuedDataPreserved:true};

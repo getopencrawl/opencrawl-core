@@ -1,5 +1,5 @@
 import type {Principal, ObjectStore, SessionBatch, Authenticate, HttpHandler} from './types.mjs';
-import {parseJson, isSessionHarness} from './types.mjs';
+import {parseJson, isSessionHarness, SESSION_HARNESSES} from './types.mjs';
 import type {MemorySnapshot} from '../memories/types.mjs';
 import type {SearchAdapter} from '../search/types.mjs';
 import type {createCaptureCredentials} from './credentials.mjs';
@@ -150,7 +150,10 @@ export function createCaptureHandler({ingest, authenticate, search=undefined, cr
       if(credentials && req.method==='POST' && url.pathname==='/api/sessions/credentials') return await privateResult(200,{data:await credentials.issue(principal)});
       const credential=/^\/api\/sessions\/credentials\/([a-f0-9]{64})$/.exec(url.pathname);
       if(credentials && req.method==='DELETE' && credential) return send(200,{data:await credentials.revoke(principal,credential[1])});
-      if (req.method === 'GET' && url.pathname === '/api/sessions/identity') return await privateResult(200, {data:{principal}});
+      // The harness list lets a client enroll an agent only where its sessions are
+      // accepted: a batch for an unknown harness is rejected, and a rejected batch
+      // would hold back every other agent's uploads on that machine.
+      if (req.method === 'GET' && url.pathname === '/api/sessions/identity') return await privateResult(200, {data:{principal, harnesses:[...SESSION_HARNESSES]}});
       if(req.method==='GET' && url.pathname==='/api/sessions/search') {
         if(!search)return send(503,{error:{code:'SEARCH_NOT_CONFIGURED'}});
         return await privateResult(200,{data:await search.search(principal,{query:url.searchParams.get('q')??'',limit:Number(url.searchParams.get('limit')??20)})});

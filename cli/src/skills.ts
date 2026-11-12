@@ -23,6 +23,7 @@ export function skillTargets({home = homedir(), env = process.env, which = Bun.w
     {client: 'gemini', command: 'gemini', root: join(home, '.gemini'), directory: shared},
     {client: 'opencode', command: 'opencode', root: join(env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode'), directory: shared},
     {client: 'copilot', command: 'copilot', root: join(home, '.copilot'), directory: shared},
+    {client: 'muse', command: 'muse', root: join(env.XDG_CONFIG_HOME || join(home, '.config'), 'muse'), directory: shared},
   ];
   if (clients?.some(client => !known.some(entry => entry.client === client))) throw new CliError('INVALID_USAGE', `Use --client ${known.map(entry => entry.client).join('|')}.`, 64);
   const selected = known.filter(entry => clients ? clients.includes(entry.client) : existsSync(entry.root) || Boolean(which(entry.command)) || includeExisting && metadata(entry.directory) !== null || entry.client === 'claude-code' && env.CLAUDE_CODE_REMOTE === 'true');

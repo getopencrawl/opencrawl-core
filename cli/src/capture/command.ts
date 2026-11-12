@@ -1,8 +1,13 @@
 import {CliError} from '../oauth.ts';
 import {installCapture,uninstallCapture,upgradeCaptureHooks} from './install.ts';
-import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush,bindHookIdentity} from './runtime.ts';
+import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush,bindHookIdentity,ingestInbox} from './runtime.ts';
 import {credentialRotation} from '../session.ts';
 import {grokBotResponse} from './grok-bot.ts';
+import {payloadAdapter} from './adapters.ts';
+import {detectAgents} from './agents.ts';
+import {homedir} from 'node:os';
+import type {PayloadHarness} from './payload.ts';
+import {readsTranscript, type Harness} from './parse.ts';
 import {backfill,backfillPreview,selection,setupBackfill,reportBackfillProgress} from './backfill.ts';
 import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
 import {captureNoticeFor} from './policy.ts';
@@ -18,15 +23,16 @@ async function hookInput(eager=false) {
   }
   return JSON.parse(Buffer.concat(chunks).toString());
 }
-/** Grok Bot waits for this process on every hook. Answer as soon as the payload
+/** Grok Bot, Cursor and Muse Code wait for this process on every hook; the
+ * OpenCode plugin starts it without waiting. Answer as soon as the payload
  * is read, then record and take at most one upload pass. Nothing here may deny
  * or long delay an action. An outer deadline cannot interrupt a held lock or a
  * request in flight, so the process ends at five seconds, well inside the
  * installed hook timeout. The one thing it waits for is a sign-in renewal
  * already in flight: abandoning that would lose the sign-in. */
-async function grokBotHook() {
+async function waitedHook(harness:Harness,respond:(event:any)=>unknown,boundary?:(event:any)=>boolean,inbox=false) {
   let answered=false;
-  const answer=(event:any)=>{if(!answered){answered=true;process.stdout.write(JSON.stringify(grokBotResponse(event))+'\n');}};
+  const answer=(event:any)=>{if(!answered){answered=true;process.stdout.write(JSON.stringify(respond(event))+'\n');}};
   const finish=()=>{const renewing=credentialRotation();if(renewing)void renewing.finally(()=>process.exit(0));else process.exit(0);};
   const deadline=setTimeout(()=>{
     answer(null);
@@ -34,12 +40,30 @@ async function grokBotHook() {
     finish();
   },5000);
   try {
+    if(inbox) {
+      // Nothing is piped in: the plugin already left its deliveries on disk and
+      // does not wait for this process. Record them, then take the upload pass
+      // a finished turn among them has earned.
+      answer(null);
+      let ended=false;
+      await ingestInbox(harness as PayloadHarness,async delivery=>{ended||=boundary?.(delivery)??false;await captureHook(harness,delivery);});
+      await bindHookIdentity(null,{boundary:ended});
+      await upgradeCaptureHooks();
+      await hookFlush(null,{boundary:ended});
+    } else {
     const event=await hookInput(true);
     answer(event);
-    await bindHookIdentity(event);
-    await captureHook('grok-bot',event);
+    // Grok Bot's boundaries are decided where its payloads are read.
+    const pass=boundary?{boundary:boundary(event)}:{};
+    // Grok Bot records nothing before an identity is bound, so it binds first.
+    // The other agents keep a delivery once a credential is on the machine:
+    // theirs is saved before the first request to the server can cut it short.
+    if(boundary)await captureHook(harness,event);
+    await bindHookIdentity(event,pass);
+    if(!boundary)await captureHook(harness,event);
     await upgradeCaptureHooks();
-    await hookFlush(event);
+    await hookFlush(event,pass);
+    }
   }catch(e){answer(null);try{recordError(e);}catch{}}
   clearTimeout(deadline);
   // The pipe may still be open, which would keep this process alive.
@@ -53,12 +77,17 @@ export async function collectCommand(action:string,api:string,values:any) {
   if((values.concurrency!==undefined||values['batch-delay-ms']!==undefined)&&(action!=='backfill'||values['dry-run']))throw new CliError('INVALID_USAGE','Upload pacing options apply only to collect backfill imports.',64);
   switch(action) {
     case 'install': {
-      // Grok Bot keeps no local history to import.
-      const mode=values.backfill??(process.env.CLAUDE_CODE_REMOTE==='true'||values.harness==='grok-bot'?'skip':'ask');
+      // Several agents can be named at once: --harness opencode,cursor.
+      const chosen:Harness[]|undefined=typeof values.harness==='string'?[...new Set(values.harness.split(',').map((name:string)=>name.trim()).filter(Boolean))] as Harness[]:undefined;
+      // Only Claude Code and Codex keep local history to import.
+      const mode=values.backfill??(process.env.CLAUDE_CODE_REMOTE==='true'||chosen&&!chosen.some(readsTranscript)?'skip':'ask');
       if(!['ask','skip','all','claude-code','codex'].includes(mode))throw new CliError('INVALID_USAGE','Use --backfill ask, skip, all, claude-code, or codex.',64);
-      const notice=captureNoticeFor(api,values.harness);
+      // Consent names the agents: the ones asked for, or Claude Code and Codex
+      // with whatever else a plain install finds here.
+      const cloud=process.env.CLAUDE_CODE_REMOTE==='true';
+      const notice=captureNoticeFor(api,chosen??[...(cloud?['claude-code']:['claude-code','codex']) as Harness[],...(cloud?[]:detectAgents({home:homedir()}))]);
       if(!await approveCapture(values.yes===true,values.json,notice))return {status:'consent_required',notice,nextStep:'Confirm the destination and recording scope with the user, then run collect install --yes. This does not approve history import.'};
-      const installed=await installCapture(api,{deferAuth:values['defer-auth']===true,...(values.harness?{harnesses:[values.harness]}:{})});
+      const installed=await installCapture(api,{deferAuth:values['defer-auth']===true,...(chosen?{harnesses:chosen}:{})});
       // Skill setup must not undo working capture or hide its installed state.
       const skills=await agentSkills('install',api).catch(()=>({status:'error',nextStep:`Capture is installed. Run opencrawl skills install --api ${api} with approved access to agent skill directories.`}));
       return {...installed,skills,backfill:await setupBackfill(api,mode,values.json)};
@@ -82,7 +111,9 @@ export async function collectCommand(action:string,api:string,values:any) {
     case 'flush': try{return await flushCaptureWork();}catch(e){recordError(e);throw e;}
     case 'worker': {try{await ownedCaptureWorker();}catch(e){try{recordError(e);}catch{}}return null;}
     case 'hook': {
-      if(values.harness==='grok-bot')return grokBotHook();
+      if(values.harness==='grok-bot')return waitedHook('grok-bot',grokBotResponse);
+      const adapter=payloadAdapter(values.harness);
+      if(adapter)return waitedHook(values.harness,adapter.response,adapter.boundary,adapter.inbox===true);
       // Only harness-managed async hooks may upload. Legacy sync hooks stay local.
       try {
         if(!['claude-code','codex'].includes(values.harness))throw new Error('Invalid harness');
