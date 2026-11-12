@@ -135,7 +135,9 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
         if(req.headers.origin)return respond(403,'Browser request denied');
         const result=await identifyCli(req.headers.authorization,{capture:true});
         if(result.status!==200)return json(result.status,{schemaVersion:1,error:{code:result.status===403?(result.code||'ACCESS_DENIED'):'AUTH_REQUIRED'}});
-        await observe.cli(result.principal);return json(200,{schemaVersion:1,data:{user:result.user,index:{available:false}}});
+        const workspace:{id:string;name:string|null}={id:result.principal.tenantId,name:null};
+        try{const organization=await directory.organizations.getOrganization(workspace.id);if(organization.id===workspace.id)workspace.name=organization.name;}catch{/* Display failure does not invalidate a verified sign-in. */}
+        await observe.cli(result.principal);return json(200,{schemaVersion:1,data:{user:result.user,workspace,index:{available:false}}});
       }
       if(req.method==='GET'&&url.pathname==='/setup-prompt.txt'){res.setHeader('Access-Control-Allow-Origin','*');return respond(200,captureSetupPrompt(settings.url));}
       if(req.method==='GET'&&url.pathname==='/robots.txt')return respond(200,'User-agent: *\nDisallow: /\n');

@@ -3,8 +3,8 @@ import type {WorkOS as Workos} from '@workos-inc/node';
 import type {Principal} from './types.mjs';
 import {workosDirectory} from './workos.mjs';
 import type {IdentitySettings} from './types.mjs';
-type CliResult = {status: 200; user: {id: string; email: string}; principal?: Principal} | {status: 401 | 403 | 503; code?: string};
-import {userPrincipal, singleOrganizationPrincipal} from './principal.mjs';
+type CliResult = {status: 200; user: {id: string; email: string}; principal?: Principal} | {status: 401 | 403 | 503; code?: string; workspaces?: Array<{id: string; name: string | null}>};
+import {principalMemberships, membershipPrincipal} from './principal.mjs';
 import {currentVerifiedUser, currentUserSession} from './auth.mjs';
 import {createRemoteJWKSet, jwtVerify} from 'jose';
 
@@ -19,7 +19,8 @@ export function cliConfiguration(settings: Pick<IdentitySettings, 'clientId'>) {
 
 export function cliIdentity(settings: Pick<IdentitySettings, 'clientId' | 'organizationId'>, workos: Workos) {
   const directory=workosDirectory(workos);
-  const fixedPrincipal = settings.organizationId ? singleOrganizationPrincipal(directory, settings.organizationId) : null;
+  const fixedOrganization = settings.organizationId;
+  if (fixedOrganization && !/^org_[A-Za-z0-9]+$/.test(fixedOrganization)) throw new Error('Configure one organization');
   let keys: ReturnType<typeof createRemoteJWKSet> | undefined;
   return identify;
   function identify(authorization: string | undefined, options: {capture: true}): Promise<Exclude<CliResult, {status: 200}> | {status: 200; user: {id: string; email: string}; principal: Principal}>;
@@ -53,8 +54,22 @@ export function cliIdentity(settings: Pick<IdentitySettings, 'clientId' | 'organ
     const {user} = current;
     const result: CliResult = {status: 200, user: {id: user.id, email: user.email}};
     if (capture) {
-      const principal = await (fixedPrincipal ? fixedPrincipal(user, payload.org_id) : userPrincipal(directory, user, payload.org_id));
-      if (!principal) return {status:403, code:'ORGANIZATION_REQUIRED'};
+      if (fixedOrganization && payload.org_id != null && payload.org_id !== fixedOrganization) return {status:403, code:'ORGANIZATION_REQUIRED', workspaces:[]};
+      let memberships: Awaited<ReturnType<typeof principalMemberships>>;
+      try {memberships = await principalMemberships(directory, user.id, fixedOrganization || payload.org_id);}
+      catch {return {status:503};}
+      const principal = membershipPrincipal(user, memberships);
+      if (!principal) {
+        // Only current, user-bound membership facts establish eligible choices.
+        // Names are display-only and must come back for the exact verified ID.
+        const workspaces = await Promise.all([...new Set((memberships || []).map(member => member.organizationId))].map(async id => {
+          let name: string | null = null;
+          try {const organization = await directory.organizations.getOrganization(id);if (organization.id === id && typeof organization.name === 'string') name = organization.name;}
+          catch { /* Display-name failure cannot grant access or invalidate verified membership facts. */ }
+          return {id,name};
+        }));
+        return {status:403, code:'ORGANIZATION_REQUIRED', workspaces};
+      }
       result.principal = {...principal, email:user.email,
         name:[user.firstName,user.lastName].filter(Boolean).join(' ') || null};
     }
