@@ -102,6 +102,10 @@ up to 1,000 events, also bounded by payload size. On a smaller server, add
 `--concurrency 1 --batch-delay-ms 250` to pace an approved import. Progress goes to stderr (JSON lines
 with `--json`); `opencrawl collect status --json` exposes the latest import progress.
 Source-byte progress counts compressed file sizes for archives, not network bytes.
+Parsing overlaps uploads with a bounded queue. Large batches use gzip when both
+client and server support it; lowering concurrency also lowers the queue limit.
+An import marked complete confirms durable storage. Search indexing continues
+asynchronously, so a completed upload is not a search-readiness signal.
 Transient auth throttling and server failures retry with bounded backoff; queued
 data and cursors remain available if retries are exhausted. Rerun the same approved
 import to resume. Membership, destination and revoked-grant failures stop immediately.

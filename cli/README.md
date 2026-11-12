@@ -366,9 +366,17 @@ History uploads use four workers and up to 1,000 events per batch, with a payloa
 size bound. On a small server, pace the approved import with
 `collect backfill --harness all --yes --concurrency 1 --batch-delay-ms 250`.
 The delay is the minimum gap between batch starts; it is zero by default.
+Parsing overlaps uploads and pauses at four queued batches per worker (16 at the
+default concurrency). Transcripts are read incrementally; unusually long individual
+records can still require larger buffers. Large batches use gzip when the server
+advertises support and compression reduces the payload size. Older servers remain
+supported, and compression does not change durable receipt identity.
 Progress reports source files/bytes and durably uploaded batches on stderr
 (`backfill.progress` JSON lines with `--json`), leaving stdout for the final result.
 `collect status --json` includes the latest progress snapshot and update time.
+A complete import confirms durable uploads. Search visibility follows asynchronous
+indexing and may lag behind the upload result; setup readiness does not wait for
+the entire historical corpus to become searchable.
 Refresh throttling honors Retry-After and retries without discarding the saved login.
 
 A one-time import reuses capture cursors, authentication, attachment storage and
