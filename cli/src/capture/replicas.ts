@@ -46,7 +46,7 @@ export function claudeReplicasActors(history:History,workspaceId:string,sessionI
  * later profile-name changes or a worker restart cannot change an event ID.
  * This is collector-reported provenance, never a human authentication grant. */
 export function createReplicasAttribution({run=runReplicas,directory=()=>join(configDir(),'capture','replicas-actors')}: {run?:(args:string[])=>Promise<unknown>;directory?:()=>string}={}){
- const sessions=new Map<string,{chatId:string;actors:Map<string,ReplicasActor>}>();
+ const sessions=new Map<string,{chatId:string;actors:Map<string,ReplicasActor>;unattributed:Set<string>}>();
  return async(workspaceId:string,sessionId:string,nativeId:string):Promise<ReplicasActor|undefined>=>{
   if(!uuid(workspaceId)||!uuid(sessionId)||!uuid(nativeId))throw unavailable();
   const cacheKey=workspaceId+':'+sessionId,file=join(directory(),hash(cacheKey)+'.json');
@@ -61,10 +61,13 @@ export function createReplicasAttribution({run=runReplicas,directory=()=>join(co
      const [id,actor]=entry;
      if(!uuid(id)||actor?.nativeId!==id||actor.workspaceId!==workspaceId||actor.provider!=='replicas'||actor.assurance!=='collector-reported'||!identifier(actor.messageId)||!['human','unknown'].includes(actor.kind)||actor.kind==='human'&&!uuid(actor.userId))throw unavailable();
     }
-    state={chatId:saved.chatId,actors:new Map(saved.actors)};sessions.set(cacheKey,state);
+    const actors=new Map<string,ReplicasActor>(saved.actors),unattributed=saved.unattributed??[];
+    if(!Array.isArray(unattributed)||unattributed.length+saved.actors.length>20000||unattributed.some(id=>!uuid(id)||actors.has(id)))throw unavailable();
+    state={chatId:saved.chatId,actors,unattributed:new Set(unattributed)};sessions.set(cacheKey,state);
    }catch(error:any){if(error.code!=='ENOENT')throw unavailable();}
   }
   const remembered=state?.actors.get(nativeId);if(remembered)return remembered;
+  if(state?.unattributed.has(nativeId))return undefined;
   try{
    const chats=state?[{id:state.chatId,provider:'claude'}]:object(await run(['chat','list',workspaceId])).chats;
    if(!Array.isArray(chats)||chats.length>1000)throw unavailable();
@@ -72,14 +75,32 @@ export function createReplicasAttribution({run=runReplicas,directory=()=>join(co
     const chat=object(row);if(chat.provider!=='claude'||!uuid(chat.id))continue;
     let history=object(await run(['read',workspaceId,'--chat',chat.id,'--limit','200'])) as History;
     if(history.thread_id!==sessionId)continue;
-    state??={chatId:chat.id,actors:new Map()};sessions.set(cacheKey,state);
+    state??={chatId:chat.id,actors:new Map(),unattributed:new Set()};sessions.set(cacheKey,state);
     const visited=new Set<string>();
+    let nativeWithoutPlatformId=false;
     for(let page=0;page<100;page++){
-     for(const [id,actor] of claudeReplicasActors(history,workspaceId,sessionId))if(!state.actors.has(id))state.actors.set(id,actor);
-     if(state.actors.size>20000)throw unavailable();
+     for(const [id,actor] of claudeReplicasActors(history,workspaceId,sessionId))if(!state.actors.has(id)&&!state.unattributed.has(id))state.actors.set(id,actor);
+     if(state.actors.size+state.unattributed.size>20000)throw unavailable();
+     // Claude control records, including interruption notices, can have an
+     // exact provider/native UUID without a platform input or human sender.
+     // Keep their content without inventing an actor. An absent record or a
+     // malformed platform ID still retains the cursor for retry.
+     for(const value of history.events as unknown[]){
+      const event=object(value),payload=object(event.payload);
+      if(event.type==='claude-user'&&payload.uuid===nativeId){
+       if(Object.hasOwn(payload,'replicasMessageId')&&!identifier(payload.replicasMessageId))throw unavailable();
+       if(!Object.hasOwn(payload,'replicasMessageId'))nativeWithoutPlatformId=true;
+      }
+     }
      if(state.actors.has(nativeId)){
-      atomicJson(file,{schemaVersion:1,workspaceId,sessionId,chatId:state.chatId,actors:[...state.actors]});
+      atomicJson(file,{schemaVersion:1,workspaceId,sessionId,chatId:state.chatId,actors:[...state.actors],unattributed:[...state.unattributed]});
       return state.actors.get(nativeId);
+     }
+     if(history.has_more===false&&nativeWithoutPlatformId){
+      if(state.actors.size+state.unattributed.size>=20000)throw unavailable();
+      state.unattributed.add(nativeId);
+      atomicJson(file,{schemaVersion:1,workspaceId,sessionId,chatId:state.chatId,actors:[...state.actors],unattributed:[...state.unattributed]});
+      return undefined;
      }
      if(history.has_more!==true)throw unavailable();
      const cursor=bounded(history.before_cursor,8192);if(!cursor||visited.has(cursor))throw unavailable();visited.add(cursor);
