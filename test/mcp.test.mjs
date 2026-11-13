@@ -4,6 +4,38 @@ import {createServer, request} from 'node:http';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
 import {standaloneMcp} from '../dist/tools/test-fixtures/mcp.mjs';
+import {z} from 'zod';
+
+test('runtime tools use the authenticated principal across concurrent requests', async t => {
+  let handler, principalOutsideRequest;
+  const server = createServer((req, res) => handler(req, res));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  handler = createOpenCrawlMcp({origin, authenticate: req => {
+    const userId = /^Bearer ([ab])$/.exec(req.headers.authorization || '')?.[1];
+    return userId ? {userId, tenantId: 'tenant_' + userId} : null;
+  }, registerTools(server, principal) {
+    principalOutsideRequest = principal;
+    server.registerTool('local_report', {inputSchema: z.strictObject({text: z.string()})}, async () => {
+      const before = principal();
+      await new Promise(resolve => setTimeout(resolve, 10));
+      assert.deepEqual(principal(), before);
+      return {content: [{type: 'text', text: JSON.stringify(before)}]};
+    });
+  }});
+  t.after(async () => {await handler.close(); await new Promise(resolve => server.close(resolve));});
+  const clients = await Promise.all(['a', 'b'].map(async user => {
+    const client = new Client({name: 'local', version: '1'});
+    await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), {requestInit: {headers: {authorization: 'Bearer ' + user}}}));
+    t.after(() => client.close());
+    return client;
+  }));
+  const reports = await Promise.all(clients.map(client => client.callTool({name: 'local_report', arguments: {text: 'example'}})));
+  assert.deepEqual(reports.map(result => JSON.parse(result.content[0].text)), [{userId: 'a', tenantId: 'tenant_a'}, {userId: 'b', tenantId: 'tenant_b'}]);
+  assert.throws(principalOutsideRequest, /Missing authenticated principal/);
+  assert.equal((await clients[0].callTool({name: 'local_report', arguments: {text: 'example', tenantId: 'tenant_b'}})).isError, true);
+  assert.equal((await fetch(origin + '/mcp')).status, 401);
+});
 
 test('MCP serves exactly two tools without skills or resources through real SDK clients', async t => {
   let handler;

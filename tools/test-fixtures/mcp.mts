@@ -41,4 +41,3 @@ export function standaloneMcp({token, origin, revision, boardPath, boardSearch, 
   server.requestTimeout = 15000;
   return server;
 }
-
