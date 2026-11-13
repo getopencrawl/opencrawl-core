@@ -1,0 +1,3 @@
+[test]
+# Keeps a test run away from the developer's own capture configuration.
+preload = ["./test/isolate.ts"]

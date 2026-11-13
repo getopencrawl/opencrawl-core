@@ -9,11 +9,12 @@ import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
 import {transcriptEntries} from '../../dist/src/sessions/library.mjs';
 import {batchDocuments} from '../../dist/src/sessions/indexer.mjs';
 import {createOnboardingStatus} from '../../dist/src/onboarding-status.mjs';
-import {installCapture,uninstallCapture} from '../src/capture/install.ts';
+import {installCapture,uninstallCapture,upgradeCaptureHooks} from '../src/capture/install.ts';
 import {captureHook,captureDir,captureStatus,readCaptureConfig,drainCaptureNotices,hookFlush,bindHookIdentity,syncCaptures} from '../src/capture/runtime.ts';
 import {saveSession,readSession,withSessionLock} from '../src/session.ts';
 import {excludeCapture} from '../src/capture/controls.ts';
-import {grokBotEvents,grokBotSession,grokBotResponse,GROK_BOT_HOOK_EVENTS} from '../src/capture/grok-bot.ts';
+import {collectCommand} from '../src/capture/command.ts';
+import {grokBotEvents,grokBotSession,grokBotResponse,grokBotHookName,grokBotStamp,GROK_BOT_HOOK_EVENTS,GROK_ENGINE_HOOK_EVENTS} from '../src/capture/grok-bot.ts';
 import {hash} from '../src/capture/parse.ts';
 
 // Payload shapes follow Cursor's published hook reference, which Grok Bot's
@@ -21,6 +22,24 @@ import {hash} from '../src/capture/parse.ts';
 const base={conversation_id:'6f1c2d3e-0000-4000-8000-bot-conversation',generation_id:'gen-1',model:'grok-4.7-thinking',model_id:'grok-4.7',cursor_version:'3.1.0',workspace_roots:['/home/bot/expenses'],user_email:'owner@example.com',transcript_path:null};
 const hook=(name:string,fields:Record<string,unknown>={})=>({...base,hook_event_name:name,...fields});
 const notice=(event:any,sequence=10)=>({id:'notice',at:'2026-11-10T12:00:00.000Z',sequence,event});
+
+// Envelopes as Grok's own engine writes them to a hook's stdin, taken from runs
+// of Grok 1.0.77 and 1.0.83 against a stub model. That engine does not run the
+// Cursor entries above; it runs matcher groups. Content is synthetic.
+const grokSession='01a1ce3f-b823-71c2-9b20-2f68b5076e56';
+const GROK_ALIASES:Record<string,string>={sessionId:'session_id',transcriptPath:'transcript_path',permissionMode:'permission_mode',toolName:'tool_name',toolInput:'tool_input',toolResult:'tool_response',
+  toolUseId:'tool_use_id',durationMs:'duration_ms',isInterrupt:'is_interrupt',stopHookActive:'stop_hook_active',lastAssistantMessage:'last_assistant_message',errorDetails:'error_details'};
+/** One dispatch, stamped at the given second of 2026-11-12T05:34. */
+function grok(name:string,second:number,fields:Record<string,unknown>={}) {
+  const event:Record<string,unknown>={hookEventName:name.replace(/([a-z])([A-Z])/g,'$1_$2').toLowerCase(),sessionId:grokSession,cwd:'/workspace',workspaceRoot:'/workspace',
+    timestamp:`2026-11-12T05:34:${String(second).padStart(2,'0')}.145551332+00:00`,permissionMode:'default',...fields,hook_event_name:name};
+  // The engine repeats these fields under Claude Code's names.
+  for(const [key,alias] of Object.entries(GROK_ALIASES))if(event[key]!==undefined)event[alias]=event[key];
+  return event;
+}
+const grokShell=(second:number,fields:Record<string,unknown>={})=>grok('PostToolUse',second,{toolName:'run_terminal_command',toolUseId:'call-1',toolInput:{command:'git log -3',description:'Recent commits'},
+  toolResult:{type:'Bash',output:[...Buffer.from('abc\n')],output_for_prompt:'exit: 0\nabc\n',exit_code:0,truncated:false},toolInputTruncated:false,toolResultTruncated:false,durationMs:8,isBackgrounded:false,...fields});
+const grokStop=(second:number)=>grok('Stop',second,{promptId:'turn-1',reason:'end_turn',stopHookActive:false,lastAssistantMessage:'Two items moved to Q1.',backgroundTasks:[],sessionCrons:[]});
 
 test('Grok Bot hook payloads become message, reasoning, tool and compaction events',()=>{
   const prompt=grokBotEvents(notice(hook('beforeSubmitPrompt',{prompt:'Expense the conference pass',attachments:[{type:'file',file_path:'/home/bot/expenses/policy.md'},{type:'rule'}]})));
@@ -70,6 +89,64 @@ test('Grok Bot hook answers never withhold a permission',()=>{
   for(const name of ['preToolUse','subagentStart','beforeShellExecution','beforeMCPExecution','beforeReadFile'])expect(GROK_BOT_HOOK_EVENTS as readonly string[]).not.toContain(name);
 });
 
+test("Grok's engine names the same hooks its own way and stamps every dispatch",()=>{
+  for(const [sent,name] of [['postToolUse','postToolUse'],['PostToolUse','postToolUse'],['post_tool_use','postToolUse'],['UserPromptSubmit','beforeSubmitPrompt'],['user_prompt_submit','beforeSubmitPrompt'],
+    ['Stop','stop'],['StopCancelled','stopCancelled'],['stop_failure','stopFailure'],['SessionStart','sessionStart'],['SubagentEnd','subagentStop'],['PreCompact','preCompact'],['beforeMCPExecution','beforeMCPExecution']])
+    expect(grokBotHookName({hook_event_name:sent})).toBe(name);
+  expect(grokBotHookName(grok('SessionEnd',9))).toBe('sessionEnd');expect(grokBotHookName({hookEventName:'session_end'})).toBe('sessionEnd');
+  // A name neither engine documents stays what it was, whatever it is called.
+  for(const name of ['Notification','constructor','__proto__','toString'])expect(grokBotHookName({hook_event_name:name})).toBe(name);
+  for(const event of [null,{},{hook_event_name:''},{hook_event_name:7}])expect(grokBotHookName(event)).toBeNull();
+  expect(grokBotStamp(grok('Stop',5))).toEqual({at:'2026-11-12T05:34:05.145Z',sequence:Date.parse('2026-11-12T05:34:05Z')*1000+145551,precise:true});
+  // A stamp without microseconds still dates the event, but cannot order a turn.
+  expect(grokBotStamp({timestamp:'2026-04-14T12:00:00Z'})).toEqual({at:'2026-04-14T12:00:00.000Z',sequence:Date.parse('2026-04-14T12:00:00Z')*1000,precise:false});
+  expect(grokBotStamp({timestamp:'2026-04-14T14:00:00.5+02:00'})).toEqual({at:'2026-04-14T12:00:00.500Z',sequence:Date.parse('2026-04-14T12:00:00Z')*1000+500000,precise:false});
+  // Cursor's payloads carry no time.
+  for(const stamp of [undefined,null,'',42,'yesterday','2026-11-12','2026-11-12T05:34:05','2026-13-45T05:34:05Z'])expect(grokBotStamp({timestamp:stamp})).toBeNull();
+  expect(grokBotStamp(hook('stop'))).toBeNull();
+  // The answers are the same under either engine's names.
+  expect(grokBotResponse(grok('UserPromptSubmit',1,{prompt:'hello'}))).toEqual({continue:true});
+  for(const name of ['PostToolUse','Stop','StopCancelled','SessionStart','Notification'])expect(grokBotResponse(grok(name,1))).toEqual({});
+  // The one event of Grok's that decides a tool call is not registered.
+  expect(GROK_ENGINE_HOOK_EVENTS as readonly string[]).not.toContain('PreToolUse');
+});
+
+test("a turn under Grok's engine is its prompt, its tool calls and the reply the turn ended with",()=>{
+  const prompt=grok('UserPromptSubmit',1,{promptId:'turn-1',prompt:'What changed in the roadmap?'});
+  expect(grokBotEvents(notice(prompt))).toMatchObject([{kind:'message',turnId:'turn-1',data:{role:'user',content:[{type:'text',text:'What changed in the roadmap?'}]}}]);
+  const [call,result]=grokBotEvents(notice(grokShell(2)));
+  expect(call).toMatchObject({kind:'tool_call',nativeId:'call-1',turnId:null,sequence:10,data:{type:'tool_use',name:'run_terminal_command',input:{command:'git log -3',description:'Recent commits'},call_id:'call-1'}});
+  // The shell result repeats its output as byte values; the text the model read is kept.
+  expect(result).toMatchObject({kind:'tool_result',nativeId:'call-1',sequence:11});
+  expect(result.data).toEqual({type:'tool_result',name:'run_terminal_command',call_id:'call-1',output:{type:'Bash',output_for_prompt:'exit: 0\nabc\n',exit_code:0,truncated:false},duration_ms:8});
+  // A result too large for its typed form arrives as that text alone.
+  const large=grok('PostToolUse',3,{toolName:'read_file',toolUseId:'call-2',toolInput:{path:'notes.md'},toolResult:'line one\nline two',toolResultTruncated:true});
+  expect(grokBotEvents(notice(large))[1].data.output).toBe('line one\nline two');
+  // An output array that is not bytes is somebody's data.
+  const listing=grok('PostToolUse',3,{toolName:'list_dir',toolUseId:'call-4',toolInput:{path:'.'},toolResult:{type:'ListDir',output:['a.md','b.md'],output_for_prompt:'a.md\nb.md'}});
+  expect(grokBotEvents(notice(listing))[1].data.output).toEqual({type:'ListDir',output:['a.md','b.md'],output_for_prompt:'a.md\nb.md'});
+  const failed=grok('PostToolUseFailure',4,{toolName:'use_tool',toolUseId:'call-3',toolInput:{tool:'gmail.search'},error:'MCP server returned an error',isInterrupt:false});
+  expect(grokBotEvents(notice(failed))[1].data).toEqual({type:'tool_result',name:'use_tool',call_id:'call-3',output:'MCP server returned an error',is_error:true,is_interrupt:false});
+  // Grok has no reply hook: the answer arrives with the end of the turn.
+  expect(grokBotEvents(notice(grokStop(5)))).toMatchObject([{kind:'message',turnId:'turn-1',data:{role:'assistant',content:[{type:'text',text:'Two items moved to Q1.'}]}}]);
+  // An interrupted turn reports what it had already said.
+  const cancelled=grok('StopCancelled',6,{promptId:'turn-2',reason:'user_interrupt',cancelledBy:'user',lastAssistantMessage:'Looking at the first'});
+  expect(grokBotEvents(notice(cancelled))).toMatchObject([{kind:'message',turnId:'turn-2',data:{role:'assistant',content:[{type:'text',text:'Looking at the first'}]}}]);
+  // The session's closing Stop has no reply, and a failed turn's text is the error rather than the Bot.
+  for(const event of [grok('Stop',7,{reason:'shutdown',stopHookActive:false}),grok('StopFailure',8,{promptId:'turn-3',error:'rate_limit',lastAssistantMessage:'Rate limit reached'}),
+    grok('StopCancelled',8,{promptId:'turn-4',reason:'user_interrupt'}),grok('SessionStart',0,{source:'new'}),grok('SessionEnd',9,{reason:'shutdown'}),grok('Notification',9,{notificationType:'idle_prompt',message:'Idle'})])
+    expect(grokBotEvents(notice(event))).toEqual([expect.objectContaining({kind:'hook',data:event})]);
+});
+
+test("Grok's engine names the session and the workspace on every event",()=>{
+  const at='2026-11-12T05:34:05.145Z';
+  // A tool event's cwd follows the tool call; the session stays in its workspace.
+  expect(grokBotSession(grokShell(2,{cwd:'/workspace/reports'}),at)).toEqual({sessionId:grokSession+':2026-11-12',identified:true,conversationId:grokSession,cwd:'/workspace',version:null,title:null,day:'2026-11-12'});
+  const blank=grokShell(2,{sessionId:'',cwd:'/workspace/reports'}),activity=grokBotSession(blank,at);
+  expect(activity).toMatchObject({identified:false,conversationId:null,cwd:'/workspace',title:'Grok Bot activity in workspace on 2026-11-12'});
+  expect(grokBotSession(grok('Stop',5,{sessionId:''}),at).sessionId).toBe(activity.sessionId);
+});
+
 async function fixture(run:(f:any)=>Promise<void>) {
   const dir=mkdtempSync(join(tmpdir(),'opencrawl-grok-bot-')),saved={...process.env};
   const principal={tenantId:'tenant-test',userId:'user-test',name:'Bot Owner',email:'owner@example.com'},token='grok-bot-capture-token-0123456789012345';
@@ -91,7 +168,7 @@ async function fixture(run:(f:any)=>Promise<void>) {
   const api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=api;
   try {
     Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),OPENCRAWL_SESSIONS_TOKEN:token,CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex'),OPENCRAWL_NO_UPDATE:'1'});
-    delete process.env.CLAUDE_CODE_REMOTE;
+    delete process.env.CLAUDE_CODE_REMOTE;delete process.env.GROK_HOME; // Grok's hook file belongs under the fixture's home
     await run({dir,api,principal,ingest,batches,hooksFile:join(dir,'.cursor','hooks.json'),install:()=>installCapture(api,{home:dir,command:[process.execPath,'-e',''],harnesses:['grok-bot']}),
       get uploads(){return uploads;},set fail(value:boolean){fail=value;},set stall(value:boolean){stall=value;}});
   } finally {
@@ -336,11 +413,17 @@ test('the hook process always exits 0 with the answer Grok Bot expects, installe
   // Before installation, and for input that is not JSON, the Bot is simply allowed to continue.
   expect(await run(JSON.stringify(hook('beforeSubmitPrompt',{prompt:'hello'})))).toMatchObject({exit:0,stdout:'{"continue":true}\n',stderr:''});
   expect(await run('not json')).toMatchObject({exit:0,stdout:'{}\n',stderr:''});
+  expect(await run(JSON.stringify(grok('UserPromptSubmit',1,{promptId:'turn-1',prompt:'hello'})))).toMatchObject({exit:0,stdout:'{"continue":true}\n',stderr:''});
+  expect(await run(JSON.stringify(grokStop(5)))).toMatchObject({exit:0,stdout:'{}\n',stderr:''});
   expect(existsSync(join(captureDir(),'notices'))).toBe(false);
   await f.install();
   const recorded=await run(JSON.stringify(hook('postToolUse',{tool_name:'Shell',tool_input:{command:'date'},tool_output:'{"exitCode":0}',tool_use_id:'spawned'})));
   expect(recorded).toMatchObject({exit:0,stdout:'{}\n',stderr:''});
   expect(f.batches.flatMap((batch:any)=>batch.events).map((event:any)=>event.kind)).toEqual(['tool_call','tool_result']);
+  // The same under Grok's envelope: the prompt, then the reply its turn ended with.
+  expect(await run(JSON.stringify(grok('UserPromptSubmit',1,{promptId:'turn-1',prompt:'hello'})))).toMatchObject({exit:0,stdout:'{"continue":true}\n',stderr:''});
+  expect(await run(JSON.stringify(grokStop(2)))).toMatchObject({exit:0,stdout:'{}\n',stderr:''});
+  expect(f.batches.flatMap((batch:any)=>batch.events).filter((event:any)=>event.kind==='message').map((event:any)=>event.data.role)).toEqual(['user','assistant']);
   // A missing sign-in is recorded for collect status; it never fails or blocks the hook.
   const signedOut=await run(JSON.stringify(hook('stop')),{OPENCRAWL_SESSIONS_TOKEN:''});
   expect(signedOut).toMatchObject({exit:0,stdout:'{}\n',stderr:''});
@@ -384,6 +467,11 @@ test('Claude Code and Codex hooks stand aside when a Cursor-format runtime runs 
   const cursor={...hook('postToolUse',{tool_name:'Shell',tool_input:{command:'ls'},tool_output:'{}',tool_use_id:'x'}),session_id:'cursor-session'};
   // The managed hook would otherwise hold the Bot for as long as its uploader stays alive.
   for(const harness of ['claude-code','codex'])expect(await run(['--managed','--harness',harness],cursor)).toMatchObject({exit:0,stdout:''});
+  expect(captureStatus().pendingHooks).toBe(0);
+  // Grok's engine loads the same Claude Code hook file and sends its own envelope,
+  // session ID and transcript path included. That is not a Claude Code session either.
+  const grokEnvelope=grokShell(2,{transcriptPath:'/home/bot/.grok/sessions/%2Fworkspace/'+grokSession+'/updates.jsonl'});
+  for(const harness of ['claude-code','codex'])expect(await run(['--managed','--harness',harness],grokEnvelope)).toMatchObject({exit:0,stdout:''});
   expect(captureStatus().pendingHooks).toBe(0);
   // The same hook still records a native session.
   expect(await run(['--harness','claude-code'],{session_id:'claude-session',hook_event_name:'PostToolUse'})).toMatchObject({exit:0});
@@ -455,3 +543,224 @@ test('a receiver that never answers costs the Bot five seconds once, then a minu
   expect(next).toMatchObject({exit:0,stdout:'{}\n'});expect(next.ms).toBeLessThan(2000);
   expect(f.uploads).toBe(1);expect(captureStatus()).toMatchObject({pendingHooks:1,queued:1});
 }),30_000);
+
+test("install also registers with Grok's own engine, beside whatever else its hook file holds",async()=>fixture(async f=>{
+  const file=join(f.dir,'.grok','hooks','opencrawl.json'),theirs={matcher:'Bash',hooks:[{type:'command',command:'bin/safety-check.sh',timeout:10}]};
+  mkdirSync(join(f.dir,'.grok','hooks'),{recursive:true});
+  writeFileSync(file,JSON.stringify({hooks:{PreToolUse:[theirs]}}));
+  const first=await f.install();
+  expect(first.nextStep).toContain('Grok Bot hooks installed in '+f.hooksFile+' and '+file+'.');expect(first.nextStep).toContain('collect status');
+  expect(readCaptureConfig()!.grokEngineHooks).toBe(file);
+  const installed=JSON.parse(readFileSync(file,'utf8')),command=JSON.parse(readFileSync(f.hooksFile,'utf8')).hooks.stop[0].command;
+  expect(Object.keys(installed.hooks).sort()).toEqual([...GROK_ENGINE_HOOK_EVENTS,'PreToolUse'].sort());
+  expect(installed.hooks.PreToolUse).toEqual([theirs]);
+  // Matcher groups, the only shape Grok's engine runs, with room past its five-second default.
+  for(const event of GROK_ENGINE_HOOK_EVENTS)expect(installed.hooks[event]).toEqual([{hooks:[{type:'command',command,timeout:30}]}]);
+  expect((await f.install()).installationId).toBe(first.installationId);
+  expect(JSON.parse(readFileSync(file,'utf8'))).toEqual(installed);
+  await uninstallCapture(f.dir);
+  expect(JSON.parse(readFileSync(file,'utf8'))).toEqual({hooks:{PreToolUse:[theirs]}});
+  // With nothing else in it, the file goes with the uninstall. One that cannot be read is replaced.
+  writeFileSync(file,'{ not json');
+  await f.install();
+  expect(Object.keys(JSON.parse(readFileSync(file,'utf8')).hooks).sort()).toEqual([...GROK_ENGINE_HOOK_EVENTS].sort());
+  await uninstallCapture(f.dir);
+  expect(existsSync(file)).toBe(false);
+}));
+
+test("a home directory that refuses Grok's hook file still gets the Cursor entries, and is not asked again",async()=>fixture(async f=>{
+  writeFileSync(join(f.dir,'.grok'),'not a directory');
+  const installed=await f.install();
+  expect(readCaptureConfig()!.grokEngineHooks).toBeNull();
+  expect(installed.nextStep).toContain('Grok Bot hooks installed in '+f.hooksFile+'.');
+  expect(JSON.parse(readFileSync(f.hooksFile,'utf8')).hooks.stop).toHaveLength(1);
+  const backups=readdirSync(join(captureDir(),'backups')).length;
+  await upgradeCaptureHooks();await upgradeCaptureHooks();
+  expect(readdirSync(join(captureDir(),'backups'))).toHaveLength(backups);
+  expect(readFileSync(join(f.dir,'.grok'),'utf8')).toBe('not a directory');
+  expect(captureStatus().grokBot).toMatchObject({engineHooks:null});
+  // The Cursor registration records as before.
+  const stop=hook('stop');await captureHook('grok-bot',stop);await hookFlush(stop);
+  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,lastError:null});
+  // The same when the file's own place is taken by something that is not a file.
+  rmSync(join(f.dir,'.grok'));mkdirSync(join(f.dir,'.grok','hooks','opencrawl.json'),{recursive:true});
+  await f.install();
+  expect(readCaptureConfig()!.grokEngineHooks).toBeNull();
+  expect(statSync(join(f.dir,'.grok','hooks','opencrawl.json')).isDirectory()).toBe(true);
+  expect(captureStatus().grokBot).toMatchObject({engineHooks:null});
+}));
+
+test('an install from before Grok engine hooks gains them on its next run, and no other hook file is rewritten',async()=>fixture(async f=>{
+  await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e','']});
+  await f.install();
+  const file=join(f.dir,'.grok','hooks','opencrawl.json'),configFile=join(captureDir(),'config.json');
+  // As CLI 0.4.30 to 0.4.37 left it: the Cursor entries only.
+  const older=JSON.parse(readFileSync(configFile,'utf8'));delete older.grokEngineHooks;
+  writeFileSync(configFile,JSON.stringify(older));rmSync(file);
+  const others=[join(f.dir,'claude','settings.json'),join(f.dir,'codex','hooks.json'),join(f.dir,'codex','config.toml'),f.hooksFile,join(captureDir(),'runner.cjs')];
+  const before=others.map(path=>[readFileSync(path,'utf8'),statSync(path).mtimeMs]),backups=readdirSync(join(captureDir(),'backups')).length;
+  await upgradeCaptureHooks();
+  expect(readCaptureConfig()).toMatchObject({grokEngineHooks:file,harnesses:['claude-code','codex','grok-bot']});
+  const added=JSON.parse(readFileSync(file,'utf8')),command=JSON.parse(readFileSync(f.hooksFile,'utf8')).hooks.stop[0].command;
+  // The command is the one already installed, so the two registrations are one handler to Grok.
+  for(const event of GROK_ENGINE_HOOK_EVENTS)expect(added.hooks[event]).toEqual([{hooks:[{type:'command',command,timeout:30}]}]);
+  expect(Object.keys(added.hooks).sort()).toEqual([...GROK_ENGINE_HOOK_EVENTS].sort());
+  expect(others.map(path=>[readFileSync(path,'utf8'),statSync(path).mtimeMs])).toEqual(before);
+  expect(readdirSync(join(captureDir(),'backups'))).toHaveLength(backups);
+  // Settled: a person who removes the file is not overruled by the next hook.
+  rmSync(file);await upgradeCaptureHooks();
+  expect(existsSync(file)).toBe(false);
+  // Status is where a quiet capture gets looked at, so it brings the files up to date itself.
+  writeFileSync(configFile,JSON.stringify(older));
+  expect(await collectCommand('status',f.api,{})).toMatchObject({installed:true,grokBot:{engineHooks:file,hooks:{}}});
+  expect(existsSync(file)).toBe(true);
+}));
+
+test("a conversation under Grok's engine is recorded once per dispatch, at the times the engine gave",async()=>fixture(async f=>{
+  await f.install();
+  const turn=[grok('SessionStart',0,{source:'new'}),grok('UserPromptSubmit',1,{promptId:'turn-1',prompt:'What changed in the roadmap?'}),grokShell(2,{cwd:'/workspace/reports'}),grokStop(3)];
+  // Every dispatch arrives twice, as it does where two registrations both run.
+  for(const event of turn)for(const copy of [event,JSON.parse(JSON.stringify(event))]){await captureHook('grok-bot',copy);await hookFlush(copy);}
+  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,lastError:null,attention:null,grokBot:{firstHook:'2026-11-12T05:34:00.145Z',lastHook:'2026-11-12T05:34:03.145Z',
+    hooks:{sessionStart:1,beforeSubmitPrompt:1,postToolUse:1,stop:1},recorded:{prompts:1,replies:1,toolCalls:1},engineHooks:join(f.dir,'.grok','hooks','opencrawl.json')}});
+  expect(f.batches).toHaveLength(2);
+  for(const batch of f.batches as any[])expect(batch).toMatchObject({harness:'grok-bot',sessionId:grokSession+':2026-11-12',conversationId:grokSession,origin:'cloud',captureMode:'live',cwd:'/workspace',owner:f.principal});
+  const events:any[]=f.batches.flatMap((batch:any)=>batch.events).sort((a:any,b:any)=>a.sequence-b.sequence);
+  expect(events.map(event=>event.kind)).toEqual(['hook','message','tool_call','tool_result','message']);
+  expect(events.map(event=>event.timestamp)).toEqual(['2026-11-12T05:34:00.145Z','2026-11-12T05:34:01.145Z','2026-11-12T05:34:02.145Z','2026-11-12T05:34:02.145Z','2026-11-12T05:34:03.145Z']);
+  expect(events[1]).toMatchObject({turnId:'turn-1',data:{role:'user'}});expect(events[4]).toMatchObject({turnId:'turn-1',data:{role:'assistant'}});
+  expect(JSON.stringify(f.batches)).not.toContain('[97,98,99,10]');
+  const entries=events.flatMap(event=>transcriptEntries(event));
+  expect(entries.map(entry=>entry.type)).toEqual(['message','tool_call','tool_result','message']);
+  expect(entries[0]).toEqual({type:'message',role:'user',text:'What changed in the roadmap?'});expect(entries.at(-1)).toEqual({type:'message',role:'assistant',text:'Two items moved to Q1.'});
+  // An identified session needs no activity title.
+  expect(events.some(event=>event.kind==='session_title')).toBe(false);
+  // A repeat that arrives after the list of recent dispatches has moved on is
+  // uploaded again as the very same event, which the receiver takes as one.
+  rmSync(join(captureDir(),'grok-bot-hooks.json'));
+  await captureHook('grok-bot',turn[3]);await hookFlush(turn[3]);
+  const replies=f.batches.flatMap((batch:any)=>batch.events).filter((event:any)=>event.kind==='message'&&event.data.role==='assistant');
+  expect(replies).toHaveLength(2);expect(replies[1]).toEqual(replies[0]);
+  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,lastError:null});
+}));
+
+test('status tells hooks that never ran from hooks that carried no conversation',async()=>fixture(async f=>{
+  expect(captureStatus().grokBot).toBeUndefined();
+  await f.install();
+  expect(captureStatus()).toMatchObject({attention:expect.stringContaining('No Grok Bot hook has run on this computer since capture was installed.'),
+    grokBot:{firstHook:null,lastHook:null,hooks:{},recorded:{prompts:0,replies:0,toolCalls:0}}});
+  await captureHook('grok-bot',grok('SessionStart',0,{source:'new'}));
+  expect(captureStatus().attention).toBe('Grok Bot hooks run here but none has carried a prompt, a reply or a tool call (received: sessionStart x1).');
+  await captureHook('grok-bot',hook('postToolUse',{tool_name:'Shell',tool_input:{command:'ls'},tool_output:'{}',tool_use_id:'a'}));
+  expect(captureStatus().attention).toBe('This Grok Bot runtime has reported tool activity only (received: sessionStart x1, postToolUse x1). Prompts and replies are recorded when it sends them.');
+  await captureHook('grok-bot',hook('beforeSubmitPrompt',{prompt:'hello'}));
+  expect(captureStatus()).toMatchObject({attention:null,grokBot:{hooks:{sessionStart:1,postToolUse:1,beforeSubmitPrompt:1},recorded:{prompts:1,replies:0,toolCalls:1}}});
+  // The counters hold names and numbers, never what a hook carried.
+  expect(readFileSync(join(captureDir(),'grok-bot-hooks.json'),'utf8')).not.toContain('hello');
+  // A hook may be named after anything.
+  for(const name of ['constructor','__proto__'])await captureHook('grok-bot',{hook_event_name:name,cwd:'/workspace'});
+  expect(Object.entries(captureStatus().grokBot!.hooks).filter(([name])=>['constructor','__proto__'].includes(name))).toEqual([['constructor',1],['__proto__',1]]);
+  // Counters that cannot be read start over; they never stop a recording.
+  const pending=captureStatus().pendingHooks;
+  writeFileSync(join(captureDir(),'grok-bot-hooks.json'),'{ not json');
+  await captureHook('grok-bot',grok('UserPromptSubmit',1,{promptId:'turn-1',prompt:'still recorded'}));
+  expect(captureStatus()).toMatchObject({pendingHooks:pending+1,grokBot:{hooks:{beforeSubmitPrompt:1},recorded:{prompts:1}}});
+  // After an uninstall there is nothing to report.
+  await uninstallCapture(f.dir);
+  expect(captureStatus().grokBot).toBeUndefined();
+  // A plain install followed by the Grok Bot one, as a Bot does when it follows the
+  // pointer: Codex's own note does not hide Grok Bot's.
+  rmSync(join(captureDir(),'grok-bot-hooks.json'));
+  await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e','']});await f.install();
+  expect(captureStatus().attention).toMatch(/^Codex will not run \d+ OpenCrawl capture hooks until you trust them.* No Grok Bot hook has run on this computer since capture was installed\./);
+  expect(captureStatus().attention).not.toContain('which is not in place here');
+  // A hook file that has gone is named, since without it Grok's engine runs nothing.
+  rmSync(join(f.dir,'.grok','hooks','opencrawl.json'));
+  expect(captureStatus()).toMatchObject({grokBot:{engineHooks:null},attention:expect.stringContaining("Grok's own engine runs hooks only from its hook file, which is not in place here: opencrawl collect install --yes --harness grok-bot writes it.")});
+}));
+
+test("a project exclusion holds under Grok's engine, whichever directory an event names it by",async()=>fixture(async f=>{
+  await f.install();
+  const repo=join(f.dir,'repo'),payroll=join(repo,'packages','payroll'),docs=join(repo,'docs');
+  for(const path of [payroll,docs])mkdirSync(path,{recursive:true});
+  await excludeCapture(payroll);
+  // Grok reports the repository as the workspace root, and the directory the
+  // session was launched in or the tool call ran in as cwd.
+  await captureHook('grok-bot',grok('UserPromptSubmit',1,{workspaceRoot:repo,cwd:payroll,promptId:'turn-1',prompt:'a raise for the whole team'}));
+  await captureHook('grok-bot',grokShell(2,{workspaceRoot:repo,cwd:payroll}));
+  await captureHook('grok-bot',grokStop(3));
+  // The stop above names neither directory: with an exclusion in place, /workspace alone is not excluded.
+  expect(captureStatus()).toMatchObject({pendingHooks:1,grokBot:{hooks:{stop:1},recorded:{prompts:0,replies:1,toolCalls:0}}});
+  // The rest of the repository is still recorded,
+  await captureHook('grok-bot',grokShell(4,{workspaceRoot:repo,cwd:docs,toolUseId:'call-docs'}));
+  expect(captureStatus().pendingHooks).toBe(2);
+  // until it is excluded too: that covers what is still waiting here.
+  await excludeCapture(docs);
+  expect(await drainCaptureNotices()).toBe(2);
+  const queued=readdirSync(join(captureDir(),'queue')).map(name=>JSON.parse(readFileSync(join(captureDir(),'queue',name),'utf8')));
+  expect(queued.flatMap(batch=>batch.events).map((event:any)=>event.kind)).toEqual(['message']);
+  expect(JSON.stringify(queued)).not.toContain('payroll');expect(JSON.stringify(queued)).not.toContain('call-docs');
+  // An excluded workspace root excludes every event of the session.
+  await excludeCapture(repo);
+  await captureHook('grok-bot',grokShell(5,{workspaceRoot:repo,cwd:join(repo,'src'),toolUseId:'call-src'}));
+  expect(captureStatus().pendingHooks).toBe(0);
+}));
+
+test('a stamp to the second still drops a repeat, and events keep the order they arrived in',async()=>fixture(async f=>{
+  await f.install();
+  const calls=['a','b','c','d'].map(id=>({...grokShell(0,{toolUseId:'call-'+id,toolInput:{command:'echo '+id}}),timestamp:'2026-11-12T05:34:05Z'}));
+  for(const event of [...calls,calls[1],calls[3]])await captureHook('grok-bot',event);
+  expect(captureStatus()).toMatchObject({pendingHooks:4,grokBot:{hooks:{postToolUse:4},recorded:{toolCalls:4}}});
+  await drainCaptureNotices();
+  const [batch]=readdirSync(join(captureDir(),'queue')).map(name=>JSON.parse(readFileSync(join(captureDir(),'queue',name),'utf8')));
+  expect(batch.events.filter((event:any)=>event.kind==='tool_call').map((event:any)=>event.nativeId)).toEqual(['call-a','call-b','call-c','call-d']);
+  expect(batch.events.every((event:any)=>event.timestamp==='2026-11-12T05:34:05.000Z')).toBe(true);
+  expect(new Set(batch.events.map((event:any)=>event.sequence)).size).toBe(batch.events.length);
+}));
+
+test("an older install's next hook adds Grok's hook file and still uploads, also where that file cannot be written",async()=>fixture(async f=>{
+  await f.install();
+  const file=join(f.dir,'.grok','hooks','opencrawl.json'),configFile=join(captureDir(),'config.json'),cli=resolve(import.meta.dir,'../src/cli.ts');
+  const run=async(event:any)=>{
+    const child=Bun.spawn(['bun',cli,'collect','hook','--harness','grok-bot'],{stdin:Buffer.from(JSON.stringify(event)),stdout:'pipe',stderr:'pipe',env:{...process.env}});
+    const [exit,stdout]=await Promise.all([child.exited,new Response(child.stdout).text()]);
+    return {exit,stdout};
+  };
+  // As CLI 0.4.30 to 0.4.37 left an install: the Cursor entries only.
+  const asOlder=()=>{const config=JSON.parse(readFileSync(configFile,'utf8'));delete config.grokEngineHooks;writeFileSync(configFile,JSON.stringify(config));};
+  const backups=()=>readdirSync(join(captureDir(),'backups')).length;
+  asOlder();rmSync(join(f.dir,'.grok'),{recursive:true});
+  expect(await run(hook('stop'))).toEqual({exit:0,stdout:'{}\n'});
+  expect(readCaptureConfig()!.grokEngineHooks).toBe(file);expect(existsSync(file)).toBe(true);
+  expect(f.batches).toHaveLength(1);
+  // The file's place is taken by a directory. The hook settles on doing without,
+  // once, and uploads all the same.
+  asOlder();rmSync(file);mkdirSync(file);
+  const before=backups();
+  for(const second of [1,2,3])expect(await run(grokStop(second))).toEqual({exit:0,stdout:'{}\n'});
+  expect(readCaptureConfig()!.grokEngineHooks).toBeNull();
+  expect(f.batches).toHaveLength(4);expect(backups()).toBe(before);
+  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,lastError:null});
+  // Cursor's hooks file cannot be read, so there is no installed command to copy:
+  // still settled, still no hold-up, and the file is left as it was found.
+  asOlder();writeFileSync(f.hooksFile,'{ not json');
+  expect(await run(grokStop(4))).toEqual({exit:0,stdout:'{}\n'});
+  expect(readCaptureConfig()!.grokEngineHooks).toBeNull();
+  expect(f.batches).toHaveLength(5);
+  expect(readFileSync(f.hooksFile,'utf8')).toBe('{ not json');
+  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,lastError:null});
+  writeFileSync(f.hooksFile,JSON.stringify({version:1,hooks:{}})); // so the fixture can uninstall
+}),60_000);
+
+test('hook processes that run at the same time record every dispatch, and a repeated one once',async()=>fixture(async f=>{
+  await f.install();
+  const cli=resolve(import.meta.dir,'../src/cli.ts');
+  const run=(event:any)=>Bun.spawn(['bun',cli,'collect','hook','--harness','grok-bot'],{stdin:Buffer.from(JSON.stringify(event)),stdout:'ignore',stderr:'ignore',env:{...process.env}}).exited;
+  const calls=Array.from({length:6},(_,index)=>grokShell(10+index,{toolUseId:'call-'+index,toolInput:{command:'echo '+index}}));
+  // Each dispatch is delivered twice, and all twelve hooks run at once.
+  expect(await Promise.all([...calls,...calls].map(run))).toEqual(Array(12).fill(0));
+  const stop=grokStop(30);await captureHook('grok-bot',stop);await hookFlush(stop);
+  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0,lastError:null,grokBot:{hooks:{postToolUse:6,stop:1},recorded:{toolCalls:6,replies:1}}});
+  const recorded=f.batches.flatMap((batch:any)=>batch.events).filter((event:any)=>event.kind==='tool_call').sort((a:any,b:any)=>a.sequence-b.sequence).map((event:any)=>event.nativeId);
+  expect(recorded).toEqual(['call-0','call-1','call-2','call-3','call-4','call-5']);
+}),60_000);
