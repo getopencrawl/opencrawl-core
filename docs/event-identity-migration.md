@@ -65,10 +65,12 @@ retrying the fence. All imported fingerprints commit before the marker is writte
 a crash before or after the fence resumes safely. The marker contains no event
 map and never grows with the session. Old software cannot overwrite it.
 
-An ordinary `up.sh` restart also migrates individual sessions lazily before their
-first new reservation. The offline command is the recommended upgrade for large
-installations and is required when upgrading writers from before immutable event
-ledgers were introduced. Deploy the receiver and index worker together. A migrated
+Startup scripts detect an old configuration without the PostgreSQL credential
+and direct it through the backup-backed upgrade, without changing its running
+services or secrets. After upgrading, individual sessions can also migrate lazily
+before their first new reservation. Separately operated services must stop old
+writers before switching, especially versions from before immutable event ledgers.
+Deploy the receiver and index worker together. A migrated
 source presented to a different/empty database fails closed, rather than silently
 falling back to an old ledger. Resolve an actual content conflict explicitly; do
 not pick an arbitrary winner or remove a failed-upload reservation.

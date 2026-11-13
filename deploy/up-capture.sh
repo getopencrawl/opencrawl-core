@@ -16,7 +16,8 @@ if [ ! -f .env ]; then
   echo "==> Wrote deploy/.env with fresh secrets"
 fi
 if ! grep -q '^OPENCRAWL_DATABASE_PASSWORD=.' .env; then
-  printf '\nOPENCRAWL_DATABASE_PASSWORD=%s\n' "$(secret)" >> .env
+  echo 'Existing configuration needs the PostgreSQL upgrade. Run: COMPOSE_FILE=compose.capture.yaml node deploy/upgrade.mjs /absolute/new-backup-directory (from the repository root). Existing data and running services are unchanged.' >&2
+  exit 1
 fi
 docker compose -f compose.capture.yaml up -d --build --wait --wait-timeout 240 "$@"
 . ./.env

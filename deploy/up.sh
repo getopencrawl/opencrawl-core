@@ -42,11 +42,11 @@ if [ ! -f .env ]; then
   echo "Created deploy/.env with local secrets. Set OPENCRAWL_URL, configure Airbyte if enabled, then rerun this command."
   exit 0
 fi
-# Existing installations acquire only the new database secret; retain every
-# existing credential and volume. The receiver migrates each session with a CAS
-# fence before accepting new events. Use upgrade.sh for a full offline migration.
+# Unknown old installations may predate conditional event reservations. Do not
+# overlap their writers with migration or silently skip their matched backup.
 if ! grep -q '^OPENCRAWL_DATABASE_PASSWORD=.' .env; then
-  printf '\nOPENCRAWL_DATABASE_PASSWORD=%s\n' "$(secret)" >> .env
+  echo 'Existing configuration needs the PostgreSQL upgrade. Run: node deploy/upgrade.mjs /absolute/new-backup-directory (from the repository root). Existing data and running services are unchanged.' >&2
+  exit 1
 fi
 docker compose up -d --build --wait --wait-timeout 600 "$@"
 echo "OpenCrawl is running at the OPENCRAWL_URL configured in deploy/.env."
