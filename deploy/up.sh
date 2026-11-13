@@ -43,6 +43,8 @@ if [ ! -f .env ]; then
   exit 0
 fi
 command -v node >/dev/null 2>&1 || { echo 'Node.js 24 is required for the coordinated upgrade; ./dev/up installs its pinned runtime automatically.' >&2; exit 1; }
+# Retain an explicitly selected disabled integration mode across later upgrades.
+# Persist only after the upgrader has captured the original configuration.
 node upgrade.mjs --automatic
 docker compose up -d --build --wait --wait-timeout 600 "$@"
 node upgrade.mjs --record-startup

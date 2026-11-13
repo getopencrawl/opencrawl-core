@@ -3,7 +3,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,appe
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
-import {standaloneCapture} from '../../dist/src/sessions/standalone.mjs';
+import {standaloneCapture} from '../../dist/tools/test-fixtures/capture.mjs';
 import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
 import {installCapture,uninstallCapture} from '../src/capture/install.ts';

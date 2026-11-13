@@ -32,7 +32,16 @@ async function request(path:string,init:RequestInit={}){
   for(const cookie of response.headers.getSetCookie()){const [pair]=cookie.split(';'),i=pair.indexOf('=');cookies.set(pair.slice(0,i),pair.slice(i+1));}
   return response;
 }
-const form=(path:string,fields:Record<string,string>)=>request(path,{method:'POST',headers:{origin:input.origin,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(fields)});
+async function form(path:string,fields:Record<string,string>){
+  const deadline=Date.now()+60000;
+  for(;;){
+    const response=await request(path,{method:'POST',headers:{origin:input.origin,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(fields)});
+    if(response.status!==429||Date.now()>=deadline)return response;
+    await response.arrayBuffer();
+    console.log('Waiting for the authentication retry window...');
+    await delay(Math.max(1,Number(response.headers.get('retry-after'))||10)*1000);
+  }
+}
 async function json<T>(path:string,body?:unknown):Promise<T>{
   const r=await request(path,body===undefined?{}:{method:'POST',headers:{origin:input.origin,'content-type':'application/json'},body:JSON.stringify(body)});
   if(!r.ok)throw new Error(`Authenticated ${path} returned ${r.status}`);return await r.json() as T;

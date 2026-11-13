@@ -26,10 +26,10 @@ export function snapshot(installation,containers) {
       } else throw new Error('Unsupported persistent mount type');
     }
     services[name]={image:container.Image,command:container.Config.Cmd,entrypoint:container.Config.Entrypoint,
-      environment:container.Config.Env.map(value=>value.replaceAll('$','$$')),user:container.Config.User,working_dir:container.Config.WorkingDir,
+      environment:container.Config.Env.map(value=>value.replaceAll('$',()=> '$$')),user:container.Config.User,working_dir:container.Config.WorkingDir,
       restart:container.HostConfig.RestartPolicy.Name||'no',volumes:mounts,
       ports:Object.entries(container.HostConfig.PortBindings||{}).flatMap(([target,bindings])=>(bindings||[]).map(b=>({target:Number(target.split('/')[0]),published:b.HostPort,host_ip:b.HostIp||'0.0.0.0',protocol:target.split('/')[1]}))),
-      ...(container.Config.Healthcheck?{healthcheck:{test:container.Config.Healthcheck.Test,interval:container.Config.Healthcheck.Interval+'ns',timeout:container.Config.Healthcheck.Timeout+'ns',retries:container.Config.Healthcheck.Retries,start_period:(container.Config.Healthcheck.StartPeriod||0)+'ns'}}:{})};
+      ...(container.Config.Healthcheck?{healthcheck:{test:container.Config.Healthcheck.Test,...Object.fromEntries([['Interval','interval'],['Timeout','timeout'],['StartPeriod','start_period']].filter(([source])=>container.Config.Healthcheck[source]).map(([source,key])=>[key,container.Config.Healthcheck[source]+'ns'])),...(container.Config.Healthcheck.Retries?{retries:container.Config.Healthcheck.Retries}:{})}}:{})};
   }
   if(!services.app||!services.worker||!services['temporal-db'])throw new Error('Upgrade requires the full application installation (app, worker and temporal-db)');
   return {format:2,project,kind:installation.kind,createdAt:new Date().toISOString(),stores,compose:{name:project,services,volumes},

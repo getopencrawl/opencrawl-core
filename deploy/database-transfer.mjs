@@ -3,7 +3,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {createHash} from 'node:crypto';
 import {createPostgresEventIdentities} from '../dist/src/sessions/postgres-identities.mjs';
 
-const password=process.env.OPENCRAWL_DATABASE_PASSWORD;
+const password=decodeURIComponent(new URL(process.env.OPENCRAWL_DATABASE_URL).password);
 const config={user:'opencrawl',password,database:'opencrawl'};
 const source=new pg.Client({...config,host:'app-db'}),target=new pg.Client({...config,host:'temporal-db'});
 const tables=[

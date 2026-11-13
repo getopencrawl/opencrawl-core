@@ -1,5 +1,5 @@
 import {spawnSync} from 'node:child_process';
-import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,rmSync,lstatSync,realpathSync} from 'node:fs';
+import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,rmSync,lstatSync,realpathSync,openSync,closeSync,fsyncSync} from 'node:fs';
 import {resolve,dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseEnv} from 'node:util';
@@ -9,7 +9,9 @@ export function privateFile(path,value) {
   if(existsSync(path)&&lstatSync(path).isSymbolicLink())throw new Error('Refusing symlinked installation state');
   mkdirSync(dirname(path),{recursive:true,mode:0o700});
   writeFileSync(path+'.tmp',typeof value==='string'?value:JSON.stringify(value,null,2)+'\n',{mode:0o600});
+  const fd=openSync(path+'.tmp','r');try{fsyncSync(fd);}finally{closeSync(fd);}
   renameSync(path+'.tmp',path);
+  const directory=openSync(dirname(path),'r');try{fsyncSync(directory);}finally{closeSync(directory);}
 }
 export function run(command,args,{capture=true,input,env={},stdio}={}) {
   const result=spawnSync(command,args,{cwd:root,env:{...process.env,...env},encoding:'utf8',input,

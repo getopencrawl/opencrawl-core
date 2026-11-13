@@ -52,6 +52,7 @@ try {
   if(nodeIds){const c=JSON.parse(docker(['inspect',nodeIds]))[0];if(c.Config.Labels['io.x-k8s.kind.cluster']!==current.project)throw new Error('Airbyte node ownership mismatch');airbyte={id:c.Id,running:c.State.Running};}
   journal={format:1,project:current.project,target,backup,phase:'prepared',snapshot:saved,containerIds:inventory.map(c=>c.Id),airbyte,
    databasePassword:current.env.OPENCRAWL_DATABASE_PASSWORD||randomBytes(24).toString('hex'),
+   airbyteEnabled:process.env.OPENCRAWL_AIRBYTE_ENABLED??app.Config.Env.find(value=>value.startsWith('OPENCRAWL_AIRBYTE_ENABLED='))?.split('=').slice(1).join('=')??'true',
    legacyDatabase:inventory.find(c=>c.Config.Labels['com.docker.compose.service']==='app-db')?.Id||null};
   privateFile(journalFile,journal);
  }
@@ -68,6 +69,8 @@ try {
  if(!done('configured')) {
   let text=readFileSync(current.envFile,'utf8');
   if(!current.env.OPENCRAWL_DATABASE_PASSWORD)text+='\nOPENCRAWL_DATABASE_PASSWORD='+journal.databasePassword+'\n';
+  text=text.replace(/^OPENCRAWL_AIRBYTE_ENABLED=.*$/m,'OPENCRAWL_AIRBYTE_ENABLED='+journal.airbyteEnabled);
+  if(!/^OPENCRAWL_AIRBYTE_ENABLED=/m.test(text))text+='\nOPENCRAWL_AIRBYTE_ENABLED='+journal.airbyteEnabled+'\n';
   privateFile(current.envFile,text);
   if(current.state){current.state.databasePassword=journal.databasePassword;privateFile(join(current.stateDir,'state.json'),current.state);}
   current=installation(kind);mark('configured');

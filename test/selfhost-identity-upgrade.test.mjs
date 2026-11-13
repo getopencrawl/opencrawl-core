@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {snapshot} from '../deploy/recovery.mjs';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,copyFileSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -37,4 +38,13 @@ test('a failed target build leaves old writers and credentials unchanged, and ca
   }
   assert.equal(JSON.parse(readFileSync(join(f.deploy,'.upgrade/upgrade.json'),'utf8')).phase,'prepared');
  }finally{f.cleanup();}
+});
+
+test('recovery Compose preserves literal environment values and omitted Docker health defaults',()=>{
+ const runtime=['app','worker','temporal-db'].map(name=>({Image:'sha256:fixture',Config:{Labels:{'com.docker.compose.service':name},Cmd:['true'],Env:['SECRET=a$b'],Healthcheck:{Test:['CMD','true'],Interval:5000000000}},HostConfig:{RestartPolicy:{Name:'unless-stopped'}},Mounts:[],State:{Running:true}}));
+ const saved=snapshot({project:'fixture',kind:'deploy',configuration:[]},runtime);
+ assert.equal(saved.compose.services.app.environment[0],'SECRET=a$$b');
+ assert.equal(saved.compose.services.app.healthcheck.interval,'5000000000ns');
+ assert.equal(saved.compose.services.app.healthcheck.timeout,undefined);
+ assert.ok(!JSON.stringify(saved).includes('undefinedns'));
 });
