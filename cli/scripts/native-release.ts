@@ -6,10 +6,11 @@ import {createHash} from 'node:crypto';
 const root=resolve(import.meta.dir,'..'),dist=join(root,'dist'),output=join(root,'native');
 const manifest=JSON.parse(readFileSync(join(dist,'cli/package.json'),'utf8'));
 const digest=(file:string)=>createHash('sha256').update(readFileSync(file)).digest('hex');
+const platforms=['darwin-arm64','darwin-x64','linux-arm64','linux-x64','win32-x64'];
 function run(args:string[]){const result=Bun.spawnSync(args,{stdout:'pipe',stderr:'pipe'});if(result.exitCode)throw new Error(result.stderr.toString());return result.stdout.toString();}
 if(!process.argv.includes('--publish')){
   mkdirSync(output,{recursive:true});const sums:string[]=[];
-  for(const platform of readdirSync(dist).filter(name=>name!=='cli').sort()){
+  for(const platform of platforms){
     const directory=join(dist,platform),pkg=JSON.parse(readFileSync(join(directory,'package.json'),'utf8'));
     if(pkg.version!==manifest.version||pkg.opencrawlRevision!==manifest.opencrawlRevision)throw new Error('Mixed native release artifacts');
     const entries:Record<string,Blob>={};
@@ -23,7 +24,14 @@ if(!process.argv.includes('--publish')){
 }else{
   if(!/^[a-f0-9]{40}$/.test(manifest.opencrawlRevision||''))throw new Error('Native publication requires source provenance');
   const repo='getopencrawl/opencrawl-core',tag='cli-v'+manifest.version;
-  const files=readdirSync(output).sort(),scratch=mkdtempSync(join(tmpdir(),'opencrawl-native-release-'));
+  const checksummed=[...platforms.map(platform=>'opencrawl-'+platform+'.tgz'),'install.sh','install.ps1'];
+  const files=[...checksummed,'SHA256SUMS','release.json'].sort();
+  if(JSON.stringify(readdirSync(output).sort())!==JSON.stringify(files))throw new Error('Unexpected or missing native release assets');
+  const expected=checksummed.map(name=>digest(join(output,name))+'  '+name).join('\n')+'\n';
+  if(readFileSync(join(output,'SHA256SUMS'),'utf8')!==expected)throw new Error('Native release checksum manifest differs');
+  const receipt=JSON.parse(readFileSync(join(output,'release.json'),'utf8'));
+  if(receipt.version!==manifest.version||receipt.revision!==manifest.opencrawlRevision)throw new Error('Native source provenance differs');
+  const scratch=mkdtempSync(join(tmpdir(),'opencrawl-native-release-'));
   try{
     const probe=Bun.spawnSync(['gh','release','view',tag,'--repo',repo,'--json','tagName'],{stdout:'pipe',stderr:'pipe'});
     if(probe.exitCode){
@@ -39,5 +47,19 @@ if(!process.argv.includes('--publish')){
       }else run(['gh','release','upload',tag,join(output,name),'--repo',repo]);
     }
     run(['gh','release','edit',tag,'--repo',repo,'--draft=false','--latest=false']);
+    // The update channel must not advertise a native release until anonymous
+    // downloads return the exact tested bytes, including through the asset CDN.
+    for(const name of files){
+      const deadline=Date.now()+120_000;
+      for(;;){
+        try{
+          const response=await fetch('https://github.com/'+repo+'/releases/download/'+tag+'/'+name,{signal:AbortSignal.timeout(60_000)});
+          if(!response.ok||!response.body)throw new Error('Native asset HTTP '+response.status);
+          const hash=createHash('sha256');for await(const chunk of response.body)hash.update(chunk);
+          if(hash.digest('hex')!==digest(join(output,name)))throw new Error('Published native asset differs: '+name);
+          break;
+        }catch(error){if(String(error).includes('Published native asset differs:')||Date.now()>=deadline)throw error;await Bun.sleep(5000);}
+      }
+    }
   }finally{rmSync(scratch,{recursive:true,force:true});}
 }
