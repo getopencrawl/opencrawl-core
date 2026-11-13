@@ -6,17 +6,14 @@ const report = (): UsageReport => ({workspace: 'Example workspace', days: 30, ge
   overlap: {timeZone: 'UTC', measuredAt: '2026-11-13T12:00:00Z', sessions: 20, daily: Array.from({length: 30}, (_, i) => ({date: new Date(Date.UTC(2026, 9, 15 + i)).toISOString().slice(0, 10), average: 1 + i % 6 / 2, peak: 4 + i % 9, partial: i === 29}))},
 });
 
-test('overlap chart shows average/peak, supports keyboard daily values and fits desktop/mobile', async ({page}, info) => {
+test('overlap chart shows average/peak with hover details and fits desktop/mobile', async ({page}, info) => {
   await page.route('**/api/console/usage', route => route.fulfill({json: report()}));
   await page.goto('/usage');
   const panel = page.getByRole('region', {name: 'Main session overlap', exact: true});
   await expect(panel.locator('.report-line-legend').getByText('Daily average', {exact: true})).toBeVisible();
   await expect(panel.locator('.report-line-legend').getByText('Daily peak', {exact: true})).toBeVisible();
-  await panel.locator('summary').focus();
-  await page.keyboard.press('Enter');
-  await expect(panel.getByRole('row', {name: '2026-11-13 (partial) 3.5 6'})).toBeVisible();
-  await page.keyboard.press('Enter');
-  await expect(panel.getByRole('table')).toBeHidden();
+  await expect(panel.locator('details')).toHaveCount(0);
+  await expect(panel.getByRole('table')).toHaveCount(0);
   await panel.locator('.report-line-hit').first().hover();
   await expect(panel.locator('figcaption')).toHaveCount(0);
   await expect(panel.locator('.report-line-hit').first().locator('title')).toHaveText('2026-10-15: average 1, peak 4 sessions');

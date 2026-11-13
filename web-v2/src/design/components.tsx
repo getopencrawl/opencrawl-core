@@ -129,7 +129,7 @@ export function ActivityChart({daily}: {daily: ReadonlyArray<{date: string; sess
   })}</svg><figcaption><span>{daily[0]!.date}</span><span>Peak {sessions(peak)} a day</span><span>{daily.at(-1)!.date}</span></figcaption></figure>;
 }
 
-/** Shared daily line chart with a keyboard-readable data table. */
+/** Shared daily line chart with per-day hover details. */
 export function DailyLineChart({daily, label}: {daily: ReadonlyArray<{date: string; average: number; peak: number; partial: boolean}>; label: string}) {
   const figure = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(760);
@@ -152,7 +152,7 @@ export function DailyLineChart({daily, label}: {daily: ReadonlyArray<{date: stri
   const labels = [...new Set([0, Math.floor((daily.length - 1) / 2), daily.length - 1])];
   return <figure ref={figure} className="report-line-chart" aria-label={label}>
     <div className="report-line-legend"><span className="report-line-average">Daily average</span><span className="report-line-peak">Daily peak</span></div>
-    <svg viewBox={`0 0 ${width} 250`} role="img" aria-label={`${label}. ${description(detail)}. Daily values are in the table below.`}>
+    <svg viewBox={`0 0 ${width} 250`} role="img" aria-label={`${label}. ${description(detail)}.`}>
       {[0, 1, 2, 3, 4].map(i => <g key={i}><line className="report-line-grid" x1="44" x2={width - 24} y1={y(i * maximum / 4)} y2={y(i * maximum / 4)}/><text x="34" y={y(i * maximum / 4) + 4} textAnchor="end">{number(i * maximum / 4)}</text></g>)}
       <path className="report-line-peak" d={path('peak')}/><path className="report-line-average" d={path('average')}/>
       {daily.map((day, i) => <g key={day.date}>
@@ -162,7 +162,6 @@ export function DailyLineChart({daily, label}: {daily: ReadonlyArray<{date: stri
       </g>)}
       {labels.map(i => <text key={i} x={x(i)} y="242" textAnchor={i === 0 ? 'start' : i === daily.length - 1 ? 'end' : 'middle'}>{daily[i]!.date.slice(5)}</text>)}
     </svg>
-    <details className="report-line-values"><summary>Daily values</summary><Table label={`${label} daily values`}><thead><tr><th scope="col">Day (UTC)</th><th scope="col">Daily average</th><th scope="col">Daily peak</th></tr></thead><tbody>{daily.map(day => <tr key={day.date}><th scope="row">{day.date}{day.partial ? ' (partial)' : ''}</th><td>{number(day.average)}</td><td>{number(day.peak)}</td></tr>)}</tbody></Table></details>
   </figure>;
 }
 
