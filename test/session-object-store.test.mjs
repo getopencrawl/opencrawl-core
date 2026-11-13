@@ -13,9 +13,10 @@ test('self-hosted startup requires object storage and rejects incomplete or obso
 });
 
 test('self-hosted S3 receiver round-trips all four surfaces, attachments and restart readback',{
-  skip:!process.env.OPENCRAWL_TEST_S3_ENDPOINT,
+  skip:!process.env.OPENCRAWL_TEST_S3_ENDPOINT||!process.env.OPENCRAWL_TEST_POSTGRES_URL,
 },async t=>{
   const env={
+    OPENCRAWL_DATABASE_URL:process.env.OPENCRAWL_TEST_POSTGRES_URL,
     OPENCRAWL_LANDING_S3_ENDPOINT:process.env.OPENCRAWL_TEST_S3_ENDPOINT,
     OPENCRAWL_LANDING_S3_BUCKET:process.env.OPENCRAWL_TEST_S3_BUCKET||'capture-test',
     OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:process.env.OPENCRAWL_TEST_S3_ACCESS_KEY_ID||'capture-test',

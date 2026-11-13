@@ -207,13 +207,14 @@ test('reference search settles preflight and definite auth rejection but not par
     const search = createConnectorSearch({endpoint: 'http://search.test', tenantId: binding.tenantId, fetch: async () => {
       sent++;
       if (scenario === 'auth-denied') return Response.json({error: {type: 'security_exception'}}, {status: 403});
+      if (scenario === 'oversized-item') return new Response('Provider request limit', {status:413});
       if (scenario === 'unknown-forbidden') return Response.json({error: {type: 'unknown'}}, {status: 403});
       if (scenario === 'partial-bulk') return Response.json({errors: true, items: [{update: {status: 400}}]});
       return new Response('invalid JSON');
     }});
     const guarded = guardConnectorWrites({binding, store: h.store, search});
     await assert.rejects(guarded.search.putDocuments({tenantId: binding.tenantId}, binding, documents));
-    assert.equal(sent, ['invalid-document', 'oversized-item'].includes(scenario) ? 0 : 1);
+    assert.equal(sent, scenario === 'invalid-document' ? 0 : 1);
     assert.equal((await guarded.writeBarrier.close()).pending, ['invalid-document', 'oversized-item', 'auth-denied'].includes(scenario) ? 0 : 1, scenario);
   }
 });

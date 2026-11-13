@@ -12,7 +12,7 @@ interface Pins {platforms:Record<string,{kind:Pin;kubectl:Pin;helm:Pin}>;airbyte
 interface State {
   format:1;root:string;project:string;createdAt:string;port:number;airbytePort:number;origin:string;
   organization:string;email:string;password:string;authSecret:string;setupToken:string;connectorKey:string;
-  s3Key:string;s3Secret:string;temporalPassword:string;airbytePassword:string;airbyteClientId:string;
+  databasePassword?:string;s3Key:string;s3Secret:string;temporalPassword:string;airbytePassword:string;airbyteClientId:string;
   airbyteClientSecret:string;airbyteDbPassword:string;airbyteStorageSecret:string;
   workspaceId?:string;airbyteInstalled?:boolean;airbyteConfigHash?:string;airbyteEnabled?:boolean;verifiedAt?:string;startedAt?:string;
   searchBackend?:'opensearch'|'sqlite';
@@ -75,6 +75,7 @@ if(existsSync(stateFile)){
 function save(){privateFile(stateFile,state);}
 const node=state.project+'-control-plane',kubeconfig=join(stateDir,'kubeconfig'),envFile=join(stateDir,'compose.env'),override=join(stateDir,'compose.json');
 const sqlite=state.searchBackend==='sqlite';
+state.databasePassword??=secret();privateFile(stateFile,state);
 const compose=(args:string[],options:Parameters<typeof run>[2]={})=>run('docker',['compose','--project-name',state.project,'--env-file',envFile,'-f',join(root,'deploy/compose.yaml'),...(sqlite?['-f',join(root,'deploy/compose.sqlite.yaml')]:[]),'-f',override,...args],options);
 const kubectl=(args:string[],options:Parameters<typeof run>[2]={})=>run(join(bin,'kubectl'),['--kubeconfig',kubeconfig,'--cache-dir',join(stateDir,'kube-cache'),'--context','kind-'+state.project,...args],options);
 const helm=(args:string[],options:Parameters<typeof run>[2]={})=>run(join(bin,'helm'),['--kubeconfig',kubeconfig,'--kube-context','kind-'+state.project,...args],options);
@@ -156,7 +157,7 @@ function writeCompose(airbyteAddress='127.0.0.1',s3Address='s3',workspaceId=stat
   const connectorEnv=Object.fromEntries(['COMPOSIO_API_KEY','COMPOSIO_BASE_URL','SLACK_CLIENT_ID','SLACK_CLIENT_SECRET','GITHUB_APP','AIRBYTE_GITHUB_REPOSITORY','AIRBYTE_GITHUB_TAG','OPENCRAWL_AIRBYTE_APP_URL'].filter(key=>supplied[key]).map(key=>[key,supplied[key]!]));
   const env={COMPOSE_PROJECT_NAME:state.project,OPENCRAWL_IMAGE_TAG:state.project,OPENCRAWL_URL:state.origin,OPENCRAWL_ORGANIZATION_ID:state.organization,
     OPENCRAWL_AUTH_SECRET:state.authSecret,OPENCRAWL_SETUP_TOKEN:state.setupToken,OPENCRAWL_CONNECTOR_KEY:state.connectorKey,
-    OPENCRAWL_S3_ACCESS_KEY_ID:state.s3Key,OPENCRAWL_S3_SECRET_ACCESS_KEY:state.s3Secret,OPENCRAWL_TEMPORAL_PASSWORD:state.temporalPassword,
+    OPENCRAWL_S3_ACCESS_KEY_ID:state.s3Key,OPENCRAWL_S3_SECRET_ACCESS_KEY:state.s3Secret,OPENCRAWL_TEMPORAL_PASSWORD:state.temporalPassword,OPENCRAWL_DATABASE_PASSWORD:state.databasePassword,
     OPENCRAWL_AIRBYTE_ENABLED:String(airbyteEnabled),OPENCRAWL_APP_PORT:String(state.port),OPENCRAWL_APP_BIND:'127.0.0.1',OPENCRAWL_S3_BIND:'127.0.0.1',OPENCRAWL_S3_PORT:'0',
     ...(airbyteEnabled?{OPENCRAWL_AIRBYTE_S3_ENDPOINT:`http://${s3Address}:8333`,AIRBYTE_URL:`http://${airbyteAddress}:30080`,AIRBYTE_CLIENT_ID:state.airbyteClientId,AIRBYTE_CLIENT_SECRET:state.airbyteClientSecret,AIRBYTE_WORKSPACE_ID:workspaceId,
       OPENCRAWL_AIRBYTE_APP_URL:appForAirbyte,...connectorEnv}:{} )};

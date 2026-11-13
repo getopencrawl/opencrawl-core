@@ -146,15 +146,15 @@ see the CLI README for the compatibility boundary. Batch metadata such as upload
 the event identity; it does not change event chunk contents.
 
 Before publishing a raw batch, capture atomically reserves all its event IDs in
-a conditional per-session ledger. A conflict rejects the entire batch without
+PostgreSQL. A conflict rejects the entire batch without
 reserving its other IDs. A source-write failure after reservation leaves those
 IDs reserved but does **not** mean the batch was accepted: retry identical event
 content until the durable receipt arrives. Reservations are never automatically
 released because a lost acknowledgement may conceal a successful source write.
-Each ledger is capped at 16 MiB (about 125,000 distinct IDs); a batch that exceeds
-capacity fails with HTTP 413 before publication. Start a new session to continue.
-Concurrent writers use storage compare-and-set; exhausted contention returns 503
-and clients retry the same batch.
+There is no per-session event-identity size limit. Concurrent writers use database
+transactions. Database unavailability returns a retryable failure without
+publishing the raw batch. See [PostgreSQL migration](event-identity-migration.md)
+for existing installations, failed-upload reservations, backups and rollback.
 
 Installation enrolls new sessions and existing sessions modified afterward. Existing active transcripts are read from the beginning on first encounter. It does not automatically import inactive historical sessions. Setup offers an optional one-time history import: terminal users choose Claude Code, Codex, both, or skip; noninteractive/JSON installs return a decision for the agent to ask the user. `collect backfill --dry-run --json` previews file counts without reading transcript content or contacting a server. After explicit user approval, `collect backfill --harness claude-code|codex|all --yes` imports the selected local stores, including desktop coding, host-mirrored Claude Desktop `.claude/projects` histories and subagents, and archived Codex sessions, through the same authenticated capture pipeline. `collect install --backfill skip` skips history. A repeat import resumes existing cursors; it never enables recurring history import. Claude Desktop mirrors are discovered only within native runtime directories under its `local-agent-mode-sessions` application-data store. Messages in each runtime’s audit log are preserved when their native UUID is absent from its project transcripts; duplicate audit copies and transport bookkeeping are skipped. Audit messages retain their individual session IDs and timestamps. Cloud-only chats and records available only inside a VM remain outside this local transcript importer.
 
@@ -196,14 +196,13 @@ The HTTP protocol provides identity, attachment upload, immutable batch upload a
 
 Back up the configured bucket/prefix using the object store's versioning, replication or backup tooling. Restore with the same configured prefix and tenant/user identity; receipt readback verifies the restored records. Preserve the receiver token and storage credentials separately. Never merge backups belonging to different configured owners. Preserve current deletion controls and reconcile later deletions before exposing a restored instance; an old backup must not overwrite tombstones or revive erased sessions.
 
-Both deployments write `<prefix>/tenants/<tenant-hash>/users/<user-hash>/<harness>/<installation-hash>/<session-hash>/<batch-hash>.json.gz` and `attachments/<sha256>` objects inside that same session directory. Attachment PUT requests include `harness`, `installationId` and `sessionId` query parameters. Legacy owner-scoped blobs are read only for existing captures; new unscoped writes are refused. The session directory also contains `event-identities-v1.json`, a versioned conditional ledger of hashed event IDs and canonical content hashes. Back up and restore ledgers together with raw objects; retained failed-upload reservations remain authoritative. A downstream OpenSearch ingester uses one S3 reader and one batch schema, configured with the endpoint/bucket/prefix. The shared OpenSearch ingester and authenticated search API are documented in `session-indexing.md`. The laptop spool remains local and is only a retry buffer.
+Both deployments write `<prefix>/tenants/<tenant-hash>/users/<user-hash>/<harness>/<installation-hash>/<session-hash>/<batch-hash>.json.gz` and `attachments/<sha256>` objects inside that same session directory. Attachment PUT requests include `harness`, `installationId` and `sessionId` query parameters. Legacy owner-scoped blobs are read only for existing captures; new unscoped writes are refused. The session directory retains a small migration fence at `event-identities-v1.json`; fingerprints are stored in PostgreSQL. Back up and restore PostgreSQL together with raw objects; retained failed-upload reservations remain authoritative. A downstream OpenSearch ingester uses one S3 reader and one batch schema, configured with the endpoint/bucket/prefix. The shared OpenSearch ingester and authenticated search API are documented in `session-indexing.md`. The laptop spool remains local and is only a retry buffer.
 
 Upgrading the former filesystem receiver: stop it, copy the contents under `capture-v1/` into the target S3 prefix without changing relative object keys, verify attachment hashes and receipt readback, then start this receiver with the S3 configuration. Keep the original directory as a rollback backup until verification finishes. `OPENCRAWL_SESSION_DIRECTORY` now fails startup explicitly; local storage is retained only as an internal test helper.
 
 Schema version 1 retains immutable batches and attachment objects. Upgrading a
 receiver without event-ID enforcement requires the audit and activation procedure
-in `session-indexing.md`; do not overlap old writers with the first ledger
-bootstrap. Keep existing objects and ledgers when upgrading or rolling back.
+in [PostgreSQL migration](event-identity-migration.md); do not overlap pre-enforcement writers with migration. Preserve both PostgreSQL and object storage.
 A binary without the capture API cannot serve these records, but does not erase
 them. Before downgrading the CLI to a version without capture, run collect
 uninstall to remove its hooks and scheduler. Hosted object lifecycle and backups

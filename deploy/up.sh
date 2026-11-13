@@ -26,8 +26,8 @@ if [ "$sqlite" = true ]; then
   fi
 fi
 command -v docker >/dev/null 2>&1 || { echo "Install Docker with the Compose plugin first." >&2; exit 1; }
+secret() { od -An -tx1 -N24 /dev/urandom | tr -d ' \n'; }
 if [ ! -f .env ]; then
-  secret() { od -An -tx1 -N24 /dev/urandom | tr -d ' \n'; }
   key() { dd if=/dev/urandom bs=32 count=1 2>/dev/null | base64 | tr -d '\n'; }
   sed -e "s/^OPENCRAWL_AUTH_SECRET=$/OPENCRAWL_AUTH_SECRET=$(secret)/" \
       -e "s/^OPENCRAWL_ORGANIZATION_ID=$/OPENCRAWL_ORGANIZATION_ID=org_$(secret)/" \
@@ -35,11 +35,18 @@ if [ ! -f .env ]; then
       -e "s|^OPENCRAWL_CONNECTOR_KEY=$|OPENCRAWL_CONNECTOR_KEY=$(key)|" \
       -e "s/^OPENCRAWL_S3_ACCESS_KEY_ID=$/OPENCRAWL_S3_ACCESS_KEY_ID=opencrawl$(secret | cut -c1-12)/" \
       -e "s/^OPENCRAWL_S3_SECRET_ACCESS_KEY=$/OPENCRAWL_S3_SECRET_ACCESS_KEY=$(secret)/" \
+      -e "s/^OPENCRAWL_DATABASE_PASSWORD=$/OPENCRAWL_DATABASE_PASSWORD=$(secret)/" \
       -e "s/^OPENCRAWL_TEMPORAL_PASSWORD=$/OPENCRAWL_TEMPORAL_PASSWORD=$(secret)/" .env.example > .env
   if [ "$sqlite" = true ]; then printf '\nCOMPOSE_FILE=%s\n' "$sqlite_files" >> .env; fi
   chmod 600 .env
   echo "Created deploy/.env with local secrets. Set OPENCRAWL_URL, configure Airbyte if enabled, then rerun this command."
   exit 0
+fi
+# Unknown old installations may predate conditional event reservations. Do not
+# overlap their writers with migration or silently skip their matched backup.
+if ! grep -q '^OPENCRAWL_DATABASE_PASSWORD=.' .env; then
+  echo 'Existing configuration needs the PostgreSQL upgrade. Run: node deploy/upgrade.mjs /absolute/new-backup-directory (from the repository root). Existing data and running services are unchanged.' >&2
+  exit 1
 fi
 docker compose up -d --build --wait --wait-timeout 600 "$@"
 echo "OpenCrawl is running at the OPENCRAWL_URL configured in deploy/.env."

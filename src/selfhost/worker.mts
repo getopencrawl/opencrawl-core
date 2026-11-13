@@ -1,3 +1,4 @@
+import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
 import {mkdir,writeFile,unlink} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -32,13 +33,14 @@ export async function withTemporalStartupRetry<T>(run:()=>Promise<T>,{timeoutMs=
 }
 export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const settings=selfhostSettings(env),{store,prefix}=standaloneStorage(env),services=selfhostServices(settings,store,env);
+  const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
   const address=env.TEMPORAL_ADDRESS,namespace=env.TEMPORAL_NAMESPACE;
   if(!address||!namespace)throw new Error('Configure Temporal address and namespace');
   const config={address,namespace},taskQueue=env.TEMPORAL_CONNECTOR_TASK_QUEUE||'connector-indexing-v1',sessionQueue=env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',deletionQueue=env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1';
   const bundleRoot=env.OPENCRAWL_WORKFLOW_DIRECTORY||'/tmp/opencrawl-workflows';await mkdir(bundleRoot,{recursive:true});
   if(services.connectors)await buildConnectorWorkflows(bundleRoot+'/connectors.cjs');
   await buildSessionWorkflows(bundleRoot+'/sessions.cjs');
-  const scheduling=await connectorClient(config),source=singleOrganizationSessionSource(settings,store,prefix);
+  const scheduling=await connectorClient(config),source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
   const connectors=services.connectors?await createConnectorWorker({...config,taskQueue,bundlePath:bundleRoot+'/connectors.cjs',resolve:services.connectors.resolve}):undefined;
   const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve});
   const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:source.resolveDeletion,maxConcurrentActivityTaskExecutions:1});
@@ -70,6 +72,6 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const stop=()=>{stopping=true;clearInterval(timer);for(const x of workers)if(x.worker.getState()==='RUNNING')x.worker.shutdown();};
   process.once('SIGTERM',stop);process.once('SIGINT',stop);
   const runs=workers.map(x=>x.worker.run());tick();
-  try{await Promise.all(runs);}finally{stop();await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();}
+  try{await Promise.all(runs);}finally{stop();await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();await eventIdentities.close();}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await runSelfhostWorker();

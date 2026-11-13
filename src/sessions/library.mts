@@ -1,4 +1,4 @@
-import type {Principal, ObjectStore, SessionEvent, JsonValue} from './types.mjs';
+import type {Principal, ObjectStore, SessionEvent, JsonValue, EventIdentityStore} from './types.mjs';
 import {isSessionHarness, SESSION_HARNESSES, parseJson} from './types.mjs';
 import {gunzipSync} from 'node:zlib';
 import type {SessionBatch} from './types.mjs';
@@ -129,8 +129,8 @@ function decodeCursor(cursor: unknown): JsonValue[] | undefined {
 /** Team members read every session that is not private to another member.
  * Only the owner changes visibility or deletes; deletion removes raw capture,
  * search documents and future uploads of the same session. */
-export interface SessionLibraryOptions extends RealmOptions {store: ObjectStore; prefix: string; purgeCopies?: (principal: Principal, key: SessionKey, store: ObjectStore) => Promise<number>; scheduleDeletion?: (key: string) => Promise<unknown>}
-export function createSessionLibrary({store, prefix, purgeCopies, scheduleDeletion, ...options}: SessionLibraryOptions) {
+export interface SessionLibraryOptions extends RealmOptions {store: ObjectStore; prefix: string; eventIdentities?: EventIdentityStore; purgeCopies?: (principal: Principal, key: SessionKey, store: ObjectStore) => Promise<number>; scheduleDeletion?: (key: string) => Promise<unknown>}
+export function createSessionLibrary({store, prefix, eventIdentities, purgeCopies, scheduleDeletion, ...options}: SessionLibraryOptions) {
   const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
   const reader = (principal: Principal) => {
     sessionScope(principal);
@@ -293,6 +293,7 @@ export function createSessionLibrary({store, prefix, purgeCopies, scheduleDeleti
     await resolve(principal).refresh(principal);
     documents += (await apply(principal, key, control)).changed;
     if (await owned(principal, key)) throw new Error('Session search documents remain');
+    await eventIdentities?.purgeSession({prefix,principal,harness:key.harness,sessionId:key.sessionId});
     await controls.update(principal, 'sessions', key.harness, key.sessionId, current => ({
       visibility: current?.visibility ?? 'team', deletedAt: control.deletedAt,
       deletion: {sessionId: key.sessionId, state: 'complete'},

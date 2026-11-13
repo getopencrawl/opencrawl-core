@@ -66,6 +66,8 @@ export interface RealmOptions {
   endpoint: string; index?: string; tenantId?: string; environment?: string; generation?: string;
   username?: string; password?: string; credentials?: CredentialProvider; region?: string;
   replicas?: number; fetch?: typeof globalThis.fetch;
+  /** Scheduling target only. A larger individual document is still submitted. */
+  bulkTargetBytes?: number;
 }
 export interface IndexTransportOptions extends RealmOptions {index: string; allowIndexPattern?: boolean}
 export interface Mapping {

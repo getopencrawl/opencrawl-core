@@ -5,6 +5,7 @@ services:
     environment:
       OPENCRAWL_SEARCH_URL: sqlite:///data/search.sqlite
     depends_on: !override
+      app-db: {condition: service_healthy}
       storage-ready: {condition: service_completed_successfully}
   worker:
     environment:

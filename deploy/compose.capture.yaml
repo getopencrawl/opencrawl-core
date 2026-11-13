@@ -7,6 +7,7 @@ x-runtime: &runtime
   image: opencrawl-core:local
   restart: unless-stopped
   environment: &env
+    OPENCRAWL_DATABASE_URL: postgres://opencrawl:${OPENCRAWL_DATABASE_PASSWORD:?Run ./up.sh}@app-db:5432/opencrawl
     OPENCRAWL_TENANT_ID: ${OPENCRAWL_TENANT_ID:-self-hosted}
     OPENCRAWL_USER_ID: ${OPENCRAWL_USER_ID:-owner}
     OPENCRAWL_USER_NAME: ${OPENCRAWL_USER_NAME:-Owner}
@@ -33,7 +34,7 @@ services:
       PORT: "8093"
       OPENCRAWL_SESSIONS_TOKEN: ${OPENCRAWL_SESSIONS_TOKEN:?run ./up.sh or set it in .env}
     ports: ["127.0.0.1:${OPENCRAWL_SESSIONS_PORT:-8093}:8093"]
-    depends_on: {s3: {condition: service_started}, opensearch: {condition: service_healthy}}
+    depends_on: {app-db: {condition: service_healthy}, s3: {condition: service_started}, opensearch: {condition: service_healthy}}
 
   worker:
     <<: *runtime
@@ -47,7 +48,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 20
-    depends_on: {s3: {condition: service_started}, opensearch: {condition: service_healthy}, temporal: {condition: service_healthy}}
+    depends_on: {app-db: {condition: service_healthy}, s3: {condition: service_started}, opensearch: {condition: service_healthy}, temporal: {condition: service_healthy}}
 
   mcp:
     <<: *runtime
@@ -64,7 +65,17 @@ services:
     configs: [{source: search, target: /run/opencrawl/search.json}]
     volumes: ["board:/data"]
     ports: ["127.0.0.1:${OPENCRAWL_MCP_PORT:-8094}:8094"]
-    depends_on: {opensearch: {condition: service_healthy}}
+    depends_on: {app-db: {condition: service_healthy}, opensearch: {condition: service_healthy}}
+
+  app-db:
+    image: postgres:17.11-bookworm
+    restart: unless-stopped
+    environment: {POSTGRES_USER: opencrawl, POSTGRES_DB: opencrawl, POSTGRES_PASSWORD: "${OPENCRAWL_DATABASE_PASSWORD:?Run ./up.sh}"}
+    volumes: ["app-db:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencrawl -d opencrawl"]
+      interval: 5s
+      retries: 30
 
   s3:
     # SeaweedFS (Apache-2.0): single-node S3 API.
@@ -111,7 +122,7 @@ services:
     image: opencrawl-core:local
     user: root
     entrypoint: []
-    volumes: ["s3:/data/s3", "opensearch:/data/opensearch", "temporal:/data/temporal", "board:/data/board"]
+    volumes: ["app-db:/data/app-db", "s3:/data/s3", "opensearch:/data/opensearch", "temporal:/data/temporal", "board:/data/board"]
 
 configs:
   search:
@@ -120,6 +131,7 @@ configs:
        "sessions": {"endpoint": "http://opensearch:9200", "environment": "selfhost"}}
 
 volumes:
+  app-db:
   s3:
   opensearch:
   temporal:

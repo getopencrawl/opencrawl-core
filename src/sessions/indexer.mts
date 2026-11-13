@@ -112,7 +112,7 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
  * The runtime supplies fixed self-host identity or resolves server-authenticated
  * stored owners. Workflow arguments never select a bucket, index, or principal.
  */
-export function createSessionPipeline({store,prefix,search,principal,resolvePrincipal,jobId='sessions-v1',checkActive=async()=>{}}: SessionPipelineOptions) {
+export function createSessionPipeline({store,eventIdentities,prefix,search,principal,resolvePrincipal,jobId='sessions-v1',checkActive=async()=>{}}: SessionPipelineOptions) {
   if(Boolean(principal)===Boolean(resolvePrincipal))throw new Error('Supply one fixed single-tenant principal or a trusted scope resolver');
   if(principal)sessionScope(principal);
   if(!prefix||prefix.split('/').some(p=>!p||p==='.'||p==='..'))throw new Error('Invalid session prefix');
@@ -187,7 +187,7 @@ export function createSessionPipeline({store,prefix,search,principal,resolvePrin
       // Check the whole event before any chunk write. Receipt order, shorter
       // payloads and concurrent activities must never assemble mixed revisions.
       try {
-      await checkActive();await reserveSessionEvents({store:sessionWriteStore(store,prefix,scope,batch.harness,batch.sessionId),prefix,principal:scope,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
+      await checkActive();await reserveSessionEvents({eventIdentities,store:sessionWriteStore(store,prefix,scope,batch.harness,batch.sessionId),prefix,principal:scope,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
       await checkActive();await search.ensureIndex(scope);
       await barrier.run('search-write',()=>search.putDocuments(docs,scope),{target:digest(key)});
       } catch(error) {if((await barrier.inspect()).closed)return {records:0,skipped:true};throw error;}

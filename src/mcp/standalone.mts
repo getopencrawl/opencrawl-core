@@ -14,6 +14,7 @@ import {createBoardHandler} from '../board/http.mjs';
 import {createLocalBoardStore} from '../board/local-store.mjs';
 import {createRecentSessions} from '../sessions/recent.mjs';
 import {standaloneStorage} from '../sessions/standalone.mjs';
+import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
 import {createSessionLibrary} from '../sessions/library.mjs';
 import {createMemoryLibrary} from '../memories/library.mjs';
 import {createLibraryApi, createLibraryHandler} from '../sessions/library-http.mjs';
@@ -54,11 +55,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const sessionSettings = process.env.OPENCRAWL_OPENSEARCH_URL ? {endpoint: process.env.OPENCRAWL_OPENSEARCH_URL, index: process.env.OPENCRAWL_OPENSEARCH_INDEX || undefined,
     username: process.env.OPENCRAWL_OPENSEARCH_USERNAME, password: process.env.OPENCRAWL_OPENSEARCH_PASSWORD, tenantId: workspace.principal?.tenantId || process.env.OPENCRAWL_TENANT_ID || 'self-hosted'} : null;
   const capture = sessionSettings && process.env.OPENCRAWL_LANDING_S3_BUCKET ? standaloneStorage(process.env) : null;
+  const eventIdentities=capture?standaloneEventIdentities(capture.store):undefined;
+  await eventIdentities?.ready();
   const server = standaloneMcp({principal:{tenantId:process.env.OPENCRAWL_TENANT_ID||'self-hosted',userId:process.env.OPENCRAWL_USER_ID||'owner'}, ...workspace, token: process.env.MCP_TOKEN, origin: process.env.MCP_ORIGIN || `http://127.0.0.1:${port}`, boardPath: process.env.OPENCRAWL_BOARD_PATH,
     recentSessions: capture && sessionSettings ? createRecentSessions({...sessionSettings, ...capture}) : undefined,
-    library: capture && sessionSettings ? createLibraryApi({sessions: createSessionLibrary({...sessionSettings, ...capture}), memories: createMemoryLibrary({...sessionSettings, ...capture})}) : undefined,
+    library: capture && sessionSettings ? createLibraryApi({sessions: createSessionLibrary({...sessionSettings, ...capture,eventIdentities}), memories: createMemoryLibrary({...sessionSettings, ...capture})}) : undefined,
     boardSearch: sessionSettings || undefined});
   // HOST is for containers; MCP_ORIGIN still pins the Host header clients must send.
   server.listen(port, process.env.HOST || '127.0.0.1');
+  server.once('close',()=>{void eventIdentities?.close();});
   process.on('SIGTERM', () => server.close());
 }

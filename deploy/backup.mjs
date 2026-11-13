@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 const cwd=dirname(fileURLToPath(import.meta.url)),[action,destination]=process.argv.slice(2);
 if(!['create','restore'].includes(action)||!destination)throw new Error('Usage: node deploy/backup.mjs create|restore /absolute/backup-directory');
 const backup=resolve(destination),env=join(cwd,'.env');
+const leaveStopped=process.argv.includes('--leave-stopped');
 function compose(args,stdio='pipe') {
   const result=spawnSync('docker',['compose',...args],{cwd,stdio,encoding:stdio==='pipe'?'utf8':undefined});
   if(result.status!==0)throw new Error('Docker backup operation failed; preserve the backup and inspect the stopped stack.');
@@ -27,7 +28,7 @@ if(action==='create') {
     if(revision.status!==0)throw new Error('Cannot record source revision.');
     writeFileSync(join(backup,'manifest.json'),JSON.stringify({format:1,revision:revision.stdout.trim(),
       storesSha256:await digest(join(backup,'stores.tgz')),environmentSha256:await digest(join(backup,'environment'))},null,2)+'\n',{mode:0o600,flag:'wx'});
-  }finally{compose(['up','-d','--wait','--wait-timeout','240'],'inherit');}
+  }finally{if(!leaveStopped)compose(['up','-d','--wait','--wait-timeout','240'],'inherit');}
 } else {
   const manifest=JSON.parse(readFileSync(join(backup,'manifest.json'),'utf8'));
   const revision=spawnSync('git',['rev-parse','HEAD'],{cwd,encoding:'utf8'});
