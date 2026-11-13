@@ -1,4 +1,4 @@
-import {standaloneEventIdentities} from '../sessions/identity-migration.mjs';
+import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
 import {sessionDeletionScheduler} from '../sessions/temporal/client.mjs';
 import {pathToFileURL} from 'node:url';
 import {selfhostSettings} from './settings.mjs';

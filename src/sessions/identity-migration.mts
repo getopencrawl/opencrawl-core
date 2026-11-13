@@ -1,16 +1,7 @@
 import {pathToFileURL} from 'node:url';
 import type {ObjectStore} from './types.mjs';
 import {sourceBatchIdentity} from './event-identity.mjs';
-import {createPostgresEventIdentities} from './postgres-identities.mjs';
-
-/** Operator-owned PostgreSQL; no hosted account or credentials are required. */
-export function standaloneEventIdentities(store:Pick<ObjectStore,'bucket'>,env=process.env){
- const connectionString=env.OPENCRAWL_DATABASE_URL;
- if(!connectionString)throw new Error('OPENCRAWL_DATABASE_URL is required for event identities. See docs/event-identity-migration.md before upgrading existing storage.');
- const namespace=env.OPENCRAWL_EVENT_IDENTITY_NAMESPACE||store.bucket;
- if(!namespace)throw new Error('Configure a stable OPENCRAWL_EVENT_IDENTITY_NAMESPACE for this storage source');
- return createPostgresEventIdentities({connectionString,namespace});
-}
+import {createPostgresEventIdentities,standaloneEventIdentities} from './postgres-identities.mjs';
 
 /** Per-session commits are the restart checkpoint. Re-running scans is safe and
  * does not import ready sessions again. Include ledger-only failed uploads;

@@ -1,4 +1,4 @@
-import {standaloneEventIdentities} from './identity-migration.mjs';
+import {standaloneEventIdentities} from './postgres-identities.mjs';
 import type {Principal, ObjectStore, EventIdentityStore, Authenticate, HttpHandler} from './types.mjs';
 import type {SearchAdapter} from '../search/types.mjs';
 import {createCaptureCredentials,isCaptureCredential} from './credentials.mjs';

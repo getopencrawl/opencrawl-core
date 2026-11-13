@@ -1,4 +1,4 @@
-import {standaloneEventIdentities} from '../identity-migration.mjs';
+import {standaloneEventIdentities} from '../postgres-identities.mjs';
 import type {SessionTaskInput} from './worker.mjs';
 import {pathToFileURL} from 'node:url';
 import {standaloneStorage} from '../standalone.mjs';

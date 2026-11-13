@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
 import {Pool} from 'pg';
 import {createPostgresEventIdentities} from '../dist/src/sessions/postgres-identities.mjs';
 import {createSessionIngest,digest} from '../dist/src/sessions/ingest.mjs';
@@ -22,6 +23,15 @@ async function fixture(t){
  return {namespace,store,identities,pool,ingest:createSessionIngest({store,prefix,eventIdentities:identities}),reserve:events=>identities.reserve({...identity,store,events})};
 }
 const live=(name,fn)=>test(name,{skip:!connectionString},fn);
+
+test('the migration executable starts and reports storage failure without a circular top-level await',()=>{
+ const result=spawnSync(process.execPath,[new URL('../dist/src/sessions/identity-migration.mjs',import.meta.url).pathname,'migrate'],{
+  encoding:'utf8',timeout:15000,env:{PATH:process.env.PATH,OPENCRAWL_DATABASE_URL:'postgres://test:test@127.0.0.1:1/test',
+   OPENCRAWL_LANDING_S3_BUCKET:'migration-test',OPENCRAWL_LANDING_S3_ENDPOINT:'http://127.0.0.1:1',
+   OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test'},
+ });
+ assert.equal(result.status,1,result.stderr);assert.match(result.stderr,/migration incomplete/);assert.doesNotMatch(result.stderr,/unsettled top-level await/i);
+});
 
 live('Postgres reservations are atomic across concurrent clients and preserve tenant boundaries',async t=>{
  const f=await fixture(t),other=createPostgresEventIdentities({connectionString,namespace:f.namespace});t.after(()=>other.close());

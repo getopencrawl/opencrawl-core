@@ -36,7 +36,7 @@ export function sessionActivities({resolve}: {resolve: SessionResolver}) {
     } catch(caught){const error=serviceError(caught);
       if(error instanceof SourcePaginationError)throw ApplicationFailure.nonRetryable(error.message,'SourcePaginationFailed');
       // Never put transcript fragments, parser messages or provider bodies in history.
-      if(error.code==='BULK_TOO_LARGE')throw ApplicationFailure.nonRetryable('Session search document exceeds bulk limit','BULK_TOO_LARGE');
+      if(error.code==='BULK_TOO_LARGE')throw ApplicationFailure.nonRetryable('Search provider rejected an individual document size','BULK_TOO_LARGE');
       if(error.permanent)throw ApplicationFailure.nonRetryable('Session source scope denied','InvalidSessionInput');
       throw ApplicationFailure.retryable('Session indexing operation failed','SessionProcessingFailed');
     } finally {clearInterval(pulse);}

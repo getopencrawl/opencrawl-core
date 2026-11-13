@@ -1,4 +1,4 @@
-import {standaloneEventIdentities} from '../sessions/identity-migration.mjs';
+import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
 import {mkdir,writeFile,unlink} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
