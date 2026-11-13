@@ -118,6 +118,11 @@ try {
     writeFileSync(join(env.XDG_CACHE_HOME, 'opencrawl/update.json'), JSON.stringify({checkedAt: Date.now()}));
     env.OPENCRAWL_NO_UPDATE = '0';
     if (sync(['node', launcher, '--version']) !== version) throw new Error('Original launcher did not adopt the updated launcher and binary');
+    // The originally installed native executable must select that same update
+    // without the legacy launcher, Node, npm or Bun on PATH.
+    const oldBinary=join(install,'node_modules/@getopencrawl','cli-'+platform,'bin',process.platform==='win32'?'opencrawl.exe':'opencrawl');
+    const direct=Bun.spawnSync([oldBinary,'--version'],{env:{...env,PATH:join(scratch,'no-runtimes')},stdout:'pipe',stderr:'pipe'});
+    if(direct.exitCode||direct.stdout.toString().trim()!==version)throw new Error('Native executable could not adopt its update without Node: '+direct.stderr.toString());
     sync(['node', launcher, 'board', 'fetch', '--help']);
     if (readFileSync(skillFile, 'utf8') !== oldSkill || readFileSync(customized, 'utf8') !== 'User-customized skill' || !existsSync(stale)) throw new Error('Information command rewrote managed skills');
     if (readFileSync(join(capture, 'config.json'), 'utf8') !== JSON.stringify(config)) throw new Error('Information command migrated capture hooks');

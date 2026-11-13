@@ -21,12 +21,16 @@ export const releaseRoot=(v:string)=>join(cacheRoot(),'releases',v,'node_modules
 export function binary(root:string){const name=PACKAGE+'-'+target(),manifest=createRequire(join(root,'package.json')).resolve(name+'/package.json'),pkg=read(manifest);if(pkg?.name!==name||pkg.version!==read(join(root,'package.json'))?.version)throw new Error('Platform package mismatch');return join(dirname(manifest),'bin',process.platform==='win32'?'opencrawl.exe':'opencrawl');}
 export function validRelease(root:string,v:string){try{return read(join(root,'package.json'))?.name===PACKAGE&&read(join(root,'package.json'))?.version===v&&statSync(join(root,'bin/opencrawl.cjs')).isFile()&&statSync(binary(root)).isFile();}catch{return false;}}
 const versions=(directory:string)=>{try{return readdirSync(directory).filter(stable).sort((a,b)=>compare(b,a));}catch{return [];}};
+export function validNative(v:string){
+  const directory=join(nativeRoot(),'versions',v),receipt=read(join(directory,'installation.json'));
+  try{return stable(v)&&receipt?.version===v&&receipt.platform===target()&&[process.platform==='win32'?'opencrawl.exe':'opencrawl','LICENSE','THIRD_PARTY_NOTICES.txt','runtime/opencrawl.js'].every(file=>statSync(join(directory,file)).isFile());}catch{return false;}
+}
 export function activeRoot(){return versions(join(cacheRoot(),'releases')).map(releaseRoot).find(root=>validRelease(root,read(join(root,'package.json'))?.version))||'';}
 export function selectedBinary(current=version):{version:string;file:string}{
   let selected={version:current,file:process.execPath};if(!stable(current))return selected;
   const cached=activeRoot(),pkg=cached?read(join(cached,'package.json')):null;
   if(pkg&&compare(pkg.version,selected.version)>0)selected={version:pkg.version,file:binary(cached)};
-  for(const v of versions(join(nativeRoot(),'versions'))){if(compare(v,selected.version)<=0)break;const directory=join(nativeRoot(),'versions',v),receipt=read(join(directory,'installation.json')),file=join(directory,process.platform==='win32'?'opencrawl.exe':'opencrawl');if(receipt?.version===v&&receipt.platform===target()&&existsSync(file)){selected={version:v,file};break;}}
+  for(const v of versions(join(nativeRoot(),'versions'))){if(compare(v,selected.version)<=0)break;if(validNative(v)){selected={version:v,file:join(nativeRoot(),'versions',v,process.platform==='win32'?'opencrawl.exe':'opencrawl')};break;}}
   return selected;
 }
 // Source and replaceable-runtime development runs must never install the Bun
@@ -79,9 +83,9 @@ export async function installBinary(source=process.execPath,v=version){
         atomicJson(join(stage,'installation.json'),{version:v,platform:target()});renameSync(stage,directory);
       }finally{rmSync(stage,{recursive:true,force:true});}
     }
-    if(read(join(directory,'installation.json'))?.version!==v||!statSync(file).isFile())throw new Error('Incomplete native installation');
+    if(!validNative(v))throw new Error('Incomplete native installation');
     const entry=nativeBin(),receiptFile=join(nativeRoot(),'installation.json'),prior=read(receiptFile);
-    const candidates=versions(join(nativeRoot(),'versions')).filter(candidate=>read(join(nativeRoot(),'versions',candidate,'installation.json'))?.platform===target());
+    const candidates=versions(join(nativeRoot(),'versions')).filter(validNative);
     const selected=candidates[0]||v,selectedFile=join(nativeRoot(),'versions',selected,basename(file));
     // Only replace a path this installer owns. Keep a hand-written wrapper intact.
     let owned=false;
