@@ -56,7 +56,7 @@ function sourceCard(html: string, name: string) {
   return html.slice(start, html.indexOf('</article>', start));
 }
 
-test('main-session overlap distinguishes measured zero from unavailable and exposes both series and daily values', () => {
+test('main-session overlap distinguishes measured zero from unavailable and exposes both series with hover details', () => {
   const data = report();
   data.overlap = {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 3, daily: [
     {date: '2026-11-06', average: 1.25, peak: 3, partial: false},
@@ -66,10 +66,10 @@ test('main-session overlap distinguishes measured zero from unavailable and expo
   assert.match(html, /Main session overlap/);
   assert.match(html, /Daily average/); assert.match(html, /Daily peak/);
   assert.match(html, /2026-11-07 \(partial\)/);
-  assert.match(html, /<td>1.25<\/td><td>3<\/td>/);
-  assert.match(html, /<td>0<\/td><td>0<\/td>/);
+  assert.match(html, /<title>2026-11-06: average 1.25, peak 3 sessions<\/title>/);
+  assert.match(html, /<title>2026-11-07 \(partial\): average 0, peak 0 sessions<\/title>/);
   assert.match(html, /Concurrent sessions by day/);
-  assert.doesNotMatch(html, /Each session spans|Subagents excluded|Days use UTC|Captured spans can grow/);
+  assert.doesNotMatch(html, /Each session spans|Subagents excluded|Days use UTC|Captured spans can grow|Daily values|report-line-values/);
   assert.doesNotMatch(html, /NaN|Infinity|overlap is unavailable/);
   const unavailable = render({...data, agents: null, overlap: null});
   assert.doesNotMatch(unavailable, /Session overlap is unavailable/);
@@ -337,4 +337,11 @@ test('copying writes the exact prompt and reports when the browser cannot copy',
   assert.equal(await copyText(prompt, {} as Pick<Clipboard, 'writeText'>), false);
   assert.equal(await copyText(prompt), false);
   assert.deepEqual(written, [prompt]);
+});
+
+test('shared setup is labeled once instead of marking personal installations missing',()=>{
+ const data=report();
+ for(const member of data.members)member.setup={shared:{name:'Replicas',observedAt:'2026-11-13T00:00:00Z'}};
+ const html=renderToStaticMarkup(createElement(MemoryRouter,null,createElement(UsageReportView,{data,now})));
+ assert.match(html,/Shared Replicas setup/);assert.doesNotMatch(html,/CLI not set up|MCP not set up|Sessions not set up/);
 });

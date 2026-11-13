@@ -87,7 +87,7 @@ export async function usageReport({principal, directory, integrations, search, c
     if (!onboarding) return {};
     const receipt: Partial<OnboardingReceipts> | null = await soft('onboarding', () => onboarding.read(memberScope(user.id)), {});
     const {cli = null, mcp = null, session = null} = receipt || {};
-    return {cli, mcp, session, client: mcp?.client || null};
+    return {cli, mcp, session, client: mcp?.client || null, ...(receipt?.shared ? {shared: receipt.shared} : {})};
   }));
 
   const activity = new Map((agents?.people || []).map(p => [p.userId, p]));

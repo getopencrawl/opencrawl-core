@@ -150,6 +150,7 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
 }
 
 function SetupDots({member}: {member: UsageMember}) {
+  if (member.setup.shared) return <span title="Your administrator verified the shared installation.">Shared {member.setup.shared.name} setup</span>;
   const labels = {cli: 'CLI', mcp: 'MCP', session: 'Sessions'};
   return <>
     <span className="report-setup-dots">{(['cli', 'mcp', 'session'] as const).map(key => (
@@ -181,7 +182,7 @@ function TeamReport({report, now}: {report: UsageReport; now: number}) {
             </div>
           ) : null)}</dl>
         )}
-        <Section className="report-panel" headingLevel={3} title="Member activity" description={`${report.days ? `Last ${report.days} days.` : 'All captured activity.'} Ranked by sessions, then tool calls; subagent sessions are counted separately. Setup: CLI, MCP, sessions.`}>
+        <Section className="report-panel" headingLevel={3} title="Member activity" description={`${report.days ? `Last ${report.days} days.` : 'All captured activity.'} Ranked by sessions, then tool calls; subagent sessions are counted separately. Setup: shared installation or individual CLI, MCP and sessions.`}>
           <Table label="Team usage" className="report-member-table report-leaderboard-table">
             <thead><tr>
               <th scope="col">Rank</th><th scope="col">Member</th><th scope="col">Sessions</th><th scope="col">Messages</th>

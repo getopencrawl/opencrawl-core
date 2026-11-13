@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {standaloneCapture} from '../dist/tools/test-fixtures/capture.mjs';
-import {cloudSetupScript,captureSetupPrompt,cloudCapturePage} from '../dist/src/sessions/cloud-setup.mjs';
+import {cloudSetupScript,captureSetupPrompt,replicasSetupPrompt,cloudCapturePage} from '../dist/src/sessions/cloud-setup.mjs';
 import {memorySessionStore as memory} from './session-store-fixture.mjs';
 const owner={tenantId:'fixed',userId:'owner'};
 test('capture delegation is hashed, scoped, expiring and revocable',async()=>{
@@ -78,4 +78,11 @@ test('owner revocation permanently invalidates old delegations without affecting
  const fresh=await credentials.issue(owner);assert.ok(await credentials.authenticate(fresh.token));
  await assert.rejects(credentials.revokeAll(await credentials.authenticate(fresh.token)),{status:403});
  await credentials.revokeAll(owner);assert.equal(await credentials.authenticate(fresh.token),null);
+});
+
+test('dedicated Replicas prompt keeps shared setup independent from personal login',()=>{
+ const prompt=replicasSetupPrompt('https://selfhost.example');
+ for(const expected of ['workspace_identity','https://selfhost.example/mcp','https://selfhost.example/onboarding','onboardingWorkspaceId','warm-hooks save-test','start-hooks test','stored and searchable','never write user hook trust','unknown authors','one shared installation verification']) assert.ok(prompt.includes(expected),expected);
+ assert.ok(!prompt.includes('https://app.getopencrawl.com'));
+ assert.ok(!prompt.includes('opencrawl token create'));
 });

@@ -1,5 +1,5 @@
 import type {EventIdentityStore} from '../sessions/types.mjs';
-import {createReplicasWorkloads, isReplicasToken, isWorkloadPrincipal} from '../identity/replicas.mjs';
+import {createReplicasWorkloads, replicasSharedInstallations, isReplicasToken, isWorkloadPrincipal} from '../identity/replicas.mjs';
 import type {createSlackOAuth} from '../integrations/slack-oauth.mjs';
 import {connectorProxyHandler,type SourceCredentialProxy} from '../integrations/proxy-http.mjs';
 import type {IncomingMessage,ServerResponse} from 'node:http';
@@ -20,7 +20,7 @@ import {mcpMetadata} from '../identity/mcp.mjs';
 import {teamService,isAdmin} from '../identity/team.mjs';
 import {roleWriteGuard} from '../identity/role-write.mjs';
 import {createOnboardingStatus} from '../onboarding-status.mjs';
-import {deriveOnboarding,hasReceipt} from '../onboarding-state.mjs';
+import {deriveOnboarding,hasCompletedOnboarding} from '../onboarding-state.mjs';
 import {createOnboardingObserver} from '../application/onboarding-observer.mjs';
 import {createGuidedOnboarding} from '../application/onboarding.mjs';
 import {smallJson} from '../application/http.mjs';
@@ -69,7 +69,7 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
   const accounts=localAuth({identity,url:settings.url,organizationId:settings.organizationId,setupToken:settings.setupToken,member:async browser=>(await admit(browser)).status===200});
   const credentials=createCaptureCredentials({store,prefix});
   const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(store,prefix),credentials.revokeAll);
-  const onboarding=createOnboardingStatus({store,prefix}),observe=createOnboardingObserver(onboarding);
+  const onboarding=createOnboardingStatus({store,prefix,sharedInstallations:()=>replicasSharedInstallations(settings.replicasBindings??[])}),observe=createOnboardingObserver(onboarding);
   const values=valueReports({store,prefix});
   const search=createSessionSearch({...settings.search,store,prefix});
   async function authorize(principal:Principal,requested?:unknown) {
@@ -97,7 +97,7 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
     if(!isReplicasToken(token))return accounts.mcpIdentity(req,res);
     const result=await workloads.identify(token);if(result.status===200)return result.principal;
     res.writeHead(result.status,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'invalid_workload'}));return null;
-  },onConnectionTest:async p=>{if(!isWorkloadPrincipal(p))await onboarding.mcpTest(p);},onAuthenticated:async(p,info)=>{if(!isWorkloadPrincipal(p))await onboarding.mcp(p,info);}});
+  },onConnectionTest:async p=>{await onboarding.mcpTest(p);},onAuthenticated:async(p,info)=>{await onboarding.mcp(p,info);}});
   const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:scheduleSessionIndexing,onStored:observe.session}),authenticate:async req=>{
     const token=/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1];
     if(isReplicasToken(token)){const result=await workloads.identify(token);if(result.status!==200)throw Object.assign(new Error('Workload authentication required'),{status:result.status});return {...result.principal,captureAccess:'write'};}
@@ -150,7 +150,7 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
         if(result.status!==200)return json(result.status,{schemaVersion:1,error:{code:result.status===403?(result.code||'ACCESS_DENIED'):'AUTH_REQUIRED'}});
         const workspace:{id:string;name:string|null}={id:result.principal.tenantId,name:null};
         try{const organization=await directory.organizations.getOrganization(workspace.id);if(organization.id===workspace.id)workspace.name=organization.name;}catch{/* Display failure does not invalidate a verified sign-in. */}
-        if(!isWorkloadPrincipal(result.principal))await observe.cli(result.principal);return json(200,{schemaVersion:1,data:{user:result.user,workspace,index:{available:false},...('workload' in result?{credential:'workspace-identity',workload:result.workload}:{})}});
+        await observe.cli(result.principal);return json(200,{schemaVersion:1,data:{user:result.user,workspace,index:{available:false},...('workload' in result?{credential:'workspace-identity',workload:result.workload}:{})}});
       }
       if(req.method==='GET'&&url.pathname==='/setup-prompt.txt'){res.setHeader('Access-Control-Allow-Origin','*');return respond(200,captureSetupPrompt(settings.url));}
       if(req.method==='GET'&&url.pathname==='/robots.txt')return respond(200,'User-agent: *\nDisallow: /\n');
@@ -176,14 +176,14 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
         usage:p=>usageReport({principal:p,directory,integrations,search,connectors,onboarding,values}),progress:guided.progress,next:guided.next,library,libraryFailure});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{
         if(selected.name.startsWith('/api/console/')){
-          if(selected.name!=='/api/console/bootstrap'&&!hasReceipt((await guided.progress(principal))?.completed))return reply(409,JSON.stringify({error:'Complete onboarding before opening the workspace.',onboardingUrl:await guided.next(principal)}),'application/json');
+          if(selected.name!=='/api/console/bootstrap'&&!hasCompletedOnboarding(await guided.progress(principal)))return reply(409,JSON.stringify({error:'Complete onboarding before opening the workspace.',onboardingUrl:await guided.next(principal)}),'application/json');
           const result=await consoleApi(request,selected.name,{principal,user,member,cacheScope,admitted:true,revalidate:rpc?async()=>true:revalidate});return reply(result.status,JSON.stringify(result.body),'application/json');
         }
         if(request.method==='GET'&&consolePages.has(target.pathname)){
           const progress=await guided.progress(principal);
-          if(!target.pathname.startsWith('/onboarding')&&!hasReceipt(progress?.completed))return redirect(await guided.next(principal));
+          if(!target.pathname.startsWith('/onboarding')&&!hasCompletedOnboarding(progress))return redirect(await guided.next(principal));
           // An admin can invite teammates while connecting their own agent. Other setup and workspace gates remain receipt-based.
-          if(target.pathname.startsWith('/onboarding/')&&!(target.pathname==='/onboarding/invite'&&isAdmin(member))&&!hasReceipt(progress?.completed)&&!(progress&&deriveOnboarding(progress).complete))return redirect('/onboarding');
+          if(target.pathname.startsWith('/onboarding/')&&!(target.pathname==='/onboarding/invite'&&isAdmin(member))&&!hasCompletedOnboarding(progress)&&!(progress&&deriveOnboarding(progress).complete))return redirect('/onboarding');
           return reply(200,consoleDocument(),'text/html; charset=utf-8');
         }
         if(guided.handles(selected.name))return guided.handle(request,{route:selected,principal,identity:{user},member,respond:reply});

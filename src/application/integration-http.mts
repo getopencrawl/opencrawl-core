@@ -7,7 +7,7 @@ import type {createOnboardingStatus} from '../onboarding-status.mjs';
 import type {createGuidedOnboarding} from './onboarding.mjs';
 import type {Route} from './routes.mjs';
 import {errorInfo} from '../errors.mjs';
-import {hasReceipt} from '../onboarding-state.mjs';
+import {hasCompletedOnboarding} from '../onboarding-state.mjs';
 import {callbackPage} from './integration-callback.mjs';
 import {smallJson} from './http.mjs';
 export async function integrationRequest(req: IncomingMessage,url: URL,route: Route, {
@@ -47,7 +47,7 @@ export async function integrationRequest(req: IncomingMessage,url: URL,route: Ro
         if (route.name === 'integration-callback') {
           const result = await integrations.complete(principal, provider.id, url.searchParams);
           if (!result.actions?.length) track(result.ok ? 'integration_connected' : 'integration_connect_failed', principal, {provider: provider.id, reason: result.ok ? null : result.reason || null});
-          const inOnboarding = Boolean(onboarding && !hasReceipt((await guided.progress(principal))?.completed));
+          const inOnboarding = Boolean(onboarding && !hasCompletedOnboarding(await guided.progress(principal)));
           const callback = callbackPage({...result,name:provider.name,returnTo:inOnboarding ? '/onboarding/sources' : '/sources'});
           return respond(result.ok || result.actions?.length ? 200 : 400, document(callback,{signedIn:true}), 'text/html; charset=utf-8');
         }
