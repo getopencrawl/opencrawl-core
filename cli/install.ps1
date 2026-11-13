@@ -20,6 +20,7 @@ try {
   if ((Get-FileHash (Join-Path $scratch $archive) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'OpenCrawl download checksum mismatch.' }
   & tar -xzf (Join-Path $scratch $archive) -C $scratch
   if ($LASTEXITCODE -ne 0) { throw 'Could not unpack OpenCrawl.' }
+  if ((Get-Item (Join-Path $scratch 'package/bin/opencrawl.exe')).Length -eq 0) { throw 'OpenCrawl archive has no executable.' }
   & (Join-Path $scratch 'package/bin/opencrawl.exe') install
   if ($LASTEXITCODE -ne 0) { throw 'OpenCrawl installation failed.' }
 } finally { Remove-Item -Recurse -Force $scratch }

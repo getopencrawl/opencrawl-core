@@ -24,5 +24,6 @@ expected=$(awk -v name="$archive" '$2 == name {print $1}' "$scratch/SHA256SUMS")
 if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$scratch/$archive" | awk '{print $1}'); else actual=$(shasum -a 256 "$scratch/$archive" | awk '{print $1}'); fi
 if [ ${#expected} -ne 64 ] || [ "$actual" != "$expected" ]; then echo 'OpenCrawl download checksum mismatch.' >&2; exit 1; fi
 tar -xzf "$scratch/$archive" -C "$scratch"
+if [ ! -s "$scratch/package/bin/opencrawl" ]; then echo 'OpenCrawl archive has no executable.' >&2; exit 1; fi
 chmod 755 "$scratch/package/bin/opencrawl"
 "$scratch/package/bin/opencrawl" install

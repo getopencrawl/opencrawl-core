@@ -15,8 +15,9 @@ const server=Bun.serve({hostname:'127.0.0.1',port:0,fetch(request){const name=ne
 try{
   const windows=process.platform==='win32',powershell=windows?join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'):'';
   const installer=windows?[powershell,'-NoProfile','-File',join(root,'install.ps1'),pkg.version]:['/bin/sh',join(root,'install.sh'),pkg.version];
-  await run(installer,{OPENCRAWL_DOWNLOAD_BASE:server.url.origin});
+  const installed=await run(installer,{OPENCRAWL_DOWNLOAD_BASE:server.url.origin});
   const entry=join(env.OPENCRAWL_INSTALL_DIR,windows?'opencrawl.cmd':'opencrawl');
+  if(!existsSync(entry))throw new Error('Installer did not create its command: '+installed);
   const command=(args:string[])=>windows?[powershell,'-NoProfile','-Command',`& '${entry.replace(/'/g,"''")}' ${args.map(v=>"'"+v.replace(/'/g,"''")+"'").join(' ')}`]:[entry,...args];
   if(await run(command(['--version']))!==pkg.version)throw new Error('Native install version mismatch');
   await run(command(['skills','install','--client','claude-code','--json']));

@@ -10,11 +10,15 @@ const platforms=['darwin-arm64','darwin-x64','linux-arm64','linux-x64','win32-x6
 function run(args:string[]){const result=Bun.spawnSync(args,{stdout:'pipe',stderr:'pipe'});if(result.exitCode)throw new Error(result.stderr.toString());return result.stdout.toString();}
 if(!process.argv.includes('--publish')){
   mkdirSync(output,{recursive:true});const sums:string[]=[];
-  for(const platform of platforms){
+  for(const platform of platforms.filter(platform=>!process.argv.includes('--current')||platform===process.platform+'-'+process.arch)){
     const directory=join(dist,platform),pkg=JSON.parse(readFileSync(join(directory,'package.json'),'utf8'));
     if(pkg.version!==manifest.version||pkg.opencrawlRevision!==manifest.opencrawlRevision)throw new Error('Mixed native release artifacts');
-    const entries:Record<string,Blob>={};
-    for(const file of ['package.json','LICENSE','THIRD_PARTY_NOTICES.txt','runtime/opencrawl.js','bin/'+(platform.startsWith('win32-')?'opencrawl.exe':'opencrawl')])entries['package/'+file]=Bun.file(join(directory,file));
+    const entries:Record<string,Uint8Array>={};
+    // Materialize file bytes: Bun 1.3.14 archives file-backed Blobs as empty
+    // entries even though in-memory Blobs and byte arrays are supported.
+    for(const file of ['package.json','LICENSE','THIRD_PARTY_NOTICES.txt','runtime/opencrawl.js','bin/'+(platform.startsWith('win32-')?'opencrawl.exe':'opencrawl')]){
+      const bytes=readFileSync(join(directory,file));if(!bytes.length)throw new Error('Empty native release file: '+file);entries['package/'+file]=bytes;
+    }
     const name='opencrawl-'+platform+'.tgz';await Bun.write(join(output,name),new Bun.Archive(entries,{compress:'gzip'}));
     sums.push(digest(join(output,name))+'  '+name);
   }
