@@ -12,11 +12,13 @@ import {createControls, visibleTo} from './controls.mjs';
 import type {ResourceControl} from './controls.mjs';
 import {capturedTitle, TITLE_KINDS} from './titles.mjs';
 import {capturedActor,type CapturedActor} from './actors.mjs';
+import {validParticipant, type SessionParticipant} from './participants.mjs';
 
 export interface SessionKey {userId: string; harness: string; sessionId: string}
 export interface SessionSummary extends SessionKey {
   title: string; private: boolean; mine: boolean; origin: string | null; host: string | null;
   hosts: string[]; hostsTruncated: boolean;
+  participants: SessionParticipant[]; participantsTruncated: boolean;
   firstActivityAt: string | null; lastActivityAt: string | null; events: number; capturedTokens?: number | null;
 }
 export type TranscriptEntry =
@@ -301,9 +303,10 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
     return {...key, deleted: true as const, pending: false as const, objects, documents};
   }
   return {
-    async list(principal: Principal, {scope = 'all', query = '', limit = 50}: {scope?: unknown; query?: unknown; limit?: unknown} = {}) {
+    async list(principal: Principal, {scope = 'all', query = '', participant, limit = 50}: {scope?: unknown; query?: unknown; participant?: unknown; limit?: unknown} = {}) {
       const collection = reader(principal);
       if (!['all', 'mine'].includes(String(scope)) || typeof query !== 'string' || query.length > 500 || !Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 500) fail(400, 'Invalid session list');
+      if (participant !== undefined && !validParticipant(participant)) fail(400, 'Invalid participant');
       // Summarize from conversation records only: bookkeeping is most of the index.
       // A Grok Bot runtime that reports only tool hooks has no messages to list by.
       const listed = (kinds: string[]): QueryBody => ({bool: {minimum_should_match: 1, should: [{terms: {[f('kind')]: kinds}},
@@ -311,7 +314,41 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
       const filter: QueryBody[] = [{term: {[f('chunk')]: 0}}, listed(CONVERSATION), visibleTo('session', principal), ...(scope === 'mine' ? [{term: {[f('userId')]: principal.userId}}] : [])];
       const fields = ['userId', 'harness', 'sessionId'].map(field => ({field: f(field)}));
       const order = [{lastActivity: 'desc'}, {_key: 'asc'}];
-      if (query.trim()) {
+      const restrict = (keys: Array<{key: string[]}>) => ({bool: {minimum_should_match: 1, should: keys.map(bucket => ({bool: {filter: sessionFilter(checkKey({userId: bucket.key[0], harness: bucket.key[1], sessionId: bucket.key[2]}))}}))}});
+      if (participant) {
+        const matches: QueryBody[] = [{term: {[f('participantId')]: participant}}];
+        const owner = participant.startsWith('user:') ? participant.slice(5) : null;
+        if (owner && !owner.startsWith('workload_replicas_')) matches.push({bool: {filter: [{term: {[f('userId')]: owner}}], must_not: [{exists: {field: f('participantVersion')}}]}});
+        // Select sessions by sender, then summarize the whole conversation.
+        // The search words may have been written by another participant.
+        type Match = {key: string[]; lastActivity: {value: number | null}};
+        let cursor: string[] | undefined, selected: Match[] = [];
+        // Walk all sender sessions in stable key order. A page limit must not
+        // hide older search matches or sort by just this sender's last message.
+        for (;;) {
+          const after: QueryBody[] = cursor ? [{bool: {minimum_should_match: 1, should: ['userId','harness','sessionId'].map((field, index) => ({bool: {filter: [
+            ...['userId','harness','sessionId'].slice(0, index).map((prefix, i) => ({term: {[f(prefix)]: cursor![i]}})), {range: {[f(field)]: {gt: cursor![index]}}},
+          ]}}))}}] : [];
+          const candidates = await collection.search(principal, {size: 0, query: {bool: {filter: [...filter, ...after, {bool: {should: matches, minimum_should_match: 1}}]}},
+            aggs: {sessions: {multi_terms: {terms: fields, size: 500, order: {_key: 'asc'}}}}});
+          const keys = candidates.aggregations?.sessions?.buckets as unknown as Array<{key: string[]}>;
+          if (!Array.isArray(keys)) throw new Error('Invalid participant matches');
+          if (!keys.length) break;
+          const matchFilter = filter.map((value, index) => index === 1 ? listed([...CONVERSATION, ...TITLE_KINDS]) : value);
+          const matched = await collection.search(principal, {size: 0, query: {bool: {filter: [...matchFilter, restrict(keys)], ...(query.trim() ? {must: [{match: {text: {query: query.trim(), operator: 'and'}}}]} : {})}},
+            aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {lastActivity: {max: {field: 'timestamp'}}}}}});
+          const values = matched.aggregations?.sessions?.buckets as unknown as Match[];
+          if (!Array.isArray(values)) throw new Error('Invalid participant matches');
+          selected = [...selected, ...values].sort((a,b) => (b.lastActivity.value ?? 0) - (a.lastActivity.value ?? 0) || JSON.stringify(a.key).localeCompare(JSON.stringify(b.key))).slice(0, limit as number);
+          const next = keys.at(-1)!.key;
+          if (JSON.stringify(next) === JSON.stringify(cursor)) throw new Error('Non-advancing participant cursor');
+          cursor = next;
+          if (keys.length < 500) break;
+        }
+        if (!selected.length) return {sessions: [], limit};
+        filter.push(restrict(selected));
+      }
+      if (query.trim() && !participant) {
         // Select sessions containing the words, then summarize each whole session.
         const matchFilter = filter.map((value, index) => index === 1 ? listed([...CONVERSATION, ...TITLE_KINDS]) : value);
         const matched = await collection.search(principal, {size: 0, query: {bool: {filter: matchFilter, must: [{match: {text: {query: query.trim(), operator: 'and'}}}]}},
@@ -324,15 +361,23 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
         lastActivity: {max: {field: 'timestamp'}}, firstActivity: {min: {field: 'timestamp'}},
         private: {filter: {term: {[f('private')]: true}}},
         origin: {terms: {field: f('origin'), size: 1}}, host: hostTerms,
+        participants: {terms: {field: f('participantId'), size: 100, order: {_key: 'asc'}}, aggs: {name: {terms: {field: f('participantName'), size: 1}}}},
+        unknownParticipants: {filter: {term: {[f('participantUnknown')]: true}}},
       }}}});
       type Bucket = {key: string[]; doc_count: number; lastActivity: {value: number | null}; firstActivity: {value: number | null}; private: {doc_count: number};
-        origin: {buckets: Array<{key: string}>}; host: HostBuckets};
+        origin: {buckets: Array<{key: string}>}; host: HostBuckets;
+        participants?: {buckets: Array<{key: string; name: {buckets: Array<{key: string}>}}> ; sum_other_doc_count?: number}; unknownParticipants?: {doc_count: number}};
       const buckets = result.aggregations?.sessions?.buckets as unknown as Bucket[] | undefined;
       if (!Array.isArray(buckets)) throw new Error('Invalid session list response');
       const sessions: SessionSummary[] = buckets.map(bucket => {
         const [userId, harness, sessionId] = bucket.key;
         if (!identity(userId) || !isSessionHarness(harness) || !identity(sessionId)) throw new Error('Invalid session list response');
-        return {userId: userId!, harness: harness!, sessionId: sessionId!, title: `Session ${sessionId}`,
+        const participants: SessionParticipant[] = (bucket.participants?.buckets ?? []).map(person => {
+          if (!validParticipant(person.key)) throw new Error('Invalid session participant');
+          return {id: person.key, ...(person.name.buckets[0]?.key ? {name: person.name.buckets[0].key} : {})};
+        });
+        if (!participants.length && !bucket.unknownParticipants?.doc_count && !userId!.startsWith('workload_replicas_')) participants.push({id: 'user:' + userId!});
+        return {userId: userId!, harness: harness!, sessionId: sessionId!, participants, participantsTruncated: (bucket.participants?.sum_other_doc_count ?? 0) > 0, title: `Session ${sessionId}`,
           private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, ...capturedHosts(bucket.host),
           firstActivityAt: iso(bucket.firstActivity.value), lastActivityAt: iso(bucket.lastActivity.value), events: bucket.doc_count};
       });

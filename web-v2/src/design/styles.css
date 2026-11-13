@@ -589,6 +589,14 @@ img { max-width: 100%; }
 .oc-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oc-row-title { display: flex; align-items: center; gap: var(--space-2); color: var(--strong); font-size: var(--text-ui); }
 .oc-row-title > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oc-row-title { min-width: 0; text-decoration: none; }
+.oc-row > .oc-row-participants { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); white-space: normal; overflow: visible; padding-block: var(--space-1); }
+.oc-row-participants a { min-width: 0; max-width: 100%; overflow-wrap: anywhere; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+.oc-row-participants a:hover { color: var(--accent-hover); }
+.oc-filter-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.oc-button.oc-filter-chip { min-width: 0; max-width: 100%; min-height: 32px; padding: var(--space-1) var(--space-2); border-radius: var(--radius-badge); background: var(--surface-raised); font-size: var(--text-sm); }
+.oc-filter-chip > span { overflow-wrap: anywhere; text-align: left; }
+.oc-filter-chip > svg { flex-shrink: 0; }
 .oc-row:hover .oc-row-title > span:first-child { color: var(--accent-hover); }
 .oc-row-end { text-align: right; }
 @media (max-width: 800px) { .oc-row { grid-template-columns: minmax(0, 1fr) auto; } .oc-row-optional { display: none; } }
@@ -608,6 +616,9 @@ img { max-width: 100%; }
   .oc-row-with-host { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-1); padding-block: var(--space-2); }
   .oc-row-with-host .oc-row-host { grid-column: 1; grid-row: 2; font-size: var(--text-xs); }
   .oc-row-with-host .oc-row-end { grid-column: 2; grid-row: 1; }
+  .oc-row-with-host .oc-row-participants { grid-column: 1 / -1; grid-row: 3; font-size: var(--text-xs); }
+  .oc-row-participants a { display: inline-flex; align-items: center; min-height: 32px; }
+  .oc-button.oc-filter-chip { min-height: 44px; }
   .oc-row-with-host .oc-row-tokens { grid-column: 2; grid-row: 2; font-size: var(--text-xs); }
   .oc-row-tokens-label { display: inline; }
   .oc-row-host-label { display: inline; }

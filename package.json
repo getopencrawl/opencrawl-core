@@ -18,6 +18,7 @@
     "./memories/library": "./dist/src/memories/library.mjs",
     "./sessions/indexer": "./dist/src/sessions/indexer.mjs",
     "./sessions/token-migration": "./dist/src/sessions/token-migration.mjs",
+    "./sessions/participant-migration": "./dist/src/sessions/participant-migration.mjs",
     "./sessions/document-identity": "./dist/src/sessions/document-identity.mjs",
     "./sessions/projection-migration": "./dist/src/sessions/projection-migration.mjs",
     "./onboarding/status": "./dist/src/onboarding-status.mjs",
