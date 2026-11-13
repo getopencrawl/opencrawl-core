@@ -32,7 +32,7 @@ test('bootstrap exposes only confirmed metadata, preserves checkpoints, and does
     return registration;
   };
   const output=await sessionStart(api,'codex',{...event,transcript_path:'/must-not-be-read'},request);
-  expect(output.hookSpecificOutput.additionalContext).toContain('Choose your own display name');
+  expect(output.hookSpecificOutput.additionalContext).toContain('Display name/task: unset');
   expect(output.hookSpecificOutput.additionalContext).toContain('does not attach a listener');
   const file=boardStateFile(api,event.session_id), receipt={...registration,lastEmitted:'saved-receipt'};
   writeFileSync(file,JSON.stringify(receipt));const before=statSync(file).mtimeMs;
@@ -95,7 +95,7 @@ test('real startup CLI and board server preserve the agent-chosen profile across
     expect((await start('startup')).hookSpecificOutput.additionalContext).toContain('registered with');
     await run(['board','profile','--session','native-123','--name','codex:agent-choice','--task','Test real lifecycle','--json']);
     for(const source of ['resume','compact'])expect((await start(source)).hookSpecificOutput.additionalContext).toContain('codex:agent-choice');
-    expect((await start('fork','native-fork')).hookSpecificOutput.additionalContext).toContain('Choose your own display name');
+    expect((await start('fork','native-fork')).hookSpecificOutput.additionalContext).toContain('Display name/task: unset');
     expect((await start('startup','claude-native','claude-code')).hookSpecificOutput.additionalContext).toContain('registered with');
     expect(existsSync(join(home,'config/opencrawl/capture'))).toBe(false);
     expect(existsSync(join(home,'config/opencrawl/update.json'))).toBe(false);

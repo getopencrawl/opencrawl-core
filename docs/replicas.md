@@ -39,3 +39,11 @@ Workspace creator metadata is not a per-message author. Sender attribution,
 resource administration for workload-owned data, native transcript normalization,
 and lifecycle reconciliation require separate acceptance. Enabling this adapter
 alone does not establish local-machine parity or mark every team member onboarded.
+
+Replicas chat names are resolved through an exact native-thread match in the
+platform history API. The CLI caches this metadata for 30 seconds across workers;
+it does not mistake the SDK's generic `Claude Code` title for the platform name.
+`opencrawl collect titles` refreshes names for already enrolled sessions without
+replaying their conversation. A metadata/provenance API failure keeps local data
+for retry and must not be reported as complete capture. Platform title metadata
+is descriptive and grants no authentication or resource access.
