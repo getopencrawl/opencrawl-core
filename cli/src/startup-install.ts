@@ -1,5 +1,5 @@
 import {existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync, statSync, lstatSync, chmodSync} from 'node:fs';
-import {join, dirname} from 'node:path';
+import {join, dirname, basename, isAbsolute, relative} from 'node:path';
 import {homedir} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {atomicFile, configDir} from './session.ts';
@@ -8,10 +8,39 @@ import {retryWindowsSharing} from './filesystem.ts';
 
 export const startupMarker = 'OpenCrawl session startup';
 const quote = (s: string) => process.platform === 'win32' ? '"' + s.replace(/"/g, '""') + '"' : "'" + s.replace(/'/g, "'\\''") + "'";
-type Options = {home?: string; env?: NodeJS.ProcessEnv; command?: string[]; node?: string};
+export type StartupOptions = {home?: string; env?: NodeJS.ProcessEnv; command?: string[]; node?: string; requirementsFile?: string};
+
+/** Inspect the documented system policy without changing it or granting trust.
+ * Recognize only an unconditional synchronous invocation of an installed CLI.
+ * Other managed sources still require inspection in Codex's native hook UI. */
+function managedStartup(file: string) {
+  if (!existsSync(file)) return null;
+  const policy = Bun.TOML.parse(readFileSync(file, 'utf8')) as any;
+  if (policy.features?.hooks === false) return {status: 'disabled', file, managed: true};
+  const directory = process.platform === 'win32' ? policy.hooks?.windows_managed_dir : policy.hooks?.managed_dir;
+  for (const group of policy.hooks?.SessionStart ?? []) {
+    if (group.matcher) continue;
+    for (const hook of group.hooks ?? []) {
+      if (hook.type !== 'command' || hook.statusMessage !== startupMarker || hook.async === true) continue;
+      const command = process.platform === 'win32' ? hook.command_windows ?? hook.command : hook.command;
+      const match = typeof command === 'string' && /^(?:exec\s+)?(?:OPENCRAWL_NO_UPDATE=1\s+)?(?:"([^"]+)"|'([^']+)'|(\S+))\s+session\s+start\s+--harness\s+codex$/.exec(command);
+      const binary = match && (match[1] || match[2] || match[3]);
+      if (!binary || !isAbsolute(binary) || !/^opencrawl(?:-\d+\.\d+\.\d+)?(?:\.exe)?$/.test(basename(binary))) continue;
+      if (typeof directory !== 'string' || !isAbsolute(directory)) continue;
+      const within = relative(directory, binary);
+      if (!within || within.startsWith('..') || isAbsolute(within)) continue;
+      const executable = statSync(binary);
+      if (!executable.isFile() || process.platform !== 'win32' && !(executable.mode & 0o111)) continue;
+      return {status: 'managed', file, managed: true, featuresEnabled: policy.features?.hooks === true};
+    }
+  }
+  if (policy.allow_managed_hooks_only === true) return {status: 'disabled', file, managed: true,
+    message: 'Codex permits only administrator-managed hooks; ask the administrator to configure OpenCrawl SessionStart.'};
+  return null;
+}
 
 /** Own only our synchronous SessionStart entry. Never enable disabled hooks. */
-export function startupHooks(clients: string[], action: 'status' | 'install', {home = homedir(), env = process.env, command = commandForSelf(), node = process.env.OPENCRAWL_NODE || Bun.which('node') || ''}: Options = {}) {
+export function startupHooks(clients: string[], action: 'status' | 'install', {home = homedir(), env = process.env, command = commandForSelf(), node = process.env.OPENCRAWL_NODE || Bun.which('node') || '', requirementsFile = process.platform === 'win32' ? join(process.env.ProgramData || 'C:\\ProgramData', 'OpenAI', 'Codex', 'requirements.toml') : '/etc/codex/requirements.toml'}: StartupOptions = {}) {
   return clients.filter(client => ['codex', 'claude-code'].includes(client)).map(client => {
     const root = client === 'codex' ? env.CODEX_HOME || join(home, '.codex') : env.CLAUDE_CONFIG_DIR || join(home, '.claude');
     const file = join(root, client === 'codex' ? 'hooks.json' : 'settings.json');
@@ -20,7 +49,10 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
       const config = before ? JSON.parse(before) : {};
       if (!config || typeof config !== 'object' || Array.isArray(config) || config.hooks !== undefined && (!config.hooks || typeof config.hooks !== 'object' || Array.isArray(config.hooks))) throw new Error();
       const toml = join(root, 'config.toml');
-      if (config.disableAllHooks === true || client === 'codex' && existsSync(toml) && (Bun.TOML.parse(readFileSync(toml, 'utf8')) as {features?: {hooks?: boolean}}).features?.hooks === false) return {client, file, status: 'disabled'};
+      const managed = client === 'codex' ? managedStartup(requirementsFile) : null;
+      const locallyDisabled = config.disableAllHooks === true || client === 'codex' && existsSync(toml) && (Bun.TOML.parse(readFileSync(toml, 'utf8')) as {features?: {hooks?: boolean}}).features?.hooks === false;
+      if (locallyDisabled && !managed?.featuresEnabled) return {client, file, status: 'disabled'};
+      if (managed) return {client, ...managed};
       const runner = join(configDir(), 'startup', 'runner.cjs');
       const script = `const command=${JSON.stringify(command)};
 const env={...process.env,OPENCRAWL_CONFIG_HOME:${JSON.stringify(dirname(configDir()))}};

@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {atomicFile, withSessionLock} from './session.ts';
 import {CliError} from './oauth.ts';
 import {participationInstructions} from './board.ts';
-import {startupHooks} from './startup-install.ts';
+import {startupHooks, type StartupOptions} from './startup-install.ts';
 
 const revision = 6;
 const manifestName = '.opencrawl-skill.json';
@@ -13,7 +13,7 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 function metadata(path: string) {
   try {return lstatSync(path);} catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
 }
-type Options = {home?: string; env?: NodeJS.ProcessEnv; which?: (name: string) => string | null; clients?: string[]; includeExisting?: boolean};
+type Options = StartupOptions & {which?: (name: string) => string | null; clients?: string[]; includeExisting?: boolean};
 
 export function skillTargets({home = homedir(), env = process.env, which = Bun.which, clients, includeExisting = false}: Options = {}) {
   const shared = join(home, '.agents', 'skills', 'opencrawl');
@@ -186,7 +186,7 @@ export async function agentSkills(action: string, api: string, options: Options 
       }
     });
     return {api, results, startupInstruction: startupInstruction(),
-      ...(results.some(result => 'startupHooks' in result && result.startupHooks?.some(hook => hook.client === 'codex' && hook.status !== 'disabled'))
+      ...(results.some(result => 'startupHooks' in result && result.startupHooks?.some(hook => hook.client === 'codex' && !['disabled', 'managed'].includes(hook.status)))
         ? {hookReview: 'Codex requires review of new or changed hooks in /hooks (desktop Settings > Hooks). Trust OpenCrawl session startup there, then start a new session. Installation does not grant hook trust.'} : {}),
       ...(targets.length ? {} : {message: 'No supported client detected. Use --client to select a client explicitly.'})};
   };
