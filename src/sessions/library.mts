@@ -314,7 +314,16 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
       const filter: QueryBody[] = [{term: {[f('chunk')]: 0}}, listed(CONVERSATION), visibleTo('session', principal), ...(scope === 'mine' ? [{term: {[f('userId')]: principal.userId}}] : [])];
       const fields = ['userId', 'harness', 'sessionId'].map(field => ({field: f(field)}));
       const order = [{lastActivity: 'desc'}, {_key: 'asc'}];
-      const restrict = (keys: Array<{key: string[]}>) => ({bool: {minimum_should_match: 1, should: keys.map(bucket => ({bool: {filter: sessionFilter(checkKey({userId: bucket.key[0], harness: bucket.key[1], sessionId: bucket.key[2]}))}}))}});
+      const restrict = (keys: Array<{key: string[]}>) => {
+        const groups = new Map<string, {userId: string; harness: string; sessionIds: string[]}>();
+        for (const bucket of keys) {
+          const key = checkKey({userId: bucket.key[0], harness: bucket.key[1], sessionId: bucket.key[2]}), id = JSON.stringify([key.userId, key.harness]);
+          const group = groups.get(id) ?? {...key, sessionIds: []}; group.sessionIds.push(key.sessionId); groups.set(id, group);
+        }
+        return {bool: {minimum_should_match: 1, should: [...groups.values()].map(group => ({bool: {filter: [
+          {term: {[f('userId')]: group.userId}}, {term: {[f('harness')]: group.harness}}, {terms: {[f('sessionId')]: group.sessionIds}},
+        ]}}))}};
+      };
       if (participant) {
         const matches: QueryBody[] = [{term: {[f('participantId')]: participant}}];
         const owner = participant.startsWith('user:') ? participant.slice(5) : null;
@@ -330,7 +339,7 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
             ...['userId','harness','sessionId'].slice(0, index).map((prefix, i) => ({term: {[f(prefix)]: cursor![i]}})), {range: {[f(field)]: {gt: cursor![index]}}},
           ]}}))}}] : [];
           const candidates = await collection.search(principal, {size: 0, query: {bool: {filter: [...filter, ...after, {bool: {should: matches, minimum_should_match: 1}}]}},
-            aggs: {sessions: {multi_terms: {terms: fields, size: 500, order: {_key: 'asc'}}}}});
+            aggs: {sessions: {multi_terms: {terms: fields, size: 200, order: {_key: 'asc'}}}}});
           const keys = candidates.aggregations?.sessions?.buckets as unknown as Array<{key: string[]}>;
           if (!Array.isArray(keys)) throw new Error('Invalid participant matches');
           if (!keys.length) break;
@@ -343,7 +352,7 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
           const next = keys.at(-1)!.key;
           if (JSON.stringify(next) === JSON.stringify(cursor)) throw new Error('Non-advancing participant cursor');
           cursor = next;
-          if (keys.length < 500) break;
+          if (keys.length < 200) break;
         }
         if (!selected.length) return {sessions: [], limit};
         filter.push(restrict(selected));

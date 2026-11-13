@@ -37,11 +37,13 @@ async function fixture(t) {
 for (const backend of ['sqlite', 'opensearch']) test(`session participants use human senders, filter whole conversations, and migrate without changing permissions (${backend})`, {skip: backend === 'opensearch' && !process.env.OPENCRAWL_TEST_OPENSEARCH_URL}, async t => {
   const local = await fixture(t), endpoint = backend === 'opensearch' ? process.env.OPENCRAWL_TEST_OPENSEARCH_URL : local.endpoint;
   const principal = {...local.principal, tenantId: 'participants_' + Date.now()}, store = memorySessionStore(), prefix = 'sessions/participants';
-  const realm = createRealm({endpoint, tenantId: principal.tenantId}), collection = realm.collection('session');
-  const search = createSessionSearch({endpoint, store, prefix}), ingest = createSessionIngest({store, prefix});
+  const checkedFetch = async (...args) => {const response = await fetch(...args); if (!response.ok) console.error('Participant fixture engine response:', await response.clone().text()); return response;};
+  const realm = createRealm({endpoint, tenantId: principal.tenantId, fetch: checkedFetch}), collection = realm.collection('session');
+  const search = createSessionSearch({endpoint, store, prefix, fetch: checkedFetch}), ingest = createSessionIngest({store, prefix});
   const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
-  const library = createSessionLibrary({endpoint, store, prefix});
-  if (backend === 'opensearch') t.after(async () => {for (const tenantId of [principal.tenantId, 'foreign']) await fetch(endpoint + '/' + createRealm({endpoint, tenantId}).index, {method: 'DELETE'});});
+  const library = createSessionLibrary({endpoint, store, prefix, fetch: checkedFetch});
+  const foreign = principal.tenantId + '_foreign';
+  if (backend === 'opensearch') t.after(async () => {for (const tenantId of [principal.tenantId, foreign]) await fetch(endpoint + '/' + createRealm({endpoint, tenantId}).index, {method: 'DELETE'});});
   const sender = n => `50000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
   const actor = n => ({provider: 'replicas', assurance: 'collector-reported', kind: 'human', workspaceId: '10000000-0000-4000-8000-000000000001', nativeId: `40000000-0000-4000-8000-${String(n).padStart(12, '0')}`, messageId: 'user-' + n, userId: sender(n)});
   const owner = {...principal, userId: 'workload_replicas_fixture'};
@@ -68,7 +70,7 @@ for (const backend of ['sqlite', 'opensearch']) test(`session participants use h
   await assert.rejects(library.list(principal, {participant: 'tenant:other'}), {status: 400});
   await library.setVisibility(owner, {harness: 'claude-code', sessionId: 'shared', visibility: 'private'});
   assert.deepEqual((await library.list(principal, {participant: 'replicas:' + sender(1)})).sessions, []);
-  assert.deepEqual((await library.list({...principal, tenantId: 'foreign'})).sessions, []);
+  assert.deepEqual((await library.list({...principal, tenantId: foreign})).sessions, []);
   await assert.rejects(library.setVisibility(principal, {harness: 'claude-code', sessionId: 'shared', visibility: 'team'}), {status: 404});
   // Emulate older projections while keeping immutable captures intact.
   const existing = await collection.search(principal, {size: 100});
