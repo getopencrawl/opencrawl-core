@@ -181,7 +181,6 @@ export function createSqliteRealm(options: RealmOptions): SearchRealm {
         async bulk(principal, items) {
           const prepared = preflight(() => {
             scope(principal);
-            if (Buffer.byteLength(JSON.stringify(items)) > 4 * 1024 * 1024) throw fail('Realm bulk exceeds limit', 400);
             return items.map(item => {if (item.script) unsupported('raw scripts; use a named write policy'); return {...item, document: encode(item.id, item.document)};});
           });
           return withDatabase(true, true, db => {

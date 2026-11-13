@@ -5,6 +5,7 @@ interface MigrationState {identity: string; version: string; after: JsonValue[] 
 interface SourceStats {indices: Record<string, {uuid: string; shards: Record<string, Array<{routing?: {primary?: boolean}; seq_no?: {max_seq_no?: number}}>>}>}
 export interface MigrationSource {identity: string; version(): Promise<string>; read(after: JsonValue[] | null): Promise<{total: number; documents: DocumentItem[]; next: JsonValue[] | null}>}
 import {createHash} from 'node:crypto';
+import {INITIAL_BULK_TARGET_BYTES} from './bulk.mjs';
 import {createIndexTransport,realmDocument} from './realm.mjs';
 import {withSessionDocumentWrites} from '../sessions/write-barrier.mjs';
 const sorts={connector:['connectionId','workspaceId','provider','kind','sourceId'],session:['tenantId','userId','harness','installationId','sessionId','eventId','chunk']};
@@ -63,13 +64,12 @@ export async function migrateRealmCorpus({principal,corpus,source,realm,store,pr
       if(await source.version()!==version)throw new Error('Migration source changed during copy');
       state={...state,total:page.total,complete:true};await save(state);return state;
     }
-    // Bounded batches also handle large previously stored messages without loading a corpus.
+    // Schedule small batches; a larger individual document is sent alone.
     const copy=async()=>{
     let batch: DocumentItem[]=[],bytes=0;
     for(const item of page.documents){
       const size=Buffer.byteLength(JSON.stringify(realmDocument(corpus,item.id,item.document)));
-      if(size>3*1024*1024)throw new Error('Migration document exceeds bounded bulk size');
-      if(bytes+size>3*1024*1024){await collection.bulk(principal,batch);batch=[];bytes=0;}
+      if(batch.length&&bytes+size>INITIAL_BULK_TARGET_BYTES){await collection.bulk(principal,batch);batch=[];bytes=0;}
       batch.push(item);bytes+=size;
     }
     await collection.bulk(principal,batch);
