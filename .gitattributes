@@ -1,0 +1,2 @@
+# Historical package fixtures must retain the exact bytes shipped by npm.
+cli/test/fixtures/legacy-launcher-0.4.60.cjs -text

@@ -66,7 +66,7 @@ try{
   const held=new Promise<void>(resolve=>{finishSearch=resolve;});
   api=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
     if(new URL(request.url).pathname==='/api/search'){
-      await held;return Response.json({schemaVersion:1,data:{results:[],coverage:[],partial:false,next:null}});
+      await held;return Response.json({schemaVersion:1,data:{results:[],coverage:[{source:'sessions',state:'ready'}],partial:false,next:null}});
     }
     return Response.json({error:'fixture endpoint'},{status:401});
   }});
@@ -89,12 +89,12 @@ try{
   const output=new Response(running.stdout as ReadableStream<Uint8Array>).text(),errors=new Response(running.stderr as ReadableStream<Uint8Array>).text();
   const deadline=Date.now()+75_000;
   while(!existsSync(join(release,'package.json'))){
-    if(running.exitCode!==null)throw new Error('Published old command exited before updating: '+await errors);
+    if(running.exitCode!==null)throw new Error('Published old command exited before updating: '+await errors+await output+'; updater state: '+(existsSync(join(cache,'update.json'))?readFileSync(join(cache,'update.json'),'utf8'):'missing'));
     if(Date.now()>deadline)throw new Error('Published old auto-updater did not install the candidate within its command lifetime');
     await Bun.sleep(100);
   }
   finishSearch();
-  assert.equal(await running.exited,0,await errors);await output;running=undefined;
+  assert.equal(await running.exited,0,await errors+await output);running=undefined;
   delete environment.OPENCRAWL_TOKEN;
   // The next normal invocation uses the same old installation and migrates it.
   await run([node,launcher,'board','instructions'],environment);
@@ -132,6 +132,9 @@ try{
     assert(requests.every(request=>!request.npm),'Automatic update unexpectedly invoked npm');
   }
   console.log(JSON.stringify({bootstrapVersion,oldVersion,version:expected,platform,published,unmodifiedPublishedUpdater:true,originalCommandAndStartupHooksNodeFree:true,credentialsQueueAndCursorPreserved:true,legacyBridgePreserved:true,captureCommand:realpathSync(migrated.command[0])}));
+}catch(error){
+  for(const file of [join(environment.XDG_CACHE_HOME!,'opencrawl/update.json'),join(scratch,'proxy-receipt.json')])if(existsSync(file))console.error(readFileSync(file,'utf8'));
+  throw error;
 }finally{
   finishSearch();
   if(running){await Promise.race([running.exited,Bun.sleep(10_000)]);if(running.exitCode===null){running.kill();await running.exited;}}
