@@ -1,6 +1,15 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
+
+test('retained pagination cursors do not retain complete XML pages',()=>{
+ const child=spawnSync(process.execPath,['--expose-gc','--max-old-space-size=64',fileURLToPath(new URL('./fixtures/s3-pagination-memory.mjs',import.meta.url))],{encoding:'utf8',timeout:15000});
+ assert.equal(child.status,0,child.stderr);
+ const result=JSON.parse(child.stdout);
+ assert.equal(result.pages,160);assert.equal(result.retained,160);
+});
 
 test('S3 pagination omits persisted end-of-list null and preserves opaque tokens',async()=>{
  const requests=[];
