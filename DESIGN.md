@@ -533,11 +533,10 @@ inside their own container at narrow widths.
 
 Main session overlap follows Daily agent sessions in its own report panel. The
 shared DailyLineChart uses a solid lavender daily average and dashed green daily
-peak, UTC day labels, a zero-based session axis, and a keyboard-accessible daily
-values disclosure. Both series share one scale. Keep the description concise,
-with date/value details in hover titles and the daily values disclosure rather
-than a persistent caption or explanatory notes. The disclosure identifies the
-partial current day. Unavailable data never becomes a zero line.
+peak, UTC day labels, and a zero-based session axis. Both series share one scale.
+Keep the description concise, with date/value details and the partial current day
+identified in hover titles. Do not add a data-table disclosure, persistent caption,
+or explanatory notes. Unavailable data never becomes a zero line.
 Session activity responses require overlap data. Failed overlap reads reject the
 shared Usage query so its scoped cache retains the last complete report; never
 replace the chart with a per-panel unavailable message on refresh.
