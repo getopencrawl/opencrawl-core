@@ -9,10 +9,16 @@ export function singleOrganizationIdentity(directory: IdentityDirectory, organiz
   if (!/^org_[A-Za-z0-9]+$/.test(organizationId)) throw new Error('Configure one organization');
   return async (identity: BrowserIdentity & {organizationId?: unknown}): Promise<OrganizationAdmission> => {
     if (identity.organizationId != null && identity.organizationId !== organizationId) return {status: 403};
-    const current = await currentBrowserUser(directory, identity);
+    if (identity.authenticated !== true || !identity.sessionId || !identity.user?.id) return {status:401};
+    const [current, membershipRead] = await Promise.all([
+      currentBrowserUser(directory, identity),
+      activeMemberships(directory, identity.user.id, organizationId)
+        .then(value => ({ok:true as const,value}), () => ({ok:false as const})),
+    ]);
     if (current.status !== 200) return current;
     try {
-      const memberships = await activeMemberships(directory, current.user.id, organizationId);
+      if (!membershipRead.ok) return {status:503};
+      const memberships = membershipRead.value;
       if (memberships.length !== 1) return {status: 403};
       const member = memberships[0]!;
       const principal = {tenantId: organizationId, userId: current.user.id, email: current.user.email};
