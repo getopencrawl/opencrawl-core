@@ -11,6 +11,55 @@ on:
 permissions:
   contents: read
 jobs:
+  event-identity-upgrade:
+    name: Existing capture installation PostgreSQL upgrade
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: opencrawl-identity-upgrade
+      COMPOSE_FILE: compose.capture.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Start the immutable pre-PostgreSQL release and capture data
+        run: |
+          git fetch --depth 1 origin 831eb9a89b34c2a2e04002f754f3d1e1e8e21bb6
+          git worktree add --detach "$RUNNER_TEMP/identity-old" 831eb9a89b34c2a2e04002f754f3d1e1e8e21bb6
+          "$RUNNER_TEMP/identity-old/deploy/up-capture.sh"
+          cp "$RUNNER_TEMP/identity-old/deploy/.env" deploy/.env
+          node deploy/smoke.mjs seed "$RUNNER_TEMP/identity-receipt.json"
+          docker compose --project-directory "$RUNNER_TEMP/identity-old/deploy" exec -T worker node deploy/trigger-index.mjs
+          node deploy/smoke.mjs verify "$RUNNER_TEMP/identity-receipt.json"
+      - name: Run the documented upgrade against existing named volumes
+        run: |
+          node deploy/upgrade.mjs "$RUNNER_TEMP/identity-before"
+          node deploy/identity-upgrade-smoke.mjs "$RUNNER_TEMP/identity-receipt.json"
+          docker compose --project-directory deploy exec -T worker node deploy/trigger-index.mjs
+          node deploy/smoke.mjs verify "$RUNNER_TEMP/identity-receipt.json"
+      - name: Verify matched PostgreSQL and object-storage backup restore
+        run: |
+          node deploy/backup.mjs create "$RUNNER_TEMP/identity-after"
+          docker compose --project-directory deploy down --volumes
+          node deploy/backup.mjs restore "$RUNNER_TEMP/identity-after"
+          docker compose --project-directory deploy up -d --wait --wait-timeout 300
+          node deploy/identity-upgrade-smoke.mjs "$RUNNER_TEMP/identity-receipt.json"
+          node deploy/smoke.mjs verify "$RUNNER_TEMP/identity-receipt.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: postgres-identity-upgrade-${{ github.sha }}
+          path: ${{ runner.temp }}/identity-receipt.json.identity-upgrade.json
+      - name: Show migration failure diagnostics
+        if: failure()
+        run: docker compose --project-directory deploy logs --tail 60 receiver worker app-db
+      - name: Remove only the disposable upgrade installation
+        if: always()
+        run: |
+          docker compose --project-directory deploy down --volumes --remove-orphans
+          git worktree remove --force "$RUNNER_TEMP/identity-old"
+          rm -rf "$RUNNER_TEMP/identity-before" "$RUNNER_TEMP/identity-after"
   sqlite:
     name: Application with SQLite FTS5
     runs-on: blacksmith-4vcpu-ubuntu-2404

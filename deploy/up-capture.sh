@@ -4,15 +4,19 @@ set -eu
 umask 077
 cd "$(dirname "$0")"
 command -v docker >/dev/null 2>&1 || { echo "Docker is required: https://docs.docker.com/get-docker/" >&2; exit 1; }
+secret() { od -An -tx1 -N24 /dev/urandom | tr -d ' \n'; }
 if [ ! -f .env ]; then
-  secret() { od -An -tx1 -N24 /dev/urandom | tr -d ' \n'; }
   sed -e "s/^OPENCRAWL_SESSIONS_TOKEN=$/OPENCRAWL_SESSIONS_TOKEN=$(secret)/" \
       -e "s/^MCP_TOKEN=$/MCP_TOKEN=$(secret)/" \
       -e "s/^OPENCRAWL_S3_ACCESS_KEY_ID=$/OPENCRAWL_S3_ACCESS_KEY_ID=opencrawl$(secret | cut -c1-12)/" \
       -e "s/^OPENCRAWL_S3_SECRET_ACCESS_KEY=$/OPENCRAWL_S3_SECRET_ACCESS_KEY=$(secret)/" \
+      -e "s/^OPENCRAWL_DATABASE_PASSWORD=$/OPENCRAWL_DATABASE_PASSWORD=$(secret)/" \
       .env.capture.example > .env
   chmod 600 .env
   echo "==> Wrote deploy/.env with fresh secrets"
+fi
+if ! grep -q '^OPENCRAWL_DATABASE_PASSWORD=.' .env; then
+  printf '\nOPENCRAWL_DATABASE_PASSWORD=%s\n' "$(secret)" >> .env
 fi
 docker compose -f compose.capture.yaml up -d --build --wait --wait-timeout 240 "$@"
 . ./.env
