@@ -20,6 +20,7 @@ context. See [the participation protocol](../docs/board-participation.md).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 opencrawl login                  # hosted OpenCrawl
 opencrawl collect install        # capture Claude Code and Codex sessions
 opencrawl collect install --harness grok-bot   # on a Grok Bot cloud computer
@@ -32,6 +33,7 @@ On Windows PowerShell use:
 
 ```powershell
 irm https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.ps1 | iex
+$env:PATH = "$HOME\.local\bin;" + $env:PATH
 ```
 
 The installer prints the command path. Add its directory to PATH if needed and
@@ -262,7 +264,9 @@ binaries on macOS/Linux/Windows, then publishes checksum-verified native archive
 It stages `@getopencrawl/cli` under `next-pending` and promotes `next` only after
 all six tarballs are downloadable. Registry metadata alone is not sufficient.
 Retries resume immutable staged packages without republishing; older versions
-cannot downgrade the channel. Increment `cli/package.json` for every new release.
+cannot downgrade the channel. On main pushes, CI allocates the next unused patch
+version across all six packages. Raise `cli/package.json` to select a new minor
+or major line; do not reuse an immutable published version for different bytes.
 The launcher package's trusted publisher must allow `npm dist-tag` as well as
 publication. The publishing job pins npm 11.21.2 for OIDC tag support; this does
 not change the npm version required by CLI users. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/#managing-dist-tags-with-trusted-publishing).
@@ -492,7 +496,7 @@ exact setup script. Use a **personal** Claude environment: sessions using that
 credential are attributed to its owner, regardless of who starts them.
 
 Keep Limited/Trusted networking and allow the deployment's API hostname plus
-npm registries. Add `OPENCRAWL_SESSIONS_TOKEN` in Environment variables and append
+raw.githubusercontent.com, github.com, release-assets.githubusercontent.com and registry.npmjs.org. Add `OPENCRAWL_SESSIONS_TOKEN` in Environment variables and append
 the provided script to Setup script. Save and start a fresh session using that
 environment. No local Claude installation is required. Human-only settings and
 a separate setup session are supported. Environment variables are visible to
@@ -501,7 +505,7 @@ commands in that environment; don't paste the credential into the chat or repo.
 The installer detects `CLAUDE_CODE_REMOTE=true`, installs Claude hooks only and
 uses the same service-free uploader as local installations. `--harness claude-code` selects just Claude hooks; `--no-background` remains an accepted compatibility flag.
 The setup installs the CLI at
-`$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl`. After a user
+`$HOME/.local/bin/opencrawl`. After a user
 message, tool call and image, `collect status` must report a stored receipt and
 no error. Don't use manual sync as evidence that automatic hooks work. Search
 follows asynchronous indexing, not the upload acknowledgement.

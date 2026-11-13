@@ -13,9 +13,9 @@ test('publication requires the latest successful run of every trusted main gate'
   assert(!ready([...runs, {...cli, conclusion: 'failure'}], revision, repository));
 });
 test('generated cloud installations retain an exact released CLI pin', () => {
-  assert.equal(pinCli('npm install @getopencrawl/cli@0.4.29', '0.4.34'), 'npm install @getopencrawl/cli@0.4.34');
-  assert.throws(() => pinCli('npm install @getopencrawl/cli@0.4.29', 'next'));
-  assert.throws(() => pinCli('npm install @getopencrawl/cli@next', '0.4.34'));
+  assert.equal(pinCli("const CLOUD_CLI_VERSION='next';", '0.4.34'), "const CLOUD_CLI_VERSION='0.4.34';");
+  assert.throws(() => pinCli("const CLOUD_CLI_VERSION='0.4.29';", 'next'));
+  assert.throws(() => pinCli("const CLOUD_CLI_VERSION='invalid';", '0.4.34'));
 });
 test('core publications are deterministic and bound to source history and revision', () => {
   assert.equal(continuousVersion('0.3.4', '123', revision), '0.3.4-cd.123.gaaaaaaaaaaaa');

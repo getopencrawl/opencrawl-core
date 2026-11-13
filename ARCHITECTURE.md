@@ -41,6 +41,10 @@ licenses; bundling or offering them as managed services needs separate review.
 
 `src/` contains the package runtime, `web/` shared assets, `web-v2/` the React
 console, `cli/` the independent client, and `deploy/` the single-tenant stack.
+The CLI embeds Bun in each platform executable. Native installation is preferred;
+npm runs Node at installation time to place that same executable. Commands,
+hooks and updates run inside the executable. Versioned installs preserve active
+processes and capture state; see `cli/README.md` for migration and recovery.
 Add seams only alongside an implemented feature and a working reference adapter;
 an interface without a usable implementation does not deliver self-hosting.
 Do not retain disconnected ingestion tools or superseded UI implementations.

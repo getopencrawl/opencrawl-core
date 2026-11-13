@@ -82,7 +82,7 @@ test('owner revocation permanently invalidates old delegations without affecting
 
 test('dedicated Replicas prompt keeps shared setup independent from personal login',()=>{
  const prompt=replicasSetupPrompt('https://selfhost.example');
- for(const expected of ['workspace_identity','https://selfhost.example/mcp','https://selfhost.example/onboarding','onboardingWorkspaceId','warm-hooks save-test','start-hooks test','stored and searchable','never write user hook trust','unknown authors','one shared installation verification']) assert.ok(prompt.includes(expected),expected);
+ for(const expected of ['install.sh','export PATH=', 'opencrawl update','workspace_identity','https://selfhost.example/mcp','https://selfhost.example/onboarding','onboardingWorkspaceId','warm-hooks save-test','start-hooks test','stored and searchable','never write user hook trust','unknown authors','one shared installation verification']) assert.ok(prompt.includes(expected),expected);
  assert.ok(!prompt.includes('https://app.getopencrawl.com'));
  assert.ok(!prompt.includes('opencrawl token create'));
 });

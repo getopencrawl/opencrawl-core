@@ -13,7 +13,8 @@ command hooks from `~/.cursor/hooks.json` there. Install on that computer, from 
 Bot's shell, not on the device that shows the chat:
 
 ```sh
-npm i -g @getopencrawl/cli@next
+curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 opencrawl login --no-browser          # or an upload-only OPENCRAWL_SESSIONS_TOKEN
 opencrawl collect install --yes --harness grok-bot
 ```
@@ -108,7 +109,7 @@ that carries no credential:
   "manifestId": "opencrawl-capture",
   "entries": [{
     "id": "install-opencrawl-capture",
-    "setup": "#!/bin/sh\nset -eu\nnpm install --prefix \"$HOME/.local/share/opencrawl\" --no-audit --no-fund @getopencrawl/cli@next\nOPENCRAWL_NO_UPDATE=1 \"$HOME/.local/share/opencrawl/node_modules/.bin/opencrawl\" collect install --yes --harness grok-bot --defer-auth --api https://your-opencrawl.example --json"
+    "setup": "#!/bin/sh\nset -eu\ninstaller=$(mktemp)\ntrap 'rm -f \"$installer\"' EXIT HUP INT TERM\ncurl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh -o \"$installer\"\nsh \"$installer\"\nOPENCRAWL_NO_UPDATE=1 \"$HOME/.local/bin/opencrawl\" collect install --yes --harness grok-bot --defer-auth --api https://your-opencrawl.example --json"
   }]
 }
 ```

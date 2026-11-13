@@ -5,6 +5,7 @@ import {Button, Field, Input, LinkButton, Notice, Page, Textarea} from '../desig
 import {FocusedFrame} from '../design/focused-frame.tsx';
 import {CallbackChoices, readContinuation} from './callback-view.tsx';
 import {AuthDocument} from './auth-document.tsx';
+import {nativeInstallCommand,nativePathCommand} from '../../../src/sessions/cli-installation.mjs';
 
 export function readBrowserDocument() {
   const element = document.getElementById('opencrawl-page');
@@ -40,17 +41,17 @@ function CaptureDocument({page}: {page:CapturePage}) {
     </> : <form method="post" action="/capture/cloud"><Button type="submit" variant="primary">Create upload-only credential</Button></form>}
     <ol className="oc-document-steps">
       <li>At claude.ai/code, open the environment selector and create or edit a personal environment.</li>
-      <li>Under Network access, keep Limited/Trusted access and add <code>{new URL(page.api).hostname}</code>. Keep npm/package registries allowed.</li>
+      <li>Under Network access, keep Limited/Trusted access and allow <code>{new URL(page.api).hostname}</code>, <code>raw.githubusercontent.com</code>, <code>github.com</code>, <code>release-assets.githubusercontent.com</code> and <code>registry.npmjs.org</code> for installation and updates.</li>
       <li>Under Environment variables, add the credential above. Values are readable by sessions in this environment.</li>
       <li>Append this script to Setup script (preserve any existing setup), then save changes.</li>
       <li>Start a new session with that environment selected. Ask it to run a shell command, read an attached image, and check <code>opencrawl collect status</code> using the installed path below. A stored receipt confirms upload; search appears after asynchronous indexing.</li>
     </ol>
     <Field label="Setup script"><Textarea rows={10} readOnly value={page.script}/></Field>
-    <p>CLI path: <code>$HOME/.local/share/opencrawl-cloud/node_modules/.bin/opencrawl</code>. Your current setup session may need a restart; future sessions prepare capture in the setup script and authenticate in a supervised asynchronous hook when Claude starts. Capture includes messages, tool arguments/results and attachments. System prompt snapshots are omitted.</p>
+    <p>CLI path: <code>$HOME/.local/bin/opencrawl</code>. Your current setup session may need a restart; future sessions prepare capture in the setup script and authenticate in a supervised asynchronous hook when Claude starts. Capture includes messages, tool arguments/results and attachments. System prompt snapshots are omitted.</p>
     <h2>Capture Grok Bot sessions</h2>
     <p>Your Bots share one cloud computer, so one installation there captures all of them, attributed to you. Use your own computer, never a shared Bot’s.</p>
     <ol className="oc-document-steps">
-      <li>Ask a Bot to run this on its computer: <code>{'npm i -g @getopencrawl/cli@next && opencrawl collect install --yes --harness grok-bot --defer-auth --api '+page.api}</code></li>
+      <li>Ask a Bot to run this on its computer: <code>{nativeInstallCommand()+' && '+nativePathCommand()+' && opencrawl collect install --yes --harness grok-bot --defer-auth --api '+page.api}</code></li>
       <li>Sign in on that computer with <code>{'opencrawl login --no-browser --api '+page.api}</code> and approve it in your browser. To keep the computer upload-only instead, create the credential above and enter it as <code>OPENCRAWL_SESSIONS_TOKEN</code> in the secure secret card the Bot shows you, never in the chat.</li>
       <li>Bots that are already running may keep their earlier hooks. From a newly created Bot, run a command, then ask it for <code>opencrawl collect status</code>: a stored receipt confirms upload.</li>
     </ol>

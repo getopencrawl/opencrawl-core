@@ -1,4 +1,5 @@
 import type {OnboardingReceipt, OnboardingSource, OnboardingStatus} from './types.ts';
+import {nativeInstallCommand,nativePathCommand} from '../../../src/sessions/cli-installation.mjs';
 
 export type OnboardingStep = 'connect' | 'mcp' | 'verify' | 'session' | 'ready';
 export type PromptStep = Exclude<OnboardingStep, 'ready'>;
@@ -40,12 +41,12 @@ export function oauthDestination(value: string): string {
   return url.href;
 }
 
-export function promptModel({mcpUrl, setupPrompt}: {mcpUrl: string; setupPrompt: string}) {
+export function promptModel({mcpUrl, setupPrompt, windows=typeof navigator!=='undefined'&&/Windows/.test(navigator.userAgent)}: {mcpUrl: string; setupPrompt: string; windows?:boolean}) {
   const api = new URL(mcpUrl).origin;
   const deploymentArgs = api === 'https://app.getopencrawl.com' ? '' : ` --api ${api}`;
   return {
     commands: {
-      cli: `npm i -g @getopencrawl/cli@next\nopencrawl login${deploymentArgs}`,
+      cli: `${nativeInstallCommand(windows)}\n${nativePathCommand(windows)}\nopencrawl login${deploymentArgs}`,
       recording: `opencrawl collect install${deploymentArgs}`,
       history: `opencrawl collect backfill${deploymentArgs}`,
     },
