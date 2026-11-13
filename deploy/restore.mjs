@@ -49,5 +49,5 @@ try {
  privateFile(join(root,snapshot.kind==='dev'?'.opencrawl-dev/upgrade.json':'deploy/.upgrade/upgrade.json'),{format:1,project:snapshot.project,target:'restored:'+snapshot.compose.services.app.image,phase:'complete'});
  console.log(JSON.stringify({restore:'complete',project:snapshot.project,
   start:`docker compose --project-name ${snapshot.project} -f ${shellQuote(join(directory,'restore-compose.json'))} up -d --wait --wait-timeout 600`,
-  warning:'Start the saved images using the command above. Keep the application, PostgreSQL and object-store snapshot together. The separate Airbyte deployment remains operator-managed.'}));
+  warning:'Start the saved images using the command above. Keep the application, PostgreSQL and object-store snapshot together. For development Airbyte, return to the original source revision and run its ./dev/up to resume the retained cluster and refresh private routes. The separate Airbyte deployment remains operator-managed.'}));
 } finally {release();}

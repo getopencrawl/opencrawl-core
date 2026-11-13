@@ -69,8 +69,12 @@ owned application network if it was recreated, restores every store together,
 and emits the exact Compose
 command to start those old images. Use that command, not the newer source's
 Compose file. Check login, retained session search, board history and connector
-retrieval before reopening access. Starting the updated checkout later runs the
-upgrade again.
+retrieval before reopening access. For a development installation with Airbyte,
+return the checkout to the original release (recorded in the saved app's `REVISION`
+environment value), then run that release's `./dev/up`. It resumes the retained
+cluster and refreshes its private addresses and application routes. Do not use
+the newer release for this recovery step. Starting the updated checkout later
+runs the upgrade again.
 
 The separately deployed Airbyte control plane is not in the Compose recovery
 archive. Its connections, grants and owned development cluster remain in place

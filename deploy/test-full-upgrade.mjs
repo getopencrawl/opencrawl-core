@@ -103,8 +103,14 @@ if(airbyte){
  // release's installer. No newer code is allowed to migrate the restored data.
  run('git',['checkout','--detach',old]);run('bash',['dev/up']);
 }
-// Use the restored container; the current Compose config would replace it.
-docker([...recovery,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(!airbyte?['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']:[]),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
+// The old installer refreshes the retained cluster's addresses after restore.
+// Check that exact old application and its live configuration, not the stale
+// pre-restore addresses in the saved recovery Compose environment.
+if(airbyte){
+ const restored=compose(['ps','-q','app'],{capture:true});
+ assert.equal(docker(['inspect','-f','{{.Image}}',restored],{capture:true}),saved.compose.services.app.image,'Recovery must still run the saved old application image');
+ verify();
+}else docker([...recovery,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true','-e','OPENCRAWL_DEV_VERIFY_ONLY=true','--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
 largeSession('restored',recovery);
 const report={ok:true,largeSessionCeilingReproducedAndRemoved:large,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
 writeFileSync(join(process.env.RUNNER_TEMP,'full-upgrade-receipt.json'),JSON.stringify(report,null,2));
