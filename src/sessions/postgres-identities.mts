@@ -118,9 +118,11 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
    await client.query("INSERT INTO opencrawl_event_identity_sessions(namespace,source,identity,resource,state) VALUES($1,$2,$3,$4,'importing') ON CONFLICT DO NOTHING",[namespace,where.source,identity,resource(where.source)]);
   }
   if(where.identity)await ensureSession(where.identity);
-  // Stream historical batches independently; no per-session event/page ceiling.
-  // This also detects conflicts in pre-ledger installations and checks retained
-  // source against the ledger. Reservations without raw data are imported below.
+  // A v1 ledger is authoritative: its first CAS already bootstrapped all older
+  // batches, and subsequent writers reserve before uploading. Re-reading raw
+  // history would make the first PostgreSQL capture proportional to all prior
+  // uploads. Only pre-ledger sources need that scan; no event/page ceiling.
+  if(!first.ledger){
   let cursor:string|null|undefined;const cursors=new Set<string>();
   do{
    const page=await store.listPage(where.source,{continuationToken:cursor,maxKeys:100});
@@ -138,6 +140,7 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
    }
    cursor=page.nextToken;if(cursor){if(cursors.has(cursor))unavailable('Session inventory cursor did not advance');cursors.add(cursor);}
   }while(cursor);
+  }
   // CAS races with a legacy writer import its additional committed reservations
   // and retry. Imported chunks stay durable if the process is interrupted.
   for(;;){

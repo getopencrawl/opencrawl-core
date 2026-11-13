@@ -49,8 +49,10 @@ the new receivers and workers. No hosted control-plane access is involved.
 ## Migration and interruption behavior
 
 The migration includes every legacy ledger, including those left by failed
-uploads with no corresponding raw batch. It also checks retained raw batches,
-including pre-ledger installations. Imports commit in small transactions and
+uploads with no corresponding raw batch. A valid version-1 ledger already
+contains the historical bootstrap and every later reservation; it is imported
+directly without re-reading every upload. Sources without a ledger are rebuilt
+from retained raw batches, including pre-ledger installations. Imports commit in small transactions and
 record each session's progress in PostgreSQL. Re-running scans is safe; completed
 sessions are skipped. Inventory is paginated and historical batches are read
 one at a time. There is no total inventory/session/event quota.

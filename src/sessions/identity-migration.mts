@@ -15,7 +15,7 @@ export async function migrateEventIdentitySource({store,prefix,eventIdentities,o
  await eventIdentities.ready();
  const root=prefix+'/tenants/',cursors=new Set<string>();let cursor:string|null|undefined,objects=0,sessionVisits=0;
  do{
-  const page=await store.listPage(root,{continuationToken:cursor,maxKeys:100}),sources=new Set<string>();
+  const page=await store.listPage(root,{continuationToken:cursor,maxKeys:1000}),sources=new Set<string>();
   for(const key of page.keys){
    if(!key.startsWith(root))throw new Error('Identity migration inventory outside source');
    objects++;

@@ -58,6 +58,26 @@ live('migration imports reservations with no raw batch and fences every legacy w
  await assert.rejects(legacy.putBatch(owner,batch([event('old-writer')])),{status:409});
 });
 
+live('an authoritative legacy ledger migrates without re-reading raw history',async t=>{
+ const f=await fixture(t),legacy=createSessionIngest({store:f.store,prefix});
+ await legacy.putBatch(owner,batch([event('historical')]));
+ f.store.listPage=async()=>{throw Error('raw history must not be listed');};
+ f.store.get=async()=>{throw Error('raw history must not be downloaded');};
+ assert.equal((await f.reserve([event('new')])).reservedEvents,2);
+ await assert.rejects(f.reserve([event('historical','changed')]),{status:409});
+});
+
+live('pre-ledger history is still scanned and corrupt owner paths are rejected',async t=>{
+ const f=await fixture(t),legacy=createSessionIngest({store:f.store,prefix});
+ const receipt=await legacy.putBatch(owner,batch([event('historical')])),where=eventIdentityLocation(identity);
+ f.store.data.delete(where.key);
+ assert.equal((await f.reserve([event('new')])).reservedEvents,2);
+ await assert.rejects(f.reserve([event('historical','changed')]),{status:409});
+ const foreign={...identity,sessionId:'foreign'},other=eventIdentityLocation(foreign);
+ await f.store.put(other.source+receipt.batchId+'.json.gz',await f.store.get(where.source+receipt.batchId+'.json.gz'));
+ await assert.rejects(f.identities.reserve({...foreign,store:f.store,events:[event('new')]}),{status:409});
+});
+
 live('a concurrent legacy CAS is incorporated before the migration fence wins',async t=>{
  const f=await fixture(t),where=eventIdentityLocation(identity),cas=f.store.compareAndSet;let raced=false;
  f.store.compareAndSet=async(key,version,bytes)=>{
