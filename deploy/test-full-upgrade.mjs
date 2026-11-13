@@ -97,6 +97,12 @@ for(const config of saved.configurations)rmSync(resolve(root,config.path),{force
 run(process.execPath,['deploy/restore.mjs','--backup',backup]);
 const recovery=['compose','--project-name',project,'-f',join(backup,'restore-compose.json')];
 docker([...recovery,'up','-d','--wait','--wait-timeout','600']);
+// A verification sidecar shares the restored app's image, environment and
+// volumes, but must not claim the real app's reserved IP address.
+const verificationCompose=structuredClone(saved.compose);
+if(verificationCompose.services.app.networks)verificationCompose.services.app.networks={default:{}};
+const verificationFile=join(scratch,'verification-compose.json');writeFileSync(verificationFile,JSON.stringify(verificationCompose),{mode:0o600});
+const recoveryChecks=['compose','--project-name',project,'-f',verificationFile];
 writeFileSync(join(seedDir,'upgrade-fixture.json'),originalFixture);
 if(airbyte){
  assert.ok(saved.airbyte,'Recovery must retain the original Airbyte network address');
@@ -107,14 +113,14 @@ if(airbyte){
   const api=createAirbyteTransport({url:process.env.AIRBYTE_URL,clientId:process.env.AIRBYTE_CLIENT_ID,clientSecret:process.env.AIRBYTE_CLIENT_SECRET});
   for(let i=0;;i++){try{await api.request('GET','/workspaces?limit=1');break;}catch(error){if(i>=59)throw error;await delay(3000);}}
  `;
- docker([...recovery,'run','--rm','--no-deps','app','node','--input-type=module','-e',ready]);
+ docker([...recoveryChecks,'run','--rm','--no-deps','app','node','--input-type=module','-e',ready]);
  const restored=docker([...recovery,'ps','-q','app'],{capture:true});
  assert.equal(docker(['inspect','-f','{{.Image}}',restored],{capture:true}),saved.compose.services.app.image);
 }
 // Verify the exact saved old images without rebuilding or changing checkout.
 // A new Airbyte sync must reach the restored fixture and S3 addresses.
-docker([...recovery,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(airbyte?['-e','OPENCRAWL_UPGRADE_FRESH_SYNC=true']:['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
-largeSession('restored',recovery);
+docker([...recoveryChecks,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(airbyte?['-e','OPENCRAWL_UPGRADE_FRESH_SYNC=true']:['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
+largeSession('restored',recoveryChecks);
 const report={ok:true,largeSessionCeilingReproducedAndRemoved:large,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,freshAirbyteSyncAfterRestore:airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
 writeFileSync(join(process.env.RUNNER_TEMP,'full-upgrade-receipt.json'),JSON.stringify(report,null,2));
 docker([...recovery,'down','--volumes','--remove-orphans']);
