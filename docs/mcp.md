@@ -22,20 +22,13 @@ does not consume provider tokens, user objects, or hosted credentials. This
 surface reads no tenant data. A successful test proves only that this request
 reached the authenticated server, not that another service is operational.
 
-## Run independently
+## Run the self-hosted application
 
-Install with `npm ci`, generate a random secret, and run:
-
-```sh
-export MCP_TOKEN=$(openssl rand -hex 32)
-npm run mcp
-```
-
-Connect a Streamable HTTP client to `http://127.0.0.1:8094/mcp` with the token in
-an `Authorization: Bearer` header. This reference adapter binds loopback unless `HOST` is set (for containers),
-requires a 32-character minimum secret, and validates Host and Origin. It needs
-no hosted account or cloud service. Use your own TLS/auth adapter for network
-deployment. Keep credentials outside source and out of chat/logs.
+Start the [full application](self-host.md), then connect to its `/mcp` endpoint
+using browser approval or the CLI's per-origin login. The same application serves
+accounts, sessions, memories, connectors and the board. No static shared-user
+MCP server is distributed. Embedders can use `createOpenCrawlMcp` with their own
+authentication adapter.
 
 Tests use the official SDK client in both protocol eras, verify both tools and the absence of skill/resource capabilities, and reject anonymous access, forged origins, oversized bodies,
 invalid arguments, and reads of the removed skill resource. The official SDK dependencies are

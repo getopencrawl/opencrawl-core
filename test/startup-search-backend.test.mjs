@@ -12,6 +12,8 @@ function fixture(t){
   t.after(()=>rmSync(root,{recursive:true,force:true}));
   for(const name of ['dev','deploy','bin'])mkdirSync(join(root,name));
   for(const name of ['dev/installer.mts','dev/pins.json','deploy/up.sh','deploy/.env.example'])copyFileSync(join(source,name),join(root,name));
+  // Upgrade behavior has its own stateful acceptance suite; this fixture isolates backend selection.
+  writeFileSync(join(root,'deploy/upgrade.mjs'),'process.exit(0);\n');
   const log=join(root,'calls');
   writeFileSync(join(root,'bin/docker'),`#!/bin/sh\nprintf '%s\\n' "$*" >> "$TEST_LOG"\ncase "$1" in inspect) exit 1 ;; info) echo '{"MemTotal":0,"NCPU":0}' ;; esac\n`,{mode:0o755});
   const env={...process.env,PATH:join(root,'bin')+':'+process.env.PATH,TEST_LOG:log};

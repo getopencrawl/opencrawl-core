@@ -1,14 +1,13 @@
-import {standaloneEventIdentities} from './postgres-identities.mjs';
-import type {Principal, ObjectStore, EventIdentityStore, Authenticate, HttpHandler} from './types.mjs';
-import type {SearchAdapter} from '../search/types.mjs';
-import {createCaptureCredentials,isCaptureCredential} from './credentials.mjs';
-import {createOnboardingStatus} from '../onboarding-status.mjs';
+import {standaloneEventIdentities} from '../../src/sessions/postgres-identities.mjs';
+import type {Principal, ObjectStore, EventIdentityStore, Authenticate, HttpHandler} from '../../src/sessions/types.mjs';
+import type {SearchAdapter} from '../../src/search/types.mjs';
+import {createCaptureCredentials,isCaptureCredential} from '../../src/sessions/credentials.mjs';
+import {createOnboardingStatus} from '../../src/onboarding-status.mjs';
 import {createServer} from 'node:http';
 import {timingSafeEqual} from 'node:crypto';
-import {pathToFileURL} from 'node:url';
-import {createSessionIngest,createCaptureHandler} from './ingest.mjs';
-import {createObjectStore,awsCredentials} from './s3-store.mjs';
-import {createSessionSearch,searchSettings} from './search.mjs';
+import {createSessionIngest,createCaptureHandler} from '../../src/sessions/ingest.mjs';
+import {sessionStorage as standaloneStorage} from '../../src/sessions/storage.mjs';
+import {createSessionSearch,searchSettings} from '../../src/sessions/search.mjs';
 
 /** Single-tenant adapter: the operator sets identity; requests cannot select an owner. */
 export function standaloneCapture({token,principal,store,eventIdentities,prefix='capture-v1',search=undefined}: {token?: string; principal: Principal; store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; search?: SearchAdapter | null}): HttpHandler {
@@ -48,21 +47,6 @@ export function standaloneCapture({token,principal,store,eventIdentities,prefix=
     }
   };
 }
-/** Same object format and S3 adapter as hosted ingestion; no filesystem fallback. */
-export function standaloneStorage(env=process.env) {
-  if(env.OPENCRAWL_SESSION_DIRECTORY)throw new Error('Filesystem session storage is no longer supported. Migrate existing objects to the configured S3 bucket before starting.');
-  const bucket=env.OPENCRAWL_LANDING_S3_BUCKET;
-  if(!bucket)throw new Error('OPENCRAWL_LANDING_S3_BUCKET is required; configure AWS S3 or an S3-compatible store.');
-  const accessKeyId=env.OPENCRAWL_LANDING_S3_ACCESS_KEY_ID;
-  const secretAccessKey=env.OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY;
-  if(Boolean(accessKeyId)!==Boolean(secretAccessKey))throw new Error('Set both OPENCRAWL_LANDING_S3_ACCESS_KEY_ID and OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY.');
-  const prefix=(env.OPENCRAWL_LANDING_S3_PATH||'sessions/self-hosted/v1').replace(/^\/+|\/+$/g,'');
-  if(!prefix||prefix.split('/').some(p=>!p||p==='.'||p==='..'))throw new Error('Invalid OPENCRAWL_LANDING_S3_PATH');
-  const store=createObjectStore({bucket,endpoint:env.OPENCRAWL_LANDING_S3_ENDPOINT||undefined,
-    region:env.OPENCRAWL_LANDING_S3_REGION||'us-east-1',
-    credentials:accessKeyId?{accessKeyId,secretAccessKey: secretAccessKey!,sessionToken:env.OPENCRAWL_LANDING_S3_SESSION_TOKEN||undefined}:awsCredentials({env})});
-  return {store,prefix};
-}
 export async function startStandaloneCapture(env=process.env) {
   const principal={tenantId:env.OPENCRAWL_TENANT_ID||'self-hosted',userId:env.OPENCRAWL_USER_ID||'owner',
     name:env.OPENCRAWL_USER_NAME||null,email:env.OPENCRAWL_USER_EMAIL||null};
@@ -79,7 +63,4 @@ export async function startStandaloneCapture(env=process.env) {
     server.listen(Number(env.PORT||8093),env.HOST||'127.0.0.1',()=>{server.removeListener('error',reject);resolve();});
   });
   return server;
-}
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href) {
-  await startStandaloneCapture();
 }

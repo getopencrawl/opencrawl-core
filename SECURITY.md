@@ -29,7 +29,3 @@ not a hardened production deployment. Keep dependency ports private, terminate
 TLS before exposing the application, and protect identity, object-store and
 backup data. The bundled development OpenSearch disables its security plugin.
 See [self-hosting](docs/self-host.md) for configuration and account recovery.
-
-The separate capture-only stack uses static bearer tokens; holders share that
-token's configured identity. Do not confuse that smoke stack with the multi-user
-application or expose its dependencies publicly.

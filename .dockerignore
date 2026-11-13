@@ -8,3 +8,5 @@
 *.tgz
 *.tar
 *.zip
+
+deploy/.upgrade

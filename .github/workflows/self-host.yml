@@ -11,55 +11,41 @@ on:
 permissions:
   contents: read
 jobs:
-  event-identity-upgrade:
-    name: Existing capture installation PostgreSQL upgrade
+  full-application-upgrade:
+    name: Full application upgrade (${{ matrix.installation }}, ${{ matrix.storage }})
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 30
-    env:
-      COMPOSE_PROJECT_NAME: opencrawl-identity-upgrade
-      COMPOSE_FILE: compose.capture.yaml
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {installation: deploy, storage: legacy-json, from: 831eb9a89b34c2a2e04002f754f3d1e1e8e21bb6, sqlite: false}
+          - {installation: deploy, storage: dedicated-postgres, from: a1238901d505bb6f01f48d973ed3123f98ee20fd, sqlite: true}
+          - {installation: dev, storage: legacy-json, from: 831eb9a89b34c2a2e04002f754f3d1e1e8e21bb6, sqlite: false}
+          - {installation: dev, storage: dedicated-postgres, from: a1238901d505bb6f01f48d973ed3123f98ee20fd, sqlite: true}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24.22.2
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Start the immutable pre-PostgreSQL release and capture data
+      - name: Upgrade a running old full application, resume a failure, and restore the old version
+        env:
+          UPGRADE_FROM: ${{ matrix.from }}
+          UPGRADE_TARGET: ${{ github.sha }}
+          UPGRADE_INSTALLATION: ${{ matrix.installation }}
+          UPGRADE_SQLITE: ${{ matrix.sqlite }}
         run: |
-          git fetch --depth 1 origin 831eb9a89b34c2a2e04002f754f3d1e1e8e21bb6
-          git worktree add --detach "$RUNNER_TEMP/identity-old" 831eb9a89b34c2a2e04002f754f3d1e1e8e21bb6
-          "$RUNNER_TEMP/identity-old/deploy/up-capture.sh"
-          cp "$RUNNER_TEMP/identity-old/deploy/.env" deploy/.env
-          node deploy/smoke.mjs seed "$RUNNER_TEMP/identity-receipt.json"
-          docker compose --env-file "$RUNNER_TEMP/identity-old/deploy/.env" -f "$RUNNER_TEMP/identity-old/deploy/compose.capture.yaml" exec -T worker node deploy/trigger-index.mjs
-          node deploy/smoke.mjs verify "$RUNNER_TEMP/identity-receipt.json"
-      - name: Run the documented upgrade against existing named volumes
-        run: |
-          node deploy/upgrade.mjs "$RUNNER_TEMP/identity-before"
-          node deploy/identity-upgrade-smoke.mjs "$RUNNER_TEMP/identity-receipt.json"
-          docker compose --env-file deploy/.env -f deploy/compose.capture.yaml exec -T worker node deploy/trigger-index.mjs
-          node deploy/smoke.mjs verify "$RUNNER_TEMP/identity-receipt.json"
-      - name: Verify matched PostgreSQL and object-storage backup restore
-        run: |
-          node deploy/backup.mjs create "$RUNNER_TEMP/identity-after"
-          docker compose --env-file deploy/.env -f deploy/compose.capture.yaml down --volumes
-          node deploy/backup.mjs restore "$RUNNER_TEMP/identity-after"
-          docker compose --env-file deploy/.env -f deploy/compose.capture.yaml up -d --wait --wait-timeout 300
-          node deploy/identity-upgrade-smoke.mjs "$RUNNER_TEMP/identity-receipt.json"
-          node deploy/smoke.mjs verify "$RUNNER_TEMP/identity-receipt.json"
+          cp deploy/test-full-upgrade.mjs "$RUNNER_TEMP/test-full-upgrade.mjs"
+          node "$RUNNER_TEMP/test-full-upgrade.mjs"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: postgres-identity-upgrade-${{ github.sha }}
-          path: ${{ runner.temp }}/identity-receipt.json.identity-upgrade.json
-      - name: Show migration failure diagnostics
+          name: full-upgrade-${{ matrix.installation }}-${{ matrix.storage }}-${{ github.sha }}
+          path: ${{ runner.temp }}/full-upgrade-receipt.json
+      - name: Show bounded failure diagnostics
         if: failure()
-        run: docker compose --env-file deploy/.env -f deploy/compose.capture.yaml logs --tail 60 receiver worker app-db
-      - name: Remove only the disposable upgrade installation
-        if: always()
         run: |
-          docker compose --env-file deploy/.env -f deploy/compose.capture.yaml down --volumes --remove-orphans
-          git worktree remove --force "$RUNNER_TEMP/identity-old"
-          rm -rf "$RUNNER_TEMP/identity-before" "$RUNNER_TEMP/identity-after"
+          docker ps -a --format '{{.Names}} {{.Status}}'
+          for id in $(docker ps -aq --filter label=com.docker.compose.service=app --filter label=com.docker.compose.oneoff=False); do docker logs --tail 40 "$id"; done
   sqlite:
     name: Application with SQLite FTS5
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -232,54 +218,17 @@ jobs:
       - name: Remove only this job's disposable installation
         if: always()
         run: ./dev/up reset --yes
-  self-host:
-    name: ${{ matrix.name }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {name: Self-host smoke, runner: blacksmith-4vcpu-ubuntu-2404, arch: amd64}
-          - {name: Self-host smoke (ARM64), runner: blacksmith-4vcpu-ubuntu-2404-arm, arch: arm64}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
-    env:
-      COMPOSE_PROJECT_NAME: opencrawl-smoke
-      COMPOSE_FILE: compose.capture.yaml
+  full-application-gate:
+    # Preserve the required branch-protection check while replacing its coverage.
+    name: Self-host smoke
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [full-application-upgrade, sqlite, application]
+    if: always()
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 24.22.2
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run build
-      - run: ./deploy/up-capture.sh
-      - name: Verify capture, indexing, MCP and authorization
-        run: |
-          node deploy/smoke.mjs seed "$RUNNER_TEMP/receipt.json"
-          docker compose -f deploy/compose.capture.yaml exec -T worker node deploy/trigger-index.mjs
-          node deploy/smoke.mjs verify "$RUNNER_TEMP/receipt.json"
-      - name: Verify restart persistence
-        run: |
-          docker compose -f deploy/compose.capture.yaml restart
-          docker compose -f deploy/compose.capture.yaml up -d --wait --wait-timeout 240
-          node deploy/smoke.mjs verify "$RUNNER_TEMP/receipt.json"
-      - name: Verify backup and restore into empty disposable volumes
-        run: |
-          node deploy/backup.mjs create "$RUNNER_TEMP/opencrawl-backup"
-          docker compose -f deploy/compose.capture.yaml down -v
-          node deploy/backup.mjs restore "$RUNNER_TEMP/opencrawl-backup"
-          docker compose -f deploy/compose.capture.yaml up -d --wait --wait-timeout 240
-          node deploy/smoke.mjs verify "$RUNNER_TEMP/receipt.json"
-      - name: Show service diagnostics on failure
-        if: failure()
-        run: docker compose -f deploy/compose.capture.yaml logs --tail 60
-      - name: Remove only this job's disposable stack and backup
-        if: always()
-        run: |
-          docker compose -f deploy/compose.capture.yaml down -v --remove-orphans
-          rm -rf "$RUNNER_TEMP/opencrawl-backup"
+      - name: Require full application installation and upgrade acceptance
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: node -e 'const jobs=JSON.parse(process.env.RESULTS);if(Object.values(jobs).some(j=>j.result!=="success"))process.exit(1)'
 
   macos-bootstrap:
     name: macOS bootstrap (${{ matrix.runner }})

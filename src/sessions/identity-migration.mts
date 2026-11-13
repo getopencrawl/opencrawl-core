@@ -31,7 +31,7 @@ export async function migrateEventIdentitySource({store,prefix,eventIdentities,o
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  if(process.argv.length!==3||process.argv[2]!=='migrate')throw new Error('Usage: node dist/src/sessions/identity-migration.mjs migrate');
- const {standaloneStorage}=await import('./standalone.mjs'),{store,prefix}=standaloneStorage();
+ const {sessionStorage}=await import('./storage.mjs'),{store,prefix}=sessionStorage();
  const eventIdentities=standaloneEventIdentities(store);
  try{
   await store.checkAccess();

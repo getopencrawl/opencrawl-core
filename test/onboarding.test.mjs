@@ -8,7 +8,7 @@ import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/clien
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
-import {standaloneCapture} from '../dist/src/sessions/standalone.mjs';
+import {standaloneCapture} from '../dist/tools/test-fixtures/capture.mjs';
 import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 

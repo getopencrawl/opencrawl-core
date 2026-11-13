@@ -7,7 +7,7 @@ import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
 import {memorySourceIdentity,memorySnapshotId} from '../dist/src/memories/snapshot.mjs';
 import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
 import {createServer} from 'node:http';
-import {standaloneCapture} from '../dist/src/sessions/standalone.mjs';
+import {standaloneCapture} from '../dist/tools/test-fixtures/capture.mjs';
 const owner={tenantId:'tenant-a',userId:'alice'};
 const snapshot=(harness='codex')=>({schemaVersion:1,owner,installationId:'machine',host:'fixture',harness,generation:Date.now(),
   files:[{path:'memories/MEMORY.md',project:'',modifiedAt:'2026-11-07T00:00:00Z',text:'violet lighthouse current memory'}]});

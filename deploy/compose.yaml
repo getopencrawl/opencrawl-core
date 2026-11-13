@@ -8,7 +8,7 @@ x-runtime: &runtime
   stop_grace_period: 45s
   volumes: ["application:/data"]
   environment: &env
-    OPENCRAWL_DATABASE_URL: postgres://opencrawl:${OPENCRAWL_DATABASE_PASSWORD:?Run ./up.sh}@app-db:5432/opencrawl
+    OPENCRAWL_DATABASE_URL: postgres://opencrawl:${OPENCRAWL_DATABASE_PASSWORD:?Run ./up.sh}@temporal-db:5432/opencrawl
     OPENCRAWL_URL: ${OPENCRAWL_URL:?Set the HTTPS application origin}
     OPENCRAWL_ORGANIZATION_ID: ${OPENCRAWL_ORGANIZATION_ID:?Run ./up.sh}
     OPENCRAWL_AUTH_SECRET: ${OPENCRAWL_AUTH_SECRET:?Run ./up.sh}
@@ -54,7 +54,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-    depends_on: {app-db: {condition: service_healthy}, s3: {condition: service_started}, opensearch: {condition: service_healthy}}
+    depends_on: {database-ready: {condition: service_completed_successfully}, s3: {condition: service_started}, opensearch: {condition: service_healthy}}
 
   worker:
     <<: *runtime
@@ -66,15 +66,15 @@ services:
       retries: 30
     depends_on: {app: {condition: service_healthy}, temporal: {condition: service_healthy}}
 
-  app-db:
-    image: postgres:17.11-bookworm
-    restart: unless-stopped
-    environment: {POSTGRES_USER: opencrawl, POSTGRES_DB: opencrawl, POSTGRES_PASSWORD: "${OPENCRAWL_DATABASE_PASSWORD:?Run ./up.sh}"}
-    volumes: ["app-db:/var/lib/postgresql/data"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U opencrawl -d opencrawl"]
-      interval: 5s
-      retries: 30
+  database-ready:
+    <<: *runtime
+    restart: "no"
+    command: ["node", "deploy/database-init.mjs"]
+    environment:
+      OPENCRAWL_TEMPORAL_PASSWORD: ${OPENCRAWL_TEMPORAL_PASSWORD:?Run ./up.sh}
+      OPENCRAWL_DATABASE_PASSWORD: ${OPENCRAWL_DATABASE_PASSWORD:?Run ./up.sh}
+    volumes: []
+    depends_on: {temporal-db: {condition: service_healthy}}
 
   s3:
     image: chrislusf/seaweedfs:4.52
@@ -136,10 +136,9 @@ services:
     image: opencrawl-core:${OPENCRAWL_IMAGE_TAG:-local}
     user: root
     entrypoint: []
-    volumes: ["app-db:/data/app-db", "s3:/data/s3", "opensearch:/data/opensearch", "temporal-db:/data/temporal-db", "application:/data/application"]
+    volumes: ["s3:/data/s3", "opensearch:/data/opensearch", "temporal-db:/data/temporal-db", "application:/data/application"]
 
 volumes:
-  app-db:
   s3:
   opensearch:
   temporal-db:

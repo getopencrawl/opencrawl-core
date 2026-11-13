@@ -75,7 +75,7 @@ if(existsSync(stateFile)){
 function save(){privateFile(stateFile,state);}
 const node=state.project+'-control-plane',kubeconfig=join(stateDir,'kubeconfig'),envFile=join(stateDir,'compose.env'),override=join(stateDir,'compose.json');
 const sqlite=state.searchBackend==='sqlite';
-state.databasePassword??=secret();privateFile(stateFile,state);
+
 const compose=(args:string[],options:Parameters<typeof run>[2]={})=>run('docker',['compose','--project-name',state.project,'--env-file',envFile,'-f',join(root,'deploy/compose.yaml'),...(sqlite?['-f',join(root,'deploy/compose.sqlite.yaml')]:[]),'-f',override,...args],options);
 const kubectl=(args:string[],options:Parameters<typeof run>[2]={})=>run(join(bin,'kubectl'),['--kubeconfig',kubeconfig,'--cache-dir',join(stateDir,'kube-cache'),'--context','kind-'+state.project,...args],options);
 const helm=(args:string[],options:Parameters<typeof run>[2]={})=>run(join(bin,'helm'),['--kubeconfig',kubeconfig,'--kube-context','kind-'+state.project,...args],options);
@@ -170,6 +170,10 @@ function writeCompose(airbyteAddress='127.0.0.1',s3Address='s3',workspaceId=stat
   }});
 }
 async function up(){
+  // Upgrade before rewriting persisted credentials or replacing any old writer.
+  run(process.execPath,[join(root,'deploy/upgrade.mjs'),'--installation','dev','--automatic','--installer-pid',String(process.pid)]);
+  state=JSON.parse(readFileSync(stateFile,'utf8')) as State;
+  state.databasePassword??=secret();save();
   const docker=JSON.parse(run('docker',['info','--format','{{json .}}'],{capture:true})) as {MemTotal:number;NCPU:number};
   if(docker.MemTotal<(airbyteEnabled?12:6)*1024**3||docker.NCPU<4)throw new Error(`Allocate at least 4 CPUs and ${airbyteEnabled?16:8} GiB RAM to Docker`);
   const disk=statfsSync(root),minimumDisk=airbyteEnabled?40:20;
@@ -205,6 +209,7 @@ async function up(){
   }
   state.airbyteEnabled=airbyteEnabled;state.startedAt=new Date().toISOString();save();
   privateFile(join(stateDir,'login.txt'),`Development only\nURL: ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\n`+(airbyteEnabled?`Airbyte URL: http://localhost:${state.airbytePort}\nAirbyte password: ${state.airbytePassword}\n`:'Airbyte disabled. Resume with ./dev/up --no-airbyte\n'));
+  run(process.execPath,[join(root,'deploy/upgrade.mjs'),'--installation','dev','--record-startup','--installer-pid',String(process.pid)]);
   summary();
   console.log(`\nSign in to ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\n\nThese local development credentials are also saved in .opencrawl-dev/login.txt.`);
 }

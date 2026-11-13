@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createServer, request} from 'node:http';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
-import {standaloneMcp} from '../dist/src/mcp/standalone.mjs';
+import {standaloneMcp} from '../dist/tools/test-fixtures/mcp.mjs';
 
 test('MCP serves exactly two tools without skills or resources through real SDK clients', async t => {
   let handler;

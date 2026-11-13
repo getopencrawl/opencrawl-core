@@ -5,7 +5,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {selfhostSettings} from './settings.mjs';
 import {selfhostServices} from './services.mjs';
 import {singleOrganizationSessionSource} from './indexing.mjs';
-import {standaloneStorage} from '../sessions/standalone.mjs';
+import {sessionStorage} from '../sessions/storage.mjs';
 import {createSessionWorker,buildSessionWorkflows} from '../sessions/temporal/worker.mjs';
 import {ensureSessionSchedule,ensureSessionDeletionSchedule} from '../sessions/temporal/client.mjs';
 import {createConnectorWorker,buildConnectorWorkflows} from '../connectors/temporal/worker.mjs';
@@ -32,7 +32,7 @@ export async function withTemporalStartupRetry<T>(run:()=>Promise<T>,{timeoutMs=
   }
 }
 export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
-  const settings=selfhostSettings(env),{store,prefix}=standaloneStorage(env),services=selfhostServices(settings,store,env);
+  const settings=selfhostSettings(env),{store,prefix}=sessionStorage(env),services=selfhostServices(settings,store,env);
   const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
   const address=env.TEMPORAL_ADDRESS,namespace=env.TEMPORAL_NAMESPACE;
   if(!address||!namespace)throw new Error('Configure Temporal address and namespace');

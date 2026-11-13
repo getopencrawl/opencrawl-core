@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
-import {standaloneCapture} from '../dist/src/sessions/standalone.mjs';
+import {standaloneCapture} from '../dist/tools/test-fixtures/capture.mjs';
 import {cloudSetupScript,captureSetupPrompt,cloudCapturePage} from '../dist/src/sessions/cloud-setup.mjs';
 import {memorySessionStore as memory} from './session-store-fixture.mjs';
 const owner={tenantId:'fixed',userId:'owner'};

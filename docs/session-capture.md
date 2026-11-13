@@ -164,37 +164,24 @@ Installation enrolls new sessions and existing sessions modified afterward. Exis
 
 The collector persists batches before advancing cursors, holds incomplete trailing JSONL lines, and deletes batches only after a matching durable receipt. Repeated transcript records have stable IDs; hook/transcript duplicates remain available for downstream deduplication. Enrollment and queued records stay pinned to their original team and human author. A changed login rejects uploads before any attachment bytes are sent. Sign back into the original destination, or uninstall and explicitly resolve/purge pending data before reinstalling for another destination. Rejected uploads remain queued. The default local spool is `~/.config/opencrawl/capture/`: `queue/` contains pending JSON batches, `blobs/` contains attachment bytes keyed by SHA-256, and `state/` contains transcript cursors. `OPENCRAWL_CONFIG_HOME` takes precedence over `XDG_CONFIG_HOME`; either replaces `~/.config`. Local spool/configuration files are private to the OS user. Unreferenced attachment blobs are reclaimed after a 24-hour grace period.
 
-## Single-tenant deployment
+## Self-hosted deployment
 
-Core owns the shared ingestion protocol and requires an explicit principal and durable store adapter. Domain logic imports no WorkOS or AWS code. Both hosted and self-hosted receivers use the same S3-compatible adapter and object format. The runnable single-tenant receiver requires an existing bucket; it checks access before listening and has no filesystem fallback:
-
-```sh
-export OPENCRAWL_SESSIONS_TOKEN="$(openssl rand -hex 32)"
-export OPENCRAWL_LANDING_S3_BUCKET=opencrawl
-export OPENCRAWL_LANDING_S3_REGION=us-east-1
-export OPENCRAWL_LANDING_S3_ENDPOINT=http://127.0.0.1:8333 # omit for AWS S3
-export OPENCRAWL_LANDING_S3_ACCESS_KEY_ID=your-access-key
-export OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY=your-secret-key
-# Defaults to sessions/self-hosted/v1:
-export OPENCRAWL_LANDING_S3_PATH=sessions/self-hosted/v1
-export OPENCRAWL_USER_ID=owner
-export OPENCRAWL_USER_NAME="Your name"
-npm run sessions
-# In the CLI environment, with the same receiver token:
-opencrawl collect install --api http://localhost:8093
-```
-
-The receiver defaults to loopback. Use HTTPS when exposing it remotely. The CLI securely saves the receiver token for later hook/background uploads. The operator-configured identity defines the sole tenant/owner; the uploaded body cannot change it. Storage persists in the bucket across receiver restarts. Set the endpoint to your MinIO, SeaweedFS, or other S3-compatible service. For a local stack with object storage, follow [self-hosting](self-host.md). AWS role credentials are supported when explicit keys are omitted. Other deployments can supply their own authentication adapter.
+Start the [full application](self-host.md), then authenticate the CLI against its
+origin and install capture through the normal consent flow. The application
+verifies each user and organization, stores immutable batches in its configured
+S3-compatible bucket, and stores event identities in its application PostgreSQL
+database. The same accounts serve search, memories, connectors and the board.
+See [upgrades](upgrades.md) before updating an existing installation.
 
 ## Hosted deployment
 
-The hosted shell verifies the OAuth token and fresh verified WorkOS user. Every data-bearing request requires current active organization membership. Missing or ambiguous team selection must be completed before capture; there is no personal tenant fallback. The shared core enforces the resulting neutral principal. Each environment, tenant and user has a separate object prefix; attachment deduplication is scoped to that owner and session. The shell supplies the S3 adapter and deployment configuration. No WorkOS account or AWS service is required for the single-tenant offering; a compatible object store is required.
+The hosted shell verifies the OAuth token and fresh verified WorkOS user. Every data-bearing request requires current active organization membership. Missing or ambiguous team selection must be completed before capture; there is no personal tenant fallback. The shared core enforces the resulting neutral principal. Each environment, tenant and user has a separate object prefix; attachment deduplication is scoped to that owner and session. The shell supplies the S3 adapter and deployment configuration. No WorkOS account or AWS service is required for the self-hosted application; a compatible object store is required.
 
 The HTTP protocol provides identity, attachment upload, immutable batch upload and receipt-based batch readback under /api/sessions/. Team members can search and read team-visible sessions; private or deleted sessions are excluded by authoritative owner controls. Receipt readback accepts `userId` to select the author inside the authenticated tenant, while uploads must match the authenticated human. Stored records preserve that human's ID, name and email.
 
 ## Persistence, backup and versioning
 
-Back up the configured bucket/prefix using the object store's versioning, replication or backup tooling. Restore with the same configured prefix and tenant/user identity; receipt readback verifies the restored records. Preserve the receiver token and storage credentials separately. Never merge backups belonging to different configured owners. Preserve current deletion controls and reconcile later deletions before exposing a restored instance; an old backup must not overwrite tombstones or revive erased sessions.
+Back up the configured bucket/prefix using the object store's versioning, replication or backup tooling. Restore with the same configured prefix and tenant/user identity; receipt readback verifies the restored records. Preserve account state and storage credentials as part of the matched backup. Never merge backups belonging to different configured owners. Preserve current deletion controls and reconcile later deletions before exposing a restored instance; an old backup must not overwrite tombstones or revive erased sessions.
 
 Both deployments write `<prefix>/tenants/<tenant-hash>/users/<user-hash>/<harness>/<installation-hash>/<session-hash>/<batch-hash>.json.gz` and `attachments/<sha256>` objects inside that same session directory. Attachment PUT requests include `harness`, `installationId` and `sessionId` query parameters. Legacy owner-scoped blobs are read only for existing captures; new unscoped writes are refused. The session directory retains a small migration fence at `event-identities-v1.json`; fingerprints are stored in PostgreSQL. Back up and restore PostgreSQL together with raw objects; retained failed-upload reservations remain authoritative. A downstream OpenSearch ingester uses one S3 reader and one batch schema, configured with the endpoint/bucket/prefix. The shared OpenSearch ingester and authenticated search API are documented in `session-indexing.md`. The laptop spool remains local and is only a retry buffer.
 
