@@ -80,6 +80,13 @@ is descriptive and grants no authentication or resource access.
 
 ## Shared installation onboarding
 
+Administrators can use **Install on Replicas** in Agent setup to copy a dedicated
+setup prompt into a Replicas chat. It covers the persistent environment, workload
+authentication and fresh-session verification. The first release still requires
+the deployment operator to approve the environment binding and designate the
+verified workspace; the prompt reports this once rather than requesting personal
+credentials from every member.
+
 An operator may add `onboardingWorkspaceId` to an approved Replicas binding after
 an administrator chooses one workspace for installation verification. The
 receiver reads that exact workload owner's real CLI, MCP test and fresh capture

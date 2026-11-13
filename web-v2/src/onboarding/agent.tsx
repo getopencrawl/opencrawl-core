@@ -50,12 +50,13 @@ export interface AgentOnboardingProps {
   adapter: OnboardingAdapter;
   mcpUrl: string;
   setupPrompt: string;
+  replicasSetupPrompt?: string;
   initialStatus?: OnboardingStatus;
   canInviteBeforeSetup?: boolean;
   presentation?: 'focused' | 'workspace';
 }
 
-export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus, canInviteBeforeSetup = false, presentation = 'focused'}: AgentOnboardingProps) {
+export function AgentOnboarding({adapter, mcpUrl, setupPrompt, replicasSetupPrompt, initialStatus, canInviteBeforeSetup = false, presentation = 'focused'}: AgentOnboardingProps) {
   const progress = useOnboardingResource(signal => adapter.status(signal), {key:consoleResourceKey(adapter,'onboarding-status'), interval: 5000, initial: initialStatus});
   const status = progress.data ?? {};
   const derived = deriveOnboarding(status);
@@ -66,6 +67,7 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus, ca
   const [copied, setCopied] = useState<string | null>(null);
   const [manual, setManual] = useState<{text: string; step: string} | null>(null);
   const copyButton = useRef<HTMLButtonElement>(null);
+  const replicasButton = useRef<HTMLButtonElement>(null);
   const fallback = useRef<HTMLTextAreaElement>(null);
   const currentStep = useRef(promptStep);
   currentStep.current = promptStep;
@@ -89,28 +91,31 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus, ca
     setCopied(step);
     copyTimer.current = setTimeout(() => setCopied(null), 1500);
   }
-  async function copy() {
+  async function copy(text = prompt.text, label: string = promptStep) {
     const requestedStep = promptStep;
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
-      await navigator.clipboard.writeText(prompt.text);
-      if (mounted.current && currentStep.current === requestedStep) showCopied(requestedStep);
+      await navigator.clipboard.writeText(text);
+      if (mounted.current && currentStep.current === requestedStep) showCopied(label);
     } catch {
-      if (mounted.current && currentStep.current === requestedStep) setManual({text: prompt.text, step: requestedStep});
+      if (mounted.current && currentStep.current === requestedStep) setManual({text, step: label});
     }
   }
+
+  const replicasAction = !progress.loading && !progress.error && !manual && replicasSetupPrompt && <section aria-label="Replicas installation"><div className="focus-action"><Button ref={replicasButton} variant="primary" onClick={() => void copy(replicasSetupPrompt, 'replicas')}>{copied === 'replicas' ? 'Copied' : 'Install on Replicas'}</Button></div><p className="focus-reassurance">Copy a setup prompt to paste into a Replicas chat. Set up the shared environment once for your whole team.</p></section>;
 
   const Heading = presentation === 'workspace' ? 'h2' : 'h1';
   const content = <>
     {progress.loading ? <section className="focus-loading" role="status"><span className="waiting-dot" aria-hidden="true" />Checking your connection…</section>
       : progress.error ? <section aria-labelledby="error-title"><Heading id="error-title" tabIndex={-1}>Let’s reconnect</Heading><p className="focus-description">We couldn’t check your progress. Try again to pick up where you left off.</p><div className="focus-action"><Button variant="primary" onClick={progress.reload}>Try again<Icon name="arrow-right" /></Button></div><p className="focus-reassurance">You don’t need to repeat your setup.</p></section>
-        : hasReceipt(status.shared) ? <section aria-labelledby="shared-title"><Heading id="shared-title">Your team’s Replicas setup is ready</Heading><p className="focus-description">Your administrator connected the shared installation. Conversations and memories from that installation are shared with your OpenCrawl workspace. You do not need to sign in or install capture separately.</p><div className="focus-action"><LinkButton to="/" variant="primary">Open workspace</LinkButton></div></section>
-        : manual ? <section aria-labelledby="manual-title"><Heading id="manual-title" tabIndex={-1}>Copy this prompt</Heading><p className="focus-description">Automatic copying isn’t available. Copy the selected text, then paste it into your coding agent.</p><label className="sr-only" htmlFor="copy-fallback">Prompt to copy</label><Textarea ref={fallback} id="copy-fallback" readOnly rows={6} value={manual.text} /><div className="focus-action"><Button variant="primary" onClick={() => {showCopied(manual.step); setManual(null); requestAnimationFrame(() => copyButton.current?.focus());}}>I’ve copied it<Icon name="arrow-right" /></Button></div></section>
+        : hasReceipt(status.shared) && !manual ? <section aria-labelledby="shared-title"><Heading id="shared-title">Your team’s Replicas setup is ready</Heading><p className="focus-description">Your administrator connected the shared installation. Conversations and memories from that installation are shared with your OpenCrawl workspace. You do not need to sign in or install capture separately.</p><div className="focus-action"><LinkButton to="/" variant="primary">Open workspace</LinkButton></div>{replicasAction}</section>
+        : manual ? <section aria-labelledby="manual-title"><Heading id="manual-title" tabIndex={-1}>Copy this prompt</Heading><p className="focus-description">Automatic copying isn’t available. Copy the selected text, then paste it into your coding agent.</p><label className="sr-only" htmlFor="copy-fallback">Prompt to copy</label><Textarea ref={fallback} id="copy-fallback" readOnly rows={6} value={manual.text} /><div className="focus-action"><Button variant="primary" onClick={() => {showCopied(manual.step); setManual(null); requestAnimationFrame(() => (manual.step === 'replicas' ? replicasButton : copyButton).current?.focus());}}>I’ve copied it<Icon name="arrow-right" /></Button></div></section>
           : <section aria-labelledby="connect-title">
             <Heading id="connect-title" tabIndex={-1}>{title}</Heading>
             <p className="focus-description">{description}</p>
             <div className="focus-action"><div className="prompt-actions"><Button ref={copyButton} variant="primary" className="copy-prompt" data-label={prompt.label} onClick={() => void copy()}><span>{copied === promptStep ? 'Copied' : prompt.label}</span></Button><Button variant="primary" className="prompt-toggle" aria-label={`${expanded ? 'Hide' : 'Show'} ${prompt.name} prompt`} aria-expanded={expanded} aria-controls="connect-preview" onClick={() => setExpanded(value => !value)}><Icon name="chevron-down" /></Button></div></div>
             <div className="prompt-preview" id="connect-preview" hidden={!expanded}><p>{prompt.text}</p></div>
+            {replicasAction}
             <ul className="signal-checklist" aria-label="Connection checklist">
               <Signal name="cli" done={cli} label={cli ? 'CLI signed in' : 'Waiting for CLI sign-in'}><CommandSnippet text={commands.cli} label="Copy CLI setup commands" /><p className="signal-instruction">Open the URL printed in your terminal and approve sign-in in your browser.</p></Signal>
               <Signal name="mcp" done={mcp} label={mcp ? 'MCP signed in' : 'Waiting for MCP sign-in'}><CommandSnippet text={mcpUrl} label="Copy MCP server URL" /><p className="signal-instruction">Add this server in your agent’s settings, then complete sign-in.</p></Signal>

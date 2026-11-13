@@ -1,4 +1,5 @@
 import {hasCompletedOnboarding} from '../onboarding-state.mjs';
+import {replicasSetupPrompt} from '../sessions/cloud-setup.mjs';
 import type {IncomingMessage} from 'node:http';
 import type {SourceCard, TeamReport, InvitationPolicy} from './types.mjs';
 
@@ -80,7 +81,7 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
       if (path === '/api/console/bootstrap') {
         const [organization, progress, extension] = await Promise.all([services.organization(principal.tenantId), services.progress(principal), extensions.bootstrap?.(context)]);
         const completed = hasCompletedOnboarding(progress);
-        body = {...extension,...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope:context.cacheScope || [principal.tenantId,principal.userId,admin(member)?'admin':'member'].join(':'),workspace:{name:organization.name,userName:name(user),email:user.email,role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
+        body = {...extension,...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope:context.cacheScope || [principal.tenantId,principal.userId,admin(member)?'admin':'member'].join(':'),workspace:{name:organization.name,userName:name(user),email:user.email,role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,...(admin(member)?{replicasSetupPrompt:replicasSetupPrompt(services.url)}:{}),canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
       } else if (path === '/api/console/usage') {
         body = await services.usage(principal);
       } else if (path === '/api/console/sources') {
