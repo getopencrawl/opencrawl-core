@@ -15,6 +15,8 @@ export interface McpOptions {
  onObservationError?: (event: McpExchange & {event: string; reason: string}) => unknown | Promise<unknown>;
  board?: ReturnType<typeof createBoard>;
  search?: ReturnType<typeof createWorkspaceSearch>;
+ /** Runtime-owned tools share this transport's authentication and request-local principal. */
+ registerTools?: (server: McpServer, principal: () => Principal) => void;
 }
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {readFile} from 'node:fs/promises';
@@ -30,7 +32,7 @@ const overview = await readFile(new URL('./overview.md', import.meta.url), 'utf8
 // Authentication belongs to the runtime adapter. No account or tenant data is
 // exposed by this initial surface; every MCP request still requires a principal.
 export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated, onConnectionTest,
-  observationTimeoutMs = 1000, onObservationError = event => console.error(JSON.stringify(event)), board, search}: McpOptions) {
+  observationTimeoutMs = 1000, onObservationError = event => console.error(JSON.stringify(event)), board, search, registerTools}: McpOptions) {
   if (typeof authenticate !== 'function' || new URL(origin).origin !== origin) throw new Error('MCP requires authentication and a canonical origin');
   if (!Number.isInteger(observationTimeoutMs) || observationTimeoutMs < 1 || observationTimeoutMs > 10000) throw new Error('Invalid MCP observation timeout');
   const handler = createMcpHandler(() => {
@@ -104,6 +106,11 @@ export function createOpenCrawlMcp({authenticate, origin, revision = 'developmen
         }
       });
     }
+    registerTools?.(server, () => {
+      const principal = context.getStore();
+      if (!principal) throw new Error('Missing authenticated principal');
+      return principal;
+    });
     return server;
   }, {maxRequestBodySize: 65536, maxSubscriptions: 0});
   const context = new AsyncLocalStorage<Principal>();
