@@ -66,7 +66,7 @@ export function boardInput(operation: string, values: Options) {
   if (operation === 'ack') return {session, receipt: values.receipt};
   if (operation === 'inbox') return {session, ...(values.receipt ? {receipt: values.receipt} : {})};
   if (operation === 'leave') return {session};
-  throw new CliError('INVALID_USAGE', 'Use board bootstrap|profile|register|directory|subscribe|publish|inbox|watch|wait|ack|leave|instructions.', 64);
+  throw new CliError('INVALID_USAGE', 'Use board bootstrap|profile|register|directory|fetch|subscribe|publish|inbox|watch|wait|ack|leave|instructions.', 64);
 }
 
 // Short JSON lines preserve complete messages through monitors that truncate long

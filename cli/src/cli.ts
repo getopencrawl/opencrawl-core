@@ -83,7 +83,10 @@ Search: opencrawl search "words" --json
   --excerpt-chars 100..2000         Default: 800
   --cursor TOKEN                    Next live page; repeat the same arguments
   --no-dedupe                       Show all equivalent passage occurrences
-Search returns compact verbatim excerpts. Expand with opencrawl fetch <result-id>.
+Search returns compact verbatim excerpts. Expand with opencrawl fetch ID [ID ...].
+  --concurrency 1..8                Fetch independent references (default: 8, max 40)
+Run opencrawl fetch --help for paging and partial-failure output.
+Run opencrawl board fetch --help for message/session references and JSON examples.
   --offset N --length 1..16000       Read a passage in parts (default length: 6000)
   --content-version VERSION         Detect changes between fetch pages
 Environment tokens use OpenCrawl cloud by default. Use --api or OPENCRAWL_API_URL

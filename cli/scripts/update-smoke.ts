@@ -113,18 +113,23 @@ try {
     writeFileSync(worker, `const cli=require(${JSON.stringify(launcher)}); cli.update({force:true, root:${JSON.stringify(installedRoot)}, fetcher:async()=>new Response(JSON.stringify({name:'@getopencrawl/cli',version:${JSON.stringify(version)}})), install:v=>cli.installRelease(v,{registry:${JSON.stringify(server.url.origin)}})}).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e);process.exitCode=1});`);
     const receipt = JSON.parse(await asyncRun(['node', worker]));
     if (!receipt.updated || receipt.version !== version) throw new Error('Upgrade was not promoted');
-    // The new launcher performs its ordinary automatic-refresh path. Registry
-    // checking is already current, so this smoke never contacts public npm.
+    // Information commands must not perform refresh or hook migrations. Registry
+    // checking is already current, so the ordinary command never contacts public npm.
     writeFileSync(join(env.XDG_CACHE_HOME, 'opencrawl/update.json'), JSON.stringify({checkedAt: Date.now()}));
     env.OPENCRAWL_NO_UPDATE = '0';
     if (sync(['node', launcher, '--version']) !== version) throw new Error('Original launcher did not adopt the updated launcher and binary');
+    sync(['node', launcher, 'board', 'fetch', '--help']);
+    if (readFileSync(skillFile, 'utf8') !== oldSkill || readFileSync(customized, 'utf8') !== 'User-customized skill' || !existsSync(stale)) throw new Error('Information command rewrote managed skills');
+    if (readFileSync(join(capture, 'config.json'), 'utf8') !== JSON.stringify(config)) throw new Error('Information command migrated capture hooks');
+    // This normal local command refreshes skills and migrates existing hooks.
+    sync(['node', launcher, 'board', 'instructions']);
     env.OPENCRAWL_NO_UPDATE = '1';
     if (readFileSync(skillFile, 'utf8') !== canonicalSkill || readFileSync(customized, 'utf8') !== canonicalSkill || existsSync(stale)) throw new Error('Upgrade did not regenerate CLI-owned skills');
     if (readFileSync(join(other, 'SKILL.md'), 'utf8') !== 'keep') throw new Error('Upgrade changed another named skill');
     if (JSON.parse(readFileSync(manifestFile, 'utf8')).api !== undefined) throw new Error('Skill retained a duplicate deployment URL');
     const skillReceipt = JSON.parse(readFileSync(join(env.XDG_CACHE_HOME, 'opencrawl/skills-update.json'), 'utf8'));
     if (skillReceipt.version !== version || skillReceipt.result.updated !== 2 || skillReceipt.result.conflicts !== 0) throw new Error('Upgrade did not report managed skill outcomes');
-    // The ordinary version command also performs the existing legacy hook migration.
+    // The ordinary board command also performs the existing legacy hook migration.
     const upgradedConfig = readFileSync(join(capture, 'config.json'), 'utf8');
     if (JSON.stringify(JSON.parse(upgradedConfig)) !== JSON.stringify({...config, hookMode: 'managed-v3'})) throw new Error('Upgrade changed capture configuration beyond the expected hook migration');
     const selectedApi = (...args: string[]) => JSON.parse(sync(['node', launcher, 'skills', 'status', '--client', 'claude-code', '--json', ...args])).data.api;
