@@ -132,14 +132,19 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
 }
 
 type Activity = Exclude<TranscriptEntry, {type: 'message'}>;
-type Block = {kind: 'message'; key: string; role: 'user' | 'assistant'; text: string; timestamp: string | null; first: boolean} | {kind: 'activity'; key: string; entries: Activity[]};
+type Block = {kind: 'message'; key: string; role: 'user' | 'assistant'; text: string; timestamp: string | null; first: boolean; actor?: TranscriptEvent['actor']} | {kind: 'activity'; key: string; entries: Activity[]};
 /** Consecutive tool calls, results and notes collapse into one line between messages. */
 export function transcriptBlocks(events: ReadonlyArray<TranscriptEvent>): Block[] {
   const blocks: Block[] = [];
-  let role: string | null = null;
+  let speaker: string | null = null;
   for (const event of events) event.entries.forEach((entry, index) => {
     const key = `${event.eventId}:${index}`;
-    if (entry.type === 'message') {blocks.push({kind: 'message', key, role: entry.role, text: entry.text, timestamp: event.timestamp, first: entry.role !== role}); role = entry.role; return;}
+    if (entry.type === 'message') {
+      const actor = entry.role === 'user' ? event.actor : undefined;
+      const nextSpeaker = actor ? `${entry.role}:${actor.provider}:${actor.userId ?? actor.messageId}` : entry.role;
+      blocks.push({kind: 'message', key, role: entry.role, text: entry.text, timestamp: event.timestamp, first: nextSpeaker !== speaker, ...(actor ? {actor} : {})});
+      speaker = nextSpeaker; return;
+    }
     const last = blocks.at(-1);
     if (last?.kind === 'activity') last.entries.push(entry); else blocks.push({kind: 'activity', key, entries: [entry]});
   });
@@ -169,7 +174,7 @@ function MessageText({text}: {text: string}) {
 function TranscriptBlock({block, turn}: {block: Block; turn: boolean}) {
   if (block.kind === 'activity') return <li className="oc-log-activity"><span className="oc-log-gutter"/><details className="oc-log-tools"><summary>{activitySummary(block.entries)}</summary><ol>{block.entries.map((entry, index) => <ActivityDetail key={index} entry={entry}/>)}</ol></details></li>;
   return <li className={`oc-log-${block.role}${turn ? ' oc-log-turn' : ''}`}>
-    <span className="oc-log-gutter">{block.first && <><strong>{block.role === 'user' ? 'User' : 'Agent'}</strong><When value={block.timestamp}/></>}</span>
+    <span className="oc-log-gutter">{block.first && <><strong title={block.actor ? `Replicas sender reported by capture${block.actor.email ? ': ' + block.actor.email : ''}` : undefined}>{block.role === 'assistant' ? 'Agent' : block.actor ? block.actor.name || block.actor.email || (block.actor.kind === 'human' ? 'Replicas user' : 'Unknown sender') : 'User'}</strong><When value={block.timestamp}/></>}</span>
     <MessageText text={block.text}/>
   </li>;
 }

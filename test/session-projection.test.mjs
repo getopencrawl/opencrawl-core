@@ -74,6 +74,19 @@ test('search strips recognized transport wrappers while retaining unknown tool p
  assert.equal(batch.events[0].data.transportNote,'irrelevant routing metadata');
 });
 
+test('search retains readable reasoning and tool signatures but drops opaque thinking payloads',async()=>{
+ const f=await fixture('claude-code'),batch=structuredClone(f.batch);
+ batch.events=[{id:'reasoning',kind:'message',data:{role:'assistant',content:[
+  {type:'thinking',thinking:'Readable explanation',signature:'OPAQUE_SIGNATURE'},
+  {type:'redacted_thinking',data:'OPAQUE_REDACTED'},
+  {type:'text',text:'Final answer'},
+ ]}},{id:'tool-signature',kind:'tool_result',data:{output:{signature:'legitimate tool signature'}}}];
+ const docs=batchDocuments({prefix,key:f.key,batch,principal:owner}).map(x=>x.document);
+ assert.equal(docs.find(d=>d.eventId==='reasoning').text,'Readable explanation\nFinal answer');
+ assert.equal(docs.find(d=>d.eventId==='tool-signature').text,'legitimate tool signature');
+ assert.equal(batch.events[0].data.content[0].signature,'OPAQUE_SIGNATURE');
+});
+
 function indexFixture(f) {
  const template=f.docs[0].document,rows=new Map(f.docs.map(item=>[item.id,item.document]));
  const compaction=f.docs.find(item=>item.document.kind==='compaction');

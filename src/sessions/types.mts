@@ -44,11 +44,13 @@ export interface EventData {[key: string]: unknown; role?: string | null; call_i
 export interface SessionEvent {
   id: string; kind: string; data?: EventData; timestamp?: string | null; sequence?: number;
   nativeId?: string | null; parentId?: string | null; turnId?: string | null;
+  actor?: unknown;
 }
 export interface SessionBatch {
   schemaVersion: number; installationId: string; sessionId: string; harness: string; origin: string;
   owner: Principal; events: SessionEvent[]; attachments: Attachment[]; captureMode?: string;
   host?: string | null; receivedAt?: string; title?: string;
+  actorProfiles?: Record<string,unknown>;
 }
 export interface SessionIdentity {
   prefix: string; principal: Principal; harness: string; installationId: string; sessionId: string;

@@ -1,13 +1,13 @@
 import {CliError, jsonRequest} from './oauth.ts';
 import {accessToken} from './session.ts';
-import {environmentToken} from './environment-token.ts';
+import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 
 async function workspaceRequest(api: string, operation: 'search' | 'fetch', input: Record<string, unknown>, fetcher = fetch) {
-  const configuredToken = environmentToken('OPENCRAWL_TOKEN', api);
-  let token = configuredToken || await accessToken(api, undefined, fetcher);
+  const configured = await configuredToken('OPENCRAWL_TOKEN', api);
+  let token = configured || await accessToken(api, undefined, fetcher);
   const request = () => jsonRequest(`${api}/api/search${operation === 'fetch' ? '/fetch' : ''}`, {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'}, body: JSON.stringify(input), signal: AbortSignal.timeout(70_000)}, fetcher);
   let result = await request();
-  if (result.response.status === 401 && !configuredToken) {token = await accessToken(api, token, fetcher);result = await request();}
+  if (result.response.status === 401 && (!configured || workspaceIdentityEnabled())) {token = await configuredToken('OPENCRAWL_TOKEN', api, token) || await accessToken(api, token, fetcher);result = await request();}
   if (result.response.status === 401) throw new CliError('AUTH_REQUIRED', 'Sign in with opencrawl login, or configure your self-hosted search token.', 2);
   if (result.response.status === 403) throw new CliError('SEARCH_FORBIDDEN', 'This credential cannot search the selected workspace.', 2);
   if (result.response.status === 400) throw new CliError('INVALID_QUERY', 'Invalid query, filters or expired cursor. Run opencrawl search --help.', 64);

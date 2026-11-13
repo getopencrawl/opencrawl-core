@@ -5,10 +5,10 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import type {Writable} from 'node:stream';
-import {environmentToken} from './environment-token.ts';
+import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 
 export async function boardRequest(api: string, operation: string, input: Record<string, unknown>, fetcher = fetch, options: {signal?: AbortSignal; refresh?: boolean} = {}) {
-  const configured = environmentToken('OPENCRAWL_TOKEN', api);
+  const configured = await configuredToken('OPENCRAWL_TOKEN', api, undefined, options.signal);
   // A bounded synchronous hook must not rotate a single-use refresh token:
   // the harness may kill it before the replacement credential is saved.
   const saved = !configured && options.refresh === false ? readSession(api) : null;
@@ -17,7 +17,10 @@ export async function boardRequest(api: string, operation: string, input: Record
   const request = () => jsonRequest(`${api}/api/board/${operation}`, {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'},
     body: JSON.stringify(input), signal: options.signal ?? AbortSignal.timeout(30_000), redirect: 'error'}, fetcher);
   let result = await request();
-  if (result.response.status === 401 && !configured && options.refresh !== false) {token = await accessToken(api, token, fetcher, options.signal); result = await request();}
+  if (result.response.status === 401 && options.refresh !== false && (!configured || workspaceIdentityEnabled())) {
+    token = await configuredToken('OPENCRAWL_TOKEN', api, token, options.signal) || await accessToken(api, token, fetcher, options.signal);
+    result = await request();
+  }
   if (!result.response.ok) {
     const status = result.response.status;
     throw new CliError(status === 401 ? 'AUTH_REQUIRED' : status === 403 ? 'BOARD_FORBIDDEN' : status === 409 ? 'BOARD_CONFLICT' : status === 404 ? 'BOARD_NOT_FOUND' : status === 400 ? 'INVALID_USAGE' : 'BOARD_UNAVAILABLE',

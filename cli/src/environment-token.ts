@@ -12,7 +12,11 @@ export function withEnvironmentTokenOrigin<T>(origin: string | undefined, operat
 export function environmentToken(name: 'OPENCRAWL_TOKEN' | 'OPENCRAWL_SESSIONS_TOKEN', api: string): string | undefined {
   const token = process.env[name];
   if (!token) return undefined;
+  assertTokenDestination(api);
+  return token;
+}
+
+export function assertTokenDestination(api: string): void {
   const configured = destination.getStore() ?? process.env.OPENCRAWL_API_URL ?? DEFAULT_API_ORIGIN;
   if (apiOrigin(configured) !== apiOrigin(api)) throw new CliError('TOKEN_DESTINATION_MISMATCH', 'The environment token is bound to a different deployment. Use that deployment or remove the environment token to use saved credentials.', 64);
-  return token;
 }

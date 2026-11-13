@@ -26,7 +26,7 @@ test('agent command errors keep stdout JSON, stable exit codes and credential-fr
 test('identity distinguishes organization setup, email verification and denied access', async () => {
   const {identity}=await import('../src/cli.ts');
   for(const [code,message] of [
-    ['ORGANIZATION_REQUIRED','Create or join a team at https://capture.example.com/organizations'],
+    ['ORGANIZATION_REQUIRED','Open https://capture.example.com/organizations in your browser to create or join a team'],
     ['EMAIL_VERIFICATION_REQUIRED','Verify your email address'],
     ['UNKNOWN','This account cannot access the deployment'],
   ]) {

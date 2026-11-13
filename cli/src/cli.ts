@@ -6,12 +6,13 @@ import {readCaptureConfig} from './capture/runtime.ts';
 import {scheduleMemoryRefresh} from './capture/memory.ts';
 import {scheduleCliUpdate} from './update.ts';
 import {spawn} from 'node:child_process';
-import {parseArgs} from 'node:util';
+import {parseArgs, stripVTControlCharacters} from 'node:util';
 import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest, DEFAULT_API_ORIGIN} from './oauth.ts';
-import {readSession, saveSession, accessToken, logout} from './session.ts';
+import {readSession, saveSession, accessToken, logout, selectOrganization, credentialRotation} from './session.ts';
 import {filesystemError} from './filesystem.ts';
 import {agentSkills} from './skills.ts';
-import {withEnvironmentTokenOrigin, environmentToken} from './environment-token.ts';
+import {withEnvironmentTokenOrigin} from './environment-token.ts';
+import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 import {tokenCommand} from './token.ts';
 import {sessionStartCommand} from './session-start.ts';
 
@@ -35,6 +36,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   update      Install the latest CLI for your next invocation
 
 Options:
+  --organization <org_ID>  Select a workspace with login using your saved sign-in
   --no-browser   Print the sign-in URL without opening a browser (SSH/agents)
   --json         Versioned JSON on stdout; instructions on stderr
   --api <url>    Server (overrides OPENCRAWL_API_URL and saved capture config)
@@ -54,6 +56,7 @@ Uploaded data is unchanged by uninstall or local purge.
 History import (optional, asks during collect install):
   collect install --backfill skip       Set up future collection without history
   collect backfill                     Choose history sources interactively
+  collect flush --retry-rejected       Retry held HTTP 413 batches after fixing the receiver limit
   collect backfill --dry-run --json     Preview local transcript counts; no upload
   collect backfill --harness all --yes  Import after the user approves
   --harness claude-code|codex|all        Limit the history import to chosen sources
@@ -84,7 +87,13 @@ Search returns compact verbatim excerpts. Expand with opencrawl fetch <result-id
 Environment tokens use OpenCrawl cloud by default. Use --api or OPENCRAWL_API_URL
 to send them to a self-hosted deployment. Without a token, the CLI uses saved login.
 
-Machines created per task (cloud agent platforms):
+Replicas workspaces (requires the deployment administrator's exact environment binding):
+  OPENCRAWL_API_URL=<origin> OPENCRAWL_AUTH=replicas-workspace
+Remove shared OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN from that environment.
+The CLI renews workspace identity in memory; configure native workspace_identity
+for the Replicas MCP separately. Workloads read shared team data, not human private data.
+
+Other machines created per task (use a personal environment):
   token create [--env-file PATH]     One-year token for search, the board, MCP and uploads
   token revoke ID                    End a token; needs your own sign-in, like create
 Store OPENCRAWL_API_URL, OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN in the platform's
@@ -131,21 +140,47 @@ function openBrowser(url: string) {
   child.unref();
 }
 
-export async function identity(api: string, fetcher = fetch, initialToken?: string) {
+function organizationRequired(api: string, value: unknown) {
+  const workspaces: NonNullable<CliError['workspaces']> = [];
+  if (Array.isArray(value)) for (const entry of value.slice(0, 100) as unknown[]) {
+    if (!entry || typeof entry !== 'object' || !('id' in entry) || !('name' in entry) || typeof entry.id !== 'string' || !/^org_[A-Za-z0-9]+$/.test(entry.id)
+      || !(typeof entry.name === 'string' || entry.name === null) || workspaces.some(item => item.id === entry.id)) continue;
+    const name = typeof entry.name === 'string' ? stripVTControlCharacters(entry.name).replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ').slice(0, 200) : null;
+    workspaces.push({id: entry.id, name});
+  }
+  const message = workspaces.length
+    ? `Choose a workspace for this CLI:\n${workspaces.map(workspace => `${workspace.name || workspace.id} (${workspace.id}): opencrawl login --organization ${workspace.id} --api ${api}`).join('\n')}`
+    : `Open ${api}/organizations in your browser to create or join a team, then run opencrawl whoami --api ${api}. If you already belong to several teams, select one with opencrawl login --organization org_ID --api ${api}.`;
+  const error = new CliError('ORGANIZATION_REQUIRED', message, 2);
+  if (Array.isArray(value)) error.workspaces = workspaces;
+  return error;
+}
+
+export async function identity(api: string, fetcher = fetch, initialToken?: string): Promise<{
+  user: {id: string; email: string | null}; workspace?: {id: string; name: string | null};
+}> {
   let token = initialToken ?? await accessToken(api, undefined, fetcher);
   let result = await jsonRequest(`${api}/api/cli/me`, {headers: {authorization: `Bearer ${token}`}}, fetcher);
-  if (result.response.status === 401 && !initialToken) {
-    token = await accessToken(api, token, fetcher);
+  if (result.response.status === 401 && (!initialToken || workspaceIdentityEnabled())) {
+    token = workspaceIdentityEnabled() ? (await configuredToken('OPENCRAWL_TOKEN', api, token))! : await accessToken(api, token, fetcher);
     result = await jsonRequest(`${api}/api/cli/me`, {headers: {authorization: `Bearer ${token}`}}, fetcher);
   }
   if (result.response.status === 401) throw new CliError('AUTH_REQUIRED', 'Your session expired. Run opencrawl login again.', 2);
   if (result.response.status === 403) {
-    if (result.body.error?.code === 'ORGANIZATION_REQUIRED') throw new CliError('ORGANIZATION_REQUIRED', `Create or join a team at ${api}/organizations, then run opencrawl login again.`, 2);
+    if (result.body.schemaVersion === 1 && result.body.error?.code === 'ORGANIZATION_REQUIRED') throw organizationRequired(api, result.body.error.workspaces);
     if (result.body.error?.code === 'EMAIL_VERIFICATION_REQUIRED') throw new CliError('AUTH_FORBIDDEN', 'Verify your email address before using the CLI.', 2);
     throw new CliError('AUTH_FORBIDDEN', 'This account cannot access the deployment. Open it in your browser to check access.', 2);
   }
   if (!result.response.ok || result.body.schemaVersion !== 1 || typeof result.body.data?.user?.id !== 'string') throw new CliError('INVALID_RESPONSE', 'Could not verify your session with this deployment.');
-  return {id: result.body.data.user.id, email: typeof result.body.data.user.email === 'string' ? result.body.data.user.email : null};
+  const user = {id: result.body.data.user.id, email: typeof result.body.data.user.email === 'string' ? result.body.data.user.email : null};
+  // Display only the workspace resolved by the server; older deployments may
+  // omit it, and a missing display name does not invalidate a verified ID.
+  const workspace: unknown = result.body.data.workspace;
+  if (workspace && typeof workspace === 'object' && 'id' in workspace && typeof workspace.id === 'string' && workspace.id.trim()
+    && 'name' in workspace && (typeof workspace.name === 'string' || workspace.name === null)) {
+    return {user, workspace: {id: workspace.id, name: workspace.name}};
+  }
+  return {user};
 }
 
 export async function main(args = process.argv.slice(2)) {
@@ -158,7 +193,7 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {organization:{type:'string'},'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},'retry-rejected':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
@@ -170,6 +205,10 @@ export async function main(args = process.argv.slice(2)) {
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
     if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (['login','token'].includes(command) && workspaceIdentityEnabled()) throw new CliError('WORKLOAD_ACCOUNT_ACTION', 'Workspace identity cannot manage human sign-ins or credentials. Use your personal machine for account setup.', 2);
+    const organizationId = parsed.values.organization as string | undefined;
+    if (organizationId !== undefined && (command !== 'login' || !/^org_[A-Za-z0-9]+$/.test(organizationId))) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
+    if (organizationId && process.env.OPENCRAWL_TOKEN?.trim()) throw new CliError('ENVIRONMENT_TOKEN_ACTIVE', 'Unset OPENCRAWL_TOKEN before selecting a workspace with your saved sign-in. Environment tokens remain bound to the workspace that issued them.', 2);
     if (parsed.values.client && command !== 'skills') throw new CliError('INVALID_USAGE', 'Use --client with skills install or skills status.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL
@@ -181,7 +220,7 @@ export async function main(args = process.argv.slice(2)) {
       return data.results.some(result => ['conflict', 'error'].includes(result.status)) ? 1 : 0;
     }
     return await withEnvironmentTokenOrigin((parsed.values.api as string|undefined) ?? process.env.OPENCRAWL_API_URL, async () => {
-    if(command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob.current=scheduleMemoryRefresh();
+    if(!organizationId&&command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob.current=scheduleMemoryRefresh();
     if (command === 'board') {
       await boardCommand(parsed.positionals[1] ?? 'directory', api, parsed.values, data => writeBoardOutput(data, json));
       return 0;
@@ -209,28 +248,52 @@ export async function main(args = process.argv.slice(2)) {
     }
     if (command === 'logout') { await logout(api); emit({api, authenticated: false, localCredentialsRemoved: true}, 'Removed saved credentials from this machine.'); return 0; }
     if (command === 'login') {
+      const signedIn = (verified: Awaited<ReturnType<typeof identity>>) => {
+        const {user} = verified;
+        emit({api, authenticated: true, ...verified}, `Signed in${user.email ? ` as ${user.email}` : ''}${organizationId ? ` to workspace ${organizationId}` : ''}. Use opencrawl search to query indexed workspace knowledge.`);
+      };
+      if (organizationId && readSession(api)) {
+        signedIn(await selectOrganization(api, organizationId, token => identity(api, fetch, token)));
+        return 0;
+      }
       const auth = await discover(api);
       const device = await startDevice(auth);
       const url = device.verification_uri_complete ?? device.verification_uri;
       process.stderr.write(`Open ${url}\nConfirm code: ${device.user_code}\nWaiting for browser approval (expires in ${device.expires_in} seconds)…\n`);
       if (!parsed.values['no-browser'] && process.stdin.isTTY && !process.env.SSH_CONNECTION && !process.env.SSH_TTY) openBrowser(url);
       const tokens = await pollDevice(auth, device);
-      const user = await identity(api, fetch, tokens.accessToken);
-      await saveSession(api, {auth, ...tokens});
-      emit({api, authenticated: true, user}, `Signed in${user.email ? ` as ${user.email}` : ''}. Use opencrawl search to query indexed workspace knowledge.`);
+      let verified: Awaited<ReturnType<typeof identity>> | undefined;
+      try { verified = await identity(api, fetch, tokens.accessToken); }
+      catch (error) {
+        // The service verifies the account and session before returning this
+        // specific setup requirement. Retain that sign-in without claiming
+        // workspace access or repeating device approval after browser setup.
+        if (error instanceof CliError && error.code === 'ORGANIZATION_REQUIRED') {
+          if (!organizationId) {
+            await saveSession(api, {auth, ...tokens});
+            error.message = `Your sign-in is saved on this machine; workspace setup is still required. ${error.message}`;
+            throw error;
+          }
+        } else throw error;
+      }
+      if (organizationId) verified = await selectOrganization(api, organizationId, token => identity(api, fetch, token), {auth, ...tokens});
+      if (!verified) throw new CliError('INVALID_RESPONSE', 'Could not verify the selected workspace.');
+      if (!organizationId) await saveSession(api, {auth, ...tokens});
+      signedIn(verified);
       return 0;
     }
     // A machine created for one task has no saved sign-in, only the token its platform injected.
     // A token the service does not accept here leaves the saved sign-in to decide, as before.
     let configured: string | undefined;
-    try { configured = environmentToken('OPENCRAWL_TOKEN', api); } catch {}
+    try { configured = await configuredToken('OPENCRAWL_TOKEN', api); } catch (error) {if(workspaceIdentityEnabled())throw error;}
     if (configured) {
-      let user: Awaited<ReturnType<typeof identity>> | null = null;
-      try { user = await identity(api, fetch, configured); }
-      catch (error) { if (!(error instanceof CliError) || !['AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'ORGANIZATION_REQUIRED'].includes(error.code)) throw error; }
-      if (user) {
-        emit({api, version, authenticated: true, credential: 'environment-token', user, ...(command === 'status' ? {index: {available: null}} : {})},
-          command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''} with OPENCRAWL_TOKEN.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
+      let verified: Awaited<ReturnType<typeof identity>> | null = null;
+      try { verified = await identity(api, fetch, configured); }
+      catch (error) { if (workspaceIdentityEnabled() || !(error instanceof CliError) || !['AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'ORGANIZATION_REQUIRED'].includes(error.code)) throw error; }
+      if (verified) {
+        const {user} = verified;
+        emit({api, version, authenticated: true, credential: workspaceIdentityEnabled() ? 'workspace-identity' : 'environment-token', ...verified, ...(command === 'status' ? {index: {available: null}} : {})},
+          command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''} with ${workspaceIdentityEnabled() ? "Replicas workspace identity" : "OPENCRAWL_TOKEN"}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
         return 0;
       }
     }
@@ -238,8 +301,8 @@ export async function main(args = process.argv.slice(2)) {
       emit({api, version, authenticated: false, index: {available: null}}, `opencrawl ${version}\nNot signed in. Run opencrawl login.\nUse opencrawl search to check indexed workspace knowledge.`);
       return 0;
     }
-    const user = await identity(api);
-    emit({api, version, authenticated: true, user, ...(command === 'status' ? {index: {available: null}} : {})}, command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
+    const verified = await identity(api), {user} = verified;
+    emit({api, version, authenticated: true, ...verified, ...(command === 'status' ? {index: {available: null}} : {})}, command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
     return 0;
     });
   } catch (error) {
@@ -247,7 +310,7 @@ export async function main(args = process.argv.slice(2)) {
     const known = failure instanceof CliError;
     const code = known ? failure.code : 'CLI_ERROR';
     const message = known ? failure.message : 'The command failed. Retry, or run opencrawl login to repair your session.';
-    if (json) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code, message}}) + '\n');
+    if (json) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code, message, ...(known && failure.workspaces ? {workspaces: failure.workspaces} : {})}}) + '\n');
     else process.stderr.write(`opencrawl: ${message}\n`);
     const exit = known ? failure.exitCode : 1;
     // Harnesses read a hook's exit code 2 as "block this action".
@@ -261,7 +324,14 @@ export async function main(args = process.argv.slice(2)) {
 }
 
 if (import.meta.main) {
-  process.on('SIGINT', () => process.exit(130));
-  process.on('SIGTERM', () => process.exit(143));
+  // Once a one-use refresh has left, save its response before honoring a
+  // cooperative shutdown. The request itself has a bounded deadline.
+  const stop = (code: number) => {
+    const renewing = credentialRotation();
+    if (renewing) void renewing.finally(() => process.exit(code));
+    else process.exit(code);
+  };
+  process.on('SIGINT', () => stop(130));
+  process.on('SIGTERM', () => stop(143));
   process.exitCode = await main();
 }

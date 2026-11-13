@@ -7,7 +7,7 @@ import {setTimeout as pause} from 'node:timers/promises';
 import {CliError, refresh, type AuthConfig, type Tokens} from './oauth.ts';
 import {filesystemError, retryWindowsSharing} from './filesystem.ts';
 
-export type Session = Tokens & {auth: AuthConfig};
+export type Session = Tokens & {auth: AuthConfig; pendingOrganization?: string};
 export const configDir = () => join(process.env.OPENCRAWL_CONFIG_HOME || process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencrawl');
 export const sessionFile = (api: string) => join(configDir(), createHash('sha256').update(api).digest('hex') + '.json');
 
@@ -45,6 +45,7 @@ export function readSession(api: string): Session | null {
       }
       const session = JSON.parse(readFileSync(fd, 'utf8'));
       if (!session?.auth?.clientId || !session.auth.tokenEndpoint || !session.accessToken || !session.refreshToken || !Number.isFinite(session.expiresAt)) throw new Error();
+      if (session.pendingOrganization !== undefined && (typeof session.pendingOrganization !== 'string' || !/^org_[A-Za-z0-9]+$/.test(session.pendingOrganization))) throw new Error();
       return session;
     } finally { closeSync(fd); }
   } catch (error: any) {
@@ -151,11 +152,45 @@ let rotation: Promise<void> | null = null;
  * live to save the reply, or the sign-in is lost. Deadlines wait on this. */
 export const credentialRotation = () => rotation;
 
+/** Selection is a provider-authorized refresh, followed by service verification.
+ * Keep rotated tokens recoverable even if verification fails, but do not let
+ * ordinary commands use the new scope until that verification succeeds. */
+export async function selectOrganization<T extends {workspace?: {id: string}}>(api: string, organizationId: string,
+  verify: (token: string) => Promise<T>, initialSession?: Session, fetcher = fetch): Promise<T> {
+  if (!/^org_[A-Za-z0-9]+$/.test(organizationId)) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
+  return withSessionLock(api, async () => {
+    const saved = readSession(api);
+    if (initialSession && saved) throw new CliError('SESSION_CHANGED', 'Another process saved a sign-in during browser approval. Retry workspace selection using that saved sign-in.', 2);
+    const session = saved ?? initialSession;
+    if (!session) throw new CliError('AUTH_REQUIRED', 'Run opencrawl login to sign in.', 2);
+    // A fresh device sign-in has already passed account/session verification.
+    // Keep it available for a different choice after provider denial, while
+    // preventing ordinary commands from using its unconfirmed workspace.
+    if (initialSession) atomicJson(sessionFile(api), {...initialSession, pendingOrganization: organizationId});
+    const renewed = (async () => {
+      const next = {...session, ...await refresh(session.auth, session.refreshToken, fetcher, organizationId), pendingOrganization: organizationId};
+      atomicJson(sessionFile(api), next);
+      const verified = await verify(next.accessToken);
+      if (verified.workspace?.id !== organizationId) throw new CliError('ORGANIZATION_MISMATCH', `The server did not confirm workspace ${organizationId}. Your rotated sign-in is retained but cannot be used until workspace selection succeeds. Retry opencrawl login --organization ${organizationId} --api ${api}.`, 2);
+      const {pendingOrganization: _, ...ready} = next;
+      atomicJson(sessionFile(api), ready);
+      return verified;
+    })();
+    const settled: Promise<void> = renewed.then(() => {}, () => {}).finally(() => {if (rotation === settled) rotation = null;});
+    rotation = settled;
+    return renewed;
+  });
+}
+
 export async function accessToken(api: string, rejectedToken?: string, fetcher = fetch,signal?:AbortSignal): Promise<string> {
   signal?.throwIfAborted();
   const usable = (session: Session) => session.expiresAt > Date.now() + 60_000 && (!rejectedToken || rejectedToken !== session.accessToken);
   const current = readSession(api);
   if (!current) throw new CliError('AUTH_REQUIRED', 'Run opencrawl login to sign in.', 2);
+  const requireReady = (session: Session) => {
+    if (session.pendingOrganization) throw new CliError('ORGANIZATION_SELECTION_REQUIRED', `Workspace selection is not verified. Run opencrawl login --organization ${session.pendingOrganization} --api ${api} to finish using your saved sign-in.`, 2);
+  };
+  requireReady(current);
   // Atomic session publication makes this snapshot safe without a disk lock.
   // Rotation still rereads under the cross-process lock after a 401 or expiry.
   if (usable(current)) return current.accessToken;
@@ -163,6 +198,7 @@ export async function accessToken(api: string, rejectedToken?: string, fetcher =
     signal?.throwIfAborted();
     const session = readSession(api);
     if (!session) throw new CliError('AUTH_REQUIRED', 'Run opencrawl login to sign in.', 2);
+    requireReady(session);
     if (usable(session)) return session.accessToken;
     const cancellable=signal?((input:any,init:any)=>fetcher(input,{...init,signal:init?.signal?AbortSignal.any([signal,init.signal]):signal})) as typeof fetch:fetcher;
     const renewed = (async () => {

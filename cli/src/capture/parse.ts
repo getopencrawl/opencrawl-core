@@ -36,11 +36,14 @@ export function finalizeEventIdentity(event:any) {
   wire.id='wire1:'+digest.digest('hex');
   return wire;
 }
-export function detectOrigin(harness: Harness, record: any): {origin:Origin, evidence:string|null} {
+export function detectOrigin(harness: Harness, record: any, environment:NodeJS.ProcessEnv=process.env): {origin:Origin, evidence:string|null} {
   const r = harness === 'codex' ? record.payload ?? record : record;
   if(harness==='claude-code' && r.type==='attachment' && r.attachment?.type==='remote_session_change' && /^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(r.attachment.url??'')) return {origin:'cloud',evidence:r.attachment.url};
   const value = [r.originator, r.entrypoint, typeof r.source === 'string' ? r.source : '', r.client].filter(Boolean).join(' ');
   if (typeof r.source === 'object' && r.source?.subagent || r.isSidechain || r.agentId) return {origin:'subagent',evidence:JSON.stringify(r.source ?? {agentId:r.agentId})};
+  // Runtime provenance is descriptive, never an authentication claim. Replicas
+  // starts SDK agents without Claude's remote URL or Codex's cloud originator.
+  if(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(environment.REPLICAS_WORKSPACE_ID??''))return {origin:'cloud',evidence:'https://app.replicas.dev/workspace/'+environment.REPLICAS_WORKSPACE_ID};
   if (harness==='codex' && /^(cli|exec|tui)$/.test(r.source ?? ''))return {origin:'cli',evidence:value};
   if (/desktop|claude-desktop|local-agent/i.test(value)) return {origin:'desktop',evidence:value};
   if (/^(cli|exec|tui)$/.test(r.source ?? '') || /^(cli|sdk-cli|cli-print|cli-interactive)$/.test(r.entrypoint ?? '') || /codex_cli_rs/.test(value)) return {origin:'cli',evidence:value};
@@ -52,7 +55,10 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
   const r = record.payload ?? {};
   let kind: string|undefined, data: any;
   if (harness === 'claude-code') {
-    if (['user','assistant'].includes(record.type)) {kind='message';data=record.message;}
+    if (['user','assistant'].includes(record.type)) {
+      if(record.type==='user'&&record.isMeta===true)return null;
+      kind=record.type==='user'&&record.origin?.kind==='task-notification'?'automation_message':'message';data=record.message;
+    }
     else if (['custom-title','ai-title'].includes(record.type)) {
       const title=record.type==='custom-title'?record.customTitle:record.aiTitle;
       if(typeof title!=='string'||!title.trim())return null;
@@ -60,8 +66,13 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
     }
     else if (record.type === 'attachment') {
       const attachment=record.attachment;
-      if(['prompt_snapshot','mcp_instructions_delta','credential_org','environment','date','model','agent_listing_delta','deferred_tools_delta','skill_listing','auto_mode','session_context','task_reminder','silent_turn_reminder'].includes(attachment?.type))return null;
-      kind=attachment?.type==='remote_session_change'?'session_metadata':'attachment';data=attachment;
+      if(['prompt_snapshot','instructions','mcp_instructions_delta','credential_org','environment','date','model','agent_listing_delta','deferred_tools_delta','skill_listing','auto_mode','session_context','task_reminder','silent_turn_reminder'].includes(attachment?.type))return null;
+      // Claude's SDK records messages delivered during a turn as queued prompts.
+      // Preserve the content blocks (including images) as conversation, without
+      // treating system/task notifications or other queued modes as human input.
+      if(attachment?.type==='queued_command' && attachment.commandMode==='prompt' && (typeof attachment.prompt==='string'||Array.isArray(attachment.prompt))) {
+        kind='message';data={role:'user',content:attachment.prompt};
+      } else {kind=attachment?.type==='remote_session_change'?'session_metadata':'attachment';data=attachment;}
     }
     else if (record.type === 'system' && /compact/.test(record.subtype ?? '')) {kind='compaction';data=record;}
     else if (record.type === 'summary') {kind='compaction';data=record;}

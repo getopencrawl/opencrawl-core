@@ -202,7 +202,8 @@ test('CLI device sign-in requires a member’s approval and yields refreshable t
   assert.ok(tokens.access_token&&tokens.refresh_token);
   const claims=JSON.parse(Buffer.from(tokens.access_token.split('.')[1],'base64url').toString());assert.equal(claims.exp-claims.iat,3600);
   const me=await f.request('/api/cli/me',null,{headers:{authorization:'Bearer '+tokens.access_token}});
-  assert.equal(me.status,200);assert.equal((await me.json()).data.user.email,'ada@example.com');
+  assert.equal(me.status,200);const meData=(await me.json()).data;assert.equal(meData.user.email,'ada@example.com');
+  assert.deepEqual(meData.workspace,{id:org,name:'Self-hosted team'});
   assert.equal((await f.request('/api/cli/me',null,{headers:{authorization:'Bearer '+tokens.access_token,origin:'https://foreign.example'}})).status,403);
   let refreshed=await (await f.request('/api/cli/token',null,form({client_id:'opencrawl-cli',grant_type:'refresh_token',refresh_token:tokens.refresh_token}))).json();
   // More than the provider's default 20/min token budget must work behind one IP.

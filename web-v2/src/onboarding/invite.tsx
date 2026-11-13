@@ -3,7 +3,7 @@ import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {Button, CopyField, Input} from '../design/components.tsx';
 import {Icon} from '../design/icons.tsx';
 import {useNavigate} from '../router.tsx';
-import {normalizeInvitationEmail, safeWorkspacePath} from './model.ts';
+import {deriveOnboarding, normalizeInvitationEmail, safeWorkspacePath} from './model.ts';
 import {useOnboardingResource} from './resource.ts';
 import {OnboardingShell} from './shell.tsx';
 import type {InvitationList, OnboardingAdapter} from './types.ts';
@@ -18,7 +18,11 @@ export interface InviteOnboardingProps {
   onComplete?: (workspaceUrl: string) => void | Promise<void>;
 }
 
-export function InviteOnboarding({adapter, canInvite, initialInvitations, onComplete, returnToAgent=false, invitationDelivery='email'}: InviteOnboardingProps) {
+export function InviteOnboarding({adapter, canInvite, initialInvitations, onComplete, returnToAgent: initiallyNeedsAgent=false, invitationDelivery='email'}: InviteOnboardingProps) {
+  // Bootstrap can predate the receipts observed on the agent step. Read the
+  // same workspace-scoped status here so finishing does not depend on a reload.
+  const progress = useOnboardingResource(signal => adapter.status(signal), {key:consoleResourceKey(adapter,'onboarding-status'), enabled:initiallyNeedsAgent, interval:5000});
+  const returnToAgent = initiallyNeedsAgent && (Boolean(progress.error) || !deriveOnboarding(progress.data ?? {}).complete);
   const invitations = useOnboardingResource(signal => adapter.invitations(signal), {key:consoleResourceKey(adapter,'onboarding-invitations'), enabled: canInvite, initial: initialInvitations});
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
