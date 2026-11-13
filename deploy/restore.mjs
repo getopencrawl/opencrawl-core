@@ -20,6 +20,8 @@ try {
  for(const store of snapshot.stores) {
   const names=docker(['volume','ls','--format','{{.Name}}']).split('\n');
   if(!names.includes(store.name))docker(['volume','create','--label',`com.docker.compose.project=${snapshot.project}`,store.name]);
+  const owner=JSON.parse(docker(['volume','inspect',store.name]))[0];
+  if(owner.Labels?.['com.docker.compose.project']!==snapshot.project)throw new Error('Restore volume ownership mismatch; no existing volume is overwritten');
   const mount=`type=volume,source=${store.name},target=/store`;
   if(docker(['run','--rm','--network','none','--user','0:0','--mount',mount,'--entrypoint','find',snapshot.compose.services.app.image,'/store','-mindepth','1','-print','-quit']))throw new Error('Restore requires empty destination volumes; existing data is never deleted');
   mounts.push('--mount',`type=volume,source=${store.name},target=/stores/${store.key}`);

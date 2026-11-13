@@ -1,5 +1,5 @@
 import test from 'node:test';
-import {snapshot} from '../deploy/recovery.mjs';
+import {snapshot,digest} from '../deploy/recovery.mjs';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,copyFileSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -48,4 +48,25 @@ test('recovery Compose preserves literal environment values and omitted Docker h
  assert.equal(saved.compose.services.app.healthcheck.timeout,undefined);
  assert.ok(!JSON.stringify(saved).includes('undefinedns'));
  assert.equal(saved.compose.services.worker.depends_on.app.condition,'service_healthy');
+});
+
+
+test('restore refuses a same-named empty volume owned by another project',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'opencrawl-restore-owner-')),deploy=join(root,'deploy'),bin=join(root,'bin'),backup=join(root,'backup');
+ for(const path of [deploy,bin,backup])mkdirSync(path);
+ try{
+  for(const file of ['restore.mjs','installation.mjs','recovery.mjs'])copyFileSync(new URL('../deploy/'+file,import.meta.url),join(deploy,file));
+  writeFileSync(join(backup,'snapshot.json'),JSON.stringify({format:2,project:'original',kind:'deploy',configurations:[],stores:[{name:'original_data',key:'store0'}],compose:{services:{app:{image:'sha256:fixture'}}}}));
+  for(const name of ['stores.tgz','images.tar'])writeFileSync(join(backup,name),'synthetic');
+  const files={};for(const name of ['snapshot.json','stores.tgz','images.tar'])files[name]=await digest(join(backup,name));
+  writeFileSync(join(backup,'manifest.json'),JSON.stringify({format:2,files}));
+  writeFileSync(join(bin,'docker'),'#!/usr/bin/env node\n'+`
+   const fs=require('node:fs'),a=process.argv.slice(2);fs.appendFileSync(process.env.CALLS,JSON.stringify(a)+'\\n');
+   if(a[0]==='volume'&&a[1]==='ls')console.log('original_data');
+   if(a[0]==='volume'&&a[1]==='inspect')console.log(JSON.stringify([{Labels:{'com.docker.compose.project':'another-installation'}}]));
+  `,{mode:0o700});
+  const result=spawnSync(process.execPath,[join(deploy,'restore.mjs'),'--backup',backup],{encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH,CALLS:join(root,'calls')}});
+  assert.notEqual(result.status,0);assert.match(result.stderr,/volume ownership mismatch/);
+  assert.ok(!readFileSync(join(root,'calls'),'utf8').includes('"run"'),'No helper may read or write the foreign volume');
+ }finally{rmSync(root,{recursive:true,force:true});}
 });
