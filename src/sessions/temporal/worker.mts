@@ -14,6 +14,7 @@ import {fileURLToPath} from 'node:url';
 import {writeFile} from 'node:fs/promises';
 import {createSessionPipeline} from '../indexer.mjs';
 import {SourcePaginationError,assertSourcePaginationInput,assertSourcePaginationPage} from '../../connectors/workflow.mjs';
+import {sessionCatchupMarker,sessionIndexingGeneration} from './handoff.mjs';
 export async function buildSessionWorkflows(path: string) {
   const {code}=await bundleWorkflowCode({workflowsPath:fileURLToPath(new URL('./workflows.cjs',import.meta.url))});
   await writeFile(path,code);
@@ -41,7 +42,23 @@ export function sessionActivities({resolve}: {resolve: SessionResolver}) {
       throw ApplicationFailure.retryable('Session indexing operation failed','SessionProcessingFailed');
     } finally {clearInterval(pulse);}
   }
-  return {listSessionPage:(input: SessionTaskInput)=>operation(input,'listPage') as Promise<SourcePage>,indexSessionObject:(input: SessionTaskInput & {key: string})=>operation(input,'processObject') as Promise<{records: number; skipped: boolean}>};
+  return {
+    listSessionPage:(input: SessionTaskInput)=>operation(input,'listPage') as Promise<SourcePage>,
+    indexSessionObject:(input: SessionTaskInput & {key: string})=>operation(input,'processObject') as Promise<{records: number; skipped: boolean}>,
+    async completeSessionCatchup(input:SessionTaskInput & {generation:string}) {
+      try {
+        heartbeat();
+        const resolved=await resolve(input);
+        if(input.generation!==sessionIndexingGeneration(resolved.search.identity,resolved.jobId||'sessions-v1'))throw Object.assign(new Error('Session generation changed'),{permanent:true});
+        const {markerKey,marker}=sessionCatchupMarker({...input,prefix:resolved.prefix,taskQueue:Context.current().info.taskQueue});
+        await resolved.store.put(markerKey,Buffer.from(JSON.stringify(marker)),'application/json');
+      } catch(caught) {
+        const error=serviceError(caught);
+        if(error.permanent)throw ApplicationFailure.nonRetryable('Session catch-up binding denied','InvalidSessionInput');
+        throw ApplicationFailure.retryable('Session catch-up completion failed','SessionProcessingFailed');
+      }
+    },
+  };
 }
 /** Operator-supplied SDK connectionOptions support TLS/auth; callers own key rotation. */
 export async function createSessionWorker({address,namespace,taskQueue,bundlePath,resolve,resolveDeletion,maxConcurrentActivityTaskExecutions=2,connectionOptions={}}: {address: string; namespace: string; taskQueue: string; bundlePath: string; resolve: SessionResolver; resolveDeletion?: SessionDeletionResolver; maxConcurrentActivityTaskExecutions?: number; connectionOptions?: NativeConnectionOptions}) {

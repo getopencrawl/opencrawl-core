@@ -16,6 +16,24 @@ async function indexSessionsV1(input: SessionTaskInput) {
   return result;
 };
 
+// The manual/upgrade scan is not periodic. Transient failures must stay durable
+// until repaired now that there is no next scheduled sweep to recover them.
+const reconciliation = proxyActivities<{listSessionPage(input:SessionTaskInput):Promise<SourcePage>;indexSessionObject(input:SessionTaskInput & {key:string}):Promise<{records:number}>;completeSessionCatchup(input:SessionTaskInput & {generation:string}):Promise<void>}>({startToCloseTimeout:'5 minutes',heartbeatTimeout:'45 seconds',retry:{initialInterval:'2 seconds',maximumInterval:'1 minute'}});
+/** The bundled self-hosted server predates standalone Activities. */
+async function indexSessionObjectV2(input:SessionTaskInput & {key:string}) {
+  return reconciliation.indexSessionObject(input);
+}
+async function reconcileSessionsV2(input:SessionTaskInput & {generation:string}) {
+  const result=await runConnectorSegment(input,{listPage:reconciliation.listSessionPage,processObject:reconciliation.indexSessionObject},{deferPaginationFailure:true});
+  const failed=(input.failed||0)+result.failed;
+  if(result.cursor)return continueAsNew({...input,cursor:result.cursor,failed,
+    ...(result.paginationProgress&&{paginationProgress:result.paginationProgress}),
+    ...(result.paginationFailure&&{paginationFailure:result.paginationFailure})});
+  if(failed)throw ApplicationFailure.nonRetryable(`${failed} session objects require repair`,'SessionObjectsFailed');
+  await reconciliation.completeSessionCatchup({sourceId:input.sourceId,generation:input.generation});
+  return result;
+}
+
 const deletion = proxyActivities<ReturnType<typeof sessionDeletionActivities>>({
   startToCloseTimeout: '2 hours', heartbeatTimeout: '45 seconds',
   retry: {initialInterval: '5 seconds', maximumInterval: '5 minutes'},
@@ -41,4 +59,4 @@ async function recoverSessionDeletionsV1(input: SessionDeletionRecoveryInput) {
   if (page.cursor) return continueAsNew<typeof recoverSessionDeletionsV1>({...input, cursor: page.cursor});
   return {completed: true};
 }
-export = {indexSessionsV1, deleteSessionV1, recoverSessionDeletionsV1};
+export = {indexSessionsV1, indexSessionObjectV2, reconcileSessionsV2, deleteSessionV1, recoverSessionDeletionsV1};

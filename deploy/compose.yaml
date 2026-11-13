@@ -42,6 +42,8 @@ x-runtime: &runtime
     TEMPORAL_CONNECTOR_TASK_QUEUE: connector-indexing-v1
     TEMPORAL_SESSION_TASK_QUEUE: session-indexing-v1
     TEMPORAL_SESSION_DELETION_TASK_QUEUE: session-deletion-v1
+    # Set to 1 only after the updated API and worker are both running.
+    OPENCRAWL_SESSION_INDEXING_CUTOVER: ${OPENCRAWL_SESSION_INDEXING_CUTOVER:-0}
 
 services:
   app:

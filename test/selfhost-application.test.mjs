@@ -307,6 +307,18 @@ test('delegated capture works for the configured team, remains write-only, and o
   await credentials.revoke(p,issued.id);assert.equal((await request('/api/sessions/identity')).status,401);
 });
 
+test('self-host capture acknowledges only after raw storage and the durable indexing handoff',async t=>{
+  let fail=true;const scheduled=[];
+  const f=await fixture(t,{scheduleSessionIndexing:async key=>{scheduled.push(key);if(fail)throw Error('Temporal unavailable');}});await f.admin();
+  const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
+  const owner={tenantId:org,userId:member.userId};
+  const issued=await createCaptureCredentials({store:f.store,prefix:f.prefix}).issue(owner);
+  const batch={schemaVersion:1,owner,harness:'codex',origin:'desktop',installationId:'device',sessionId:'durable',events:[{id:'event',kind:'message',data:{text:'kept locally until acknowledged'}}],attachments:[]};
+  const upload=()=>f.request('/api/sessions/batches',null,{method:'POST',headers:{authorization:'Bearer '+issued.token,'content-type':'application/json'},body:JSON.stringify(batch)});
+  assert.equal((await upload()).status,503);assert.equal(scheduled.length,1);assert.ok(await f.store.get(scheduled[0]));
+  fail=false;assert.equal((await upload()).status,200);assert.equal(scheduled.length,2);assert.equal(scheduled[0],scheduled[1]);
+});
+
 
 test('local auth requires same-origin forms, forbids token shortcuts, and bounds failed sign-in attempts',async t=>{
   const f=await fixture(t);await f.admin();

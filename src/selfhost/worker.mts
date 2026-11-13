@@ -7,7 +7,7 @@ import {selfhostServices} from './services.mjs';
 import {singleOrganizationSessionSource} from './indexing.mjs';
 import {sessionStorage} from '../sessions/storage.mjs';
 import {createSessionWorker,buildSessionWorkflows} from '../sessions/temporal/worker.mjs';
-import {ensureSessionSchedule,ensureSessionDeletionSchedule} from '../sessions/temporal/client.mjs';
+import {ensureSessionSchedule,ensureSessionDeletionSchedule,activateSessionIndexing} from '../sessions/temporal/client.mjs';
 import {createConnectorWorker,buildConnectorWorkflows} from '../connectors/temporal/worker.mjs';
 import {connectorClient,ensureConnectorSchedule} from '../connectors/temporal/client.mjs';
 import {createConnectionPurger} from '../integrations/purge.mjs';
@@ -45,7 +45,12 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve});
   const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:source.resolveDeletion,maxConcurrentActivityTaskExecutions:1});
   const workers=connectors?[sessions,deletions,connectors]:[sessions,deletions];
-  await withTemporalStartupRetry(()=>ensureSessionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:sessionQueue}));
+  // An operator sets this only after the receiver and worker rollout is complete.
+  // Starting the worker first must not remove recovery for old API producers.
+  const captureCutover=env.OPENCRAWL_SESSION_INDEXING_CUTOVER==='1'
+    ?await withTemporalStartupRetry(()=>activateSessionIndexing(scheduling.client,{sourceId:source.sourceId,generation:source.generation,taskQueue:sessionQueue,store,prefix}))
+    :undefined;
+  if(!captureCutover)await withTemporalStartupRetry(()=>ensureSessionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:sessionQueue}));
   const deletionSchedule=await withTemporalStartupRetry(()=>ensureSessionDeletionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:deletionQueue}));
   const realm=createRealm(settings.search),purge=createConnectionPurger({environment:'selfhost',generation:'v1',
     deleteSchedule:id=>scheduling.client.schedule.getHandle(id).delete(),
@@ -65,7 +70,7 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
         }
         await purge(records.filter(r=>r.status==='disconnected'));
       }
-      if(workers.every(x=>x.worker.getState()==='RUNNING'))await writeFile(readiness,JSON.stringify({checkedAt:new Date().toISOString(),namespace,deletionSchedule,airbyteEnabled:!!connectors,taskQueue:connectors?taskQueue:undefined,sessionQueue}));
+      if(workers.every(x=>x.worker.getState()==='RUNNING'))await writeFile(readiness,JSON.stringify({checkedAt:new Date().toISOString(),namespace,deletionSchedule,captureCatchup:captureCutover?.workflowId,airbyteEnabled:!!connectors,taskQueue:connectors?taskQueue:undefined,sessionQueue}));
     })().catch(async()=>{await unlink(readiness).catch(()=>{});console.error(JSON.stringify({event:'selfhost.indexing.discovery_failed'}));}).finally(()=>{inFlight=undefined;});
   };
   await unlink(readiness).catch(()=>{});const timer=setInterval(tick,30000);
