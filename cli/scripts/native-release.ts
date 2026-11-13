@@ -2,6 +2,7 @@ import {readFileSync,readdirSync,writeFileSync,mkdirSync,mkdtempSync,rmSync,exis
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
+import {nativeArchive} from './native-archive.ts';
 
 const root=resolve(import.meta.dir,'..'),dist=join(root,'dist'),output=join(root,'native');
 const manifest=JSON.parse(readFileSync(join(dist,'cli/package.json'),'utf8'));
@@ -19,7 +20,7 @@ if(!process.argv.includes('--publish')){
     for(const file of ['package.json','LICENSE','THIRD_PARTY_NOTICES.txt','runtime/opencrawl.js','bin/'+(platform.startsWith('win32-')?'opencrawl.exe':'opencrawl')]){
       const bytes=readFileSync(join(directory,file));if(!bytes.length)throw new Error('Empty native release file: '+file);entries['package/'+file]=bytes;
     }
-    const name='opencrawl-'+platform+'.tgz';await Bun.write(join(output,name),new Bun.Archive(entries,{compress:'gzip'}));
+    const name='opencrawl-'+platform+'.tgz';await Bun.write(join(output,name),await nativeArchive(entries));
     sums.push(digest(join(output,name))+'  '+name);
   }
   for(const name of ['install.sh','install.ps1']){writeFileSync(join(output,name),readFileSync(join(root,name)));sums.push(digest(join(output,name))+'  '+name);}
