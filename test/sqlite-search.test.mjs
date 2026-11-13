@@ -24,6 +24,7 @@ import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
 import {createControls} from '../dist/src/sessions/controls.mjs';
 import {selfhostSettings} from '../dist/src/selfhost/settings.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
+import {migrateSessionParticipants} from '../dist/src/sessions/participant-migration.mjs';
 
 async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), 'opencrawl-sqlite-'));
@@ -32,6 +33,65 @@ async function fixture(t) {
   const principal = {tenantId: 'org_sqlite', userId: 'alice'};
   return {directory, path, endpoint, principal};
 }
+
+for (const backend of ['sqlite', 'opensearch']) test(`session participants use human senders, filter whole conversations, and migrate without changing permissions (${backend})`, {skip: backend === 'opensearch' && !process.env.OPENCRAWL_TEST_OPENSEARCH_URL}, async t => {
+  const local = await fixture(t), endpoint = backend === 'opensearch' ? process.env.OPENCRAWL_TEST_OPENSEARCH_URL : local.endpoint;
+  const principal = {...local.principal, tenantId: 'participants_' + Date.now()}, store = memorySessionStore(), prefix = 'sessions/participants';
+  const checkedFetch = async (...args) => {const response = await fetch(...args); if (!response.ok) console.error('Participant fixture engine response:', await response.clone().text()); return response;};
+  const realm = createRealm({endpoint, tenantId: principal.tenantId, fetch: checkedFetch}), collection = realm.collection('session');
+  const search = createSessionSearch({endpoint, store, prefix, fetch: checkedFetch}), ingest = createSessionIngest({store, prefix});
+  const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
+  const library = createSessionLibrary({endpoint, store, prefix, fetch: checkedFetch});
+  const foreign = principal.tenantId + '_foreign';
+  if (backend === 'opensearch') t.after(async () => {for (const tenantId of [principal.tenantId, foreign]) await fetch(endpoint + '/' + createRealm({endpoint, tenantId}).index, {method: 'DELETE'});});
+  const sender = n => `50000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const actor = n => ({provider: 'replicas', assurance: 'collector-reported', kind: 'human', workspaceId: '10000000-0000-4000-8000-000000000001', nativeId: `40000000-0000-4000-8000-${String(n).padStart(12, '0')}`, messageId: 'user-' + n, userId: sender(n)});
+  const owner = {...principal, userId: 'workload_replicas_fixture'};
+  const human = (id, n, text) => ({id, kind: 'message', timestamp: '2026-11-13T10:00:00Z', data: {role: 'user', content: text}, actor: actor(n)});
+  async function upload(user, sessionId, events, profiles = {}) {
+    const before = new Set(store.data.keys());
+    await ingest.putBatch(user, {schemaVersion: 1, owner: user, installationId: 'device', sessionId, harness: 'claude-code', origin: 'cli', events, attachments: [], actorProfiles: profiles});
+    for (const key of store.data.keys()) if (!before.has(key) && key.endsWith('.json.gz')) await pipeline.processObject({key});
+    await search.refresh(user);
+  }
+  await upload(owner, 'shared', [human('a', 1, 'Alice request'), human('b', 2, 'Bob request'), human('c', 1, 'Another request'), {id: 'answer', kind: 'message', timestamp: '2026-11-13T10:01:00Z', data: {role: 'assistant', content: 'quayside answer'}}], {[sender(1)]: {provider: 'replicas', userId: sender(1), name: 'Alice'}, [sender(2)]: {provider: 'replicas', userId: sender(2), name: 'Bob'}});
+  await upload(owner, 'unknown', [{...human('unknown', 3, 'Anonymous API message'), actor: {...actor(3), kind: 'unknown', userId: undefined}}]);
+  await upload(principal, 'local', [{id: 'local', kind: 'message', timestamp: '2026-11-13T10:00:00Z', data: {role: 'user', content: 'Local request'}}]);
+  let list = await library.list(principal);
+  assert.deepEqual(list.sessions.find(s => s.sessionId === 'shared').participants, [{id: 'replicas:' + sender(1), name: 'Alice'}, {id: 'replicas:' + sender(2), name: 'Bob'}]);
+  assert.deepEqual(list.sessions.find(s => s.sessionId === 'unknown').participants, []);
+  assert.deepEqual(list.sessions.find(s => s.sessionId === 'local').participants, [{id: 'user:alice'}]);
+  const filler = Array.from({length: 501}, (_, n) => ({id: 'filler-' + n, document: {...owner, harness: 'claude-code', sessionId: 'aaa' + String(n).padStart(3, '0'), kind: 'message', chunk: 0, participantVersion: 1, participantId: 'replicas:' + sender(2), text: 'Unrelated', timestamp: '2026-11-13T10:00:00Z'}}));
+  await collection.bulk(principal, filler, {refresh: true});
+  assert.deepEqual((await library.list(principal, {participant: 'replicas:' + sender(2), query: 'quayside'})).sessions.map(s => s.sessionId), ['shared'], 'search reaches matches after the first 500 participant sessions');
+  await collection.delete(principal, filler.map(item => item.id)); await realm.refresh(principal);
+  assert.deepEqual((await library.list(principal, {participant: 'user:alice'})).sessions.map(s => s.sessionId), ['local']);
+  assert.deepEqual((await library.list(principal, {participant: 'user:workload_replicas_fixture'})).sessions, []);
+  await assert.rejects(library.list(principal, {participant: 'tenant:other'}), {status: 400});
+  await library.setVisibility(owner, {harness: 'claude-code', sessionId: 'shared', visibility: 'private'});
+  assert.deepEqual((await library.list(principal, {participant: 'replicas:' + sender(1)})).sessions, []);
+  assert.deepEqual((await library.list({...principal, tenantId: foreign})).sessions, []);
+  await assert.rejects(library.setVisibility(principal, {harness: 'claude-code', sessionId: 'shared', visibility: 'team'}), {status: 404});
+  // Emulate older projections while keeping immutable captures intact.
+  const existing = await collection.search(principal, {size: 100});
+  const legacy = existing.hits.hits.map(hit => {const document = {...hit._source}; for (const field of ['participantVersion','participantId','participantName','participantUnknown']) delete document[field]; return {id: hit._id, document};});
+  await collection.bulk(principal, legacy, {refresh: true});
+  const snapshot = await collection.mget(principal, legacy.map(d => d.id));
+  assert.equal((await migrateSessionParticipants({realm, principal, store, prefix})).events, legacy.length);
+  assert.deepEqual(await collection.mget(principal, legacy.map(d => d.id)), snapshot);
+  const migrated = await migrateSessionParticipants({realm, principal, store, prefix, dryRun: false, pageSize: 2});
+  await realm.refresh(principal);
+  assert.equal(migrated.complete, true); assert.equal(migrated.events, legacy.length);
+  assert.equal((await migrateSessionParticipants({realm, principal, store, prefix, dryRun: false})).events, 0);
+  list = await library.list(owner, {participant: 'replicas:' + sender(1)});
+  assert.equal(list.sessions[0].private, true);
+  const after = await collection.mget(principal, legacy.map(d => d.id));
+  for (const hit of after.docs) {const previous = legacy.find(d => d.id === hit._id).document; assert.equal(hit._source.private, previous.private); assert.equal(hit._source.text, previous.text); assert.equal(hit._source.capturedTokens, previous.capturedTokens);}
+  await assert.rejects(migrateSessionParticipants({realm, principal: {...principal, tenantId: 'foreign'}, store, prefix}), {status: 403});
+  const item = legacy[0]; await collection.delete(principal, [item.id]);
+  await collection.bulk(principal, [{...item, document: {...item.document, participantVersion: 1}, policy: 'session-participants'}]);
+  assert.equal((await collection.mget(principal, [item.id])).docs[0].found, false);
+});
 
 test('SQLite persists across factories, isolates colliding tenants and rejects unknown operations/files', async t => {
   const {path, endpoint, principal} = await fixture(t);

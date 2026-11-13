@@ -10,6 +10,43 @@ const sessions: SessionSummary[] = [{...base, capturedTokens: 12432},
   {...base, sessionId: 'bounded', title: 'Many capture machines', hosts: ['runner-a', 'runner-b'], hostsTruncated: true, capturedTokens: 0},
 ];
 
+for (const width of [1440, 390]) test(`multiple participants filter sessions, preserve search and browser history at ${width}px`, async ({page, request}, testInfo) => {
+  await request.post('/__test/reset', {data: {}});
+  await page.setViewportSize({width, height: 900});
+  const alice = {id: 'replicas:50000000-0000-4000-8000-000000000001', name: 'Alice'}, bob = {id: 'replicas:50000000-0000-4000-8000-000000000002', name: 'Bob'};
+  const rows: SessionSummary[] = [{...base, mine: false, title: 'Shared lighthouse session', participants: [alice, bob]}, {...base, mine: false, sessionId: 'second', title: 'Bob lighthouse session', participants: [bob]}, {...base, mine: false, sessionId: 'unknown', title: 'Unknown lighthouse sender', participants: []}];
+  const reads: Array<{participant?: string; query?: string; limit?: number}> = [];
+  await page.route('**/api/library/**', async route => {
+    const input = route.request().postDataJSON() as {participant?: string; query?: string; limit?: number}; reads.push(input);
+    const shown = rows.filter(session => (!input.participant || session.participants?.some(person => person.id === input.participant)) && (!input.query || session.title.includes(input.query)));
+    await route.fulfill({json: {sessions: shown, limit: input.limit}});
+  });
+  await page.goto('/sessions?q=lighthouse');
+  await expect(page.getByRole('tab', {name: 'My sessions'})).toHaveCount(0);
+  await expect(page.locator('.oc-rows .oc-row')).toHaveCount(3);
+  await expect(page.locator('.oc-row-participants').getByRole('link', {name: 'Alice', exact: true})).toBeVisible();
+  let navigations = 0; page.on('request', request => {if (request.isNavigationRequest()) navigations++;});
+  await page.locator('.oc-row-participants').getByRole('link', {name: 'Alice', exact: true}).press('Enter');
+  await expect(page.getByRole('button', {name: 'Remove participant filter: Alice'})).toBeVisible();
+  await expect(page.locator('.oc-rows .oc-row')).toHaveCount(1);
+  expect(reads.at(-1)).toEqual({scope: 'all', query: 'lighthouse', participant: alice.id, limit: 50});
+  await page.locator('.oc-row-participants').getByRole('link', {name: 'Bob', exact: true}).click();
+  await expect(page.locator('.oc-rows .oc-row')).toHaveCount(2);
+  await expect(page.getByRole('button', {name: 'Remove participant filter: Bob'})).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({path: testInfo.outputPath(`session-participants-${width}.png`), fullPage: true});
+  await page.getByRole('button', {name: 'Remove participant filter: Bob'}).click();
+  await expect(page.locator('.oc-rows .oc-row')).toHaveCount(3);
+  await expect(page.getByRole('searchbox', {name: 'Search sessions'})).toHaveValue('lighthouse');
+  await page.goBack(); await expect(page.getByRole('button', {name: 'Remove participant filter: Bob'})).toBeVisible();
+  await page.goBack(); await expect(page.getByRole('button', {name: 'Remove participant filter: Alice'})).toBeVisible();
+  await page.goForward(); await expect(page.getByRole('button', {name: 'Remove participant filter: Bob'})).toBeVisible();
+  expect(navigations).toBe(0);
+  await page.reload();
+  await expect(page.getByRole('button', {name: 'Remove participant filter: Bob'})).toBeVisible();
+  await expect(page.locator('.oc-rows .oc-row')).toHaveCount(2);
+});
+
 for(const width of [1440,390]) test(`shared Replicas transcript labels each sender at ${width}px`,async({page,request},testInfo)=>{
   await request.post('/__test/reset',{data:{}});
   await page.setViewportSize({width,height:900});
@@ -58,7 +95,7 @@ for (const width of [1440, 1024, 801, 390]) {
 
     let documents = 0;
     page.on('request', request => {if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documents++;});
-    const link = row('Continued on another machine').getByRole('link');
+    const link = row('Continued on another machine').getByRole('link', {name: 'Continued on another machine', exact: true});
     await link.focus();
     await page.keyboard.press('Enter');
     await expect(page.locator('.oc-library-meta')).toContainText('laptop.local, runner-42');

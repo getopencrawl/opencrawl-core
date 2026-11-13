@@ -3,8 +3,11 @@
 The console's **Sessions** and **Memories** pages let people read what their
 agents captured and control who else can.
 
-- **Sessions** lists captured sessions newest first, with All and My tabs and a
-  word search. Opening a session shows its transcript: user and agent messages,
+- **Sessions** lists captured sessions newest first, with a word search and a
+  Participants column. Click a person to filter the list to their sessions;
+  remove the chip below search to clear the filter. The URL retains search and
+  participant selection across navigation, browser history and reloads.
+  Opening a session shows its transcript: user and agent messages,
   collapsed tool calls and results, reasoning summaries and compaction notes.
   Thinking blocks, encrypted content and token accounting are never shown.
   Order and paging come from the index; text comes from the verified original
@@ -39,10 +42,25 @@ else from these pages, workspace search and fetch (CLI, HTTP, MCP), the board's
 recent sessions and transcript reads. Its owner still sees and searches it.
 Usage counts remain aggregate and include private activity without content.
 
-In **My sessions**, each row has an eye toggle: an open eye means shared with
+Each session you own has an eye toggle: an open eye means shared with
 the team, and a crossed-out eye means private. Hover text names the action;
 keyboard and screen-reader users get a labelled toggle with its current sharing
 state. Visibility changes are shown only after the server confirms them.
+
+Participants are display and filter identities, separate from capture ownership.
+Human-owned captures use the uploader when no sender envelope exists. Replicas
+messages use distinct reported human sender IDs and profile labels; shared
+workload owners and unknown senders never become human participants. A session
+can include several people. Filtering selects the whole session, so search can
+match a message from a different participant. Participant IDs grant no access.
+
+New captures index participant metadata automatically. Existing first passages
+can be repaired with `migrateSessionParticipants` from
+`@getopencrawl/opencrawl-core/sessions/participant-migration`. It defaults to a
+dry run, uses bounded pages and a resumable cursor, verifies immutable sources,
+and writes only missing participant metadata. It preserves text, token counts,
+ownership, visibility and raw captures, and never recreates a deleted document.
+Legacy human captures remain filterable by their owner during migration.
 
 Visibility is stored as an owner control object beside the owner's capture
 objects (`<prefix>/tenants/<t>/users/<u>/controls/{sessions,memories}/...`) and

@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
-import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, Tabs} from '../design/components.js';
+import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader} from '../design/components.js';
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
 import type {SessionHarness, SessionHosts, LibraryAdapter, LibraryScope, SessionRef, SessionSummary, TranscriptEntry, TranscriptEvent, Visibility} from './library-types.js';
@@ -46,13 +46,14 @@ export function SessionsPage({adapter}: {adapter: LibraryAdapter}) {
 function SessionList({adapter}: {adapter: LibraryAdapter}) {
   const [params, setParams] = useSearchParams();
   const scope: LibraryScope = params.get('scope') === 'mine' ? 'mine' : 'all';
-  const query = params.get('q')?.trim().slice(0, 500) ?? '', key = scope + '\n' + query;
+  const participant = params.get('participant') || undefined;
+  const query = params.get('q')?.trim().slice(0, 500) ?? '', key = scope + '\n' + query + '\n' + (participant ?? '');
   const model = useConsoleModel(consoleResourceKey(adapter, 'session-draft'), () => ({query, draft:query}));
   const [draft, setDraftValue] = useState(model.query === query ? model.draft : query), [page, setPage] = useState({key, limit: PAGE});
   const setDraft = (value: string) => {model.draft = value;setDraftValue(value);};
   const limit = page.key === key ? page.limit : PAGE;
   useEffect(() => {if(model.query !== query){model.query = query;model.draft = query;setDraftValue(query);}}, [model, query]);
-  const {data, error, loading, retry, replace} = useResource(adapter, 'sessions/list', key, limit, signal => adapter('sessions/list', {scope, query, limit}, signal), 'Sessions could not load. Try again.');
+  const {data, error, loading, retry, replace} = useResource(adapter, 'sessions/list', key, limit, signal => adapter('sessions/list', {scope, query, ...(participant ? {participant} : {}), limit}, signal), 'Sessions could not load. Try again.');
   const mutate = useLibraryMutation(adapter);
   const [removing, setRemoving] = useState<SessionSummary | null>(null), [removal, setRemoval] = useState({busy: false, error: ''});
   const controller = useRef<AbortController | null>(null);
@@ -91,37 +92,49 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     for (const [name, value] of Object.entries(changes)) if (value) next.set(name, value); else next.delete(name);
     setParams(next);
   };
+  const people = (session: SessionSummary) => session.participants ?? (session.userId.startsWith('workload_replicas_') ? [] : [{id: 'user:' + session.userId}]);
+  const personName = (person: {id: string; name?: string}) => person.name || (person.id.startsWith('user:')
+    ? authorName(person.id.slice(5), Boolean(data?.sessions.some(session => session.mine && session.userId === person.id.slice(5))), data?.authors) : person.id.slice(9));
+  const filterName = participant ? params.get('participantName') || personName(data?.sessions.flatMap(people).find(person => person.id === participant) ?? {id: participant}) : '';
+  const personPath = (person: {id: string; name?: string}) => {
+    const next = new URLSearchParams(params); next.delete('scope'); next.delete('deleted');
+    next.set('participant', person.id); next.set('participantName', personName(person));
+    return '/sessions?' + next.toString();
+  };
   return <Page title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them." bodyClassName="oc-library">
     {removal.error && !removing && <Notice tone="danger">{removal.error}</Notice>}
     {visibilityChange.error && <Notice tone="danger">{visibilityChange.error}</Notice>}
-    <Tabs label="Sessions shown" value={scope} onChange={value => update({scope: value === 'mine' ? 'mine' : ''})} items={[{value: 'all', label: 'All sessions'}, {value: 'mine', label: 'My sessions'}]}/>
     <form className="query-form" role="search" onSubmit={event => {event.preventDefault(); update({q: draft.trim()});}}>
       <Field label="Search sessions"><Input type="search" value={draft} maxLength={500} onChange={event => setDraft(event.target.value)} placeholder="Search sessions…"/></Field>
       <div className="actions"><Button type="submit" variant="primary">Search</Button>{query && <Button variant="quiet" onClick={() => update({q: ''})}>Clear</Button>}</div>
     </form>
+    {(participant || scope === 'mine') && <div className="oc-filter-chips" aria-label="Session filters"><Button variant="quiet" className="oc-filter-chip"
+      aria-label={`Remove participant filter: ${participant ? filterName : 'You'}`} onClick={() => update({participant: '', participantName: '', scope: ''})}>
+      <Icon name="team" size={14}/><span>Participant: {participant ? filterName : 'You'}</span><Icon name="close" size={14}/>
+    </Button></div>}
     {error && <Notice tone="danger">{error}</Notice>}
     {error && <div className="actions"><Button onClick={retry}>Try again</Button></div>}
     {!data && loading && <LoadingState label="Loading sessions"/>}
-    {data && (data.sessions.length ? <><div className="oc-row-item oc-row-heading" aria-hidden="true"><div className="oc-row oc-row-with-host"><span>Session</span><span className="oc-row-optional">Captured by</span><span className="oc-row-optional">Agent</span><span className="oc-row-host" title="The machine that captured the transcript. Imported history may have originated elsewhere.">Hostname</span><span className="oc-row-tokens">Captured tokens</span><span className="oc-row-end">Updated</span></div><span className="oc-row-actions">{scope === 'mine' && <span className="oc-row-visibility"/>}<span className="oc-row-action"/></span></div>
+    {data && (data.sessions.length ? <><div className="oc-row-item oc-row-heading" aria-hidden="true"><div className="oc-row oc-row-with-host"><span>Session</span><span className="oc-row-participants">Participants</span><span className="oc-row-optional">Agent</span><span className="oc-row-host" title="The machine that captured the transcript. Imported history may have originated elsewhere.">Hostname</span><span className="oc-row-tokens">Captured tokens</span><span className="oc-row-end">Updated</span></div><span className="oc-row-actions"><span className="oc-row-visibility"/><span className="oc-row-action"/></span></div>
     <ol className="oc-row-groups" aria-busy={loading || undefined}>{byDay(data.sessions, session => session.lastActivityAt).map(([day, items]) => <li key={day}>
       <h2 className="oc-row-group-label">{day}</h2>
-      <ul className="oc-rows">{items.map(session => <li key={sessionPath(session)} className="oc-row-item"><Link to={sessionPath(session)} className="oc-row oc-row-with-host">
-        <span className="oc-row-title"><span>{session.title}</span><VisibilityBadge value={session.private}/></span>
-        <span className="oc-row-optional">{authorName(session.userId, session.mine, data.authors)}</span>
+      <ul className="oc-rows">{items.map(session => <li key={sessionPath(session)} className="oc-row-item"><div className="oc-row oc-row-with-host">
+        <Link to={sessionPath(session)} className="oc-row-title"><span>{session.title}</span><VisibilityBadge value={session.private}/></Link>
+        <span className="oc-row-participants">{people(session).length ? people(session).map(person => <Link key={person.id} to={personPath(person)} title={`Show sessions with ${personName(person)}`}>{personName(person)}</Link>) : <span className="muted">Unknown</span>}{session.participantsTruncated && <span title="Additional participants are not shown">…</span>}</span>
         <span className="oc-row-optional">{harnessName(session.harness)}</span>
         <CaptureHostname session={session}/>
         <CapturedTokens value={session.capturedTokens}/>
         <span className="oc-row-end"><When value={session.lastActivityAt}/></span>
-      </Link><span className="oc-row-actions">
-        {scope === 'mine' && session.mine && <Button variant="quiet" className="oc-icon-button oc-row-visibility"
+      </div><span className="oc-row-actions">
+        {session.mine ? <Button variant="quiet" className="oc-icon-button oc-row-visibility"
           aria-label={`Share session with team: ${session.title}`} aria-pressed={!session.private}
           title={session.private ? 'Private. Share with team' : 'Shared with team. Make private'}
           busy={visibilityChange.session === sessionPath(session)} disabled={Boolean(visibilityChange.session) || removal.busy}
-          onClick={() => void toggleVisibility(session)}>{visibilityChange.session !== sessionPath(session) && <Icon name={session.private ? 'eye-off' : 'eye'} size={18}/>}</Button>}
+          onClick={() => void toggleVisibility(session)}>{visibilityChange.session !== sessionPath(session) && <Icon name={session.private ? 'eye-off' : 'eye'} size={18}/>}</Button> : <span className="oc-row-visibility"/>}
         {session.mine ? <Button variant="quiet" className="oc-icon-button oc-row-action" disabled={Boolean(visibilityChange.session)} aria-label={`Delete session: ${session.title}`} title="Delete session" onClick={() => {setRemoval({busy: false, error: ''}); setRemoving(session);}}><Icon name="trash" size={16}/></Button> : <span className="oc-row-action" aria-hidden="true"/>}
       </span></li>)}</ul>
-    </li>)}</ol></> : <EmptyState title={query ? 'No matching sessions' : scope === 'mine' ? 'You have no captured sessions yet' : 'No captured sessions yet'}
-      description={query ? 'Try different words, or clear the search.' : 'Sessions appear here after an agent with OpenCrawl capture finishes a turn.'}/>)}
+    </li>)}</ol></> : <EmptyState title={query || participant ? 'No matching sessions' : scope === 'mine' ? 'You have no captured sessions yet' : 'No captured sessions yet'}
+      description={query || participant ? 'Try different words, or remove a filter.' : 'Sessions appear here after an agent with OpenCrawl capture finishes a turn.'}/>)}
     <Dialog open={Boolean(removing)} onClose={() => {if (!removal.busy) setRemoving(null);}} title="Delete this session?"
       description="Permanently remove this transcript, uploaded attachments, and search results for everyone. This session cannot be captured again, including from another installation. Local files on your computer are unchanged."
       actions={<><Button disabled={removal.busy} onClick={() => setRemoving(null)}>Cancel</Button><Button variant="danger" busy={removal.busy} autoFocus onClick={() => removing && void remove(removing)}>Delete session</Button></>}>
