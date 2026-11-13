@@ -17,7 +17,7 @@ export type TranscriptEntry =
   | {type: 'tool_call'; name: string; input: string; truncated: boolean}
   | {type: 'tool_result'; text: string; truncated: boolean}
   | {type: 'note'; label: string; text: string; truncated: boolean};
-export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[]}
+export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[];actor?:import('../sessions/actors.mjs').CapturedActor}
 export interface SessionTranscript {
   session: SessionRef & SessionHosts & {title: string; mine: boolean; private: boolean; origin: string | null};
   events: TranscriptEvent[]; total: number; next: string | null;

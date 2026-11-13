@@ -19,6 +19,7 @@ test('transcripts keep messages and tool activity, never thinking or injected co
   assert.equal(long.text.length, 20000); assert.equal(long.truncated, true);
   assert.deepEqual(transcriptEntries({id: 'e', kind: 'token_count', data: {info: 1}}), []);
   assert.deepEqual(transcriptEntries({id: 'e', kind: 'agent_message', data: {author: 'assistant', recipient: 'worker', content: 'private routing'}}), []);
+  assert.deepEqual(transcriptEntries({id:'e',kind:'automation_message',data:{role:'user',content:[{type:'text',text:'Background task finished'}]}}),[{type:'note',label:'Automation',text:'Background task finished',truncated:false}]);
 });
 
 test('memory descriptions prefer frontmatter, then the first prose line', () => {
