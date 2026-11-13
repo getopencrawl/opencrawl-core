@@ -131,9 +131,8 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
           <Section className="report-panel" headingLevel={3} title="Daily agent sessions" description={busiest && busiest.sessions > 0 ? `Busiest day: ${busiest.date} with ${plural(busiest.sessions, 'session')}.` : undefined}>
             <ActivityChart daily={data.daily}/>
           </Section>
-          <Section className="report-panel" headingLevel={3} title="Main session overlap" description="Daily average and peak overlapping sessions. Each session spans its first to last captured event, including idle gaps. Subagents excluded.">
+          <Section className="report-panel" headingLevel={3} title="Main session overlap" description="Concurrent sessions by day.">
             {report.overlap ? <DailyLineChart daily={report.overlap.daily} label="Main session overlap"/> : <p className="report-note">Session overlap is unavailable. We’ll try again on the next update.</p>}
-            {report.overlap && <p className="report-note">Days use UTC. Today’s average covers the elapsed day. Captured spans can grow as new events arrive.</p>}
           </Section>
           <div className="report-split">
             <Section className="report-panel" headingLevel={3} title="Where agents run" description="Captured events by agent and surface.">

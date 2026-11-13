@@ -67,7 +67,8 @@ test('main-session overlap distinguishes measured zero from unavailable and expo
   assert.match(html, /2026-11-07 \(partial\)/);
   assert.match(html, /<td>1.25<\/td><td>3<\/td>/);
   assert.match(html, /<td>0<\/td><td>0<\/td>/);
-  assert.match(html, /Subagents excluded/);
+  assert.match(html, /Concurrent sessions by day/);
+  assert.doesNotMatch(html, /Each session spans|Subagents excluded|Days use UTC|Captured spans can grow/);
   assert.doesNotMatch(html, /NaN|Infinity|overlap is unavailable/);
   data.overlap = null;
   const unavailable = render(data);

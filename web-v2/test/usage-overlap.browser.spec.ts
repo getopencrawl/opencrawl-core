@@ -18,7 +18,8 @@ test('overlap chart shows average/peak, supports keyboard daily values and fits 
   await page.keyboard.press('Enter');
   await expect(panel.getByRole('table')).toBeHidden();
   await panel.locator('.report-line-hit').first().hover();
-  await expect(panel.locator('figcaption')).toContainText('2026-10-15: average 1, peak 4');
+  await expect(panel.locator('figcaption')).toHaveCount(0);
+  await expect(panel.locator('.report-line-hit').first().locator('title')).toHaveText('2026-10-15: average 1, peak 4 sessions');
   for (const width of [1440, 390]) {
     await page.setViewportSize({width, height: 1000});
     await panel.scrollIntoViewIfNeeded();
