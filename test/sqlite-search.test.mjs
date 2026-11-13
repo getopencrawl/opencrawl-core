@@ -10,6 +10,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {createRealm} from '../dist/src/search/realm.mjs';
+import {migrateRealmCorpus} from '../dist/src/search/migration.mjs';
 import {createSessionSearch, searchSettings} from '../dist/src/sessions/search.mjs';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
@@ -190,4 +191,25 @@ test('self-host SQLite configuration is explicit and keeps OpenSearch defaults',
   assert.equal(searchSettings({OPENCRAWL_OPENSEARCH_URL: 'http://localhost:9200'}).endpoint, 'http://localhost:9200');
   assert.throws(() => selfhostSettings({...env, OPENCRAWL_SEARCH_URL: 'sqlite://remote/data/search.sqlite'}), /Invalid SQLite/);
   assert.throws(() => selfhostSettings({...env, OPENCRAWL_OPENSEARCH_USERNAME: 'u', OPENCRAWL_OPENSEARCH_PASSWORD: 'p'}), /credentials/);
+});
+
+
+test('SQLite accepts a document larger than 4 MiB and validates the entire bulk scope before writing', async t => {
+  const {endpoint, principal} = await fixture(t), collection = createRealm({endpoint, tenantId: principal.tenantId}).collection('connector');
+  const document = {...principal, text: 'largeacceptance ' + '界'.repeat(2 * 1024 * 1024)};
+  await collection.bulk(principal, [{id: 'large', document}]);
+  assert.deepEqual((await collection.mget(principal, ['large'])).docs[0]._source, document);
+  assert.equal((await collection.search(principal, {query: {match: {text: 'largeacceptance'}}})).hits.total.value, 1);
+  await assert.rejects(collection.bulk(principal, [{id: 'valid', document}, {id: 'foreign', document: {...document, tenantId: 'other'}}]), {status: 403});
+  assert.equal((await collection.mget(principal, ['valid'])).docs[0].found, false);
+});
+
+test('realm migration copies and verifies large documents without treating the scheduling target as a ceiling', async t => {
+  const {endpoint, principal} = await fixture(t), realm = createRealm({endpoint, tenantId: principal.tenantId});
+  const documents = ['small-before', 'large', 'small-after'].map(id => ({id, document: {...principal, text: id === 'large' ? '界'.repeat(2 * 1024 * 1024) : id}}));
+  const source = {identity: 'frozen-large-source', version: async () => 'v1', read: async after => ({total: documents.length, documents: after ? [] : documents, next: after ? null : ['done']})};
+  let checkpoint;
+  const result = await migrateRealmCorpus({principal, corpus: 'connector', source, realm, load: async () => null, save: async value => {checkpoint = value;}});
+  assert.equal(result.complete, true); assert.equal(checkpoint.copied, 3);
+  assert.deepEqual((await realm.collection('connector').mget(principal, documents.map(d => d.id))).docs.map(d => d._source), documents.map(d => d.document));
 });
