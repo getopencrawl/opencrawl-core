@@ -35,10 +35,40 @@ credentials, or read a human member's private captures. Capture writes remain
 bound to the authenticated workload owner. Existing human-owned queues must be
 drained under their original credentials before changing installation ownership.
 
-Workspace creator metadata is not a per-message author. Sender attribution,
-resource administration for workload-owned data, native transcript normalization,
-and lifecycle reconciliation require separate acceptance. Enabling this adapter
-alone does not establish local-machine parity or mark every team member onboarded.
+Sessions belong to the workspace principal and may contain messages from several
+people or inputs with no known human author. An unknown author is valid. Native
+message content retains Replicas author envelopes, including a `From` label when
+the provider supplies one. Those labels are source text, not verified human
+identities or permission grants. The collector enriches Claude messages with a
+structured actor only through exact provider/native message IDs. A missing Codex
+ID link limits structured author lookup; it does not by itself mean the source
+envelope or conversation was lost. Do not create duplicate messages to replace
+an envelope that is already captured.
+
+Workspace creator metadata is not a per-message author. Personal-account
+delegation and browser onboarding remain separate from shared-workspace setup.
+Enabling this adapter alone does not prove capture, resource administration for
+workload-owned data, or lifecycle recovery.
+
+## Retention and intentional deletion
+
+API-created workspaces and automations can default to `delete_when_done`; their
+history becomes unreadable after deletion. Use `lifecycle_policy: "default"` or
+`"sleep_when_done"` when creating capture-enabled workspaces. Existing workspaces
+and automation definitions need their own checks; an environment start hook does
+not establish their creation policy.
+
+For intentional permanent deletion, finish all agent turns and prevent new input,
+run `opencrawl collect flush --json`, then inspect `opencrawl collect status --json`.
+Require no queued batches, pending hooks, rejected batches or capture error, and
+verify the final message's stored receipt before deleting. Leave the workspace
+intact if verification fails. Keep history retention enabled while relying on
+sleep/archive recovery; retained history is not an indefinite backup.
+
+This procedure covers controlled deletion after successful capture. It cannot
+recover bytes destroyed before upload or make provider completion webhooks wait
+for an upload acknowledgement. See the provider's [lifecycle documentation](https://docs.replicas.dev/features/api)
+and [retention controls](https://docs.replicas.dev/admin/data-retention).
 
 Replicas chat names are resolved through an exact native-thread match in the
 platform history API. The CLI caches this metadata for 30 seconds across workers;
