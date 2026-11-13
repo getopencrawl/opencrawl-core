@@ -48,6 +48,7 @@ for (const backend of ['sqlite', 'opensearch']) test(`${backend}: captured spans
   const principal = {tenantId: `org_overlap_${Date.now()}_${backend}`, userId: 'alice'};
   const realm = createRealm({endpoint, tenantId: principal.tenantId}), store = memorySessionStore();
   if (backend === 'opensearch') t.after(() => fetch(endpoint + '/' + realm.index, {method: 'DELETE'}));
+  await realm.ensureIndex();
   const controls = createControls({store, prefix: 'test'}), search = createSessionSearch({endpoint, store, prefix: 'test'});
   const docs = [];
   const span = (userId, harness, sessionId, first, last, extra = {}) => {
@@ -76,6 +77,7 @@ for (const backend of ['sqlite', 'opensearch']) test(`${backend}: captured spans
   const foreign = {...principal, tenantId: principal.tenantId + '_other'};
   const other = createRealm({endpoint, tenantId: foreign.tenantId});
   if (backend === 'opensearch') t.after(() => fetch(endpoint + '/' + other.index, {method: 'DELETE'}));
+  await other.ensureIndex();
   await other.collection('session').bulk(foreign, [{...docs[0], document: {...docs[0].document, tenantId: foreign.tenantId}}, {...docs[1], document: {...docs[1].document, tenantId: foreign.tenantId}}]);
   await other.refresh(foreign);
   assert.equal((await createSessionSearch({endpoint, store, prefix: 'test'}).overlap(foreign, {days: 1, now})).daily[0].average, 1);
