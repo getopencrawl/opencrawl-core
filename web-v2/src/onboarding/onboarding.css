@@ -228,3 +228,6 @@ body[data-onboarding] .brand img{width:32px;height:auto}
 .invitation-list .signal-mark path{visibility:visible}
 .invite-load-error{display:flex;align-items:center;gap:var(--space-3);margin-top:var(--space-4);color:var(--muted);font-size:var(--text-sm)}
 @media(max-width:600px){.invite-load-error{align-items:flex-start;flex-direction:column;gap:var(--space-2)}}
+
+/* Completed checks remain available without pushing the next action down. */
+.completed-setup{margin-top:var(--space-6)}
