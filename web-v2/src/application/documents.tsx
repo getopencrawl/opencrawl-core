@@ -63,7 +63,7 @@ export function ProductDocument({page}: {page:unknown}) {
   if (data.kind === 'capture') return <CaptureDocument page={data}/>;
   if (data.kind === 'auth') return <AuthDocument page={data}/>;
   if (data.kind === 'oauth-return') return <OAuthReturn url={data.url}/>;
-  return <Page title={data.heading} description={data.detail}><div><LinkButton to={data.href} reloadDocument>{data.action}</LinkButton></div></Page>;
+  return <Page className="oc-message-page" title={data.heading} description={data.detail}><div><LinkButton to={data.href} reloadDocument>{data.action}</LinkButton></div></Page>;
 }
 function OAuthReturn({url}: {url:string}) {
   useEffect(()=>{window.location.assign(url);},[url]);
