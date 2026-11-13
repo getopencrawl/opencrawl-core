@@ -657,6 +657,9 @@ img { max-width: 100%; }
 
 /* Focused React documents share controls and page composition with the console. */
 .oc-document {width:100%; max-width:var(--console-content-max, 1200px); margin-inline:auto; padding:var(--space-8); overflow-wrap:anywhere}
+.oc-document:has(> .oc-message-page) {flex:1; display:grid; place-items:center}
+.oc-message-page {width:100%; max-width:var(--console-task-width); text-align:center}
+.oc-message-page .oc-page-header p {margin-inline:auto}
 .oc-document-steps {display:grid; gap:var(--space-3); padding-left:var(--space-6)}
 @media(max-width:800px) {.oc-document {padding:var(--space-6) var(--space-4)}}
 
