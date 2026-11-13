@@ -17,7 +17,13 @@ try {
   $lines = @(Get-Content (Join-Path $scratch 'SHA256SUMS') | Where-Object { $_ -match "^[a-f0-9]{64}  $([regex]::Escape($archive))$" })
   if ($lines.Count -ne 1) { throw 'Missing or duplicate OpenCrawl checksum.' }
   $expected = $lines[0].Substring(0, 64)
-  if ((Get-FileHash (Join-Path $scratch $archive) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'OpenCrawl download checksum mismatch.' }
+  # Use the bundled .NET cryptography API even when a caller's PSModulePath
+  # prevents Windows PowerShell from discovering the Get-FileHash module.
+  $stream = [System.IO.File]::OpenRead((Join-Path $scratch $archive))
+  $sha256 = [System.Security.Cryptography.SHA256]::Create()
+  try { $actual = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
+  finally { $stream.Dispose(); $sha256.Dispose() }
+  if ($actual -ne $expected) { throw 'OpenCrawl download checksum mismatch.' }
   & tar -xzf (Join-Path $scratch $archive) -C $scratch
   if ($LASTEXITCODE -ne 0) { throw 'Could not unpack OpenCrawl.' }
   if ((Get-Item (Join-Path $scratch 'package/bin/opencrawl.exe')).Length -eq 0) { throw 'OpenCrawl archive has no executable.' }
