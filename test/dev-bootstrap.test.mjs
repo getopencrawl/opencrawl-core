@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,copyFileSync,writeFileSync,readFileSync,existsSync,readdirSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,copyFileSync,writeFileSync,readFileSync,existsSync,readdirSync,rmSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
@@ -81,4 +81,11 @@ test('native host downloads, verifies and executes its real pinned runtime',{
   const f=fixture(t,{native:true});const r=f.run();assert.equal(r.status,0,r.stderr);
   const result=JSON.parse(r.stdout.split('\n').find(line=>line.startsWith('TEST_RUNTIME=')).slice('TEST_RUNTIME='.length));
   assert.deepEqual(result,{platform:process.platform,arch:process.arch,version:'v24.22.2',args:['demo','--no-airbyte']});
+});
+
+test('operator upgrade bootstrap provides its verified runtime without creating a development installation',t=>{
+ const f=fixture(t,{docker:false});const r=f.run(['--node-runtime']);assert.equal(r.status,0,r.stderr);
+ assert.equal(r.stdout.trim(),realpathSync(join(f.dir,'deploy/.upgrade/bin/node')));
+ assert.equal(existsSync(join(f.dir,'.opencrawl-dev')),false);
+ assert.doesNotMatch(r.stdout,/INSTALLER/);
 });

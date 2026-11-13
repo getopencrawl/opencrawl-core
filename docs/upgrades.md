@@ -7,15 +7,18 @@ start a second clone with newly generated credentials. `./deploy/up.sh` and
 Use the same startup options as before. Search backend changes remain a separate
 migration; an upgrade does not switch an existing index.
 
-An operator's agent can inspect and run the same operation directly with Node 24:
+An operator's agent can inspect and run the same operation directly. The shell
+wrapper downloads and verifies the same pinned Node runtime as normal startup;
+it does not require a system Node installation:
 
 ```sh
-node deploy/upgrade.mjs --installation deploy --check
-node deploy/upgrade.mjs --installation deploy --backup /private/new-recovery-directory
+./deploy/upgrade.sh --installation deploy --check
+./deploy/upgrade.sh --installation deploy --backup /private/new-recovery-directory
 # For installations created with ./dev/up, use --installation dev instead.
 ```
 
-`--check` is read-only. Commands emit JSON lines with the project, target revision,
+`--check` leaves services, credentials and application data unchanged; the shell
+wrapper may initialize its verified runtime cache. Commands emit JSON lines with the project, target revision,
 phase, recovery directory and result. A failure exits nonzero. Rerun the same
 command after fixing the reported failure; the journal resumes completed work
 and never replaces its original completed backup. If a different release is
@@ -56,7 +59,7 @@ Restoring discards subsequent work if you choose to replace the live installatio
 preserve that newer data separately first. This tool never deletes it for you.
 
 ```sh
-node deploy/restore.mjs --backup /private/recovery-directory
+./deploy/restore.sh --backup /private/recovery-directory
 ```
 
 Restore requires the original project to be stopped, empty destination volumes,

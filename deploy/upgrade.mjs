@@ -1,7 +1,7 @@
 import {existsSync,readFileSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {join,resolve} from 'node:path';
-import {installation,containers,privateFile,lock,run,docker,root} from './installation.mjs';
+import {installation,containers,privateFile,lock,run,docker,root,shellQuote} from './installation.mjs';
 import {snapshot,saveRecovery,verifyRecovery} from './recovery.mjs';
 
 process.umask(0o077);
@@ -131,6 +131,6 @@ try {
   } catch {console.error(JSON.stringify({upgrade:'writers-stop-unconfirmed',project:current.project,action:'Check the application, worker and Airbyte node before resuming'}));}
  }
  console.error(JSON.stringify({upgrade:'failed',phase:journal?.phase,backup:journal?.backup,error:error.message,
-  resume:`node deploy/upgrade.mjs --installation ${kind}`,recovery:'node deploy/restore.mjs --backup '+(journal?.backup||'BACKUP')}));
+  resume:`./deploy/upgrade.sh --installation ${kind}`,recovery:'./deploy/restore.sh --backup '+shellQuote(journal?.backup||'BACKUP')}));
  process.exitCode=1;
 } finally {release();}

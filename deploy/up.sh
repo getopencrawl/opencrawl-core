@@ -42,12 +42,12 @@ if [ ! -f .env ]; then
   echo "Created deploy/.env with local secrets. Set OPENCRAWL_URL, configure Airbyte if enabled, then rerun this command."
   exit 0
 fi
-command -v node >/dev/null 2>&1 || { echo 'Node.js 24 is required for the coordinated upgrade; ./dev/up installs its pinned runtime automatically.' >&2; exit 1; }
+runtime_node=$(../dev/up --node-runtime)
 # Retain an explicitly selected disabled integration mode across later upgrades.
 # Persist only after the upgrader has captured the original configuration.
-node upgrade.mjs --automatic
+"$runtime_node" upgrade.mjs --automatic
 docker compose up -d --build --wait --wait-timeout 600 "$@"
-node upgrade.mjs --record-startup
+"$runtime_node" upgrade.mjs --record-startup
 echo "OpenCrawl is running at the OPENCRAWL_URL configured in deploy/.env."
 # The bootstrap grant is consumed once. Keep this URL private.
 docker compose exec -T app node -e "console.log('Private first-run setup link: '+process.env.OPENCRAWL_URL+'/auth/signup?setup='+encodeURIComponent(process.env.OPENCRAWL_SETUP_TOKEN))"

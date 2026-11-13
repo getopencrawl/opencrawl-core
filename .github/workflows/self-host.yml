@@ -247,7 +247,7 @@ jobs:
     name: Self-host smoke
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [full-application-upgrade, sqlite, application]
-    if: always()
+    if: always() && !cancelled()
     steps:
       - name: Require full application installation and upgrade acceptance
         env:

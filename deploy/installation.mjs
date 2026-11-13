@@ -54,3 +54,5 @@ export function lock(path) {
   const release=()=>{if(existsSync(path)&&readFileSync(path,'utf8')===String(process.pid))rmSync(path);};
   process.once('exit',release);return release;
 }
+
+export function shellQuote(value) {return "'" + String(value).replaceAll("'", "'\\''") + "'";}

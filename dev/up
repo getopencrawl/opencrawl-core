@@ -31,8 +31,17 @@ only this clone's development installation. Production deploy/ is independent.
 HELP
   exit 0
 fi
-case "$arg" in up|demo|status|stop|reset|--yes|--no-airbyte|--sqlite) ;; *) echo "Unknown argument: $arg. See ./dev/up --help." >&2; exit 1 ;; esac
+case "$arg" in up|demo|status|stop|reset|--yes|--no-airbyte|--sqlite|--node-runtime) ;; *) echo "Unknown argument: $arg. See ./dev/up --help." >&2; exit 1 ;; esac
 done
+# Shared, internal runtime bootstrap for operator upgrade tools. Keep all normal
+# startup modes on the same full application; this mode launches no services.
+NODE_ONLY=false
+if [[ "${1:-}" == --node-runtime ]]; then
+  [[ $# == 1 ]] || { echo 'The runtime bootstrap takes no other arguments.' >&2; exit 1; }
+  NODE_ONLY=true
+  exec 3>&1
+  exec 1>&2
+fi
 MIN_DISK_KIB=41943040
 for arg in "$@"; do [[ "$arg" != --no-airbyte ]] || MIN_DISK_KIB=20971520; done
 case "$(uname -s)" in
@@ -45,6 +54,7 @@ case "$(uname -m)" in
   arm64|aarch64) NODE_ARCH=arm64 ;;
   *) echo 'This installer supports x64 and ARM64 processors.' >&2; exit 1 ;;
 esac
+if [[ "$NODE_ONLY" != true ]]; then
 if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
   if [[ "$NODE_OS" == darwin ]]; then
     echo 'Install and start Docker Desktop or Colima, then retry. Allocate at least 4 CPUs and 8 GiB RAM (16 GiB with Airbyte).' >&2
@@ -72,7 +82,9 @@ if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
   fi
 fi
 docker compose version >/dev/null || { echo 'Install the Docker Compose v2 plugin, then retry.' >&2; exit 1; }
+fi
 STATE="$ROOT/.opencrawl-dev"
+if [[ "$NODE_ONLY" == true && ! -x "$STATE/bin/node" ]]; then STATE="$ROOT/deploy/.upgrade"; fi
 [[ ! -L "$STATE" ]] || { echo 'Refusing a symlinked development state directory.' >&2; exit 1; }
 mkdir -p "$STATE/bin"
 chmod 700 "$STATE"
@@ -103,4 +115,5 @@ if [[ "$("$NODE" -p 'process.version+"-"+process.platform+"-"+process.arch' 2>/d
   echo 'Cached Node.js runtime does not match this host/version. Remove only .opencrawl-dev/bin/node and retry; keep the rest of your data.' >&2
   exit 1
 fi
+if [[ "$NODE_ONLY" == true ]]; then printf '%s\n' "$NODE" >&3; exit 0; fi
 exec "$NODE" --disable-warning=ExperimentalWarning "$ROOT/dev/installer.mts" "$@"
