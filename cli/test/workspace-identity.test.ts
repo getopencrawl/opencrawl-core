@@ -17,7 +17,7 @@ test('workspace helper refreshes expiring and rejected tokens without persisting
 });
 test('workload CLI refuses human login and credential management before starting OAuth',async()=>{
  for(const args of [['login'],['token','create']]){
-  const env={...process.env,OPENCRAWL_AUTH:'replicas-workspace',OPENCRAWL_NO_UPDATE:'1'};
+  const env:NodeJS.ProcessEnv={...process.env,OPENCRAWL_AUTH:'replicas-workspace',OPENCRAWL_NO_UPDATE:'1'};
   delete env.OPENCRAWL_TOKEN;delete env.OPENCRAWL_SESSIONS_TOKEN;
   const child=Bun.spawn([process.execPath,join(import.meta.dir,'../src/cli.ts'),...args,'--json'],{env,stdout:'pipe',stderr:'pipe'});
   const [output,errors,status]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
