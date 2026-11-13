@@ -39,14 +39,14 @@ test('only valid server receipts unlock the source step; imported history never 
   assert.match(agent(complete), /id="next-step"[^>]*href="\/onboarding\/sources"/);
 });
 
-test('completed agent setup preserves the original instruction, full grouped checklist, and independent prompt reveal', () => {
+test('completed agent setup shows a compact success state with the checklist available on demand', () => {
   const html = agent(complete);
-  assert.match(html, /Connect your primary coding agent/);
+  assert.match(html, /Your coding agent is ready/);
   assert.match(html, /Connection checklist/);
   assert.match(html, /First session recording received/);
   assert.match(html, /Import past sessions/);
-  assert.match(html, /aria-label="Show setup prompt" aria-expanded="false"/);
-  assert.match(html, /class="prompt-preview" id="connect-preview" hidden=""/);
+  assert.match(html, /<details class="completed-setup signal-disclosure"><summary>/);
+  assert.doesNotMatch(html, /connect-preview|Copy setup prompt/);
   assert.match(html, /class="onboarding-flow onboarding-flow-panel"/);
   assert.match(html, /class="focus-content focus-panel"/);
 });
