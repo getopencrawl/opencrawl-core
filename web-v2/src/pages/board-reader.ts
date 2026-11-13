@@ -29,7 +29,7 @@ export class BoardReader {
   private readonly listeners = new Set<() => void>();
   private request: AbortController | null = null;
   private bridge: Bridge | null = null;
-  constructor(private readonly adapter: Adapter, private readonly topic: string, private readonly topics: boolean, private beforeCommit: () => void = () => {}) {}
+  constructor(private readonly adapter: Adapter, private readonly topic: string, private readonly topics: boolean, private beforeCommit: () => void = () => {}, private readonly message?: number) {}
   setBeforeCommit(callback: () => void) {this.beforeCommit=callback;}
   readonly snapshot = () => this.value;
   readonly subscribe = (listener: () => void) => {this.listeners.add(listener); return () => {this.listeners.delete(listener);};};
@@ -116,7 +116,7 @@ export class BoardReader {
       }
       let reads = 0;
       if (!this.bridge) {
-        const page = await this.read(request); reads++;
+        const page = await this.read(request, !this.value.report && this.message !== undefined ? this.message + 1 : undefined); reads++;
         if (!page) return;
         const newest = this.value.report?.messages[0];
         if (!newest) {this.commit(page); return;}

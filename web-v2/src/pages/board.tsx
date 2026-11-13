@@ -7,6 +7,7 @@ import type {BoardReport, ConsoleDataAdapter} from './types.js';
 import {useBoard} from './use-board.js';
 
 const topicHref = (topic: string) => '/diagnostics?view=board&topic=' + encodeURIComponent(topic);
+const messageHref = (topic: string, id: number) => topicHref(topic) + '&message=' + id;
 function BoardTime({timestamp}: {timestamp: number}) {
   const value = new Date(timestamp);
   if (!Number.isFinite(value.getTime())) return <span>Time unavailable</span>;
@@ -54,7 +55,7 @@ export function BoardContent({report, topics, stream}: {report: BoardReport; top
           anchor={'post:' + message.id}
           author={message.name || message.agent}
           title={stream ? <Link to={topicHref(message.topic)}>{message.topic}</Link> : undefined}
-          metadata={<><BoardTime timestamp={message.timestamp}/><span>#{message.id}</span></>}
+          metadata={<><BoardTime timestamp={message.timestamp}/><Link to={messageHref(message.topic, message.id)} aria-label={'Permalink to message #' + message.id}>#{message.id}</Link></>}
         >
           <p>{message.text}</p>
         </ForumPost>
@@ -63,8 +64,9 @@ export function BoardContent({report, topics, stream}: {report: BoardReport; top
   );
 }
 
-export function BoardInspector({adapter, stream, topic}: {adapter: Pick<ConsoleDataAdapter, 'board'>; stream: boolean; topic: string}) {
+export function BoardInspector({adapter, stream, topic, message}: {adapter: Pick<ConsoleDataAdapter, 'board'>; stream: boolean; topic: string; message?: number}) {
   const root = useRef<HTMLElement>(null);
+  const located = useRef(false);
   const anchor = useRef<{key: string; top: number} | null>(null);
   const capture = useCallback(() => {
     anchor.current = null;
@@ -78,14 +80,22 @@ export function BoardInspector({adapter, stream, topic}: {adapter: Pick<ConsoleD
     const first = posts.find(element => element.getBoundingClientRect().bottom > edge);
     if (first?.dataset.boardAnchor) anchor.current = {key: first.dataset.boardAnchor, top: first.getBoundingClientRect().top};
   }, []);
-  const topics = !stream && !topic;
-  const {report, busy, error, catchingUp, retry, older} = useBoard(adapter, topic, topics, capture);
+  const topics = !stream && !topic && message === undefined;
+  const {report, busy, error, catchingUp, retry, older} = useBoard(adapter, topic, topics, capture, message);
   useLayoutEffect(() => {
     const saved = anchor.current; anchor.current = null;
     if (!saved || !root.current) return;
     const element = Array.from(root.current.querySelectorAll<HTMLElement>('[data-board-anchor]')).find(item => item.dataset.boardAnchor === saved.key);
     if (element) window.scrollBy(0, element.getBoundingClientRect().top - saved.top);
   }, [report, error, catchingUp]);
+  useLayoutEffect(() => {
+    if (message === undefined || located.current || !report || error) return;
+    const element = root.current?.querySelector<HTMLElement>('[data-board-anchor="post:' + message + '"]');
+    if (!element) return;
+    located.current = true;
+    element.focus({preventScroll: true});
+    element.scrollIntoView({block: 'start'});
+  }, [message, report, error]);
   const count = report ? topics ? report.topicSummaries.length : report.messages.length : null;
   const noun = topics ? 'topic' : 'message';
   const status = count === null ? busy ? `Loading ${noun}s…` : 'Could not load ' + noun + 's.' : `${topics ? '' : 'Showing '}${count.toLocaleString()} ${noun}${count === 1 ? '' : 's'}${catchingUp ? '. Loading newer messages…' : ''}`;
@@ -112,6 +122,7 @@ export function BoardInspector({adapter, stream, topic}: {adapter: Pick<ConsoleD
           {!report && <Button disabled={busy} onClick={() => void retry()}>Try again</Button>}
         </div>
       )}
+      {report && message !== undefined && !report.messages.some(post => post.id === message) && <div className="oc-forum-feedback"><Notice>Message #{message} is unavailable in this topic.</Notice></div>}
       {report && <BoardContent report={report} topics={topics} stream={stream}/>}
     </ForumPanel>
   );
