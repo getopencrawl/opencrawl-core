@@ -9,12 +9,14 @@ import {randomBytes,createHash} from 'node:crypto';
 if(process.env.CI!=='true')throw new Error('Run this destructive acceptance harness only in its disposable CI job');
 const root=process.cwd(),scratch=join(process.env.RUNNER_TEMP,'full-upgrade');mkdirSync(scratch,{recursive:true});
 const target=process.env.UPGRADE_TARGET,old=process.env.UPGRADE_FROM,kind=process.env.UPGRADE_INSTALLATION||'deploy',sqlite=process.env.UPGRADE_SQLITE==='true',airbyte=process.env.UPGRADE_AIRBYTE==='true';
+const large=kind==='deploy'&&!sqlite;
 assert.match(target,/^[a-f0-9]{40}$/);assert.match(old,/^[a-f0-9]{40}$/);
 const env={...process.env,OPENCRAWL_AIRBYTE_ENABLED:String(airbyte),OPENCRAWL_URL:'http://localhost:8092',OPENCRAWL_IMAGE_TAG:'upgrade-ci'};
 function run(command,args,options={}){const r=spawnSync(command,args,{cwd:root,env,encoding:'utf8',stdio:options.capture?'pipe':'inherit',...options,maxBuffer:32*1024*1024});if(!options.failure)assert.equal(r.status,0,`${command} ${args[0]} failed: ${r.stderr||''}`);return options.failure?r:r.stdout?.trim()||'';}
 const docker=(args,options)=>run('docker',args,options);
 const seedDir=join(scratch,'seed'),fixtureDir=join(scratch,'fixture');mkdirSync(seedDir);mkdirSync(fixtureDir);
 copyFileSync(join(root,'dev/seed.mts'),join(fixtureDir,'seed.mts'));
+copyFileSync(join(root,'deploy/test-full-large-session.mjs'),join(fixtureDir,'large-upgrade.mjs'));
 run('git',['fetch','--depth','1','origin',old]);run('git',['checkout','--detach',old]);
 let project='ocdev-0123456789ab',envFile=join(root,'deploy/.env'),override;
 if(kind==='deploy'){
@@ -31,6 +33,8 @@ if(kind==='deploy'){
 function compose(args,options){return docker(['compose','--project-name',project,'--env-file',envFile,'-f',join(root,'deploy/compose.yaml'),...(sqlite?['-f',join(root,'deploy/compose.sqlite.yaml')]:[]),...(override?['-f',override]:[]),...args],options);}
 const verify=(readOnly=false)=>compose(['run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(readOnly&&!airbyte?['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']:[]),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
 verify();
+const largeSession=(phase,recovery)=>{if(!large)return;const args=['run','--rm','--no-deps','--user','root','-e','UPGRADE_LARGE_PHASE='+phase,'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','dev/large-upgrade.mjs'];if(recovery)docker([...recovery,...args]);else compose(args);};
+largeSession('before');
 // Keep a reservation without a raw upload and a deletion fence in the old PG
 // layout. A migration that copies only accepted session batches would lose them.
 const identityFixture=String.raw`
@@ -74,16 +78,16 @@ assert.equal(compose(['ps','--status','running','-q','app','worker'],{capture:tr
 run(kind==='dev'?'bash':'sh',[kind==='dev'?'dev/up':'deploy/up.sh',...(!airbyte?['--no-airbyte']:[])]);
 assert.ok(readFileSync(join(backup,'manifest.json')).equals(manifest));
 journal=JSON.parse(readFileSync(journalFile,'utf8'));assert.equal(journal.phase,'complete');
-assert.ok(readFileSync(join(seedDir,'seed-input.json')).equals(originalInput));verify(true);checkIdentities();
+assert.ok(readFileSync(join(seedDir,'seed-input.json')).equals(originalInput));verify(true);checkIdentities();largeSession('after');
 assert.equal(compose(['ps','--status','running','-q','temporal-db'],{capture:true}).split('\n').filter(Boolean).length,1);
 const legacy=docker(['ps','-q','--filter',`label=com.docker.compose.project=${project}`,'--filter','label=com.docker.compose.service=app-db'],{capture:true});assert.equal(legacy,'');
 const after=JSON.parse(run(process.execPath,['deploy/upgrade.mjs','--installation',kind,'--check'],{capture:true}).split('\n').at(-1));assert.equal(after.needed,false);
-compose(['restart','app','worker']);compose(['up','-d','--wait','--wait-timeout','600','app','worker']);verify(true);
+compose(['restart','app','worker']);compose(['up','-d','--wait','--wait-timeout','600','app','worker']);verify(true);largeSession('verify');
 // A subsequent release must retain newly accepted events, not recopy a stopped
 // pre-migration app-db. The disposable commit has exactly the same source tree.
 run('git',['-c','user.name=Upgrade acceptance','-c','user.email=upgrade@example.com','commit','--allow-empty','-m','Disposable next-release upgrade acceptance']);
 run(kind==='dev'?'bash':'sh',[kind==='dev'?'dev/up':'deploy/up.sh',...(!airbyte?['--no-airbyte']:[])]);
-const nextJournal=JSON.parse(readFileSync(journalFile,'utf8'));assert.equal(nextJournal.phase,'complete');assert.notEqual(nextJournal.target,target);assert.equal(nextJournal.legacyDatabase,null);verify(true);checkIdentities();
+const nextJournal=JSON.parse(readFileSync(journalFile,'utf8'));assert.equal(nextJournal.phase,'complete');assert.notEqual(nextJournal.target,target);assert.equal(nextJournal.legacyDatabase,null);verify(true);checkIdentities();largeSession('verify');
 // Restore the pre-upgrade matched data AND immutable old runtime images.
 if(airbyte)docker(['stop',project+'-control-plane']);
 compose(['down','--volumes','--remove-orphans']);
@@ -101,7 +105,8 @@ if(airbyte){
 }
 // Use the restored container; the current Compose config would replace it.
 docker([...recovery,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(!airbyte?['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']:[]),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
-const report={ok:true,from:old,to:target,installation:kind,airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
+largeSession('restored',recovery);
+const report={ok:true,largeSessionCeilingReproducedAndRemoved:large,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
 writeFileSync(join(process.env.RUNNER_TEMP,'full-upgrade-receipt.json'),JSON.stringify(report,null,2));
 docker([...recovery,'down','--volumes','--remove-orphans']);
 if(airbyte)run('bash',['dev/up','reset','--yes']);

@@ -84,6 +84,8 @@ CI starts immutable older full applications for both startup paths and both
 pre-PostgreSQL and dedicated-PostgreSQL layouts. It checks existing account and
 OAuth identity, search and board persistence, idempotent event retry, conflicting
 event rejection, new writes, failure/resume, restart, and matched old-version
-restore. Fresh full-application checks cover x64, ARM64 and the SQLite profile. The
+restore. The legacy OpenSearch case also reproduces the old 413 rejection with
+125,000 retained event IDs, accepts the next 1,000 after migration, and verifies
+capture and authenticated tail search for a message larger than 6 MiB. Fresh full-application checks cover x64, ARM64 and the SQLite profile. The
 explicit full-Airbyte workflow also upgrades an older default installation and
 checks its retained connector and source-to-search path.
