@@ -1,10 +1,9 @@
 import {existsSync,readFileSync,mkdirSync,mkdtempSync,renameSync,rmSync,chmodSync} from 'node:fs';
 import {join,dirname,basename} from 'node:path';
 import {createHash,timingSafeEqual} from 'node:crypto';
-import {createRequire} from 'node:module';
 import {withFileLock} from './session.ts';
 import {retryWindowsSharing} from './filesystem.ts';
-import {readCaptureConfig} from './capture/runtime.ts';
+import * as distribution from './distribution.ts';
 
 const PACKAGE='@getopencrawl/cli',REGISTRY='https://registry.npmjs.org';
 const MAX_ARCHIVE=160*1024*1024,MAX_UNPACKED=512*1024*1024;
@@ -15,11 +14,21 @@ process.once('exit',()=>{for(const stage of stages)try{rmSync(stage,{recursive:t
 type Launcher={cacheRoot:()=>string;target:()=>string;stable:(v:string)=>boolean;activeRoot:()=>string;
   updateDue:(state:unknown)=>boolean;
   automaticUpdate:(options:{signal?:AbortSignal;install:(version:string)=>Promise<void>})=>Promise<unknown>};
-function installedLauncher():Launcher|undefined {
-  const file=process.env.OPENCRAWL_LAUNCHER??readCaptureConfig()?.command.find(part=>basename(part)==='opencrawl.cjs');
-  if(!file||basename(file)!=='opencrawl.cjs')return;
-  const require=createRequire(import.meta.url),bootstrap=require(file);
-  return require(join(bootstrap.activeRoot(),'bin','opencrawl.cjs'));
+function nativeDistribution():Launcher|undefined {
+  if(!distribution.compiled())return;
+  return {...distribution,automaticUpdate:async options=>{
+    try{return await distribution.update({...options,install:options.install});}
+    catch(error){
+      const {atomicJson}=await import('./session.ts');
+      try{atomicJson(join(distribution.cacheRoot(),'update.json'),{nextCheckAt:Date.now()+15*60_000});}catch{}
+      if(!options.signal?.aborted)throw error;
+    }
+  }};
+}
+export async function updateCli(){
+  if(!distribution.compiled())throw new Error('Run update from the installed native executable.');
+  const launcher=nativeDistribution()!;
+  return withFileLock(join(distribution.cacheRoot(),'update.lock'),()=>distribution.update({force:true,install:v=>installNativeRelease(v,{launcher})}));
 }
 function readState(file:string):unknown {try{return JSON.parse(readFileSync(file,'utf8'));}catch{return null;}}
 async function bytes(response:Response,limit:number,signal?:AbortSignal) {
@@ -44,7 +53,7 @@ export async function installNativeRelease(version:string,{launcher,signal,regis
   const target=launcher.target(),platformName=PACKAGE+'-'+target;
   const releases=join(launcher.cacheRoot(),'releases'),destination=join(releases,version);
   mkdirSync(releases,{recursive:true,mode:0o700});
-  // The shared launcher validates a pre-existing complete publication.
+  // The release selector validates a pre-existing complete publication.
   if(existsSync(destination))return;
   const stage=mkdtempSync(join(releases,'.stage-'));stages.add(stage);
   try {
@@ -59,7 +68,7 @@ export async function installNativeRelease(version:string,{launcher,signal,regis
       signal?.throwIfAborted();
       const files=await new Bun.Archive(archive).files();
       const executable=name===PACKAGE?'bin/opencrawl.cjs':'bin/'+(target.startsWith('win32-')?'opencrawl.exe':'opencrawl');
-      const allowed=new Set(['package.json',executable,'runtime/opencrawl.js','README.md','LICENSE','THIRD_PARTY_NOTICES.txt']);
+      const allowed=new Set(['package.json',executable,'runtime/opencrawl.js','README.md','LICENSE','THIRD_PARTY_NOTICES.txt',...(name===PACKAGE?['bin/opencrawl.exe','install.cjs']:[])]);
       let size=0;
       for(const [path,file] of files) {
         if(!path.startsWith('package/')||!allowed.has(path.slice(8))||(size+=file.size)>MAX_UNPACKED)throw new Error('Invalid update archive');
@@ -75,8 +84,8 @@ export async function installNativeRelease(version:string,{launcher,signal,regis
       }
     }
     signal?.throwIfAborted();
-    // Explicit npm updates can race us. They publish only complete directories;
-    // the launcher chooses and validates the highest complete version afterward.
+    // Legacy npm updates can race native updates. Only complete releases become
+    // visible; each native invocation selects the highest valid version.
     retryWindowsSharing(()=>{
       signal?.throwIfAborted();
       try{renameSync(stage,destination);}catch(error){if(!existsSync(destination))throw error;}
@@ -84,7 +93,7 @@ export async function installNativeRelease(version:string,{launcher,signal,regis
   }finally{retryWindowsSharing(()=>rmSync(stage,{recursive:true,force:true}));stages.delete(stage);}
 }
 
-export async function refreshCli({signal,launcher=installedLauncher(),install}: {signal?:AbortSignal;launcher?:Launcher;install?:(version:string)=>Promise<void>}={}) {
+export async function refreshCli({signal,launcher=nativeDistribution(),install}: {signal?:AbortSignal;launcher?:Launcher;install?:(version:string)=>Promise<void>}={}) {
   if(process.env.OPENCRAWL_NO_UPDATE==='1'||!launcher?.updateDue)return;
   const state=join(launcher.cacheRoot(),'update.json');
   if(!launcher.updateDue(readState(state)))return;

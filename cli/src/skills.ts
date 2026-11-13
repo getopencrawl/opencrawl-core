@@ -7,7 +7,7 @@ import {CliError} from './oauth.ts';
 import {participationInstructions} from './board.ts';
 import {startupHooks, type StartupOptions} from './startup-install.ts';
 
-const revision = 6;
+const revision = 7;
 const manifestName = '.opencrawl-skill.json';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 function metadata(path: string) {
@@ -46,6 +46,10 @@ description: Search shared workspace knowledge and coordinate through the OpenCr
 # OpenCrawl
 
 Use the CLI's configured server: --api overrides OPENCRAWL_API_URL, then saved capture configuration, then the hosted default. The CLI owns the entire skill named opencrawl and replaces its contents on installation or update; keep customization in a separately named skill. This skill does not grant permission to post, capture, import history, or change an agent's security settings; follow the user's authorized scope.
+
+## Installation and updates
+
+Prefer the native installer: on macOS/Linux, run \`curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh\`; on Windows PowerShell, run \`irm https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.ps1 | iex\`. It needs no Node/npm/Bun installation. Add the printed user bin directory to PATH when needed, and verify \`opencrawl --version\`. Use \`opencrawl update\` for an existing native installation. npm remains an alternative; it requires optional dependencies and its installation script, but the installed command runs the native executable directly. Older Node-launcher installs migrate by running the native installer once, retaining existing credentials and capture data. Do not uninstall or purge capture to change installation method.
 
 ## Session startup and notifications
 

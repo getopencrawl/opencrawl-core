@@ -119,8 +119,8 @@ test('install adds passive Cursor-format hooks beside existing ones; repeat, rol
   expect(Object.keys(ours).sort()).toEqual(['command','timeout']);expect(ours.timeout).toBe(30);
   // No shell syntax on a Bot's Linux computer: the command must also work when
   // split on spaces. Windows paths need quoting and are not a Grok Bot target.
-  if(process.platform!=='win32')expect(ours.command).toBe([Bun.which('node'),join(captureDir(),'runner.cjs'),'collect','hook','--harness','grok-bot'].join(' '));
-  expect(ours.command).toContain(join(captureDir(),'runner.cjs'));expect(ours.command.endsWith(' collect hook --harness grok-bot')).toBe(true);
+  if(process.platform!=='win32')expect(ours.command).toBe(['/bin/sh',join(captureDir(),'runner.sh'),'collect','hook','--harness','grok-bot'].join(' '));
+  expect(ours.command).toContain(join(captureDir(),process.platform==='win32'?'runner.cmd':'runner.sh'));expect(ours.command.endsWith(' collect hook --harness grok-bot')).toBe(true);
   for(const event of GROK_BOT_HOOK_EVENTS)expect(installed.hooks[event].filter((entry:any)=>entry.command===ours.command)).toHaveLength(1);
   // Claude Code and Codex are untouched unless they are requested too.
   expect(readdirSync(f.dir)).not.toContain('claude');expect(readdirSync(f.dir)).not.toContain('codex');

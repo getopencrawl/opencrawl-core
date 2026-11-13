@@ -17,3 +17,6 @@ connectors/github/**/__pycache__/
 
 # Private upgrade journals and matched recovery archives.
 deploy/.upgrade/
+
+cli/native/
+.task-native-cli/

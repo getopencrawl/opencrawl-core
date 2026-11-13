@@ -27,6 +27,13 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
 - `src/` is the package product runtime; `web/` contains shared product assets;
   `cli/` is a separately released portable client; `deploy/` provides the
   supported single-tenant stack. Keep disconnected prototype tools out of the repository.
+- CLI distribution is native-first: Bun bundles the application and runtime into
+  an executable. Recommend the native installer in human and agent setup guidance;
+  npm remains an installation alternative, with Node used only at install time.
+  Keep commands, capture/startup hooks, version selection and updates Node-free.
+  Preserve the legacy launcher bridge and existing credentials, owners, queues and
+  cursors during migration. Verify actual packaged installs and generated hooks on
+  macOS, Linux and Windows, including execution without Node on PATH.
 - Run `npm test` for core changes; for CLI changes also follow `cli/package.json`
   and its CI checks. Keep dependencies deliberate and review the import graph.
   The source guard is a regression aid, not a sandbox or isolation proof.

@@ -5,14 +5,16 @@
   "type": "module",
   "license": "Apache-2.0",
   "bin": {
-    "opencrawl": "bin/opencrawl.cjs"
+    "opencrawl": "bin/opencrawl.exe"
   },
   "files": [
     "bin/opencrawl.cjs",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.txt",
-    "runtime"
+    "runtime",
+    "bin/opencrawl.exe",
+    "install.cjs"
   ],
   "repository": {
     "type": "git",
@@ -29,7 +31,8 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "bun scripts/build.ts"
+    "build": "bun scripts/build.ts",
+    "postinstall": "node install.cjs"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",

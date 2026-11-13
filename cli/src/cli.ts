@@ -6,7 +6,7 @@ import {upgradeCaptureHooks} from './capture/install.ts';
 import {collectCommand} from './capture/command.ts';
 import {readCaptureConfig} from './capture/runtime.ts';
 import {scheduleMemoryRefresh} from './capture/memory.ts';
-import {scheduleCliUpdate} from './update.ts';
+import {scheduleCliUpdate,updateCli} from './update.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs, stripVTControlCharacters} from 'node:util';
 import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest, DEFAULT_API_ORIGIN} from './oauth.ts';
@@ -16,10 +16,11 @@ import {agentSkills} from './skills.ts';
 import {withEnvironmentTokenOrigin} from './environment-token.ts';
 import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 import {tokenCommand} from './token.ts';
+import {version,delegateToNewest,installBinary,compiled,cacheRoot,read as readDistributionState} from './distribution.ts';
+import {join} from 'node:path';
+import {atomicJson} from './session.ts';
 import {sessionStartCommand} from './session-start.ts';
 
-declare const OPENCRAWL_VERSION: string;
-const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.2.0-dev';
 const help = `opencrawl — OpenCrawl CLI
 
 Usage: opencrawl <command> [--json] [--api <https-origin>]
@@ -35,6 +36,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   skills      Install or inspect the OpenCrawl skill for detected agent clients
   session     Bootstrap a native SessionStart hook (session start --harness NAME)
   token       Create or revoke an agent access token for machines created per task
+  install     Install this native executable in your user bin directory
   update      Install the latest CLI for your next invocation
 
 Options:
@@ -212,17 +214,19 @@ export async function main(args = process.argv.slice(2)) {
     informational=Boolean(parsed.values.help||parsed.values.version||command==='help'||command==='board'&&!parsed.positionals[1]);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help' || command==='board'&&!parsed.positionals[1]) { const text=commandHelp(command,parsed.positionals[1])??help;emit({help:text}, text.trimEnd()); return 0; }
-    if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['login', 'logout', 'whoami', 'status', 'install', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (['login','token'].includes(command) && workspaceIdentityEnabled()) throw new CliError('WORKLOAD_ACCOUNT_ACTION', 'Workspace identity cannot manage human sign-ins or credentials. Use your personal machine for account setup.', 2);
     const organizationId = parsed.values.organization as string | undefined;
     if (organizationId !== undefined && (command !== 'login' || !/^org_[A-Za-z0-9]+$/.test(organizationId))) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
     if (organizationId && process.env.OPENCRAWL_TOKEN?.trim()) throw new CliError('ENVIRONMENT_TOKEN_ACTIVE', 'Unset OPENCRAWL_TOKEN before selecting a workspace with your saved sign-in. Environment tokens remain bound to the workspace that issued them.', 2);
     if (parsed.values.client && command !== 'skills') throw new CliError('INVALID_USAGE', 'Use --client with skills install or skills status.', 64);
-    if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
+    if(command==='install'){if(!compiled())throw new CliError('INSTALL_UNAVAILABLE','Run install from a released executable.');const data=await installBinary();await agentSkills('refresh',apiOrigin((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL??readCaptureConfig()?.api??DEFAULT_API_ORIGIN),{});emit(data,`Installed opencrawl ${data.version} at ${data.path}. Add its directory to PATH if needed.`);return 0;}
+    if(command==='update'){const data=await updateCli();emit(data,data.updated?`Installed opencrawl ${data.version}. Your next invocation will use it.`:`opencrawl ${data.version} is current.`);return 0;}
     updateJob=scheduleCliUpdate();
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL
       ?? readCaptureConfig()?.api
       ?? DEFAULT_API_ORIGIN);
+    if(command!=='collect'&&command!=='skills'&&process.env.OPENCRAWL_NO_UPDATE!=='1')await refreshManagedSkills(api);
     if (command === 'skills') {
       const data = await agentSkills(parsed.positionals[1] ?? 'status', api, {clients: parsed.values.client as string[] | undefined});
       emit(data, JSON.stringify(data, null, 2));
@@ -336,7 +340,9 @@ export async function main(args = process.argv.slice(2)) {
     const failure = filesystemError(error);
     const known = failure instanceof CliError;
     const code = known ? failure.code : 'CLI_ERROR';
-    const message = known ? failure.message : 'The command failed. Retry, or run opencrawl login to repair your session.';
+    const message = known ? failure.message : ['install','update'].includes(args[0]??'')
+      ? 'The CLI installation or update failed. Retry the native installer, keeping your existing configuration and capture data.'
+      : 'The command failed. Retry, or run opencrawl login to repair your session.';
     if (json) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code, message, ...(known && failure.workspaces ? {workspaces: failure.workspaces} : {})}}) + '\n');
     else process.stderr.write(`opencrawl: ${message}\n`);
     const exit = known ? failure.exitCode : 1;
@@ -350,7 +356,21 @@ export async function main(args = process.argv.slice(2)) {
   }
 }
 
+async function refreshManagedSkills(api:string){
+  const file=join(cacheRoot(),'skills-update.json'),previous=readDistributionState(file);
+  if(previous?.version===version&&(previous.complete||previous.checkedAt>Date.now()-15*60_000))return;
+  try{
+    const data=await agentSkills('refresh',api,{}),rows=data.results;
+    const conflicts=rows.filter(row=>row.status==='conflict').length,errors=rows.filter(row=>row.status==='error').length;
+    const result={status:conflicts||errors?'attention_required':'current',updated:rows.filter(row=>['installed','updated'].includes(row.status)).length,conflicts,errors};
+    atomicJson(file,{version,checkedAt:Date.now(),complete:!errors,result});
+    if(errors)process.stderr.write('opencrawl: Managed skill refresh needs attention; run opencrawl skills refresh --json.\n');
+  }catch{} // Sandboxed skill directories must not prevent normal CLI use.
+}
+
 if (import.meta.main) {
+  const delegated=delegateToNewest(process.argv.slice(2));
+  if(delegated!==undefined)process.exit(delegated);
   // Once a one-use refresh has left, save its response before honoring a
   // cooperative shutdown. The request itself has a bounded deadline.
   const stop = (code: number) => {
