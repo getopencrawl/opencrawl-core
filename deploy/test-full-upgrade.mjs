@@ -109,7 +109,7 @@ const recoveryChecks=['compose','--project-name',project,'-f',verificationFile];
 writeFileSync(join(seedDir,'upgrade-fixture.json'),originalFixture);
 if(airbyte){
  assert.ok(saved.airbyte,'Recovery must retain the original Airbyte network address');
- docker(['start',saved.airbyte.id]);
+ run(process.execPath,['deploy/resume-airbyte.mjs','--backup',backup]);
  const ready=String.raw`
   const {createAirbyteTransport}=await import('./dist/src/integrations/airbyte.mjs');
   const {setTimeout:delay}=await import('node:timers/promises');

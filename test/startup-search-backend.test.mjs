@@ -11,7 +11,7 @@ function fixture(t){
   const root=realpathSync(mkdtempSync(join(tmpdir(),'opencrawl-startup-')));
   t.after(()=>rmSync(root,{recursive:true,force:true}));
   for(const name of ['dev','deploy','bin'])mkdirSync(join(root,name));
-  for(const name of ['dev/installer.mts','dev/pins.json','deploy/up.sh','deploy/.env.example'])copyFileSync(join(source,name),join(root,name));
+  for(const name of ['dev/installer.mts','dev/airbyte-routes.mts','dev/pins.json','deploy/up.sh','deploy/.env.example'])copyFileSync(join(source,name),join(root,name));
   // Upgrade behavior has its own stateful acceptance suite; this fixture isolates backend selection.
   writeFileSync(join(root,'deploy/upgrade.mjs'),'process.exit(0);\n');
   writeFileSync(join(root,'dev/up'),'#!/bin/sh\nprintf \"%s\\n\" \"$TEST_NODE_RUNTIME\"\n',{mode:0o755});

@@ -1,3 +1,4 @@
+import {routeUrl,routeManifest} from './airbyte-routes.mts';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {createServer} from 'node:net';
@@ -90,11 +91,7 @@ function composeExists(){return existsSync(envFile)&&existsSync(override);}
 // loopback, which a job cannot reach, so the cluster gets a stable name for the app container.
 const appService='opencrawl-app',appForAirbyte=`http://${appService}.airbyte.svc.cluster.local:8092`;
 async function publishApp(address:string){
-  kubectl(['apply','-f','-'],{capture:true,input:JSON.stringify({apiVersion:'v1',kind:'List',items:[
-    {apiVersion:'v1',kind:'Service',metadata:{name:appService,namespace:'airbyte'},spec:{ports:[{name:'http',port:8092,targetPort:8092,protocol:'TCP'}]}},
-    {apiVersion:'discovery.k8s.io/v1',kind:'EndpointSlice',metadata:{name:appService,namespace:'airbyte',labels:{'kubernetes.io/service-name':appService}},
-      addressType:'IPv4',ports:[{name:'http',port:8092,protocol:'TCP'}],endpoints:[{addresses:[address]}]},
-  ]})});
+  kubectl(['apply','-f','-'],{capture:true,input:JSON.stringify(routeManifest({app:address}))});
   await until('Airbyte access to the application',async()=>kubectl(
     ['-n','airbyte','exec','airbyte-db-0','--','wget','-q','-T','5','-O','-',appForAirbyte+'/health'],{capture:true,allowFailure:true}).includes('"ok":true'),2);
 }
@@ -149,7 +146,7 @@ function ip(service:string){
   const address=info.NetworkSettings.Networks[state.project+'_default']?.IPAddress;
   if(!address||!/^\d+\.\d+\.\d+\.\d+$/.test(address))throw new Error(`Missing ${service} address`);return address;
 }
-function writeCompose(airbyteAddress='127.0.0.1',s3Address='s3',workspaceId=state.workspaceId||'00000000-0000-0000-0000-000000000000'){
+function writeCompose(airbyteAddress='127.0.0.1',workspaceId=state.workspaceId||'00000000-0000-0000-0000-000000000000'){
   const connectorFile=join(stateDir,'connectors.env');
   if(!existsSync(connectorFile))privateFile(connectorFile,'# Optional credentials for real integrations. Restart with ./dev/up after editing.\n# COMPOSIO_API_KEY=\n# SLACK_CLIENT_ID=\n# SLACK_CLIENT_SECRET=\n# GITHUB_APP=\n');
   if(lstatSync(connectorFile).isSymbolicLink())throw new Error('Refusing symlinked connector configuration');
@@ -159,7 +156,7 @@ function writeCompose(airbyteAddress='127.0.0.1',s3Address='s3',workspaceId=stat
     OPENCRAWL_AUTH_SECRET:state.authSecret,OPENCRAWL_SETUP_TOKEN:state.setupToken,OPENCRAWL_CONNECTOR_KEY:state.connectorKey,
     OPENCRAWL_S3_ACCESS_KEY_ID:state.s3Key,OPENCRAWL_S3_SECRET_ACCESS_KEY:state.s3Secret,OPENCRAWL_TEMPORAL_PASSWORD:state.temporalPassword,OPENCRAWL_DATABASE_PASSWORD:state.databasePassword,
     OPENCRAWL_AIRBYTE_ENABLED:String(airbyteEnabled),OPENCRAWL_APP_PORT:String(state.port),OPENCRAWL_APP_BIND:'127.0.0.1',OPENCRAWL_S3_BIND:'127.0.0.1',OPENCRAWL_S3_PORT:'0',
-    ...(airbyteEnabled?{OPENCRAWL_AIRBYTE_S3_ENDPOINT:`http://${s3Address}:8333`,AIRBYTE_URL:`http://${airbyteAddress}:30080`,AIRBYTE_CLIENT_ID:state.airbyteClientId,AIRBYTE_CLIENT_SECRET:state.airbyteClientSecret,AIRBYTE_WORKSPACE_ID:workspaceId,
+    ...(airbyteEnabled?{OPENCRAWL_AIRBYTE_S3_ENDPOINT:routeUrl('s3'),AIRBYTE_URL:`http://${airbyteAddress}:30080`,AIRBYTE_CLIENT_ID:state.airbyteClientId,AIRBYTE_CLIENT_SECRET:state.airbyteClientSecret,AIRBYTE_WORKSPACE_ID:workspaceId,
       OPENCRAWL_AIRBYTE_APP_URL:appForAirbyte,...connectorEnv}:{} )};
   privateFile(envFile,Object.entries(env).map(([k,v])=>`${k}=${JSON.stringify(v)}`).join('\n')+'\n');
   // Only additive dev composition. The normal images, env contract, data volumes,
@@ -195,9 +192,12 @@ async function up(){
   console.log('Building the shared product runtime and React console...');compose(['build','app']);
   if(airbyteEnabled)await startAirbyte(existing);
   console.log('Starting the normal authenticated application and indexing worker...');compose(['up','-d','--wait','--wait-timeout','600','app','worker']);
-  if(airbyteEnabled)await publishApp(ip('app'));
+  if(airbyteEnabled){
+    await publishApp(ip('app'));
+    compose(['run','--rm','--no-deps','--user','root','--volume',`${join(root,'dev')}:/opencrawl/dev:ro`,'app','node','dev/refresh-routes.mts']);
+  }
   const credentials={format:1,project:state.project,origin:state.origin,connectOrigin:'http://app:8092',organization:state.organization,email:state.email,password:state.password,setupToken:state.setupToken,
-    airbyteEnabled,...(airbyteEnabled?{fixtureUrl:`http://${ip('fixture')}:8080`}:{})};
+    airbyteEnabled,...(airbyteEnabled?{fixtureUrl:routeUrl('fixture')}:{})};
   const seedDir=join(stateDir,'seed');mkdirSync(seedDir,{recursive:true,mode:0o700});
   privateFile(join(seedDir,'seed-input.json'),credentials);
   console.log(action==='demo'?`Loading demo data and verifying ${airbyteEnabled?'Airbyte → ':''}S3 → Temporal → ${sqlite?'SQLite FTS5':'OpenSearch'} ingestion...`:'Creating the local account and preserving first-run onboarding...');
@@ -270,5 +270,6 @@ async function startAirbyte(existing:ReturnType<typeof ownedNode>){
     state.workspaceId=matches[0]?.workspaceId||(await api('POST','/workspaces',{name:state.project})).workspaceId;
     if(!state.workspaceId)throw new Error('Airbyte returned no workspace ID');save();
   }
-  writeCompose(airbyteIp,ip('s3'));
+  kubectl(['apply','-f','-'],{capture:true,input:JSON.stringify(routeManifest({s3:ip('s3'),fixture:ip('fixture')}))});
+  writeCompose(airbyteIp);
 }

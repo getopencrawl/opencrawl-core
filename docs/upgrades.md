@@ -47,7 +47,10 @@ and deletion records. No source volume is automatically deleted.
 Next, event-ledger migration scans the retained object store, using per-session
 commits for restartability. The app and worker must pass their normal health
 checks. For `dev/up`, its normal installer also resumes Airbyte and republishes
-the app endpoint. A build failure leaves the old app running. A later failure
+the app endpoint. Owned Airbyte destinations and the built-in demo source move
+from transient container IPs to stable private service names; startup refreshes
+their routes without replacing credentials or connection IDs. A build failure
+leaves the old app running. A later failure
 stops application writers; inspect a `writers-stop-unconfirmed` result before
 allowing any further writes. Fix the failure and resume, rather than starting
 old binaries against partly migrated storage.
@@ -71,8 +74,9 @@ command to start those old images. Use that command, not the newer source's
 Compose file. Check login, retained session search, board history and connector
 retrieval before reopening access. The recovery point records the owned private
 network and running service addresses. Its start command also resumes a retained
-development Airbyte node at its original address, so existing source, destination
-and application routes continue to work. Keep the original development stack
+development Airbyte node and reapplies its saved application, storage and demo
+routes using the retained private Kubernetes configuration. This also repairs
+the stable service names introduced by a newer release before rollback. Keep the original development stack
 running when beginning an upgrade so these routes can be recorded. Starting the
 updated checkout later runs the upgrade again.
 

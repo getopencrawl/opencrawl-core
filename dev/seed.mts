@@ -15,7 +15,7 @@ const input=JSON.parse(readFileSync('/dev-state/seed-input.json','utf8')) as Inp
 const verifyOnly=process.env.OPENCRAWL_DEV_VERIFY_ONLY==='true';
 if(input.format!==1||!/^ocdev-[a-f0-9]{12}$/.test(input.project)||input.organization!==process.env.OPENCRAWL_ORGANIZATION_ID)throw new Error('Development seed scope mismatch');
 if(input.airbyteEnabled!==(process.env.OPENCRAWL_AIRBYTE_ENABLED!=='false'))throw new Error('Development seed mode mismatch');
-if(input.airbyteEnabled&&!/^http:\/\/\d+\.\d+\.\d+\.\d+:8080$/.test(input.fixtureUrl||'')||input.connectOrigin!=='http://app:8092')throw new Error('Unexpected development fixture address');
+if(input.airbyteEnabled&&!(input.fixtureUrl==='http://opencrawl-fixture.airbyte.svc.cluster.local:8080'||/^http:\/\/\d+\.\d+\.\d+\.\d+:8080$/.test(input.fixtureUrl||''))||input.connectOrigin!=='http://app:8092')throw new Error('Unexpected development fixture address');
 const stateFile='/dev-state/seed.json';
 const seed:SeedState=existsSync(stateFile)?JSON.parse(readFileSync(stateFile,'utf8')):{project:input.project,integrationId:'int_'+randomBytes(13).toString('hex')};
 if(seed.project!==input.project||!/^int_[a-f0-9]{26}$/.test(seed.integrationId))throw new Error('Sample data belongs to another development installation');
@@ -163,7 +163,7 @@ try{
       if(process.env.OPENCRAWL_UPGRADE_FIXTURE==='true'){
         const transport=createAirbyteTransport({url:required('AIRBYTE_URL'),clientId:required('AIRBYTE_CLIENT_ID'),clientSecret:required('AIRBYTE_CLIENT_SECRET')});
         const details=await transport.config<{attempts?:Array<{attempt?:{failureSummary?:unknown};failureSummary?:unknown}>}>('/jobs/get',{id:Number(job.jobId)});
-        let summary=JSON.stringify(details.attempts?.map(a=>a.attempt?.failureSummary??a.failureSummary??null));
+        let summary=JSON.stringify(details.attempts?.map(a=>a.attempt?.failureSummary??a.failureSummary??null))||'[]';
         for(const [key,value] of Object.entries(process.env))if(/secret|password|token|key|credential/i.test(key)&&value&&value.length>=8)summary=summary.replaceAll(value,'[redacted]');
         console.log('Synthetic Airbyte failure summary: '+summary.slice(0,6000));
       }
