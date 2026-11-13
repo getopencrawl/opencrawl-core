@@ -1,7 +1,9 @@
+import {replicasBindings, type ReplicasBinding} from '../identity/replicas.mjs';
 import type {IdentitySettings} from '../identity/types.mjs';
 import {CLI_CLIENT_ID} from '../identity/better-auth.mjs';
 import {sqlitePath} from '../search/sqlite.mjs';
 export interface SelfhostSettings extends IdentitySettings {
+  replicasBindings?:ReplicasBinding[];
   organizationId:string; authSecret:string; identityPath:string; setupToken:string; revision?:string;
   registryPath:string; search:{endpoint:string;username?:string;password?:string;environment:string;tenantId:string};
 }
@@ -29,7 +31,7 @@ export function selfhostSettings(env:NodeJS.ProcessEnv=process.env):SelfhostSett
   const username=env.OPENCRAWL_OPENSEARCH_USERNAME,password=env.OPENCRAWL_OPENSEARCH_PASSWORD;
   if(Boolean(username)!==Boolean(password))throw new Error('Set both OpenSearch username and password');
   if(search.protocol==='sqlite:'&&(username||password))throw new Error('SQLite search does not use OpenSearch credentials');
-  return {url,authOrigin:url+'/api/auth',clientId:CLI_CLIENT_ID,organizationId,authSecret,revision:env.REVISION,
+  return {replicasBindings:replicasBindings(env.OPENCRAWL_REPLICAS_BINDINGS,organizationId),url,authOrigin:url+'/api/auth',clientId:CLI_CLIENT_ID,organizationId,authSecret,revision:env.REVISION,
     identityPath:env.OPENCRAWL_IDENTITY_PATH||'/data/identity.sqlite',setupToken:required('OPENCRAWL_SETUP_TOKEN'),
     registryPath:env.OPENCRAWL_REGISTRY_PATH||'/data/integrations.sqlite',
     search:{endpoint,username,password,environment:'selfhost',tenantId:organizationId}};

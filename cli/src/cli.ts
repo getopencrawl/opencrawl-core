@@ -11,7 +11,8 @@ import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest, DEF
 import {readSession, saveSession, accessToken, logout, selectOrganization, credentialRotation} from './session.ts';
 import {filesystemError} from './filesystem.ts';
 import {agentSkills} from './skills.ts';
-import {withEnvironmentTokenOrigin, environmentToken} from './environment-token.ts';
+import {withEnvironmentTokenOrigin} from './environment-token.ts';
+import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 import {tokenCommand} from './token.ts';
 
 declare const OPENCRAWL_VERSION: string;
@@ -151,8 +152,8 @@ export async function identity(api: string, fetcher = fetch, initialToken?: stri
 }> {
   let token = initialToken ?? await accessToken(api, undefined, fetcher);
   let result = await jsonRequest(`${api}/api/cli/me`, {headers: {authorization: `Bearer ${token}`}}, fetcher);
-  if (result.response.status === 401 && !initialToken) {
-    token = await accessToken(api, token, fetcher);
+  if (result.response.status === 401 && (!initialToken || workspaceIdentityEnabled())) {
+    token = workspaceIdentityEnabled() ? (await configuredToken('OPENCRAWL_TOKEN', api, token))! : await accessToken(api, token, fetcher);
     result = await jsonRequest(`${api}/api/cli/me`, {headers: {authorization: `Bearer ${token}`}}, fetcher);
   }
   if (result.response.status === 401) throw new CliError('AUTH_REQUIRED', 'Your session expired. Run opencrawl login again.', 2);
@@ -194,6 +195,7 @@ export async function main(args = process.argv.slice(2)) {
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
     if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (['login','token'].includes(command) && workspaceIdentityEnabled()) throw new CliError('WORKLOAD_ACCOUNT_ACTION', 'Workspace identity cannot manage human sign-ins or credentials. Use your personal machine for account setup.', 2);
     const organizationId = parsed.values.organization as string | undefined;
     if (organizationId !== undefined && (command !== 'login' || !/^org_[A-Za-z0-9]+$/.test(organizationId))) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
     if (organizationId && process.env.OPENCRAWL_TOKEN?.trim()) throw new CliError('ENVIRONMENT_TOKEN_ACTIVE', 'Unset OPENCRAWL_TOKEN before selecting a workspace with your saved sign-in. Environment tokens remain bound to the workspace that issued them.', 2);
@@ -273,15 +275,15 @@ export async function main(args = process.argv.slice(2)) {
     // A machine created for one task has no saved sign-in, only the token its platform injected.
     // A token the service does not accept here leaves the saved sign-in to decide, as before.
     let configured: string | undefined;
-    try { configured = environmentToken('OPENCRAWL_TOKEN', api); } catch {}
+    try { configured = await configuredToken('OPENCRAWL_TOKEN', api); } catch (error) {if(workspaceIdentityEnabled())throw error;}
     if (configured) {
       let verified: Awaited<ReturnType<typeof identity>> | null = null;
       try { verified = await identity(api, fetch, configured); }
-      catch (error) { if (!(error instanceof CliError) || !['AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'ORGANIZATION_REQUIRED'].includes(error.code)) throw error; }
+      catch (error) { if (workspaceIdentityEnabled() || !(error instanceof CliError) || !['AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'ORGANIZATION_REQUIRED'].includes(error.code)) throw error; }
       if (verified) {
         const {user} = verified;
-        emit({api, version, authenticated: true, credential: 'environment-token', ...verified, ...(command === 'status' ? {index: {available: null}} : {})},
-          command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''} with OPENCRAWL_TOKEN.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
+        emit({api, version, authenticated: true, credential: workspaceIdentityEnabled() ? 'workspace-identity' : 'environment-token', ...verified, ...(command === 'status' ? {index: {available: null}} : {})},
+          command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''} with ${workspaceIdentityEnabled() ? "Replicas workspace identity" : "OPENCRAWL_TOKEN"}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
         return 0;
       }
     }

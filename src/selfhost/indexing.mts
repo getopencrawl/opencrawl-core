@@ -10,7 +10,7 @@ export function singleOrganizationSessionSource(settings:SelfhostSettings,store:
     if(input.sourceId!==sourceId)throw Object.assign(new Error('Session source denied'),{permanent:true});
     return {store,search,prefix,jobId:'single-organization-sessions-v1',resolvePrincipal:async({batch})=>{
       const {tenantId,userId}=batch.owner||{};
-      if(tenantId!==settings.organizationId||!/^user_[A-Za-z0-9]+$/.test(userId||''))throw Object.assign(new Error('Stored organization scope denied'),{permanent:true});
+      if(tenantId!==settings.organizationId||!(/^(?:user_[A-Za-z0-9]+|workload_replicas_[a-f0-9]{64})$/.test(userId||'')))throw Object.assign(new Error('Stored organization scope denied'),{permanent:true});
       return {tenantId,userId};
     }};
   };

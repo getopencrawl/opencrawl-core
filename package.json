@@ -50,6 +50,7 @@
     "./web-v2/styles.css": "./web-v2/src/styles.css",
     "./web-v2/architecture": "./web-v2/tools/architecture.ts",
     "./web-v2/types": "./web-v2/src/types.ts",
+    "./identity/replicas": "./dist/src/identity/replicas.mjs",
     "./identity/auth": "./dist/src/identity/auth.mjs",
     "./identity/principal": "./dist/src/identity/principal.mjs",
     "./identity/cli": "./dist/src/identity/cli.mjs",
