@@ -633,13 +633,13 @@ for (const viewport of [{width:1280,height:813},{width:400,height:580}]) {
     await page.getByRole('button',{name:'Show setup prompt'}).click();
     await request.post('/__test/state',{data:{status:{cli:receipt}}});
     await refresh(page);
-    await expect(page.getByRole('button',{name:'Copy MCP setup prompt',exact:true})).toBeVisible();
+    await expect(page.getByRole('button',{name:'Copy MCP setup prompt',exact:true})).toBeInViewport({ratio:1});
     await expect(setup).toHaveText('Copy setup prompt');
     await expect(page.locator('#connect-preview')).toBeHidden();
     await request.post('/__test/state',{data:{status:{cli:receipt,mcp:receipt}}});
     await refresh(page);
     const testPrompt = page.getByRole('button',{name:'Copy test prompt',exact:true});
-    await expect(testPrompt).toBeVisible();
+    await expect(testPrompt).toBeInViewport({ratio:1});
     await expect(setup).toHaveText('Copy setup prompt');
     await setup.click();
     expect(await page.evaluate(()=>sessionStorage.getItem('copied-prompt'))).toBe(setupText);
@@ -647,7 +647,7 @@ for (const viewport of [{width:1280,height:813},{width:400,height:580}]) {
     expect(await page.evaluate(()=>sessionStorage.getItem('copied-prompt'))).toContain('test_connection');
     await request.post('/__test/state',{data:{status:{cli:receipt,mcpTest:receipt}}});
     await refresh(page);
-    await expect(page.getByRole('button',{name:'Copy a small task',exact:true})).toBeVisible();
+    await expect(page.getByRole('button',{name:'Copy a small task',exact:true})).toBeInViewport({ratio:1});
     await expect(page.locator('[data-signal="mcpTest"] details')).not.toHaveAttribute('open','');
     await page.getByRole('button',{name:'Show setup prompt'}).click();
     await expect(page.locator('#connect-preview')).toBeVisible();

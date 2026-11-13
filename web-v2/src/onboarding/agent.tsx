@@ -28,7 +28,10 @@ function Signal({name, label, done, pending = false, subitem = false, detail, op
   const previousDone = useRef(done);
   useEffect(() => {
     const node = disclosure.current;
-    if (active && !done && node) node.open = true;
+    if (active && !done && node) {
+      node.open = true;
+      node.scrollIntoView({block: 'nearest'});
+    }
     if (done && !previousDone.current && node?.open) {
       const summary = node.querySelector('summary');
       const restore = node.contains(document.activeElement) && !summary?.contains(document.activeElement);
