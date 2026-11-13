@@ -54,3 +54,32 @@ test('a known platform chat with missing input mapping fails visibly; native-onl
   expect(await nativeOnly(workspace,session,first)).toBeUndefined();
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
+
+test('an exact native control record without a platform input remains unattributed across retries',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'oc-replicas-control-'));
+ try{
+  const control={type:'claude-user',payload:{uuid:first,message:{role:'user',content:[{type:'text',text:'[Request interrupted by user]'}]}}};
+  const calls:string[][]=[];
+  const run=async(args:string[])=>{calls.push(args);return args[0]==='chat'?{chats:[{id:chat,provider:'claude'}]}:args.includes('--before')?{...history(),events:[]}:{...history(),events:[control],has_more:true,before_cursor:'older'};};
+  const lookup=createReplicasAttribution({run,directory:()=>dir});
+  expect(await lookup(workspace,session,first)).toBeUndefined();
+  expect(calls.some(args=>args.includes('older'))).toBe(true);
+  const restarted=createReplicasAttribution({directory:()=>dir,run:async()=>{throw Error('must retain first observation');}});
+  expect(await restarted(workspace,session,first)).toBeUndefined();
+  // A real input with the same text still uses its explicit sender link.
+  const other=createReplicasAttribution({directory:()=>dir,run:async()=>({...history(),events:[{...control,payload:{...control.payload,uuid:second,replicasMessageId:'user-2'}}]})});
+  expect((await other(workspace,session,second))?.userId).toBe(bob);
+  expect(await other(workspace,session,first)).toBeUndefined();
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('a malformed platform ID or incomplete history cannot become a durable unattributed record',async()=>{
+ for(const extra of [{replicasMessageId:null},{replicasMessageId:''},{replicasMessageId:42},{}]){
+  const dir=mkdtempSync(join(tmpdir(),'oc-replicas-control-invalid-'));
+  try{
+   const lookup=createReplicasAttribution({directory:()=>dir,run:async args=>args[0]==='chat'?{chats:[{id:chat,provider:'claude'}]}:{...history(),events:[{type:'claude-user',payload:{uuid:first,...extra}}],has_more:Object.keys(extra).length?false:undefined}});
+   await expect(lookup(workspace,session,first)).rejects.toThrow('cursor is retained');
+   expect(readdirSync(dir)).toEqual([]);
+  }finally{rmSync(dir,{recursive:true,force:true});}
+ }
+});
