@@ -1,3 +1,5 @@
+export interface DailyOverlap {date: string; average: number; peak: number; partial: boolean}
+export interface SessionOverlap {timeZone: 'UTC'; measuredAt: string; sessions: number; daily: DailyOverlap[]}
 export interface NamedCount {name: string; count: number}
 /** Per-million-token list prices for one model, as of a stated date. */
 export interface ModelPrice {model: string; input: number; cacheRead: number; cacheWrite: number; output: number; asOf: string}
@@ -41,6 +43,8 @@ export interface UsageReport {
   };
   /** Measured value; absent until the workspace has been measured. */
   value?: ValueReport | null;
+  /** Daily overlap of main sessions' captured first-to-last-event spans. */
+  overlap?: SessionOverlap | null;
   /** Agent-session tokens captured this billing period, when the deployment meters them. */
   capture?: {tokens: number; since: string} | null;
   members: Array<{name: string | null; email: string; you: boolean; sources: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
