@@ -59,7 +59,9 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
     const xml=await res.text();
     const keys=[...xml.matchAll(/<Contents>[\s\S]*?<Key>([^<]*)<\/Key>/g)].map(m=>unescapeXml(m[1]));
     const prefixes=[...xml.matchAll(/<CommonPrefixes>\s*<Prefix>([^<]*)<\/Prefix>/g)].map(m=>unescapeXml(m[1]));
-    const nextToken=/<IsTruncated>true<\/IsTruncated>/.test(xml)?unescapeXml(xml.match(/<NextContinuationToken>([^<]*)</)?.[1]??''):null;
+    // Cycle detection retains cursors for the scan. Copy the token so a V8
+    // substring cannot keep this entire XML response alive with it.
+    const nextToken=/<IsTruncated>true<\/IsTruncated>/.test(xml)?Buffer.from(unescapeXml(xml.match(/<NextContinuationToken>([^<]*)</)?.[1]??''),'utf8').toString('utf8'):null;
     if(nextToken==='')throw new Error('S3 listing omitted its continuation token');
     if(nextToken&&nextToken===continuationToken)throw new Error('S3 listing repeated its continuation token');
     return {keys,prefixes,nextToken};
