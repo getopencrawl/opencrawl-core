@@ -591,7 +591,7 @@ img { max-width: 100%; }
 .oc-row-title > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oc-row-title { min-width: 0; text-decoration: none; }
 .oc-row > .oc-row-participants { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); white-space: normal; overflow: visible; padding-block: var(--space-1); }
-.oc-row-participants a { min-width: 0; max-width: 100%; overflow-wrap: anywhere; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+.oc-row-participants a { position: relative; z-index: 1; min-width: 0; max-width: 100%; overflow-wrap: anywhere; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
 .oc-row-participants a:hover { color: var(--accent-hover); }
 .oc-filter-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .oc-button.oc-filter-chip { min-width: 0; max-width: 100%; min-height: 32px; padding: var(--space-1) var(--space-2); border-radius: var(--radius-badge); background: var(--surface-raised); font-size: var(--text-sm); }
@@ -601,7 +601,8 @@ img { max-width: 100%; }
 .oc-row-end { text-align: right; }
 @media (max-width: 800px) { .oc-row { grid-template-columns: minmax(0, 1fr) auto; } .oc-row-optional { display: none; } }
 /* Host metadata remains visible when secondary row columns collapse. */
-.oc-row-with-host { grid-template-columns: minmax(0, 1fr) minmax(5rem, 8rem) 6rem minmax(6rem, 10rem) 6.5rem 6rem; }
+.oc-row-with-host { position: relative; grid-template-columns: minmax(0, 1fr) minmax(5rem, 8rem) 6rem minmax(6rem, 10rem) 6.5rem 6rem; }
+.oc-row-with-host > a.oc-row-title::after { content: ''; position: absolute; inset: 0; }
 .oc-row-tokens { text-align: right; font-variant-numeric: tabular-nums; }
 .oc-row-tokens-label { display: none; }
 .oc-row-heading { border-bottom: 0; }
