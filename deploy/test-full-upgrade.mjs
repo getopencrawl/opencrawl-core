@@ -31,6 +31,30 @@ if(kind==='deploy'){
 function compose(args,options){return docker(['compose','--project-name',project,'--env-file',envFile,'-f',join(root,'deploy/compose.yaml'),...(sqlite?['-f',join(root,'deploy/compose.sqlite.yaml')]:[]),...(override?['-f',override]:[]),...args],options);}
 const verify=(readOnly=false)=>compose(['run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(readOnly&&!airbyte?['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']:[]),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
 verify();
+// Keep a reservation without a raw upload and a deletion fence in the old PG
+// layout. A migration that copies only accepted session batches would lose them.
+const identityFixture=String.raw`
+ const {Client}=await import('pg');
+ if(!process.env.OPENCRAWL_DATABASE_URL){console.log(JSON.stringify({legacy:true}));process.exit(0);}
+ const c=new Client({connectionString:process.env.OPENCRAWL_DATABASE_URL});await c.connect();
+ if(process.env.SEED_IDENTITY_FIXTURE==='true'){
+  await c.query('BEGIN');
+  const {rows}=await c.query("INSERT INTO opencrawl_event_identity_sessions(namespace,source,identity,resource,state,event_count) VALUES('upgrade-test','failed-upload/',$1,'failed-upload/','ready',1) RETURNING id",['f'.repeat(64)]);
+  await c.query('INSERT INTO opencrawl_event_identities(session_id,event_hash,content_hash) VALUES($1,$2,$3)',[rows[0].id,Buffer.alloc(32,1),Buffer.alloc(32,2)]);
+  await c.query("INSERT INTO opencrawl_event_identity_deletions(namespace,resource) VALUES('upgrade-test','deleted-session/')");await c.query('COMMIT');
+ }
+ const identity=(await c.query('SELECT database_id FROM opencrawl_event_identity_schema')).rows[0].database_id;
+ const reserved=(await c.query("SELECT encode(e.event_hash,'hex') event,encode(e.content_hash,'hex') content FROM opencrawl_event_identities e JOIN opencrawl_event_identity_sessions s ON s.id=e.session_id WHERE s.namespace='upgrade-test'")).rows;
+ const deleted=(await c.query("SELECT resource FROM opencrawl_event_identity_deletions WHERE namespace='upgrade-test'")).rows;
+ const role=(await c.query('SELECT rolsuper,rolcreatedb,rolcreaterole FROM pg_roles WHERE rolname=current_user')).rows[0];
+ console.log(JSON.stringify({identity,reserved,deleted,role}));await c.end();
+`;
+const previousIdentities=JSON.parse(compose(['exec','-T','-e','SEED_IDENTITY_FIXTURE=true','app','node','--input-type=module','-e',identityFixture],{capture:true}));
+const checkIdentities=()=>{
+ const result=JSON.parse(compose(['exec','-T','app','node','--input-type=module','-e',identityFixture],{capture:true}));
+ assert.deepEqual(result.role,{rolsuper:false,rolcreatedb:false,rolcreaterole:false});
+ if(!previousIdentities.legacy){assert.equal(result.identity,previousIdentities.identity);assert.deepEqual(result.reserved,previousIdentities.reserved);assert.deepEqual(result.deleted,previousIdentities.deleted);}
+};
 const originalEnv=readFileSync(envFile),originalInput=readFileSync(join(seedDir,'seed-input.json'));
 const originalFixture=readFileSync(join(seedDir,'upgrade-fixture.json'));
 const oldApp=compose(['ps','-q','app'],{capture:true});
@@ -50,11 +74,16 @@ assert.equal(compose(['ps','--status','running','-q','app','worker'],{capture:tr
 run(kind==='dev'?'bash':'sh',[kind==='dev'?'dev/up':'deploy/up.sh',...(!airbyte?['--no-airbyte']:[])]);
 assert.ok(readFileSync(join(backup,'manifest.json')).equals(manifest));
 journal=JSON.parse(readFileSync(journalFile,'utf8'));assert.equal(journal.phase,'complete');
-assert.ok(readFileSync(join(seedDir,'seed-input.json')).equals(originalInput));verify(true);
+assert.ok(readFileSync(join(seedDir,'seed-input.json')).equals(originalInput));verify(true);checkIdentities();
 assert.equal(compose(['ps','--status','running','-q','temporal-db'],{capture:true}).split('\n').filter(Boolean).length,1);
 const legacy=docker(['ps','-q','--filter',`label=com.docker.compose.project=${project}`,'--filter','label=com.docker.compose.service=app-db'],{capture:true});assert.equal(legacy,'');
 const after=JSON.parse(run(process.execPath,['deploy/upgrade.mjs','--installation',kind,'--check'],{capture:true}).split('\n').at(-1));assert.equal(after.needed,false);
 compose(['restart','app','worker']);compose(['up','-d','--wait','--wait-timeout','600','app','worker']);verify(true);
+// A subsequent release must retain newly accepted events, not recopy a stopped
+// pre-migration app-db. The disposable commit has exactly the same source tree.
+run('git',['-c','user.name=Upgrade acceptance','-c','user.email=upgrade@example.com','commit','--allow-empty','-m','Disposable next-release upgrade acceptance']);
+run(kind==='dev'?'bash':'sh',[kind==='dev'?'dev/up':'deploy/up.sh',...(!airbyte?['--no-airbyte']:[])]);
+const nextJournal=JSON.parse(readFileSync(journalFile,'utf8'));assert.equal(nextJournal.phase,'complete');assert.notEqual(nextJournal.target,target);assert.equal(nextJournal.legacyDatabase,null);verify(true);checkIdentities();
 // Restore the pre-upgrade matched data AND immutable old runtime images.
 if(airbyte)docker(['stop',project+'-control-plane']);
 compose(['down','--volumes','--remove-orphans']);
@@ -72,11 +101,12 @@ if(airbyte){
 }
 // Use the restored container; the current Compose config would replace it.
 docker([...recovery,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(!airbyte?['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']:[]),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
-const report={ok:true,from:old,to:target,installation:kind,airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
+const report={ok:true,from:old,to:target,installation:kind,airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
 writeFileSync(join(process.env.RUNNER_TEMP,'full-upgrade-receipt.json'),JSON.stringify(report,null,2));
 docker([...recovery,'down','--volumes','--remove-orphans']);
 if(airbyte)run('bash',['dev/up','reset','--yes']);
 run('git',['checkout','--detach',target]);
 rmSync(scratch,{recursive:true,force:true});
 rmSync(backup,{recursive:true,force:true});
+rmSync(nextJournal.backup,{recursive:true,force:true});
 console.log(JSON.stringify(report));

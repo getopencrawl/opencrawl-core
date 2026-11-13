@@ -47,4 +47,5 @@ test('recovery Compose preserves literal environment values and omitted Docker h
  assert.equal(saved.compose.services.app.healthcheck.interval,'5000000000ns');
  assert.equal(saved.compose.services.app.healthcheck.timeout,undefined);
  assert.ok(!JSON.stringify(saved).includes('undefinedns'));
+ assert.equal(saved.compose.services.worker.depends_on.app.condition,'service_healthy');
 });

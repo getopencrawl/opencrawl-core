@@ -1,4 +1,4 @@
-import {createReadStream,readFileSync,existsSync,mkdirSync,openSync,closeSync,renameSync} from 'node:fs';
+import {createReadStream,readFileSync,existsSync,mkdirSync,openSync,closeSync,renameSync,fsyncSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {join,relative} from 'node:path';
 import {docker,privateFile,root} from './installation.mjs';
@@ -7,7 +7,6 @@ export async function digest(path){const h=createHash('sha256');for await(const 
 export function snapshot(installation,containers) {
   const {project}=installation,services={},volumes={},stores=[];
   for(const container of containers) {
-    if(container.State.Status==='exited'&&container.State.ExitCode===0&&container.HostConfig.RestartPolicy.Name==='no')continue;
     const name=container.Config.Labels['com.docker.compose.service'];
     if(!name||services[name])throw new Error('Expected one container per full-application service');
     const mounts=[];
@@ -31,6 +30,26 @@ export function snapshot(installation,containers) {
       ports:Object.entries(container.HostConfig.PortBindings||{}).flatMap(([target,bindings])=>(bindings||[]).map(b=>({target:Number(target.split('/')[0]),published:b.HostPort,host_ip:b.HostIp||'0.0.0.0',protocol:target.split('/')[1]}))),
       ...(container.Config.Healthcheck?{healthcheck:{test:container.Config.Healthcheck.Test,...Object.fromEntries([['Interval','interval'],['Timeout','timeout'],['StartPeriod','start_period']].filter(([source])=>container.Config.Healthcheck[source]).map(([source,key])=>[key,container.Config.Healthcheck[source]+'ns'])),...(container.Config.Healthcheck.Retries?{retries:container.Config.Healthcheck.Retries}:{})}}:{})};
   }
+  // Preserve readiness ordering as well as images. In particular, SQLite
+  // deployments depend on the one-shot authenticated object-store check.
+  for(const container of containers) {
+    const name=container.Config.Labels['com.docker.compose.service'];
+    const encoded=container.Config.Labels['com.docker.compose.depends_on'];
+    if(encoded) {
+      services[name].depends_on=Object.fromEntries(encoded.split(',').map(value=>{
+        const [dependency,condition]=value.split(':');
+        if(!services[dependency]||!['service_started','service_healthy','service_completed_successfully'].includes(condition))throw new Error('Cannot preserve an unknown service dependency during recovery');
+        return [dependency,{condition}];
+      }));
+    }
+  }
+  // Older Compose versions did not retain the dependency label. These are the
+  // full application's stable dependency relationships, not a generic importer.
+  const dependency=name=>({condition:services[name].healthcheck?'service_healthy':'service_started'});
+  if(services.temporal&&!services.temporal.depends_on)services.temporal.depends_on={'temporal-db':dependency('temporal-db')};
+  for(const name of ['storage-ready','database-ready'])if(services[name]&&!services[name].depends_on){const target=name==='storage-ready'?'s3':'temporal-db';services[name].depends_on={[target]:dependency(target)};}
+  if(services.app&&!services.app.depends_on)services.app.depends_on=Object.fromEntries(['app-db','database-ready','storage-ready','s3','opensearch'].filter(name=>services[name]).map(name=>[name,name.endsWith('-ready')?{condition:'service_completed_successfully'}:dependency(name)]));
+  if(services.worker&&!services.worker.depends_on)services.worker.depends_on={app:dependency('app'),...(services.temporal?{temporal:dependency('temporal')}:{})};
   if(!services.app||!services.worker||!services['temporal-db'])throw new Error('Upgrade requires the full application installation (app, worker and temporal-db)');
   return {format:2,project,kind:installation.kind,createdAt:new Date().toISOString(),stores,compose:{name:project,services,volumes},
     configurations:installation.configuration.map(path=>({path:relative(root,path),content:readFileSync(path,'utf8')})),
@@ -48,7 +67,7 @@ export async function saveRecovery(directory,snapshot) {
   const mounts=snapshot.stores.flatMap(s=>['--mount',`type=volume,source=${s.name},target=/stores/${s.key},readonly`]);
   function archive(name,args){
     const partial=join(directory,name+'.partial'),fd=openSync(partial,'w',0o600);
-    try{docker(args,{stdio:['ignore',fd,'inherit']});}finally{closeSync(fd);}
+    try{docker(args,{stdio:['ignore',fd,'inherit']});fsyncSync(fd);}finally{closeSync(fd);}
     renameSync(partial,join(directory,name));
   }
   archive('stores.tgz',['run','--rm','--network','none','--user','0:0',...mounts,'--entrypoint','tar',helper,'-czf','-','-C','/stores','.']);
