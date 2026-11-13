@@ -47,6 +47,7 @@ export interface SettingsData {
   workspace: {name: string; userName: string; email: string; role: WorkspaceRole};
   mcpUrl: string;
   setupPrompt: string;
+  replicasSetupPrompt?: string;
 }
 
 export interface InvitationPolicy {delivery: 'email' | 'link'; beforeAgentSetup: boolean}

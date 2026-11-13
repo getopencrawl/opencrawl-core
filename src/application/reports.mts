@@ -38,7 +38,7 @@ interface UsageReportBase {
   value?: ValueReport | null;
   /** Agent-session tokens captured this billing period, when the deployment meters them. */
   capture?: {tokens: number; since: string} | null;
-  members: Array<{name: string | null; email: string; you: boolean; sources: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
+  members: Array<{name: string | null; email: string; you: boolean; sources: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {shared?: {name: string; observedAt: string}; cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
 }
 interface AgentUsage {
   events: number; lifetimeEvents: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; machines: number; opencrawlCalls: number;

@@ -5,7 +5,7 @@ import type {Principal} from './types.mjs';
 
 export const REPLICAS_ISSUER = 'https://api.replicas.dev';
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
-export interface ReplicasBinding {organizationId: string; environmentId: string; tenantId: string}
+export interface ReplicasBinding {organizationId: string; environmentId: string; tenantId: string; onboardingWorkspaceId?: string}
 export interface ReplicasIdentity {
   organizationId: string; environmentId: string; workspaceId: string;
   creatorId: string | null; creatorEmail: string | null; expiresAt: number;
@@ -28,7 +28,8 @@ export function replicasBindings(value: string | undefined, tenantId?: string): 
     const key = row.organizationId + ':' + row.environmentId;
     if (seen.has(key)) throw new Error('A Replicas environment may bind to only one tenant');
     seen.add(key);
-    return {organizationId: row.organizationId, environmentId: row.environmentId, tenantId: tenant};
+    if (row.onboardingWorkspaceId !== undefined && (typeof row.onboardingWorkspaceId !== 'string' || !uuid.test(row.onboardingWorkspaceId))) throw new Error('Invalid Replicas onboarding workspace');
+    return {organizationId: row.organizationId, environmentId: row.environmentId, tenantId: tenant, ...(typeof row.onboardingWorkspaceId === 'string' ? {onboardingWorkspaceId: row.onboardingWorkspaceId} : {})};
   });
 }
 
@@ -38,6 +39,16 @@ export function isReplicasToken(token: string | undefined): token is string {
   try {return decodeJwt(token).iss === REPLICAS_ISSUER;} catch {return false;}
 }
 export const isWorkloadPrincipal = (principal: Principal) => principal.userId.startsWith('workload_replicas_');
+
+export function replicasOwnerId(organizationId: string, environmentId: string, workspaceId: string) {
+  return 'workload_replicas_' + createHash('sha256').update(REPLICAS_ISSUER + '\n' + `org:${organizationId}:env:${environmentId}:workspace:${workspaceId}`).digest('hex');
+}
+
+/** Operator approval names the one workspace whose real setup receipts enroll the team. */
+export function replicasSharedInstallations(bindings: readonly ReplicasBinding[]) {
+  return bindings.flatMap(row => row.onboardingWorkspaceId ? [{id: row.environmentId, tenantId: row.tenantId,
+    userId: replicasOwnerId(row.organizationId, row.environmentId, row.onboardingWorkspaceId), name: 'Replicas'}] : []);
+}
 
 /** A workspace is its own principal. It never impersonates its creator or reads
  * a member's private resources. Creator and per-message sender are provenance,
@@ -72,8 +83,9 @@ export function createReplicasWorkloads({audience, bindings, key = createRemoteJ
       try {matches = (await bindings()).filter(row => row.organizationId === org && row.environmentId === env);} catch {return {status: 503};}
       if (matches.length !== 1) return {status: 403};
       const principal: Principal = {tenantId: matches[0]!.tenantId,
-        userId: 'workload_replicas_' + createHash('sha256').update(REPLICAS_ISSUER + '\n' + payload.sub).digest('hex'),
-        name: 'Replicas workspace ' + workspace, email: null};
+        userId: replicasOwnerId(org, env, workspace),
+        name: 'Replicas workspace ' + workspace, email: null,
+        owner: {kind: 'shared', provider: 'replicas', organizationId: org, environmentId: env, workspaceId: workspace}};
       const workload: ReplicasIdentity = {organizationId: org, environmentId: env, workspaceId: workspace,
         creatorId: typeof payload.creator_id === 'string' && uuid.test(payload.creator_id) ? payload.creator_id : null,
         creatorEmail: typeof payload.creator_email === 'string' ? payload.creator_email : null, expiresAt: payload.exp * 1000};

@@ -4,6 +4,7 @@ export interface OnboardingReceipt {
 }
 
 export interface OnboardingStatus {
+  shared?: OnboardingReceipt & {id: string; name: string; owner: 'shared'};
   cli?: OnboardingReceipt | null;
   mcp?: (OnboardingReceipt & {client?: string | null}) | null;
   mcpTest?: OnboardingReceipt | null;

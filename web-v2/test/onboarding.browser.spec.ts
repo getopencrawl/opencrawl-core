@@ -581,3 +581,37 @@ test('React OAuth return renders the Claude native callback and a manual continu
   await expect(page.getByRole('heading',{name:'Returning to your app'})).toBeVisible();
   await expect(page.getByRole('link',{name:'Continue',exact:true})).toHaveAttribute('href','claude://claude.ai/mcp-auth-callback/sdk?code=example&state=bound');
 });
+
+for (const width of [1280,390]) test(`shared setup does not ask each member to install at width ${width}`,async({page,request})=>{
+ await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'env',name:'Replicas',owner:'shared'}}}});
+ await page.setViewportSize({width,height:844});
+ await page.goto('/onboarding');
+ await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
+ await expect(page.getByRole('link',{name:'Open workspace',exact:true})).toBeVisible();
+ await expect(page.getByText('Waiting for CLI sign-in',{exact:true})).toHaveCount(0);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+for (const width of [1280,390]) test(`Replicas installation copies its own prompt with an accessible fallback at ${width}px`, async ({page,request}) => {
+  await page.setViewportSize({width,height:844});
+  await page.addInitScript(() => Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{if(sessionStorage.getItem('deny'))throw new Error('denied');sessionStorage.setItem('copied',text);}}}));
+  await page.goto('/onboarding');
+  await page.getByRole('button',{name:'Install on Replicas',exact:true}).click();
+  expect(await page.evaluate(()=>sessionStorage.getItem('copied'))).toContain('Use workspace_identity');
+  await page.evaluate(()=>sessionStorage.setItem('deny','yes'));
+  await page.reload();
+  await page.getByRole('button',{name:'Install on Replicas',exact:true}).click();
+  await expect(page.getByLabel('Prompt to copy')).toBeFocused();
+  await expect(page.getByLabel('Prompt to copy')).toHaveValue(/Install OpenCrawl in this Replicas environment/);
+  await page.getByRole('button',{name:'I’ve copied it'}).click();
+  await expect(page.getByRole('heading',{name:'Connect your primary coding agent'})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'approved',name:'Replicas',owner:'shared'}}}});
+  await page.reload();
+  await page.getByRole('button',{name:'Install on Replicas',exact:true}).click();
+  await expect(page.getByLabel('Prompt to copy')).toBeVisible();
+  await page.getByRole('button',{name:'I’ve copied it'}).click();
+  await expect(page.getByRole('button',{name:'Copied',exact:true})).toBeFocused();
+  await page.goto('/onboarding?role=member');
+  await expect(page.getByRole('button',{name:'Install on Replicas'})).toHaveCount(0);
+});

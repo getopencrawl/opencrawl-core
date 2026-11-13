@@ -6,6 +6,8 @@ export interface Principal {
   name?: string | null;
   email?: string | null;
   captureAccess?: string;
+  /** Authenticated installation ownership; message authors remain independent. */
+  owner?: {kind: 'shared'; provider: 'replicas'; organizationId: string; environmentId: string; workspaceId: string};
 }
 export type TenantPrincipal = Pick<Principal, 'tenantId' | 'captureAccess'>;
 export type Authenticate = (request: IncomingMessage) => Promise<Principal | null>;

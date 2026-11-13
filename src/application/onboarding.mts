@@ -13,7 +13,7 @@ interface GuidedOptions {
   track?: (name: string, principal: Principal, properties?: Record<string, unknown>) => unknown; smallJson(req: IncomingMessage, limit?: number): Promise<Record<string, unknown>>;
 }
 interface GuidedContext {route: {name: string}; principal: Principal; identity: {user: HostedUser}; member: Membership; respond(status: number, body: string, type?: string): void}
-import {deriveOnboarding,hasReceipt} from '../onboarding-state.mjs';
+import {deriveOnboarding,hasCompletedOnboarding} from '../onboarding-state.mjs';
 
 /** Product onboarding uses persisted receipts; the runtime owns request admission. */
 export function createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,inviteBeforeSetup=false,track = () => {},smallJson}: GuidedOptions) {
@@ -33,7 +33,7 @@ export function createGuidedOnboarding({onboarding,integrations,organizations,au
       const json = (status: number,value: unknown) => respond(status,JSON.stringify(value),'application/json');
       if (!onboarding) return json(503,{error:'Setup status is temporarily unavailable.'});
       const state = (await progress(principal))!;
-      if (!deriveOnboarding(state).complete && !hasReceipt(state.completed) && !(inviteBeforeSetup && route.name === '/api/onboarding/invites')) {
+      if (!deriveOnboarding(state).complete && !hasCompletedOnboarding(state) && !(inviteBeforeSetup && route.name === '/api/onboarding/invites')) {
         return json(409,{error:'Complete agent setup first.',onboardingUrl:'/onboarding'});
       }
       if (route.name === '/api/onboarding/sources') {
@@ -41,12 +41,12 @@ export function createGuidedOnboarding({onboarding,integrations,organizations,au
         return json(200,{items});
       }
       if (route.name === '/api/workspace/search') {
-        if (!hasReceipt(state.completed)) return json(409,{error:'Finish setup to open your workspace.',onboardingUrl:await requiredSetup(principal)});
+        if (!hasCompletedOnboarding(state)) return json(409,{error:'Finish setup to open your workspace.',onboardingUrl:await requiredSetup(principal)});
         if (!authorizedSearch) return json(503,{error:'Workspace search is temporarily unavailable.'});
         try {return json(200,await authorizedSearch.search(principal,await smallJson(req,16384)));}
         catch(error) {return json([400,401,403].includes(errorInfo(error).status || 0)?errorInfo(error).status!:503,{error:errorInfo(error).status===400?'Enter a valid search query.':'We couldn’t search your workspace. Try again.'});}
       }
-      if (route.name === '/api/onboarding/finish' && hasReceipt(state.completed)) return json(200,{workspaceUrl:'/'});
+      if (route.name === '/api/onboarding/finish' && hasCompletedOnboarding(state)) return json(200,{workspaceUrl:'/'});
       if (route.name === '/api/onboarding/finish') {
         await onboarding.complete(principal);
         // Sources connected when setup finished: 0 means Sources was skipped, null that the count was unavailable. Never blocks finishing.

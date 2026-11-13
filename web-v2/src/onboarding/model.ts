@@ -8,6 +8,7 @@ export function hasReceipt(value: OnboardingReceipt | null | undefined): boolean
 }
 
 export function deriveOnboarding(status: OnboardingStatus) {
+  if (hasReceipt(status.shared)) return {complete: true, step: 'ready' as const, completedCount: 3};
   const milestones = [hasReceipt(status.cli), hasReceipt(status.mcpTest), hasReceipt(status.session)];
   const next = milestones.indexOf(false);
   const step: OnboardingStep = next === -1 ? 'ready' : next === 0 ? 'connect' : next === 1 ? hasReceipt(status.mcp) ? 'verify' : 'mcp' : 'session';
