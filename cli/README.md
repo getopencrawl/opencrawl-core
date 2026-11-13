@@ -47,12 +47,15 @@ that installer; the resulting command starts the same native executable directly
 If install scripts were disabled, run `npm rebuild -g @getopencrawl/cli` or use the
 native installer. An already running executable is never overwritten by native updates.
 
-To migrate an older Node-launcher installation, run the native installer once,
-put its printed bin directory before the old npm command on PATH, and open a new
-terminal. Credentials, installation identity, pending capture and cursors remain
-in place. Restart agent sessions to load updated native hooks; do not uninstall or
-purge collection. Older automatic updaters cannot install the new npm archive
-layout, so use this one-time migration instead of waiting for their update timer.
+Older Node-launcher installations migrate automatically: their next eligible
+update downloads a compatible release, and the next ordinary command or startup
+hook switches verified npm command shims and CLI-owned hooks to native execution.
+The existing command path keeps working; no reinstall or PATH change is needed
+for writable, unmodified npm installations. Credentials, installation identity,
+queued events and cursors stay in place. Restart existing agent sessions to load
+changed hooks. Customized commands and protected directories are preserved; if
+the CLI reports a migration conflict, use the native installer and put its printed
+bin directory first on PATH. Do not uninstall or purge collection.
 
 For a self-hosted deployment, sign in to its own origin; see
 [Self-hosted](#self-hosted).

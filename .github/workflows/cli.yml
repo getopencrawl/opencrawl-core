@@ -86,6 +86,10 @@ jobs:
       - run: tar -xzf cli-dist.tgz -C cli
       - run: bun cli/scripts/smoke.ts
       - run: bun cli/scripts/update-smoke.ts
+      - name: Migrate the real published legacy installation automatically
+        run: bun cli/scripts/legacy-upgrade-smoke.ts
+      - name: Migrate the original bootstrap with its previously updated cache
+        run: bun cli/scripts/legacy-upgrade-smoke.ts --bootstrap-version=0.2.0
       - run: bun cli/scripts/native-install-smoke.ts
       - name: Capture ownership under non-reaping PID 1
         if: runner.os == 'Linux'

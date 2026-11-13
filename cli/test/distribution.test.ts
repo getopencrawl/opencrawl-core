@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createRequire} from 'node:module';
 import {installBinary,nativeBin,nativeRoot,selectedBinary,update,cacheRoot} from '../src/distribution.ts';
-const {install}=createRequire(import.meta.url)('../install.cjs');
+const {installNpm:install}=createRequire(import.meta.url)('../bin/opencrawl.cjs');
 
 async function fixture(run:(directory:string)=>Promise<void>){
   const dir=mkdtempSync(join(tmpdir(),'opencrawl-native-')),saved={...process.env};
@@ -47,7 +47,7 @@ test('native update selection keeps a newer installation and persists its check 
   expect(result).toEqual({updated:false,version:'1.2.0'});expect(installs).toBe(0);
   expect(JSON.parse(readFileSync(join(cacheRoot(),'update.json'),'utf8')).nextCheckAt).toBeGreaterThan(Date.now());
 }));
-test('npm postinstall places the exact platform executable and rejects mismatched packages before replacement',()=>fixture(async dir=>{
+test('npm preinstall places the exact platform executable and rejects mismatched packages before replacement',()=>fixture(async dir=>{
   const root=join(dir,'node_modules','@getopencrawl','cli'),platform=process.platform+'-'+process.arch;
   mkdirSync(join(root,'bin'),{recursive:true});const name='@getopencrawl/cli-'+platform;
   writeFileSync(join(root,'package.json'),JSON.stringify({name:'@getopencrawl/cli',version:'1.0.0',optionalDependencies:{[name]:'1.0.0'}}));
@@ -56,6 +56,6 @@ test('npm postinstall places the exact platform executable and rejects mismatche
   writeFileSync(join(root,'bin/opencrawl.exe'),'placeholder');install(root);
   expect(readFileSync(join(root,'bin/opencrawl.exe'))).toEqual(readFileSync(file));
   writeFileSync(join(native,'package.json'),JSON.stringify({name,version:'2.0.0'}));
-  expect(()=>install(root)).toThrow('mismatch');
+  expect(()=>install(root)).toThrow('does not match');
   expect(readFileSync(join(root,'bin/opencrawl.exe'),'utf8')).toBe('verified fixture executable');
 }));

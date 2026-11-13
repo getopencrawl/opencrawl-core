@@ -49,6 +49,23 @@ function binary(root) {
   if (!fs.existsSync(file)) throw new Error('The OpenCrawl platform binary is missing. Reinstall @getopencrawl/cli.');
   return file;
 }
+// npm's preinstall runs before command linking. Keep this installer inside the
+// old archive allowlist; adding a separate script strands old auto-updaters.
+function installNpm(root = ROOT) {
+  const source = binary(root);
+  if (!fs.statSync(source).isFile()) throw new Error('Missing platform executable');
+  const destination = path.join(root, 'bin', 'opencrawl.exe');
+  const temporary = destination + '.' + randomUUID() + '.tmp';
+  try {
+    try { fs.linkSync(source, temporary); }
+    catch (error) {
+      if (!['EXDEV', 'EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) throw error;
+      fs.copyFileSync(source, temporary, fs.constants.COPYFILE_FICLONE);
+    }
+    if (process.platform !== 'win32') fs.chmodSync(temporary, 0o755);
+    fs.renameSync(temporary, destination);
+  } finally { fs.rmSync(temporary, {force: true}); }
+}
 function releaseRoot(version) {
   return path.join(cacheRoot(), 'releases', version, 'node_modules', '@getopencrawl', 'cli');
 }
@@ -173,6 +190,10 @@ function refreshSkills(root, {force = false, run = spawnSync} = {}) {
   return {...result, checked: true};
 }
 async function main(args = process.argv.slice(2)) {
+  if (args.length === 1 && args[0] === '--internal-npm-install') {
+    installNpm();
+    return 0;
+  }
   if (args[0] === '--internal-update') {
     await automaticUpdate();
     return 0;
@@ -222,5 +243,5 @@ function reportFailure(error, args) {
   else process.stderr.write(`opencrawl: ${message}\n`);
   return 1;
 }
-module.exports = {channel: CHANNEL, cacheRoot, updateDue, automaticUpdate, target, stable, compare, activeRoot, update, installRelease, refreshSkills, binary, npmCli, main};
+module.exports = {channel: CHANNEL, cacheRoot, updateDue, automaticUpdate, target, stable, compare, activeRoot, update, installRelease, refreshSkills, binary, npmCli, installNpm, main};
 if (require.main === module) main().then(code => { process.exitCode = code; }).catch(error => { process.exitCode = reportFailure(error, process.argv.slice(2)); });

@@ -32,7 +32,9 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
   npm remains an installation alternative, with Node used only at install time.
   Keep commands, capture/startup hooks, version selection and updates Node-free.
   Preserve the legacy launcher bridge and existing credentials, owners, queues and
-  cursors during migration. Verify actual packaged installs and generated hooks on
+  cursors during migration. Keep the npm archive compatible with published legacy
+  updater allowlists, and migrate only verified owned command shims automatically.
+  Verify upgrades from a real published old executable, packaged installs and hooks on
   macOS, Linux and Windows, including execution without Node on PATH.
 - Run `npm test` for core changes; for CLI changes also follow `cli/package.json`
   and its CI checks. Keep dependencies deliberate and review the import graph.
