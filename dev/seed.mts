@@ -150,7 +150,7 @@ try{
   }
   const connectionId=record.airbyte?.connectionId;if(!connectionId)throw new Error('Sample Airbyte connection is incomplete');
   const jobs=await airbyte.jobs(connectionId);let job=jobs.find(j=>String(j.jobId)===String(seed.jobId))||jobs[0];
-  if(!job){job=await airbyte.sync(connectionId);seed.jobId=job.jobId;save();}
+  if(!job||process.env.OPENCRAWL_UPGRADE_FRESH_SYNC==='true'){job=await airbyte.sync(connectionId);seed.jobId=job.jobId;save();}
   const deadline=Date.now()+20*60_000;
   while(job.status!=='succeeded'){
     if(['failed','cancelled'].includes(job.status))throw new Error(`Sample Airbyte job ${job.jobId} ${job.status}; inspect its logs in Airbyte`);

@@ -69,12 +69,12 @@ owned application network if it was recreated, restores every store together,
 and emits the exact Compose
 command to start those old images. Use that command, not the newer source's
 Compose file. Check login, retained session search, board history and connector
-retrieval before reopening access. For a development installation with Airbyte,
-return the checkout to the original release (recorded in the saved app's `REVISION`
-environment value), then run that release's `./dev/up`. It resumes the retained
-cluster and refreshes its private addresses and application routes. Do not use
-the newer release for this recovery step. Starting the updated checkout later
-runs the upgrade again.
+retrieval before reopening access. The recovery point records the owned private
+network and running service addresses. Its start command also resumes a retained
+development Airbyte node at its original address, so existing source, destination
+and application routes continue to work. Keep the original development stack
+running when beginning an upgrade so these routes can be recorded. Starting the
+updated checkout later runs the upgrade again.
 
 The separately deployed Airbyte control plane is not in the Compose recovery
 archive. Its connections, grants and owned development cluster remain in place
@@ -92,4 +92,4 @@ restore. The legacy OpenSearch case also reproduces the old 413 rejection with
 125,000 retained event IDs, accepts the next 1,000 after migration, and verifies
 capture and authenticated tail search for a message larger than 6 MiB. Fresh full-application checks cover x64, ARM64 and the SQLite profile. The
 explicit full-Airbyte workflow also upgrades an older default installation and
-checks its retained connector and source-to-search path.
+checks its retained connector, a new Airbyte sync after restore, and the source-to-search path.

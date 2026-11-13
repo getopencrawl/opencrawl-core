@@ -5,7 +5,8 @@ import {docker,privateFile,root} from './installation.mjs';
 
 export async function digest(path){const h=createHash('sha256');for await(const c of createReadStream(path))h.update(c);return h.digest('hex');}
 export function snapshot(installation,containers) {
-  const {project}=installation,services={},volumes={},stores=[];
+  const {project}=installation,services={},volumes={},stores=[];let network;
+  const networkName=project+'_default';
   for(const container of containers) {
     const name=container.Config.Labels['com.docker.compose.service'];
     if(!name||services[name])throw new Error('Expected one container per full-application service');
@@ -30,6 +31,20 @@ export function snapshot(installation,containers) {
       ports:Object.entries(container.HostConfig.PortBindings||{}).flatMap(([target,bindings])=>(bindings||[]).map(b=>({target:Number(target.split('/')[0]),published:b.HostPort,host_ip:b.HostIp||'0.0.0.0',protocol:target.split('/')[1]}))),
       ...(container.Config.Healthcheck?{healthcheck:{test:container.Config.Healthcheck.Test,...Object.fromEntries([['Interval','interval'],['Timeout','timeout'],['StartPeriod','start_period']].filter(([source])=>container.Config.Healthcheck[source]).map(([source,key])=>[key,container.Config.Healthcheck[source]+'ns'])),...(container.Config.Healthcheck.Retries?{retries:container.Config.Healthcheck.Retries}:{})}}:{})};
   }
+  // Airbyte's retained cluster reaches the app, object store and fixture over
+  // private addresses. Recover those routes with the stores and old binaries.
+  for(const container of containers) {
+    const attached=container.NetworkSettings?.Networks||{};
+    if(Object.keys(attached).some(name=>name!==networkName))throw new Error('Custom container networks require a reviewed recovery plan');
+    const endpoint=attached[networkName];
+    if(!endpoint?.IPAddress)continue; // completed one-shot services have no address
+    if(!network) {
+      const info=JSON.parse(docker(['network','inspect',endpoint.NetworkID]))[0];
+      if(info.Labels?.['com.docker.compose.project']!==project||info.Driver!=='bridge'||info.EnableIPv6)throw new Error('Unsupported full-application network ownership or driver');
+      network={name:networkName,driver:'bridge',ipam:{config:info.IPAM.Config.map(config=>({subnet:config.Subnet,...(config.Gateway?{gateway:config.Gateway}:{})}))}};
+    }
+    services[container.Config.Labels['com.docker.compose.service']].networks={default:{ipv4_address:endpoint.IPAddress}};
+  }
   // Preserve readiness ordering as well as images. In particular, SQLite
   // deployments depend on the one-shot authenticated object-store check.
   for(const container of containers) {
@@ -51,7 +66,7 @@ export function snapshot(installation,containers) {
   if(services.app&&!services.app.depends_on)services.app.depends_on=Object.fromEntries(['app-db','database-ready','storage-ready','s3','opensearch'].filter(name=>services[name]).map(name=>[name,name.endsWith('-ready')?{condition:'service_completed_successfully'}:dependency(name)]));
   if(services.worker&&!services.worker.depends_on)services.worker.depends_on={app:dependency('app'),...(services.temporal?{temporal:dependency('temporal')}:{})};
   if(!services.app||!services.worker||!services['temporal-db'])throw new Error('Upgrade requires the full application installation (app, worker and temporal-db)');
-  return {format:2,project,kind:installation.kind,createdAt:new Date().toISOString(),stores,compose:{name:project,services,volumes},
+  return {format:2,project,kind:installation.kind,createdAt:new Date().toISOString(),stores,compose:{name:project,services,volumes,...(network?{networks:{default:network}}:{})},
     configurations:installation.configuration.map(path=>({path:relative(root,path),content:readFileSync(path,'utf8')})),
     images:[...new Set(containers.map(c=>c.Image))]};
 }

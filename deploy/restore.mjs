@@ -36,10 +36,17 @@ try {
    if(info.State.Running)docker(['stop',id]);
    const name=snapshot.project+'_default';
    let networkId=docker(['network','ls','-q','--filter',`name=^${name}$`]);
-   if(!networkId)networkId=docker(['network','create','--label',`com.docker.compose.project=${snapshot.project}`,'--label','com.docker.compose.network=default',name]);
+   if(!networkId){
+    const ipam=snapshot.compose.networks?.default?.ipam?.config||[];
+    networkId=docker(['network','create','--label',`com.docker.compose.project=${snapshot.project}`,'--label','com.docker.compose.network=default',...ipam.flatMap(config=>['--subnet',config.Subnet||config.subnet,...((config.Gateway||config.gateway)?['--gateway',config.Gateway||config.gateway]:[])]),name]);
+   }
    const network=JSON.parse(docker(['network','inspect',networkId]))[0];
    if(network.Labels['com.docker.compose.project']!==snapshot.project)throw new Error('Retained application network ownership mismatch');
-   if(info.NetworkSettings.Networks[name]?.NetworkID!==network.Id)docker(['network','connect',name,id]);
+   if(snapshot.airbyte&&snapshot.airbyte.id!==info.Id)throw new Error('The retained Airbyte node differs from the saved recovery point');
+   const endpoint=info.NetworkSettings.Networks[name];
+   const pinAddress=snapshot.airbyte&&endpoint?.IPAMConfig?.IPv4Address!==snapshot.airbyte.address;
+   if(pinAddress&&endpoint?.NetworkID===network.Id)docker(['network','disconnect','--force',name,id]);
+   if(pinAddress||endpoint?.NetworkID!==network.Id)docker(['network','connect',...(snapshot.airbyte?['--ip',snapshot.airbyte.address]:[]),name,id]);
   }
  }
  const archive=openSync(join(directory,'stores.tgz'),'r');
@@ -48,6 +55,6 @@ try {
  privateFile(join(directory,'restore-compose.json'),snapshot.compose);
  privateFile(join(root,snapshot.kind==='dev'?'.opencrawl-dev/upgrade.json':'deploy/.upgrade/upgrade.json'),{format:1,project:snapshot.project,target:'restored:'+snapshot.compose.services.app.image,phase:'complete'});
  console.log(JSON.stringify({restore:'complete',project:snapshot.project,
-  start:`docker compose --project-name ${snapshot.project} -f ${shellQuote(join(directory,'restore-compose.json'))} up -d --wait --wait-timeout 600`,
-  warning:'Start the saved images using the command above. Keep the application, PostgreSQL and object-store snapshot together. For development Airbyte, return to the original source revision and run its ./dev/up to resume the retained cluster and refresh private routes. The separate Airbyte deployment remains operator-managed.'}));
+  start:`docker compose --project-name ${snapshot.project} -f ${shellQuote(join(directory,'restore-compose.json'))} up -d --wait --wait-timeout 600${snapshot.airbyte?' && docker start '+shellQuote(snapshot.airbyte.id):''}`,
+  warning:'Start the saved images using the command above. Keep the application, PostgreSQL and object-store snapshot together. The start command also resumes the retained development Airbyte node at its saved private address when recorded. The separate Airbyte deployment remains operator-managed.'}));
 } finally {release();}

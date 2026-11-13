@@ -99,20 +99,23 @@ const recovery=['compose','--project-name',project,'-f',join(backup,'restore-com
 docker([...recovery,'up','-d','--wait','--wait-timeout','600']);
 writeFileSync(join(seedDir,'upgrade-fixture.json'),originalFixture);
 if(airbyte){
- // Reconnect the preserved external Airbyte deployment using the restored
- // release's installer. No newer code is allowed to migrate the restored data.
- run('git',['checkout','--detach',old]);run('bash',['dev/up']);
+ assert.ok(saved.airbyte,'Recovery must retain the original Airbyte network address');
+ docker(['start',saved.airbyte.id]);
+ const ready=String.raw`
+  const {createAirbyteTransport}=await import('./dist/src/integrations/airbyte.mjs');
+  const {setTimeout:delay}=await import('node:timers/promises');
+  const api=createAirbyteTransport({url:process.env.AIRBYTE_URL,clientId:process.env.AIRBYTE_CLIENT_ID,clientSecret:process.env.AIRBYTE_CLIENT_SECRET});
+  for(let i=0;;i++){try{await api.request('GET','/workspaces?limit=1');break;}catch(error){if(i>=59)throw error;await delay(3000);}}
+ `;
+ docker([...recovery,'run','--rm','--no-deps','app','node','--input-type=module','-e',ready]);
+ const restored=docker([...recovery,'ps','-q','app'],{capture:true});
+ assert.equal(docker(['inspect','-f','{{.Image}}',restored],{capture:true}),saved.compose.services.app.image);
 }
-// The old installer refreshes the retained cluster's addresses after restore.
-// Check that exact old application and its live configuration, not the stale
-// pre-restore addresses in the saved recovery Compose environment.
-if(airbyte){
- const restored=compose(['ps','-q','app'],{capture:true});
- assert.equal(docker(['inspect','-f','{{.Image}}',restored],{capture:true}),saved.compose.services.app.image,'Recovery must still run the saved old application image');
- verify();
-}else docker([...recovery,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true','-e','OPENCRAWL_DEV_VERIFY_ONLY=true','--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
+// Verify the exact saved old images without rebuilding or changing checkout.
+// A new Airbyte sync must reach the restored fixture and S3 addresses.
+docker([...recovery,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(airbyte?['-e','OPENCRAWL_UPGRADE_FRESH_SYNC=true']:['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
 largeSession('restored',recovery);
-const report={ok:true,largeSessionCeilingReproducedAndRemoved:large,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
+const report={ok:true,largeSessionCeilingReproducedAndRemoved:large,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,freshAirbyteSyncAfterRestore:airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
 writeFileSync(join(process.env.RUNNER_TEMP,'full-upgrade-receipt.json'),JSON.stringify(report,null,2));
 docker([...recovery,'down','--volumes','--remove-orphans']);
 if(airbyte)run('bash',['dev/up','reset','--yes']);

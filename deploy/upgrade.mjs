@@ -64,7 +64,16 @@ try {
   const node=current.kind==='dev'?current.project+'-control-plane':null;
   const nodeIds=node?docker(['ps','-aq','--filter',`name=^/${node}$`]):'';
   let airbyte=null;
-  if(nodeIds){const c=JSON.parse(docker(['inspect',nodeIds]))[0];if(c.Config.Labels['io.x-k8s.kind.cluster']!==current.project)throw new Error('Airbyte node ownership mismatch');airbyte={id:c.Id,running:c.State.Running};}
+  if(nodeIds){
+   const c=JSON.parse(docker(['inspect',nodeIds]))[0];if(c.Config.Labels['io.x-k8s.kind.cluster']!==current.project)throw new Error('Airbyte node ownership mismatch');
+   airbyte={id:c.Id,running:c.State.Running};
+   const enabled=app.Config.Env.includes('OPENCRAWL_AIRBYTE_ENABLED=true');
+   if(enabled){
+    const address=c.NetworkSettings.Networks[current.project+'_default']?.IPAddress;
+    if(!address||!saved.compose.services.app.networks||!saved.compose.services.s3?.networks)throw new Error('Start the original full development installation before upgrading so its private Airbyte routes can be saved');
+    saved.airbyte={id:c.Id,address};
+   }
+  }
   journal={format:1,project:current.project,target,backup,phase:'prepared',snapshot:saved,containerIds:inventory.map(c=>c.Id),writerIds:inventory.filter(c=>['app','worker'].includes(c.Config.Labels['com.docker.compose.service'])).map(c=>c.Id),airbyte,
    databasePassword:current.env.OPENCRAWL_DATABASE_PASSWORD||randomBytes(24).toString('hex'),
    airbyteEnabled:process.env.OPENCRAWL_AIRBYTE_ENABLED??app.Config.Env.find(value=>value.startsWith('OPENCRAWL_AIRBYTE_ENABLED='))?.split('=').slice(1).join('=')??'true',
