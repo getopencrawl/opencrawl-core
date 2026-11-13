@@ -50,6 +50,22 @@ export function detectOrigin(harness: Harness, record: any, environment:NodeJS.P
   return {origin:'unknown',evidence:value || null};
 }
 
+/** New Codex transcripts put injected setup in user-role messages, with native
+ * per-block provenance. Text that merely looks like instructions is still user
+ * content; omit only the two explicitly identified setup block types. */
+function codexConversationMessage(message:any) {
+  const metadata=message.internal_chat_message_metadata_passthrough;
+  const content=message.content,kinds=metadata?.content_item_kinds,items=metadata?.content_item_metadata;
+  if(message.role!=='user'||!Array.isArray(content)||!Array.isArray(kinds)||!Array.isArray(items)||content.length!==kinds.length||content.length!==items.length)return message;
+  const keep=content.map((_:unknown,index:number)=>index).filter(index=>
+    !(kinds[index]==='agents_md.instructions'&&items[index]?.provenance?.type==='agents_md')&&
+    !(kinds[index]==='environments.environment_context'&&items[index]?.provenance?.type==='harness'));
+  if(keep.length===content.length)return message;
+  if(!keep.length)return null;
+  return {...message,content:keep.map(index=>content[index]),internal_chat_message_metadata_passthrough:{...metadata,
+    content_item_kinds:keep.map(index=>kinds[index]),content_item_metadata:keep.map(index=>items[index])}};
+}
+
 /** Preserve native message/tool content; discard repeated system/developer prompts and UI/transport bookkeeping. */
 export function parseRecord(harness: Harness, record: any, offset: number) {
   const r = record.payload ?? {};
@@ -78,7 +94,7 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
     else if (record.type === 'summary') {kind='compaction';data=record;}
   } else {
     if (record.type === 'response_item') {
-      if (r.type === 'message' && ['user','assistant'].includes(r.role)) {kind='message';data=r;}
+      if (r.type === 'message' && ['user','assistant'].includes(r.role)) {kind='message';data=codexConversationMessage(r);if(!data)return null;}
       else if (r.type === 'agent_message') {
         kind='agent_message';
         data={type:r.type,author:r.author,recipient:r.recipient,content:Array.isArray(r.content)?r.content.filter((block:any)=>block?.type!=='encrypted_content'):r.content};

@@ -1,8 +1,59 @@
 import {test, expect} from 'bun:test';
-import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, statSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, statSync, chmodSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {agentSkills, skillTargets, skillFiles} from '../src/skills.ts';
+import {startupHooks} from '../src/startup-install.ts';
+
+test('managed startup is reported without adding user hooks or asking for trust', () => fixture(async home => {
+  const directory = join(home, 'managed'), requirementsFile = join(home, 'requirements.toml');
+  mkdirSync(directory); mkdirSync(join(home, '.codex'));
+  const binary = join(directory, 'opencrawl-0.4.55' + (process.platform === 'win32' ? '.exe' : ''));
+  writeFileSync(binary, 'fixture'); chmodSync(binary, 0o755);
+  const command = JSON.stringify(binary) + ' session start --harness codex';
+  const policy = `[hooks]\nmanaged_dir = ${JSON.stringify(directory)}\nwindows_managed_dir = ${JSON.stringify(directory)}\n[[hooks.SessionStart]]\n[[hooks.SessionStart.hooks]]\ntype = "command"\nstatusMessage = "OpenCrawl session startup"\ncommand = ${JSON.stringify(command)}\ntimeout = 7\n`;
+  writeFileSync(requirementsFile, policy);
+  const userFile = join(home, '.codex/hooks.json'), userHooks = '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"keep"}]}]}}';
+  writeFileSync(userFile, userHooks);
+  const options = {home, env: {}, which: () => null, clients: ['codex'], requirementsFile};
+  for (const action of ['install', 'status', 'refresh']) {
+    const result = await agentSkills(action, 'https://self-host.example', options);
+    const row = result.results[0]!;
+    expect('startupHooks' in row && row.startupHooks?.[0]).toMatchObject({client: 'codex', status: 'managed', file: requirementsFile, managed: true});
+    expect(result.hookReview).toBeUndefined();
+    expect(readFileSync(userFile, 'utf8')).toBe(userHooks);
+    expect(readFileSync(requirementsFile, 'utf8')).toBe(policy);
+    expect(existsSync(join(home, 'config/opencrawl/startup/runner.cjs'))).toBe(false);
+  }
+  // Policy may force hooks on; without that requirement, preserve a local opt-out.
+  writeFileSync(join(home, '.codex/config.toml'), '[features]\nhooks = false\n');
+  expect(startupHooks(['codex'], 'install', options)[0]!.status).toBe('disabled');
+  writeFileSync(requirementsFile, '[features]\nhooks = true\n' + policy);
+  expect(startupHooks(['codex'], 'install', options)[0]!.status).toBe('managed');
+  expect(readFileSync(userFile, 'utf8')).toBe(userHooks);
+}));
+
+test('managed restrictions and invalid policy never cause a user hook installation', () => fixture(async home => {
+  const requirementsFile = join(home, 'requirements.toml'), options = {home, env: {}, requirementsFile};
+  for (const policy of ['[features]\nhooks = false\n', 'allow_managed_hooks_only = true\n']) {
+    writeFileSync(requirementsFile, policy);
+    expect(startupHooks(['codex'], 'install', options)[0]!.status).toBe('disabled');
+    expect(existsSync(join(home, '.codex/hooks.json'))).toBe(false);
+    expect(readFileSync(requirementsFile, 'utf8')).toBe(policy);
+  }
+  writeFileSync(requirementsFile, 'hooks = [');
+  expect(startupHooks(['codex'], 'install', options)[0]!.status).toBe('error');
+  expect(existsSync(join(home, '.codex/hooks.json'))).toBe(false);
+}));
+
+test('a matching label alone cannot establish managed startup readiness', () => fixture(async home => {
+  const requirementsFile = join(home, 'requirements.toml');
+  for (const command of ['echo session start --harness codex', 'opencrawl session start --harness codex', '/tmp/opencrawl session start --harness claude-code']) {
+    writeFileSync(requirementsFile, `[hooks]\nmanaged_dir = "/tmp"\n[[hooks.SessionStart]]\n[[hooks.SessionStart.hooks]]\ntype = "command"\nstatusMessage = "OpenCrawl session startup"\ncommand = ${JSON.stringify(command)}\n`);
+    expect(startupHooks(['codex'], 'status', {home, env: {}, requirementsFile})[0]!.status).toBe('missing');
+    expect(existsSync(join(home, '.codex/hooks.json'))).toBe(false);
+  }
+}));
 
 async function fixture(run: (home: string) => Promise<void>) {
   const home = mkdtempSync(join(tmpdir(), 'opencrawl-skills-')), saved = {...process.env};

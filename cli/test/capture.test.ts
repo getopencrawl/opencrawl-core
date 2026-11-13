@@ -10,6 +10,20 @@ import {installCapture,uninstallCapture} from '../src/capture/install.ts';
 import {readCaptureConfig,captureTranscript,captureDir,flushCaptures,captureStatus,captureHook} from '../src/capture/runtime.ts';
 import {parseRecord,detectOrigin,hash} from '../src/capture/parse.ts';
 
+test('native Codex setup provenance excludes injected blocks without guessing from user text',()=>{
+  const payload={type:'message',id:'native-user',role:'user',content:[{type:'input_text',text:'private injected instructions'},{type:'input_text',text:'injected environment'},{type:'input_text',text:'Explain these AGENTS.md instructions'}],internal_chat_message_metadata_passthrough:{turn_id:'turn',content_item_kinds:['agents_md.instructions','environments.environment_context','user.text'],content_item_metadata:[{provenance:{type:'agents_md'}},{provenance:{type:'harness'}},{provenance:{type:'user'}}]}};
+  const parsed=parseRecord('codex',{type:'response_item',payload},10)!;
+  expect(parsed.data.content).toEqual([payload.content[2]]);
+  expect(parsed.data.internal_chat_message_metadata_passthrough.content_item_kinds).toEqual(['user.text']);
+  expect(parsed.data.internal_chat_message_metadata_passthrough.content_item_metadata).toEqual([{provenance:{type:'user'}}]);
+  expect(parsed.nativeId).toBe('native-user');expect(payload.content).toHaveLength(3);
+  const onlySetup={...payload,content:payload.content.slice(0,2),internal_chat_message_metadata_passthrough:{...payload.internal_chat_message_metadata_passthrough,content_item_kinds:payload.internal_chat_message_metadata_passthrough.content_item_kinds.slice(0,2),content_item_metadata:payload.internal_chat_message_metadata_passthrough.content_item_metadata.slice(0,2)}};
+  expect(parseRecord('codex',{type:'response_item',payload:onlySetup},0)).toBeNull();
+  for(const metadata of [undefined,{}, {...payload.internal_chat_message_metadata_passthrough,content_item_kinds:['user.text']}, {...payload.internal_chat_message_metadata_passthrough,content_item_metadata:[{provenance:{type:'user'}},{provenance:{type:'user'}},{provenance:{type:'user'}}]}]) {
+    expect(parseRecord('codex',{type:'response_item',payload:{...payload,internal_chat_message_metadata_passthrough:metadata}},0)!.data.content).toEqual(payload.content);
+  }
+});
+
 test('SDK queued prompt remains conversation with native blocks and source identity',()=>{
   const r={type:'attachment',uuid:'queued',timestamp:'2026-11-12T21:24:05.182Z',attachment:{type:'queued_command',commandMode:'prompt',source_uuid:'native-user',prompt:[{type:'text',text:'is capture working'},{type:'image',source:{type:'base64',data:'aGVsbG8='}}]}};
   const parsed=parseRecord('claude-code',r,123)!;
