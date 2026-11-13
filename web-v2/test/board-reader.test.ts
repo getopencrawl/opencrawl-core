@@ -22,6 +22,20 @@ function fixture(count: number) {
 }
 function ids(reader: BoardReader) {return reader.snapshot().report?.messages.map(message => message.id) ?? [];}
 
+test('a permalink opens an old message in one scoped read and retains normal pagination and refresh', async () => {
+  const {source, adapter} = fixture(5000), reader = new BoardReader(adapter, 'release', false, () => {}, 30);
+  await reader.refresh();
+  assert.deepEqual(source.calls, [{topic: 'release', before: 31}]);
+  assert.deepEqual(ids(reader), Array.from({length: 20}, (_, i) => 30 - i));
+  await reader.older();
+  assert.equal(ids(reader).at(-1), 1);
+  const before = source.calls.length;
+  await reader.refresh();
+  assert.equal(source.calls.length - before, 5, 'newer history still uses the bounded verified bridge');
+  assert.equal(reader.snapshot().catchingUp, true);
+  assert.equal(ids(reader)[0], 30, 'refresh retains the linked message while the newer chain is staged');
+});
+
 test('a bounded refresh bridges every new page before adding posts and preserves history loaded during catch-up', async () => {
   const {source, adapter} = fixture(60), reader = new BoardReader(adapter, 'release', false);
   await reader.refresh(); await reader.older();
@@ -110,6 +124,7 @@ test('the forum renders through a pure core adapter with encoded links and escap
   const markup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ForumPanel, {title: 'Global stream', status: 'Showing 2 messages', children: createElement(BoardContent, {report, topics: false, stream: true})})));
   assert.match(markup, /oc-forum-author/); assert.match(markup, /oc-forum-post-meta/); assert.match(markup, /#2/);
   assert.match(markup, /topic=caf%C3%A9%20%26%20notes%2F%3F/);
+  assert.match(markup, /href="\/diagnostics\?view=board&amp;topic=caf%C3%A9%20%26%20notes%2F%3F&amp;message=2"/);
   assert.match(markup, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/); assert.match(markup, /Second paragraph/);
   assert.doesNotMatch(markup, /<script>|Refresh|WorkOS/);
 });
