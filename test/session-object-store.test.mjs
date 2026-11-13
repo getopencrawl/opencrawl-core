@@ -2,14 +2,15 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {gunzipSync} from 'node:zlib';
-import {standaloneStorage,startStandaloneCapture} from '../dist/src/sessions/standalone.mjs';
+import {sessionStorage} from '../dist/src/sessions/storage.mjs';
+import {startStandaloneCapture} from '../dist/tools/test-fixtures/capture.mjs';
 import {digest,sessionScope} from '../dist/src/sessions/ingest.mjs';
 
 test('self-hosted startup requires object storage and rejects incomplete or obsolete configuration',()=>{
-  assert.throws(()=>standaloneStorage({}),/BUCKET is required/);
-  assert.throws(()=>standaloneStorage({OPENCRAWL_SESSION_DIRECTORY:'/old/data'}),/Migrate existing objects/);
-  assert.throws(()=>standaloneStorage({OPENCRAWL_LANDING_S3_BUCKET:'capture',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'key'}),/Set both/);
-  assert.throws(()=>standaloneStorage({OPENCRAWL_LANDING_S3_BUCKET:'capture',OPENCRAWL_LANDING_S3_PATH:'../other'}),/Invalid/);
+  assert.throws(()=>sessionStorage({}),/BUCKET is required/);
+  assert.throws(()=>sessionStorage({OPENCRAWL_SESSION_DIRECTORY:'/old/data'}),/Migrate existing objects/);
+  assert.throws(()=>sessionStorage({OPENCRAWL_LANDING_S3_BUCKET:'capture',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'key'}),/Set both/);
+  assert.throws(()=>sessionStorage({OPENCRAWL_LANDING_S3_BUCKET:'capture',OPENCRAWL_LANDING_S3_PATH:'../other'}),/Invalid/);
 });
 
 test('self-hosted S3 receiver round-trips all four surfaces, attachments and restart readback',{
@@ -27,7 +28,7 @@ test('self-hosted S3 receiver round-trips all four surfaces, attachments and res
     OPENCRAWL_OPENSEARCH_URL:'http://127.0.0.1:1',TEMPORAL_ADDRESS:'127.0.0.1:1',
     OPENCRAWL_TENANT_ID:'self-hosted',OPENCRAWL_USER_ID:'owner',PORT:'0',
   };
-  const {store,prefix}=standaloneStorage(env);
+  const {store,prefix}=sessionStorage(env);
   // Allow a freshly started local S3 service to finish creating its test bucket.
   for(let attempt=0;;attempt++) {
     try{await store.checkAccess();break;}

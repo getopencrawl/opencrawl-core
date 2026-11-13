@@ -92,15 +92,15 @@ review asset/dependency rights, and document security/contribution policies befo
 calling this open source. The repository remains private while preparing release. Core and CLI are
 Apache-2.0; plugins remain MIT. See docs/self-host.md for the supported preview.
 
-Session capture now has an authenticated single-tenant receiver. Both it and the
+Session capture uses the authenticated full application. Both it and the
 hosted shell land immutable gzip batches and attachment blobs through the same
 S3-compatible adapter and schema. Self-hosted deployments must configure an
 object-store bucket (AWS S3 or a compatible service); filesystem storage is only
 an internal test helper. Downstream ingestion must share the S3 object contract
 across deployments. The CLI's local spool is a retry buffer, not a separate
 server-side source. The shared OpenSearch worker enforces explicit scope; the
-supported application runtime must fix one organization and verify every user;
-the older capture-only entrypoint fixes one tenant/user. The hosted adapter supplies
+supported application runtime fixes one organization and verifies every user.
+The hosted adapter supplies
 its authorized scope resolver. See `docs/session-indexing.md`.
 
 Publish tested immutable core runtime versions. The hosted consumer advances its

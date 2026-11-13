@@ -12,8 +12,6 @@ sessions and memories. The owner can mark a session or memory private in the
 Sessions or Memories page; it is then hidden from teammates, their agents and
 search. Owners can also delete individual items, subject to the retained-data
 limits described below. See [Sessions and Memories](sessions-and-memories.md).
-The separate capture-only Compose stack uses one operator-configured identity;
-anyone holding its read token has that identity's access.
 Active conversations are read from their beginning on first encounter, even if
 they started before installation. Inactive history requires separate consent.
 

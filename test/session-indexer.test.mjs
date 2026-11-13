@@ -9,7 +9,7 @@ import {createSessionIngest,digest,sessionScope} from '../dist/src/sessions/inge
 import {createSessionPipeline,batchDocuments} from '../dist/src/sessions/indexer.mjs';
 import {createSessionSearch} from '../dist/src/sessions/search.mjs';
 import {runConnectorSegment} from '../dist/src/connectors/workflow.mjs';
-import {standaloneStorage} from '../dist/src/sessions/standalone.mjs';
+import {sessionStorage} from '../dist/src/sessions/storage.mjs';
 import {memorySessionStore as memoryStore} from './session-store-fixture.mjs';
 async function sweep(pipeline) {
  return runConnectorSegment({}, {listPage:input=>pipeline.listPage(input),processObject:async input=>{
@@ -107,7 +107,7 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, t
  skip:!process.env.OPENCRAWL_TEST_S3_ENDPOINT||!process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
 },async t=>{
  const environment='test-'+randomUUID().slice(0,8),index=realmIndex(environment,owner.tenantId),prefix='sessions/index-test/'+randomUUID();
- const {store}=standaloneStorage({OPENCRAWL_LANDING_S3_ENDPOINT:process.env.OPENCRAWL_TEST_S3_ENDPOINT,OPENCRAWL_LANDING_S3_BUCKET:'capture-test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'capture-test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'capture-test-secret'});
+ const {store}=sessionStorage({OPENCRAWL_LANDING_S3_ENDPOINT:process.env.OPENCRAWL_TEST_S3_ENDPOINT,OPENCRAWL_LANDING_S3_BUCKET:'capture-test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'capture-test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'capture-test-secret'});
  const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:process.env.OPENCRAWL_TEST_OPENSEARCH_URL,environment});
  for(let attempt=0;;attempt++){try{await store.checkAccess();await search.ensureIndex(owner);break;}catch(e){if(attempt>=60)throw e;await new Promise(r=>setTimeout(r,1000));}}
  t.after(async()=>{for(const key of (await store.list(prefix+'/')).keys)await store.delete(key);for(const tenantId of [owner.tenantId,'tenant-b'])await fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL+'/'+realmIndex(environment,tenantId),{method:'DELETE'});});

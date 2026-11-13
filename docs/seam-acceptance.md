@@ -29,8 +29,9 @@ each candidate. Tests using provider fixtures do not establish live provider acc
 Run `npm test`, `npm run check --prefix web-v2`, and
 `npm run test:browser --prefix web-v2`. CI additionally exercises real Temporal,
 S3-compatible storage and OpenSearch. CLI changes require its typecheck, tests,
-build and cross-platform smoke suite. The capture-only Compose smoke job is
-narrower than full application acceptance.
+build and cross-platform smoke suite. Full-application upgrade CI starts immutable
+older releases, preserves their accounts and data, resumes an injected migration
+failure through normal startup, and restores the matched old runtime and stores.
 
 Use the [development installation checks](dev-install-acceptance.md) and
 [self-host guide](self-host.md) for clean-machine verification. Verify a fresh

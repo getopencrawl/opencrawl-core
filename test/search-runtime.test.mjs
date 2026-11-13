@@ -5,7 +5,7 @@ import test from 'node:test';
 test('OpenSearch and capture imports work without the optional SQLite runtime', () => {
   const realm = new URL('../dist/src/search/realm.mjs', import.meta.url).href;
   const workspace = new URL('../dist/src/search/workspace.mjs', import.meta.url).href;
-  const capture = new URL('../dist/src/sessions/standalone.mjs', import.meta.url).href;
+  const capture = new URL('../dist/src/sessions/storage.mjs', import.meta.url).href;
   const result = spawnSync(process.execPath, ['--no-experimental-sqlite', '--input-type=module', '--eval', `
     import assert from 'node:assert/strict';
     import {createRealm} from ${JSON.stringify(realm)};

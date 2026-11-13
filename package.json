@@ -128,10 +128,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node dist/src/standalone.mjs",
+    "start": "node dist/src/selfhost/server.mjs",
     "test": "npm run build && npm run typecheck:tooling && node --test test/*.test.mjs",
-    "sessions": "node dist/src/sessions/standalone.mjs",
-    "mcp": "node dist/src/mcp/standalone.mjs",
     "build": "node tools/build.mts",
     "typecheck": "tsc --noEmit",
     "prepack": "npm run build && npm run build --prefix web-v2",

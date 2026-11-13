@@ -6,9 +6,9 @@ event-count ceiling in this adapter. A batch reserves all its IDs transactionall
 same ID and content is an idempotent retry; same ID and different content rejects
 the whole batch. A failed raw upload retains its reservation.
 
-The supported application, capture-only receiver and workers require
-`OPENCRAWL_DATABASE_URL`. The Compose distributions provide an operator-owned
-PostgreSQL database on their private network. External deployments can supply a
+The supported application and workers require
+`OPENCRAWL_DATABASE_URL`. The full Compose application provisions a separate logical application
+database on its existing PostgreSQL server, on the private network. External deployments can supply a
 normal PostgreSQL URL with verified TLS, using an application database rather
 than Temporal's internal database. The role must own the identity tables and
 be able to create them on first startup. `OPENCRAWL_EVENT_IDENTITY_NAMESPACE`
@@ -18,33 +18,18 @@ user, harness, installation and session remain part of every reservation's scope
 
 ## Existing Compose installations
 
-Keep the previous source revision and its backup receipt. After checking out the
-upgrade, run:
+Use the [coordinated full-application upgrade](upgrades.md). It builds before
+downtime, backs up the old runtime and matched stores, provisions the logical
+application database, migrates event identities, and verifies service health.
+Both `./deploy/up.sh` and `./dev/up` invoke it for existing installations. A retry
+resumes its journal and retains the original recovery point. Installations that
+already created a dedicated `app-db` are copied transactionally with their exact
+database UUID, reservations and deletion records, then that old server stops.
 
-```sh
-node deploy/upgrade.mjs /absolute/path/to/new-pre-upgrade-backup
-```
-
-The command builds before downtime, adds only the new database credential to
-the existing private `.env`, stops the stack, creates and hashes a cold backup,
-starts storage, migrates all sessions, then starts the application and workers.
-It preserves existing credentials and named volumes. A failure after stopping
-writers leaves them stopped. Resolve the reported storage/database access or
-conflicting historical IDs before restarting; do not delete the source or reset
-volumes. Resume the migration with:
-
-```sh
-cd deploy
-docker compose up -d --wait app-db s3
-docker compose run --rm --no-deps app node dist/src/sessions/identity-migration.mjs migrate
-docker compose up -d --wait
-```
-
-For `compose.capture.yaml`, use `receiver` in place of `app` and the same Compose
-file selection used by that installation. For separately operated services,
-stop all receivers/workers, back up both stores, supply their normal storage and
-database environment, run the same compiled migration entrypoint, then start
-the new receivers and workers. No hosted control-plane access is involved.
+For separately operated services, stop all receivers/workers, back up raw objects
+and the application database together, supply their normal storage and database
+environment, and run `node dist/src/sessions/identity-migration.mjs migrate`
+before starting the new receivers and workers. No hosted control plane is needed.
 
 ## Migration and interruption behavior
 
@@ -65,9 +50,8 @@ retrying the fence. All imported fingerprints commit before the marker is writte
 a crash before or after the fence resumes safely. The marker contains no event
 map and never grows with the session. Old software cannot overwrite it.
 
-Startup scripts detect an old configuration without the PostgreSQL credential
-and direct it through the backup-backed upgrade, without changing its running
-services or secrets. After upgrading, individual sessions can also migrate lazily
+Startup scripts coordinate the upgrade before replacing old writers or
+changing the installation configuration. After upgrading, individual sessions can also migrate lazily
 before their first new reservation. Separately operated services must stop old
 writers before switching, especially versions from before immutable event ledgers.
 Deploy the receiver and index worker together. A migrated

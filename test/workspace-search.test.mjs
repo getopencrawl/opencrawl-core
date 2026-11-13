@@ -2,7 +2,7 @@ import {memorySessionStore as deletionTestStore} from './session-store-fixture.m
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
-import {standaloneMcp} from '../dist/src/mcp/standalone.mjs';
+import {standaloneMcp} from '../dist/tools/test-fixtures/mcp.mjs';
 import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
 
 const principal = {tenantId: 'team-a', userId: 'alice'};

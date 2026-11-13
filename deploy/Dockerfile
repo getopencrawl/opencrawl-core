@@ -16,7 +16,7 @@ COPY --chown=node:node web-v2/tools ./web-v2/tools
 COPY --chown=node:node web-v2/tsconfig.json ./web-v2/tsconfig.json
 RUN npm run build --prefix web-v2
 COPY --chown=node:node connectors ./connectors
-COPY --chown=node:node deploy/*.mjs ./deploy/
+COPY --chown=node:node deploy/database-init.mjs deploy/database-transfer.mjs deploy/wait-storage.mjs ./deploy/
 COPY --chown=node:node LICENSE ./LICENSE
 # Named volumes copy this ownership on first mount (board SQLite store).
 RUN mkdir -p /data && chown node:node /data

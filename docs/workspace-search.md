@@ -144,16 +144,10 @@ The fixed principal must match captured/indexed data; request parameters never
 supply this identity. This static configuration trusts the local operator to
 maintain connector access; restart it when changing bindings.
 
-```sh
-export MCP_TOKEN='<random secret of at least 32 characters>'
-PORT=8094 OPENCRAWL_SEARCH_CONFIG=/path/to/search.json npm run mcp
-# In another shell; use the same token for this self-hosted deployment.
-export OPENCRAWL_TOKEN='<same secret>'
-opencrawl search 'release decision' --api http://127.0.0.1:8094 --json
-opencrawl search 'Edit personal filters' --match phrase --source sessions --json \
-  --api http://127.0.0.1:8094
-opencrawl fetch 'sessions:RESULT_ID' --api http://127.0.0.1:8094 --json
-```
+For the supported self-hosted product, start the [full application](self-host.md)
+and use `opencrawl login --api https://your-opencrawl.example`, followed by normal
+`opencrawl search` and `opencrawl fetch` commands. The static binding format above
+is an embedding API; it is not a separately distributed product server.
 
 The server binds loopback by default. MCP is at `/mcp`; CLI uses `/api/search`.
 Without `OPENCRAWL_TOKEN`, the CLI uses its saved deployment-specific OAuth

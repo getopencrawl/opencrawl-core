@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createServer, request} from 'node:http';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
-import {standaloneMcp} from '../dist/src/mcp/standalone.mjs';
+import {standaloneMcp} from '../dist/tools/test-fixtures/mcp.mjs';
 import {z} from 'zod';
 
 test('runtime tools use the authenticated principal across concurrent requests', async t => {

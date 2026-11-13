@@ -24,28 +24,19 @@ The standalone shared runner instead reports pagination errors immediately.
 
 The workflow carries only an operator-configured source reference, S3 object keys, cursors and counts. Transcript text and attachment bytes remain in S3. Activities validate each complete event against the same PostgreSQL identity store as capture **before** writing any search chunk, then normalize text and attachment references, validate every OpenSearch bulk item, and only then write an idempotent success receipt. A bypassed receiver or conflicting raw object therefore cannot replace only part of an event. Stable document IDs and deterministic JSON traversal make retry after a partial write safe. Activity failures are sanitized before entering Temporal history.
 
-## Single-tenant self-hosting
+## Self-hosted application
 
-Run the receiver with the S3 settings and bearer token in `session-capture.md`. Run Temporal with persistent storage separately. The worker uses the same S3 settings plus:
+The [full application](self-host.md) runs its indexing worker alongside the API
+with the same object storage, application database and verified organization.
+Its bundled Temporal server retains durable workflow state. `npm run app:worker`
+is the worker entrypoint for separately orchestrated full-application services;
+use the same configuration contract as `deploy/compose.yaml`.
 
-```sh
-export OPENCRAWL_TENANT_ID=my-team
-export OPENCRAWL_USER_ID=owner
-export OPENCRAWL_OPENSEARCH_URL=https://your-search.example
-# Optional: OPENCRAWL_OPENSEARCH_INDEX names the organization realm shared by all sources.
-export OPENCRAWL_OPENSEARCH_USERNAME=your-service-user
-export OPENCRAWL_OPENSEARCH_PASSWORD=your-service-password
-export TEMPORAL_ADDRESS=your-temporal:7233
-export TEMPORAL_NAMESPACE=your-existing-namespace
-export TEMPORAL_SESSION_TASK_QUEUE=session-indexing-v1
-# Build once with the released worker code, then run independently of the API.
-node dist/src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs --build
-node dist/src/sessions/temporal/standalone.mjs /path/to/session-bundle.cjs
-```
-
-`npm ci` in the core repository installs the pinned Temporal SDK. Package consumers install the optional `@temporalio/{activity,client,common,worker,workflow}` peers at 1.25.0 explicitly. Use an operator-controlled source ID (`OPENCRAWL_SESSION_SOURCE_ID`, default `self-hosted-sessions-v1`) and dedicated task queue for each fixed source binding. The worker lists and processes only the configured tenant/user namespace. It requires no hosted shell, WorkOS or OpenCrawl account. Stop its worker and pause its exact schedule before changing that fixed authorization policy. Remote services require their normal network/authentication protections; the provided plain connection configuration assumes a private trusted Temporal network.
-
-The API still serves `GET /api/sessions/search?q=words&limit=20` with the receiver bearer token. It always binds the authenticated tenant and returns every teammate's sessions with the original `userId` attribution. Arbitrary search DSL and caller-selected index/tenant are not accepted. `GET /api/sessions/batches` accepts `userId` to select the author of a batch within that tenant; omitting it selects the caller. Uploads still require the authenticated user's own identity. Stored batches retain the authenticated name and email; user subdirectories preserve attribution and write ownership, not private read access. The worker creates the search index when it first processes data. Binary attachments stay in S3; OCR and embeddings are separate features.
+The API binds search and receipt readback to the authenticated user and
+organization. It rejects caller-selected tenant/index parameters. Raw batches
+retain their authenticated authors, and authoritative visibility controls govern
+shared and private reads. Binary attachments stay in S3; OCR and embeddings are
+separate features. See [upgrades](upgrades.md) before replacing a running worker.
 
 ## Hosted deployment
 

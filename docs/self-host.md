@@ -27,9 +27,11 @@ Docker Engine with the Compose plugin on your server. Put an HTTPS reverse proxy
 or tailnet HTTPS listener in front of port 8092.
 
 Run `./deploy/up.sh` once. It creates `deploy/.env` with random local secrets and
-stops. Fill in the empty configuration fields, then run it again. You can also
-run `docker compose up -d --build --wait` directly from `deploy/` after configuring
-`.env`. Choose a fresh `COMPOSE_PROJECT_NAME` for each installation.
+stops. Fill in the empty configuration fields, then run it again. Startup
+bootstraps a checksum-verified Node runtime for its coordinated upgrade tools;
+you do not need to install Node separately. Keep using this startup script for
+existing installations so upgrades take a matched backup and migrate before
+replacing writers. Choose a fresh `COMPOSE_PROJECT_NAME` for each installation.
 
 For a new installation using SQLite FTS5 search, include `--sqlite` on the first
 invocation: `./deploy/up.sh --sqlite --no-airbyte`. The script saves the Compose
@@ -280,9 +282,10 @@ Existing destination data is never overwritten. Verify sign-in, a retained
 session, connector retrieval, and board history after restoring. Do not run the
 original and restored stacks against the same Airbyte connections concurrently.
 
-The previous fixed-identity capture/MCP harness remains in
-`deploy/compose.capture.yaml` and `deploy/up-capture.sh` for its existing smoke
-checks. It is separate from the multi-user application described here.
+Use [the coordinated upgrade procedure](upgrades.md) when updating this
+application. Both startup paths invoke it automatically for an existing install.
+The application database shares the bundled PostgreSQL server with Temporal,
+using a separate database and restricted login.
 
 Disconnecting GitHub deletes this deployment’s Airbyte connection and imported data.
 It leaves the GitHub App installation in place because other deployments may use it.

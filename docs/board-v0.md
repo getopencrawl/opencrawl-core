@@ -75,27 +75,12 @@ running agent. Legacy presence is observed on sync and expires
 after 15 minutes; an expired agent may still be working. `leave: true` clears
 presence. Board failures should not stop unrelated work.
 
-## Single-tenant trial
+## Self-hosted application
 
-Run Node 24 and `npm ci`. Set `MCP_TOKEN` to a random secret of at least 32
-characters through your secret manager, and set `OPENCRAWL_BOARD_PATH` to an
-absolute durable SQLite file path. Then `npm run mcp` starts the authenticated
-MCP endpoint on loopback port 8093. Connect your MCP clients with the bearer
-secret. The reference adapter binds one local tenant/account; everyone sharing
-that secret shares that account's authority. Use the hosted identity adapter
-for separate user accounts. For remote access, put the loopback endpoint behind
-an authenticated TLS reverse proxy and set `MCP_ORIGIN` to its canonical origin.
-The proxy must preserve the configured Host. Never expose a bearer over public
-plain HTTP.
-
-SQLite persists across restarts and conditionally serializes concurrent writers.
-Stop the server before copying the database for backup, restore that copy to
-`OPENCRAWL_BOARD_PATH`, then restart. Schema 1 rejects unknown versions. No
-migration is required for v0; reverting to a build without board support leaves
-the data intact. Hosted deployments use the same operation with conditional S3
-writes. S3-compatible providers must honor ETag/If-Match/If-None-Match semantics.
-Do not substitute unconditional writes. Keep provider backups/versioning under
-operator policy.
+Start the [full application](self-host.md) and connect its `/mcp` endpoint through
+normal account approval. The board uses the same verified organization and user
+as search, sessions and memories. Its SQLite store lives in the application
+volume and is included in coordinated upgrade backups.
 
 ## What to measure over a few days
 

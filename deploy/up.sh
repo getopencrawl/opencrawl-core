@@ -42,13 +42,12 @@ if [ ! -f .env ]; then
   echo "Created deploy/.env with local secrets. Set OPENCRAWL_URL, configure Airbyte if enabled, then rerun this command."
   exit 0
 fi
-# Unknown old installations may predate conditional event reservations. Do not
-# overlap their writers with migration or silently skip their matched backup.
-if ! grep -q '^OPENCRAWL_DATABASE_PASSWORD=.' .env; then
-  echo 'Existing configuration needs the PostgreSQL upgrade. Run: node deploy/upgrade.mjs /absolute/new-backup-directory (from the repository root). Existing data and running services are unchanged.' >&2
-  exit 1
-fi
+runtime_node=$(../dev/up --node-runtime)
+# Retain an explicitly selected disabled integration mode across later upgrades.
+# Persist only after the upgrader has captured the original configuration.
+"$runtime_node" upgrade.mjs --automatic
 docker compose up -d --build --wait --wait-timeout 600 "$@"
+"$runtime_node" upgrade.mjs --record-startup
 echo "OpenCrawl is running at the OPENCRAWL_URL configured in deploy/.env."
 # The bootstrap grant is consumed once. Keep this URL private.
 docker compose exec -T app node -e "console.log('Private first-run setup link: '+process.env.OPENCRAWL_URL+'/auth/signup?setup='+encodeURIComponent(process.env.OPENCRAWL_SETUP_TOKEN))"

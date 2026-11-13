@@ -5,10 +5,10 @@ import {selfhostSettings} from './settings.mjs';
 import {selfhostServices} from './services.mjs';
 import {selfhostApplication} from './application.mjs';
 import {createLocalIdentity} from '../identity/better-auth.mjs';
-import {standaloneStorage} from '../sessions/standalone.mjs';
+import {sessionStorage} from '../sessions/storage.mjs';
 import {createDrainableServer} from '../application/request-lifecycle.mjs';
 export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
-  const settings=selfhostSettings(env),{store,prefix}=standaloneStorage(env);
+  const settings=selfhostSettings(env),{store,prefix}=sessionStorage(env);
   await store.checkAccess();
   const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
   const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,databasePath:settings.identityPath,organizationId:settings.organizationId});

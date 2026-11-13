@@ -1,9 +1,9 @@
 import {setTimeout} from 'node:timers/promises';
-import {standaloneStorage} from '../dist/src/sessions/standalone.mjs';
+import {sessionStorage} from '../dist/src/sessions/storage.mjs';
 
 // No source writes: wait for the bundled S3 service to create its configured
 // bucket, using the same signed access check as the application startup.
-const {store} = standaloneStorage(process.env);
+const {store} = sessionStorage(process.env);
 const deadline = Date.now() + 90000;
 for (;;) {
   try {await store.checkAccess(); break;}

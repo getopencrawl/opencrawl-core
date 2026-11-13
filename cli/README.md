@@ -266,9 +266,8 @@ per-origin saved credentials through local Better Auth. It requires no hosted
 OpenCrawl or WorkOS account. Capture consent names the destination before setup.
 See [the self-host guide](../docs/self-host.md) for operator configuration.
 
-The separate capture-only receiver and search server can still use
-`OPENCRAWL_SESSIONS_TOKEN` and `OPENCRAWL_TOKEN`, and an agent access token uses
-the same two variables. Both default to OpenCrawl cloud
+An agent access token can use `OPENCRAWL_SESSIONS_TOKEN` and
+`OPENCRAWL_TOKEN`. Both default to OpenCrawl cloud
 (`https://app.getopencrawl.com`); cloud capture needs no API URL environment
 variable. Use `--api` or `OPENCRAWL_API_URL` to send an environment token to a
 self-hosted deployment. A saved capture destination cannot redirect a newly

@@ -7,7 +7,7 @@ import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {createServer} from 'node:http';
 import {installNativeRelease} from '../src/update.ts';
-import {standaloneCapture} from '../../dist/src/sessions/standalone.mjs';
+import {standaloneCapture} from '../../dist/tools/test-fixtures/capture.mjs';
 import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
 import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 const nodeExecutable = Bun.which('node');
