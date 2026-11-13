@@ -340,7 +340,9 @@ export async function main(args = process.argv.slice(2)) {
     const failure = filesystemError(error);
     const known = failure instanceof CliError;
     const code = known ? failure.code : 'CLI_ERROR';
-    const message = known ? failure.message : 'The command failed. Retry, or run opencrawl login to repair your session.';
+    const message = known ? failure.message : ['install','update'].includes(args[0]??'')
+      ? 'The CLI installation or update failed. Retry the native installer, keeping your existing configuration and capture data.'
+      : 'The command failed. Retry, or run opencrawl login to repair your session.';
     if (json) process.stdout.write(JSON.stringify({schemaVersion: 1, error: {code, message, ...(known && failure.workspaces ? {workspaces: failure.workspaces} : {})}}) + '\n');
     else process.stderr.write(`opencrawl: ${message}\n`);
     const exit = known ? failure.exitCode : 1;

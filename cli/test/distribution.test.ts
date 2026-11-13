@@ -34,6 +34,11 @@ test('a custom command is preserved; an interrupted installation cannot become s
   mkdirSync(join(nativeRoot(),'versions','9.0.0'));writeFileSync(join(nativeRoot(),'versions','9.0.0','installation.json'),JSON.stringify({version:'9.0.0',platform:process.platform+'-'+process.arch}));
   expect(selectedBinary('2.0.0').version).toBe('2.0.0');
   rmSync(nativeBin());
+  if(process.platform!=='win32'){
+    symlinkSync(join(dir,'missing-custom-command'),nativeBin());
+    await expect(installBinary(source,'1.0.0')).rejects.toMatchObject({code:'INSTALL_CONFLICT'});
+    rmSync(nativeBin());
+  }
   expect((await installBinary(source,'1.0.0')).version).toBe('1.0.0');
 }));
 test('native update selection keeps a newer installation and persists its check without npm',()=>fixture(async dir=>{

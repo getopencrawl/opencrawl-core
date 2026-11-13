@@ -88,9 +88,9 @@ export async function installBinary(source=process.execPath,v=version){
     const candidates=versions(join(nativeRoot(),'versions')).filter(validNative);
     const selected=candidates[0]||v,selectedFile=join(nativeRoot(),'versions',selected,basename(file));
     // Only replace a path this installer owns. Keep a hand-written wrapper intact.
-    let owned=false;
-    try{owned=process.platform==='win32'?prior?.entry===entry&&readFileSync(entry,'utf8')===prior.launcher:lstatSync(entry).isSymbolicLink()&&readlinkSync(entry).startsWith(join(nativeRoot(),'versions')+'/');}catch(error:any){if(error.code!=='ENOENT')throw error;}
-    if(existsSync(entry)&&!owned)throw new CliError('INSTALL_CONFLICT','A custom command already exists at '+entry+'. Move it aside before running opencrawl install.');
+    let owned=false,present=false;
+    try{const info=lstatSync(entry);present=true;owned=process.platform==='win32'?prior?.entry===entry&&readFileSync(entry,'utf8')===prior.launcher:info.isSymbolicLink()&&readlinkSync(entry).startsWith(join(nativeRoot(),'versions')+'/');}catch(error:any){if(error.code!=='ENOENT')throw error;}
+    if(present&&!owned)throw new CliError('INSTALL_CONFLICT','A custom command already exists at '+entry+'. Move it aside before running opencrawl install.');
     mkdirSync(dirname(entry),{recursive:true});
     const launcher=process.platform==='win32'?`@echo off\r\n"${selectedFile.replace(/%/g,'%%')}" %*\r\n`:undefined;
     if(launcher)atomicFile(entry,launcher);else{const temporary=entry+'.'+randomUUID()+'.tmp';try{symlinkSync(selectedFile,temporary);renameSync(temporary,entry);}finally{rmSync(temporary,{force:true});}}
