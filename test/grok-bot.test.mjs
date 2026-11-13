@@ -104,8 +104,10 @@ test('a recorded Grok Bot tool call completes the recording step; other harnesse
 test('setup guidance sends Grok Bot to its own cloud computer with the explicit harness',()=>{
  const api='https://capture.example.com',prompt=captureSetupPrompt(api);
  for(const text of ['For Grok Bot','opencrawl collect install --yes --harness grok-bot --api '+api+' --json',api+'/mcp as a custom connector','newly created Bot',"skip a shared Bot's computer",'no local history to import'])assert.ok(prompt.includes(text),text);
- // The cloud credential sentences stay together; "that" token is the one from /capture/cloud.
- assert.ok(prompt.includes(api+'/capture/cloud for Claude cloud setup. For machine images, templates or snapshots, use that upload-only OPENCRAWL_SESSIONS_TOKEN'));
+ // Cloud preparation keeps credentials and per-machine capture ownership out of snapshots.
+ assert.ok(prompt.includes(api+'/capture/cloud for Claude cloud setup.'));
+ assert.ok(prompt.includes('prepare static CLI, skill and hook files without saved sign-ins, capture ownership or session data; inject the appropriate credentials at runtime'));
+ assert.ok(prompt.includes('Never snapshot a signed-in CLI'));
  // The capture page is inert data rendered by the React console, which builds the Grok Bot
  // commands from this API origin (web-v2/test/documents.test.ts covers the rendered steps).
  assert.deepEqual(cloudCapturePage({api}),{kind:'capture',api,credential:undefined,revoked:false,script:cloudSetupScript(api)});
