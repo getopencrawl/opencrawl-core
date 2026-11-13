@@ -11,6 +11,8 @@ import {createReplicasWorkloads,REPLICAS_ISSUER} from '../dist/src/identity/repl
 import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {createControls} from '../dist/src/sessions/controls.mjs';
+import {singleOrganizationSessionSource} from '../dist/src/selfhost/indexing.mjs';
+import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
 
 test('self-host workspace identity uploads and uses board; cannot mint credentials, forge owners or read private members',async t=>{
  const dir=await mkdtemp(join(tmpdir(),'replicas-selfhost-')),store=createLocalSessionStore(dir),prefix='sessions/selfhost/v1';
@@ -36,6 +38,12 @@ test('self-host workspace identity uploads and uses board; cannot mint credentia
  assert.equal((await request('/api/console/bootstrap')).status,401);
  const registered=await request('/api/board/register',{session:'fixture',name:'claude-code:workload',task:'test scoped admission',harness:'claude-code'});assert.equal(registered.status,200);
  assert.equal((await request('/api/board/fetch',{workspace:'org_other',id:'message:1'})).status,403);
+ const source=singleOrganizationSessionSource(settings,store,prefix),resolved=await source.resolve({sourceId:source.sourceId}),documents=[];
+ const worker=createSessionPipeline({...resolved,search:{identity:'workload-fixture',ensureIndex:async()=>{},putDocuments:async rows=>documents.push(...rows)}});
+ for(const key of (await worker.listPage()).keys)await worker.processObject({key});
+ assert.equal(documents.length,1);assert.equal(documents[0].document.text,'workspace fixture');assert.equal(documents[0].document.userId,principal.userId);
+ assert.equal(documents[0].document.tenantId,organizationId);
+ for(const owner of [{...principal,tenantId:'org_other'},{...principal,userId:'workload_replicas_forged'}])await assert.rejects(resolved.resolvePrincipal({batch:{owner}}),/scope denied/);
  const ingest=createSessionIngest({store,prefix}),human={tenantId:organizationId,userId:'human'};
  const humanReceipt=await ingest.putBatch(human,{...batch,owner:human});
  await createControls({store,prefix}).update(human,'sessions','claude-code','same-session',()=>({visibility:'private',deletedAt:null}));
