@@ -338,3 +338,10 @@ test('copying writes the exact prompt and reports when the browser cannot copy',
   assert.equal(await copyText(prompt), false);
   assert.deepEqual(written, [prompt]);
 });
+
+test('shared setup is labeled once instead of marking personal installations missing',()=>{
+ const data=report();
+ for(const member of data.members)member.setup={shared:{name:'Replicas',observedAt:'2026-11-13T00:00:00Z'}};
+ const html=renderToStaticMarkup(createElement(MemoryRouter,null,createElement(UsageReportView,{data,now})));
+ assert.match(html,/Shared Replicas setup/);assert.doesNotMatch(html,/CLI not set up|MCP not set up|Sessions not set up/);
+});
