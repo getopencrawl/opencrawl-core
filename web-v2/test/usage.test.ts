@@ -55,6 +55,26 @@ function sourceCard(html: string, name: string) {
   return html.slice(start, html.indexOf('</article>', start));
 }
 
+test('main-session overlap distinguishes measured zero from unavailable and exposes both series and daily values', () => {
+  const data = report();
+  data.overlap = {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 3, daily: [
+    {date: '2026-11-06', average: 1.25, peak: 3, partial: false},
+    {date: '2026-11-07', average: 0, peak: 0, partial: true},
+  ]};
+  const html = render(data);
+  assert.match(html, /Main session overlap/);
+  assert.match(html, /Daily average/); assert.match(html, /Daily peak/);
+  assert.match(html, /2026-11-07 \(partial\)/);
+  assert.match(html, /<td>1.25<\/td><td>3<\/td>/);
+  assert.match(html, /<td>0<\/td><td>0<\/td>/);
+  assert.match(html, /Subagents excluded/);
+  assert.doesNotMatch(html, /NaN|Infinity|overlap is unavailable/);
+  data.overlap = null;
+  const unavailable = render(data);
+  assert.match(unavailable, /Session overlap is unavailable/);
+  assert.doesNotMatch(unavailable, /report-line-chart/);
+});
+
 test('one Usage page contains Agent sessions, Data sources and Team in order without tabs or index comparison bars', () => {
   const html = render();
   assert.deepEqual([...html.matchAll(/<h2\b[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]), ['Agent sessions', 'Data sources', 'Team']);

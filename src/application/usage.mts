@@ -6,7 +6,7 @@ import type {createSessionSearch} from '../sessions/search.mjs';
 import type {createOnboardingStatus, OnboardingReceipts} from '../onboarding-status.mjs';
 import {indexedSourceInventory} from './usage-inventory.mjs';
 import type {ValueReports} from './value-report.mjs';
-type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage'>;
+type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage'> & Partial<Pick<ReturnType<typeof createSessionSearch>, 'overlap'>>;
 interface ConnectionCount {total: number; kinds: Record<string, number>}
 interface Connectors {count(principal: Principal): Promise<ConnectionCount & {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}>}
 type Usage = Awaited<ReturnType<Sessions['usage']>>;
@@ -37,7 +37,7 @@ export async function usageReport({principal, directory, integrations, search, c
 
   const emptyCounts: Awaited<ReturnType<Connectors['count']>> = {total:0,kinds:{},providers:{},connections:{}};
   // These reports are independent. Navigation waits for the slowest read, not their sum.
-  const [organization, users, cards, agents, counted, value] = await Promise.all([
+  const [organization, users, cards, agents, counted, value, overlap] = await Promise.all([
     team ? soft('organization', () => directory.organizations.getOrganization(principal.tenantId)) : null,
     team ? soft('members', async () => {
       const memberships = await directory.userManagement.listOrganizationMemberships({organizationId: principal.tenantId, statuses: ['active'], limit: 100});
@@ -49,6 +49,7 @@ export async function usageReport({principal, directory, integrations, search, c
     search ? soft('sessions', () => search.usage(principal, {team: true, days}), empty()) : null,
     connectors ? soft('connectors', () => connectors.count(principal), emptyCounts) : null,
     values ? soft('value', () => values.read(principal.tenantId)) : null,
+    search?.overlap ? soft('overlap', () => search.overlap!(principal, {days})) : null,
   ]);
   const members = users || [];
   // The adapter defines the measurement period; billing policy stays in the host.
@@ -80,7 +81,7 @@ export async function usageReport({principal, directory, integrations, search, c
   const report = {
     tab, team, days, generatedAt: new Date().toISOString(), integrationsUrl: '/integrations',
     workspace: organization?.name || (team ? null : 'Personal workspace'),
-    ingestion: cards ? {sources, index} : null, agents, value, capture: capture ? {tokens:capture.tokens,since:capture.since} : null,
+    ingestion: cards ? {sources, index} : null, agents, value, overlap, capture: capture ? {tokens:capture.tokens,since:capture.since} : null,
     members: members.map((user, i) => {
       const a: Partial<Usage['people'][number]> = activity.get(user.id) || {};
       return {name: displayName(user, null), email: user.email, you: user.id === principal.userId,

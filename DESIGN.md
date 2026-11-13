@@ -531,6 +531,13 @@ metrics use 20px padding, 12px gaps and 32px figures. The page title follows the
 Unavailable measurements stay distinct from measured zero, and tables scroll
 inside their own container at narrow widths.
 
+Main session overlap follows Daily agent sessions in its own report panel. The
+shared DailyLineChart uses a solid lavender daily average and dashed green daily
+peak, UTC day labels, a zero-based session axis, and a keyboard-accessible daily
+values disclosure. Both series share one scale. Its caption identifies the partial
+current day; the description defines first-to-last captured-event spans including
+idle gaps and excludes subagents. Unavailable data never becomes a zero line.
+
 ## Integrations
 
 Integrations uses an alphabetical, responsive grid of uniform connector cards.

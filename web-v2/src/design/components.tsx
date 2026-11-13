@@ -129,4 +129,43 @@ export function ActivityChart({daily}: {daily: ReadonlyArray<{date: string; sess
   })}</svg><figcaption><span>{daily[0]!.date}</span><span>Peak {sessions(peak)} a day</span><span>{daily.at(-1)!.date}</span></figcaption></figure>;
 }
 
+/** Shared daily line chart with a keyboard-readable data table. */
+export function DailyLineChart({daily, label}: {daily: ReadonlyArray<{date: string; average: number; peak: number; partial: boolean}>; label: string}) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const figure = useRef<HTMLElement>(null);
+  const [width, setWidth] = useState(760);
+  useEffect(() => {
+    const element = figure.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {if (entry) setWidth(Math.max(240, Math.round(entry.contentRect.width)));});
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [daily.length]);
+  if (!daily.length) return <p className="report-note">No captured session spans yet.</p>;
+  const maximum = Math.max(1, Math.ceil(Math.max(...daily.map(day => day.peak)) / 4) * 4);
+  const plotWidth = width - 68;
+  const x = (index: number) => 44 + index / Math.max(1, daily.length - 1) * plotWidth;
+  const y = (value: number) => 216 - value / maximum * 192;
+  const path = (key: 'average' | 'peak') => daily.map((day, i) => `${i ? 'L' : 'M'}${x(i)},${y(day[key])}`).join(' ');
+  const number = (value: number) => value.toLocaleString('en-US', {maximumFractionDigits: 2});
+  const detail = daily.find(day => day.date === selected) ?? daily.at(-1)!;
+  const description = (day: typeof detail) => `${day.date}${day.partial ? ' (partial)' : ''}: average ${number(day.average)}, peak ${number(day.peak)} sessions`;
+  const labels = [...new Set([0, Math.floor((daily.length - 1) / 2), daily.length - 1])];
+  return <figure ref={figure} className="report-line-chart" aria-label={label}>
+    <div className="report-line-legend"><span className="report-line-average">Daily average</span><span className="report-line-peak">Daily peak</span></div>
+    <svg viewBox={`0 0 ${width} 250`} role="img" aria-label={`${label}. ${description(detail)}. Daily values are in the table below.`}>
+      {[0, 1, 2, 3, 4].map(i => <g key={i}><line className="report-line-grid" x1="44" x2={width - 24} y1={y(i * maximum / 4)} y2={y(i * maximum / 4)}/><text x="34" y={y(i * maximum / 4) + 4} textAnchor="end">{number(i * maximum / 4)}</text></g>)}
+      <path className="report-line-peak" d={path('peak')}/><path className="report-line-average" d={path('average')}/>
+      {daily.map((day, i) => <g key={day.date}>
+        <circle className="report-line-peak" cx={x(i)} cy={y(day.peak)} r="3"/>
+        <circle className="report-line-average" cx={x(i)} cy={y(day.average)} r="3"/>
+        <rect className="report-line-hit" x={Math.max(40, x(i) - plotWidth / Math.max(1, daily.length - 1) / 2)} y="20" width={plotWidth / Math.max(1, daily.length - 1)} height="200" onMouseEnter={() => setSelected(day.date)}><title>{description(day)}</title></rect>
+      </g>)}
+      {labels.map(i => <text key={i} x={x(i)} y="242" textAnchor={i === 0 ? 'start' : i === daily.length - 1 ? 'end' : 'middle'}>{daily[i]!.date.slice(5)}</text>)}
+    </svg>
+    <figcaption>{description(detail)}. UTC.</figcaption>
+    <details className="report-line-values"><summary>Daily values</summary><Table label={`${label} daily values`}><thead><tr><th scope="col">Day (UTC)</th><th scope="col">Daily average</th><th scope="col">Daily peak</th></tr></thead><tbody>{daily.map(day => <tr key={day.date}><th scope="row">{day.date}{day.partial ? ' (partial)' : ''}</th><td>{number(day.average)}</td><td>{number(day.peak)}</td></tr>)}</tbody></Table></details>
+  </figure>;
+}
+
 export {Icon} from './icons.tsx';

@@ -284,6 +284,22 @@ img { max-width: 100%; }
 .report-chart rect{fill:var(--brand-face);opacity:.85;transition:opacity var(--motion-fast)}
 .report-chart rect:hover{opacity:1;fill:var(--accent-hover)}
 .report-chart figcaption{display:flex;justify-content:space-between;margin-top:var(--space-2);color:var(--quiet);font-family:var(--font-mono);font-size:var(--text-xs)}
+.report-line-chart{margin:0;min-width:0}
+.report-line-chart svg{display:block;width:100%;height:auto;overflow:visible}
+.report-line-chart svg text{fill:var(--muted);font-family:var(--font-mono);font-size:12px}
+.report-line-grid{stroke:var(--line);stroke-width:1}
+.report-line-chart path{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}
+.report-line-chart .report-line-average{stroke:var(--brand-face)}
+.report-line-chart .report-line-peak{stroke:var(--success)}
+.report-line-chart path.report-line-peak{stroke-dasharray:5 4}
+.report-line-chart circle.report-line-average{fill:var(--brand-face)}
+.report-line-chart circle.report-line-peak{fill:var(--success)}
+.report-line-hit{fill:transparent;stroke:none}
+.report-line-legend{display:flex;gap:var(--space-6);font-size:var(--text-xs);color:var(--muted)}
+.report-line-legend span::before{content:'';display:inline-block;width:20px;border-top:2px solid var(--brand-face);margin-right:var(--space-2);vertical-align:middle}
+.report-line-legend .report-line-peak::before{border-color:var(--success);border-top-style:dashed}
+.report-line-chart figcaption,.report-line-values{color:var(--muted);font-size:var(--text-xs);margin-top:var(--space-2)}
+.report-line-values summary{cursor:pointer}
 .report-source-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:var(--space-3)}
 .report-source-card{display:flex;flex-direction:column;gap:var(--space-3);padding:var(--space-5);background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-message)}
 .report-source-header{position:static;display:flex;align-items:center;gap:var(--space-3);min-height:0;padding:0;border:0;background:none;-webkit-backdrop-filter:none;backdrop-filter:none}
