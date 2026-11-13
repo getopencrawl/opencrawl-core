@@ -10,6 +10,27 @@ import {installCapture,uninstallCapture} from '../src/capture/install.ts';
 import {readCaptureConfig,captureTranscript,captureDir,flushCaptures,captureStatus,captureHook} from '../src/capture/runtime.ts';
 import {parseRecord,detectOrigin,hash} from '../src/capture/parse.ts';
 
+test('SDK queued prompt remains conversation with native blocks and source identity',()=>{
+  const r={type:'attachment',uuid:'queued',timestamp:'2026-11-12T21:24:05.182Z',attachment:{type:'queued_command',commandMode:'prompt',source_uuid:'native-user',prompt:[{type:'text',text:'is capture working'},{type:'image',source:{type:'base64',data:'aGVsbG8='}}]}};
+  const parsed=parseRecord('claude-code',r,123)!;
+  expect(parsed.kind).toBe('message');expect(parsed.nativeId).toBe('queued');expect(parsed.data).toEqual({role:'user',content:r.attachment.prompt});
+  expect(parseRecord('claude-code',{...r,attachment:{...r.attachment,commandMode:'notification'}},123)?.kind).toBe('attachment');
+  expect(parseRecord('claude-code',{type:'attachment',attachment:{type:'instructions',instructions:'injected setup'}},0)).toBeNull();
+  expect(parseRecord('claude-code',{type:'user',isMeta:true,message:{role:'user',content:'injected skill'}},0)).toBeNull();
+  expect(parseRecord('claude-code',{type:'user',origin:{kind:'task-notification',producer:'session-task'},message:{role:'user',content:'monitor event'}},0)?.kind).toBe('automation_message');
+});
+
+test('Replicas runtime origin is cloud without turning an SDK or malformed ID into evidence',()=>{
+  const env={REPLICAS_WORKSPACE_ID:'b847d71f-f28b-482c-b9a1-75369af4c027'};
+  for(const harness of ['claude-code','codex'] as const){
+    const r=harness==='codex'?{type:'session_meta',payload:{source:'cli',originator:'codex_cli_rs'}}:{entrypoint:'sdk-ts'};
+    expect(detectOrigin(harness,r,env)).toEqual({origin:'cloud',evidence:'https://app.replicas.dev/workspace/'+env.REPLICAS_WORKSPACE_ID});
+  }
+  expect(detectOrigin('claude-code',{entrypoint:'sdk-ts'},{}).origin).toBe('unknown');
+  expect(detectOrigin('claude-code',{}, {REPLICAS_WORKSPACE_ID:'../../foreign'}).origin).toBe('unknown');
+  expect(detectOrigin('claude-code',{agentId:'child'},env).origin).toBe('subagent');
+});
+
 test('Claude and Codex preserve message, tool, branch, origin and attachment records without system prompts',()=>{
   expect(parseRecord('codex',{type:'response_item',payload:{type:'message',role:'system',content:'secret'}},0)).toBeNull();
   expect(parseRecord('codex',{type:'response_item',payload:{type:'message',role:'developer',content:'repeat'}},0)).toBeNull();

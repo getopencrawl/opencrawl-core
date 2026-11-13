@@ -22,6 +22,10 @@ function collect(value: unknown,text: string[],attachments: Attachment[],names: 
   if(!value||typeof value!=='object')return;
   const fields=value as Record<string, unknown>;
   if(fields.type==='opencrawl_attachment'){attachments.push(fields as Attachment);return;}
+  // Reasoning signatures and redacted blocks are opaque transport evidence.
+  // Keep readable thinking, and preserve ordinary tool fields named signature.
+  if(fields.type==='redacted_thinking')return;
+  if(fields.type==='thinking'){collect(fields.thinking,text,attachments,names,depth+1);return;}
   if(typeof fields.type==='string'&&['tool_use','function_call','custom_tool_call'].includes(fields.type)&&typeof fields.name==='string')names.add(fields.name);
   if(Array.isArray(value)){for(const child of value)collect(child,text,attachments,names,depth+1);return;}
   // JSON object property order is not event identity. Keep chunk boundaries
