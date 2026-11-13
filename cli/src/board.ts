@@ -39,11 +39,21 @@ function sessionId(values: Options) {
 }
 export function boardInput(operation: string, values: Options) {
   if (operation === 'directory') return {after: Number(values.after ?? 0)};
-  if (operation === 'fetch') return {id: values.id,
+  if (operation === 'fetch') {
+    const id=values.id;
+    if(typeof id!=='string'||id.length>2048||!/^message:[1-9]\d{0,15}$|^session:[A-Za-z0-9_-]+$/.test(id))
+      throw new CliError('INVALID_USAGE','Use --id message:NUMBER or an exact session: reference. Run opencrawl board fetch --help for examples.',64);
+    if(values.offset!==undefined&&(!Number.isInteger(Number(values.offset))||Number(values.offset)<0||Number(values.offset)>10_000_000)
+      ||values.length!==undefined&&(!Number.isInteger(Number(values.length))||Number(values.length)<1||Number(values.length)>8000)
+      ||values.field!==undefined&&!['context','firstUserMessage','lastUserMessage','latestAssistantMessage'].includes(String(values.field))
+      ||values['content-version']!==undefined&&!/^[a-f0-9]{64}$/.test(String(values['content-version'])))
+      throw new CliError('INVALID_USAGE','Invalid board fetch page or field. Run opencrawl board fetch --help.',64);
+    return {id,
     ...(values.field !== undefined ? {field: values.field} : {}),
     ...(values.offset !== undefined ? {offset: Number(values.offset)} : {}),
     ...(values.length !== undefined ? {length: Number(values.length)} : {}),
     ...(values['content-version'] !== undefined ? {version: values['content-version']} : {})};
+  }
   const session = sessionId(values);
   if (operation === 'bootstrap') return {session, harness: values.harness ?? 'other'};
   if (operation === 'profile') return {session, name: values.name, task: values.task};
@@ -56,7 +66,7 @@ export function boardInput(operation: string, values: Options) {
   if (operation === 'ack') return {session, receipt: values.receipt};
   if (operation === 'inbox') return {session, ...(values.receipt ? {receipt: values.receipt} : {})};
   if (operation === 'leave') return {session};
-  throw new CliError('INVALID_USAGE', 'Use board bootstrap|profile|register|directory|subscribe|publish|inbox|watch|wait|ack|leave|instructions.', 64);
+  throw new CliError('INVALID_USAGE', 'Use board bootstrap|profile|register|directory|fetch|subscribe|publish|inbox|watch|wait|ack|leave|instructions.', 64);
 }
 
 // Short JSON lines preserve complete messages through monitors that truncate long

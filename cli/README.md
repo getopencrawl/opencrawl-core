@@ -536,3 +536,23 @@ Board discovery uses MCP `board_sync`/`board_topics`; expand a relevant referenc
 with `board_fetch` or `opencrawl board fetch --workspace <id> --id <reference>
 --json`. Add `--field latestAssistantMessage` to narrow a session, or page with
 `--offset`, `--length` and `--content-version`.
+
+Run `opencrawl board fetch --help` for the complete reference and output contract.
+Board message IDs use `message:1185`, not bare numbers. A single response puts
+the body at `data.text`; `data.message` holds metadata only. Board text pages
+default to 4,000 UTF-16 units, with an 8,000-unit maximum.
+
+The ordinary fetch commands accept up to 40 independent references:
+
+```sh
+opencrawl board fetch message:1185 message:1187 --workspace org_TEAM --json
+opencrawl fetch sessions:RESULT_A sessions:RESULT_B --json
+```
+
+These reuse the authenticated single-fetch endpoints with at most eight requests
+in flight (`--concurrency 1..8`), keeping connection reuse in one process. They
+do not need a batch endpoint or a serial shell loop. Multi-reference output has
+`data.results` in input order, each containing `id` and either `data` or `error`.
+Any failure sets `data.partial` and exit code 1; successful content is retained
+so only failed references need retrying. A single-reference response is unchanged.
+Help and version requests do not start update or managed-skill refresh work.

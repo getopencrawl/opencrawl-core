@@ -110,5 +110,24 @@ test('CLI workspace choices require a verified current account and an active own
   assert.deepEqual(await f.identify(f.token(),{capture:true}),{status:401});
   f.state.sessionStatus='active';f.state.sessionUserId='user_other';
   assert.deepEqual(await f.identify(f.token(),{capture:true}),{status:401});
-  assert.deepEqual(f.membershipReads,[]);assert.deepEqual(f.organizationReads,[]);
+  assert.equal(f.membershipReads.length,4);
+  assert.ok(f.membershipReads.every(input=>input.userId==='user_test'));
+  assert.deepEqual(f.organizationReads,[],'parallel membership reads never disclose choices for a rejected account/session');
+});
+
+test('CLI live account, session and membership reads overlap without caching the next request',async t=>{
+  const f=await fixture(t);f.state.members=[member('org_a')];
+  let started=0,release,timedOut=false;
+  const barrier=new Promise(resolve=>{release=resolve;});
+  for(const key of ['getUser','listSessions','listOrganizationMemberships']){
+    const original=f.sdk.userManagement[key];
+    f.sdk.userManagement[key]=async(...args)=>{if(++started===3)release();await barrier;return original(...args);};
+  }
+  const timeout=setTimeout(()=>{timedOut=true;release();},1000);t.after(()=>clearTimeout(timeout));
+  assert.equal((await f.identify(f.token(),{capture:true})).status,200);
+  assert.equal(started,3);
+  assert.equal(timedOut,false,'independent checks must all start before any finishes');
+  f.state.sessionStatus='revoked';
+  assert.equal((await f.identify(f.token(),{capture:true})).status,401);
+  assert.equal(started,6,'no completed authorization is cached across requests');
 });

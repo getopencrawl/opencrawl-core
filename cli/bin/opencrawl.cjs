@@ -200,7 +200,8 @@ async function main(args = process.argv.slice(2)) {
   // The native process overlaps opportunistic updates with its command, including
   // direct managed hooks. It owns cancellation and the shared update lock.
   const root = activeRoot();
-  if (process.env.OPENCRAWL_NO_UPDATE !== '1' && !(args[0] === 'collect' && ['hook', 'worker'].includes(args[1]))) {
+  const informational = args.length === 0 || args.some(arg => ['--help','-h','--version','-v'].includes(arg)) || args[0] === 'help' || args.length === 1 && args[0] === 'board';
+  if (!informational && process.env.OPENCRAWL_NO_UPDATE !== '1' && !(args[0] === 'collect' && ['hook', 'worker'].includes(args[1]))) {
     const skills = refreshSkills(root);
     if (skills.checked && skills.status !== 'current') process.stderr.write('opencrawl: Managed skill refresh needs attention; run opencrawl skills refresh --json to inspect directory access or refresh errors.\n');
   }

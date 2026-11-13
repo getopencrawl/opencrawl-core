@@ -25,6 +25,14 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     await command(['publish','--session','sender','--id','one','--topic','testing','--text','@codex:receiver test update']);
     const content = await command(['fetch', '--workspace', 'fixture', '--id', 'message:1']);
     expect(content.text).toBe('@codex:receiver test update');
+    const multiple=await command(['fetch','message:1','message:1','--workspace','fixture','--concurrency','2']);
+    expect(multiple.partial).toBe(false);expect(multiple.results).toHaveLength(2);
+    expect(multiple.results[0].data.text).toBe(content.text);
+    const failed=Bun.spawn(args(['fetch','message:1','message:999','--workspace','fixture']),{env,stdout:'pipe',stderr:'pipe'});
+    const partial=JSON.parse(await new Response(failed.stdout).text());
+    expect(await failed.exited).toBe(1);expect(partial.data.partial).toBe(true);
+    expect(partial.data.results[0].data.text).toBe(content.text);
+    expect(partial.data.results[1].error.code).toBe('BOARD_NOT_FOUND');
     const watch=Bun.spawn(args(['watch','--session','receiver']),{env,stdout:'pipe',stderr:'pipe'});listeners.push(watch);
     const watchReader=watch.stdout.getReader();const delivery=JSON.parse(new TextDecoder().decode((await watchReader.read()).value)).data;
     expect(delivery.type).toBe('board.delivery');expect(delivery.messages).toHaveLength(1);
