@@ -22,7 +22,7 @@ export function sourceBatchIdentity(prefix: string,key: string) {
  const match=new RegExp(`^tenants/(${hash})/users/(${hash})/(${SESSION_HARNESSES.join('|')})/(${hash})/(${hash})/(${hash})\\.json\\.gz$`).exec(key.slice(prefix.length+1));
  return match?{tenantHash:match[1],userHash:match[2],harness:match[3],installationHash:match[4],sessionHash:match[5],batchId:match[6]}:null;
 }
-function location({prefix,principal,harness,installationId,sessionId}: SessionIdentity) {
+export function eventIdentityLocation({prefix,principal,harness,installationId,sessionId}: SessionIdentity) {
  if(typeof prefix!=='string'||!prefix||prefix.split('/').some(part=>!part||part==='.'||part==='..'))fail(400,'Invalid session prefix');
  const scope=sessionScope(principal);
  if(!isSessionHarness(harness)||!id(installationId)||!id(sessionId))fail(400,'Invalid session identity');
@@ -51,13 +51,14 @@ function eventHash(event: SessionEvent) {
  }
  visit(event);flush();return hash.digest('hex');
 }
-function fingerprints(events: SessionEvent[],conflicts=new Set<string>()) {
+export function eventFingerprints(events: SessionEvent[],conflicts=new Set<string>()) {
  if(!Array.isArray(events)||!events.length||events.length>1000)fail(400,'Invalid events');
  const result=new Map<string, string>();
  for(const event of events){const hash=eventHash(event),key=digest(event.id);if(result.has(key)&&result.get(key)!==hash)conflicts.add(key);else result.set(key,hash);}
  return result;
 }
-function conflict(conflicts: Set<string>) {fail(409,'Event ID already reserved for different content',{code:'SESSION_EVENT_ID_CONFLICT',conflictCount:conflicts.size,conflictIds:[...conflicts].sort().slice(0,100)});}
+export function eventIdentityConflict(conflicts: Set<string>) {fail(409,'Event ID already reserved for different content',{code:'SESSION_EVENT_ID_CONFLICT',conflictCount:conflicts.size,conflictIds:[...conflicts].sort().slice(0,100)});}
+const location=eventIdentityLocation,fingerprints=eventFingerprints,conflict=eventIdentityConflict;
 function merge(target: Map<string, string>,incoming: Map<string, string>,conflicts: Set<string>) {
  for(const [key,hash] of incoming){if(target.has(key)&&target.get(key)!==hash)conflicts.add(key);else target.set(key,hash);}
 }
@@ -129,6 +130,7 @@ async function historical(options: SessionIdentity & {store: ObjectStore},where:
  * Old writers must be drained before the first historical bootstrap.
  */
 export async function reserveSessionEvents(options: EventReservationOptions) {
+ if(options.eventIdentities)return options.eventIdentities.reserve(options);
  const where=location(options),inputConflicts=new Set<string>(),incoming=fingerprints(options.events,inputConflicts);
  if(inputConflicts.size)conflict(inputConflicts);
  let initial: Awaited<ReturnType<typeof historical>> | undefined;

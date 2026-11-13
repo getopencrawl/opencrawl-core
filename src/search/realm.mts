@@ -10,7 +10,7 @@ import {realmIndex,realmField,realmDocument} from './realm-format.mjs';
 export {realmIndex,realmField,realmDocument};
 import {createSqliteRealm} from './sqlite.mjs';
 import {patchScript} from './mutations.mjs';
-import {bulkItemLine,MAX_BULK_BYTES} from './bulk.mjs';
+import {bulkItemLine,INITIAL_BULK_TARGET_BYTES} from './bulk.mjs';
 const gzip=promisify(gzipCallback);
 const fail = (message: string,status=503) => Object.assign(new Error(message),{status,permanent:status===403});
 const corpora = new Set(['connector','session','board','memory']);
@@ -25,12 +25,14 @@ function compatible(actual: Mapping | undefined,expected: Mapping): boolean {
 export function createRealm(options: RealmOptions): SearchRealm {
   return new URL(options.endpoint).protocol === 'sqlite:' ? createSqliteRealm(options) : createOpenSearchRealm(options);
 }
-export function createOpenSearchRealm({endpoint,index,tenantId,environment='selfhost',generation='v1',username,password,credentials,region='us-east-1',replicas=0,fetch:send=globalThis.fetch}: RealmOptions): SearchRealm {
+export function createOpenSearchRealm({endpoint,index,tenantId,environment='selfhost',generation='v1',username,password,credentials,region='us-east-1',replicas=0,bulkTargetBytes=INITIAL_BULK_TARGET_BYTES,fetch:send=globalThis.fetch}: RealmOptions): SearchRealm {
   if(typeof tenantId!=='string'||!tenantId)throw fail('Realm tenant required',403);
   index ||= realmIndex(environment,tenantId,generation);
   const base=new URL(endpoint);
   if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!/^[a-z][a-z0-9_-]{0,150}$/.test(index))throw fail('Invalid realm endpoint or index',400);
   if(Boolean(username)!==Boolean(password)||!Number.isInteger(replicas)||replicas<0||replicas>2)throw fail('Invalid realm configuration',400);
+  if(!Number.isSafeInteger(bulkTargetBytes)||bulkTargetBytes<1)throw fail('Invalid bulk scheduling target',400);
+  let bulkTarget=bulkTargetBytes;
   const scope=(principal: TenantPrincipal)=>{if(principal?.tenantId!==tenantId || principal.captureAccess!==undefined)throw fail('Realm scope denied',403);};
   const request=createIndexTransport({endpoint,index,username,password,credentials,region,fetch:send});
   let ready: Promise<void> | undefined;
@@ -114,28 +116,42 @@ export function createOpenSearchRealm({endpoint,index,tenantId,environment='self
         },
         async mget(principal: TenantPrincipal,ids: string[]){scope(principal);const result=await request('/_mget',{ids:ids.map(encodedId)});if(!Array.isArray(result.docs)||result.docs.length!==ids.length)throw fail('Incomplete realm lookup');const docs=result.docs.map(decode);if(docs.some(d=>!ids.includes(d._id))||new Set(docs.map(d=>d._id)).size!==ids.length)throw fail('Realm lookup identity mismatch');return {...result,docs};},
         async bulk(principal: TenantPrincipal,items: DocumentItem[],{refresh=false}={}){
-          const chunks:Array<{body:string;count:number}>=[];
+          const chunks:string[][]=[];
           try {
             scope(principal);if(!items.length)return {items:[]};
             let lines:string[]=[],bytes=0;
             // Validate the entire call before sending anything, including a
-            // foreign scope or one unshippable item late in the input.
+            // foreign scope late in the input.
             for(const item of items){
               const line=bulkItemLine(item,{encode,id:encodedId}),size=Buffer.byteLength(line);
-              if(size>MAX_BULK_BYTES)throw Object.assign(fail('Realm bulk item exceeds limit',400),{code:'BULK_TOO_LARGE',permanent:true});
-              if(bytes+size>MAX_BULK_BYTES){chunks.push({body:lines.join(''),count:lines.length});lines=[];bytes=0;}
+              if(lines.length&&bytes+size>bulkTarget){chunks.push(lines);lines=[];bytes=0;}
               lines.push(line);bytes+=size;
             }
-            if(lines.length)chunks.push({body:lines.join(''),count:lines.length});
+            if(lines.length)chunks.push(lines);
           } catch(caught){const error=serviceError(caught);throw Object.assign(error,{writeOutcome:'not-applied'});}
           const results:OpenSearchResponse['items']=[];let wrote=false;
-          for(const chunk of chunks){
+          const sendChunk=async(lines:string[]):Promise<void>=>{
             try{
-              const result=await request('/_bulk'+(refresh?'?refresh=wait_for':''),chunk.body,'POST','application/x-ndjson');
-              if(result.errors||!Array.isArray(result.items)||result.items.length!==chunk.count||result.items.some(item=>{const op=item.index||item.update;return !op||op.status<200||op.status>=300;}))throw fail('Realm bulk contained failed or missing items');
+              const result=await request('/_bulk'+(refresh?'?refresh=wait_for':''),lines.join(''),'POST','application/x-ndjson');
+              if(result.errors||!Array.isArray(result.items)||result.items.length!==lines.length||result.items.some(item=>{const op=item.index||item.update;return !op||op.status<200||op.status>=300;}))throw fail('Realm bulk contained failed or missing items');
               results.push(...result.items);wrote=true;
-            }catch(caught){const error=serviceError(caught);if(wrote)delete error.writeOutcome;throw error;}
-          }
+            }catch(caught){const error=serviceError(caught);
+              // A whole-request 413 means no items were applied. Do not replay
+              // partial bulk responses or ambiguous connection failures here.
+              if(error.httpStatus===413&&error.writeOutcome==='not-applied'){
+                if(lines.length>1){
+                  const total=lines.reduce((n,line)=>n+Buffer.byteLength(line),0);
+                  bulkTarget=Math.min(bulkTarget,Math.max(1,Math.floor(total/2)));
+                  let split=1,size=Buffer.byteLength(lines[0]!);
+                  while(split<lines.length-1&&size<total/2)size+=Buffer.byteLength(lines[split++]!);
+                  await sendChunk(lines.slice(0,split));await sendChunk(lines.slice(split));return;
+                }
+                Object.assign(error,{code:'BULK_TOO_LARGE',permanent:true});
+              }
+              if(wrote)delete error.writeOutcome;throw error;
+            }
+          };
+          for(const chunk of chunks)await sendChunk(chunk);
           return {items:results};
         },
         /** Removes documents of this corpus by ID. Missing IDs are already removed. */
@@ -203,7 +219,7 @@ export function createIndexTransport({endpoint,index,username,password,credentia
     try {
       url=new URL(base.href.replace(/\/$/,'')+'/'+index.replaceAll('*','%2A')+path);
       plain=body===undefined?undefined:typeof body==='string'?body:JSON.stringify(body);wire=plain;
-      // The caller has already enforced the uncompressed bulk limit. Compress
+      // Compress
       // large NDJSON bodies only when it saves bytes; sign the actual wire bytes.
       if(gzipSupported&&contentType==='application/x-ndjson'&&plain!==undefined&&Buffer.byteLength(plain)>=32*1024){
         const bytes=await gzip(plain,{level:1});
@@ -223,6 +239,9 @@ export function createIndexTransport({endpoint,index,username,password,credentia
       if(compressed&&attempt===0&&unsupportedCompression(response.status,data)){
         gzipSupported=false;compressed=false;wire=plain;continue;
       }
+      // Proxies commonly return HTML for 413. Preserve the HTTP rejection even
+      // without an OpenSearch JSON body so the caller can split the request.
+      if(response.status===413)throw Object.assign(fail('Search provider rejected request size',413),{httpStatus:413,writeOutcome:'not-applied'});
       if(!data)throw fail('Invalid realm response');
       if(!response.ok)throw Object.assign(fail('Realm request failed ('+response.status+')',response.status),{httpStatus:response.status,type:data?.error?.type,
         ...([401,403].includes(response.status)&&['security_exception','authentication_exception','authorization_exception'].includes(data?.error?.type ?? '')?{writeOutcome:'not-applied'}:{})});

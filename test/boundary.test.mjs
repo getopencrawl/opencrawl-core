@@ -17,6 +17,7 @@ function checkImports(source, file, root = sourceRoot) {
     assert.ok(!specifier.includes('\\'), `Escaped dependency needs review: ${specifier}`);
     if (specifier.startsWith('node:') || ['@modelcontextprotocol/server', '@modelcontextprotocol/node', 'zod'].includes(specifier)) continue;
     if (file.href.endsWith('/sessions/token-count.mts') && specifier === 'gpt-tokenizer/encoding/o200k_base') continue;
+    if (file.href.endsWith('/sessions/postgres-identities.mts') && specifier === 'pg') continue;
     if (file.href.includes('/identity/') && specifier==='jose') continue;
     if (['workos.mts','cli.mts','single-organization-device.mts'].some(name=>file.href.endsWith('/identity/'+name)) && specifier==='@workos-inc/node') continue;
     // Self-host identity: Better Auth is confined to its adapter and the self-host auth routes.
@@ -51,7 +52,8 @@ test('core runtime imports stay inside src, Node builtins, or reviewed portable 
   // PDF/HTML parsing is lazy and isolated; no hosted credentials or external fetches.
   // Better Auth (MIT) is the self-host identity provider; it stores accounts locally, telemetry off.
   // gpt-tokenizer (MIT) counts transcript text locally, without network access.
-  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@better-auth/oauth-provider', '@modelcontextprotocol/node', '@modelcontextprotocol/server', '@trpc/client', '@trpc/server', '@workos-inc/node', 'better-auth', 'gpt-tokenizer', 'jose', 'parse5', 'pdfjs-dist', 'zod']);
+  // pg (MIT) is confined to the operator-owned event identity database adapter.
+  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@better-auth/oauth-provider', '@modelcontextprotocol/node', '@modelcontextprotocol/server', '@trpc/client', '@trpc/server', '@workos-inc/node', 'better-auth', 'gpt-tokenizer', 'jose', 'parse5', 'pdfjs-dist', 'pg', 'zod']);
   assert.deepEqual(pkg.optionalDependencies || {}, {});
   const temporal = ['@temporalio/activity', '@temporalio/client', '@temporalio/common', '@temporalio/worker', '@temporalio/workflow'];
   const markdown = {'react-markdown':'10.1.0','remark-frontmatter':'5.0.0','remark-gfm':'4.0.1'};

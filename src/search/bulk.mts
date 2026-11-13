@@ -1,6 +1,8 @@
 import type {DocumentItem,SearchCollection} from './types.mjs';
 import {writeScript} from './mutations.mjs';
-export const MAX_BULK_BYTES=4*1024*1024;
+// A scheduling target, never a document acceptance limit. Oversized individual
+// documents are sent alone. The transport splits batches rejected by a provider.
+export const INITIAL_BULK_TARGET_BYTES=3*1024*1024;
 const scriptPrefix=(source:string)=>'{"scripted_upsert":true,"script":{"lang":"painless","source":'+JSON.stringify(source)+',"params":{"doc":';
 // These immutable policies recur for every indexed document. Reuse only
 // their static JSON framing; never retain documents or arbitrary legacy scripts.

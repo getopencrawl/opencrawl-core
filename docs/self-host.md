@@ -16,6 +16,10 @@ OpenCrawl hosted service.
 This branch is a candidate. [Acceptance status](seam-acceptance.md) distinguishes
 unit/regression checks from a clean-server install and real provider verification.
 
+Existing installations: follow the [PostgreSQL identity upgrade](event-identity-migration.md)
+before deploying this version. The application database is included in Compose
+and cold backups; capture event identities no longer have a session-size ceiling.
+
 ## Configure your installation
 
 Clone this repository and check out the branch/revision you intend to run. Install

@@ -9,7 +9,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 
-test('the self-host entrypoint outlives proxy idle timeouts without widening request deadlines',async t=>{
+test('the self-host entrypoint outlives proxy idle timeouts without widening request deadlines',{skip:!process.env.OPENCRAWL_TEST_POSTGRES_URL},async t=>{
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-transport-'));
   const storage=createServer((req,res)=>{res.writeHead(req.method==='HEAD'?200:404);res.end();});
   const agent=new Agent({keepAlive:true,maxSockets:1});
@@ -28,7 +28,7 @@ test('the self-host entrypoint outlives proxy idle timeouts without widening req
       buffer:server.keepAliveTimeoutBuffer,headersTimeout:server.headersTimeout,requestTimeout:server.requestTimeout});
   `;
   child=spawn(process.execPath,['--input-type=module','--eval',code],{
-    env:{PATH:process.env.PATH,HOST:'127.0.0.1',PORT:'0',OPENCRAWL_URL:'http://localhost:8092',
+    env:{OPENCRAWL_DATABASE_URL:process.env.OPENCRAWL_TEST_POSTGRES_URL,PATH:process.env.PATH,HOST:'127.0.0.1',PORT:'0',OPENCRAWL_URL:'http://localhost:8092',
       OPENCRAWL_ORGANIZATION_ID:'org_transporttest',OPENCRAWL_AUTH_SECRET:randomBytes(32).toString('hex'),
       OPENCRAWL_SETUP_TOKEN:randomBytes(32).toString('hex'),OPENCRAWL_IDENTITY_PATH:join(dir,'identity.sqlite'),
       OPENCRAWL_REGISTRY_PATH:join(dir,'registry.sqlite'),OPENCRAWL_AIRBYTE_ENABLED:'false',

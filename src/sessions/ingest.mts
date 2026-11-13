@@ -1,10 +1,10 @@
-import type {Principal, ObjectStore, SessionBatch, Authenticate, HttpHandler} from './types.mjs';
+import type {Principal, ObjectStore, EventIdentityStore, SessionBatch, Authenticate, HttpHandler} from './types.mjs';
 import {parseJson, isSessionHarness} from './types.mjs';
 import type {MemorySnapshot} from '../memories/types.mjs';
 import type {SearchAdapter} from '../search/types.mjs';
 import type {createCaptureCredentials} from './credentials.mjs';
 import type {IncomingMessage} from 'node:http';
-export interface SessionIngestOptions {store: ObjectStore; prefix?: string; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
+export interface SessionIngestOptions {store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
 export interface SessionBatchReceipt {harness: string; installationId: string; sessionId: string; batchId: string; userId?: string}
 import {serviceError} from './types.mjs';
 import {gzipSync, gunzipSync, gunzip} from 'node:zlib';
@@ -24,7 +24,7 @@ export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const MAX_STORED_BATCH_BYTES = MAX_BATCH_BYTES + 1024 * 1024;
 const decompressBatch = promisify(gunzip);
 
-export function createSessionIngest({store, prefix = 'capture-v1', onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
+export function createSessionIngest({store, eventIdentities, prefix = 'capture-v1', onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = (principal: Principal) => `${prefix}/${sessionScope(principal)}`;
   // Existence checks must not download attachment bodies on every batch retry.
@@ -88,7 +88,7 @@ export function createSessionIngest({store, prefix = 'capture-v1', onStored=unde
         else if (await exists(legacy, MAX_ATTACHMENT_BYTES)) attachmentKeys.set(hash, legacy);
         else fail(409, 'Attachment not uploaded');
       }
-      await reserveSessionEvents({store:writes,prefix,principal,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
+      await reserveSessionEvents({eventIdentities,store:writes,prefix,principal,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
       const batchId = digest(serialized);
       const key = `${keyPrefix}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/${batchId}.json.gz`;
       // Immutable content-addressed batches: retries and simultaneous delivery do not duplicate or overwrite events.

@@ -55,11 +55,16 @@ export interface SessionBatch {
 export interface SessionIdentity {
   prefix: string; principal: Principal; harness: string; installationId: string; sessionId: string;
 }
-export interface EventReservationOptions extends SessionIdentity {store: ObjectStore; events: SessionEvent[]; initialize?: boolean}
+export interface EventIdentityStore {
+  reserve(options: SessionIdentity & {store: ObjectStore; events: SessionEvent[]}): Promise<{reservedEvents: number}>;
+  purgeSession(options: Pick<SessionIdentity,'prefix'|'principal'|'harness'|'sessionId'>): Promise<void>;
+}
+export interface EventReservationOptions extends SessionIdentity {store: ObjectStore; events: SessionEvent[]; eventIdentities?: EventIdentityStore; initialize?: boolean}
 export interface SourceOptions {
   store: ObjectStore; prefix: string; principal?: Principal;
   resolvePrincipal?: (input: {key: string; batch: SessionBatch}) => Promise<Principal>;
   initialize?: boolean;
+  eventIdentities?: EventIdentityStore;
 }
 export interface AwsCredentials {accessKeyId: string; secretAccessKey: string; sessionToken?: string; expiration?: number}
 export type CredentialProvider = () => Promise<AwsCredentials>;

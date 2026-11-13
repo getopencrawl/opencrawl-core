@@ -1,3 +1,4 @@
+import type {EventIdentityStore} from '../sessions/types.mjs';
 import {createReplicasWorkloads, isReplicasToken, isWorkloadPrincipal} from '../identity/replicas.mjs';
 import type {createSlackOAuth} from '../integrations/slack-oauth.mjs';
 import {connectorProxyHandler,type SourceCredentialProxy} from '../integrations/proxy-http.mjs';
@@ -47,7 +48,7 @@ import {createSessionIngest,createCaptureHandler} from '../sessions/ingest.mjs';
 import {errorInfo} from '../errors.mjs';
 type Store=ReturnType<typeof createObjectStore>;
 export interface SelfhostApplicationOptions {
-  settings:SelfhostSettings;store:Store;prefix:string;identity:LocalIdentity;
+  settings:SelfhostSettings;store:Store;eventIdentities?:EventIdentityStore;prefix:string;identity:LocalIdentity;
   integrations?:Integrations;providers?:ProviderCatalog;connectors?:ReturnType<typeof createConnectorResolver>;
   oauth?:ReturnType<typeof createSlackOAuth>;sourceCredentials?:SourceCredentialProxy;
   /** Lets an admin store an operator connector credential from the product. */
@@ -57,7 +58,7 @@ export interface SelfhostApplicationOptions {
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,workloadIdentity,
+export function selfhostApplication({settings,store,eventIdentities,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,workloadIdentity,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
 }:SelfhostApplicationOptions) {
   const workloads=workloadIdentity??createReplicasWorkloads({audience:settings.url,bindings:()=>settings.replicasBindings??[]});
@@ -96,7 +97,7 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
     const result=await workloads.identify(token);if(result.status===200)return result.principal;
     res.writeHead(result.status,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'invalid_workload'}));return null;
   },onConnectionTest:async p=>{if(!isWorkloadPrincipal(p))await onboarding.mcpTest(p);},onAuthenticated:async(p,info)=>{if(!isWorkloadPrincipal(p))await onboarding.mcp(p,info);}});
-  const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({store,prefix,onStored:observe.session}),authenticate:async req=>{
+  const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({store,eventIdentities,prefix,onStored:observe.session}),authenticate:async req=>{
     const token=/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1];
     if(isReplicasToken(token)){const result=await workloads.identify(token);if(result.status!==200)throw Object.assign(new Error('Workload authentication required'),{status:result.status});return {...result.principal,captureAccess:'write'};}
     if(isCaptureCredential(token)) {
@@ -111,7 +112,7 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
     return principal;
   }});
   const guided=createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,smallJson,inviteBeforeSetup:true});
-  const library=createLibraryApi({sessions:createSessionLibrary({store,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion}),memories:createMemoryLibrary({store,prefix,...settings.search})});
+  const library=createLibraryApi({sessions:createSessionLibrary({store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion}),memories:createMemoryLibrary({store,prefix,...settings.search})});
   const members=async(organizationId:string)=>{
     if(organizationId!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
     const result=await directory.userManagement.listOrganizationMemberships({organizationId,statuses:['active'],limit:100});

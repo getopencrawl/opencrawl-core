@@ -98,7 +98,9 @@
     "./memories/projection-migration": "./dist/src/memories/projection-migration.mjs",
     "./integrations/google-drive-access": "./dist/src/integrations/google-drive-access.mjs",
     "./integrations/google-drive-source": "./dist/src/integrations/google-drive-source.mjs",
-    "./integrations/proxy-http": "./dist/src/integrations/proxy-http.mjs"
+    "./integrations/proxy-http": "./dist/src/integrations/proxy-http.mjs",
+    "./sessions/postgres-identities": "./dist/src/sessions/postgres-identities.mjs",
+    "./sessions/identity-migration": "./dist/src/sessions/identity-migration.mjs"
   },
   "files": [
     "dist/src",
@@ -149,6 +151,7 @@
     "jose": "6.2.15",
     "parse5": "8.1.0",
     "pdfjs-dist": "6.5.438",
+    "pg": "8.23.1",
     "zod": "4.6.7"
   },
   "devDependencies": {
@@ -160,6 +163,7 @@
     "@temporalio/worker": "1.25.0",
     "@temporalio/workflow": "1.25.0",
     "@types/node": "24.10.0",
+    "@types/pg": "8.23.1",
     "typescript": "7.0.2"
   },
   "peerDependencies": {
