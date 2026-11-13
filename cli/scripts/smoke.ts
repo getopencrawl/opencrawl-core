@@ -16,7 +16,7 @@ const platform = `${process.platform}-${process.arch}`;
 const artifacts = new Map<string, {bytes: Buffer; pkg: any}>();
 function run(command: string[], cwd?: string, env: Record<string, string | undefined> = {}) {
   if (command[0] === 'npm') command = [...npmCommand, ...command.slice(1)];
-  const result = Bun.spawnSync(command, {cwd, env: {...environment, ...env}, stdout: 'pipe', stderr: 'pipe'});
+  const result = Bun.spawnSync(command, {cwd, env: {...environment, ...env}, windowsVerbatimArguments:process.platform==='win32'&&command[0].toLowerCase().endsWith('cmd.exe'), stdout: 'pipe', stderr: 'pipe'});
   if (result.exitCode) throw new Error(`${command[0]} failed: ${result.stderr.toString()}`);
   return result.stdout.toString();
 }

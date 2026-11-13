@@ -60,7 +60,8 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
         return {client, ...status};
       }
       const runner=hookRunner('startup',command);
-      const hook = {type:'command',command:runner.command+' session start --harness '+client,
+      const invocation=runner.invocation(client);
+      const hook = {type:'command',...invocation,command:invocation.command+' session start --harness '+client,
         timeout: 7, statusMessage: startupMarker};
       const hooks = {...config.hooks};
       for (const [event, groups] of Object.entries(hooks)) {

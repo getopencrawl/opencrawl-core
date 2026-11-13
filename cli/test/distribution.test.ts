@@ -24,7 +24,7 @@ test('native installation publishes complete versions, keeps older files and nev
   await installBinary(source,'1.2.0');
   expect(selectedBinary('1.0.0').version).toBe('1.2.0');
   expect((await installBinary(source,'1.1.0')).version).toBe('1.2.0');
-  expect(readdirSync(join(nativeRoot(),'versions'))).toEqual(['1.1.0','1.2.0']);
+  expect(readdirSync(join(nativeRoot(),'versions')).sort()).toEqual(['1.1.0','1.2.0']);
   expect(readFileSync(join(nativeRoot(),'versions/1.2.0/runtime/opencrawl.js'),'utf8')).toBe('fixture support');
 }));
 test('a custom command is preserved; an interrupted installation cannot become selected',()=>fixture(async dir=>{

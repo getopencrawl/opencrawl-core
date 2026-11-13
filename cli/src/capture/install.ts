@@ -94,15 +94,15 @@ function enableCodex(root:string) {
 function configureHooks(config:CaptureConfig,harnesses:Harness[]) {
   const runner=hookRunner('capture',config.command);
   runner.write();
-  const hook=(...args:string[])=>runner.command+' collect hook '+args.map(quote).join(' ');
-  const managed=(harness:Harness)=>():HookEntry=>({command:hook('--managed','--harness',harness),async:true,timeout:120});
+  const hook=(harness:Harness,...args:string[])=>{const invocation=runner.invocation(harness);return {...invocation,command:invocation.command+' collect hook '+args.map(quote).join(' ')};};
+  const managed=(harness:Harness)=>()=>({...hook(harness,'--managed','--harness',harness),async:true,timeout:120});
   if(harnesses.includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),
     ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','Stop','SubagentStop','SessionEnd'],managed('claude-code'));
   // Codex runs SessionEnd synchronously within 3s. Record its notice locally;
   // the next managed hook uploads it instead of delaying exit or being killed.
   if(harnesses.includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),
     ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SubagentStop','SessionEnd'],
-    event=>event==='SessionEnd'?{command:hook('--harness','codex'),timeout:3}:managed('codex')());
+    event=>event==='SessionEnd'?{...hook('codex','--harness','codex'),timeout:3}:managed('codex')());
   // Cursor does not document a shell for hook commands. Quote only when needed
   // so the command also survives being split on spaces.
   const plain=(s:string)=>/^[\w@%+=:,./-]+$/.test(s)?s:quote(s);

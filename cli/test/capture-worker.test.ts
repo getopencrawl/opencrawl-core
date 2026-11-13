@@ -181,19 +181,21 @@ test('SubagentStop enrolls the child transcript separately and preserves both la
 test('async hook retains its harness-owned PID on Unix; legacy upgrade preserves identity and queue',async()=>fixture(async f=>{
  const cli=resolve(import.meta.dir,'../src/cli.ts');
  const output=join(f.dir,'pid.json');
- const code=`require('node:fs').writeFileSync(${JSON.stringify(output)},JSON.stringify({pid:process.pid,ppid:process.ppid}));`;
- await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e',code]});
+ const observer=join(f.dir,'observe-hook.cjs');
+ writeFileSync(observer,`require('node:fs').writeFileSync(${JSON.stringify(output)},JSON.stringify({pid:process.pid,ppid:process.ppid,args:process.argv.slice(2)}));`);
+ await installCapture(f.api,{home:f.dir,command:[process.execPath,observer]});
  const config=readCaptureConfig()!;
  const hooksFile=join(config.roots['claude-code'],'settings.json');
  const hook=JSON.parse(readFileSync(hooksFile,'utf8')).hooks.Stop[0].hooks[0];
  expect(hook.async).toBe(true);
  // Let Node quote cmd.exe's /s /c payload; CRT argv escaping is not cmd syntax.
- const shell=process.platform==='win32'?[Bun.which('node')!,'-e',`const r=require('node:child_process').spawnSync(${JSON.stringify(hook.command)},{shell:true,stdio:'inherit'});process.exit(r.status??1);`]:['/bin/sh','-c',hook.command];
+ const shell=process.platform==='win32'?(hook.shell==='powershell'?[join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'),'-NoProfile','-Command',hook.command]:[Bun.which('node')!,'-e',`const r=require('node:child_process').spawnSync(${JSON.stringify(hook.command)},{shell:true,stdio:'inherit'});process.exit(r.status??1);`]):['/bin/sh','-c',hook.command];
  const child=Bun.spawn(shell,{env:process.env,stdout:'pipe',stderr:'pipe'});
  const exit=await child.exited;
  if(exit!==0)throw new Error(await new Response(child.stderr).text());
  expect(exit).toBe(0);
  const observed=JSON.parse(readFileSync(output,'utf8'));
+ expect(observed.args).toEqual(['collect','hook','--managed','--harness','claude-code']);
  if(process.platform!=='win32')expect(observed.pid).toBe(child.pid);
  // A legacy synchronous hook must queue locally, not wait on network or spawn.
  writeFileSync(join(captureDir(),'config.json'),JSON.stringify({...config,hookMode:undefined,command:[process.execPath,cli]}));
