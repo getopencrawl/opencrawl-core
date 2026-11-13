@@ -61,9 +61,10 @@ live('migration imports reservations with no raw batch and fences every legacy w
 live('an authoritative legacy ledger migrates without re-reading raw history',async t=>{
  const f=await fixture(t),legacy=createSessionIngest({store:f.store,prefix});
  await legacy.putBatch(owner,batch([event('historical')]));
+ let reads=0;const read=f.store.readVersion;f.store.readVersion=async(...args)=>{reads++;return read(...args);};
  f.store.listPage=async()=>{throw Error('raw history must not be listed');};
  f.store.get=async()=>{throw Error('raw history must not be downloaded');};
- assert.equal((await f.reserve([event('new')])).reservedEvents,2);
+ assert.equal((await f.reserve([event('new')])).reservedEvents,2);assert.equal(reads,1);
  await assert.rejects(f.reserve([event('historical','changed')]),{status:409});
 });
 

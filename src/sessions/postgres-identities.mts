@@ -106,12 +106,12 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
    where={...where,identity:existing.rows[0].identity};
    if(existing.rows[0].state==='ready')return;
   }
-  const first=await readLedger(store,where);
-  if(first.ledger?.schemaVersion===2){
-   if(!existing.rows[0]||first.ledger.database!==database||first.ledger.namespace!==digest(namespace))unavailable('Event identity database does not match the migrated source; restore its matching backup');
+  let current=await readLedger(store,where);
+  if(current.ledger?.schemaVersion===2){
+   if(!existing.rows[0]||current.ledger.database!==database||current.ledger.namespace!==digest(namespace))unavailable('Event identity database does not match the migrated source; restore its matching backup');
    await client.query("UPDATE opencrawl_event_identity_sessions SET state='ready' WHERE namespace=$1 AND source=$2",[namespace,where.source]);return;
   }
-  where={...where,identity:where.identity??first.ledger?.identity};
+  where={...where,identity:where.identity??current.ledger?.identity};
   async function ensureSession(identity:string){
    if(where.identity&&where.identity!==identity)invalid('Legacy event identity scope mismatch');
    where.identity=identity;
@@ -122,7 +122,7 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
   // batches, and subsequent writers reserve before uploading. Re-reading raw
   // history would make the first PostgreSQL capture proportional to all prior
   // uploads. Only pre-ledger sources need that scan; no event/page ceiling.
-  if(!first.ledger){
+  if(!current.ledger){
   let cursor:string|null|undefined;const cursors=new Set<string>();
   do{
    const page=await store.listPage(where.source,{continuationToken:cursor,maxKeys:100});
@@ -144,7 +144,6 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
   // CAS races with a legacy writer import its additional committed reservations
   // and retry. Imported chunks stay durable if the process is interrupted.
   for(;;){
-   const current=await readLedger(store,where);
    if(current.ledger?.schemaVersion===2){
     if(current.ledger.database!==database||current.ledger.namespace!==digest(namespace))unavailable('Event identity source belongs to another database');
     break;
@@ -155,6 +154,7 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
    if(!where.identity)invalid('Cannot identify an empty historical session');
    const marker:Marker={schemaVersion:2,identity:where.identity!,database,namespace:digest(namespace)};
    if(await store.compareAndSet(where.source+'event-identities-v1.json',current.version,Buffer.from(JSON.stringify(marker))))break;
+   current=await readLedger(store,where);
   }
   await client.query("UPDATE opencrawl_event_identity_sessions SET state='ready' WHERE namespace=$1 AND source=$2",[namespace,where.source]);
  }
