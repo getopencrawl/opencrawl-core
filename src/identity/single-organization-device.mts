@@ -33,9 +33,13 @@ export function singleOrganizationDevice(settings:IdentitySettings & {organizati
    // WorkOS applies the target organization's SSO/MFA/membership policy here.
    const scoped=await workos.userManagement.authenticateWithRefreshToken({clientId:settings.clientId,refreshToken,organizationId:settings.organizationId});
    if(scoped.organizationId!==settings.organizationId||!scoped.user?.id)return reply(403,{error:'access_denied'});
-   const current=await currentVerifiedUser(workos,scoped.user.id);
+   const [current,membershipRead]=await Promise.all([
+    currentVerifiedUser(workos,scoped.user.id),
+    activeMemberships(workos,scoped.user.id,settings.organizationId).then(value=>({ok:true as const,value}),()=>({ok:false as const})),
+   ]);
    if(current.status!==200)return reply(current.status===503?503:403,{error:current.status===503?'temporarily_unavailable':'access_denied'});
-   if((await activeMemberships(workos,scoped.user.id,settings.organizationId)).length!==1)return reply(403,{error:'access_denied'});
+   if(!membershipRead.ok)return reply(503,{error:'temporarily_unavailable'});
+   if(membershipRead.value.length!==1)return reply(403,{error:'access_denied'});
    return reply(200,{access_token:scoped.accessToken,refresh_token:scoped.refreshToken,token_type:'Bearer'});
   }catch(error){const value=error as {status?:number;error?:string};return reply(value.status&&value.status<500?400:503,{error:errors.has(value.error||'')?value.error:value.status&&value.status<500?'access_denied':'temporarily_unavailable'});}
  };
