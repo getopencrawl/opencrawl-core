@@ -18,7 +18,8 @@ test('overlap chart shows average/peak, supports keyboard daily values and fits 
   await page.keyboard.press('Enter');
   await expect(panel.getByRole('table')).toBeHidden();
   await panel.locator('.report-line-hit').first().hover();
-  await expect(panel.locator('figcaption')).toContainText('2026-10-15: average 1, peak 4');
+  await expect(panel.locator('figcaption')).toHaveCount(0);
+  await expect(panel.locator('.report-line-hit').first().locator('title')).toHaveText('2026-10-15: average 1, peak 4 sessions');
   for (const width of [1440, 390]) {
     await page.setViewportSize({width, height: 1000});
     await panel.scrollIntoViewIfNeeded();
@@ -28,11 +29,29 @@ test('overlap chart shows average/peak, supports keyboard daily values and fits 
   }
 });
 
-test('unavailable overlap stays distinct from zero and does not hide existing Usage sections', async ({page}) => {
-  const data = report(); data.overlap = null;
-  await page.route('**/api/console/usage', route => route.fulfill({json: data}));
+test('failed refresh retains the overlap chart, recovery replaces it, and access denial clears it', async ({page}) => {
+  await page.clock.install();
+  let status = 200, reads = 0;
+  const data = report();
+  await page.route('**/api/console/usage', route => {
+    reads++;
+    return status === 200 ? route.fulfill({json: data}) : route.fulfill({status, json: {error: 'Usage request failed'}});
+  });
   await page.goto('/usage');
-  await expect(page.getByText('Session overlap is unavailable.', {exact: false})).toBeVisible();
-  await expect(page.getByRole('heading', {name: 'Data sources', exact: true})).toBeVisible();
-  await expect(page.locator('.report-line-chart')).toHaveCount(0);
+  const chart = page.locator('.report-line-chart');
+  await expect(chart).toBeVisible();
+  const initialReads = reads;
+  status = 503;
+  await page.clock.runFor(60_001);
+  await expect.poll(() => reads).toBeGreaterThan(initialReads);
+  await expect(page.getByText('Usage couldn’t update.', {exact: false})).toBeVisible();
+  await expect(chart).toBeVisible();
+  await expect(page.getByText('Session overlap is unavailable.', {exact: false})).toHaveCount(0);
+  status = 200;
+  data.overlap!.daily[0]!.peak = 99;
+  await page.clock.runFor(60_001);
+  await expect(chart.locator('.report-line-hit').first().locator('title')).toContainText('peak 99 sessions');
+  status = 403;
+  await page.clock.runFor(60_001);
+  await expect(chart).toHaveCount(0);
 });

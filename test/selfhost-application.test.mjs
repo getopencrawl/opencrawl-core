@@ -13,6 +13,7 @@ import {valueReportKey} from '../dist/src/application/value-report.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 const org='org_selfhost',setup='setup-token-for-tests';
 async function fixture(t,options={}){
+  const {search:searchOptions,...appOptions}=options;
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-selfhost-app-'));
   const store=createLocalSessionStore(dir),prefix='sessions/selfhost/v1';
   let app;const server=createServer((req,res)=>app(req,res));
@@ -20,8 +21,8 @@ async function fixture(t,options={}){
   const origin='http://localhost:'+server.address().port;
   const identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),databasePath:join(dir,'identity.sqlite'),organizationId:org});
   await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));identity.close();await rm(dir,{recursive:true,force:true});});
-  const settings={organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),identityPath:join(dir,'identity.sqlite'),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org}};
-  app=selfhostApplication({settings,store,prefix,identity,readAsset:async file=>'asset:'+file,...options});
+  const settings={organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),identityPath:join(dir,'identity.sqlite'),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
+  app=selfhostApplication({settings,store,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
   const jars=new Map();
   const request=async(path,who=null,options={})=>{
     const jar=who?jars.get(who)||new Map():null;
@@ -156,7 +157,7 @@ test('self-host team integration actions reject members through both HTTP and tR
 });
 
 test('OSS reads only its configured organization measured report from operator storage',async t=>{
-  const f=await fixture(t);
+  const f=await fixture(t,{search:{fetch:async()=>Response.json({error:{type:'index_not_found_exception'}},{status:404})}});
   await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
   const onboarding=createOnboardingStatus({store:f.store,prefix:f.prefix}),principal={tenantId:org,userId:member.userId};
