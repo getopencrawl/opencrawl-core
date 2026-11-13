@@ -12,6 +12,7 @@ import {CallbackChoices, readContinuation} from '../../src/application/callback-
 import {SessionsPage} from '../../src/pages/sessions.tsx';
 import type {LibraryAdapter} from '../../src/pages/library-types.ts';
 import {UsagePage} from '../../src/pages/usage.tsx';
+import {DiagnosticsPage} from '../../src/pages/diagnostics.tsx';
 import type {ConsoleDataAdapter} from '../../src/pages/types.ts';
 
 declare global {
@@ -35,6 +36,7 @@ const adapter: OnboardingAdapter = {
 };
 const never = new AbortController().signal;
 const usageAdapter: ConsoleDataAdapter = {usage: signal => request('/api/console/usage', signal), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
+const diagnosticsAdapter: ConsoleDataAdapter = {...usageAdapter, board: (input, signal) => request('/api/console/board?' + new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)])), signal)};
 const selfhostSetup = new URLSearchParams(window.location.search).has('selfhost');
 const libraryAdapter: LibraryAdapter = (operation, input, signal) => request('/api/library/' + operation, signal, input);
 /** The Integrations page against the same fixture state as the onboarding step. */
@@ -53,6 +55,7 @@ function Fixture() {
   const location = useLocation();
   useEffect(() => {window.__onboardingTestNavigate = path => {void navigate(path);}; return () => {delete window.__onboardingTestNavigate;};}, [navigate]);
   if (location.pathname === '/usage') return <ConsoleDataProvider scopeKey="usage-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/usage', label: 'Usage', icon: 'usage', element: <UsagePage adapter={usageAdapter}/>}]}/></ConsoleDataProvider>;
+  if (location.pathname === '/diagnostics') return <ConsoleDataProvider scopeKey="diagnostics-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/diagnostics', label: 'Diagnostics', icon: 'diagnostics', element: <DiagnosticsPage adapter={diagnosticsAdapter} canInspect/>}]}/></ConsoleDataProvider>;
   if (location.pathname === '/sessions') return <ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/sessions', label: 'Sessions', icon: 'sessions', element: <SessionsPage adapter={libraryAdapter}/>}]}/></ConsoleDataProvider>;
   if (location.pathname === '/integrations-fixture') return <ConsoleDataProvider scopeKey="fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[{path:'/integrations-fixture',label:'Integrations',icon:'sources',element:<SourcesPage adapter={sourcesAdapter} canConfigure={!location.search.includes('role=member')}/>}]}/></ConsoleDataProvider>;
   if (location.pathname.startsWith('/workspace')) return <AppShell

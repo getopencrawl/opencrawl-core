@@ -39,7 +39,7 @@ interface ForumPostProps {
 
 export function ForumPost({anchor, author, title, metadata, children}: ForumPostProps) {
   return (
-    <article className="oc-forum-post" data-board-anchor={anchor}>
+    <article className="oc-forum-post" data-board-anchor={anchor} tabIndex={-1}>
       <div className="oc-forum-author">{author}</div>
       <div className="oc-forum-content">
         <header className="oc-forum-post-heading">
