@@ -66,7 +66,7 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
     }
     else if (record.type === 'attachment') {
       const attachment=record.attachment;
-      if(['prompt_snapshot','instructions','mcp_instructions_delta','credential_org','environment','date','model','agent_listing_delta','deferred_tools_delta','skill_listing','auto_mode','session_context','task_reminder','silent_turn_reminder'].includes(attachment?.type))return null;
+      if(['prompt_snapshot','instructions','mcp_instructions_delta','credential_org','environment','date','model','agent_listing_delta','deferred_tools_delta','deferred_tools_record','skill_listing','auto_mode','session_context','task_reminder','silent_turn_reminder','command_permissions','thinking_drop'].includes(attachment?.type))return null;
       // Claude's SDK records messages delivered during a turn as queued prompts.
       // Preserve the content blocks (including images) as conversation, without
       // treating system/task notifications or other queued modes as human input.

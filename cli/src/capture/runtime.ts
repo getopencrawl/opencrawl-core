@@ -20,7 +20,7 @@ import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-histo
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
 import {redactValue,redactAttachment,MAX_REDACTION_DEPTH} from './redact.ts';
-import {replicasAttribution,replicasEventAttribution} from './replicas.ts';
+import {replicasAttribution,replicasEventAttribution,replicasTitle,type ReplicasTitle} from './replicas.ts';
 
 const compressBatch=promisify(gzip);
 export const captureDir = () => join(configDir(),'capture');
@@ -234,7 +234,8 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
     let readPath=path;
     if(compressed) {
       if(old.archiveSize===source.size && old.archiveMtime===source.mtimeMs && old.ino===source.ino && (!reconcileHistory || old.parserVersion===2)) {
-        captureCodexTitle(config, old.meta);
+        const platform=await platformTitle(config,old.meta);
+        if(platform)capturePlatformTitle(config,old.meta,platform);else captureCodexTitle(config,old.meta);
         atomicJson(stateFile, old);
         return old.meta;
       }
@@ -324,6 +325,8 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
             if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd)){await spool({...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
             const parsed=auditMessage?parseRecord(harness,record,position):null;
             if(parsed?.kind==='session_title') {
+              const platform=await platformTitle(config,meta);
+              if(platform)parsed.data={title:platform.title,titleType:'custom'};
               if(parsed.data.titleType==='custom')meta.customTitle=parsed.data.title;
               // A later automatic suggestion must not overwrite a manual rename.
               if(meta.customTitle)parsed.data={title:meta.customTitle,titleType:'custom'};
@@ -372,10 +375,22 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
         offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
       }
     } finally{closeSync(fd);if(compressed)try{unlinkSync(readPath);}catch{}}
-    if(harness==='codex' && captureCodexTitle(config,meta))atomicJson(stateFile,{...read(stateFile,old),meta});
+    const platform=await platformTitle(config,meta);
+    if(platform?capturePlatformTitle(config,meta,platform):harness==='codex'&&captureCodexTitle(config,meta))atomicJson(stateFile,{...read(stateFile,old),meta});
     return meta;
   });
   },Infinity);
+}
+
+async function platformTitle(config:CaptureConfig,meta:any,force=false) {
+  if(!process.env.REPLICAS_WORKSPACE_ID||!workspaceIdentityEnabled()||meta?.parentSessionId||meta?.origin==='subagent'||!['claude-code','codex'].includes(meta?.harness)||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(meta?.sessionId??'')||captureExcluded(readCaptureConfig()??config,meta))return undefined;
+  return replicasTitle(process.env.REPLICAS_WORKSPACE_ID,meta.sessionId,meta.harness,force);
+}
+function capturePlatformTitle(config:CaptureConfig,meta:any,{title,timestamp}:ReplicasTitle) {
+  if(meta.capturedTitle===title)return false;
+  enqueue(config,{...meta,captureMode:'history'},[{id:hash('replicas-title:'+meta.sessionId+':'+timestamp+':'+title),kind:'session_title',sequence:0,timestamp,data:{title,titleType:'custom'}}],[]);
+  meta.capturedTitle=title;meta.customTitle=title;
+  return true;
 }
 
 function captureCodexTitle(config:CaptureConfig,meta:any) {
@@ -402,6 +417,11 @@ export async function refreshCapturedTitles() {
       await withSessionLock('capture:'+stateFile,async()=>{
         const state=read(stateFile),meta=state?.meta;
         if(!meta?.sessionId || !meta.sourcePath || !state.offset || !['codex','claude-code'].includes(meta.harness) || captureExcluded(readCaptureConfig()??config,meta))return;
+        const platform=await platformTitle(config,meta,true);
+        if(platform) {
+          if(capturePlatformTitle(config,meta,platform)){atomicJson(stateFile,{...state,meta});updated++;}
+          return;
+        }
         if(meta.harness==='codex') {
           if(captureCodexTitle(config,meta)){atomicJson(stateFile,{...state,meta});updated++;}
           return;
