@@ -19,7 +19,7 @@ test('managed startup is reported without adding user hooks or asking for trust'
   for (const action of ['install', 'status', 'refresh']) {
     const result = await agentSkills(action, 'https://self-host.example', options);
     const row = result.results[0]!;
-    expect('startupHooks' in row && row.startupHooks?.[0]).toMatchObject({client: 'codex', status: 'managed', file: requirementsFile, managed: true});
+    expect('startupHooks' in row && row.startupHooks?.[0]).toEqual({client: 'codex', status: 'managed', file: requirementsFile, managed: true});
     expect(result.hookReview).toBeUndefined();
     expect(readFileSync(userFile, 'utf8')).toBe(userHooks);
     expect(readFileSync(requirementsFile, 'utf8')).toBe(policy);

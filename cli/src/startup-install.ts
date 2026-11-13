@@ -52,7 +52,12 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
       const managed = client === 'codex' ? managedStartup(requirementsFile) : null;
       const locallyDisabled = config.disableAllHooks === true || client === 'codex' && existsSync(toml) && (Bun.TOML.parse(readFileSync(toml, 'utf8')) as {features?: {hooks?: boolean}}).features?.hooks === false;
       if (locallyDisabled && !managed?.featuresEnabled) return {client, file, status: 'disabled'};
-      if (managed) return {client, ...managed};
+      if (managed) {
+        // This flag resolves policy precedence; it does not describe the
+        // effective feature state when Codex uses its enabled default.
+        const {featuresEnabled, ...status} = managed;
+        return {client, ...status};
+      }
       const runner = join(configDir(), 'startup', 'runner.cjs');
       const script = `const command=${JSON.stringify(command)};
 const env={...process.env,OPENCRAWL_CONFIG_HOME:${JSON.stringify(dirname(configDir()))}};
