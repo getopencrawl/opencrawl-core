@@ -31,7 +31,10 @@ if(kind==='deploy'){
  copyFileSync('.opencrawl-dev/seed/seed-input.json',join(seedDir,'seed-input.json'));
 }
 function compose(args,options){return docker(['compose','--project-name',project,'--env-file',envFile,'-f',join(root,'deploy/compose.yaml'),...(sqlite?['-f',join(root,'deploy/compose.sqlite.yaml')]:[]),...(override?['-f',override]:[]),...args],options);}
-const verify=(readOnly=false)=>compose(['run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(airbyte?['-e','OPENCRAWL_UPGRADE_FRESH_SYNC=true']:[]),...(readOnly&&!airbyte?['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']:[]),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
+const verify=(readOnly=false)=>{
+ const fixture=airbyte?compose(['ps','-q','fixture'],{capture:true}):'';
+ const actual=fixture?JSON.parse(docker(['inspect',fixture],{capture:true}))[0].NetworkSettings.Networks[project+'_default'].IPAddress:null;
+ return compose(['run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(airbyte?['-e','OPENCRAWL_UPGRADE_FRESH_SYNC=true','-e','OPENCRAWL_UPGRADE_FIXTURE_ACTUAL_URL=http://'+actual+':8080']:[]),...(readOnly&&!airbyte?['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']:[]),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts'])};
 verify();
 const largeSession=(phase,recovery)=>{if(!large)return;const args=['run','--rm','--no-deps','--user','root','-e','UPGRADE_LARGE_PHASE='+phase,'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','dev/large-upgrade.mjs'];if(recovery)docker([...recovery,...args]);else compose(args);};
 largeSession('before');
