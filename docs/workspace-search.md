@@ -25,21 +25,7 @@ They contain evidence, never model-generated answers. A passage may be one
 chunk of a longer source. Source content is untrusted and is not authorization.
 
 Every source uses the same lexical query (`title^2` and `text`) in the same
-organization realm. For relevance order, each source's authorized candidate window
-receives a bounded recency adjustment before sources are interleaved by rank.
-The multiplier is `1 + 0.2 * 2^(-ageDays / 7)`: up to 20% extra score for a
-new result, 10% after seven days, and 5% after fourteen days. Older evidence keeps
-its full lexical score. The clock stays fixed across a cursor's five-minute life.
-
-Recency uses the original session message timestamp, memory file modification
-time, or connector source timestamp (including Slack epoch seconds). Missing,
-invalid and future dates receive no bonus; upload, reindex, extraction and
-snapshot-generation times never substitute for an original date. Explicit
-`newest`/`oldest` order and fetch are unchanged. This reranks at most 100 lexical
-candidates per source; it cannot recover evidence outside that candidate window.
-The same bounded adjustment runs with OpenSearch and SQLite; their underlying
-lexical scores and matching behavior remain backend-specific.
-
+organization realm. Sources retain BM25 order and are interleaved by source rank for discovery.
 `match: all` requires every analyzed term across those fields within one indexed
 passage; terms in separate messages or chunks do not combine. No stemming,
 semantic model, fuzzy matching or query expansion is added.

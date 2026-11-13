@@ -13,7 +13,6 @@ import {digest,sessionScope as ownerScope} from '../sessions/event-identity.mjs'
 import {searchFiltersSchema} from './controls.mjs';
 import {candidateFacets, facetNames} from './facets.mjs';
 import {memoryPassageId} from '../memories/projection.mjs';
-import {recencyRank} from './recency.mjs';
 
 export const workspaceSearchSchema = z.strictObject({
   query: z.string().trim().max(4000).describe('Use 2–6 distinctive keywords or an exact phrase, not a question. Start match=all; shorten or use any if needed. Empty only for time-ordered browsing.'),
@@ -80,10 +79,7 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
           return {source, state: error.status === 404 && error.type === 'index_not_found_exception' ? 'pending' : 'unavailable', hits: [], truncated: false};
         }
         if (!Array.isArray(result.hits) || result.hits.length > WINDOW || result.hits.some(hit => hit.tenantId !== principal.tenantId || typeof hit.id !== 'string')) throw new Error('Invalid workspace search scope');
-        // Keep the recency clock fixed across cursor pages. Authorization and
-        // candidate retrieval remain live, and explicit time order is unchanged.
-        const hits = query.order === 'relevance' ? recencyRank(source, result.hits, page.expires - TTL) : result.hits;
-        return {source, state: 'ready', hits, truncated: Boolean(result.truncated)||(result.total ?? 0)>result.hits.length};
+        return {source, state: 'ready', hits: result.hits, truncated: Boolean(result.truncated)||(result.total ?? 0)>result.hits.length};
       }));
       const ranked: WorkspaceHit[] = [];
       for (let rank = 0; rank < WINDOW; rank++) for (const group of groups) {
