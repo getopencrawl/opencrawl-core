@@ -228,7 +228,7 @@ test('receipts, manual copy, and the three-step flow preserve one browser docume
   await expect(page.getByRole('link', {name: 'Next', exact: true})).toHaveCount(0);
   await request.post('/__test/state', {data: {status: complete}});
   await refresh(page);
-  await expect(page.getByRole('heading', {name: 'Connect your primary coding agent'})).toBeVisible();
+  await expect(page.getByRole('heading', {name: 'Your coding agent is ready'})).toBeVisible();
   await expect(page.getByRole('link', {name: 'Next', exact: true})).toBeVisible();
   await expect(page).toHaveURL(/\/onboarding$/);
   await page.getByRole('link', {name: 'Next', exact: true}).click();
@@ -236,7 +236,7 @@ test('receipts, manual copy, and the three-step flow preserve one browser docume
   await expect(page.getByRole('link', {name: 'Next', exact: true})).toHaveCount(0);
   await expect(page.getByRole('link', {name: 'Skip for now', exact: true})).toBeVisible();
   await page.goBack();
-  await expect(page.getByRole('heading', {name: 'Connect your primary coding agent'})).toBeVisible();
+  await expect(page.getByRole('heading', {name: 'Your coding agent is ready'})).toBeVisible();
   await page.getByRole('link', {name: 'Next', exact: true}).click();
   await page.getByRole('button', {name: 'Connect Granola', exact: true}).click();
   await expect(page.getByRole('dialog')).toBeVisible();
@@ -337,6 +337,7 @@ test('finish errors stay in the flow and do not infer completion from a button c
 test('received history stays unconfirmed and optional until an explicit completion receipt arrives', async ({page, request}, testInfo) => {
   await request.post('/__test/state', {data: {status: {...complete, history: {...receipt, state: 'received'}}}});
   await page.goto('/onboarding');
+  await page.getByText('View setup details', {exact: true}).click();
   const history = page.locator('[data-signal="history"]');
   await expect(history).not.toHaveAttribute('data-complete', '');
   await expect(history.locator('.signal-status')).toHaveText('Pending');
@@ -389,7 +390,7 @@ for (const viewport of [{name: 'desktop', width: 1440, height: 1000}, {name: 'mo
     await expect(page.getByRole('link', {name: 'Next', exact: true})).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
     const panel = await page.locator('.focus-panel').boundingBox();
-    const heading = page.getByRole('heading', {name: 'Connect your primary coding agent'});
+    const heading = page.getByRole('heading', {name: 'Your coding agent is ready'});
     const typography = await heading.evaluate(node => ({size: getComputedStyle(node).fontSize, weight: getComputedStyle(node).fontWeight, family: getComputedStyle(node).fontFamily, align: getComputedStyle(node).textAlign}));
     expect(typography.size).toBe(viewport.name === 'mobile' ? '30px' : '36px');
     expect(typography.weight).toBe('550');
@@ -406,11 +407,14 @@ for (const viewport of [{name: 'desktop', width: 1440, height: 1000}, {name: 'mo
     expect(navigation.y).toBeGreaterThanOrEqual(panel.y + panel.height + 24);
     expect(navigation.x + navigation.width).toBe(panel.x + panel.width);
     await page.screenshot({path: testInfo.outputPath(`onboarding-${viewport.name}.png`), fullPage: true});
+    await request.post('/__test/state', {data: {status: {}}});
+    await refresh(page);
     await page.getByRole('button', {name: 'Show setup prompt'}).click();
     await expect(page.locator('#connect-preview')).toBeVisible();
     await page.screenshot({path: testInfo.outputPath(`react-long-prompt-${viewport.name}.png`), fullPage: true});
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await request.post('/__test/state', {data: {invitations: [{email: `${'long-address-'.repeat(10)}@example.com`}]}});
+    await request.post('/__test/state', {data: {status: complete, invitations: [{email: `${'long-address-'.repeat(10)}@example.com`}]}});
+    await refresh(page);
     await page.getByRole('link', {name: 'Next', exact: true}).click();
     await page.evaluate(() => window.__onboardingTestNavigate?.('/onboarding/invite'));
     await expect(page.locator('.invitation-email')).toBeVisible();
@@ -614,4 +618,78 @@ for (const width of [1280,390]) test(`Replicas installation copies its own promp
   await expect(page.getByRole('button',{name:'Copied',exact:true})).toBeFocused();
   await page.goto('/onboarding?role=member');
   await expect(page.getByRole('button',{name:'Install on Replicas'})).toHaveCount(0);
+});
+
+
+for (const viewport of [{width:1280,height:813},{width:400,height:580}]) {
+  test(`setup actions keep their identity and completion exposes Next at ${viewport.width}px`, async ({page,request}, testInfo) => {
+    await page.setViewportSize(viewport);
+    await page.addInitScript(() => Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{sessionStorage.setItem('copied-prompt',text);}}}));
+    await page.goto('/onboarding?role=member');
+    const setup = page.locator('.copy-prompt');
+    await expect(setup).toHaveText('Copy setup prompt');
+    await setup.click();
+    const setupText = await page.evaluate(()=>sessionStorage.getItem('copied-prompt'));
+    await page.getByRole('button',{name:'Show setup prompt'}).click();
+    await request.post('/__test/state',{data:{status:{cli:receipt}}});
+    await refresh(page);
+    await expect(page.getByRole('button',{name:'Copy MCP setup prompt',exact:true})).toBeInViewport({ratio:1});
+    await expect(setup).toHaveText('Copy setup prompt');
+    await expect(page.locator('#connect-preview')).toBeHidden();
+    await request.post('/__test/state',{data:{status:{cli:receipt,mcp:receipt}}});
+    await refresh(page);
+    const testPrompt = page.getByRole('button',{name:'Copy test prompt',exact:true});
+    await expect(testPrompt).toBeInViewport({ratio:1});
+    await expect(setup).toHaveText('Copy setup prompt');
+    await setup.click();
+    expect(await page.evaluate(()=>sessionStorage.getItem('copied-prompt'))).toBe(setupText);
+    await testPrompt.click();
+    expect(await page.evaluate(()=>sessionStorage.getItem('copied-prompt'))).toContain('test_connection');
+    await request.post('/__test/state',{data:{status:{cli:receipt,mcpTest:receipt}}});
+    await refresh(page);
+    await expect(page.getByRole('button',{name:'Copy a small task',exact:true})).toBeInViewport({ratio:1});
+    await expect(page.locator('[data-signal="mcpTest"] details')).not.toHaveAttribute('open','');
+    await page.getByRole('button',{name:'Show setup prompt'}).click();
+    await expect(page.locator('#connect-preview')).toBeVisible();
+    await request.post('/__test/state',{data:{status:complete}});
+    await refresh(page);
+    await expect(page.getByRole('heading',{name:'Your coding agent is ready'})).toBeVisible();
+    await expect(page.locator('.completed-setup')).not.toHaveAttribute('open','');
+    await expect(page.getByRole('button',{name:'Copy setup prompt',exact:true})).toHaveCount(0);
+    const next = page.getByRole('link',{name:'Next',exact:true});
+    await expect(next).toBeInViewport({ratio:1});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:testInfo.outputPath(`completed-${viewport.width}.png`)});
+    await next.click();
+    await expect(page.getByRole('heading',{name:'Connect your sources'})).toBeVisible();
+    await page.goBack();
+    await expect(page.getByRole('heading',{name:'Your coding agent is ready'})).toBeVisible();
+    await expect(page.locator('.completed-setup')).not.toHaveAttribute('open','');
+  });
+}
+
+test('the separate test prompt preserves manual-copy text and keyboard focus',async({page,request})=>{
+  await request.post('/__test/state',{data:{status:{cli:receipt,mcp:receipt}}});
+  await page.addInitScript(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('denied');}}}));
+  await page.goto('/onboarding?role=member');
+  await page.getByRole('button',{name:'Copy test prompt',exact:true}).click();
+  await expect(page.getByLabel('Prompt to copy')).toBeFocused();
+  await expect(page.getByLabel('Prompt to copy')).toHaveValue(/test_connection/);
+  await page.getByRole('button',{name:'I’ve copied it'}).click();
+  await expect(page.locator('[data-prompt="verify"]')).toBeFocused();
+  await expect(page.locator('.copy-prompt')).toHaveText('Copy setup prompt');
+});
+
+
+test('completion dismisses manual setup even when receipts arrive together',async({page,request})=>{
+  await page.setViewportSize({width:400,height:580});
+  await page.addInitScript(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('denied');}}}));
+  await page.goto('/onboarding?role=member');
+  await page.getByRole('button',{name:'Copy setup prompt',exact:true}).click();
+  await expect(page.getByLabel('Prompt to copy')).toBeFocused();
+  await request.post('/__test/state',{data:{status:complete}});
+  await refresh(page);
+  await expect(page.getByRole('heading',{name:'Your coding agent is ready'})).toBeVisible();
+  await expect(page.getByLabel('Prompt to copy')).toHaveCount(0);
+  await expect(page.getByRole('link',{name:'Next',exact:true})).toBeInViewport({ratio:1});
 });
