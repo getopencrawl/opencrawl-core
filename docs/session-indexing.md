@@ -1,8 +1,12 @@
 # Session indexing with Temporal
 
-The ingest API authenticates the user, validates ownership and the envelope, and stores immutable transcript batches and attachments in S3-compatible storage. Its acknowledgement requires durable S3 storage. It does not create indexing work items, call Temporal, initialize search, or run background processing. A Temporal or OpenSearch outage does not prevent capture.
+The ingest API authenticates the user, validates ownership and the envelope, stores the immutable transcript batch or memory snapshot, and submits that object's key to Temporal before acknowledging it. A retry submits the same durable job even when the raw object already exists. A crash between storage and submission therefore leaves the client queue intact; its next upload completes the handoff. Attachments remain content-addressed objects and are indexed through their transcript batch.
 
-A separate Node.js worker runs `indexSessionsV1` on Temporal. A five-minute durable schedule discovers captured objects in bounded S3 pages and executes indexing activities. Temporal owns activity retry/backoff, timeouts and the discovery cursor. After five pages a workflow continues as new to bound history. Each activity retries five times; an exhausted object does not block the rest of the sweep, but causes a visible failed workflow. The next scheduled sweep can retry repaired objects. Schedule overlap is SKIP.
+Temporal owns retries and worker outages. Each object uses the existing `indexSessionObject` activity directly, without listing the capture inventory. Work IDs include the trusted source, search/receipt generation and raw object key. Concurrent submissions reuse a running execution; completed submissions reuse the success, and failed executions can be restarted. Transient failures retry without an overall expiration. Permanent scope or document-size failures remain visible in Temporal and require repair. An unavailable Temporal service prevents a remote acknowledgement, while local capture continues to buffer safely. An OpenSearch outage does not prevent submission.
+
+Hosted deployments use standalone Activities on a compatible Temporal service. The bundled self-hosted Temporal 1.29.1 server has no standalone Activity API, so its producer uses `indexSessionObjectV2`, a one-activity compatibility workflow with the same retry policy. This change does not upgrade the server or its database schema. Both runtimes reuse the same activity, validation, visibility controls and indexing receipts.
+
+`indexSessionsV1` remains available for explicit recovery and old histories. Its legacy five-minute schedule stays enabled during a staged upgrade, then is paused after all producers submit directly. `reconcileSessionsV2` performs the one-time catch-up with unlimited transient retries and a durable completion marker. Both scans use bounded pages and continue as new after five pages. Memory indexing may still list one owner's memory controls to enforce visibility; it does not scan captured source objects.
 
 Session and connector sweeps detect cyclic provider cursors across continuations.
 The workflow retains one checkpoint token and two decimal counters (constant
@@ -72,9 +76,19 @@ Existing S3 objects, attachment references and document IDs are unchanged. Succe
 Deploy the receiver and worker against the same PostgreSQL identity database.
 Existing installations follow the [event identity upgrade](event-identity-migration.md)
 for migration, cutover and rollback. Do not delete the search cluster or connector
-schedules. Periodic reconciliation remains enabled.
+schedules. Keep session reconciliation enabled until the direct-submission cutover below.
 
-Discovery currently sweeps the fixed source prefix, including successful receipts checks, using bounded pages. This deliberately favors simple reliable catch-up over low-latency ingestion. Monitor schedule failures, activity retries and sweep lag. S3 credentials need source reads/listing, conditional event-ledger reads/writes and success-receipt reads/writes; source deletion is unnecessary. Back up canonical S3, the event identity PostgreSQL database and Temporal persistence. Rebuild against a new versioned index with its own receipt namespace; never restore receipts without the matching index.
+### Direct-submission cutover
+
+Deploy compatible workers first, then API producers with `scheduleIndexing` wired for both transcript batches and memory snapshots. Prove a newly acknowledged object has an accepted Temporal execution and becomes searchable. Keep the old sweep during these stages; worker startup alone cannot establish that all producers have upgraded.
+
+Then call `activateSessionIndexing(client, {sourceId, taskQueue, generation, store, prefix})` from `sessions/temporal-client` using trusted runtime configuration. Derive `generation` with `sessionIndexingGeneration(search.identity, jobId)` in both producer and worker. Activation verifies and pauses the existing sweep, starts/reuses one catch-up workflow, and returns `{workflowId, markerKey, completed}`. If `completed` is false, await `client.workflow.getHandle(workflowId).result()` before declaring the transition complete. The workflow's final retrying activity writes the completion marker only after every page succeeds. Future activation skips completed catch-up even after Temporal history retention expires. No marker means catch-up must run; failed, terminated or expired executions can be restarted by activating again.
+
+Fresh self-host installations set `OPENCRAWL_SESSION_INDEXING_CUTOVER=1` in the generated `deploy/.env`; Compose starts the worker only after the API is healthy. Existing `.env` files omit it and retain the old schedule during rollout. After updating both services and verifying direct submission, set the flag to `1` and restart the worker. Its readiness record exposes `captureCatchup`; verify that workflow completes. Permanent failures leave no completion marker: repair the cause and restart the worker to retry. Keep the flag enabled on subsequent releases.
+
+Explicit repair can run `indexSessionsV1` with an operator-selected workflow ID, or remove only the known completion marker and activate again after diagnosing why a full catch-up is required. New versioned search targets must use a new generation and their matching receipt namespace. Do not reuse completion markers or indexing receipts after rebuilding an index. A producer rollback that stops durable submission must first resume the legacy schedule; retain compatible workers for already accepted work.
+
+Monitor failed executions and retry/backlog age instead of recurring scan activity. Storage credentials still need bounded listing for catch-up, authoritative controls and deletion. Back up canonical S3, the event identity database and Temporal persistence together. Never restore receipts without the matching search index, and never clear deletion controls to make a retry succeed.
 
 ## Installation-independent document IDs (0.2.39)
 

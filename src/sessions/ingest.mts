@@ -4,7 +4,7 @@ import type {MemorySnapshot} from '../memories/types.mjs';
 import type {SearchAdapter} from '../search/types.mjs';
 import type {createCaptureCredentials} from './credentials.mjs';
 import type {IncomingMessage} from 'node:http';
-export interface SessionIngestOptions {store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
+export interface SessionIngestOptions {store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; scheduleIndexing?: (key: string) => Promise<unknown>; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
 export interface SessionBatchReceipt {harness: string; installationId: string; sessionId: string; batchId: string; userId?: string}
 import {serviceError} from './types.mjs';
 import {gzipSync, gunzipSync, gunzip} from 'node:zlib';
@@ -24,7 +24,7 @@ export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const MAX_STORED_BATCH_BYTES = MAX_BATCH_BYTES + 1024 * 1024;
 const decompressBatch = promisify(gunzip);
 
-export function createSessionIngest({store, eventIdentities, prefix = 'capture-v1', onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
+export function createSessionIngest({store, eventIdentities, prefix = 'capture-v1', scheduleIndexing=undefined, onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = (principal: Principal) => `${prefix}/${sessionScope(principal)}`;
   // Existence checks must not download attachment bodies on every batch retry.
@@ -32,7 +32,7 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
   const controls = createControls({store, prefix});
   return {
     async putMemorySnapshot(principal: Principal,snapshot: MemorySnapshot) {
-      const receipt=await createMemoryIngest({store,prefix}).putSnapshot(principal,snapshot);
+      const receipt=await createMemoryIngest({store,prefix,scheduleIndexing}).putSnapshot(principal,snapshot);
       if(onMemoryStored)await onMemoryStored(principal,{harness:snapshot.harness,files:receipt.files,snapshotId:receipt.snapshotId});
       return receipt;
     },
@@ -97,6 +97,9 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
           name: principal.name ?? null, email: principal.email ?? null}, receivedAt: new Date().toISOString()};
         await writes.put(key, gzipSync(JSON.stringify(record)), 'application/gzip');
       }
+      // The immutable write is retried safely if durable dispatch failed. Never
+      // acknowledge a configured handoff before Temporal accepted this object.
+      if (scheduleIndexing) await scheduleIndexing(key);
       if (onStored) await onStored(principal, batch);
       return {batchId, eventCount: batch.events.length, stored: true};
       } catch (error) {if ((await barrier.inspect()).closed) return discarded(); throw error;}

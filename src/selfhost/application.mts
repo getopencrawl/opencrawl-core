@@ -53,12 +53,13 @@ export interface SelfhostApplicationOptions {
   oauth?:ReturnType<typeof createSlackOAuth>;sourceCredentials?:SourceCredentialProxy;
   /** Lets an admin store an operator connector credential from the product. */
   connectorSettings?:{save(id:string,value:unknown,by:Principal):Promise<void>};
+  scheduleSessionIndexing?:(key:string)=>Promise<unknown>;
   scheduleSessionDeletion?:(key:string)=>Promise<unknown>;
   workloadIdentity?:ReturnType<typeof createReplicasWorkloads>;
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,eventIdentities,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,workloadIdentity,
+export function selfhostApplication({settings,store,eventIdentities,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
 }:SelfhostApplicationOptions) {
   const workloads=workloadIdentity??createReplicasWorkloads({audience:settings.url,bindings:()=>settings.replicasBindings??[]});
@@ -97,7 +98,7 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
     const result=await workloads.identify(token);if(result.status===200)return result.principal;
     res.writeHead(result.status,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'invalid_workload'}));return null;
   },onConnectionTest:async p=>{if(!isWorkloadPrincipal(p))await onboarding.mcpTest(p);},onAuthenticated:async(p,info)=>{if(!isWorkloadPrincipal(p))await onboarding.mcp(p,info);}});
-  const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({store,eventIdentities,prefix,onStored:observe.session}),authenticate:async req=>{
+  const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:scheduleSessionIndexing,onStored:observe.session}),authenticate:async req=>{
     const token=/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1];
     if(isReplicasToken(token)){const result=await workloads.identify(token);if(result.status!==200)throw Object.assign(new Error('Workload authentication required'),{status:result.status});return {...result.principal,captureAccess:'write'};}
     if(isCaptureCredential(token)) {
