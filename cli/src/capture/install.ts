@@ -10,6 +10,7 @@ import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts'
 import {CliError} from '../oauth.ts';
 import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
+import {workspaceIdentityEnabled} from '../workspace-identity.ts';
 import {captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, codexHooksAwaitingReview, HOOK_MODE, type CaptureConfig} from './runtime.ts';
 import {captureNotice, grokBotNotice} from './policy.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
@@ -148,6 +149,7 @@ export async function upgradeCaptureHooks() {
   },0);}catch(error:any){if(error?.code!=='SESSION_BUSY')throw error;}
 }
 export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
+  workspaceIdentityEnabled(); // Reject mixed credentials even during image preparation.
   const receiverToken=environmentToken('OPENCRAWL_SESSIONS_TOKEN',api);
   if(!harnesses.length||harnesses.some(h=>!HARNESSES.includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code, codex or grok-bot',64);
   // Image preparation cannot access runtime secrets. First worker authenticates

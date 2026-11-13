@@ -1,3 +1,4 @@
+import {createReplicasWorkloads, isReplicasToken, isWorkloadPrincipal} from '../identity/replicas.mjs';
 import type {createSlackOAuth} from '../integrations/slack-oauth.mjs';
 import {connectorProxyHandler,type SourceCredentialProxy} from '../integrations/proxy-http.mjs';
 import type {IncomingMessage,ServerResponse} from 'node:http';
@@ -52,12 +53,14 @@ export interface SelfhostApplicationOptions {
   /** Lets an admin store an operator connector credential from the product. */
   connectorSettings?:{save(id:string,value:unknown,by:Principal):Promise<void>};
   scheduleSessionDeletion?:(key:string)=>Promise<unknown>;
+  workloadIdentity?:ReturnType<typeof createReplicasWorkloads>;
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,
+export function selfhostApplication({settings,store,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,workloadIdentity,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
 }:SelfhostApplicationOptions) {
+  const workloads=workloadIdentity??createReplicasWorkloads({audience:settings.url,bindings:()=>settings.replicasBindings??[]});
   const directory=identity.directory;
   const credentialProxy=sourceCredentials?connectorProxyHandler(sourceCredentials):null;
   const admit=singleOrganizationIdentity(directory,settings.organizationId),resolve=singleOrganizationPrincipal(directory,settings.organizationId);
@@ -69,6 +72,7 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
   const search=createSessionSearch({...settings.search,store,prefix});
   async function authorize(principal:Principal,requested?:unknown) {
     if(principal?.tenantId!==settings.organizationId || principal.captureAccess!==undefined || requested!=null&&requested!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
+    if(isWorkloadPrincipal(principal))return workloads.revalidate(principal,requested);
     const current=await currentVerifiedUser(directory,principal.userId);
     if(current.status!==200)throw Object.assign(new Error('Account unavailable'),{status:current.status});
     const result=await resolve(current.user,settings.organizationId);
@@ -81,13 +85,20 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
     async fetch(p:Principal,input:unknown){await authorize(p);const result=await workspace.fetch(p,input);await authorize(p);return result;},
   };
   const board=authorizedBoard({store,prefix:prefix+'/board',authorize,search:createBoardSearch(settings.search),recentSessions:createRecentSessions({store,prefix,...settings.search})});
-  const authenticate=async(req:IncomingMessage)=>{const identity=await identifyCli(req.headers.authorization,{capture:true});if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});return identity.principal;};
+  const identifyAgent=async(req:IncomingMessage)=>{const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];return isReplicasToken(token)?workloads.identify(token):identifyCli(req.headers.authorization,{capture:true});};
+  const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});return identity.principal;};
   const query=createWorkspaceSearchHandler({search:authorizedSearch,authenticate});
   const fetchPassage=createWorkspaceSearchHandler({search:authorizedSearch,authenticate,operation:'fetch'});
   const boardHandler=createBoardHandler({board,authenticate});
-  const mcp=createOpenCrawlMcp({origin:settings.url,revision:settings.revision,search:authorizedSearch,board,authenticate:accounts.mcpIdentity,onConnectionTest:p=>onboarding.mcpTest(p),onAuthenticated:(p,info)=>onboarding.mcp(p,info)});
+  const mcp=createOpenCrawlMcp({origin:settings.url,revision:settings.revision,search:authorizedSearch,board,authenticate:async(req,res)=>{
+    const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];
+    if(!isReplicasToken(token))return accounts.mcpIdentity(req,res);
+    const result=await workloads.identify(token);if(result.status===200)return result.principal;
+    res.writeHead(result.status,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'invalid_workload'}));return null;
+  },onConnectionTest:async p=>{if(!isWorkloadPrincipal(p))await onboarding.mcpTest(p);},onAuthenticated:async(p,info)=>{if(!isWorkloadPrincipal(p))await onboarding.mcp(p,info);}});
   const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({store,prefix,onStored:observe.session}),authenticate:async req=>{
     const token=/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1];
+    if(isReplicasToken(token)){const result=await workloads.identify(token);if(result.status!==200)throw Object.assign(new Error('Workload authentication required'),{status:result.status});return {...result.principal,captureAccess:'write'};}
     if(isCaptureCredential(token)) {
       const delegated=await credentials.authenticate(token);
       if(!delegated)throw Object.assign(new Error('Capture credential expired or revoked'),{status:401});
@@ -133,11 +144,11 @@ export function selfhostApplication({settings,store,prefix,identity,integrations
       if(url.pathname==='/api/cli/me'){
         if(req.method!=='GET')return respond(405,'Method not allowed');
         if(req.headers.origin)return respond(403,'Browser request denied');
-        const result=await identifyCli(req.headers.authorization,{capture:true});
+        const result=await identifyAgent(req);
         if(result.status!==200)return json(result.status,{schemaVersion:1,error:{code:result.status===403?(result.code||'ACCESS_DENIED'):'AUTH_REQUIRED'}});
         const workspace:{id:string;name:string|null}={id:result.principal.tenantId,name:null};
         try{const organization=await directory.organizations.getOrganization(workspace.id);if(organization.id===workspace.id)workspace.name=organization.name;}catch{/* Display failure does not invalidate a verified sign-in. */}
-        await observe.cli(result.principal);return json(200,{schemaVersion:1,data:{user:result.user,workspace,index:{available:false}}});
+        if(!isWorkloadPrincipal(result.principal))await observe.cli(result.principal);return json(200,{schemaVersion:1,data:{user:result.user,workspace,index:{available:false},...('workload' in result?{credential:'workspace-identity',workload:result.workload}:{})}});
       }
       if(req.method==='GET'&&url.pathname==='/setup-prompt.txt'){res.setHeader('Access-Control-Allow-Origin','*');return respond(200,captureSetupPrompt(settings.url));}
       if(req.method==='GET'&&url.pathname==='/robots.txt')return respond(200,'User-agent: *\nDisallow: /\n');

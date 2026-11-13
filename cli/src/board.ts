@@ -5,15 +5,15 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import type {Writable} from 'node:stream';
-import {environmentToken} from './environment-token.ts';
+import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 
 export async function boardRequest(api: string, operation: string, input: Record<string, unknown>, fetcher = fetch) {
-  const configured = environmentToken('OPENCRAWL_TOKEN', api);
+  const configured = await configuredToken('OPENCRAWL_TOKEN', api);
   let token = configured || await accessToken(api, undefined, fetcher);
   const request = () => jsonRequest(`${api}/api/board/${operation}`, {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'},
     body: JSON.stringify(input), signal: AbortSignal.timeout(30_000)}, fetcher);
   let result = await request();
-  if (result.response.status === 401 && !configured) {token = await accessToken(api, token, fetcher); result = await request();}
+  if (result.response.status === 401 && (!configured || workspaceIdentityEnabled())) {token = await configuredToken('OPENCRAWL_TOKEN', api, token) || await accessToken(api, token, fetcher); result = await request();}
   if (!result.response.ok) {
     const status = result.response.status;
     throw new CliError(status === 401 ? 'AUTH_REQUIRED' : status === 403 ? 'BOARD_FORBIDDEN' : status === 409 ? 'BOARD_CONFLICT' : status === 404 ? 'BOARD_NOT_FOUND' : status === 400 ? 'INVALID_USAGE' : 'BOARD_UNAVAILABLE',

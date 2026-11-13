@@ -13,6 +13,7 @@ import {configDir, atomicFile, atomicJson, accessToken, readSession, withSession
 import {CliError} from '../oauth.ts';
 import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
+import {workspaceIdentityEnabled, workspaceToken} from '../workspace-identity.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
@@ -58,6 +59,7 @@ export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,
   return (await captureIdentity(config,token,signal)).principal;
 }
 function staticCaptureToken(api:string) {
+  if(workspaceIdentityEnabled())return undefined;
   const saved=read(join(captureDir(),'receiver-token.json'));
   return environmentToken('OPENCRAWL_SESSIONS_TOKEN',api) || (saved?.api===api?saved.token:null);
 }
@@ -65,7 +67,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   const staticToken=tokenOverride || staticCaptureToken(api);
   const signal=init.signal??undefined;
   signal?.throwIfAborted();
-  let token=staticToken || await accessToken(api,undefined,fetch,signal);
+  let token=staticToken || (workspaceIdentityEnabled()?await workspaceToken(api):await accessToken(api,undefined,fetch,signal));
   const method=init.method??'GET',pathname=new URL(path,api).pathname;
   // Only retry operations whose payloads are read-only or content-addressed.
   // A lost response after storage must resend the same batch/blob, not lose it.
@@ -85,7 +87,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
     }
   };
   let res=await send();
-  if(res.status===401 && (renew || !staticToken)){token=renew?await renew(token):await accessToken(api,token,fetch,signal);res=await send();}
+  if(res.status===401 && (renew || !staticToken)){token=renew?await renew(token):workspaceIdentityEnabled()?await workspaceToken(api,token):await accessToken(api,token,fetch,signal);res=await send();}
   if(res.status===413){await res.body?.cancel();throw Object.assign(new CliError('CAPTURE_UPLOAD_FAILED','Capture request failed (413): payload or session capacity exceeded'),{httpStatus:413});}
   const body=await res.json().catch(()=>{throw res.status>=500||res.status===429
     ?new CliError('CAPTURE_RETRY_EXHAUSTED',`Capture endpoint ${new URL(api).hostname} is temporarily unavailable (HTTP ${res.status}). Queued data is retained; retry the approved import.`)
@@ -669,7 +671,7 @@ export async function bindHookIdentity(event:any,{now=Date.now}={}) {
   const config=readCaptureConfig();if(!config||config.disabled||!config.authPending)return;
   // Nobody has signed in on this computer. That is a local fact, not a failing
   // receiver: look again on every hook, quietly.
-  if(!staticCaptureToken(config.api)&&!readSession(config.api))return;
+  if(!workspaceIdentityEnabled()&&!staticCaptureToken(config.api)&&!readSession(config.api))return;
   return hookPass(event,now,async pending=>{await refreshCaptureIdentity(pending);});
 }
 export const hookFlush=(event:any,{now=Date.now}={})=>readCaptureConfig()?.authPending?Promise.resolve():hookPass(event,now,async config=>{
@@ -707,7 +709,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     // A concurrent login must not switch the identity between the initial check
     // and blob writes. If this credential expires, retain the queue for a retry.
     const staticToken=staticCaptureToken(config.api);
-    let token=staticToken||await accessToken(config.api);
+    let token=staticToken||(workspaceIdentityEnabled()?await workspaceToken(config.api):await accessToken(config.api));
     const identity=await captureIdentity(config,token),principal=identity.principal;
     let useGzip=identity.gzip;
     // A long flush outlives a short-lived sign-in token. Renew before each request
@@ -720,8 +722,8 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
       if(current.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Signed-in team changed during upload. Sign back into the original destination; queued data is retained.');
       return token=next;
     };
-    const current=async()=>staticToken||await adopt(await accessToken(config.api));
-    const renew=staticToken?undefined:async(rejected:string)=>adopt(await accessToken(config.api,rejected));
+    const current=async()=>staticToken||await adopt(workspaceIdentityEnabled()?await workspaceToken(config.api):await accessToken(config.api));
+    const renew=staticToken?undefined:async(rejected:string)=>adopt(workspaceIdentityEnabled()?await workspaceToken(config.api,rejected):await accessToken(config.api,rejected));
     let uploaded=0,excluded=0,visited=0,scheduled=0,stopped=false,failure:unknown,nextUploadAt=0;
     if(retryRejected)for(const name of rejectedNames())retryWindowsSharing(()=>unlinkSync(join(captureDir(),'rejected',name)));
     let names=queuedNames();
