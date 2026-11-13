@@ -33,14 +33,15 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
     await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_event_identity_schema (
       singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton), version integer NOT NULL, database_id uuid NOT NULL);
       CREATE TABLE IF NOT EXISTS opencrawl_event_identity_sessions (
+      id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       namespace text NOT NULL, source text NOT NULL, identity text NOT NULL CHECK(identity ~ '^[a-f0-9]{64}$'),
       resource text NOT NULL, state text NOT NULL CHECK(state IN ('importing','ready')), event_count bigint NOT NULL DEFAULT 0,
-      PRIMARY KEY(namespace,source));
+      UNIQUE(namespace,source));
       CREATE TABLE IF NOT EXISTS opencrawl_event_identities (
-      namespace text NOT NULL, source text NOT NULL, event_hash bytea NOT NULL CHECK(octet_length(event_hash)=32),
+      session_id bigint NOT NULL REFERENCES opencrawl_event_identity_sessions(id) ON DELETE CASCADE,
+      event_hash bytea NOT NULL CHECK(octet_length(event_hash)=32),
       content_hash bytea NOT NULL CHECK(octet_length(content_hash)=32),
-      PRIMARY KEY(namespace,source,event_hash),
-      FOREIGN KEY(namespace,source) REFERENCES opencrawl_event_identity_sessions(namespace,source) ON DELETE CASCADE);
+      PRIMARY KEY(session_id,event_hash));
       CREATE INDEX IF NOT EXISTS opencrawl_event_identity_resource ON opencrawl_event_identity_sessions(namespace,resource);
       CREATE TABLE IF NOT EXISTS opencrawl_event_identity_deletions(namespace text NOT NULL, resource text NOT NULL, PRIMARY KEY(namespace,resource))`);
     await client.query('INSERT INTO opencrawl_event_identity_schema(singleton,version,database_id) VALUES(true,1,$1) ON CONFLICT DO NOTHING',[randomUUID()]);
@@ -71,12 +72,15 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
   const entries=[...events],ids=entries.map(([id])=>Buffer.from(id,'hex')),hashes=entries.map(([,hash])=>Buffer.from(hash,'hex'));
   await client.query('BEGIN');
   try{
-   const inserted=await client.query(`INSERT INTO opencrawl_event_identities(namespace,source,event_hash,content_hash)
-     SELECT $1,$2,event_hash,content_hash FROM unnest($3::bytea[],$4::bytea[]) AS input(event_hash,content_hash)
+   const inserted=await client.query(`INSERT INTO opencrawl_event_identities(session_id,event_hash,content_hash)
+     SELECT s.id,input.event_hash,input.content_hash FROM opencrawl_event_identity_sessions s
+     CROSS JOIN unnest($3::bytea[],$4::bytea[]) AS input(event_hash,content_hash)
+     WHERE s.namespace=$1 AND s.source=$2
      ON CONFLICT DO NOTHING`,[namespace,where.source,ids,hashes]);
    const mismatches=await client.query<{id:string}>(`SELECT encode(e.event_hash,'hex') AS id
-     FROM opencrawl_event_identities e JOIN unnest($3::bytea[],$4::bytea[]) AS input(event_hash,content_hash) USING(event_hash)
-     WHERE e.namespace=$1 AND e.source=$2 AND e.content_hash<>input.content_hash`,[namespace,where.source,ids,hashes]);
+     FROM opencrawl_event_identities e JOIN opencrawl_event_identity_sessions s ON s.id=e.session_id
+     JOIN unnest($3::bytea[],$4::bytea[]) AS input(event_hash,content_hash) ON input.event_hash=e.event_hash
+     WHERE s.namespace=$1 AND s.source=$2 AND e.content_hash<>input.content_hash`,[namespace,where.source,ids,hashes]);
    if(mismatches.rows.length)eventIdentityConflict(new Set(mismatches.rows.map(row=>row.id)));
    await client.query('UPDATE opencrawl_event_identity_sessions SET event_count=event_count+$3 WHERE namespace=$1 AND source=$2',[namespace,where.source,inserted.rowCount]);
    await client.query('COMMIT');return inserted.rowCount??0;
@@ -85,6 +89,7 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
  async function readLedger(store:ObjectStore,where:Where){
   const value=await store.readVersion(where.source+'event-identities-v1.json',{maxBytes:MAX_EVENT_LEDGER_BYTES});
   if(!value.data){if(value.version!==null)unavailable('Invalid event identity storage version');return {...value,ledger:null};}
+  if(value.version===null||value.version===undefined)unavailable('Invalid event identity storage version');
   let ledger:Legacy|Marker;try{ledger=parseJson(value.data);}catch{invalid('Invalid legacy event identity ledger');}
   if(!ledger!||!hex(ledger!.identity)||where.identity&&ledger!.identity!==where.identity||![1,2].includes(ledger!.schemaVersion))invalid('Legacy event identity scope mismatch');
   if(ledger!.schemaVersion===1&&(!ledger!.events||typeof ledger!.events!=='object'||Array.isArray(ledger!.events)||Object.entries(ledger!.events).some(([id,hash])=>!hex(id)||!hex(hash))))invalid('Invalid legacy event identity fingerprints');

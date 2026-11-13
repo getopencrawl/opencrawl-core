@@ -5,6 +5,7 @@ import {Pool} from 'pg';
 import {createPostgresEventIdentities} from '../dist/src/sessions/postgres-identities.mjs';
 import {createSessionIngest,digest} from '../dist/src/sessions/ingest.mjs';
 import {eventIdentityLocation,eventFingerprints} from '../dist/src/sessions/event-identity.mjs';
+import {migrateEventIdentitySource} from '../dist/src/sessions/identity-migration.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 
 const connectionString=process.env.OPENCRAWL_TEST_POSTGRES_URL;
@@ -90,8 +91,23 @@ live('session growth beyond the old JSON ceiling retains constant-size storage r
 live('permanent deletion removes fingerprints from all installations and fences late reservations',async t=>{
  const f=await fixture(t);await f.reserve([event('same')]);
  await f.identities.reserve({...identity,installationId:'other-machine',store:f.store,events:[event('same')]});
+ await f.identities.reserve({...identity,principal:{...owner,tenantId:'other'},store:f.store,events:[event('same')]});
  await f.identities.purgeSession(identity);
- assert.equal((await f.pool.query('SELECT count(*) FROM opencrawl_event_identities WHERE namespace=$1',[f.namespace])).rows[0].count,'0');
+ assert.equal((await f.pool.query('SELECT count(*) FROM opencrawl_event_identities e JOIN opencrawl_event_identity_sessions s ON s.id=e.session_id WHERE s.namespace=$1',[f.namespace])).rows[0].count,'1');
  await assert.rejects(f.reserve([event('late')]),{status:410});
  await assert.rejects(f.identities.reserve({...identity,installationId:'new-machine',store:f.store,events:[event('late')]}),{status:410});
+});
+
+live('whole-source migration discovers ledger-only sessions, validates raw owners, and can restart',async t=>{
+ const f=await fixture(t),legacy=createSessionIngest({store:f.store,prefix});
+ await legacy.putBatch(owner,batch([event('stored')]));
+ const other={...identity,sessionId:'ledger-only'},where=eventIdentityLocation(other);
+ await f.store.put(where.key,Buffer.from(JSON.stringify({schemaVersion:1,identity:where.identity,events:Object.fromEntries(eventFingerprints([event('reserved-only')]))})));
+ const report=await migrateEventIdentitySource({store:f.store,prefix,eventIdentities:f.identities});assert.equal(report.complete,true);
+ await assert.rejects(f.identities.reserve({...other,store:f.store,events:[event('reserved-only','changed')]}),{status:409});
+ assert.equal((await migrateEventIdentitySource({store:f.store,prefix,eventIdentities:f.identities})).complete,true);
+ // A damaged old ledger cannot be adopted under a different source identity.
+ const corrupt={...identity,sessionId:'corrupt'},location=eventIdentityLocation(corrupt);
+ await f.store.put(location.key,Buffer.from(JSON.stringify({schemaVersion:1,identity:'a'.repeat(64),events:{}})));
+ await assert.rejects(f.identities.reserve({...corrupt,store:f.store,events:[event('new')]}),{status:409});
 });
