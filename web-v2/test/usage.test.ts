@@ -36,6 +36,7 @@ function report(): UsageReport {
       firstAt: '2026-11-01T10:00:00Z', lastAt: '2026-11-07T19:55:00Z',
       daily: [{date: '2026-11-06', sessions: 3, events: 40}, {date: '2026-11-07', sessions: 5, events: 60}],
     },
+    overlap: {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 8, daily: [{date: '2026-11-07', average: 1, peak: 2, partial: true}]},
     members: [
       {name: 'Alex', email: 'alex@example.test', you: true, sources: 2, sessions: 3, messages: 10, toolCalls: 20,
         weekEvents: 40, lastAt: '2026-11-07T19:55:00Z', setup: {cli: true, mcp: true, session: true, client: 'Codex'}},
@@ -70,9 +71,8 @@ test('main-session overlap distinguishes measured zero from unavailable and expo
   assert.match(html, /Concurrent sessions by day/);
   assert.doesNotMatch(html, /Each session spans|Subagents excluded|Days use UTC|Captured spans can grow/);
   assert.doesNotMatch(html, /NaN|Infinity|overlap is unavailable/);
-  data.overlap = null;
-  const unavailable = render(data);
-  assert.match(unavailable, /Session overlap is unavailable/);
+  const unavailable = render({...data, agents: null, overlap: null});
+  assert.doesNotMatch(unavailable, /Session overlap is unavailable/);
   assert.doesNotMatch(unavailable, /report-line-chart/);
 });
 

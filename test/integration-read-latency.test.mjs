@@ -68,7 +68,7 @@ test('durable counts remain readable while a slow recount runs, and scoped cache
 test('usage reports do not execute synthetic full-text latency probes',async()=>{
   let usageReads=0;
   const report=await usageReport({principal,directory:{organizations:{getOrganization:async()=>({name:'Team'})},userManagement:{listOrganizationMemberships:async()=>({data:[]})}},
-    search:{usage:async()=>{usageReads++;return {people:[],lifetimeEvents:0};},search:async()=>assert.fail('Usage must not run a search benchmark')}});
+    search:{usage:async()=>{usageReads++;return {people:[],lifetimeEvents:0};},overlap:async()=>({timeZone:'UTC',measuredAt:new Date().toISOString(),sessions:0,daily:[]}),search:async()=>assert.fail('Usage must not run a search benchmark')}});
   assert.equal(usageReads,1);assert.equal(report.ingestion,null);
 });
 

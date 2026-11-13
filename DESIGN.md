@@ -538,6 +538,9 @@ values disclosure. Both series share one scale. Keep the description concise,
 with date/value details in hover titles and the daily values disclosure rather
 than a persistent caption or explanatory notes. The disclosure identifies the
 partial current day. Unavailable data never becomes a zero line.
+Session activity responses require overlap data. Failed overlap reads reject the
+shared Usage query so its scoped cache retains the last complete report; never
+replace the chart with a per-panel unavailable message on refresh.
 
 ## Integrations
 

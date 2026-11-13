@@ -25,7 +25,7 @@ export interface ValueReport {
   /** Search results agents went on to use and fixes they picked up from the board, with what the searches found. */
   value: {searchesUsed: number; fixesReused: number; found: {teammateWork: number; whereThingsLive: number; pastDecisions: number; pastFixes: number; other: number}};
 }
-export interface UsageReport {
+interface UsageReportBase {
   workspace: string | null;
   team?: boolean;
   days: number;
@@ -34,21 +34,24 @@ export interface UsageReport {
     sources: Array<{name: string; icon: string; account?: string; state: string; records: number | null; indexed: number | null; indexedSpecies?: NamedCount[]; lastSyncedAt: string | null; connectedBy?: string; units?: [string, string]; rows?: Array<{label: string; count: number}>}>;
     index: null | {sessionEvents: number | null; connectorDocuments: number | null; sources: NamedCount[]; searchMs: number | null; probes?: number[]};
   };
-  agents: null | {
-    events: number; lifetimeEvents: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; machines: number; opencrawlCalls: number;
-    people?: Array<{userId: string}>;
-    tools: NamedCount[]; harnesses: NamedCount[]; origins: NamedCount[];
-    firstAt: string | null; lastAt: string | null;
-    daily: Array<{date: string; events: number; sessions: number}>;
-  };
   /** Measured value; absent until the workspace has been measured. */
   value?: ValueReport | null;
-  /** Daily overlap of main sessions' captured first-to-last-event spans. */
-  overlap?: SessionOverlap | null;
   /** Agent-session tokens captured this billing period, when the deployment meters them. */
   capture?: {tokens: number; since: string} | null;
   members: Array<{name: string | null; email: string; you: boolean; sources: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
 }
+interface AgentUsage {
+  events: number; lifetimeEvents: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; machines: number; opencrawlCalls: number;
+  people?: Array<{userId: string}>;
+  tools: NamedCount[]; harnesses: NamedCount[]; origins: NamedCount[];
+  firstAt: string | null; lastAt: string | null;
+  daily: Array<{date: string; events: number; sessions: number}>;
+}
+/** Session activity always includes overlap. Only an unconfigured session service omits both. */
+export type UsageReport = UsageReportBase & (
+  | {agents: AgentUsage | null; overlap: SessionOverlap}
+  | {agents: null; overlap: null}
+);
 export interface DiagnosticHit {_id?: string; _score?: number; _source?: Record<string, unknown>}
 export interface SearchResponse {
   state?: string; truncated?: boolean; timed_out?: boolean; _shards?: {failed?: number};

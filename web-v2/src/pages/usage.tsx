@@ -132,7 +132,7 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
             <ActivityChart daily={data.daily}/>
           </Section>
           <Section className="report-panel" headingLevel={3} title="Main session overlap" description="Concurrent sessions by day.">
-            {report.overlap ? <DailyLineChart daily={report.overlap.daily} label="Main session overlap"/> : <p className="report-note">Session overlap is unavailable. We’ll try again on the next update.</p>}
+            <DailyLineChart daily={report.overlap.daily} label="Main session overlap"/>
           </Section>
           <div className="report-split">
             <Section className="report-panel" headingLevel={3} title="Where agents run" description="Captured events by agent and surface.">
