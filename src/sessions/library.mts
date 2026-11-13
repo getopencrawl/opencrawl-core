@@ -11,6 +11,7 @@ import {sourceBatchIdentity} from './event-identity.mjs';
 import {createControls, visibleTo} from './controls.mjs';
 import type {ResourceControl} from './controls.mjs';
 import {capturedTitle, TITLE_KINDS} from './titles.mjs';
+import {capturedActor,type CapturedActor} from './actors.mjs';
 
 export interface SessionKey {userId: string; harness: string; sessionId: string}
 export interface SessionSummary extends SessionKey {
@@ -23,7 +24,7 @@ export type TranscriptEntry =
   | {type: 'tool_call'; name: string; input: string; truncated: boolean}
   | {type: 'tool_result'; text: string; truncated: boolean}
   | {type: 'note'; label: string; text: string; truncated: boolean};
-export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[]}
+export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[];actor?:CapturedActor}
 
 const identity = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 const f = (field: string) => realmField('session', field);
@@ -91,6 +92,9 @@ export function transcriptEntries(event: SessionEvent): TranscriptEntry[] {
       else if (block.type === 'tool_result') entries.push({type: 'tool_result', ...clip(blockText(block))});
       else if (block.type === 'image' || block.type === 'input_image') entries.push({type: 'note', label: 'Image', text: '', truncated: false});
     }
+  } else if (event.kind === 'automation_message') {
+    const text = typeof data.content === 'string' ? data.content : Array.isArray(data.content) ? data.content.map(raw => raw && typeof raw === 'object' && typeof (raw as Record<string, unknown>).text === 'string' ? (raw as Record<string, unknown>).text : '').filter(Boolean).join('\n') : '';
+    if (text.trim()) entries.push({type:'note',label:'Automation',...clip(text)});
   } else if (event.kind === 'user_message') message('user', typeof data.message === 'string' ? data.message : '');
   else if (event.kind === 'agent_message') {
     if (data.author === 'assistant' && (!data.recipient || data.recipient === 'all')) message('assistant', Array.isArray(data.content) ? data.content.map(b => b && typeof b === 'object' && typeof (b as Record<string, unknown>).text === 'string' ? (b as Record<string, unknown>).text : '').join('\n') : stringify(data.content));
@@ -212,11 +216,14 @@ export function createSessionLibrary({store, prefix, purgeCopies, scheduleDeleti
   // across pages and readers. Every read still authorizes through the index first.
   const rendered = new Map<string, {value: Promise<Map<string, TranscriptEvent> | null>; size: number}>();
   let cachedChars = 0;
-  const weigh = (events: Map<string, TranscriptEvent>) => [...events.values()].reduce((sum, event) => sum + 64 + event.entries.reduce((total, entry) => total + (entry.type === 'tool_call' ? entry.input.length + entry.name.length : entry.type === 'note' ? entry.text.length + entry.label.length : entry.text.length), 0), 0);
+  const weigh = (events: Map<string, TranscriptEvent>) => [...events.values()].reduce((sum, event) => sum + 64 + (event.actor ? JSON.stringify(event.actor).length : 0) + event.entries.reduce((total, entry) => total + (entry.type === 'tool_call' ? entry.input.length + entry.name.length : entry.type === 'note' ? entry.text.length + entry.label.length : entry.text.length), 0), 0);
   function renderedBatch(principal: Principal, key: SessionKey, sourceKey: string, installationId: string, batchId: string) {
     const cached = rendered.get(sourceKey);
     if (cached) {rendered.delete(sourceKey); rendered.set(sourceKey, cached); return cached.value;}
-    const entry = {value: ingest.getBatch(principal, {...key, installationId, batchId}).then(batch => batch && new Map(batch.events.map(event => [event.id, {eventId: event.id, kind: event.kind, timestamp: iso(event.timestamp), entries: transcriptEntries(event)}]))), size: 0};
+    const entry = {value: ingest.getBatch(principal, {...key, installationId, batchId}).then(batch => batch && new Map(batch.events.map(event => {
+      const actor=capturedActor(event,batch);
+      return [event.id, {eventId: event.id, kind: event.kind, timestamp: iso(event.timestamp), entries: transcriptEntries(event),...(actor?{actor}:{})}];
+    }))), size: 0};
     rendered.set(sourceKey, entry);
     entry.value.then(events => {
       if (rendered.get(sourceKey) !== entry) return;

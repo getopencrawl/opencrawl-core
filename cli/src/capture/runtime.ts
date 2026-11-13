@@ -20,6 +20,7 @@ import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-histo
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
 import {redactValue,redactAttachment,MAX_REDACTION_DEPTH} from './redact.ts';
+import {replicasAttribution,replicasEventAttribution} from './replicas.ts';
 
 const compressBatch=promisify(gzip);
 export const captureDir = () => join(configDir(),'capture');
@@ -329,6 +330,19 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
             }
             if(parsed&&desktopAudit){parsed.timestamp=record._audit_timestamp??record.timestamp??null;parsed.parentId=record.parent_tool_use_id??null;}
             if(parsed && !captureExcluded(readCaptureConfig()??config,meta)) {
+              if(harness==='claude-code'&&!record.agentId&&!record.isSidechain&&workspaceIdentityEnabled()&&process.env.REPLICAS_WORKSPACE_ID&&parsed.kind==='message'&&parsed.data?.role==='user'){
+                const content=parsed.data.content;
+                const input=typeof content==='string'||Array.isArray(content)&&content.some((block:any)=>block&&['text','image','document','file'].includes(block.type));
+                if(input){
+                  const nativeId=record.attachment?.type==='queued_command'?record.attachment.source_uuid:record.uuid;
+                  const reported=await replicasAttribution(process.env.REPLICAS_WORKSPACE_ID,meta.sessionId,nativeId);
+                  if(reported){
+                    const {actor,profile}=replicasEventAttribution(reported);
+                    Object.assign(parsed,{actor});
+                    if(profile)meta.actorProfiles={...meta.actorProfiles,[profile.userId]:profile};
+                  }
+                }
+              }
               if(parsed.kind==='session_title')meta.capturedTitle=parsed.data.title;
               // Only native attachment blocks may cause file reads. A tool argument/result can
               // contain arbitrary JSON that resembles an attachment but was never opened.
