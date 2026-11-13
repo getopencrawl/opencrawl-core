@@ -6,7 +6,9 @@ import type {createSessionSearch} from '../sessions/search.mjs';
 import type {createOnboardingStatus, OnboardingReceipts} from '../onboarding-status.mjs';
 import {indexedSourceInventory} from './usage-inventory.mjs';
 import type {ValueReports} from './value-report.mjs';
-type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage'> & Partial<Pick<ReturnType<typeof createSessionSearch>, 'overlap'>>;
+import type {SessionOverlap} from './reports.mjs';
+import {dailyOverlap} from '../sessions/overlap.mjs';
+type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage' | 'overlap'>;
 interface ConnectionCount {total: number; kinds: Record<string, number>}
 interface Connectors {count(principal: Principal): Promise<ConnectionCount & {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}>}
 type Usage = Awaited<ReturnType<Sessions['usage']>>;
@@ -18,8 +20,8 @@ const empty = (): Usage => ({events: 0, lifetimeEvents: 0, sessions: 0, subagent
 const missing = (error: unknown) => errorInfo(error).status === 404 || errorInfo(error).type === 'index_not_found_exception';
 
 /**
- * principal must already be verified for its tenant. Every source is optional: a missing
- * service shows as unavailable rather than failing the page.
+ * principal must already be verified for its tenant. Session overlap must succeed
+ * with activity so a failed refresh cannot replace the cached chart with null.
  */
 export async function usageReport({principal, directory, integrations, search, connectors, onboarding, values, captured, tab, days = 30, log = () => {}}: UsageOptions) {
   const team = principal.tenantId.startsWith('org_');
@@ -37,7 +39,7 @@ export async function usageReport({principal, directory, integrations, search, c
 
   const emptyCounts: Awaited<ReturnType<Connectors['count']>> = {total:0,kinds:{},providers:{},connections:{}};
   // These reports are independent. Navigation waits for the slowest read, not their sum.
-  const [organization, users, cards, agents, counted, value, overlap] = await Promise.all([
+  const [organization, users, cards, sessions, counted, value] = await Promise.all([
     team ? soft('organization', () => directory.organizations.getOrganization(principal.tenantId)) : null,
     team ? soft('members', async () => {
       const memberships = await directory.userManagement.listOrganizationMemberships({organizationId: principal.tenantId, statuses: ['active'], limit: 100});
@@ -46,11 +48,22 @@ export async function usageReport({principal, directory, integrations, search, c
       return Promise.all(ids.map(id => directory.userManagement.getUser(id)));
     }) : soft('members', async () => [await directory.userManagement.getUser(principal.userId)]),
     integrations ? soft('integrations', () => integrations.list(principal)) : null,
-    search ? soft('sessions', () => search.usage(principal, {team: true, days}), empty()) : null,
+    (async () => {
+      if (!search) return {agents: null, overlap: null};
+      const now = Date.now();
+      const [agents, overlap] = await Promise.all([
+        soft('sessions', () => search.usage(principal, {team: true, days, now}), empty()),
+        search.overlap(principal, {days, now}).catch((error: unknown): SessionOverlap => {
+          if (errorInfo(error).type === 'index_not_found_exception') return {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 0, daily: dailyOverlap([], days, now)};
+          throw error;
+        }),
+      ]);
+      return {agents, overlap};
+    })(),
     connectors ? soft('connectors', () => connectors.count(principal), emptyCounts) : null,
     values ? soft('value', () => values.read(principal.tenantId)) : null,
-    search?.overlap ? soft('overlap', () => search.overlap!(principal, {days})) : null,
   ]);
+  const {agents} = sessions;
   const members = users || [];
   // The adapter defines the measurement period; billing policy stays in the host.
   const capture = organization && captured ? await soft('capture', () => captured(principal)) : null;
@@ -81,7 +94,7 @@ export async function usageReport({principal, directory, integrations, search, c
   const report = {
     tab, team, days, generatedAt: new Date().toISOString(), integrationsUrl: '/integrations',
     workspace: organization?.name || (team ? null : 'Personal workspace'),
-    ingestion: cards ? {sources, index} : null, agents, value, overlap, capture: capture ? {tokens:capture.tokens,since:capture.since} : null,
+    ingestion: cards ? {sources, index} : null, ...sessions, value, capture: capture ? {tokens:capture.tokens,since:capture.since} : null,
     members: members.map((user, i) => {
       const a: Partial<Usage['people'][number]> = activity.get(user.id) || {};
       return {name: displayName(user, null), email: user.email, you: user.id === principal.userId,
