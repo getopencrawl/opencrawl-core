@@ -121,3 +121,26 @@ test('history receipts cannot complete recording and completion is durable and s
  assert.equal((await status.read({...principal,userId:'another'})).completed,null);
  await assert.rejects(status.complete({...principal,captureAccess:'write'}),{status:403});
 });
+
+test('approved shared installation opens the team without fabricating personal receipts', async () => {
+  const store=memorySessionStore(),shared={id:'replicas-env',name:'Replicas',tenantId:'tenant-a',userId:'workload-a'};
+  let approved=[shared];
+  const status=createOnboardingStatus({store,sharedInstallations:()=>approved});
+  const member={tenantId:'tenant-a',userId:'member'},other={tenantId:'tenant-b',userId:'member'};
+  await status.cli(shared);await status.mcpTest(shared);
+  await status.session(shared,{harness:'codex',captureMode:'history',events:[{kind:'message'}]});
+  assert.equal((await status.read(member)).shared,undefined,'history is not fresh capture');
+  await assert.rejects(status.complete(member),{status:409});
+  await status.session({...shared,userId:'different-workspace'},{harness:'codex',events:[{kind:'message'}]});
+  assert.equal((await status.read(member)).shared,undefined,'cannot combine receipts across workspaces');
+  await status.session(shared,{harness:'codex',events:[{kind:'message'}]});
+  const observed=await status.read(member);
+  assert.equal(observed.shared.owner,'shared');assert.equal(observed.cli,null);assert.equal(observed.completed,null);
+  assert.deepEqual(await status.complete(member),observed.shared);
+  assert.equal((await status.read(member)).completed,null,'no human completion record is synthesized');
+  assert.equal((await status.read(other)).shared,undefined);
+  await assert.rejects(status.read({...member,captureAccess:'write'}),{status:403});
+  approved=[];
+  assert.equal((await status.read(member)).shared,undefined,'withdrawn approval stops sharing setup');
+  await assert.rejects(status.complete(member),{status:409});
+});

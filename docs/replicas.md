@@ -77,3 +77,20 @@ it does not mistake the SDK's generic `Claude Code` title for the platform name.
 replaying their conversation. A metadata/provenance API failure keeps local data
 for retry and must not be reported as complete capture. Platform title metadata
 is descriptive and grants no authentication or resource access.
+
+## Shared installation onboarding
+
+An operator may add `onboardingWorkspaceId` to an approved Replicas binding after
+an administrator chooses one workspace for installation verification. The
+receiver reads that exact workload owner's real CLI, MCP test and fresh capture
+receipts. Once all three exist, members of the bound tenant can open the product
+without installing a local agent. The API reports a separate `shared` setup
+receipt and never fabricates human setup records. History imports do not count.
+Removing approval immediately removes this alternative on the next status read;
+ordinary completed personal setup remains valid. Self-host uses the same binding
+and receipt logic without hosted credentials.
+
+The authenticated principal has an explicit `owner.kind: shared` descriptor.
+Stable workload IDs and existing captured object paths remain unchanged. Message
+authors are independent provenance and do not become permissions. This change
+does not grant shared principals access to private human resources or admin APIs.

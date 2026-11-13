@@ -13,7 +13,7 @@ import {valueReportKey} from '../dist/src/application/value-report.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 const org='org_selfhost',setup='setup-token-for-tests';
 async function fixture(t,options={}){
-  const {search:searchOptions,...appOptions}=options;
+  const {search:searchOptions,replicasBindings,...appOptions}=options;
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-selfhost-app-'));
   const store=createLocalSessionStore(dir),prefix='sessions/selfhost/v1';
   let app;const server=createServer((req,res)=>app(req,res));
@@ -21,7 +21,7 @@ async function fixture(t,options={}){
   const origin='http://localhost:'+server.address().port;
   const identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),databasePath:join(dir,'identity.sqlite'),organizationId:org});
   await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));identity.close();await rm(dir,{recursive:true,force:true});});
-  const settings={organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),identityPath:join(dir,'identity.sqlite'),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
+  const settings={replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),identityPath:join(dir,'identity.sqlite'),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
   app=selfhostApplication({settings,store,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
   const jars=new Map();
   const request=async(path,who=null,options={})=>{
@@ -422,4 +422,19 @@ test('MCP registration rejects executable and local-file callback schemes',async
     const response=await f.request('/api/auth/oauth2/register',null,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client_name:'Unsafe',redirect_uris:[redirect],token_endpoint_auth_method:'none',grant_types:['authorization_code'],response_types:['code']})});
     assert.equal(response.status,400,redirect);
   }
+});
+
+test('shared installation admits real local members without personal setup or hosted credentials',async t=>{
+ const binding={organizationId:'11111111-1111-4111-8111-111111111111',environmentId:'22222222-2222-4222-8222-222222222222',onboardingWorkspaceId:'33333333-3333-4333-8333-333333333333',tenantId:org};
+ const {replicasSharedInstallations}=await import('../dist/src/identity/replicas.mjs');
+ const f=await fixture(t,{replicasBindings:[binding]});await f.admin();await f.join('member','member@example.com');
+ assert.equal((await f.request('/','member')).headers.get('location'),'/onboarding');
+ const owner=replicasSharedInstallations([binding])[0],status=createOnboardingStatus({store:f.store,prefix:f.prefix});
+ await status.cli(owner);await status.mcpTest(owner);await status.session(owner,{harness:'codex',events:[{kind:'message'}]});
+ const boot=await(await f.request('/api/console/bootstrap','member')).json();
+ assert.deepEqual(boot.onboarding,{completed:true,next:'/'});
+ assert.equal((await f.request('/','member')).status,200);
+ const {data:setup}=await(await f.request('/api/onboarding','member')).json();
+ assert.equal(setup.shared.owner,'shared');assert.equal(setup.cli,null);assert.equal(setup.completed,null);
+ assert.equal((await f.request('/api/console/bootstrap')).status,401);
 });

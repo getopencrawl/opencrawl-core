@@ -581,3 +581,13 @@ test('React OAuth return renders the Claude native callback and a manual continu
   await expect(page.getByRole('heading',{name:'Returning to your app'})).toBeVisible();
   await expect(page.getByRole('link',{name:'Continue',exact:true})).toHaveAttribute('href','claude://claude.ai/mcp-auth-callback/sdk?code=example&state=bound');
 });
+
+for (const width of [1280,390]) test(`shared setup does not ask each member to install at width ${width}`,async({page,request})=>{
+ await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'env',name:'Replicas',owner:'shared'}}}});
+ await page.setViewportSize({width,height:844});
+ await page.goto('/onboarding');
+ await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
+ await expect(page.getByRole('link',{name:'Open workspace',exact:true})).toBeVisible();
+ await expect(page.getByText('Waiting for CLI sign-in',{exact:true})).toHaveCount(0);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});

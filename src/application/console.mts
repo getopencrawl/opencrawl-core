@@ -1,3 +1,4 @@
+import {hasCompletedOnboarding} from '../onboarding-state.mjs';
 import type {IncomingMessage} from 'node:http';
 import type {SourceCard, TeamReport, InvitationPolicy} from './types.mjs';
 
@@ -5,7 +6,7 @@ export type Principal = {tenantId: string; userId: string};
 export type User = {id: string; email: string; firstName?: string | null; lastName?: string | null};
 export type Membership = {userId: string; organizationId: string; status: string; role?: {slug: string}; roles?: Array<{slug: string}>; directoryManaged?:boolean};
 export type Organization = {id: string; name: string; metadata?: Record<string, string>};
-type Progress = {completed?: {observedAt?: string} | null};
+type Progress = {completed?: {observedAt?: string} | null; shared?: {observedAt?: string} | null};
 export interface ConsoleContext {principal: Principal; user: User; member: Membership; revalidate: () => Promise<boolean>; admitted?: boolean; cacheScope?: string}
 export interface ConsoleServices {
   url: string;
@@ -78,7 +79,7 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
       let body: unknown;
       if (path === '/api/console/bootstrap') {
         const [organization, progress, extension] = await Promise.all([services.organization(principal.tenantId), services.progress(principal), extensions.bootstrap?.(context)]);
-        const completed = Boolean(progress?.completed?.observedAt);
+        const completed = hasCompletedOnboarding(progress);
         body = {...extension,...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope:context.cacheScope || [principal.tenantId,principal.userId,admin(member)?'admin':'member'].join(':'),workspace:{name:organization.name,userName:name(user),email:user.email,role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
       } else if (path === '/api/console/usage') {
         body = await services.usage(principal);

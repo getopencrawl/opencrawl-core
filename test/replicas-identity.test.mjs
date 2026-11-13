@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateKeyPair, SignJWT} from 'jose';
-import {createReplicasWorkloads, replicasBindings, isReplicasToken, REPLICAS_ISSUER} from '../dist/src/identity/replicas.mjs';
+import {createReplicasWorkloads, replicasBindings, isReplicasToken, replicasSharedInstallations, replicasOwnerId, REPLICAS_ISSUER} from '../dist/src/identity/replicas.mjs';
 
 const org='11111111-1111-4111-8111-111111111111',env='22222222-2222-4222-8222-222222222222',workspace='33333333-3333-4333-8333-333333333333';
 const audience='https://operator.example';
@@ -13,6 +13,7 @@ function fixture(){let allowed=[{organizationId:org,environmentId:env,tenantId:'
 test('operator binding creates a distinct workspace identity, never a human identity',async()=>{
  const {auth}=fixture();const result=await auth.identify(await token({creator_id:org,creator_email:'admin@operator.example'}));
  assert.equal(result.status,200);assert.equal(result.principal.tenantId,'org_local');assert.match(result.principal.userId,/^workload_replicas_/);assert.equal(result.user.email,null);
+ assert.deepEqual(result.principal.owner,{kind:'shared',provider:'replicas',organizationId:org,environmentId:env,workspaceId:workspace});
  assert.equal(await auth.revalidate(result.principal,'org_local'),result.principal);
  await assert.rejects(auth.revalidate({...result.principal}),/denied/);
  await assert.rejects(auth.revalidate(result.principal,'org_other'),/denied/);
@@ -38,4 +39,11 @@ test('bindings reject collisions and cannot override a self-hosted tenant',()=>{
 test('key discovery outages fail closed and remain retryable',async()=>{
  const auth=createReplicasWorkloads({audience,key:async()=>{throw new Error('network unavailable');},bindings:()=>[{organizationId:org,environmentId:env,tenantId:'org_local'}]});
  assert.equal((await auth.identify(await token())).status,503);
+});
+
+test('shared onboarding needs explicit operator approval of an exact workspace',()=>{
+ const row={organizationId:org,environmentId:env,tenantId:'org_local'};
+ assert.deepEqual(replicasSharedInstallations([row]),[]);
+ assert.deepEqual(replicasSharedInstallations(replicasBindings(JSON.stringify([{...row,onboardingWorkspaceId:workspace}]))),[{id:env,tenantId:'org_local',userId:replicasOwnerId(org,env,workspace),name:'Replicas'}]);
+ assert.throws(()=>replicasBindings(JSON.stringify([{...row,onboardingWorkspaceId:'../other'}])));
 });
