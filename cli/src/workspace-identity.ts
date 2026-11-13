@@ -15,20 +15,21 @@ export function workspaceIdentityEnabled(): boolean {
 /** Tokens remain in memory. Only Replicas' supported helper mints them; the
  * receiving service verifies signatures and authorizes the exact environment.
  */
-export function createWorkspaceTokenProvider({mint = async (audience: string) => {
-  const {stdout} = await execute('replicas', ['identity', 'token', '--audience', audience], {timeout: 10000, maxBuffer: 32768, encoding: 'utf8'});
+export function createWorkspaceTokenProvider({mint = async (audience: string, signal?: AbortSignal) => {
+  const {stdout} = await execute('replicas', ['identity', 'token', '--audience', audience], {timeout: 10000, maxBuffer: 32768, encoding: 'utf8', signal});
   return stdout.trim();
-}, now = Date.now}: {mint?: (audience: string) => Promise<string>; now?: () => number} = {}) {
+}, now = Date.now}: {mint?: (audience: string, signal?: AbortSignal) => Promise<string>; now?: () => number} = {}) {
   const cache = new Map<string, {token: string; expiresAt: number}>();
   const pending = new Map<string, Promise<string>>();
-  return async (api: string, rejected?: string): Promise<string> => {
+  return async (api: string, rejected?: string, signal?: AbortSignal): Promise<string> => {
+    signal?.throwIfAborted();
     assertTokenDestination(api);
     const audience = apiOrigin(api), previous = cache.get(audience);
     if (previous && previous.token !== rejected && previous.expiresAt > now() + 60000) return previous.token;
     if (pending.has(audience)) return pending.get(audience)!;
     const request = (async () => {
       let token: string;
-      try {token = await mint(audience);} catch {throw new CliError('WORKSPACE_IDENTITY_UNAVAILABLE', 'Replicas could not supply workspace identity. Keep queued data and retry from an active workspace.', 2);}
+      try {token = await mint(audience, signal);} catch {throw new CliError('WORKSPACE_IDENTITY_UNAVAILABLE', 'Replicas could not supply workspace identity. Keep queued data and retry from an active workspace.', 2);}
       try {
         const parts = token.split('.');
         if (parts.length !== 3 || token.length > 16384) throw new Error('Invalid token');
@@ -43,5 +44,5 @@ export function createWorkspaceTokenProvider({mint = async (audience: string) =>
   };
 }
 export const workspaceToken = createWorkspaceTokenProvider();
-export const configuredToken = async (name: 'OPENCRAWL_TOKEN' | 'OPENCRAWL_SESSIONS_TOKEN', api: string, rejected?: string) =>
-  workspaceIdentityEnabled() ? workspaceToken(api, rejected) : environmentToken(name, api);
+export const configuredToken = async (name: 'OPENCRAWL_TOKEN' | 'OPENCRAWL_SESSIONS_TOKEN', api: string, rejected?: string, signal?: AbortSignal) =>
+  workspaceIdentityEnabled() ? workspaceToken(api, rejected, signal) : environmentToken(name, api);

@@ -5,6 +5,22 @@ import {join} from 'node:path';
 
 const api='https://receiver.example';
 const token=(exp:number,nonce:number,aud=api)=>'header.'+Buffer.from(JSON.stringify({iss:'https://api.replicas.dev',aud,exp,nonce})).toString('base64url')+'.signature';
+test('bounded startup cancels workspace identity minting and permits a later retry',async()=>{
+ let calls=0;
+ const controller=new AbortController();
+ const provider=createWorkspaceTokenProvider({mint:async(audience,signal)=>{
+   calls++;
+   if(calls===1)return await new Promise<string>((_resolve,reject)=>signal!.addEventListener('abort',()=>reject(signal!.reason),{once:true}));
+   return token(Date.now()/1000+900,calls,audience);
+ }});
+ await withEnvironmentTokenOrigin(api,async()=>{
+   const first=provider(api,undefined,controller.signal);
+   controller.abort();
+   await expect(first).rejects.toMatchObject({code:'WORKSPACE_IDENTITY_UNAVAILABLE'});
+   expect(await provider(api)).toContain('.signature');expect(calls).toBe(2);
+   await expect(provider(api,undefined,controller.signal)).rejects.toThrow();expect(calls).toBe(2);
+ });
+});
 test('workspace helper refreshes expiring and rejected tokens without persisting or sharing destinations',async()=>{
  let time=1000000,calls=0;
  const provider=createWorkspaceTokenProvider({now:()=>time,mint:async aud=>{calls++;return token(time/1000+900,calls,aud);}});

@@ -64,6 +64,7 @@ test.skipIf(process.platform !== 'darwin' || !existsSync('/usr/bin/sandbox-exec'
     if (path === '/token') { refreshes++; return Response.json({error: 'must-not-rotate'}, {status: 400}); }
     if (request.headers.get('authorization') !== 'Bearer never-print-current') return Response.json({}, {status: 401});
     const data = path === '/api/cli/me' ? {user: {id: 'sandbox-user'}}
+      : path === '/api/board/register' ? {workspace:'sandbox',agent:'a'.repeat(64),name:'codex:sandbox'}
       : path === '/api/board/directory' ? {agents: []}
       : path === '/api/search' ? {results: [], coverage: [{source: 'sessions', state: 'ready'}], partial: false}
       : {id: 'sessions:fixture', text: 'Fixture passage', version: 'a'.repeat(64), offset: 0, totalChars: 15, nextOffset: null};

@@ -14,6 +14,7 @@ import {agentSkills} from './skills.ts';
 import {withEnvironmentTokenOrigin} from './environment-token.ts';
 import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 import {tokenCommand} from './token.ts';
+import {sessionStartCommand} from './session-start.ts';
 
 declare const OPENCRAWL_VERSION: string;
 const version = typeof OPENCRAWL_VERSION === 'string' ? OPENCRAWL_VERSION : '0.2.0-dev';
@@ -30,6 +31,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   collect     Install and manage Claude Code, Codex and Grok Bot session capture
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
+  session     Bootstrap a native SessionStart hook (session start --harness NAME)
   token       Create or revoke an agent access token for machines created per task
   update      Install the latest CLI for your next invocation
 
@@ -101,6 +103,7 @@ Updates are checked opportunistically every 3–6 hours, including capture hooks
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
 
 Board: board register --session ID --name codex:unique-name --task "Current work"
+  board profile --session ID --name NAME --task "Current work"  Name a bootstrapped session
   board directory [--after N]                   Discover taggable agents
   board fetch --workspace ID --id REF           Expand selected discovery content
   --field firstUserMessage|lastUserMessage|latestAssistantMessage|context
@@ -181,6 +184,7 @@ export async function identity(api: string, fetcher = fetch, initialToken?: stri
 }
 
 export async function main(args = process.argv.slice(2)) {
+  if (args[0] === 'session' && args[1] === 'start') return sessionStartCommand(args.slice(2));
   // Process-owned work overlaps commands and async hooks. It is cancelled when
   // the command ends, so quick commands never wait and no orphan worker exists.
   const memoryJob:{current?:ReturnType<typeof scheduleMemoryRefresh>}={};
