@@ -1,5 +1,7 @@
 import {searchWorkspace, searchInput, formatSearch, fetchWorkspace, fetchInput, formatFetch} from './search.ts';
-import {boardCommand, writeBoardOutput} from './board.ts';
+import {boardCommand, boardInput, writeBoardOutput} from './board.ts';
+import {fetchMany} from './fetch-many.ts';
+import {commandHelp} from './help.ts';
 import {upgradeCaptureHooks} from './capture/install.ts';
 import {collectCommand} from './capture/command.ts';
 import {readCaptureConfig} from './capture/runtime.ts';
@@ -81,7 +83,10 @@ Search: opencrawl search "words" --json
   --excerpt-chars 100..2000         Default: 800
   --cursor TOKEN                    Next live page; repeat the same arguments
   --no-dedupe                       Show all equivalent passage occurrences
-Search returns compact verbatim excerpts. Expand with opencrawl fetch <result-id>.
+Search returns compact verbatim excerpts. Expand with opencrawl fetch ID [ID ...].
+  --concurrency 1..8                Fetch independent references (default: 8, max 40)
+Run opencrawl fetch --help for paging and partial-failure output.
+Run opencrawl board fetch --help for message/session references and JSON examples.
   --offset N --length 1..16000       Read a passage in parts (default length: 6000)
   --content-version VERSION         Detect changes between fetch pages
 Environment tokens use OpenCrawl cloud by default. Use --api or OPENCRAWL_API_URL
@@ -188,7 +193,8 @@ export async function main(args = process.argv.slice(2)) {
   // Process-owned work overlaps commands and async hooks. It is cancelled when
   // the command ends, so quick commands never wait and no orphan worker exists.
   const memoryJob:{current?:ReturnType<typeof scheduleMemoryRefresh>}={};
-  const updateJob=scheduleCliUpdate();
+  let updateJob:ReturnType<typeof scheduleCliUpdate>|undefined;
+  let informational=false;
   let json = args.includes('--json');
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
@@ -201,9 +207,11 @@ export async function main(args = process.argv.slice(2)) {
     // Metadata-only recovery and a history preview must not start an unrelated
     // memory upload while the foreground operation is inspecting local state.
     const localCollect=command==='collect'&&(['uninstall','titles'].includes(parsed.positionals[1]??'')||parsed.positionals[1]==='backfill'&&!parsed.values.yes);
-    if (parsed.positionals.length > (command === 'token' ? 3 : ['collect','search','fetch','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    const manyFetch=command==='fetch'||command==='board'&&parsed.positionals[1]==='fetch';
+    if (parsed.positionals.length > (manyFetch ? command==='board'?42:41 : command === 'token' ? 3 : ['collect','search','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    informational=Boolean(parsed.values.help||parsed.values.version||command==='help'||command==='board'&&!parsed.positionals[1]);
     if (parsed.values.version) { emit({version}, version); return 0; }
-    if (parsed.values.help || command === 'help') { emit({help}, help.trimEnd()); return 0; }
+    if (parsed.values.help || command === 'help' || command==='board'&&!parsed.positionals[1]) { const text=commandHelp(command,parsed.positionals[1])??help;emit({help:text}, text.trimEnd()); return 0; }
     if (!['login', 'logout', 'whoami', 'status', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (['login','token'].includes(command) && workspaceIdentityEnabled()) throw new CliError('WORKLOAD_ACCOUNT_ACTION', 'Workspace identity cannot manage human sign-ins or credentials. Use your personal machine for account setup.', 2);
     const organizationId = parsed.values.organization as string | undefined;
@@ -211,6 +219,7 @@ export async function main(args = process.argv.slice(2)) {
     if (organizationId && process.env.OPENCRAWL_TOKEN?.trim()) throw new CliError('ENVIRONMENT_TOKEN_ACTIVE', 'Unset OPENCRAWL_TOKEN before selecting a workspace with your saved sign-in. Environment tokens remain bound to the workspace that issued them.', 2);
     if (parsed.values.client && command !== 'skills') throw new CliError('INVALID_USAGE', 'Use --client with skills install or skills status.', 64);
     if (command === 'update') throw new CliError('UPDATE_UNAVAILABLE', 'Run update through the npm-installed opencrawl command.');
+    updateJob=scheduleCliUpdate();
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL
       ?? readCaptureConfig()?.api
       ?? DEFAULT_API_ORIGIN);
@@ -222,10 +231,28 @@ export async function main(args = process.argv.slice(2)) {
     return await withEnvironmentTokenOrigin((parsed.values.api as string|undefined) ?? process.env.OPENCRAWL_API_URL, async () => {
     if(!organizationId&&command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob.current=scheduleMemoryRefresh();
     if (command === 'board') {
+      if(parsed.positionals[1]==='fetch'&&parsed.positionals.length>2){
+        if(parsed.values.id)throw new CliError('INVALID_USAGE','Use positional references or --id, not both. See opencrawl board fetch --help.',64);
+        const ids=parsed.positionals.slice(2);
+        if(typeof parsed.values.workspace!=='string'||!parsed.values.workspace.trim())throw new CliError('INVALID_USAGE','Use --workspace with the workspace returned by discovery. See opencrawl board fetch --help.',64);
+        for(const id of ids)boardInput('fetch',{...parsed.values,id});
+        if(ids.length===1){await boardCommand('fetch',api,{...parsed.values,id:ids[0]},data=>writeBoardOutput(data,json));return 0;}
+        const result=await fetchMany(ids,parsed.values.concurrency,async id=>{
+          let value:unknown;
+          await boardCommand('fetch',api,{...parsed.values,id},data=>{value=data;});
+          return value;
+        });
+        await writeBoardOutput(result,json);return result.partial?1:0;
+      }
       await boardCommand(parsed.positionals[1] ?? 'directory', api, parsed.values, data => writeBoardOutput(data, json));
       return 0;
     }
     if (command === 'fetch') {
+      if(parsed.positionals.length>2){
+        const inputs=parsed.positionals.slice(1).map(id=>fetchInput(id,parsed.values));
+        const result=await fetchMany(inputs.map(input=>input.id),parsed.values.concurrency,id=>fetchWorkspace(api,fetchInput(id,parsed.values)));
+        emit(result,JSON.stringify(result,null,2));return result.partial?1:0;
+      }
       const data = await fetchWorkspace(api, fetchInput(parsed.positionals[1], parsed.values));
       emit(data, formatFetch(data));
       return 0;
@@ -317,9 +344,9 @@ export async function main(args = process.argv.slice(2)) {
     return exit === 2 && args[0] === 'collect' && args[1] === 'hook' ? 1 : exit;
   } finally {
     memoryJob.current?.stop();
-    await updateJob.stop();
+    await updateJob?.stop();
     // Upgrade only our hook settings locally; never launch an unowned process.
-    if(args[0]!=='collect' && args[0]!=='logout' && args[0]!=='skills')try{await upgradeCaptureHooks();}catch{}
+    if(!informational && args[0]!=='collect' && args[0]!=='logout' && args[0]!=='skills')try{await upgradeCaptureHooks();}catch{}
   }
 }
 

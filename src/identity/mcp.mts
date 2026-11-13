@@ -36,11 +36,13 @@ export function mcpIdentity(settings: Pick<IdentitySettings, 'url' | 'authOrigin
     if (typeof payload.sub !== 'string' || !/^user_[A-Za-z0-9]+$/.test(payload.sub)) return reject(401, 'invalid_token');
     if (typeof payload.scope !== 'string' || !payload.scope.split(' ').includes('openid')) return reject(403, 'insufficient_scope');
     try {
-      const user = await directory.userManagement.getUser(payload.sub);
+      const [user, principal] = await Promise.all([
+        directory.userManagement.getUser(payload.sub),
+        fixedPrincipal ? fixedPrincipal({id:payload.sub}, payload.org_id) : userPrincipal(directory, {id:payload.sub}, payload.org_id),
+      ]);
       if (user.id !== payload.sub || !verifiedUser(user)) {
         res.writeHead(403, {'Content-Type': 'application/json'});res.end(JSON.stringify({error: 'verified_account_required'}));return null;
       }
-      const principal = await (fixedPrincipal ? fixedPrincipal(user, payload.org_id) : userPrincipal(directory, user, payload.org_id));
       if (!principal) return reject(403, 'insufficient_scope');
       return principal;
     } catch (error) {
