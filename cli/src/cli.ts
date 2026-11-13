@@ -85,7 +85,13 @@ Search returns compact verbatim excerpts. Expand with opencrawl fetch <result-id
 Environment tokens use OpenCrawl cloud by default. Use --api or OPENCRAWL_API_URL
 to send them to a self-hosted deployment. Without a token, the CLI uses saved login.
 
-Machines created per task (cloud agent platforms):
+Replicas workspaces (requires the deployment administrator's exact environment binding):
+  OPENCRAWL_API_URL=<origin> OPENCRAWL_AUTH=replicas-workspace
+Remove shared OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN from that environment.
+The CLI renews workspace identity in memory; configure native workspace_identity
+for the Replicas MCP separately. Workloads read shared team data, not human private data.
+
+Other machines created per task (use a personal environment):
   token create [--env-file PATH]     One-year token for search, the board, MCP and uploads
   token revoke ID                    End a token; needs your own sign-in, like create
 Store OPENCRAWL_API_URL, OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN in the platform's
