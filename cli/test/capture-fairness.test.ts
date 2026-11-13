@@ -69,7 +69,7 @@ test('a hook arriving during a large flush reaches the receiver before the old b
  for(let n=0;n<80;n++)f.enqueue(n);
  const held:Array<()=>void>=[];
  f.handle=async()=>{if(f.payloads.length<=4)await new Promise<void>(r=>held.push(r));else await sleep(5);};
- const working=captureWorker({idleMs:20,pollMs:5});await until(()=>held.length===4);
+ const working=captureWorker({flushMs:0,idleMs:20,pollMs:5});await until(()=>held.length===4);
  const path=join(f.config.roots['claude-code'],'projects','fresh','session.jsonl');mkdirSync(join(path,'..'),{recursive:true});
  writeFileSync(path,JSON.stringify({type:'user',uuid:'fresh-event',sessionId:'fresh',message:{role:'user',content:'new work during backlog'}})+'\n');
  await captureHook('claude-code',{session_id:'fresh',transcript_path:path,hook_event_name:'Stop'});

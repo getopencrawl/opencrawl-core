@@ -113,7 +113,7 @@ with `--json`); `opencrawl collect status --json` exposes the latest import prog
 Source-byte progress counts compressed file sizes for archives, not network bytes.
 Parsing overlaps uploads with a bounded queue. Large batches use gzip when both
 client and server support it; lowering concurrency also lowers the queue limit.
-An import marked complete confirms durable storage. Search indexing continues
+An import marked complete confirms durable storage and accepted Temporal indexing. Search indexing continues
 asynchronously, so a completed upload is not a search-readiness signal.
 Transient auth throttling and server failures retry with bounded backoff; queued
 data and cursors remain available if retries are exhausted. Rerun the same approved

@@ -29,7 +29,7 @@ export function memorySourceIdentity(prefix: string,key: string) {
   const m=/^tenants\/([a-f0-9]{64})\/users\/([a-f0-9]{64})\/memories\/(codex|claude-code)\/([a-f0-9]{64})\/(\d+)-([a-f0-9]{64})\.json\.gz$/.exec(key.slice(prefix.length+1));
   return m?{tenantHash:m[1],userHash:m[2],harness:m[3],installationHash:m[4],generation:Number(m[5]),snapshotId:m[6]}:null;
 }
-export function createMemoryIngest({store,prefix}: {store: ObjectStore; prefix: string}) {
+export function createMemoryIngest({store,prefix,scheduleIndexing}: {store: ObjectStore; prefix: string; scheduleIndexing?: (key: string) => Promise<unknown>}) {
   return {async putSnapshot(principal: Principal,input: MemorySnapshot) {
     // Freeze the supplied JSON before validation and I/O.
     let snapshot: MemorySnapshot;try{snapshot=parseJson<MemorySnapshot>(JSON.stringify(input));}catch{fail(400,'Invalid memory JSON');}
@@ -40,6 +40,7 @@ export function createMemoryIngest({store,prefix}: {store: ObjectStore; prefix: 
     const key=`${prefix}/${sessionScope(principal)}/memories/${snapshot.harness}/${digest(snapshot.installationId)}/${snapshot.generation}-${snapshotId}.json.gz`;
     const exists=store.has?await store.has(key,{maxBytes:MAX_MEMORY_BYTES+1048576}):await store.get(key,{maxBytes:MAX_MEMORY_BYTES+1048576});
     if(!exists)await store.put(key,gzipSync(JSON.stringify({...snapshot,receivedAt:new Date().toISOString(),snapshotId})),'application/gzip');
+    if(scheduleIndexing)await scheduleIndexing(key);
     return {snapshotId,generation:snapshot.generation,files:snapshot.files.length,stored:true};
   }};
 }
