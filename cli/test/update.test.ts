@@ -100,14 +100,11 @@ test('cancellation discards staging and explicit opt-out prevents any automatic 
   await refreshCli({launcher});expect(existsSync(join(cache,'update.json'))).toBe(false);
 }));
 
-test('real hook and worker entrypoints reach the in-process scheduler, including direct managed runners',async()=>fixture(async({dir,cache})=>{
-  const root=join(dir,'hook-launcher'),file=join(root,'bin/opencrawl.cjs'),marker=join(dir,'check');mkdirSync(dirnameFor(file),{recursive:true});
-  writeFileSync(file,`module.exports={activeRoot:()=>${JSON.stringify(root)},cacheRoot:()=>${JSON.stringify(cache)},updateDue:()=>true,automaticUpdate:async()=>{require('node:fs').writeFileSync(${JSON.stringify(marker)},'checked');}};`);
+test('development hook entrypoints do not load an npm launcher or start update subprocesses',async()=>fixture(async({dir})=>{
+  const file=join(dir,'forbidden.cjs');writeFileSync(file,"throw new Error('Node launcher must not load')");
   const code=resolve(import.meta.dir,'../src/cli.ts');
   for(const args of [['collect','hook','--harness','codex'],['collect','hook','--managed','--harness','codex'],['collect','worker']]) {
-    rmSync(marker,{force:true});
     const child=Bun.spawn([process.execPath,code,...args],{env:{...process.env,OPENCRAWL_LAUNCHER:file,OPENCRAWL_CONFIG_HOME:join(dir,'config')},stdin:new Blob(['{}']),stdout:'ignore',stderr:'pipe'});
-    expect(await child.exited).toBe(0);expect(existsSync(marker)).toBe(true);
+    expect(await child.exited).toBe(0);
   }
 }));
-function dirnameFor(file:string){return join(file,'..');}

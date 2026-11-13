@@ -93,7 +93,7 @@ test('CLI owns the reserved skill, replaces edits and stale files, and leaves ot
   expect(existsSync(join(directory, 'my-notes.md'))).toBe(false);
   expect(readFileSync(join(other, 'SKILL.md'), 'utf8')).toBe('keep');
   const manifest = JSON.parse(readFileSync(join(directory, '.opencrawl-skill.json'), 'utf8'));
-  expect(manifest.schemaVersion).toBe(2); expect(manifest.revision).toBe(6); expect(manifest.api).toBeUndefined();
+  expect(manifest.schemaVersion).toBe(2); expect(manifest.revision).toBe(7); expect(manifest.api).toBeUndefined();
   expect(JSON.stringify(skillFiles())).not.toContain('https://new.example');
 }));
 

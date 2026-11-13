@@ -87,10 +87,10 @@ excerpts; surrounding details are summarized.
 ## Connect your agent
 
 Onboarding guides this setup. To do it by hand, install the CLI on the machine
-running your agent (Node 22.15+ and npm are needed for installation):
+running your agent. The preferred native installer needs no Node, npm or Bun:
 
 ```sh
-npm i -g @getopencrawl/cli@next
+curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
 opencrawl login --api http://localhost:8092
 opencrawl collect install --api http://localhost:8092
 ```

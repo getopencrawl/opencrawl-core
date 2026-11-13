@@ -36,8 +36,11 @@ for (const [os, arch, target] of selected) {
 const launcher = join(dist, 'cli');
 mkdirSync(join(launcher, 'bin'), {recursive: true});
 const {scripts, devDependencies, ...published} = pkg;
-writeFileSync(join(launcher, 'package.json'), JSON.stringify({...published, optionalDependencies}, null, 2) + '\n');
+writeFileSync(join(launcher, 'package.json'), JSON.stringify({...published, scripts:{postinstall:'node install.cjs'}, optionalDependencies}, null, 2) + '\n');
 copyFileSync(join(root, 'bin/opencrawl.cjs'), join(launcher, 'bin/opencrawl.cjs'));
 chmodSync(join(launcher, 'bin/opencrawl.cjs'), 0o755);
+copyFileSync(join(root,'install.cjs'),join(launcher,'install.cjs'));
+// No shebang: npm creates a direct executable shim on Windows too.
+writeFileSync(join(launcher,'bin/opencrawl.exe'),'OpenCrawl native executable is missing. Run the native installer or npm rebuild @getopencrawl/cli.\n');
 copyReleaseFiles(launcher);
 console.log(`Prepared ${selected.length} platform packages and ${pkg.name}@${pkg.version} in cli/dist.`);

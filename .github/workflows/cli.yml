@@ -40,8 +40,9 @@ jobs:
       - run: bun install --cwd cli --frozen-lockfile --ignore-scripts
       - run: bun run --cwd cli typecheck
       - run: bun cli/scripts/build.ts
+      - run: bun cli/scripts/native-release.ts
       - run: bun cli/scripts/publish.ts --dry-run
-      - run: tar -czf cli-dist.tgz -C cli dist
+      - run: tar -czf cli-dist.tgz -C cli dist native
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: cli-dist-${{ github.sha }}
@@ -84,6 +85,7 @@ jobs:
       - run: tar -xzf cli-dist.tgz -C cli
       - run: bun cli/scripts/smoke.ts
       - run: bun cli/scripts/update-smoke.ts
+      - run: bun cli/scripts/native-install-smoke.ts
       - name: Capture ownership under non-reaping PID 1
         if: runner.os == 'Linux'
         run: |

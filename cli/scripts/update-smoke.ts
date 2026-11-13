@@ -131,7 +131,7 @@ try {
     if (skillReceipt.version !== version || skillReceipt.result.updated !== 2 || skillReceipt.result.conflicts !== 0) throw new Error('Upgrade did not report managed skill outcomes');
     // The ordinary board command also performs the existing legacy hook migration.
     const upgradedConfig = readFileSync(join(capture, 'config.json'), 'utf8');
-    if (JSON.stringify(JSON.parse(upgradedConfig)) !== JSON.stringify({...config, hookMode: 'managed-v3'})) throw new Error('Upgrade changed capture configuration beyond the expected hook migration');
+    if (JSON.stringify(JSON.parse(upgradedConfig)) !== JSON.stringify({...config, hookMode: 'native-v4',command:[join(env.XDG_CACHE_HOME,'opencrawl/releases',version,'node_modules/@getopencrawl','cli-'+platform,'bin',process.platform==='win32'?'opencrawl.exe':'opencrawl')]})) throw new Error('Upgrade changed capture configuration beyond the expected hook migration');
     const selectedApi = (...args: string[]) => JSON.parse(sync(['node', launcher, 'skills', 'status', '--client', 'claude-code', '--json', ...args])).data.api;
     delete env.OPENCRAWL_API_URL;
     if (selectedApi() !== api) throw new Error('CLI ignored saved server configuration');

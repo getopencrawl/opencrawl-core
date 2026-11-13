@@ -19,12 +19,38 @@ context. See [the participation protocol](../docs/board-participation.md).
 
 
 ```sh
-npm install -g @getopencrawl/cli@next
+curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
 opencrawl login                  # hosted OpenCrawl
 opencrawl collect install        # capture Claude Code and Codex sessions
 opencrawl collect install --harness grok-bot   # on a Grok Bot cloud computer
 opencrawl search "release checklist"
 ```
+
+
+Native installation is preferred and needs no separate Node, npm or Bun runtime.
+On Windows PowerShell use:
+
+```powershell
+irm https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.ps1 | iex
+```
+
+The installer prints the command path. Add its directory to PATH if needed and
+run `opencrawl --version`. It verifies the archive against release SHA-256 checksums.
+To select a released version on macOS/Linux, append `sh -s -- VERSION` instead of
+`sh` in the command above. An existing newer native installation is retained.
+
+npm remains an alternative: `npm install -g @getopencrawl/cli@next`.
+Allow optional dependencies and the package's installation script. Node runs only
+that installer; the resulting command starts the same native executable directly.
+If install scripts were disabled, run `npm rebuild -g @getopencrawl/cli` or use the
+native installer. An already running executable is never overwritten by native updates.
+
+To migrate an older Node-launcher installation, run the native installer once,
+put its printed bin directory before the old npm command on PATH, and open a new
+terminal. Credentials, installation identity, pending capture and cursors remain
+in place. Restart agent sessions to load updated native hooks; do not uninstall or
+purge collection. Older automatic updaters cannot install the new npm archive
+layout, so use this one-time migration instead of waiting for their update timer.
 
 For a self-hosted deployment, sign in to its own origin; see
 [Self-hosted](#self-hosted).
@@ -106,7 +132,7 @@ opencrawl login --no-browser --json
 Open the printed URL on any machine, confirm the displayed code and sign in.
 The CLI waits for approval. It needs no client secret, inbound port, localhost
 callback or browser on the machine running the command. No authentication runs
-during package installation. Installation does not configure agents or telemetry.
+during package installation. Fresh installation does not configure agents or capture. Migration refreshes existing managed hooks and skills.
 
 `whoami` verifies your identity with the service. `status` reports the version
 and sign-in state. `logout` removes this deployment's local
@@ -171,11 +197,18 @@ or forbidden, 64 invalid arguments, 130 interrupted.
 
 ## Updates and distribution
 
-TypeScript compiled with Bun 1.3.14 produces a self-contained binary. Users need
-Node 22.15+ and npm for the bootstrap, never Bun. npm platform packages cover macOS
-arm64/x64, Linux glibc arm64/x64 and Windows x64. Alpine/musl and Windows arm64
-are not supported in v0. Platform packages are optional dependencies at the exact
-launcher version; there are no install scripts.
+TypeScript compiled with Bun 1.3.14 produces a self-contained executable for macOS
+arm64/x64, Linux glibc arm64/x64 and Windows x64. Alpine/musl and Windows arm64 are
+not supported. Native installs live in `$XDG_DATA_HOME/opencrawl/versions`
+(default `~/.local/share/opencrawl/versions`). On Unix `~/.local/bin/opencrawl`
+is a symlink to a complete version; Windows uses a small `.cmd` entry pointing to
+the versioned executable. `OPENCRAWL_INSTALL_DIR` overrides the command directory.
+The installer preserves a custom command instead of replacing it.
+
+npm installs matching platform packages and links/copies the executable into its
+command path at install time. Node is only needed to run npm. The old
+`bin/opencrawl.cjs` entry remains for legacy callers; current command and hook
+execution, version selection and updates belong to the executable.
 
 Ordinary CLI invocations, including capture hooks and workers, opportunistically check
 one shared per-user timer. Successful checks schedule the next check 3–6 hours
@@ -195,22 +228,21 @@ Both paths use the npm `next` channel and atomically publish complete releases
 into a private user-owned cache. Automatic installation downloads the launcher
 and exact platform package from the public npm registry, verifies their SHA-512
 integrity and package identities, and writes only allowlisted regular files.
-It runs no package scripts. Explicit updates use npm with scripts disabled.
+It runs no package scripts. Explicit updates use the same native downloader; neither update path runs npm.
 Each new invocation selects the highest complete cached release; running captures
 finish using their existing version. A failure preserves the working copy.
 Existing managed hook runners migrate locally to remove their hardcoded update
 opt-out; an explicitly inherited opt-out remains respected.
 
 `OPENCRAWL_NO_UPDATE=1` disables automatic updates for reproducible agent runs.
-`opencrawl update [--json]` explicitly updates from that same channel. Cached releases live under
-`$XDG_CACHE_HOME/opencrawl` (default `~/.cache/opencrawl`); previous releases remain
-available for recovery. Install a newer npm version directly to override an older
-cached version. `current.json` remains a compatibility hint for older installed
-launchers; removing it does not disable cached releases in current launchers.
-To return to the npm-installed version, stop running CLI processes, set the
-opt-out, and move the cache's `releases` directory outside the cache. Keep it for
-recovery. Standalone binary installation/self-update is not offered in
-this release; distribute the npm command.
+`opencrawl update [--json]` explicitly updates from that same channel. Downloaded npm artifacts live under `$XDG_CACHE_HOME/opencrawl`
+(default `~/.cache/opencrawl`). Native installations copy complete releases into
+the durable version directory before switching their owned launcher. The executable
+selects the newest complete version; Unix delegation preserves its PID. Running
+commands keep their current version. Older versions remain for recovery; native
+updates never delete an executable that another process might still use.
+Do not remove an active native version directory. `current.json` remains only a
+compatibility hint for old Node launchers.
 
 ## Development and release
 
@@ -226,7 +258,7 @@ bun scripts/build.ts             # all five platform packages
 
 The `next` dist-tag keeps this new client separate from the existing v1 `latest`
 release. Publishing must never move that v1 tag. The dedicated CLI workflow builds and signs on macOS, tests those same
-binaries on macOS/Linux/Windows, then publishes the five platform packages first.
+binaries on macOS/Linux/Windows, then publishes checksum-verified native archives and the five npm platform packages.
 It stages `@getopencrawl/cli` under `next-pending` and promotes `next` only after
 all six tarballs are downloadable. Registry metadata alone is not sufficient.
 Retries resume immutable staged packages without republishing; older versions
@@ -303,8 +335,7 @@ attachment content. It does not rewrite or choose between historical revisions.
 The harness runs each hook asynchronously and owns its process. The hook saves
 its notice locally, then competes for one nonblocking uploader lock. The winner
 parses permitted transcripts, spools immutable batches and uploads; other hooks
-exit after saving their notices. On Unix the shell and Node dispatcher replace
-themselves with the native CLI using exec, keeping the harness-owned PID. Capture
+exit after saving their notices. On Unix the shell runner replaces itself with the native CLI using exec, keeping the harness-owned PID. Capture
 never detaches a child, starts a service or launches a replacement worker.
 Each uploader has a 90-second deadline, including during outages or lock waits,
 and checks once per second that its original parent is still alive. Parent loss
@@ -348,7 +379,7 @@ Grok Bot runs a person's Bots on one cloud computer and loads Cursor-format
 hooks from `~/.cursor/hooks.json` there. Ask a Bot to run, on its computer:
 
 ```sh
-npm i -g @getopencrawl/cli@next
+curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
 opencrawl login --no-browser
 opencrawl collect install --yes --harness grok-bot
 ```

@@ -39,10 +39,10 @@ try {
     const install = join(scratch, 'install');
     mkdirSync(install);
     writeFileSync(join(install, 'package.json'), '{"private":true}');
-    const result = Bun.spawn([...npmCommand, 'install', '--prefix', install, '--ignore-scripts', '--no-audit', '--no-fund', `--registry=${server.url.origin}`, `@getopencrawl/cli@${pkg.version}`], {cwd: install, env: {...process.env, npm_config_registry: server.url.origin}, stdout: 'pipe', stderr: 'pipe'});
+    const result = Bun.spawn([...npmCommand, 'install', '--prefix', install, '--no-audit', '--no-fund', `--registry=${server.url.origin}`, `@getopencrawl/cli@${pkg.version}`], {cwd: install, env: {...process.env, npm_config_registry: server.url.origin}, stdout: 'pipe', stderr: 'pipe'});
     const stderr = await new Response(result.stderr).text();
     if (await result.exited) throw new Error(`Packaged install failed: ${stderr}`);
-    const command = ['node', join(install, 'node_modules/@getopencrawl/cli/bin/opencrawl.cjs')];
+    const command = [join(install, 'node_modules/@getopencrawl/cli/bin/opencrawl.exe')];
     if (run([...command, '--version']).trim() !== pkg.version) throw new Error('Installed version mismatch');
     if (run(['bun',join(install,'node_modules/@getopencrawl/cli/runtime/opencrawl.js'),'--version']).trim() !== pkg.version) throw new Error('Replaceable-runtime bundle version mismatch');
     const status = JSON.parse(run([...command, 'status', '--json']));

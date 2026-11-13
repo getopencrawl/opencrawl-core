@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 'use strict';
-// npm owns the bootstrap. Updates live in a private per-user cache so global
-// install permissions and running processes never prevent the next upgrade.
+// Compatibility entrypoint for pre-native npm installs and hooks already loaded
+// by a running agent. New npm installs run bin/opencrawl.exe directly; the native
+// executable owns normal update and launch behavior. Retain this module so old
+// launchers can reach a new release without changing credentials or capture data.
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
