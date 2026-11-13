@@ -12,6 +12,7 @@ import {visibleTo, createControls} from './controls.mjs';
 import type {ResourceControl} from './controls.mjs';
 import {applySessionControl} from './library.mjs';
 import {searchFilters,searchSort} from '../search/controls.mjs';
+import {sessionOverlap} from './overlap.mjs';
 
 import {sessionIndexMapping} from '../search/mapping.mjs';
 export {sessionIndexMapping};
@@ -72,6 +73,11 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       await collection.bulk(principal,prepared);
     },
     search,
+    async overlap(principal: Principal, window?: {days?: number; now?: number}) {
+      sessionScope(principal);
+      if (principal.captureAccess !== undefined) fail(403, 'Session read access required');
+      return sessionOverlap(resolve(principal).collection('session'), controls, principal, window);
+    },
     /** Activity within the requested UTC calendar-day window, plus lifetimeEvents for
      * index inventory. Never returns transcript text. With team:true the caller
      * must already have authorized the principal for its whole tenant. */
