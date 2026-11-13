@@ -91,6 +91,7 @@ running your agent. The preferred native installer needs no Node, npm or Bun:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 opencrawl login --api http://localhost:8092
 opencrawl collect install --api http://localhost:8092
 ```

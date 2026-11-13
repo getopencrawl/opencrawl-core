@@ -41,9 +41,9 @@ export function allocateCliVersion(base:string,published:string[]):string {
 }
 export function pinCli(source: string, version: string): string {
   cliVersion(version);
-  const pattern = /@getopencrawl\/cli@\d+\.\d+\.\d+/g;
+  const pattern = /const CLOUD_CLI_VERSION='(?:next|\d+\.\d+\.\d+)'/g;
   if ([...source.matchAll(pattern)].length !== 1) throw Error('Expected exactly one pinned cloud CLI installation');
-  return source.replace(pattern, '@getopencrawl/cli@' + version);
+  return source.replace(pattern, "const CLOUD_CLI_VERSION='" + version + "'");
 }
 async function api(path: string): Promise<unknown> {
   const response = await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/${path}`, {headers: {authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json'}, signal: AbortSignal.timeout(30_000)});

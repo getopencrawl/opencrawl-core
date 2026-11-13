@@ -15,7 +15,10 @@ test('capture setup covers Claude cloud and Grok Bot from the page data, without
   assert.doesNotMatch(html, /<secret>|<setup>/);
   for (const text of ['Capture Grok Bot sessions', `opencrawl collect install --yes --harness grok-bot --defer-auth --api ${api}`, `opencrawl login --no-browser --api ${api}`, 'newly created Bot', 'a stored receipt confirms upload']) assert.ok(html.includes(text), text);
   // Shell operators in the copied command are escaped as text.
-  assert.ok(html.includes('@getopencrawl/cli@next &amp;&amp; opencrawl collect install'));
+  assert.ok(html.includes('install.sh | sh &amp;&amp; export PATH='));
+  assert.ok(html.includes('&amp;&amp; opencrawl collect install'));
+  assert.match(html,/\$HOME\/\.local\/bin\/opencrawl/);
+  assert.doesNotMatch(html,/npm i |node_modules/);
   // The Grok Bot steps come after the Claude setup and before revoking a credential.
   assert.ok(html.indexOf('Capture Grok Bot sessions') > html.indexOf('Setup script'));
   assert.ok(html.indexOf('Capture Grok Bot sessions') < html.indexOf('Credential ID to revoke'));

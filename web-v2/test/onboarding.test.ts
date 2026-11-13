@@ -4,7 +4,7 @@ import {createElement, type ReactElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {MemoryRouter} from '../src/router.tsx';
 import {AgentOnboarding, SourcesOnboarding, InviteOnboarding, type OnboardingAdapter, type OnboardingStatus} from '../src/onboarding/index.ts';
-import {deriveOnboarding, hasReceipt, normalizeInvitationEmail, oauthDestination, safeWorkspacePath} from '../src/onboarding/model.ts';
+import {deriveOnboarding, hasReceipt, normalizeInvitationEmail, oauthDestination, safeWorkspacePath, promptModel} from '../src/onboarding/model.ts';
 
 const receipt = {observedAt: '2026-11-07T12:00:00.000Z'};
 const complete: OnboardingStatus = {cli: receipt, mcpTest: receipt, session: receipt};
@@ -18,6 +18,16 @@ const adapter: OnboardingAdapter = {
 };
 const render = (element: ReactElement) => renderToStaticMarkup(createElement(MemoryRouter, {}, element));
 const agent = (initialStatus: OnboardingStatus) => render(createElement(AgentOnboarding, {adapter, mcpUrl: 'https://app.getopencrawl.com/mcp', setupPrompt: 'The approved setup prompt.', initialStatus}));
+
+test('manual setup chooses a native installer and makes its command available before login on each OS',()=>{
+  for(const windows of [false,true]){
+    const {commands}=promptModel({mcpUrl:'https://selfhost.example/mcp',setupPrompt:'Approved prompt',windows});
+    assert.match(commands.cli,windows?/install\.ps1/:/install\.sh/);
+    assert.match(commands.cli,windows?/\$env:PATH =/:/export PATH=/);
+    assert.match(commands.cli,/opencrawl login --api https:\/\/selfhost\.example$/);
+    assert.doesNotMatch(commands.cli,/npm |node /);
+  }
+});
 
 test('only valid server receipts unlock the source step; imported history never substitutes for a fresh session', () => {
   assert.equal(hasReceipt({observedAt: ''}), false);
