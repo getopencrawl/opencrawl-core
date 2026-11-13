@@ -92,4 +92,4 @@ restore. The legacy OpenSearch case also reproduces the old 413 rejection with
 125,000 retained event IDs, accepts the next 1,000 after migration, and verifies
 capture and authenticated tail search for a message larger than 6 MiB. Fresh full-application checks cover x64, ARM64 and the SQLite profile. The
 explicit full-Airbyte workflow also upgrades an older default installation and
-checks its retained connector, a new Airbyte sync after restore, and the source-to-search path.
+checks its retained connector, new Airbyte syncs after upgrade and restore, and the source-to-search path.
