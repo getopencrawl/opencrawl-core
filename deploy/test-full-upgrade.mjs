@@ -34,8 +34,8 @@ verify();
 // Keep a reservation without a raw upload and a deletion fence in the old PG
 // layout. A migration that copies only accepted session batches would lose them.
 const identityFixture=String.raw`
- const {Client}=await import('pg');
  if(!process.env.OPENCRAWL_DATABASE_URL){console.log(JSON.stringify({legacy:true}));process.exit(0);}
+ const {Client}=await import('pg');
  const c=new Client({connectionString:process.env.OPENCRAWL_DATABASE_URL});await c.connect();
  if(process.env.SEED_IDENTITY_FIXTURE==='true'){
   await c.query('BEGIN');
