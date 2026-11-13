@@ -7,6 +7,9 @@ import {CliError} from '../oauth.ts';
 import {hash} from './parse.ts';
 
 const execute=promisify(execFile);
+const runReplicas=async(args:string[])=>{
+ const {stdout}=await execute('replicas',[...args,'--json'],{encoding:'utf8',timeout:15000,maxBuffer:64*1024*1024});return JSON.parse(stdout) as unknown;
+};
 const uuid=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
 const identifier=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 export type ReplicasActor={provider:'replicas';assurance:'collector-reported';workspaceId:string;messageId:string;nativeId:string;kind:'human'|'unknown';userId?:string;name?:string;email?:string};
@@ -42,9 +45,7 @@ export function claudeReplicasActors(history:History,workspaceId:string,sessionI
 /** The first observed attribution is persisted before spooling its event, so
  * later profile-name changes or a worker restart cannot change an event ID.
  * This is collector-reported provenance, never a human authentication grant. */
-export function createReplicasAttribution({run=async(args:string[])=>{
- const {stdout}=await execute('replicas',[...args,'--json'],{encoding:'utf8',timeout:15000,maxBuffer:64*1024*1024});return JSON.parse(stdout) as unknown;
-},directory=()=>join(configDir(),'capture','replicas-actors')}: {run?:(args:string[])=>Promise<unknown>;directory?:()=>string}={}){
+export function createReplicasAttribution({run=runReplicas,directory=()=>join(configDir(),'capture','replicas-actors')}: {run?:(args:string[])=>Promise<unknown>;directory?:()=>string}={}){
  const sessions=new Map<string,{chatId:string;actors:Map<string,ReplicasActor>}>();
  return async(workspaceId:string,sessionId:string,nativeId:string):Promise<ReplicasActor|undefined>=>{
   if(!uuid(workspaceId)||!uuid(sessionId)||!uuid(nativeId))throw unavailable();
@@ -93,3 +94,42 @@ export function createReplicasAttribution({run=async(args:string[])=>{
  };
 }
 export const replicasAttribution=createReplicasAttribution();
+
+export type ReplicasTitle={chatId:string;title:string;timestamp:string};
+/** Replicas' native file may call every chat "Claude Code". Resolve the
+ * platform's title through an exact native-thread match, never by list order.
+ * The bounded durable cache limits provider reads across short-lived workers.
+ * A failed read leaves transcript bytes/cursors available for a later retry. */
+export function createReplicasTitles({run=runReplicas,directory=()=>join(configDir(),'capture','replicas-titles'),now=Date.now}: {run?:(args:string[])=>Promise<unknown>;directory?:()=>string;now?:()=>number}={}){
+ return async(workspaceId:string,sessionId:string,harness:'claude-code'|'codex',force=false):Promise<ReplicasTitle|undefined>=>{
+  const failed=()=>new CliError('REPLICAS_METADATA_UNAVAILABLE','Replicas chat metadata is unavailable; local capture data is retained for retry.');
+  if(!uuid(workspaceId)||!uuid(sessionId))throw failed();
+  const provider=harness==='claude-code'?'claude':'codex',file=join(directory(),hash(workspaceId+':'+sessionId+':'+provider)+'.json');
+  let saved:{checkedAt:number;value?:ReplicasTitle}|undefined;
+  try{
+   const raw=readFileSync(file,'utf8');if(raw.length>8192)throw failed();const value=JSON.parse(raw);
+   if(value.schemaVersion!==1||value.workspaceId!==workspaceId||value.sessionId!==sessionId||value.provider!==provider||!Number.isFinite(value.checkedAt)||value.value&&(!uuid(value.value.chatId)||!bounded(value.value.title,1024)?.trim()||!Number.isFinite(Date.parse(value.value.timestamp))))throw failed();
+   saved=value;
+   if(!force&&now()>=value.checkedAt&&now()-value.checkedAt<30000)return value.value;
+  }catch(error:any){if(error.code!=='ENOENT')throw failed();}
+  try{
+   const chats=object(await run(['chat','list',workspaceId])).chats;
+   if(!Array.isArray(chats)||chats.length>1000)throw failed();
+   let matched:ReplicasTitle|undefined;
+   // Even a cached chat ID must still belong to this workspace and provider.
+   for(const row of chats){
+    const chat=object(row);if(chat.provider!==provider||!uuid(chat.id))continue;
+    if(saved?.value&&chat.id!==saved.value.chatId)continue;
+    const history=object(await run(['read',workspaceId,'--chat',chat.id,'--limit','1']));
+    if(history.thread_id!==sessionId)continue;
+    if(history.coding_agent!==provider)throw failed();
+    const title=bounded(chat.title,1024)?.trim();if(!title)throw failed();
+    matched={chatId:chat.id,title,timestamp:saved?.value?.title===title?saved.value.timestamp:new Date(now()).toISOString()};break;
+   }
+   if(saved?.value&&!matched)throw failed();
+   atomicJson(file,{schemaVersion:1,workspaceId,sessionId,provider,checkedAt:now(),...(matched?{value:matched}:{})});
+   return matched;
+  }catch{throw failed();}
+ };
+}
+export const replicasTitle=createReplicasTitles();
