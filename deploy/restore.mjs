@@ -24,6 +24,24 @@ try {
   if(docker(['run','--rm','--network','none','--user','0:0','--mount',mount,'--entrypoint','find',snapshot.compose.services.app.image,'/store','-mindepth','1','-print','-quit']))throw new Error('Restore requires empty destination volumes; existing data is never deleted');
   mounts.push('--mount',`type=volume,source=${store.name},target=/stores/${store.key}`);
  }
+ // A stopped kind node can retain the ID of a Compose network removed by
+ // `compose down`. Reattach it to the restored owned network before any old
+ // installer tries to start it; never recreate the cluster or delete its data.
+ if(snapshot.kind==='dev') {
+  const node=snapshot.project+'-control-plane';
+  const id=docker(['ps','-aq','--filter',`name=^/${node}$`]);
+  if(id) {
+   const info=JSON.parse(docker(['inspect',id]))[0];
+   if(info.Config.Labels['io.x-k8s.kind.cluster']!==snapshot.project)throw new Error('Retained Airbyte cluster ownership mismatch');
+   if(info.State.Running)docker(['stop',id]);
+   const name=snapshot.project+'_default';
+   let networkId=docker(['network','ls','-q','--filter',`name=^${name}$`]);
+   if(!networkId)networkId=docker(['network','create','--label',`com.docker.compose.project=${snapshot.project}`,'--label','com.docker.compose.network=default',name]);
+   const network=JSON.parse(docker(['network','inspect',networkId]))[0];
+   if(network.Labels['com.docker.compose.project']!==snapshot.project)throw new Error('Retained application network ownership mismatch');
+   if(info.NetworkSettings.Networks[name]?.NetworkID!==network.Id)docker(['network','connect',name,id]);
+  }
+ }
  const archive=openSync(join(directory,'stores.tgz'),'r');
  try{docker(['run','--rm','-i','--network','none','--user','0:0',...mounts,'--entrypoint','tar',snapshot.compose.services.app.image,'-xzf','-','-C','/stores'],{stdio:[archive,'inherit','inherit']});}finally{closeSync(archive);}
  for(const saved of snapshot.configurations)privateFile(resolve(root,saved.path),saved.content);

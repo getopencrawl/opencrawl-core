@@ -64,7 +64,9 @@ preserve that newer data separately first. This tool never deletes it for you.
 
 Restore requires the original project to be stopped, empty destination volumes,
 and absent or exactly matching saved configuration files. It verifies checksums,
-loads the saved images, restores every store together, and emits the exact Compose
+loads the saved images, reconnects a retained development Airbyte node to the
+owned application network if it was recreated, restores every store together,
+and emits the exact Compose
 command to start those old images. Use that command, not the newer source's
 Compose file. Check login, retained session search, board history and connector
 retrieval before reopening access. Starting the updated checkout later runs the
