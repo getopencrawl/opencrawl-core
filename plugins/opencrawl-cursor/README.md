@@ -7,7 +7,9 @@ a setup command, an OpenCrawl skill, and MCP configuration. Capture uses the CLI
 
 Install from the repository's `.cursor-plugin/marketplace.json`, or import the
 `opencrawl-cursor` folder in Cursor Customize. For local CLI validation use
-`agent --plugin-dir /absolute/path/to/opencrawl-cursor`. Follow `/opencrawl:setup`.
+`agent --plugin-dir /absolute/path/to/opencrawl-cursor`. In desktop chat, type
+`/setup` and select **Set up OpenCrawl search and optional Cursor capture**.
+Run `opencrawl update` if the CLI is already installed before enrolling capture.
 Connect MCP with Cursor OAuth. Capture requires separate CLI sign-in and explicit
 enrollment: `opencrawl collect install --yes --harness cursor --backfill skip`.
 The CLI preserves the existing installation and Claude Code/Codex capture.
