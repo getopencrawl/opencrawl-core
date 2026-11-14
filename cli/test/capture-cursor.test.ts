@@ -101,9 +101,13 @@ test('desktop model and turn thought aliases pair across durable drains without 
  // No observed generation relationship means no speculative deduplication.
  await emit({...model,generation_id:'unrelated-generation'});await emit({...turn,generation_id:null});
  await emit(hook('afterAgentResponse',{generation_id:'next-generation',text:'Desktop resumed reply'}));
+ // Native board notifications start a new turn without beforeSubmitPrompt.
+ const notification='37347a24-d60c-425b-abbd-24423a667604';
+ await emit({...model,generation_id:notification+'-0-pyaf'});
+ await emit({...turn,generation_id:notification});
  await hookFlush(hook('stop'));
  const events=f.batches.flatMap((b:any)=>b.events).sort((a:any,b:any)=>a.sequence-b.sequence);
- expect(events.filter((e:any)=>e.kind==='reasoning_summary')).toHaveLength(5);
+ expect(events.filter((e:any)=>e.kind==='reasoning_summary')).toHaveLength(6);
  expect(events.filter((e:any)=>e.kind==='message').map((e:any)=>e.data.content[0].text)).toEqual(['Desktop first turn','Desktop first reply','Desktop resumed turn','Desktop resumed reply']);
  expect(captureStatus().pendingHooks).toBe(0);
 }));
