@@ -55,9 +55,15 @@ inferred from clicks or stored browser state.
 All steps share the boxed, left-aligned shell and bounded header with Sign out.
 Forward navigation sits outside the panel at the right; Back stays quiet with
 matching arrow insets. The primary button's brand layers appear only on hover.
-Checklist disclosures close when their receipt first becomes complete. Prompt
-and snippet copy feedback clears after 1.5 seconds; disclosure changes are instant.
+The setup prompt remains unchanged while required receipts arrive. Pending checks
+do not open disclosures, move the viewport, or replace it with MCP setup/test
+prompts. The expanded prompt and manual-copy fallback remain available until setup
+completes. Checklist disclosures close when their receipt first becomes complete.
+Prompt and snippet copy feedback clears after 1.5 seconds; disclosure changes are instant.
 Clipboard failures retain a usable manual-copy path.
+Replicas enrollment stays in workspace Agent setup for administrators; the focused
+onboarding flow does not offer that separate installation action. Existing shared
+readiness still opens the workspace and offers personal-computer setup.
 
 The release contains no preview controls, simulated APIs, variant switches or
 mock workspace. Hosted route tests use synthetic identity/provider adapters;

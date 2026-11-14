@@ -8,6 +8,19 @@ import {join, relative, sep, basename} from 'node:path';
 // its content conversion shared, but their session namespaces are independent.
 export const CURSOR_HOOK_EVENTS = GROK_BOT_HOOK_EVENTS;
 export const cursorEvents = grokBotEvents;
+export type CursorThoughtHooks = {generation: string; turn: Record<string,number>; model: Record<string,number>};
+/** Desktop emits the same thought through its model and turn hooks. Pair only
+ * aliases of the generation observed in beforeSubmitPrompt. Occurrence counts
+ * preserve repeated thoughts within a turn and leave unidentified hooks alone. */
+export function cursorThoughtDuplicate(state: CursorThoughtHooks | undefined, event: any) {
+  const generation=event.generation_id;
+  if(!state||event.hook_event_name!=='afterAgentThought'||typeof event.text!=='string'||typeof generation!=='string')return false;
+  const source=generation===state.generation?'turn':generation.startsWith(state.generation+'-')?'model':null;
+  if(!source)return false;
+  const key=createHash('sha256').update(JSON.stringify([event.text,event.duration_ms??null])).digest('hex');
+  const count=(state[source][key]??0)+1;state[source][key]=count;
+  return count<=(state[source==='turn'?'model':'turn'][key]??0);
+}
 /** Cursor CLI omits some content hooks. Reconcile only the active native JSONL
  * named by a hook, inside Cursor's own project transcript directory. Never read
  * a referenced project file or follow a link outside that directory. */

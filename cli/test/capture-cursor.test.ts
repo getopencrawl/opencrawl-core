@@ -79,6 +79,35 @@ test('Cursor prompts, responses, reasoning, tools and compaction survive queue r
  await excludeCapture(undefined,base.conversation_id);await captureHook('cursor',hook('afterAgentResponse',{text:'excluded'}));expect(captureStatus().pendingHooks).toBe(0);
 }));
 
+test('desktop model and turn thought aliases pair across durable drains without losing genuine repetitions',async()=>fixture(async f=>{
+ await f.install();
+ const generation='7c6b7b5e-56f0-410f-86cc-f6edf752815c',text='The user wants the exact acceptance marker.';
+ const emit=async(event:any)=>{await captureHook('cursor',event);await drainCaptureNotices();};
+ await emit(hook('beforeSubmitPrompt',{generation_id:generation,prompt:'Desktop first turn'}));
+ // Shapes observed in Cursor desktop 3.30.14: the model hook has a suffixed
+ // generation, followed by the turn hook with the same text and duration.
+ const model=hook('afterAgentThought',{generation_id:generation+'-0-j5zz',model:'grok-4.7',text,duration_ms:694});
+ const turn=hook('afterAgentThought',{generation_id:generation,model:'grok-4.7-high-fast',model_id:'grok-4.7',text,duration_ms:694});
+ await emit(model);
+ await captureHook('cursor',turn);
+ const notices=join(captureDir(),'notices'),name=readdirSync(notices).find(n=>n.endsWith('.json'))!,saved=readFileSync(join(notices,name));
+ await drainCaptureNotices();writeFileSync(join(notices,name),saved);await drainCaptureNotices();
+ // Repeated identical thoughts in the same generation survive, even when
+ // the two delivery paths arrive in the opposite order.
+ await emit(turn);await emit(model);
+ await emit(hook('afterAgentResponse',{generation_id:generation,text:'Desktop first reply'}));
+ await emit(hook('beforeSubmitPrompt',{generation_id:'next-generation',prompt:'Desktop resumed turn'}));
+ await emit({...turn,generation_id:'next-generation'});await emit({...model,generation_id:'next-generation-0-other'});
+ // No observed generation relationship means no speculative deduplication.
+ await emit({...model,generation_id:'unrelated-generation'});await emit({...turn,generation_id:null});
+ await emit(hook('afterAgentResponse',{generation_id:'next-generation',text:'Desktop resumed reply'}));
+ await hookFlush(hook('stop'));
+ const events=f.batches.flatMap((b:any)=>b.events).sort((a:any,b:any)=>a.sequence-b.sequence);
+ expect(events.filter((e:any)=>e.kind==='reasoning_summary')).toHaveLength(5);
+ expect(events.filter((e:any)=>e.kind==='message').map((e:any)=>e.data.content[0].text)).toEqual(['Desktop first turn','Desktop first reply','Desktop resumed turn','Desktop resumed reply']);
+ expect(captureStatus().pendingHooks).toBe(0);
+}));
+
 test('Cursor startup uses native hook shape, preserves capture hooks and registers its conversation',async()=>fixture(async f=>{
  await f.install();const options={home:f.dir,env:process.env,command:[process.execPath,'-e','']};
  expect(startupHooks(['cursor'],'install',options)[0].status).toBe('installed');expect(startupHooks(['cursor'],'install',options)[0].status).toBe('unchanged');

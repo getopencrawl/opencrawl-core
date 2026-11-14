@@ -30,7 +30,7 @@ function sourceFixture({permissions=grants,body='Original body with violet light
     if(endpoint===DRIVE_API+'/drives')return {status:200,data:{drives:[]}};
     if(endpoint===DRIVE_API+'/about')return {status:200,data:{user:{emailAddress:'connector@gmail.com'}}};
     if(endpoint===DRIVE_API+'/files')return {status:200,data:{files:[{id:state.metadata.id}]}};
-    if(endpoint===DRIVE_API+`/files/${state.metadata.id}`)return {status:200,data:{...state.metadata}};
+    if(endpoint===DRIVE_API+`/files/${state.metadata.id}`)return {status:200,data:input.query?.alt==='media'?state.body:{...state.metadata}};
     if(endpoint===DRIVE_API+`/files/${state.metadata.id}/permissions`)return {status:200,data:{permissions:state.permissions}};
     if(endpoint===DRIVE_API+`/files/${state.metadata.id}/export`)return {status:200,data:state.body};
     throw new Error('Unexpected provider request '+endpoint);
@@ -74,6 +74,35 @@ test('Drive source exports permitted bodies, binds the receipt, and rejects arbi
   assert.deepEqual([document.access.tenantId,document.access.connectionId,document.access.fileId],[tenantId,connectionId,file.id]);
   assert.equal(document.access.contentHash,digest(document.text));
   for(const input of [{endpoint:DRIVE_API+'/files'},{endpoint:DRIVE_SOURCE_ENDPOINT,query:{corpora:'allDrives'}},{endpoint:DRIVE_SOURCE_ENDPOINT,headers:{Authorization:'secret'}},{endpoint:DRIVE_SOURCE_ENDPOINT,method:'POST'}])await assert.rejects(fixture.source.read(input),{status:403});
+});
+
+test('Drive imports decoded JSON objects, arrays and scalars without mistaking normalized bytes for source size',async()=>{
+  for(const body of [{nested:{evidence:'violet lighthouse'},enabled:true},['evidence',7],null,true,42,'null']){
+    const original=JSON.stringify(body,null,2)+'\n';
+    const fixture=sourceFixture({body,metadata:{...file,mimeType:'application/json',size:String(Buffer.byteLength(original))}});
+    const document=(await fixture.source.read({endpoint:DRIVE_SOURCE_ENDPOINT})).data.documents[0];
+    assert.deepEqual(JSON.parse(document.text),body);
+    assert.equal(document.extractionStatus,'extracted');
+    assert.equal(document.access.contentHash,digest(document.text));
+    assert.equal(fixture.calls.filter(call=>call.endpoint.endsWith('/permissions')).length,2);
+  }
+});
+
+test('Drive decoded JSON remains bounded and rechecks access; raw downloads retain size validation',async()=>{
+  const fixture=sourceFixture({body:{evidence:'shared'},metadata:{...file,mimeType:'application/json',size:'100'}});
+  const revoked=async input=>{const result=await fixture.request(input);if(input.query?.alt==='media')fixture.state.permissions=[];return result;};
+  assert.deepEqual((await createGoogleDriveSource({...fixture.options,request:revoked}).read({endpoint:DRIVE_SOURCE_ENDPOINT})).data.documents,[]);
+  for(const body of [{text:'x'.repeat(8*1024*1024)},Number.POSITIVE_INFINITY]){
+    const invalid=sourceFixture({body,metadata:{...file,mimeType:'application/json',size:'1'}});
+    await assert.rejects(invalid.source.read({endpoint:DRIVE_SOURCE_ENDPOINT}),/supported size|Invalid Drive JSON number/);
+  }
+  const raw=sourceFixture({body:'short',metadata:{...file,mimeType:'text/plain',size:'100'}});
+  await assert.rejects(raw.source.read({endpoint:DRIVE_SOURCE_ENDPOINT}),/size mismatch/);
+  const empty=sourceFixture({body:'',metadata:{...file,mimeType:'application/json',size:'0'}});
+  const emptyDocument=(await empty.source.read({endpoint:DRIVE_SOURCE_ENDPOINT})).data.documents[0];
+  assert.equal(emptyDocument.text,'');assert.equal(emptyDocument.extractionStatus,'empty');
+  const unsupported=sourceFixture({body:{unexpected:true},metadata:{...file,mimeType:'text/plain',size:'1'}});
+  await assert.rejects(unsupported.source.read({endpoint:DRIVE_SOURCE_ENDPOINT}),/content representation/);
 });
 
 test('Drive rechecks permission, version, and roster after body extraction',async()=>{

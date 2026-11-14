@@ -52,8 +52,6 @@ export function promptModel({mcpUrl, setupPrompt, windows=typeof navigator!=='un
     },
     prompts: {
       connect: {label: 'Copy setup prompt', name: 'setup', text: setupPrompt},
-      mcp: {label: 'Copy MCP setup prompt', name: 'MCP setup', text: `Connect OpenCrawl’s remote MCP server at ${mcpUrl}. Guide me through sign-in, then call the OpenCrawl MCP tool test_connection and confirm it returns connected: true. Do not paste credentials into chat.`},
-      verify: {label: 'Copy test prompt', name: 'test', text: 'Call the OpenCrawl MCP tool test_connection. Confirm that it returns connected: true. If OpenCrawl is not available, help me connect its remote MCP server and sign in, then retry test_connection.'},
       session: {label: 'Copy a small task', name: 'task', text: 'Tell me which project we are working in and briefly describe its purpose.'},
     },
   };
