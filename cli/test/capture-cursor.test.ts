@@ -111,7 +111,7 @@ test('desktop model and turn thought aliases pair across durable drains without 
 test('Cursor startup uses native hook shape, preserves capture hooks and registers its conversation',async()=>fixture(async f=>{
  await f.install();const options={home:f.dir,env:process.env,command:[process.execPath,'-e','']};
  expect(startupHooks(['cursor'],'install',options)[0].status).toBe('installed');expect(startupHooks(['cursor'],'install',options)[0].status).toBe('unchanged');
- const config=JSON.parse(readFileSync(join(f.dir,'.cursor/hooks.json'),'utf8'));expect(config.hooks.sessionStart).toHaveLength(2);
+ const config=JSON.parse(readFileSync(join(f.dir,'.cursor/hooks.json'),'utf8'));expect(config.hooks.sessionStart).toHaveLength(2);expect(config.hooks.postToolUse).toHaveLength(2);expect(config.hooks.postToolUse.some((entry:any)=>entry.command.endsWith('session start --harness cursor --after-tool'))).toBe(true);
  let registered:any;const output=await sessionStart(f.api,'cursor',hook('sessionStart',{session_id:base.conversation_id}),async(_api,_operation,args)=>{registered=args;return {session:base.conversation_id,workspace:f.owner.tenantId,agent:'a'.repeat(64),name:null,task:null};});
  expect(registered).toEqual({session:base.conversation_id,harness:'cursor'});expect(output.additional_context).toContain('registered');
  expect((await sessionStart(f.api,'cursor',hook('stop'))).additional_context).toContain('unavailable');
