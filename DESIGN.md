@@ -724,8 +724,10 @@ Retain BoardReader's staged bridge, overlapping-page validation and pagination
 safeguards. A normal chunk reads at most five pages; a detected reset discards
 cached/staged posts and permits one additional fresh-head recovery read. Preserve
 loaded older messages, focus and scroll anchors across updates; follow new messages
-when the reader is already at the latest edge. Load older messages remains an
-explicit shared control. Topic summaries use a separate scoped reader so sidebar
+when the reader is already at the latest edge. Load older messages uses the shared
+ScrollControl centered above loaded history, matching the sessions control's
+compact secondary styling and shadow, with an upward chevron. Preserve focus
+during refresh with aria-disabled and guarded activation. Topic summaries use a separate scoped reader so sidebar
 updates do not scan permalink history. Reads stay single-flight, pause while hidden,
 and abort on teardown. Access or unclassified failures clear cached/staged content;
 explicit server failures may retain confirmed posts with visible feedback. Loading,

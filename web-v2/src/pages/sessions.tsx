@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
-import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader} from '../design/components.js';
+import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, ScrollControl} from '../design/components.js';
 import {Markdown} from '../design/markdown.js';
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
@@ -295,11 +295,11 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
           {moreState.error && <Notice tone="danger">{moreState.error}</Notice>}
           <div ref={end} className="oc-session-end" aria-hidden="true"/>
         </div></div>
-        {(awayFromBottom || next) && <Button className="oc-session-jump" busy={moreState.busy} onClick={() => {
+        {(awayFromBottom || next) && <ScrollControl className="oc-session-jump" busy={moreState.busy} onClick={() => {
           if (!awayFromBottom) {void loadMore();}
           else if (next) {jumpPending.current = true; void loadMore(true);}
           else end.current?.scrollIntoView({behavior: 'instant', block: 'end'});
-        }}>{awayFromBottom ? 'Jump to latest' : 'Load more'}<Icon name="chevron-down" size={14}/></Button>}
+        }}>{awayFromBottom ? 'Jump to latest' : 'Load more'}</ScrollControl>}
       </div>
       {details && <aside id="session-details" className="oc-session-details" aria-labelledby="session-details-title" onKeyDown={event => {if (event.key === 'Escape') closeDetails();}}>
         <div className="oc-session-details-title"><h2 id="session-details-title" ref={panelHeading} tabIndex={-1}>Session details</h2><Button variant="quiet" className="oc-icon-button" aria-label="Close details" onClick={closeDetails}><Icon name="close" size={16}/></Button></div>
