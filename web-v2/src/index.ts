@@ -9,7 +9,7 @@ export * from './pages/types.ts';
 export {OverviewPage} from './pages/overview.tsx';
 export {UsagePage} from './pages/usage.tsx';
 export {ago as relativeTime} from './pages/usage-model.ts';
-export {DiagnosticsPage, SearchInspector, JsonDisclosure} from './pages/diagnostics.tsx';
+export {DiagnosticsPage, SearchPlaygroundPage, SearchInspector, JsonDisclosure} from './pages/diagnostics.tsx';
 export {FocusedFrame} from './design/focused-frame.tsx';
 export * from './pages/library-types.ts';
 export {libraryResourceKey} from './pages/use-resource.ts';
