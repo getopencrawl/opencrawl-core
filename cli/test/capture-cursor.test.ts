@@ -133,6 +133,8 @@ test('Cursor resume rewrites the same inode with a larger file and recovers lega
  await captureHook('cursor',hook('stop',{transcript_path:file}));await drainCaptureNotices();await hookFlush(hook('stop'));
  const messages=f.batches.flatMap((b:any)=>b.events).filter((e:any)=>e.kind==='message');
  expect(messages.map((e:any)=>e.data.content[0].text)).toEqual(['First prompt','First reply','Resumed prompt '+ 'x'.repeat(512),'Resumed reply']);
+ expect(messages.every((event:any,index:number)=>index===0||event.sequence>messages[index-1].sequence)).toBe(true);
+ expect(messages[2].timestamp).not.toBe(messages[0].timestamp);
  expect(captureStatus().pendingHooks).toBe(0);
 }));
 

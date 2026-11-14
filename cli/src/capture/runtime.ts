@@ -577,6 +577,9 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
           let signature;
           if(event.kind==='message') {
             event.data=cursorMessage(event.data);signature=[event.data.role,event.data.content];
+            // sessionStart may run only once for a conversation. Its time belongs
+            // to the first prompt, never to a later resumed turn.
+            if(event.data.role==='user'){delete state.startSequence;delete state.startAt;}
           } else if(event.kind==='reasoning_summary'&&Array.isArray(event.data?.summary)) {
             // Cursor also writes thought text as an ordinary assistant transcript
             // message. Keep its explicit thought hook, not a second visible reply.
@@ -586,7 +589,9 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
           const key=hash(JSON.stringify(signature));
           const count=(state[source][key]??0)+1;state[source][key]=count;
           if(count<=(state.emitted[key]??0))return null;
-          state.emitted[key]=count;return event;
+          state.emitted[key]=count;
+          if(source==='transcript'){event.sequence=Math.max(event.sequence,(state.lastTranscriptSequence??0)+1);state.lastTranscriptSequence=event.sequence;}
+          return event;
         };
         let events:any[]=[],attachments:any[]=[],eventBytes=0;
         const commit=()=>{
