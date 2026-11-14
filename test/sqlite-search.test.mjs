@@ -66,9 +66,11 @@ for (const backend of ['sqlite', 'opensearch']) test(`session participants use h
   assert.deepEqual(list.sessions.find(s => s.sessionId === 'assistant-only').participants, [{id: 'user:alice'}]);
   assert.deepEqual(list.sessions.find(s => s.sessionId === 'uploader-only').participants.map(p => p.id), ['replicas:' + sender(2)]);
   const filler = Array.from({length: 501}, (_, n) => ({id: 'filler-' + n, document: {...owner, harness: 'claude-code', sessionId: 'aaa' + String(n).padStart(3, '0'), kind: 'message', chunk: 0, participantVersion: 1, participantId: 'replicas:' + sender(2), text: 'Unrelated', timestamp: '2026-11-13T10:00:00Z'}}));
-  await collection.bulk(principal, filler, {refresh: true});
+  const excludedOwners = filler.map(item => ({id: 'owner-' + item.id, document: {...item.document, userId: principal.userId}}));
+  await collection.bulk(principal, [...filler, ...excludedOwners], {refresh: true});
   assert.deepEqual((await library.list(principal, {participant: 'replicas:' + sender(2), query: 'quayside'})).sessions.map(s => s.sessionId), ['shared'], 'search reaches matches after the first 500 participant sessions');
-  await collection.delete(principal, filler.map(item => item.id)); await realm.refresh(principal);
+  assert.deepEqual((await library.list(principal, {participant: 'user:alice'})).sessions.map(s => s.sessionId), ['assistant-only', 'local'], 'excluded uploader-only pages do not hide later participant matches');
+  await collection.delete(principal, [...filler, ...excludedOwners].map(item => item.id)); await realm.refresh(principal);
   assert.deepEqual((await library.list(principal, {participant: 'user:alice'})).sessions.map(s => s.sessionId), ['assistant-only', 'local']);
   assert.deepEqual((await library.list(principal, {participant: 'user:workload_replicas_fixture'})).sessions, []);
   await assert.rejects(library.list(principal, {participant: 'tenant:other'}), {status: 400});
