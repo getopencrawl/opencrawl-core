@@ -18,10 +18,14 @@ const consumerDomains = new Set(['gmail.com', 'googlemail.com']);
 const textTypes = new Set(['application/json', 'application/xml', 'application/yaml', 'application/pdf', 'application/xhtml+xml']);
 
 /** Broker downloads carry no provider credentials; only signed AWS object URLs are accepted. */
-async function bodyBytes(response: ProxyResponse<unknown>, send: typeof globalThis.fetch): Promise<Uint8Array> {
+async function bodyBytes(response: ProxyResponse<unknown>, send: typeof globalThis.fetch, parsedJson = false): Promise<Uint8Array> {
   if (response.status < 200 || response.status >= 300) throw new Error(`Drive content returned ${response.status}`);
-  if (typeof response.data === 'string') {
-    const bytes = Buffer.from(response.data);
+  const text = parsedJson ? JSON.stringify(response.data, (_key, value: unknown) => {
+    if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('Invalid Drive JSON number');
+    return value;
+  }) : typeof response.data === 'string' ? response.data : undefined;
+  if (text !== undefined) {
+    const bytes = Buffer.from(text);
     if (bytes.length > MAX_BODY) throw new Error('Drive body exceeds supported size');
     return bytes;
   }
@@ -64,8 +68,12 @@ async function content(request: Proxy, file: DriveFile, send: typeof globalThis.
     if (!exported && (!/^\d+$/.test(file.size || '') || Number(file.size) > MAX_BODY)) throw new Error('Drive download size is unknown or exceeds supported size');
     const response = await request<unknown>({endpoint: `${DRIVE_API}/files/${file.id}${exported ? '/export' : ''}`,
       query: exported ? {mimeType: exported} : {alt: 'media', supportsAllDrives: true}});
-    const bytes = await bodyBytes(response, send);
-    if (!exported && bytes.length !== Number(file.size)) throw new Error('Drive download size mismatch');
+    // Proxies decode JSON responses, including scalar values. Their normalized
+    // representation retains the delivered values, not the source's whitespace
+    // or byte length. Raw text/binary downloads still require the exact size.
+    const parsedJson = mediaType === 'application/json' && !response.binary_data;
+    const bytes = await bodyBytes(response, send, parsedJson);
+    if (!exported && !parsedJson && bytes.length !== Number(file.size)) throw new Error('Drive download size mismatch');
     if (!bytes.length) return {text: '', extractionStatus: 'empty' as const};
     const extracted = await extractDocumentText(bytes, {mediaType, timeoutMs: 30000});
     body = extracted.parts.map(part => part.text).join('\n');

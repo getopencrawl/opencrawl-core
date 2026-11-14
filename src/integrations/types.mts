@@ -26,6 +26,7 @@ export interface AirbyteMigration {
 export interface UpdateOptions {whenStatus?: string[]; whenFields?: Record<string, unknown>}
 
 export interface ProxyRequest {endpoint: string; method?: string; query?: Record<string, string | number | boolean | undefined>; headers?: Record<string, string>; body?: unknown}
+/** JSON responses carry decoded values; binary_data carries an exact-byte download. */
 export interface ProxyResponse<T> {status: number; data: T; headers?: Record<string, string>; binary_data?: {url: string; content_type?: string}}
 export type Proxy = <T = ProviderData>(request: ProxyRequest) => Promise<ProxyResponse<T>>;
 export interface ProviderData {
