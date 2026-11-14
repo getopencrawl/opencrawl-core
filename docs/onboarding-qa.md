@@ -12,8 +12,9 @@ Hosted route tests cover all three step gates, source sign-in versus authorizati
 source indexing, invitation validation/retry/deduplication, admin/member roles,
 CSRF, durable optional completion and real workspace-search result contracts.
 
-Browser acceptance covers dynamic headings, manual disclosures, prompt preview,
-auto-collapse on receipt, no automatic advancement, source authorization return,
+Browser acceptance covers a stable setup prompt and preview across pending receipts,
+manual-copy focus, user-controlled disclosures, auto-collapse on receipt,
+no intermediate automatic scrolling or advancement, source authorization return,
 API-key entry, invitation rows, keyboard entry, final navigation and search.
 Desktop and phone renders preserve the approved frame, alignment and controls.
 Actual hosted identity/provider interactions are verified separately on release.

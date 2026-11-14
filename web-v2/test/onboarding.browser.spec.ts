@@ -224,7 +224,9 @@ test('receipts, manual copy, and the three-step flow preserve one browser docume
 
   await request.post('/__test/state', {data: {status: {cli: receipt, mcp: receipt, history: {...receipt, state: 'complete'}}}});
   await refresh(page);
-  await expect(page.getByRole('heading', {name: 'Ask your agent to test the connection'})).toBeVisible();
+  await expect(page.getByRole('heading', {name: 'Connect your primary coding agent'})).toBeVisible();
+  await expect(page.getByText('Waiting for agent to test connection', {exact: true})).toBeVisible();
+  await expect(page.getByRole('button', {name: 'Copy test prompt', exact: true})).toHaveCount(0);
   await expect(page.getByRole('link', {name: 'Next', exact: true})).toHaveCount(0);
   await request.post('/__test/state', {data: {status: complete}});
   await refresh(page);
@@ -596,10 +598,18 @@ for (const width of [1280,390]) test(`shared setup does not ask each member to i
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
-for (const width of [1280,390]) test(`Replicas installation copies its own prompt with an accessible fallback at ${width}px`, async ({page,request}) => {
+for (const width of [1280,390]) test(`Replicas installation stays in workspace settings, outside onboarding at ${width}px`, async ({page,request}) => {
   await page.setViewportSize({width,height:844});
   await page.addInitScript(() => Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{if(sessionStorage.getItem('deny'))throw new Error('denied');sessionStorage.setItem('copied',text);}}}));
   await page.goto('/onboarding');
+  await expect(page.getByRole('button',{name:'Install on Replicas',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Copy setup prompt',exact:true})).toBeVisible();
+  await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'approved',name:'Replicas',owner:'shared'}}}});
+  await page.reload();
+  await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Install on Replicas',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('link',{name:'Open workspace',exact:true})).toBeVisible();
+  await page.goto('/workspace/settings');
   await page.getByRole('button',{name:'Install on Replicas',exact:true}).click();
   expect(await page.evaluate(()=>sessionStorage.getItem('copied'))).toContain('Use workspace_identity');
   await page.evaluate(()=>sessionStorage.setItem('deny','yes'));
@@ -608,49 +618,47 @@ for (const width of [1280,390]) test(`Replicas installation copies its own promp
   await expect(page.getByLabel('Prompt to copy')).toBeFocused();
   await expect(page.getByLabel('Prompt to copy')).toHaveValue(/Install OpenCrawl in this Replicas environment/);
   await page.getByRole('button',{name:'I’ve copied it'}).click();
-  await expect(page.getByRole('heading',{name:'Connect your primary coding agent'})).toBeVisible();
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'approved',name:'Replicas',owner:'shared'}}}});
-  await page.reload();
-  await page.getByRole('button',{name:'Install on Replicas',exact:true}).click();
-  await expect(page.getByLabel('Prompt to copy')).toBeVisible();
-  await page.getByRole('button',{name:'I’ve copied it'}).click();
   await expect(page.getByRole('button',{name:'Copied',exact:true})).toBeFocused();
-  await page.goto('/onboarding?role=member');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.goto('/workspace/settings?role=member');
   await expect(page.getByRole('button',{name:'Install on Replicas'})).toHaveCount(0);
 });
 
 
 for (const viewport of [{width:1280,height:813},{width:400,height:580}]) {
-  test(`setup actions keep their identity and completion exposes Next at ${viewport.width}px`, async ({page,request}, testInfo) => {
+  test(`setup prompt stays stable while receipts arrive and completion exposes Next at ${viewport.width}px`, async ({page,request}, testInfo) => {
     await page.setViewportSize(viewport);
-    await page.addInitScript(() => Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{sessionStorage.setItem('copied-prompt',text);}}}));
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{sessionStorage.setItem('copied-prompt',text);}}});
+      const scroll = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = function (...args) {
+        sessionStorage.setItem('automatic-scrolls',String(Number(sessionStorage.getItem('automatic-scrolls') ?? 0)+1));
+        scroll.apply(this,args);
+      };
+    });
     await page.goto('/onboarding?role=member');
     const setup = page.locator('.copy-prompt');
-    await expect(setup).toHaveText('Copy setup prompt');
     await setup.click();
     const setupText = await page.evaluate(()=>sessionStorage.getItem('copied-prompt'));
     await page.getByRole('button',{name:'Show setup prompt'}).click();
-    await request.post('/__test/state',{data:{status:{cli:receipt}}});
-    await refresh(page);
-    await expect(page.getByRole('button',{name:'Copy MCP setup prompt',exact:true})).toBeInViewport({ratio:1});
-    await expect(setup).toHaveText('Copy setup prompt');
-    await expect(page.locator('#connect-preview')).toBeHidden();
-    await request.post('/__test/state',{data:{status:{cli:receipt,mcp:receipt}}});
-    await refresh(page);
-    const testPrompt = page.getByRole('button',{name:'Copy test prompt',exact:true});
-    await expect(testPrompt).toBeInViewport({ratio:1});
-    await expect(setup).toHaveText('Copy setup prompt');
+    const scrolls = await page.evaluate(()=>sessionStorage.getItem('automatic-scrolls'));
+    for (const status of [{cli:receipt},{cli:receipt,mcp:receipt},{cli:receipt,mcpTest:receipt}]) {
+      await request.post('/__test/state',{data:{status}});
+      await refresh(page);
+      await expect(page.locator('[data-signal="cli"]')).toHaveAttribute('data-complete','');
+      if ('mcp' in status) await expect(page.locator('[data-signal="mcp"]')).toHaveAttribute('data-complete','');
+      if ('mcpTest' in status) await expect(page.locator('[data-signal="mcpTest"]')).toHaveAttribute('data-complete','');
+      await expect(setup).toHaveText('Copy setup prompt');
+      await expect(page.locator('#connect-preview')).toBeVisible();
+      await expect(page.locator('#connect-preview p')).toHaveText(setupText!);
+      await expect(page.getByRole('button',{name:/Copy (MCP setup|test) prompt/})).toHaveCount(0);
+      await expect(page.locator('.signal-disclosure[open]')).toHaveCount(0);
+      await expect(page.getByRole('link',{name:'Next',exact:true})).toHaveCount(0);
+      expect(await page.evaluate(()=>sessionStorage.getItem('automatic-scrolls'))).toBe(scrolls);
+    }
     await setup.click();
     expect(await page.evaluate(()=>sessionStorage.getItem('copied-prompt'))).toBe(setupText);
-    await testPrompt.click();
-    expect(await page.evaluate(()=>sessionStorage.getItem('copied-prompt'))).toContain('test_connection');
-    await request.post('/__test/state',{data:{status:{cli:receipt,mcpTest:receipt}}});
-    await refresh(page);
-    await expect(page.getByRole('button',{name:'Copy a small task',exact:true})).toBeInViewport({ratio:1});
-    await expect(page.locator('[data-signal="mcpTest"] details')).not.toHaveAttribute('open','');
-    await page.getByRole('button',{name:'Show setup prompt'}).click();
-    await expect(page.locator('#connect-preview')).toBeVisible();
+    await page.screenshot({path:testInfo.outputPath(`stable-prompt-${viewport.width}.png`),fullPage:true});
     await request.post('/__test/state',{data:{status:complete}});
     await refresh(page);
     await expect(page.getByRole('heading',{name:'Your coding agent is ready'})).toBeVisible();
@@ -668,16 +676,24 @@ for (const viewport of [{width:1280,height:813},{width:400,height:580}]) {
   });
 }
 
-test('the separate test prompt preserves manual-copy text and keyboard focus',async({page,request})=>{
-  await request.post('/__test/state',{data:{status:{cli:receipt,mcp:receipt}}});
+test('receipt changes preserve the setup manual-copy text and keyboard focus',async({page,request})=>{
   await page.addInitScript(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('denied');}}}));
   await page.goto('/onboarding?role=member');
-  await page.getByRole('button',{name:'Copy test prompt',exact:true}).click();
-  await expect(page.getByLabel('Prompt to copy')).toBeFocused();
-  await expect(page.getByLabel('Prompt to copy')).toHaveValue(/test_connection/);
+  await page.getByRole('button',{name:'Copy setup prompt',exact:true}).click();
+  const fallback = page.getByLabel('Prompt to copy');
+  await expect(fallback).toBeFocused();
+  const setupText = await fallback.inputValue();
+  for (const status of [{cli:receipt},{cli:receipt,mcp:receipt},{cli:receipt,mcpTest:receipt}]) {
+    const previous = ((await (await request.get('/__test/state')).json()) as {requests:{status:number}}).requests.status;
+    await request.post('/__test/state',{data:{status}});
+    await refresh(page);
+    await expect.poll(async()=>((await (await request.get('/__test/state')).json()) as {requests:{status:number}}).requests.status).toBeGreaterThan(previous);
+    await expect(fallback).toHaveValue(setupText);
+    await expect(fallback).toBeFocused();
+  }
   await page.getByRole('button',{name:'I’ve copied it'}).click();
-  await expect(page.locator('[data-prompt="verify"]')).toBeFocused();
-  await expect(page.locator('.copy-prompt')).toHaveText('Copy setup prompt');
+  await expect(page.locator('.copy-prompt')).toBeFocused();
+  await expect(page.getByRole('button',{name:/Copy (MCP setup|test) prompt/})).toHaveCount(0);
 });
 
 

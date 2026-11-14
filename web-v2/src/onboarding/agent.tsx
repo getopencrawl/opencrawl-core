@@ -10,28 +10,20 @@ import type {OnboardingAdapter, OnboardingStatus} from './types.ts';
 
 const titles = {
   connect: 'Connect your primary coding agent',
-  mcp: 'Complete MCP sign-in',
-  verify: 'Ask your agent to test the connection',
   session: 'Start a new coding session',
 };
 const descriptions = {
   connect: 'Install the OpenCrawl CLI to start recording your coding agent sessions. Your agent will guide you through sign-in, then test the connection.',
-  mcp: 'Your CLI is signed in. Finish OpenCrawl’s MCP sign-in in your coding agent. Your agent will test the connection afterward.',
-  verify: 'MCP is connected, but we haven’t received a successful connection test. Paste this prompt into your agent to run it.',
   session: 'Open a new session in your coding agent, then paste this small task. We’ll continue when its recording arrives.',
 };
 
-function Signal({name, label, done, pending = false, subitem = false, detail, optional = false, active = false, children}: {
-  name: string; label: string; done: boolean; pending?: boolean; subitem?: boolean; detail?: string; optional?: boolean; active?: boolean; children?: ReactNode;
+function Signal({name, label, done, pending = false, subitem = false, detail, optional = false, children}: {
+  name: string; label: string; done: boolean; pending?: boolean; subitem?: boolean; detail?: string; optional?: boolean; children?: ReactNode;
 }) {
   const disclosure = useRef<HTMLDetailsElement>(null);
   const previousDone = useRef(done);
   useEffect(() => {
     const node = disclosure.current;
-    if (active && !done && node) {
-      node.open = true;
-      node.scrollIntoView({block: 'nearest'});
-    }
     if (done && !previousDone.current && node?.open) {
       const summary = node.querySelector('summary');
       const restore = node.contains(document.activeElement) && !summary?.contains(document.activeElement);
@@ -39,7 +31,7 @@ function Signal({name, label, done, pending = false, subitem = false, detail, op
       if (restore) summary?.focus({preventScroll: true});
     }
     previousDone.current = done;
-  }, [done, active]);
+  }, [done]);
   const content = <>
     <Icon name="check" className="signal-mark" />
     <span><span className="signal-heading"><span className="signal-label">{label}</span>{children && <Icon name="chevron-down" className="signal-chevron" />}</span>{optional && <span className="optional-label">Optional</span>}{detail && <span className="signal-detail" data-complete={done ? '' : undefined}>{detail}</span>}</span>
@@ -70,7 +62,6 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, canInstallReplica
   const [replicasError,setReplicasError] = useState('');
   const replicasAbort = useRef<AbortController | null>(null);
   useEffect(() => () => replicasAbort.current?.abort(), []);
-  const promptStep = derived.step === 'ready' ? 'connect' : derived.step;
   const showComplete = derived.complete && presentation === 'focused';
   const {commands, prompts} = promptModel({mcpUrl, setupPrompt});
   const [expanded, setExpanded] = useState(false);
@@ -79,15 +70,16 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, canInstallReplica
   const copyButton = useRef<HTMLButtonElement>(null);
   const replicasButton = useRef<HTMLButtonElement>(null);
   const fallback = useRef<HTMLTextAreaElement>(null);
-  const currentStep = useRef(derived.step);
-  currentStep.current = derived.step;
+  const copyScope = JSON.stringify([mcpUrl, setupPrompt, derived.complete]);
+  const currentCopyScope = useRef(copyScope);
+  currentCopyScope.current = copyScope;
   const mounted = useRef(true);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {mounted.current = true; return () => {mounted.current = false; if (copyTimer.current) clearTimeout(copyTimer.current);};}, []);
   useEffect(() => {
     if (manual) {fallback.current?.focus(); fallback.current?.select();}
   }, [manual]);
-  useEffect(() => {setManual(null); setCopied(null); setExpanded(false);}, [derived.step]);
+  useEffect(() => {setManual(null); setCopied(null); setExpanded(false);}, [copyScope]);
   useEffect(() => {
     if (showComplete && !manual && !progress.error) document.getElementById('next-step')?.scrollIntoView({block: 'nearest'});
   }, [showComplete, manual, progress.error]);
@@ -97,30 +89,30 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, canInstallReplica
   const session = hasReceipt(status.session);
   const history = hasReceipt(status.history) ? status.history?.state : undefined;
   const historyDone = history === 'complete';
-  const needsCli = !derived.complete && promptStep === 'connect' && mcp;
+  const needsCli = !derived.complete && derived.step === 'connect' && mcp;
   function showCopied(step: string) {
     if (copyTimer.current) clearTimeout(copyTimer.current);
     setCopied(step);
     copyTimer.current = setTimeout(() => setCopied(null), 1500);
   }
   async function copy(text: string, label: string) {
-    const requestedStep = derived.step;
+    const requestedScope = copyScope;
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(text);
-      if (mounted.current && currentStep.current === requestedStep) showCopied(label);
+      if (mounted.current && currentCopyScope.current === requestedScope) showCopied(label);
     } catch {
-      if (mounted.current && currentStep.current === requestedStep) setManual({text, step: label});
+      if (mounted.current && currentCopyScope.current === requestedScope) setManual({text, step: label});
     }
   }
 
   const ActionHeading = presentation === 'workspace' ? 'h3' : 'h2';
   const checklist = <ul className="signal-checklist" aria-label="Connection checklist">
               <Signal name="cli" done={cli} label={cli ? 'CLI signed in' : 'Waiting for CLI sign-in'}><CommandSnippet text={commands.cli} label="Copy CLI setup commands" /><p className="signal-instruction">Open the URL printed in your terminal and approve sign-in in your browser.</p></Signal>
-              <Signal name="mcp" active={promptStep === 'mcp'} done={mcp} label={mcp ? 'MCP signed in' : 'Waiting for MCP sign-in'}><ActionHeading className="signal-instruction">{titles.mcp}</ActionHeading><p className="signal-instruction">{descriptions.mcp}</p><Button variant="primary" data-prompt="mcp" onClick={() => void copy(prompts.mcp.text, 'mcp')}>{copied === 'mcp' ? 'Copied' : prompts.mcp.label}</Button><CommandSnippet text={mcpUrl} label="Copy MCP server URL" /><p className="signal-instruction">Add this server in your agent’s settings, then complete sign-in.</p></Signal>
-              <Signal name="mcpTest" active={promptStep === 'verify'} done={mcpTest} pending={!mcpTest && !(cli && hasReceipt(status.mcp))} subitem label={mcpTest ? 'Connection test passed' : 'Waiting for agent to test connection'}><ActionHeading className="signal-instruction">{titles.verify}</ActionHeading><p className="signal-instruction">{descriptions.verify}</p><Button variant="primary" data-prompt="verify" onClick={() => void copy(prompts.verify.text, 'verify')}>{copied === 'verify' ? 'Copied' : prompts.verify.label}</Button></Signal>
+              <Signal name="mcp" done={mcp} label={mcp ? 'MCP signed in' : 'Waiting for MCP sign-in'}><CommandSnippet text={mcpUrl} label="Copy MCP server URL" /><p className="signal-instruction">Add this server in your agent’s settings, then complete sign-in.</p></Signal>
+              <Signal name="mcpTest" done={mcpTest} pending={!mcpTest && !(cli && hasReceipt(status.mcp))} subitem label={mcpTest ? 'Connection test passed' : 'Waiting for agent to test connection'} />
               <Signal name="recording" done={session} pending={!session} label={session ? 'Session recording enabled' : 'Enable session recording'}><CommandSnippet text={commands.recording} label="Copy session recording command" /><p className="signal-instruction">Installs recording hooks and offers an optional history import.</p></Signal>
-              <Signal name="session" active={promptStep === 'session'} done={session} pending={!session && !mcpTest} subitem label={session ? 'First session recording received' : 'Waiting for first session recording'}><ActionHeading className="signal-instruction">{titles.session}</ActionHeading><p className="signal-instruction">{descriptions.session}</p><Button variant="primary" data-prompt="session" onClick={() => void copy(prompts.session.text, 'session')}>{copied === 'session' ? 'Copied' : prompts.session.label}</Button><p className="signal-instruction">Start a new chat to verify recording works.</p><p className="signal-instruction">Use the coding agent and environment you just connected. The setup chat may not be recorded.</p><p className="signal-instruction">If no recording arrives, ask your agent to check:</p><CommandSnippet text="opencrawl collect status" label="Copy recording status command" /></Signal>
+              <Signal name="session" done={session} pending={!session && !mcpTest} subitem label={session ? 'First session recording received' : 'Waiting for first session recording'}><ActionHeading className="signal-instruction">{titles.session}</ActionHeading><p className="signal-instruction">{descriptions.session}</p><Button variant="primary" data-prompt="session" onClick={() => void copy(prompts.session.text, 'session')}>{copied === 'session' ? 'Copied' : prompts.session.label}</Button><p className="signal-instruction">Start a new chat to verify recording works.</p><p className="signal-instruction">Use the coding agent and environment you just connected. The setup chat may not be recorded.</p><p className="signal-instruction">If no recording arrives, ask your agent to check:</p><CommandSnippet text="opencrawl collect status" label="Copy recording status command" /></Signal>
               <Signal name="history" done={historyDone} pending={history !== 'importing' && !historyDone} subitem optional label="Import past sessions" detail={history === 'complete' ? 'Imported' : history === 'received' ? 'Some history received; full import unconfirmed.' : history === 'skipped' ? 'Skipped' : history === 'importing' ? 'Importing' : session ? 'Not started' : undefined}>
                 {history === 'importing' ? <p className="signal-instruction">Your past sessions are being imported. You can continue setup.</p> : <><CommandSnippet text={commands.history} label="Copy history import command" /><p className="signal-instruction">Choose Claude Code, Codex, both, or skip in your terminal.</p><p className="signal-instruction">Importing uploads messages, tool activity, and available attachments.</p></>}
               </Signal>
@@ -139,7 +131,7 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, canInstallReplica
     } finally {if (mounted.current && !request.signal.aborted) setReplicasPending(false);}
   }
 
-  const replicasAction = !progress.loading && !progress.error && !manual && canInstallReplicas && adapter.replicasSetup && <section aria-label="Replicas installation"><div className="focus-action"><Button ref={replicasButton} variant="primary" disabled={replicasPending} onClick={() => void installReplicas()}>{replicasPending ? 'Preparing setup…' : copied === 'replicas' ? 'Copied' : 'Install on Replicas'}</Button></div><p className="focus-reassurance">Copy a setup prompt to paste into a Replicas chat. Connect your Replicas organization once for your whole team. The setup prompt expires in 30 minutes.</p>{replicasError && <p role="alert">{replicasError}</p>}</section>;
+  const replicasAction = presentation === 'workspace' && !progress.loading && !progress.error && !manual && canInstallReplicas && adapter.replicasSetup && <section aria-label="Replicas installation"><div className="focus-action"><Button ref={replicasButton} variant="primary" disabled={replicasPending} onClick={() => void installReplicas()}>{replicasPending ? 'Preparing setup…' : copied === 'replicas' ? 'Copied' : 'Install on Replicas'}</Button></div><p className="focus-reassurance">Copy a setup prompt to paste into a Replicas chat. Connect your Replicas organization once for your whole team. The setup prompt expires in 30 minutes.</p>{replicasError && <p role="alert">{replicasError}</p>}</section>;
 
   const Heading = presentation === 'workspace' ? 'h2' : 'h1';
   const content = <>
