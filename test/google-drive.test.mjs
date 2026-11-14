@@ -98,6 +98,9 @@ test('Drive decoded JSON remains bounded and rechecks access; raw downloads reta
   }
   const raw=sourceFixture({body:'short',metadata:{...file,mimeType:'text/plain',size:'100'}});
   await assert.rejects(raw.source.read({endpoint:DRIVE_SOURCE_ENDPOINT}),/size mismatch/);
+  const empty=sourceFixture({body:'',metadata:{...file,mimeType:'application/json',size:'0'}});
+  const emptyDocument=(await empty.source.read({endpoint:DRIVE_SOURCE_ENDPOINT})).data.documents[0];
+  assert.equal(emptyDocument.text,'');assert.equal(emptyDocument.extractionStatus,'empty');
   const unsupported=sourceFixture({body:{unexpected:true},metadata:{...file,mimeType:'text/plain',size:'1'}});
   await assert.rejects(unsupported.source.read({endpoint:DRIVE_SOURCE_ENDPOINT}),/content representation/);
 });

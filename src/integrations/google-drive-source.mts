@@ -71,7 +71,7 @@ async function content(request: Proxy, file: DriveFile, send: typeof globalThis.
     // Proxies decode JSON responses, including scalar values. Their normalized
     // representation retains the delivered values, not the source's whitespace
     // or byte length. Raw text/binary downloads still require the exact size.
-    const parsedJson = mediaType === 'application/json' && !response.binary_data;
+    const parsedJson = mediaType === 'application/json' && Number(file.size) > 0 && !response.binary_data;
     const bytes = await bodyBytes(response, send, parsedJson);
     if (!exported && !parsedJson && bytes.length !== Number(file.size)) throw new Error('Drive download size mismatch');
     if (!bytes.length) return {text: '', extractionStatus: 'empty' as const};
