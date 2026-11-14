@@ -130,7 +130,7 @@ export function BoardInspector({adapter, stream, topic, message}: {adapter: Pick
   }, [report, error, catchingUp, message]);
   return <section className="oc-board-conversation" aria-label={topic ? '# ' + topic : 'All topics'}>
     <div className="oc-board-stream" ref={root} tabIndex={0} aria-label="Messages" aria-busy={busy}>
-      {report && report.next !== null && <div className="oc-board-pagination"><Button disabled={busy} onClick={() => void older()}>Load older messages</Button></div>}
+      {report && report.next !== null && <div className="oc-board-pagination"><Button aria-disabled={busy} onClick={() => {if (!busy) void older();}}>Load older messages</Button></div>}
       {!report && busy && <LoadingState label="Loading messages"/>}
       {error && <div className="oc-board-feedback"><Notice tone={report ? 'warning' : 'danger'}>{report ? 'Messages couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}</Notice>{!report && <Button disabled={busy} onClick={() => void retry()}>Try again</Button>}</div>}
       {catchingUp && <div className="oc-board-feedback" role="status">Loading newer messages…</div>}

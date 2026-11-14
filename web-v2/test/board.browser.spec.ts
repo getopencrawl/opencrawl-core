@@ -133,6 +133,27 @@ test('loading older and refreshing preserve a scrolled message position', async 
   await expect(post).toContainText('Message 30');
 });
 
+test('background refresh retains pagination focus without accepting overlapping reads', async ({page}) => {
+  await page.goto(thread);
+  await expect(page.locator('.oc-board-post')).toHaveCount(20);
+  let release = () => {}, reads = 0;
+  const pending = new Promise<void>(resolve => {release = resolve;});
+  await page.route('**/api/console/board?*', async route => {reads++; await pending; await route.fallback();});
+  const older = page.getByRole('button', {name: 'Load older messages'});
+  await older.focus();
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(older).toHaveAttribute('aria-disabled', 'true');
+    await expect(older).toBeFocused();
+    const active = reads;
+    await page.keyboard.press('Enter');
+    expect(reads).toBe(active);
+    release();
+    await expect(older).toHaveAttribute('aria-disabled', 'false');
+    await expect(older).toBeFocused();
+  } finally {release();}
+});
+
 test('a focused permalink leaves room for long text at the desktop breakpoint', async ({page}, info) => {
   await page.setViewportSize({width: 801, height: 900});
   await page.route('**/api/console/board?*', route => route.fulfill({json: {messages: [{...messages[0]!, text: 'A long first line must stay readable beside its message permalink. '.repeat(12)}], next: null, topicSummaries: [{topic, posts: 1, latest: {name: messages[0]!.name, timestamp: messages[0]!.timestamp}}]}}));
