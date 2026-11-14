@@ -1,5 +1,5 @@
 import {test,expect} from 'bun:test';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,existsSync,appendFileSync,symlinkSync,utimesSync,renameSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,existsSync,appendFileSync,symlinkSync,utimesSync,renameSync,statSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
@@ -115,6 +115,25 @@ test('native Cursor JSONL fills missing content hooks, deduplicates hooks and tr
  // Neither a forged project path nor a symlink can turn a hook into a file reader.
  const outside=join(f.dir,'outside.jsonl');writeFileSync(outside,message('user','private outside'));expect(()=>[...cursorTranscript(root,base.conversation_id,outside)]).toThrow('outside');
  if(process.platform!=='win32'){rmSync(file);symlinkSync(outside,file);expect(()=>[...cursorTranscript(root,base.conversation_id,file)]).toThrow('outside');}
+}));
+
+test('Cursor resume rewrites the same inode with a larger file and recovers legacy checkpoints without duplicate messages',async()=>fixture(async f=>{
+ await f.install();const root=readCaptureConfig()!.roots.cursor!,directory=join(root,'projects','workspace','agent-transcripts',base.conversation_id),file=join(directory,base.conversation_id+'.jsonl');mkdirSync(directory,{recursive:true});
+ const message=(role:string,text:string)=>({role,message:{content:[{type:'text',text}]}});
+ const original=[message('user','First prompt'),message('assistant','First reply')];
+ // Cursor changes earlier JSON serialization when reconstructing a resumed chat.
+ writeFileSync(file,original.map(r=>JSON.stringify(r,null,1).replaceAll('\n',' ')).join('\n')+'\n');
+ await captureHook('cursor',hook('stop',{transcript_path:file}));await drainCaptureNotices();
+ const before=statSync(file),resumed=[...original,message('user','Resumed prompt '+ 'x'.repeat(512)),message('assistant','Resumed reply')];
+ writeFileSync(file,resumed.map(r=>JSON.stringify(r)).join('\n')+'\n');
+ expect(statSync(file).ino).toBe(before.ino);expect(statSync(file).size).toBeGreaterThan(before.size);
+ await captureHook('cursor',hook('stop',{transcript_path:file}));await drainCaptureNotices();
+ // Previously released cursors have no boundary fingerprint. Upgrade must replay safely.
+ const stateFile=join(captureDir(),'state','cursor-'+hash(base.conversation_id)+'.json'),state=JSON.parse(readFileSync(stateFile,'utf8'));delete state.checkpoint;writeFileSync(stateFile,JSON.stringify(state));
+ await captureHook('cursor',hook('stop',{transcript_path:file}));await drainCaptureNotices();await hookFlush(hook('stop'));
+ const messages=f.batches.flatMap((b:any)=>b.events).filter((e:any)=>e.kind==='message');
+ expect(messages.map((e:any)=>e.data.content[0].text)).toEqual(['First prompt','First reply','Resumed prompt '+ 'x'.repeat(512),'Resumed reply']);
+ expect(captureStatus().pendingHooks).toBe(0);
 }));
 
 test('an older receiver cannot enroll Cursor and parked Cursor batches never block existing client uploads',async()=>fixture(async f=>{

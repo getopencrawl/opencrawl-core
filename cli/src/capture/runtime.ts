@@ -595,15 +595,15 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
         };
         const file=notice.event.transcript_path;
         if(typeof file==='string'&&existsSync(file)) {
-          const transcriptState={offset:state.offset,ino:state.ino};
-          for(const record of cursorTranscript(harnessRoot(config,'cursor'),session.sessionId,file,transcriptState.offset,transcriptState.ino)) {
+          const transcriptState={offset:state.offset,ino:state.ino,checkpoint:state.checkpoint};
+          for(const record of cursorTranscript(harnessRoot(config,'cursor'),session.sessionId,file,transcriptState.offset,transcriptState.ino,transcriptState.checkpoint)) {
             if(record.start===0&&state.offset>0){state.transcript={};state.offset=0;}
             if(record.data) {
               const event=messages({id:hash('cursor-transcript:'+session.sessionId+':'+record.start),kind:'message',sequence:record.data.role==='user'?(state.startSequence??notice.sequence):notice.sequence,
                 timestamp:record.data.role==='user'?(state.startAt??notice.at):notice.at,nativeId:null,parentId:null,turnId:notice.event.generation_id??null,agentId:null,data:record.data},'transcript');
               if(event){const transformed=attachmentTransform(event,attachments,session.cwd??homedir());events.push(transformed);eventBytes+=Buffer.byteLength(JSON.stringify(transformed));}
             }
-            state.offset=record.offset;state.ino=record.ino;
+            state.offset=record.offset;state.ino=record.ino;state.checkpoint=record.checkpoint;
             if(events.length>=100||attachments.length>=8||eventBytes>=1024*1024){await yieldToOwner();commit();}
           }
         }
