@@ -168,6 +168,25 @@ test('native tool and assistant media survive capture without reading attachment
  expect(captureStatus().queued).toBe(0);
 }));
 
+test('native background task completion is captured as automation while startup prompts stay filtered',async()=>fixture(async f=>{
+ await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e',''],harnesses:['antigravity']});
+ const logs=join(f.dir,'gemini','antigravity','brain','conv-background','.system_generated','logs');
+ mkdirSync(logs,{recursive:true});
+ const notification='The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-14T21:19:04Z sender=conv-background/task-23 priority=MESSAGE_PRIORITY_HIGH content=Task id "conv-background/task-23" finished with result:\nCommand exited with code 7.\n\nCommand output:\nBACKGROUND_SIGNAL_80\n</SYSTEM_MESSAGE>';
+ const file=join(logs,'transcript_full.jsonl');
+ writeFileSync(file,[
+  {step_index:0,type:'SYSTEM_MESSAGE',source:'SYSTEM_SDK',content:'SessionStart hook: repeated startup instructions'},
+  {step_index:1,type:'SYSTEM_MESSAGE',source:'SYSTEM',content:notification},
+  {step_index:2,type:'SYSTEM_MESSAGE',source:'SYSTEM',content:'Repeated environment instructions'},
+ ].map(row=>JSON.stringify(row)+'\n').join(''));
+ await captureTranscript(readCaptureConfig()!,'antigravity',file);await flushCaptures();
+ const events=f.batches.flatMap(batch=>batch.events);
+ expect(events).toHaveLength(1);
+ expect(events[0]).toMatchObject({kind:'automation_message',nativeId:'1',data:{source:'SYSTEM',content:notification}});
+ expect(transcriptEntries(events[0])).toEqual([{type:'note',label:'Automation',text:notification,truncated:false}]);
+ expect(f.documents.some(item=>item.document.text?.includes('BACKGROUND_SIGNAL_80'))).toBe(true);
+}));
+
 test('compact-to-full capture, resume and retry keep one indexed copy of unchanged steps and searchable errors',async()=>fixture(async f=>{
  await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e',''],harnesses:['antigravity']});
  const config=readCaptureConfig()!;

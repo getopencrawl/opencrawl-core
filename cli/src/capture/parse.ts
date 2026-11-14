@@ -130,6 +130,11 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
       const media=antigravityMediaBlocks(record.media);
       if(!output&&!media.length&&record.status!=='ERROR')return null;
       kind='tool_result';data={type:'tool_result',output,...(media.length?{content:media}:{}),...(record.status==='ERROR'?{is_error:true,...(typeof record.error==='string'?{error:record.error}:{})}:{})};
+    } else if (record.type === 'SYSTEM_MESSAGE' && record.source === 'SYSTEM' && typeof record.content === 'string'
+      && /(?:^|\n)\[Message\] timestamp=\S+ sender=\S+ priority=\S+ content=/.test(record.content)) {
+      // Native task completions and inbox notices carry new execution evidence.
+      // SessionStart prompts and repeated environment context remain filtered.
+      kind='automation_message';data={source:record.source,content:record.content};
     } else if (record.type === 'CHECKPOINT' && typeof record.content === 'string' && record.content.trim()) {
       kind='compaction';data={content:record.content};
     } else if (record.type === 'ERROR_MESSAGE') {
