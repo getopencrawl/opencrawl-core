@@ -75,10 +75,10 @@ test('Cursor prompts, responses, reasoning, tools and compaction survive queue r
  const before=queue();expect(before.join('')).not.toContain(secret);expect(before.join('')).toContain('[REDACTED]');
  f.unavailable=true;await expect(hookFlush(hook('stop'))).rejects.toThrow();const eventBytes=(items:string[])=>items.flatMap(item=>JSON.parse(item).events.map((event:unknown)=>JSON.stringify(event))).sort();expect(eventBytes(queue())).toEqual(eventBytes(before));
  f.unavailable=false;await hookFlush(hook('stop'),{now:()=>Date.now()+901_000});expect(captureStatus().lastUpload).toMatchObject({harness:'cursor',sessionId:base.conversation_id,stored:true});
- const events=f.batches.flatMap((b:any)=>b.events);expect(events.map((e:any)=>e.kind)).toEqual(['message','reasoning_summary','tool_call','tool_result','tool_call','tool_result','message','compaction']);
+ const events=f.batches.flatMap((b:any)=>b.events).sort((a:any,b:any)=>a.sequence-b.sequence);expect(events.map((e:any)=>e.kind)).toEqual(['message','reasoning_summary','tool_call','tool_result','tool_call','tool_result','message','compaction']);
  const batch=f.batches[0];expect(batch).toMatchObject({harness:'cursor',sessionId:base.conversation_id,origin:'unknown',cwd:'/work/project',captureMode:'live',owner:f.owner});
  const receipt=await f.ingest.putBatch(f.owner,batch);expect(await f.ingest.getBatch({...f.owner,tenantId:'another-team'},{...batch,batchId:receipt.batchId})).toBeNull();
- const docs=batchDocuments({prefix:'capture-v1',key:`capture-v1/tenants/${hash(f.owner.tenantId)}/users/${hash(f.owner.userId)}/cursor/${hash(batch.installationId)}/${hash(batch.sessionId)}/${hash(JSON.stringify(batch))}.json.gz`,batch,principal:f.owner}).map(x=>x.document);
+ const docs=f.batches.flatMap((batch:any)=>batchDocuments({prefix:'capture-v1',key:`capture-v1/tenants/${hash(f.owner.tenantId)}/users/${hash(f.owner.userId)}/cursor/${hash(batch.installationId)}/${hash(batch.sessionId)}/${hash(JSON.stringify(batch))}.json.gz`,batch,principal:f.owner}).map(x=>x.document));
  expect(docs.filter(d=>d.role==='user').map(d=>d.text)).toEqual(['Cursor capture harbor marker']);expect(docs.some(d=>d.harness==='cursor'&&d.kind==='tool_result'&&d.text?.includes('harbor result'))).toBe(true);
  await excludeCapture(undefined,base.conversation_id);await captureHook('cursor',hook('afterAgentResponse',{text:'excluded'}));expect(captureStatus().pendingHooks).toBe(0);
 }));
