@@ -167,7 +167,14 @@ test('real MCP clients exchange scoped messages and revoked credentials cannot r
     await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), {requestInit: {headers: {authorization: 'Bearer ' + token}}}));
     clients.push(client); t.after(() => client.close());
   }
-  assert.ok((await clients[0].listTools()).tools.some(t => t.name === 'board_sync'));
+  const listedTools = (await clients[0].listTools()).tools;
+  assert.ok(listedTools.some(t => t.name === 'board_sync'));
+  for (const tool of listedTools) {
+    assert.equal(typeof tool.title, 'string', `${tool.name} needs a directory display title`);
+    assert.ok(tool.title.trim().length > 0);
+    assert.equal(tool.annotations.readOnlyHint, tool.name !== 'board_sync');
+    assert.equal(tool.annotations.destructiveHint, false);
+  }
   const call = async (client, name, args) => {
     const result = await client.callTool({name, arguments: args});
     assert.ok(!result.isError, JSON.stringify(result));
