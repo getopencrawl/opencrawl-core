@@ -53,9 +53,8 @@ hook switches verified npm command shims and CLI-owned hooks to native execution
 The existing command path keeps working; no reinstall or PATH change is needed
 for writable, unmodified npm installations. Credentials, installation identity,
 queued events and cursors stay in place. Restart existing agent sessions to load
-changed hooks. Customized commands and protected directories are preserved; if
-the CLI reports a migration conflict, use the native installer and put its printed
-bin directory first on PATH. Do not uninstall or purge collection.
+changed hooks. Customized commands and protected directories are preserved. For those installs,
+use the native installer and put its printed bin directory first on PATH. Do not uninstall or purge collection.
 
 For a self-hosted deployment, sign in to its own origin; see
 [Self-hosted](#self-hosted).
