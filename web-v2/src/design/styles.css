@@ -667,7 +667,7 @@ img { max-width: 100%; }
 .oc-session-entry { margin-top: var(--space-3); color: var(--muted); font-size: var(--text-xs); }
 .oc-session-entry .code-block { max-height: 24rem; margin-top: var(--space-2); padding: var(--space-3); font-size: var(--text-xs); white-space: pre; overflow: auto; }
 .oc-session-count { color: var(--quiet); font-size: var(--text-xs); text-align: center; margin-top: var(--space-6); }
-.oc-session-end { text-align: center; color: var(--quiet); font-size: var(--text-xs); padding: var(--space-6) 0 calc(var(--space-16) + env(safe-area-inset-bottom)); }
+.oc-session-end { padding-block-end: calc(var(--space-16) + env(safe-area-inset-bottom)); }
 .oc-session-jump.oc-button { position: absolute; z-index: 2; left: 50%; bottom: max(var(--space-4), env(safe-area-inset-bottom)); transform: translateX(-50%); gap: var(--space-2); font-size: var(--text-xs); box-shadow: var(--shadow-floating); }
 .oc-session-details { width: 290px; flex-shrink: 0; overflow-y: auto; padding: var(--space-5); background: var(--surface); border-left: 1px solid var(--line); }
 .oc-session-details-title { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-6); }

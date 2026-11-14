@@ -576,10 +576,14 @@ reconstructed prose. Paginated status distinguishes loaded events from the
 server-reported total.
 
 The reading column is centered at a 796px maximum, including 40px side insets;
-insets reduce to 32px at 1100px and below, and 20px at 800px and below. Jump to latest is
-a floating secondary button centered over the reading pane, with no footer bar.
-It loads remaining pages before scrolling to the end. Keep bottom space for the
-button and device safe area so the last message remains readable.
+insets reduce to 32px at 1100px and below, and 20px at 800px and below. One floating
+secondary button stays centered over the reading pane, with no footer bar. More
+than 200px from the loaded bottom, it says Jump to latest and loads remaining
+pages before scrolling to the end. Within 200px, it says Load more only when
+another page exists, loading one page; otherwise it is hidden. Re-evaluate this
+state on scrolling and content or viewport resize. Retain the captured-event
+count without a separate more action or end-of-session label. Keep bottom space
+for the button and device safe area so the last message remains readable.
 
 The optional 290px desktop rail holds capture/source facts and existing
 permission-dependent controls. At 800px and below, it overlays the reading pane
