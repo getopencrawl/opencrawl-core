@@ -1,6 +1,8 @@
 import type {IconName} from '../contracts.ts';
 
 const paths: Record<IconName, string> = {
+  // Lucide Info, licensed in web/assets/lucide-info-LICENSE.txt.
+  info: 'M12 16v-4 M12 8h.01',
   workspace: 'M3 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16 M15 9h4a2 2 0 0 1 2 2v10 M1 21h22 M7 8h2 M7 12h2',
   overview: 'M3 10 12 3l9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z',
   sources: 'M9 3v5 M15 3v5 M7 8h10v4a5 5 0 0 1-10 0V8Z M12 17v4',
@@ -34,5 +36,5 @@ const paths: Record<IconName, string> = {
 };
 
 export function Icon({name, size = 20, className = ''}: {name: IconName; size?: number; className?: string}) {
-  return <svg className={`oc-icon ${className}`} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">{name === 'check' && <circle cx="12" cy="12" r="9"/>}<path d={paths[name]}/></svg>;
+  return <svg className={`oc-icon ${className}`} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={name === 'info' ? 2 : 1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">{name === 'info' && <circle cx="12" cy="12" r="10"/>}{name === 'check' && <circle cx="12" cy="12" r="9"/>}<path d={paths[name]}/></svg>;
 }
