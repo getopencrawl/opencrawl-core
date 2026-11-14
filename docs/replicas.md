@@ -130,20 +130,18 @@ is descriptive and grants no authentication or resource access.
 
 Administrators can use **Install on Replicas** in Agent setup to copy a dedicated
 setup prompt into a Replicas chat. It covers the persistent environment, workload
-authentication and fresh-session verification. The first release still requires
-the deployment operator to approve the environment binding and designate the
-verified workspace; the prompt reports this once rather than requesting personal
-credentials from every member.
+authentication and fresh-session verification. The administrator approves the
+organization once; developers do not repeat setup or provide personal credentials
+for shared CLI, MCP or capture access.
 
-An operator may add `onboardingWorkspaceId` to an approved Replicas binding after
-an administrator chooses one workspace for installation verification. The
-receiver reads that exact workload owner's real CLI, MCP test and fresh capture
-receipts. Once all three exist, members of the bound tenant can open the product
+The receiver automatically records the first verified workload installation and
+reads that owner's real CLI, MCP test and fresh capture receipts. Once all three
+exist, members of the connected OpenCrawl organization can open the product
 without installing a local agent. The API reports a separate `shared` setup
 receipt and never fabricates human setup records. History imports do not count.
 Removing approval immediately removes this alternative on the next status read;
-ordinary completed personal setup remains valid. Self-host uses the same binding
-and receipt logic without hosted credentials.
+ordinary completed personal setup remains valid. Self-host uses the same
+organization connection and receipt logic without hosted credentials.
 
 The authenticated principal has an explicit `owner.kind: shared` descriptor.
 Stable workload IDs and existing captured object paths remain unchanged. Message
