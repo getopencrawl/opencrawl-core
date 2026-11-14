@@ -109,6 +109,19 @@ export function recordError(error:any) {
   atomicJson(join(captureDir(),'last-error.json'),{at:new Date().toISOString(),code:error?.code || 'CAPTURE_FAILED'});
 }
 function ensureDirectories() {for(const dir of ['queue','state','blobs','notices','sources','rejected','uploads'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});}
+/** Only the fixed notice header is needed for ordering. Filesystem timestamps
+ * can tie on Linux; reading whole payloads here would unbound backlog memory. */
+function orderedNoticeNames() {
+  return readdirSync(join(captureDir(),'notices')).filter(name=>name.endsWith('.json')).map(name=>{
+    const path=join(captureDir(),'notices',name),fd=openSync(path,'r'),buffer=Buffer.alloc(256);
+    try {
+      const count=readSync(fd,buffer,0,buffer.length,0);
+      const header=/^\{"id":"[^"]+","at":"([^"]+)"(?:,"sequence":(\d+))?,/.exec(buffer.subarray(0,count).toString('utf8'));
+      const order=header?.[2]?Number(header[2]):header?Date.parse(header[1]!)*1000:statSync(path).mtimeMs*1000;
+      return {name,order:Number.isFinite(order)?order:0};
+    } finally {closeSync(fd);}
+  }).sort((a,b)=>a.order-b.order||a.name.localeCompare(b.name)).map(item=>item.name);
+}
 const under = (file:string,dir:string) => file.startsWith(dir+sep);
 function transcriptAllowed(file:string, config:CaptureConfig, harness:TranscriptHarness, approvedHistory=false) {
   const path=realpathSync(file);
@@ -474,7 +487,8 @@ export async function captureHook(harness:Harness,event:any) {
     if(captureExcluded(config,{sessionId:session.sessionId,cwd:session.cwd??undefined}))return;
     // Hook payloads carry no time or order. Microseconds since the epoch keep
     // events from separate hook processes in the order they were recorded.
-    const sequence=Math.round((performance.timeOrigin+performance.now())*1000);
+    let sequence=Math.round((performance.timeOrigin+performance.now())*1000);
+    if(harness==='cursor'){const clock=join(captureDir(),'cursor-sequence.json');sequence=Math.max(sequence,Number(read(clock,0))+2);atomicJson(clock,sequence);}
     const bytes=Buffer.byteLength(JSON.stringify(event));
     atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,sequence,harness,event:bytes>GROK_BOT_MAX_HOOK_BYTES?grokBotUnsupported(event,'too_large',bytes):event});
     return;
@@ -543,7 +557,7 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
       }
     }
   };
-  for(const name of readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json')).sort((a,b)=>statSync(join(captureDir(),'notices',a)).mtimeMs-statSync(join(captureDir(),'notices',b)).mtimeMs)) {
+  for(const name of orderedNoticeNames()) {
     await yieldToOwner();
     if(Date.now()>=until)break;
     const path=join(captureDir(),'notices',name),notice=read(path);

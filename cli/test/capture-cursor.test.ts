@@ -1,5 +1,5 @@
 import {test,expect} from 'bun:test';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,existsSync,appendFileSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,existsSync,appendFileSync,symlinkSync,utimesSync,renameSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
@@ -94,6 +94,10 @@ test('native Cursor JSONL fills missing content hooks, deduplicates hooks and tr
  writeFileSync(file,message('user','<timestamp>Friday, Nov 13, 2026, 6:20 PM (UTC-8)</timestamp>\n<user_query>\nNative harbor prompt\n</user_query>')+message('assistant','A native thought.'));
  await captureHook('cursor',hook('sessionStart'));await captureHook('cursor',hook('beforeSubmitPrompt',{prompt:'Native harbor prompt'}));await captureHook('cursor',hook('afterAgentThought',{text:'A native thought.'}));
  await captureHook('cursor',hook('postToolUse',{transcript_path:file,tool_name:'Read',tool_use_id:'read-1',tool_input:{file_path:'acceptance.txt'},tool_output:{content_length:9}}));
+ // Force identical file timestamps and reverse filename order, as on fast Linux writes.
+ const initial=join(captureDir(),'notices');
+ const ordered=readdirSync(initial).map(name=>({name,notice:JSON.parse(readFileSync(join(initial,name),'utf8'))})).sort((a,b)=>a.notice.sequence-b.notice.sequence);
+ for(const [index,item] of ordered.entries()){const target=join(initial,String(ordered.length-index)+'.json');renameSync(join(initial,item.name),target);utimesSync(target,new Date(1000),new Date(1000));}
  await drainCaptureNotices();
  const reply=message('assistant','Native harbor reply');appendFileSync(file,reply.slice(0,-1));
  await captureHook('cursor',hook('stop',{transcript_path:file}));await drainCaptureNotices();
