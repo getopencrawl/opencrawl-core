@@ -3,6 +3,8 @@ import {createRemoteJWKSet, decodeJwt, jwtVerify, errors} from 'jose';
 import type {JWTVerifyGetKey} from 'jose';
 import type {Principal} from './types.mjs';
 
+export type ReplicasIdentityKey = JWTVerifyGetKey;
+
 export const REPLICAS_ISSUER = 'https://api.replicas.dev';
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 export interface ReplicasBinding {organizationId: string; environmentId: string; tenantId: string; onboardingWorkspaceId?: string}
@@ -50,45 +52,73 @@ export function replicasSharedInstallations(bindings: readonly ReplicasBinding[]
     userId: replicasOwnerId(row.organizationId, row.environmentId, row.onboardingWorkspaceId), name: 'Replicas'}] : []);
 }
 
-/** A workspace is its own principal. It never impersonates its creator or reads
- * a member's private resources. Creator and per-message sender are provenance,
- * not authority. Only the agent read/board/upload routes admit this identity.
- */
-export function createReplicasWorkloads({audience, bindings, key = createRemoteJWKSet(new URL(REPLICAS_ISSUER + '/.well-known/jwks.json'), {timeoutDuration: 5000}), now = Date.now}: {
-  audience: string; bindings: () => readonly ReplicasBinding[] | Promise<readonly ReplicasBinding[]>;
-  key?: JWTVerifyGetKey; now?: () => number;
+export type ReplicasVerification = {status: 200; workload: ReplicasIdentity} | {status: 401 | 503};
+
+/** Credential verification is separate from organization enrollment. A valid token
+ * alone never grants product access or chooses a tenant. */
+export function createReplicasVerifier({audience, key = createRemoteJWKSet(new URL(REPLICAS_ISSUER + '/.well-known/jwks.json'), {timeoutDuration: 5000}), now = Date.now}: {
+  audience: string; key?: JWTVerifyGetKey; now?: () => number;
 }) {
   const origin = new URL(audience);
   if (origin.origin !== audience || !['https:', 'http:'].includes(origin.protocol) || origin.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname)) throw new Error('Invalid workload audience');
+  return async (token: string): Promise<ReplicasVerification> => {
+    if (!token || token.length > 16384) return {status: 401};
+    let payload;
+    try {
+      ({payload} = await jwtVerify(token, key, {issuer: REPLICAS_ISSUER, audience, algorithms: ['RS256'], requiredClaims: ['sub', 'iat', 'exp'], maxTokenAge: 900, currentDate: new Date(now())}));
+    } catch (error) {return {status: error instanceof errors.JOSEError && !(error instanceof errors.JWKSTimeout) ? 401 : 503};}
+    const org = payload.organization_id, env = payload.environment_id, workspace = payload.workspace_id;
+    if (payload.aud !== audience || typeof org !== 'string' || !uuid.test(org) || typeof env !== 'string' || !uuid.test(env) ||
+        typeof workspace !== 'string' || !uuid.test(workspace) || payload.sub !== `org:${org}:env:${env}:workspace:${workspace}` ||
+        typeof payload.iat !== 'number' || typeof payload.exp !== 'number' || payload.exp - payload.iat > 900 || payload.exp <= payload.iat || payload.iat * 1000 > now()) return {status: 401};
+    return {status: 200, workload: {organizationId: org, environmentId: env, workspaceId: workspace,
+      creatorId: typeof payload.creator_id === 'string' && uuid.test(payload.creator_id) ? payload.creator_id : null,
+      creatorEmail: typeof payload.creator_email === 'string' ? payload.creator_email : null, expiresAt: payload.exp * 1000}};
+  };
+}
+
+/** A shared workspace never impersonates a creator or message author. The runtime
+ * resolves its verified organization through the product connection registry.
+ * Legacy bindings exist only for a staged migration; an explicit resolver is
+ * authoritative on string/null. Undefined means no migrated record yet, so the
+ * deployment may retain legacy admission during its verified cutover. */
+export function createReplicasWorkloads({audience, bindings = () => [], resolveOrganization, key, now = Date.now}: {
+  audience: string; bindings?: () => readonly ReplicasBinding[] | Promise<readonly ReplicasBinding[]>;
+  resolveOrganization?: (organizationId: string) => Promise<string | null | undefined>;
+  key?: JWTVerifyGetKey; now?: () => number;
+}) {
+  const verify = createReplicasVerifier({audience, key, now});
   const admitted = new WeakMap<Principal, ReplicasIdentity>();
+  const tenant = async (identity: ReplicasIdentity) => {
+    if (resolveOrganization) {
+      const resolved = await resolveOrganization(identity.organizationId);
+      if (resolved !== undefined) return resolved;
+      // Only a missing migration record may retain the old admission path.
+      // A present revoked connection returns null and can never fall back.
+    }
+    const matches = (await bindings()).filter(row => row.organizationId === identity.organizationId && row.environmentId === identity.environmentId);
+    return matches.length === 1 ? matches[0]!.tenantId : null;
+  };
   async function revalidate(principal: Principal, requested?: unknown): Promise<Principal> {
     const identity = admitted.get(principal);
     if (!identity || identity.expiresAt <= now() || requested !== undefined && requested !== principal.tenantId) throw Object.assign(new Error('Workload access denied'), {status: 403});
-    const matches = (await bindings()).filter(row => row.organizationId === identity.organizationId && row.environmentId === identity.environmentId);
-    if (matches.length !== 1 || matches[0]!.tenantId !== principal.tenantId) throw Object.assign(new Error('Workload binding revoked'), {status: 403});
+    if (await tenant(identity) !== principal.tenantId) throw Object.assign(new Error('Replicas organization connection revoked'), {status: 403});
     return principal;
   }
   return {
-    revalidate,
+    revalidate, verify,
     async identify(token: string): Promise<WorkloadResult> {
-      let payload;
-      try {
-        ({payload} = await jwtVerify(token, key, {issuer: REPLICAS_ISSUER, audience, algorithms: ['RS256'], requiredClaims: ['sub', 'iat', 'exp'], maxTokenAge: 900, currentDate: new Date(now())}));
-      } catch (error) {return {status: error instanceof errors.JOSEError && !(error instanceof errors.JWKSTimeout) ? 401 : 503};}
-      const org = payload.organization_id, env = payload.environment_id, workspace = payload.workspace_id;
-      if (payload.aud !== audience || typeof org !== 'string' || !uuid.test(org) || typeof env !== 'string' || !uuid.test(env) ||
-          typeof workspace !== 'string' || !uuid.test(workspace) || payload.sub !== `org:${org}:env:${env}:workspace:${workspace}` ||
-          typeof payload.iat !== 'number' || typeof payload.exp !== 'number' || payload.exp - payload.iat > 900 || payload.exp <= payload.iat || payload.iat * 1000 > now()) return {status: 401};
-      let matches;
-      try {matches = (await bindings()).filter(row => row.organizationId === org && row.environmentId === env);} catch {return {status: 503};}
-      if (matches.length !== 1) return {status: 403};
-      const principal: Principal = {tenantId: matches[0]!.tenantId,
-        userId: replicasOwnerId(org, env, workspace),
-        name: 'Replicas workspace ' + workspace, email: null,
-        owner: {kind: 'shared', provider: 'replicas', organizationId: org, environmentId: env, workspaceId: workspace}};
-      const workload: ReplicasIdentity = {organizationId: org, environmentId: env, workspaceId: workspace,
-        creatorId: typeof payload.creator_id === 'string' && uuid.test(payload.creator_id) ? payload.creator_id : null,
-        creatorEmail: typeof payload.creator_email === 'string' ? payload.creator_email : null, expiresAt: payload.exp * 1000};
+      const verified = await verify(token);
+      if (verified.status !== 200) return verified;
+      const workload = verified.workload;
+      let tenantId;
+      try {tenantId = await tenant(workload);} catch {return {status: 503};}
+      if (!tenantId) return {status: 403, code: 'REPLICAS_NOT_CONNECTED'};
+      const {organizationId, environmentId, workspaceId} = workload;
+      const principal: Principal = {tenantId,
+        userId: replicasOwnerId(organizationId, environmentId, workspaceId),
+        name: 'Replicas workspace ' + workspaceId, email: null,
+        owner: {kind: 'shared', provider: 'replicas', organizationId, environmentId, workspaceId}};
       admitted.set(principal, workload);
       return {status: 200, principal, user: {id: principal.userId, email: null}, workload};
     },

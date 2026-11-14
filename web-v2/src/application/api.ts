@@ -23,6 +23,7 @@ export interface TeamAdapter {
 export interface ProductApi<B extends Bootstrap = Bootstrap> extends SourcesAdapter, TeamAdapter, ConsoleDataAdapter {
   bootstrap(signal?: AbortSignal): Promise<B>;
   library: LibraryAdapter;
+  replicasSetup?: OnboardingAdapter['replicasSetup'];
   onboardingStatus(signal?: AbortSignal): Promise<{data: OnboardingStatus}>;
   onboardingSources: OnboardingAdapter['sources'];
   onboardingInvitations: OnboardingAdapter['invitations'];

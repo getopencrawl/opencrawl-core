@@ -48,6 +48,7 @@ export interface SettingsData {
   mcpUrl: string;
   setupPrompt: string;
   replicasSetupPrompt?: string;
+  canInstallReplicas?: boolean;
 }
 
 export interface InvitationPolicy {delivery: 'email' | 'link'; beforeAgentSetup: boolean}

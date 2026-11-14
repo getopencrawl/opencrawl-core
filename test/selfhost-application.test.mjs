@@ -1,8 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
+import {promisify} from 'node:util';
+import {execFile} from 'node:child_process';
 import {createHash,randomBytes} from 'node:crypto';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {selfhostApplication} from '../dist/src/selfhost/application.mjs';
@@ -441,4 +443,45 @@ test('shared installation admits real local members without personal setup or ho
  const {data:setup}=await(await f.request('/api/onboarding','member')).json();
  assert.equal(setup.shared.owner,'shared');assert.equal(setup.cli,null);assert.equal(setup.completed,null);
  assert.equal((await f.request('/api/console/bootstrap')).status,401);
+});
+
+test('admin connects Replicas through the product before onboarding; native forks work without stored API keys',async t=>{
+ const {generateKeyPair,SignJWT}=await import('jose');
+ const {publicKey,privateKey}=await generateKeyPair('RS256');
+ const f=await fixture(t,{workloadIdentityKey:async()=>publicKey});
+ await f.admin();await f.join('bob','bob@example.com');
+ const send=(who,body={},headers={})=>f.request('/api/console/replicas/setup',who,{method:'POST',headers:{origin:f.origin,'content-type':'application/json',...headers},body:JSON.stringify(body)});
+ assert.equal((await send('bob')).status,403);
+ assert.equal((await send('admin',{}, {origin:'http://attacker.example'})).status,403);
+ assert.equal((await send('admin',{tenantId:'org_other'})).status,400);
+ const setup=await send('admin');assert.equal(setup.status,200);
+ const {prompt,expiresAt}=await setup.json();assert.ok(Date.parse(expiresAt)>Date.now());
+ const code=prompt.match(/[a-f0-9]{64}/)?.[0];assert.ok(code);
+ assert.doesNotMatch(prompt,/must approve the exact|must bind that exact|ask the operator to bind/);
+ const boot=await (await f.request('/api/console/bootstrap','admin')).json();assert.equal(boot.canInstallReplicas,true);assert.ok(!JSON.stringify(boot).includes(code));
+ const memberBoot=await (await f.request('/api/console/bootstrap','bob')).json();assert.equal(memberBoot.canInstallReplicas,undefined);
+ const replicasOrg='11111111-1111-4111-8111-111111111111',environment='22222222-2222-4222-8222-222222222222',workspace='33333333-3333-4333-8333-333333333333',fork='44444444-4444-4444-8444-444444444444';
+ const mint=(org=replicasOrg,env=environment)=>new SignJWT({organization_id:org,environment_id:env,workspace_id:workspace}).setProtectedHeader({alg:'RS256'}).setIssuer('https://api.replicas.dev').setAudience(f.origin).setSubject(`org:${org}:env:${env}:workspace:${workspace}`).setIssuedAt().setExpirationTime('15m').sign(privateKey);
+ const token=await mint();
+ const connect=(body,headers={})=>f.request('/api/replicas/connect',null,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json',...headers},body:JSON.stringify(body)});
+ assert.equal((await connect({code,tenantId:'org_other'})).status,400);
+ assert.equal((await connect({code},{origin:f.origin})).status,403);
+ assert.equal((await connect({code},{authorization:'Bearer forged'})).status,401);
+ const connected=await connect({code});assert.equal(connected.status,200);assert.equal((await connected.json()).tenantId,org);
+ const helper=await mkdtemp(join(tmpdir(),'replicas-enrollment-helper-'));
+ t.after(()=>rm(helper,{recursive:true,force:true}));
+ await writeFile(join(helper,'replicas'),"#!/bin/sh\nprintf '%s' '"+token+"'\n",{mode:0o700});
+ const script=prompt.match(/```sh\n([\s\S]*?)```/)[1];
+ const executed=await promisify(execFile)('sh',['-c',script],{env:{...process.env,PATH:helper+':'+process.env.PATH}});
+ assert.equal(JSON.parse(executed.stdout).tenantId,org);
+ assert.ok(!executed.stdout.includes(token)&&!executed.stderr.includes(token),'the generated setup never prints the token');
+
+ for(const env of [environment,fork]){
+  const me=await f.request('/api/cli/me',null,{headers:{authorization:'Bearer '+await mint(replicasOrg,env)}});
+  assert.equal(me.status,200);const data=(await me.json()).data;assert.equal(data.workspace.id,org);assert.equal(data.credential,'workspace-identity');assert.equal(data.workload.environmentId,env);
+ }
+ const outside=await f.request('/api/cli/me',null,{headers:{authorization:'Bearer '+await mint(fork)}});assert.equal(outside.status,403);
+ assert.equal((await f.request('/api/onboarding','admin')).status,200,'personal browser onboarding remains usable');
+ const progress=(await (await f.request('/api/onboarding','admin')).json()).data;
+ assert.equal(progress.shared,undefined,'enrollment without actual MCP/capture receipts is not completed setup');
 });
