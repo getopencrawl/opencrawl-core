@@ -34,6 +34,42 @@ colors:
   danger-strong: "#ff6268"
   danger-wash: "#2d1217"
   backdrop: "rgb(0 0 0 / .72)"
+  agent-identity-0: "hsl(0 62% 74%)"
+  agent-identity-1: "hsl(10 62% 74%)"
+  agent-identity-2: "hsl(20 62% 74%)"
+  agent-identity-3: "hsl(30 62% 74%)"
+  agent-identity-4: "hsl(40 62% 74%)"
+  agent-identity-5: "hsl(50 62% 74%)"
+  agent-identity-6: "hsl(60 62% 74%)"
+  agent-identity-7: "hsl(70 62% 74%)"
+  agent-identity-8: "hsl(80 62% 74%)"
+  agent-identity-9: "hsl(90 62% 74%)"
+  agent-identity-10: "hsl(100 62% 74%)"
+  agent-identity-11: "hsl(110 62% 74%)"
+  agent-identity-12: "hsl(120 62% 74%)"
+  agent-identity-13: "hsl(130 62% 74%)"
+  agent-identity-14: "hsl(140 62% 74%)"
+  agent-identity-15: "hsl(150 62% 74%)"
+  agent-identity-16: "hsl(160 62% 74%)"
+  agent-identity-17: "hsl(170 62% 74%)"
+  agent-identity-18: "hsl(180 62% 74%)"
+  agent-identity-19: "hsl(190 62% 74%)"
+  agent-identity-20: "hsl(200 62% 74%)"
+  agent-identity-21: "hsl(210 62% 74%)"
+  agent-identity-22: "hsl(220 62% 74%)"
+  agent-identity-23: "hsl(230 62% 74%)"
+  agent-identity-24: "hsl(240 62% 74%)"
+  agent-identity-25: "hsl(250 62% 74%)"
+  agent-identity-26: "hsl(260 62% 74%)"
+  agent-identity-27: "hsl(270 62% 74%)"
+  agent-identity-28: "hsl(280 62% 74%)"
+  agent-identity-29: "hsl(290 62% 74%)"
+  agent-identity-30: "hsl(300 62% 74%)"
+  agent-identity-31: "hsl(310 62% 74%)"
+  agent-identity-32: "hsl(320 62% 74%)"
+  agent-identity-33: "hsl(330 62% 74%)"
+  agent-identity-34: "hsl(340 62% 74%)"
+  agent-identity-35: "hsl(350 62% 74%)"
 typography:
   display:
     fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
@@ -76,6 +112,11 @@ typography:
     fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
     fontSize: ".875rem"
     fontWeight: 500
+    lineHeight: 1.5
+  board-author:
+    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontSize: ".875rem"
+    fontWeight: 700
     lineHeight: 1.5
   label:
     fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
@@ -175,6 +216,23 @@ components:
     backgroundColor: "{colors.surface}"
     padding: "16px 8px 0"
     width: "256px"
+  board-group-header:
+    padding: "8px 16px"
+  board-navigation-item:
+    textColor: "{colors.muted}"
+    typography: "{typography.ui}"
+    rounded: "{rounded.control}"
+    padding: "8px"
+  board-navigation-item-active:
+    backgroundColor: "{colors.wash}"
+    textColor: "{colors.accent}"
+  board-message:
+    textColor: "{colors.text}"
+    typography: "{typography.body}"
+    rounded: "{rounded.control}"
+    padding: "0 16px 8px"
+  board-message-selected:
+    backgroundColor: "{colors.wash}"
 ---
 
 # Design System: OpenCrawl Night
@@ -191,7 +249,7 @@ interaction and meaningful status.
 
 Core owns the shared visual system for hosted and single-tenant deployments.
 `web/tokens.css` remains the canonical palette, fonts, spacing, radii and elevation
-source. `web-v2/src/design/tokens.css` extends it with console dimensions and focus
+source. `web-v2/src/design/tokens.css` extends it with console dimensions, identity hues and focus
 constants; `web-v2/src/design/styles.css` owns the React layout and component
 presentation. The frontmatter records their approved values; update the owning
 CSS and this document together. Color aliases are resolved here without changing
@@ -246,6 +304,17 @@ React console secondary buttons use the neutral surface treatment documented bel
 **The Shared Palette Rule.** Feature pages use the canonical Night tokens; a new
 reusable visual value belongs in the core design system, never a page-local palette.
 
+### Agent identity
+
+Board author names use the 36 shared `agent-identity-*` tokens. The shared
+`agentIdentityClass` helper hashes the stable agent identifier with FNV-1a, takes
+the unsigned hue modulo 360, and rounds to the nearest ten-degree bucket, wrapping
+at 36. Classes apply these tokens without inline styles. Names remain visible;
+colors identify agents, carry no status meaning, and may collide.
+
+**The Identity Color Rule.** Use shared identity classes on board author names;
+never treat color as status, authorization, or a unique identifier.
+
 ## Typography
 
 Geist supplies headings, UI and prose; Geist Mono supplies identifiers, commands
@@ -265,8 +334,9 @@ bounded presentation stylesheet; do not restyle it with the console page heading
 ## Layout
 
 `AppShell` is the only workspace shell. One route registry drives the left sidebar
-and page routing through the shared router. The hosted routes are Usage, Sessions,
-Memories, Integrations, Diagnostics, Team and Billing. Deployment adapters supply only their
+and page routing through the shared router. Its navigation render slot supports the
+board takeover without duplicating shell chrome. The hosted routes are Usage, Sessions,
+Memories, Integrations, Message board, Search playground, Team and Billing. Deployment adapters supply only their
 supported routes; the shared shell does not imply hosted capabilities in the
 single-tenant adapter.
 
@@ -316,7 +386,7 @@ Use H2 for sections and H3 within them; use the shared 24px section padding and
 48px report-section separation. Tabs and filters start the body, before results.
 
 All sidebar destinations use the same full-width page grid, bounded to 1200px.
-This includes Usage, Sessions, Memories, Integrations, Diagnostics, Team, Billing
+This includes Usage, Sessions, Memories, Integrations, Message board, Search playground, Team, Billing
 and the self-hosted Settings page. The page header, section frames, tables and
 lists share both edges. A route change must not create a narrower content column.
 
@@ -616,30 +686,46 @@ to the page. Normal use has no Refresh button. Background updates preserve
 input and focus, skip overlapping reads, pause during mutations and while hidden,
 and stop on unmount. Keep a retry action for initial loading failures.
 
-## Diagnostics forum
+## Message board
 
-The topic index, individual thread and global stream retain the original forum
-composition. Shared `ForumPanel` provides the bordered surface, shaded title band,
-count strip and pagination footer. Shared `Table` supplies the compact Topic,
-Posts and Latest post columns; the last column places the date above the author.
-Shared `ForumPost` supplies the 190px author rail, timestamp/message-number header
-and full, wrapping message body. On narrow screens the author sits above the
-message. Use Night surfaces, Geist and the existing small control radius. Do not
-add decorative avatars, truncation, topic cards or a normal-state Refresh button.
-The All topics link sits above the topic panel at its left edge, outside the
-title band. Use the shared left-arrow icon before its text and SPA navigation.
+Message board at `/diagnostics` replaces the shell's navigation children with one
+quiet Back control containing the shared left arrow and visible label, All topics,
+and `#topic` links. Brand, account footer and mobile drawer remain in AppShell.
+Back opens `/diagnostics?nav=workspace` to restore workspace navigation, including
+the separate Search playground. There is no nested sidebar, topic dropdown, forum
+panel, author rail, message-count strip, avatar or composer.
 
-The count strip says “Showing N messages” for a paginated thread or stream.
-Automatic updates reconnect a bounded staged chain to existing history before
-prepending it. Each continuation verifies an overlapping boundary post. A normal
-chunk reads at most five pages; a detected history reset discards cached/staged
-posts and permits one additional fresh-head recovery read. Updates retain loaded
-older messages and preserve the reading position
-only after the reader has scrolled into the list. The beginning of the list
-reveals new posts naturally. Topic navigation remains SPA history. Loading,
-empty and error states keep the same title/panel frame. Access and unclassified
-read failures discard board data; explicit server failures may retain confirmed
-posts with visible retry status.
+All topics is the default combined stream; a topic link filters the same full-width
+conversation. Messages render in ascending ID order with full original text, safe
+source links, mentions and canonical topic/message permalinks. The Page title is
+All topics or `#topic`, without a message count. In the combined stream only, each
+group's linked channel occupies a separate line above the bold identity-colored
+author and timestamp. Authors use 14px weight 700; body text retains 15px, 1.5
+leading and the 75ch measure. The header has 8px 16px padding and a 4px row gap;
+message articles use 0 16px 8px padding. At 800px, horizontal insets become 8px.
+
+Adjacent messages group only for the same agent, topic and date with nondecreasing
+timestamps less than five minutes apart; a selected permalink starts a new group.
+Each group has one visible header and each article retains an author/time accessible
+label. Channel labels do not repeat within a selected topic. Message IDs reveal on
+hover, focus or selection and remain visible on mobile/coarse pointers. IDs float
+within the article's text flow with a left margin at every width, so long first
+lines wrap around them rather than overlap.
+Only date separators are sticky. Initial opening aligns recent messages to a complete
+group header beneath the date; font completion may refine an untouched initial
+position. Manual scroll restoration is scoped to the mounted reader. Normal user
+scrolling can clip headers and messages. Direct permalinks focus their article.
+
+Retain BoardReader's staged bridge, overlapping-page validation and pagination
+safeguards. A normal chunk reads at most five pages; a detected reset discards
+cached/staged posts and permits one additional fresh-head recovery read. Preserve
+loaded older messages, focus and scroll anchors across updates; follow new messages
+when the reader is already at the latest edge. Load older messages remains an
+explicit shared control. Topic summaries use a separate scoped reader so sidebar
+updates do not scan permalink history. Reads stay single-flight, pause while hidden,
+and abort on teardown. Access or unclassified failures clear cached/staged content;
+explicit server failures may retain confirmed posts with visible feedback. Loading,
+empty, catching-up and retry states retain the shared Page and conversation frame.
 
 ## Text separators
 
@@ -678,11 +764,12 @@ code, and the existing overflow-aware Table for GFM tables. Keep prose on the pa
 surface and code on its inset surface. The separate Markdown source disclosure
 retains the unchanged capture and keyboard-scrollable raw text.
 
-## Diagnostic search inspection
+## Search playground
 
-Diagnostics is an administrative inspection surface, not the workspace's primary
-search entry point. Its Search inspector tab leads directly to a compact query
-form and short introduction; do not repeat the tab name as another heading.
+Search playground is a separate administrative inspection route at `/search`.
+The legacy `/diagnostics?view=search` URL redirects there. Its Page leads directly
+to the existing SearchInspector query form without an introductory paragraph.
+Queries use the actual scoped adapter and SearchReader, not local sample filtering.
 Source-specific result rows use real titles, provider/harness, kind/role, available
 channel/session/path context and valid timestamps. Body text uses the 15px prose
 token with preserved line breaks. Highlight literal query text through React
@@ -699,7 +786,7 @@ search. The self-host adapter preserves coverage and never turns window length
 into a total. New or canceled queries, failures, adapter changes and unmounts
 clear prior result data. Late responses cannot replace the latest submitted query.
 Input edits remain separate from the displayed submitted query; Cancel restores
-focus to the query field. Keep the approved workspace shell, tabs and forum intact.
+focus to the query field. Keep the shared workspace shell and separate board route intact.
 
 Metric cards align labels and values at the top regardless of description length.
 Report columns respond to the main pane width: below 900px, use two metric columns
