@@ -1,4 +1,5 @@
 import {CliError} from '../oauth.ts';
+import {createHash} from 'node:crypto';
 import {grokBotEvents, GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
 import {realpathSync, openSync, closeSync, readSync, fstatSync} from 'node:fs';
 import {join, relative, sep, basename} from 'node:path';
@@ -10,14 +11,22 @@ export const cursorEvents = grokBotEvents;
 /** Cursor CLI omits some content hooks. Reconcile only the active native JSONL
  * named by a hook, inside Cursor's own project transcript directory. Never read
  * a referenced project file or follow a link outside that directory. */
-export function* cursorTranscript(root: string, sessionId: string, file: string, offset=0, ino?: number) {
+export function* cursorTranscript(root: string, sessionId: string, file: string, offset=0, ino?: number, checkpoint?: string) {
   const base=realpathSync(root),path=realpathSync(file),parts=relative(base,path).split(sep);
   if(parts.length!==5||parts[0]!=='projects'||parts[2]!=='agent-transcripts'||parts[3]!==sessionId||basename(path)!==sessionId+'.jsonl')
     throw new CliError('CAPTURE_PATH_REJECTED','Cursor transcript outside its native conversation directory');
   const fd=openSync(path,'r');
   try {
     const stat=fstatSync(fd);if(!stat.isFile())throw new CliError('CAPTURE_PATH_REJECTED','Cursor transcript is not a regular file');
-    if(offset>stat.size||ino!==undefined&&ino!==stat.ino)offset=0;
+    // Cursor rewrites earlier records on resume without replacing the inode,
+    // and the rewritten file may already be larger. Verify the saved boundary
+    // before seeking; replay uses the existing content occurrence deduplication.
+    const fingerprint=(end:number)=>{
+      const bytes=Buffer.alloc(Math.min(end,1024));
+      const count=readSync(fd,bytes,0,bytes.length,end-bytes.length);
+      return createHash('sha256').update(bytes.subarray(0,count)).digest('hex');
+    };
+    if(offset>stat.size||ino!==undefined&&ino!==stat.ino||offset>0&&(!checkpoint||checkpoint!==fingerprint(offset)))offset=0;
     let position=offset,pending=Buffer.alloc(0);
     const buffer=Buffer.alloc(64*1024);
     while(position<stat.size) {
@@ -34,7 +43,7 @@ export function* cursorTranscript(root: string, sessionId: string, file: string,
           const content=record.message.content.filter((b:any)=>b&&['text','image','image_url','input_image'].includes(b.type));
           if(content.length)data={role:record.role,content};
         }
-        yield {start,offset,ino:stat.ino,data};
+        yield {start,offset,ino:stat.ino,checkpoint:fingerprint(offset),data};
       }
       if(pending.length>8*1024*1024)throw new CliError('CAPTURE_LINE_TOO_LARGE','Cursor transcript record exceeds 8 MiB; cursor retained');
     }
