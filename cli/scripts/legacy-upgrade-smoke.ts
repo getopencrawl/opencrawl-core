@@ -69,13 +69,14 @@ async function verify(){try{
     proxy=Bun.spawn([node,join(root,'scripts/legacy-registry-proxy.mts'),inventoryFile,leaf,key,join(scratch,'proxy-receipt.json')],{stdout:'pipe',stderr:'inherit'});
     const reader=(proxy.stdout as ReadableStream<Uint8Array>).getReader(),first=await reader.read();reader.releaseLock();
     const {port,registryPort}=JSON.parse(new TextDecoder().decode(first.value));
-    Object.assign(environment,{HTTPS_PROXY:`http://127.0.0.1:${port}`,https_proxy:`http://127.0.0.1:${port}`,NODE_EXTRA_CA_CERTS:cert,NO_PROXY:'127.0.0.1,localhost',no_proxy:'127.0.0.1,localhost'});
+    Object.assign(environment,{HTTPS_PROXY:`http://127.0.0.1:${port}`,https_proxy:`http://127.0.0.1:${port}`,NODE_EXTRA_CA_CERTS:cert,SSL_CERT_FILE:cert,NO_PROXY:'127.0.0.1,localhost',no_proxy:'127.0.0.1,localhost'});
     // Fail with the transport error itself, before the published updater's
     // intentional best-effort error handling turns it into a later timeout.
     try{
       await run([process.execPath,'-e',`const response=await fetch('https://registry.npmjs.org/@getopencrawl%2fcli/next',{redirect:'error',signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('Fixture registry status '+response.status);console.log((await response.json()).version);`],environment).then(actual=>assert.equal(actual,expected));
     }catch(error){
-      const probe=`for(const [name,url] of [['direct-fixture','https://127.0.0.1:${registryPort}/@getopencrawl%2fcli/next'],['public-registry','https://registry.npmjs.org/@getopencrawl%2fcli/next']]){try{const r=await fetch(url,{proxy:false,signal:AbortSignal.timeout(10000)});console.log(JSON.stringify({name,status:r.status}));}catch(e){console.log(JSON.stringify({name,code:e.code,message:e.message}));}}`;
+      console.error(sync([openssl,'verify','-CAfile',cert,leaf]));
+      const probe=`import {readFileSync} from 'node:fs';import https from 'node:https';import {X509Certificate} from 'node:crypto';const ca=readFileSync(process.env.NODE_EXTRA_CA_CERTS);const certificate=new X509Certificate(ca);console.log(JSON.stringify({runtime:process.versions.bun?'bun':'node',caFingerprint:certificate.fingerprint256,validFrom:certificate.validFrom,validTo:certificate.validTo}));for(const [name,url] of [['direct-fixture','https://127.0.0.1:${registryPort}/@getopencrawl%2fcli/next'],['public-registry','https://registry.npmjs.org/@getopencrawl%2fcli/next']]){try{const r=await fetch(url,{proxy:false,signal:AbortSignal.timeout(10000)});console.log(JSON.stringify({name,status:r.status}));}catch(e){console.log(JSON.stringify({name,code:e.code,cause:e.cause?.code,message:e.message}));}}await new Promise(resolve=>{https.get('https://127.0.0.1:${registryPort}/@getopencrawl%2fcli/next',{ca},response=>{console.log(JSON.stringify({name:'explicit-ca',status:response.statusCode}));response.resume();response.on('end',resolve);}).on('error',error=>{console.log(JSON.stringify({name:'explicit-ca',code:error.code}));resolve();});});`;
       for(const executable of [process.execPath,node])console.error(await run([executable,'--input-type=module','-e',probe],environment));
       throw error;
     }
