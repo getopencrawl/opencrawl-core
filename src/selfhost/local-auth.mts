@@ -97,7 +97,16 @@ export function localAuth({identity,url,organizationId,setupToken,member}:LocalA
   }
 
   async function login(req:IncomingMessage,res:ServerResponse,target:URL){
-    if(req.method==='GET')return html(res,200,loginPage(target.searchParams));
+    if(req.method==='GET'){
+      // An ordinary sign-in link must reuse the browser session. OAuth owns
+      // reauthentication and invitations can intentionally switch accounts.
+      const params=target.searchParams;
+      if(!params.has('client_id')&&!params.has('oauth_query')&&!params.has('invitation')){
+        const browser=await browserIdentity(req,res);
+        if(browser.authenticated&&await member(browser))return go(res,safeNext(params.get('next')));
+      }
+      return html(res,200,loginPage(params));
+    }
     const form=await readForm(req),email=(form.get('email')||'').trim().toLowerCase(),password=form.get('password')||'';
     const result=await signIn(req,res,email,password,form.get('oauth_query'));
     if(!result)return html(res,401,loginPage(form,'That email and password don’t match an account here.'));
@@ -169,7 +178,8 @@ export function localAuth({identity,url,organizationId,setupToken,member}:LocalA
       await auth.api.deviceVerify({query:{user_code:userCode},headers});
       if(form.get('decision')==='approve')await auth.api.deviceApprove({body:{userCode},headers});else await auth.api.deviceDeny({body:{userCode},headers});
     }catch{return html(res,400,message('That code didn’t work','Run opencrawl login again for a new code.',true));}
-    return html(res,200,message(form.get('decision')==='approve'?'CLI connected':'Sign-in cancelled','Return to your terminal.',true));
+    return html(res,200,document({kind:'message',heading:form.get('decision')==='approve'?'CLI connected':'Sign-in cancelled',
+      detail:'Return to your terminal.',href:'/',action:'Return to OpenCrawl'},{signedIn:true}));
   }
   /** The portable CLI speaks plain RFC 8628; tokens are bound to this deployment's MCP resource. */
   async function cliToken(req:IncomingMessage,res:ServerResponse,path:'/device/code'|'/oauth2/token'){
