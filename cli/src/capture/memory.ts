@@ -5,7 +5,7 @@ import {homedir,hostname} from 'node:os';
 import {createHash} from 'node:crypto';
 import {atomicJson,withSessionLock} from '../session.ts';
 import {captureDir,readCaptureConfig,refreshCaptureIdentity,request,type CaptureConfig} from './runtime.ts';
-import {readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
+import {type Harness} from './parse.ts';
 
 export const MEMORY_INTERVAL_MS=6*60*60*1000;
 const RETRY_MS=15*60*1000,MAX_BYTES=32*1024*1024;
@@ -13,8 +13,10 @@ const hash=(v:string)=>createHash('sha256').update(v).digest('hex');
 type MemoryFile={path:string,project:string,modifiedAt:string,text:string};
 type Root={path:string,label:string,project:string};
 type MemoryState={successAt?:number,retryAt?:number,generation?:number,contentHash?:string,roots?:string[],missing?:string[],error?:string};
-/** Only harnesses with native memory files. Grok Bot keeps its memory in the service. */
-const memoryHarnesses=(config:CaptureConfig)=>(config.harnesses??['codex','claude-code'] as Harness[]).filter(readsTranscript);
+export type MemoryHarness = 'claude-code'|'codex';
+const isMemoryHarness = (harness:Harness): harness is MemoryHarness => harness==='claude-code' || harness==='codex';
+/** Only harnesses with native memory files. Grok Bot keeps its memory in the service; Antigravity GEMINI.md/AGENTS.md are rule files. */
+const memoryHarnesses=(config:CaptureConfig):MemoryHarness[]=>(config.harnesses??(['codex','claude-code'] as Harness[])).filter(isMemoryHarness);
 const statePath=(config:CaptureConfig,harness:Harness)=>join(captureDir(),'memories',hash(JSON.stringify([config.api,config.installationId,config.owner.tenantId,config.owner.userId,harness]))+'.json');
 function state(config:CaptureConfig,harness:Harness):MemoryState {try{return JSON.parse(readFileSync(statePath(config,harness),'utf8'));}catch(e:any){if(e.code==='ENOENT')return {};throw e;}}
 export const memoryDue=(s:MemoryState,now=Date.now())=>!(s.successAt&&now-s.successAt<MEMORY_INTERVAL_MS)&&!(s.retryAt&&now<s.retryAt);
@@ -26,7 +28,7 @@ const maybeStat=async(path:string)=>{try{return await lstat(path);}catch(e:any){
 
 /** Only native memory directories; never follow symlinks, links in Markdown,
  * repository-supplied custom paths, SQLite/Git state, or instruction files. */
-export async function discoverMemories(config:CaptureConfig,harness:TranscriptHarness,previous:MemoryState={},signal?:AbortSignal) {
+export async function discoverMemories(config:CaptureConfig,harness:MemoryHarness,previous:MemoryState={},signal?:AbortSignal) {
   const base=await realpath(config.roots[harness]);
   const roots:Root[]=[],files:MemoryFile[]=[],seen=new Set<string>(),versions:{path:string,ino:number,size:number,mtimeMs:number}[]=[];
   const add=async(path:string,label:string,project='')=>{

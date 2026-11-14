@@ -77,6 +77,21 @@ test('startup installation preserves capture and user hooks, is idempotent, and 
   expect(startupHooks(['codex'],'install',options)[0]!.status).toBe('disabled');expect(existsSync(join(codex,'hooks.json'))).toBe(false);
   writeFileSync(file,JSON.stringify({disableAllHooks:true}));
   expect(startupHooks(['claude-code'],'install',options)[0]!.status).toBe('disabled');
+
+  // Antigravity startup owns only top-level opencrawl-startup in ~/.gemini/config/hooks.json and respects enabled: false.
+  const agyConfig=join(home,'.gemini','config');mkdirSync(agyConfig,{recursive:true});
+  const agyHooksFile=join(agyConfig,'hooks.json');
+  const agyExisting={'opencrawl-capture':{Stop:[{type:'command',command:'capture-stop',timeout:30}]}};
+  writeFileSync(agyHooksFile,JSON.stringify(agyExisting,null,4),{mode:0o640});
+  if(process.platform!=='win32')chmodSync(agyHooksFile,0o640);
+  expect(startupHooks(['antigravity'],'install',options)[0]!.status).toBe('installed');
+  const agyParsed=JSON.parse(readFileSync(agyHooksFile,'utf8'));
+  expect(agyParsed['opencrawl-capture']).toEqual(agyExisting['opencrawl-capture']);
+  expect(agyParsed['opencrawl-startup'].SessionStart[0].timeout).toBe(7);
+  expect(agyParsed['opencrawl-startup'].SessionStart[0].command).toContain('session start --harness antigravity');
+  expect(startupHooks(['antigravity'],'install',options)[0]!.status).toBe('unchanged');
+  writeFileSync(agyHooksFile,JSON.stringify({...agyParsed,'opencrawl-startup':{enabled:false}}));
+  expect(startupHooks(['antigravity'],'install',options)[0]!.status).toBe('disabled');
 }));
 
 test('real startup CLI and board server preserve the agent-chosen profile across native lifecycle events',()=>fixture(async home=>{
@@ -97,6 +112,12 @@ test('real startup CLI and board server preserve the agent-chosen profile across
     for(const source of ['resume','compact'])expect((await start(source)).hookSpecificOutput.additionalContext).toContain('codex:agent-choice');
     expect((await start('fork','native-fork')).hookSpecificOutput.additionalContext).toContain('Display name/task: unset');
     expect((await start('startup','claude-native','claude-code')).hookSpecificOutput.additionalContext).toContain('registered with');
+    const agyStart=await run(['session','start','--harness','agy'],{hookEventName:'SessionStart',conversationId:'agy-conv-123',workspacePaths:[home]});
+    expect(agyStart.injectSteps[0].systemMessage.systemMessage).toContain('registered with');
+    expect(agyStart.injectSteps[0].systemMessage.systemMessage).toContain('Session handle: agy-conv-123');
+    const agyInvalid=await run(['session','start','--harness','antigravity'],{hookEventName:'SessionStart',conversationId:'bad\nsecret'});
+    expect(agyInvalid.injectSteps[0].systemMessage.systemMessage).toContain('unavailable');
+    expect(JSON.stringify(agyInvalid)).not.toContain('secret');
     expect(existsSync(join(home,'config/opencrawl/capture'))).toBe(false);
     expect(existsSync(join(home,'config/opencrawl/update.json'))).toBe(false);
     const invalid=await run(['session','start','--harness','codex'],{...event,session_id:'invalid\nsecret'});

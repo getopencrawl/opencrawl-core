@@ -42,14 +42,40 @@ function managedStartup(file: string) {
 
 /** Own only our synchronous SessionStart entry. Never enable disabled hooks. */
 export function startupHooks(clients: string[], action: 'status' | 'install', {home = homedir(), env = process.env, command = commandForSelf(), requirementsFile = process.platform === 'win32' ? join(process.env.ProgramData || 'C:\\ProgramData', 'OpenAI', 'Codex', 'requirements.toml') : '/etc/codex/requirements.toml'}: StartupOptions = {}) {
-  return clients.filter(client => ['codex', 'claude-code', 'cursor'].includes(client)).map(client => {
-    const root = client === 'codex' ? env.CODEX_HOME || join(home, '.codex') : client === 'cursor' ? env.CURSOR_CONFIG_DIR || join(home, '.cursor') : env.CLAUDE_CONFIG_DIR || join(home, '.claude');
+  return clients.filter(client => ['codex', 'claude-code', 'cursor', 'antigravity'].includes(client)).map(client => {
+    const root = client === 'codex' ? env.CODEX_HOME || join(home, '.codex') : client === 'cursor' ? env.CURSOR_CONFIG_DIR || join(home, '.cursor') : client === 'antigravity' ? join(env.ANTIGRAVITY_HOME || join(home, '.gemini'), 'config') : env.CLAUDE_CONFIG_DIR || join(home, '.claude');
     const file = join(root, client === 'claude-code' ? 'settings.json' : 'hooks.json');
     try {
       const before = existsSync(file) ? readFileSync(file, 'utf8') : '';
       const config = before ? JSON.parse(before) : {};
-      if (!config || typeof config !== 'object' || Array.isArray(config) || config.hooks !== undefined && (!config.hooks || typeof config.hooks !== 'object' || Array.isArray(config.hooks))) throw new Error();
-      if(client==='cursor'&&config.version!==undefined&&config.version!==1)throw new Error();
+      if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error();
+      if (client === 'antigravity') {
+        for (const value of Object.values(config)) {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+        }
+        if ((config as Record<string, any>)['opencrawl-startup']?.enabled === false) return {client, file, status: 'disabled'};
+        const runner = hookRunner('startup', command);
+        const invocation = runner.invocation(client);
+        const entry = {SessionStart: [{type: 'command', command: invocation.command + ' session start --harness antigravity', timeout: 7}]};
+        const current = JSON.stringify((config as Record<string, any>)['opencrawl-startup']) === JSON.stringify(entry) && existsSync(runner.file) && readFileSync(runner.file, 'utf8') === runner.script;
+        if (action === 'status') return {client, file, status: current ? 'current' : before ? 'outdated' : 'missing'};
+        if (current) return {client, file, status: 'unchanged'};
+        if (existsSync(file) && lstatSync(file).isSymbolicLink()) throw new Error();
+        runner.write();
+        if (before) atomicFile(join(configDir(), 'startup', 'backups', randomUUID() + '.json'), before);
+        const indent = /\n([ \t]+)\S/.exec(before)?.[1] ?? (before && !before.includes('\n') ? '' : '  ');
+        const text = JSON.stringify({...config, 'opencrawl-startup': entry}, null, indent) + '\n';
+        mkdirSync(root, {recursive: true});
+        const temp = file + '.' + randomUUID() + '.tmp';
+        try {
+          writeFileSync(temp, text, {mode: 0o600, flag: 'wx'});
+          chmodSync(temp, existsSync(file) ? statSync(file).mode & 0o777 : 0o600);
+          retryWindowsSharing(() => renameSync(temp, file));
+        } finally {try {unlinkSync(temp);} catch {}}
+        return {client, file, status: 'installed'};
+      }
+      if (config.hooks !== undefined && (!config.hooks || typeof config.hooks !== 'object' || Array.isArray(config.hooks))) throw new Error();
+      if (client === 'cursor' && config.version !== undefined && config.version !== 1) throw new Error();
       const toml = join(root, 'config.toml');
       const managed = client === 'codex' ? managedStartup(requirementsFile) : null;
       const locallyDisabled = config.disableAllHooks === true || client === 'codex' && existsSync(toml) && (Bun.TOML.parse(readFileSync(toml, 'utf8')) as {features?: {hooks?: boolean}}).features?.hooks === false;

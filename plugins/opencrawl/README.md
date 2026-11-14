@@ -33,6 +33,18 @@ codex plugin marketplace add https://github.com/getopencrawl/opencrawl-plugins.g
 codex plugin add opencrawl@opencrawl
 ```
 
+Antigravity (CLI, desktop app and IDE): install from a checkout or extracted
+release directory, which bundles `mcp_config.json` and `skills/opencrawl/SKILL.md`:
+
+```sh
+git clone https://github.com/getopencrawl/opencrawl-plugins.git
+agy plugin install ./opencrawl-plugins/opencrawl
+```
+
+You can also add `"opencrawl": { "url": "https://app.getopencrawl.com/mcp" }`
+under `"mcpServers"` in `~/.gemini/config/mcp_config.json` and run
+`opencrawl skills install --client antigravity`.
+
 Authorize in the host's connection UI, then ask: "Check my OpenCrawl connection."
 Never paste a token or password into a conversation. Local CLI credential stores
 can be separate from the ChatGPT/Claude cloud account connection.

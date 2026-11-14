@@ -25,7 +25,7 @@ const events=[
 const batch={schemaVersion:1,owner:principal,installationId:'bot-computer',sessionId:'conversation-1',harness:'grok-bot',origin:'cloud',captureMode:'live',events,attachments:[]};
 
 test('Grok Bot is a session harness everywhere a session is addressed, and unknown harnesses stay rejected',async()=>{
- assert.deepEqual([...SESSION_HARNESSES],['claude-code','codex','cursor','grok-bot']);
+ assert.deepEqual([...SESSION_HARNESSES],['claude-code','codex','cursor','grok-bot','antigravity']);
  assert.equal(isSessionHarness('grok-bot'),true);
  for(const value of ['unsupported-client','grok','GROK-BOT','',null,undefined,['grok-bot']])assert.equal(isSessionHarness(value),false);
  const store=memorySessionStore(),ingest=createSessionIngest({store});

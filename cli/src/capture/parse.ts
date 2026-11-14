@@ -1,11 +1,14 @@
 import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 import {CliError} from '../oauth.ts';
-export type Harness = 'claude-code'|'codex'|'cursor'|'grok-bot';
+export type Harness = 'claude-code'|'codex'|'cursor'|'grok-bot'|'antigravity';
 /** Harnesses that persist a native transcript this collector reads. Cursor and Grok Bot
- * sessions are assembled from hook payloads instead; see grok-bot.ts. */
+ * sessions are assembled from hook payloads instead; see cursor.ts and grok-bot.ts. */
 export type TranscriptHarness = Exclude<Harness,'grok-bot'|'cursor'>;
-export const HARNESSES:Harness[] = ['claude-code','codex','cursor','grok-bot'];
-export const readsTranscript = (harness:Harness): harness is TranscriptHarness => harness==='claude-code'||harness==='codex';
+export const HARNESSES:Harness[] = ['claude-code','codex','cursor','grok-bot','antigravity'];
+export const readsTranscript = (harness:Harness): harness is TranscriptHarness => harness==='claude-code'||harness==='codex'||harness==='antigravity';
+/** Normalize CLI flag aliases ('agy' -> 'antigravity') before validation. */
+export const normalizeHarness = <T extends string|undefined>(value:T): T|('antigravity' extends T ? 'antigravity' : string) => (value==='agy'?'antigravity':value) as any;
 export type Origin = 'cli'|'desktop'|'cloud'|'subagent'|'unknown';
 export const hash = (data: string|Buffer) => createHash('sha256').update(data).digest('hex');
 /** Finalize only after attachment extraction and metadata normalization. The
@@ -37,6 +40,10 @@ export function finalizeEventIdentity(event:any) {
   return wire;
 }
 export function detectOrigin(harness: Harness, record: any, environment:NodeJS.ProcessEnv=process.env): {origin:Origin, evidence:string|null} {
+  if (harness === 'antigravity') {
+    if(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(environment.REPLICAS_WORKSPACE_ID??''))return {origin:'cloud',evidence:'https://app.replicas.dev/workspace/'+environment.REPLICAS_WORKSPACE_ID};
+    return {origin:'unknown',evidence:null};
+  }
   const r = harness === 'codex' ? record.payload ?? record : record;
   if(harness==='claude-code' && r.type==='attachment' && r.attachment?.type==='remote_session_change' && /^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(r.attachment.url??'')) return {origin:'cloud',evidence:r.attachment.url};
   const value = [r.originator, r.entrypoint, typeof r.source === 'string' ? r.source : '', r.client].filter(Boolean).join(' ');
@@ -66,10 +73,69 @@ function codexConversationMessage(message:any) {
     content_item_kinds:keep.map(index=>kinds[index]),content_item_metadata:keep.map(index=>items[index])}};
 }
 
+function antigravityMediaBlocks(media:any):any[] {
+  if(!Array.isArray(media))return [];
+  const blocks:any[]=[];
+  for(const item of media) {
+    const uri=typeof item?.uri==='string'?item.uri.trim():'';
+    if(!uri)continue;
+    const mime=typeof item?.mime_type==='string'&&item.mime_type?item.mime_type:undefined;
+    if(/^https?:\/\//i.test(uri)) {
+      blocks.push({type:'url',url:uri,...(mime?{media_type:mime}:{})});
+      continue;
+    }
+    let path=uri;
+    if(uri.startsWith('file://')) {
+      try{path=fileURLToPath(uri);}catch{path=decodeURIComponent(uri.slice('file://'.length));}
+    }
+    blocks.push({type:'input_file',path,...(mime?{media_type:mime}:{})});
+  }
+  return blocks;
+}
+
+function antigravityUserText(raw:string):string {
+  const match=/<USER_REQUEST>\r?\n?([\s\S]*?)\r?\n?<\/USER_REQUEST>/.exec(raw);
+  if(match)return match[1]!;
+  return raw.replace(/<(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>[\s\S]*?<\/(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>/g,'').trim();
+}
+
 /** Preserve native message/tool content; discard repeated system/developer prompts and UI/transport bookkeeping. */
 export function parseRecord(harness: Harness, record: any, offset: number) {
   const r = record.payload ?? {};
   let kind: string|undefined, data: any;
+  if (harness === 'antigravity') {
+    if (record.type === 'USER_INPUT') {
+      const raw=typeof record.content==='string'?record.content:'';
+      if (record.source && record.source !== 'USER_EXPLICIT') {
+        if(!raw.trim())return null;
+        kind='automation_message';data={source:record.source,content:raw};
+      } else {
+        const text=antigravityUserText(raw);
+        const blocks=[...(text.trim()?[{type:'text',text}]:[]),...antigravityMediaBlocks(record.media)];
+        if(!blocks.length)return null;
+        kind='message';data={role:'user',content:blocks};
+      }
+    } else if (record.type === 'PLANNER_RESPONSE') {
+      const blocks:any[]=[];
+      if(typeof record.thinking==='string'&&record.thinking.trim())blocks.push({type:'thinking',thinking:record.thinking});
+      if(typeof record.content==='string'&&record.content.trim())blocks.push({type:'text',text:record.content});
+      if(Array.isArray(record.tool_calls))for(const tc of record.tool_calls) {
+        if(tc&&typeof tc.name==='string'&&tc.name)blocks.push({type:'tool_use',...(typeof tc.id==='string'&&tc.id?{id:tc.id}:{}),name:tc.name,input:tc.args??tc.input??{}});
+      }
+      if(!blocks.length)return null;
+      kind='message';data={role:'assistant',content:blocks};
+    } else if (record.type === 'GENERIC') {
+      const output=typeof record.content==='string'&&record.content?record.content:(typeof record.error==='string'?record.error:'');
+      if(!output&&record.status!=='ERROR')return null;
+      kind='tool_result';data={type:'tool_result',output,...(record.status==='ERROR'?{is_error:true,...(typeof record.error==='string'?{error:record.error}:{})}:{})};
+    } else if (record.type === 'CHECKPOINT' && typeof record.content === 'string' && record.content.trim()) {
+      kind='compaction';data={content:record.content};
+    }
+    if (!kind) return null;
+    return {id:hash(harness+':'+offset+':'+JSON.stringify(record)), kind, sequence:offset, timestamp:record.created_at ?? record.timestamp ?? null,
+      nativeId:typeof record.step_index==='number'?String(record.step_index):(record.uuid ?? null), parentId:null,
+      turnId:null, agentId:null, data};
+  }
   if (harness === 'claude-code') {
     if (['user','assistant'].includes(record.type)) {
       if(record.type==='user'&&record.isMeta===true)return null;

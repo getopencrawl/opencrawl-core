@@ -72,6 +72,12 @@ test('detects only available clients, honors custom roots and deduplicates share
     expect(targets[0]).toEqual({directory: join(home, '.agents/skills/opencrawl'), clients: ['codex','gemini','opencode','copilot']});
     expect(targets[1]).toEqual({directory: join(home, 'custom-claude/skills/opencrawl'), clients: ['claude-code']});
     expect(targets[2]).toEqual({directory:join(home,'.cursor/skills/opencrawl'),clients:['cursor']});
+    // Plain .gemini alone selects gemini, while .gemini/antigravity* or agy selects antigravity's config/skills directory.
+    mkdirSync(join(home, '.gemini/antigravity-ide'), {recursive: true});
+    const withAgy = skillTargets({home, env: {}, which: () => null});
+    expect(withAgy.map(t => t.clients)).toEqual([['antigravity'], ['gemini']]);
+    expect(withAgy[0]!.directory).toBe(join(home, '.gemini/config/skills/opencrawl'));
+    expect(skillTargets({home, env: {}, which: () => null, clients: ['agy']})[0]).toEqual({directory: join(home, '.gemini/config/skills/opencrawl'), clients: ['antigravity']});
     expect(() => skillTargets({home, clients: ['../unrecognized']})).toThrow('Use --client');
   } finally {rmSync(home, {recursive: true, force: true});}
 });

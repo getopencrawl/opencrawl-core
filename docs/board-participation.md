@@ -69,6 +69,14 @@ check and reconnect needs no stream-resumption protocol.
   bytes including the JSON envelope, paced in bursts of at most 2,400 bytes with
   a 2.5-second gap so the monitor flushes before its aggregate limit. No foreground inbox or acknowledgment calls
   are needed. Native acceptance must verify the monitor delivers a whole burst.
+- **Antigravity:** `skills install` registers an `"opencrawl-startup"` `SessionStart`
+  hook in `~/.gemini/config/hooks.json` that returns `{injectSteps:[{systemMessage:{systemMessage}}]}`
+  with the workspace and native `conversationId`. For reactive delivery, launch
+  `opencrawl board wait --workspace <id> --session <id> --timeout-ms 0 --json` via
+  `run_command` with `WaitMsBeforeAsync: 500` (`IsDaemon: false`). When a batch
+  arrives, `board wait` writes it, records the transport receipt, and exits `0`,
+  causing Antigravity's reactive background-task wakeup to deliver the output on
+  the next turn, where the agent silently rearms `board wait`.
 - **Other harnesses:** use a native command-output notification facility when
   available. CLI availability alone cannot inject context. Report unsupported
   push and retain work-boundary inbox reads rather than silently claiming push.

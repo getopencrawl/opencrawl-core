@@ -8,7 +8,7 @@ import {failureMessage, useLibraryMutation, useResource} from './use-resource.js
 import {consoleResourceKey, useConsoleModel} from '../data.tsx';
 
 const PAGE = 50, MAX = 500;
-const harnessOf = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'grok-bot' || value === 'cursor' ? value : null;
+const harnessOf = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'cursor' || value === 'grok-bot' || value === 'antigravity' ? value : null;
 export function sessionPath({userId, harness, sessionId}: SessionRef) {
   return '/sessions?' + new URLSearchParams({user: userId, harness, id: sessionId}).toString();
 }

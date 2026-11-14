@@ -5,15 +5,16 @@ import {atomicJson} from '../session.ts';
 import {createInterface} from 'node:readline/promises';
 import {CliError} from '../oauth.ts';
 import {setTimeout as pause} from 'node:timers/promises';
-import {captureTranscript, captureDir, flushCaptures, readCaptureConfig, refreshCaptureIdentity, recordError, type CaptureConfig} from './runtime.ts';
-import type {TranscriptHarness} from './parse.ts';
+import {captureTranscript, captureDir, flushCaptures, readCaptureConfig, refreshCaptureIdentity, recordError, walkAntigravityTranscripts, type CaptureConfig} from './runtime.ts';
+import {normalizeHarness, type TranscriptHarness} from './parse.ts';
 import {claudeDesktopHistories,defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 
-export const backfillNotice = 'Import local Claude Code and Codex history, including desktop coding sessions and host-mirrored Claude Desktop transcripts. Messages, tool arguments/results and available attachments will be shared with your signed-in OpenCrawl team and attributed to you. Cloud-only chats and VM-only records are not included.';
+export const backfillNotice = 'Import local Claude Code, Codex and Antigravity history, including desktop coding sessions and host-mirrored Claude Desktop transcripts. Messages, tool arguments/results and available attachments will be shared with your signed-in OpenCrawl team and attributed to you. Cloud-only chats and VM-only records are not included.';
 type Selection = 'all'|TranscriptHarness;
 export function selection(value = 'all'): Selection {
-  if (!['all','claude-code','codex'].includes(value)) throw new CliError('INVALID_USAGE','Choose all, claude-code, or codex.',64);
-  return value as Selection;
+  const normalized = normalizeHarness(value);
+  if (!['all','claude-code','codex','antigravity'].includes(normalized)) throw new CliError('INVALID_USAGE','Choose all, claude-code, codex, or antigravity.',64);
+  return normalized as Selection;
 }
 function configFor(api:string) {
   const config=readCaptureConfig();
@@ -25,12 +26,24 @@ function configFor(api:string) {
 export function inventory(config:Pick<CaptureConfig,'roots'|'claudeDesktopSessionsRoot'>, selected:Selection) {
   const files:{harness:TranscriptHarness,path:string,bytes:number}[]=[];
   const sources:{harness:TranscriptHarness,files:number,bytes:number}[]=[];
-  for(const harness of ['claude-code','codex'] as TranscriptHarness[]) {
+  for(const harness of ['claude-code','codex','antigravity'] as TranscriptHarness[]) {
     if(selected!=='all' && selected!==harness)continue;
-    const source={harness,files:0,bytes:0};sources.push(source);
+    const source={harness,files:0,bytes:0};
+    const configured=config.roots[harness];
     let root:string|undefined;
-    try{root=realpathSync(config.roots[harness]);}catch(e:any){if(e.code!=='ENOENT')throw new CliError('BACKFILL_SCAN_FAILED','Cannot inspect a local session directory. Check its permissions.');}
+    if(configured)try{root=realpathSync(configured);}catch(e:any){if(e.code!=='ENOENT')throw new CliError('BACKFILL_SCAN_FAILED','Cannot inspect a local session directory. Check its permissions.');}
     const seen=new Set<string>();
+    if(harness==='antigravity') {
+      if(root)for(const real of walkAntigravityTranscripts(root)) {
+        if(!real.startsWith(root+sep))throw new CliError('CAPTURE_PATH_REJECTED','Session path changed during discovery. Retry the preview.');
+        if(seen.has(real))continue;seen.add(real);
+        const bytes=statSync(real).size;
+        files.push({harness,path:real,bytes});source.files++;source.bytes+=bytes;
+      }
+      if(selected==='antigravity' || source.files>0)sources.push(source);
+      continue;
+    }
+    sources.push(source);
     function visit(dir:string,allowedRoot:string) {
       let entries;
       try{entries=readdirSync(dir,{withFileTypes:true});}catch(e:any){if(e.code==='ENOENT')return;throw new CliError('BACKFILL_SCAN_FAILED','Cannot inspect a local session directory. Check its permissions.');}
@@ -65,10 +78,14 @@ export function backfillPreview(api:string, selected:Selection='all') {
   if(config&&config.api!==api)throw new CliError('CAPTURE_API_MISMATCH','Use the installed collector’s --api URL, or run collect install with the new URL first.');
   // Metadata discovery is useful before consent and must not install hooks,
   // create capture state, authenticate, or read transcript contents.
-  const roots=config??{roots:{'claude-code':process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),codex:process.env.CODEX_HOME||join(homedir(),'.codex')},claudeDesktopSessionsRoot:defaultClaudeDesktopSessionsRoot()};
+  const roots=config??{roots:{
+    'claude-code':process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),
+    codex:process.env.CODEX_HOME||join(homedir(),'.codex'),
+    antigravity:process.env.ANTIGRAVITY_HOME||(!process.env.CLAUDE_CONFIG_DIR&&!process.env.CODEX_HOME?join(homedir(),'.gemini'):undefined),
+  },claudeDesktopSessionsRoot:defaultClaudeDesktopSessionsRoot()};
   const {sources}=inventory(roots,selected);
   return {status:'preview',api,owner:config?.authPending?null:config?.owner??null,sources,notice:backfillNotice,
-    nextStep:'Ask the user whether to import Claude, Codex, both, or skip. Only after they choose, run opencrawl collect backfill --harness <claude-code|codex|all> --yes --api '+api+'. Install capture with the approved recording scope before importing. To skip during setup, use collect install --backfill skip.'};
+    nextStep:'Ask the user whether to import Claude, Codex, Antigravity, all, or skip. Only after they choose, run opencrawl collect backfill --harness <claude-code|codex|antigravity|all> --yes --api '+api+'. Install capture with the approved recording scope before importing. To skip during setup, use collect install --backfill skip.'};
 }
 // Retry transient auth and transport failures without discarding credentials or
 // cursors. Terminal authorization/scope errors must fail immediately.
@@ -142,12 +159,13 @@ export async function backfill(api:string, selected:Selection, approved:boolean,
   }
 }
 export async function chooseBackfill(ask:(prompt:string)=>Promise<string>) {
-  const answer=(await ask('Import history? [c] Claude, [x] Codex, [b] both, [s] skip (default): ')).trim().toLowerCase();
+  const answer=(await ask('Import history? [c] Claude, [x] Codex, [g] Antigravity, [a] all, [s] skip (default): ')).trim().toLowerCase();
   if(['c','claude','claude-code'].includes(answer))return 'claude-code' as const;
   if(['x','codex'].includes(answer))return 'codex' as const;
-  if(['b','both','all'].includes(answer))return 'all' as const;
+  if(['g','agy','antigravity'].includes(answer))return 'antigravity' as const;
+  if(['a','b','both','all'].includes(answer))return 'all' as const;
   if(['','s','skip','n','no'].includes(answer))return 'skip' as const;
-  throw new CliError('INVALID_USAGE','No history imported. Choose Claude, Codex, both, or skip.',64);
+  throw new CliError('INVALID_USAGE','No history imported. Choose Claude, Codex, Antigravity, all, or skip.',64);
 }
 export async function setupBackfill(api:string, mode:string, json=false, options:{concurrency?:number;batchDelayMs?:number}={}) {
   if(mode==='skip')return {status:'skipped'};
