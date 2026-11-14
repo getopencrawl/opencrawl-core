@@ -4,8 +4,7 @@ import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {MemoryRouter} from 'react-router';
 import {BoardReader} from '../src/pages/board-reader.js';
-import {BoardContent} from '../src/pages/board.js';
-import {ForumPanel} from '../src/design/forum.js';
+import {BoardContent, messageGroups} from '../src/pages/board.js';
 import type {BoardMessage, BoardReport, ConsoleDataAdapter} from '../src/pages/types.js';
 
 function post(id: number, topic = 'release'): BoardMessage {return {id, topic, timestamp: 1_800_000_000_000 + id, name: 'codex:release', agent: 'registered-agent', text: `Post ${id}\n\nFull authorized text.`};}
@@ -116,17 +115,33 @@ test('topic summaries replace atomically and counts stay distinct from thread pa
   assert.equal(source.calls.length, 2);
 });
 
-test('the forum renders through a pure core adapter with encoded links and escaped full text', async () => {
+test('the conversation renders through a pure core adapter with encoded links and escaped full text', async () => {
   const {source, adapter} = fixture(2);
   source.messages[1] = {...post(2), topic: 'café & notes/?', name: '<script>author</script>', text: '<script>alert(1)</script>\n\nSecond paragraph.'};
   const reader = new BoardReader(adapter, '', false); await reader.refresh();
   const report = reader.snapshot().report; assert.ok(report);
-  const markup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ForumPanel, {title: 'Global stream', status: 'Showing 2 messages', children: createElement(BoardContent, {report, topics: false, stream: true})})));
-  assert.match(markup, /oc-forum-author/); assert.match(markup, /oc-forum-post-meta/); assert.match(markup, /#2/);
+  const markup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(BoardContent, {report, stream: true})));
+  assert.match(markup, /oc-board-author-line/); assert.match(markup, /oc-board-post-header/); assert.match(markup, /#2/);
   assert.match(markup, /topic=caf%C3%A9%20%26%20notes%2F%3F/);
   assert.match(markup, /href="\/diagnostics\?view=board&amp;topic=caf%C3%A9%20%26%20notes%2F%3F&amp;message=2"/);
   assert.match(markup, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/); assert.match(markup, /Second paragraph/);
   assert.doesNotMatch(markup, /<script>|Refresh|WorkOS/);
+});
+
+test('conversation grouping keeps channels, identities, dates and selected messages distinct', () => {
+  const first = post(1), second = {...post(2), timestamp: first.timestamp + 1000};
+  assert.deepEqual(messageGroups([second, first]).map(group => group.map(item => item.id)), [[1, 2]]);
+  for (const changed of [{...second, topic: 'another'}, {...second, agent: 'another'}, {...second, timestamp: first.timestamp + 86_400_000}]) {
+    assert.equal(messageGroups([changed, first]).length, 2);
+  }
+  assert.equal(messageGroups([second, first], second.id).length, 2);
+  const report = {messages: [second, first], next: null, topicSummaries: []};
+  const render = (stream: boolean) => renderToStaticMarkup(createElement(MemoryRouter, null, createElement(BoardContent, {report, stream})));
+  const all = render(true), channel = render(false);
+  assert.match(all, /oc-board-message-topic.*oc-board-author-line/s);
+  assert.doesNotMatch(channel, /oc-board-message-topic|Showing \d+ messages/);
+  assert.equal(all.match(/oc-agent-identity-\d+/)?.[0], channel.match(/oc-agent-identity-\d+/)?.[0]);
+  assert.ok(all.indexOf('post:1') < all.indexOf('post:2'));
 });
 
 

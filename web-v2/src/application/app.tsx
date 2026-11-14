@@ -5,6 +5,8 @@ import type {ConsoleDataAdapter, NavigationItem, OnboardingAdapter} from '../ind
 import type {Bootstrap, ProductApi} from './api.ts';
 import {SourcesPage} from './sources.tsx';
 import {TeamPage, TeamLoadingPage} from './team.tsx';
+import {BoardNavigation} from '../pages/board.tsx';
+import {SearchPlaygroundPage} from '../pages/diagnostics.tsx';
 import {DocumentFrame, ProductDocument, readBrowserDocument} from './documents.tsx';
 
 export interface ConsoleRoute extends NavigationItem {pending?: (feedback?: ReactNode) => ReactNode}
@@ -72,19 +74,22 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     setData(next); navigate(next.onboarding.completed ? '/' : next.onboarding.next);
   };
   const onboarding = location.pathname.startsWith('/onboarding');
+  const boardQuery = new URLSearchParams(location.search);
+  const boardNavigation = location.pathname === '/diagnostics' && boardQuery.get('nav') !== 'workspace' && boardQuery.get('view') !== 'search' && data?.workspace.role === 'admin';
+  const boardTopic = boardQuery.get('view') === 'stream' ? '' : boardQuery.get('topic')?.trim() || '';
   const routes: ConsoleRoute[] = [
     {path:'/',label:'Usage',icon:'usage',element:<UsagePage adapter={dataAdapter} setupPrompt={data?.setupPrompt}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them. Private memories are visible only to the person who captured them.">{feedback}</PendingPage>},
     {path:'/sources',label:'Integrations',icon:'sources',element:<SourcesPage adapter={api} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
-    {path:'/diagnostics',label:'Diagnostics',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title="Diagnostics" description="See what your agents can retrieve and how they coordinate work.">{feedback}</PendingPage>},
+    {path:'/diagnostics',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All topics'}>{feedback}</PendingPage>},
+    {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
     {path:'/settings',label:'Agent setup',icon:'settings',element:data ? <AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
     {path:'/team',label:'Team',icon:'team',group:'manage',element:<TeamPage adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={name => setData(current => current ? {...current, workspace: {...current.workspace, name}} : current)}/>,pending:feedback => <TeamLoadingPage>{feedback}</TeamLoadingPage>},
     ...(extensions?.routes?.({data, activated}) ?? []),
     {path:'/integrations',label:'Integrations',navigation:false,element:<Navigate to="/sources" replace/>},
     {path:'/data',label:'Data controls',navigation:false,element:<Navigate to="/sources#data-controls" replace/>},
-    {path:'/search',label:'Search inspector',navigation:false,element:<Navigate to="/diagnostics?view=search" replace/>},
     {path:'/_/debug',label:'Diagnostics',navigation:false,element:<Navigate to={'/diagnostics' + location.search} replace/>},
   ];
   if (!data) {
@@ -100,7 +105,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     <Route path="/onboarding/invite" element={<InviteOnboarding adapter={onboardingAdapter} canInvite={data.canInvite} invitationDelivery={data.invitationPolicy?.delivery} returnToAgent={Boolean(data.invitationPolicy?.beforeAgentSetup && !data.onboarding.completed && data.onboarding.next === '/onboarding')} onComplete={async path => {await refresh();navigate(path);}}/>}/>
   </Routes></FocusedFrame></ConsoleDataProvider>;
   const shown = extensions?.decorateRoute ? routes.map(route => extensions.decorateRoute!(route, data)) : routes;
-  return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>}/></ConsoleDataProvider>;
+  return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board topics' : undefined} navigation={boardNavigation ? closeNavigation => <BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/> : undefined}/></ConsoleDataProvider>;
 }
 /** One application composition for self-hosted and hosted deployments. */
 export function OpenCrawlApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>; extensions?: ConsoleExtensions<B>}) {
