@@ -75,7 +75,7 @@ export function topMember(members: UsageMember[], key: 'sources' | 'sessions' | 
 }
 
 export function harnessName(name: string) {
-  return ({'claude-code': 'Claude Code', codex: 'Codex', 'grok-bot': 'Grok Bot'} as Record<string, string>)[name] || name;
+  return ({'claude-code': 'Claude Code', codex: 'Codex', cursor: 'Cursor', 'grok-bot': 'Grok Bot'} as Record<string, string>)[name] || name;
 }
 
 export function originName(name: string) {

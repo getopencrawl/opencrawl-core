@@ -30,3 +30,19 @@ test('reject unexpected files and symlink escapes', async () => {
     await assert.rejects(validate(temp), /Symlink/);
   } finally {await rm(temp, {recursive: true, force: true});}
 });
+
+test('Cursor package rejects unexpected files, credential transports and blocking permission hooks', async()=>{
+ const temp=await mkdtemp(join(tmpdir(),'opencrawl-cursor-plugin-'));
+ const {validateCursor}=await import('../scripts/validate.mjs');
+ try {
+  await cp(root+'/opencrawl-cursor',temp+'/opencrawl-cursor',{recursive:true});
+  await cp(root+'/.cursor-plugin',temp+'/.cursor-plugin',{recursive:true});
+  await cp(root+'/LICENSE',temp+'/LICENSE');
+  assert.equal(await validateCursor(temp),'0.1.0');
+  const manifestPath=temp+'/opencrawl-cursor/.cursor-plugin/plugin.json',manifest=JSON.parse(await readFile(manifestPath,'utf8'));
+  await writeFile(manifestPath,JSON.stringify({...manifest,hooks:{preToolUse:[{command:'deny'}]}}));await assert.rejects(validateCursor(temp));await writeFile(manifestPath,JSON.stringify(manifest));
+  const mcp=temp+'/opencrawl-cursor/mcp.json',original=await readFile(mcp,'utf8');
+  await writeFile(mcp,JSON.stringify({mcpServers:{opencrawl:{url:'https://app.getopencrawl.com/mcp',headers:{Authorization:'forbidden'}}}}));await assert.rejects(validateCursor(temp));await writeFile(mcp,original);
+  await writeFile(temp+'/opencrawl-cursor/.env','SECRET=never-package');await assert.rejects(validateCursor(temp),/Unexpected Cursor/);
+ } finally {await rm(temp,{recursive:true,force:true});}
+});

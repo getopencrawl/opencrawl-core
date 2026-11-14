@@ -25,25 +25,25 @@ const events=[
 const batch={schemaVersion:1,owner:principal,installationId:'bot-computer',sessionId:'conversation-1',harness:'grok-bot',origin:'cloud',captureMode:'live',events,attachments:[]};
 
 test('Grok Bot is a session harness everywhere a session is addressed, and unknown harnesses stay rejected',async()=>{
- assert.deepEqual([...SESSION_HARNESSES],['claude-code','codex','grok-bot']);
+ assert.deepEqual([...SESSION_HARNESSES],['claude-code','codex','cursor','grok-bot']);
  assert.equal(isSessionHarness('grok-bot'),true);
- for(const value of ['cursor','grok','GROK-BOT','',null,undefined,['grok-bot']])assert.equal(isSessionHarness(value),false);
+ for(const value of ['unsupported-client','grok','GROK-BOT','',null,undefined,['grok-bot']])assert.equal(isSessionHarness(value),false);
  const store=memorySessionStore(),ingest=createSessionIngest({store});
  const receipt=await ingest.putBatch(principal,batch);
  assert.equal(receipt.stored,true);
  const stored=await ingest.getBatch(principal,{...batch,batchId:receipt.batchId});
  assert.equal(stored.events.length,events.length);
  assert.equal(await ingest.getBatch({...principal,tenantId:'tenant2'},{...batch,batchId:receipt.batchId}),null);
- await assert.rejects(ingest.putBatch(principal,{...batch,harness:'cursor'}),/Invalid capture batch/);
- await assert.rejects(ingest.getBatch(principal,{...batch,harness:'cursor',batchId:receipt.batchId}),/Invalid receipt/);
+ await assert.rejects(ingest.putBatch(principal,{...batch,harness:'unsupported-client'}),/Invalid capture batch/);
+ await assert.rejects(ingest.getBatch(principal,{...batch,harness:'unsupported-client',batchId:receipt.batchId}),/Invalid receipt/);
  const key=`capture-v1/tenants/${digest(principal.tenantId)}/users/${digest(principal.userId)}/grok-bot/${digest(batch.installationId)}/${digest(batch.sessionId)}/${receipt.batchId}.json.gz`;
  assert.equal(sourceBatchIdentity('capture-v1',key).harness,'grok-bot');
- assert.equal(sourceBatchIdentity('capture-v1',key.replace('/grok-bot/','/cursor/')),null);
+ assert.equal(sourceBatchIdentity('capture-v1',key.replace('/grok-bot/','/unsupported-client/')),null);
  // Owner controls address the session by the same harness.
  const controls=createControls({store,prefix:'capture-v1'});
  await controls.update(principal,'sessions','grok-bot',batch.sessionId,()=>({visibility:'private',deletedAt:null}));
  assert.equal((await controls.read(principal,'sessions','grok-bot',batch.sessionId)).visibility,'private');
- await assert.rejects(controls.read(principal,'sessions','cursor',batch.sessionId),/Invalid control identity/);
+ await assert.rejects(controls.read(principal,'sessions','unsupported-client',batch.sessionId),/Invalid control identity/);
  // A deleted session swallows later uploads from the Bot's computer.
  await controls.update(principal,'sessions','grok-bot',batch.sessionId,current=>({visibility:current.visibility,deletedAt:new Date().toISOString()}));
  assert.equal((await ingest.putBatch(principal,{...batch,events:[{...events[0],id:'later'}]})).discarded,'session_deleted');
@@ -53,7 +53,7 @@ test('the library API reads Grok Bot sessions; memories remain limited to harnes
  assert.equal(libraryOperations['sessions/read'].safeParse({userId:'owner1',harness:'grok-bot',sessionId:'conversation-1'}).success,true);
  assert.equal(libraryOperations['sessions/visibility'].safeParse({harness:'grok-bot',sessionId:'conversation-1',visibility:'private'}).success,true);
  assert.equal(libraryOperations['sessions/delete'].safeParse({harness:'grok-bot',sessionId:'conversation-1'}).success,true);
- assert.equal(libraryOperations['sessions/read'].safeParse({userId:'owner1',harness:'cursor',sessionId:'conversation-1'}).success,false);
+ assert.equal(libraryOperations['sessions/read'].safeParse({userId:'owner1',harness:'unsupported-client',sessionId:'conversation-1'}).success,false);
  for(const operation of ['memories/read','memories/visibility','memories/delete'])
   assert.equal(libraryOperations[operation].safeParse({userId:'owner1',harness:'grok-bot',path:'projects/x/memory/MEMORY.md',visibility:'team'}).success,false,operation);
  assert.equal(libraryOperations['memories/read'].safeParse({userId:'owner1',harness:'codex',path:'memories/MEMORY.md'}).success,true);
@@ -98,7 +98,7 @@ test('a recorded Grok Bot tool call completes the recording step; other harnesse
  const history=createOnboardingStatus({store:memorySessionStore()});
  await history.session(principal,{...toolOnly,captureMode:'history'});
  assert.equal((await history.read(principal)).history.harness,'grok-bot');
- await assert.rejects(async()=>createOnboardingStatus({store:memorySessionStore()}).session(principal,{...batch,harness:'cursor'}),/Unknown session harness/);
+ await assert.rejects(async()=>createOnboardingStatus({store:memorySessionStore()}).session(principal,{...batch,harness:'unsupported-client'}),/Unknown session harness/);
 });
 
 test('setup guidance sends Grok Bot to its own cloud computer with the explicit harness',()=>{

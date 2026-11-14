@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "scope": "Real Cursor CLI on macOS, task-owned authenticated self-host receiver",
+  "cursorVersion": "2026.11.13-eacade1",
+  "sessionId": "ed4bdc4d-8dda-4160-aa3a-bc982fc93cdb",
+  "captureHarness": "cursor",
+  "observedKinds": {
+    "hook": 2,
+    "reasoning_summary": 2,
+    "tool_call": 1,
+    "tool_result": 1,
+    "message": 2
+  },
+  "nativeTranscriptReconciled": true,
+  "duplicateMessages": 0,
+  "tools": "Read; Cursor exposes file_path/content_length rather than file bytes",
+  "verification": {
+    "core": {
+      "passed": 571,
+      "skipped": 55
+    },
+    "cli": {
+      "passed": 283
+    },
+    "web": {
+      "passed": 79,
+      "browserPassed": 72
+    },
+    "plugins": {
+      "passed": 6
+    }
+  },
+  "pending": [
+    "immutable release CI",
+    "hosted receiver rollout",
+    "published CLI capture/search on this Mac",
+    "public Cursor plugin publication and runtime acceptance"
+  ],
+  "limits": [
+    "Existing history is not imported.",
+    "Cursor hook payloads may expose less tool content than the agent sees.",
+    "Cursor has no supported native board push listener in this integration."
+  ],
+  "plugin": "Exact native Cursor plugin loaded with CLI-managed user capture; no plugin-level capture callbacks",
+  "googleSignInVerified": true
+}

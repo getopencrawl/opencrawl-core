@@ -4,7 +4,7 @@ export type LibraryScope = 'all' | 'mine';
 export type Visibility = 'team' | 'private';
 /** Agents with native memory files. Sessions are captured from more agents. */
 export type Harness = 'claude-code' | 'codex';
-export type SessionHarness = Harness | 'grok-bot';
+export type SessionHarness = Harness | 'cursor' | 'grok-bot';
 export interface SessionRef {userId: string; harness: SessionHarness; sessionId: string}
 /** Capture-machine names, not a verified original execution host. Optional for older adapters. */
 export interface SessionHosts {host?: string | null; hosts?: string[]; hostsTruncated?: boolean}

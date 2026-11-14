@@ -68,9 +68,10 @@ test('detects only available clients, honors custom roots and deduplicates share
     mkdirSync(join(home, 'custom-claude'));
     mkdirSync(join(home, 'custom-codex'));
     const targets = skillTargets({home, env: {CLAUDE_CONFIG_DIR: join(home, 'custom-claude'), CODEX_HOME: join(home, 'custom-codex')}, which: name => ['cursor','gemini','opencode','copilot'].includes(name) ? '/bin/client' : null});
-    expect(targets).toHaveLength(2);
-    expect(targets[0]).toEqual({directory: join(home, '.agents/skills/opencrawl'), clients: ['codex','cursor','gemini','opencode','copilot']});
+    expect(targets).toHaveLength(3);
+    expect(targets[0]).toEqual({directory: join(home, '.agents/skills/opencrawl'), clients: ['codex','gemini','opencode','copilot']});
     expect(targets[1]).toEqual({directory: join(home, 'custom-claude/skills/opencrawl'), clients: ['claude-code']});
+    expect(targets[2]).toEqual({directory:join(home,'.cursor/skills/opencrawl'),clients:['cursor']});
     expect(() => skillTargets({home, clients: ['../unrecognized']})).toThrow('Use --client');
   } finally {rmSync(home, {recursive: true, force: true});}
 });
@@ -93,7 +94,7 @@ test('CLI owns the reserved skill, replaces edits and stale files, and leaves ot
   expect(existsSync(join(directory, 'my-notes.md'))).toBe(false);
   expect(readFileSync(join(other, 'SKILL.md'), 'utf8')).toBe('keep');
   const manifest = JSON.parse(readFileSync(join(directory, '.opencrawl-skill.json'), 'utf8'));
-  expect(manifest.schemaVersion).toBe(2); expect(manifest.revision).toBe(7); expect(manifest.api).toBeUndefined();
+  expect(manifest.schemaVersion).toBe(2); expect(manifest.revision).toBe(8); expect(manifest.api).toBeUndefined();
   expect(JSON.stringify(skillFiles())).not.toContain('https://new.example');
 }));
 

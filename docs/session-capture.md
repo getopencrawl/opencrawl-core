@@ -228,3 +228,22 @@ the message fallback until the capturing client supplies a name.
 Cloud image setup prepares hooks with --defer-auth and --backfill skip without
 runtime secrets. Authentication and the per-runtime installation ID are established
 by the first harness-managed async hook before capture. The agent does not wait for authentication.
+
+## Cursor
+
+Enroll explicitly with `opencrawl collect install --harness cursor --yes --backfill skip`.
+Cursor IDE and CLI hooks share the durable capture spool, masking, attachment,
+exclusion, retry and authorization paths. Native conversation IDs remain stable.
+Cursor CLI omits some content hooks; the collector reconciles its active native
+JSONL only inside the configured Cursor project/conversation transcript directory,
+with message deduplication and durable partial-record checkpoints. It does not
+scan existing Cursor history or open files referenced by tool payloads. Some Read
+results expose metadata rather than file contents. Cursor memory snapshots and a
+native board push listener are not supported.
+
+The receiver advertises `capabilities.harnesses` in its authenticated identity
+response. Enrollment fails visibly against an older receiver; queued Cursor
+batches stay local while other supported clients continue uploading. Upgrading
+that receiver releases the parked batches. The MIT Cursor plugin is distributed
+separately under `plugins/opencrawl-cursor`; capture requires explicit enrollment
+through the CLI-managed user hooks; the plugin adds no second capture callback.

@@ -71,9 +71,9 @@ opencrawl skills status --api https://your-opencrawl.example --json
 
 Detection uses existing configuration directories or commands on PATH. Supported
 clients are Codex, Claude Code, Cursor, Gemini CLI, OpenCode and Copilot CLI.
-Use repeated `--client` options to select clients explicitly. Codex, Cursor,
-Gemini, OpenCode and Copilot share `~/.agents/skills/opencrawl`; Claude Code uses
+Use repeated `--client` options to select clients explicitly. Codex, Gemini, OpenCode and Copilot share `~/.agents/skills/opencrawl`; Claude Code uses
 `$CLAUDE_CONFIG_DIR/skills/opencrawl` (default `~/.claude/skills/opencrawl`).
+Cursor uses `$CURSOR_CONFIG_DIR/skills/opencrawl` (default `~/.cursor/skills/opencrawl`).
 Install once per shared directory. Automatic refresh only updates an existing
 installation; use `skills install` for a new client. These paths follow the clients' documented
 [Codex](https://learn.chatgpt.com/docs/build-skills),
@@ -379,6 +379,35 @@ and run `opencrawl logout` before capturing the image. If capture loses its
 sign-in, `collect status` reports `attention`, and Claude Code receives the same
 notice on the next turn (at most hourly) instead of failing silently.
 
+## Cursor
+
+Install the native CLI, sign in to your chosen OpenCrawl deployment, then run
+`opencrawl collect install --yes --harness cursor --backfill skip --json`.
+Run `opencrawl skills install --client cursor --json` for session-start context
+and retrieval guidance. Cursor IDE and Cursor CLI use the same version 1 hooks
+in `~/.cursor/hooks.json` (or `CURSOR_CONFIG_DIR`). Restart existing conversations.
+Installation preserves Claude Code/Codex hooks, the installation ID, exclusions,
+queued data, and foreign Cursor hooks. Cursor and Grok Bot cannot share the same
+capture profile because both load this hooks file.
+
+New prompts, replies, reasoning, tool calls/results, inline attachments, and
+compaction metadata use the same durable spool, redaction, upload retries,
+visibility, deletion, and search as other clients. Native conversation IDs stay
+stable across turns and days. Hook callbacks run within a bounded five-second
+pass; unsent work retries on later hooks or `opencrawl collect flush`. The active native JSONL transcript is reconciled only inside Cursor’s project
+transcript directory, filling prompts/replies omitted by CLI hooks without
+duplicating hook messages. Other referenced paths are never opened. Existing
+Cursor history is not imported. Tool capture retains what Cursor exposes; some
+Read results contain metadata rather than file bytes. Origin stays unknown without explicit cloud evidence.
+
+The MIT Cursor plugin lives in `plugins/opencrawl-cursor` in the public
+`getopencrawl/opencrawl-plugins` repository. It bundles MCP, a retrieval rule,
+setup guidance. Capture requires explicit CLI enrollment and uses its managed
+user hooks; the plugin does not install a second set of capture callbacks. Cursor MCP uses
+its own OAuth grant. Verify a fresh stored receipt and search/fetch a unique new
+message filtered to harness=cursor; installation alone does not prove capture.
+Cursor has no supported native board push listener here; read at work boundaries.
+
 ### Grok Bot
 
 Grok Bot runs a person's Bots on one cloud computer and loads Cursor-format
@@ -390,7 +419,7 @@ opencrawl login --no-browser
 opencrawl collect install --yes --harness grok-bot
 ```
 
-The harness is always explicit; a default install never writes to `~/.cursor`,
+The harness is always explicit; Grok Bot enrollment is explicit; default capture never writes to `~/.cursor`,
 which Cursor also reads on a developer machine. There is no Grok Bot transcript
 to read, so sessions are built from the hook payloads: the person's message, the
 Bot's replies and reasoning, and each tool call with its result. Every Bot on

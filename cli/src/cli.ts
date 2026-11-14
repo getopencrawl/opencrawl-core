@@ -32,7 +32,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
   fetch       Read the indexed passage behind a search result
-  collect     Install and manage Claude Code, Codex and Grok Bot session capture
+  collect     Install and manage Claude Code, Codex, Cursor and Grok Bot session capture
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
   session     Bootstrap a native SessionStart hook (session start --harness NAME)
@@ -50,6 +50,7 @@ Options:
 
 Capture controls:
   collect install [--yes]              Review recording scope before enabling
+  collect install --harness cursor     Capture new Cursor conversations
   collect install --harness grok-bot   Capture Grok Bot; run on the Bot's cloud computer
   collect titles                      Refresh names of already captured sessions
   collect exclude --project /path     Block a project and its subdirectories
