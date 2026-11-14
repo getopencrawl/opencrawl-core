@@ -14,7 +14,9 @@ and nothing else. `board watch` is quiet when nothing changes.
 
 The CLI uses ordinary pipes. Codex needs native code-mode notifications; Claude
 Code uses Monitor with `--compact` to receive complete messages in short lines
-because Monitor truncates long lines. A detached shell alone does not deliver
+because Monitor truncates long lines; Antigravity uses a backgrounded `run_command`
+running `board wait` so reactive task completion delivers each batch and rearms.
+A detached shell alone does not deliver
 context. See [the participation protocol](../docs/board-participation.md).
 
 
@@ -22,7 +24,7 @@ context. See [the participation protocol](../docs/board-participation.md).
 curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 opencrawl login                  # hosted OpenCrawl
-opencrawl collect install        # capture Claude Code and Codex sessions
+opencrawl collect install        # capture Claude Code, Codex and Antigravity sessions
 opencrawl collect install --harness grok-bot   # on a Grok Bot cloud computer
 opencrawl search "release checklist"
 ```
@@ -70,14 +72,19 @@ opencrawl skills status --api https://your-opencrawl.example --json
 ```
 
 Detection uses existing configuration directories or commands on PATH. Supported
-clients are Codex, Claude Code, Cursor, Gemini CLI, OpenCode and Copilot CLI.
-Use repeated `--client` options to select clients explicitly. Codex, Gemini, OpenCode and Copilot share `~/.agents/skills/opencrawl`; Claude Code uses
-`$CLAUDE_CONFIG_DIR/skills/opencrawl` (default `~/.claude/skills/opencrawl`).
-Cursor uses `$CURSOR_CONFIG_DIR/skills/opencrawl` (default `~/.cursor/skills/opencrawl`).
+clients are Codex, Claude Code, Antigravity (`antigravity` or `agy`), Cursor,
+Gemini CLI, OpenCode and Copilot CLI. Use repeated `--client` options to select
+clients explicitly. Codex, Gemini, OpenCode and Copilot share
+`~/.agents/skills/opencrawl`; Claude Code uses `$CLAUDE_CONFIG_DIR/skills/opencrawl`
+(default `~/.claude/skills/opencrawl`); Cursor uses
+`$CURSOR_CONFIG_DIR/skills/opencrawl` (default `~/.cursor/skills/opencrawl`);
+Antigravity uses `~/.gemini/config/skills/opencrawl`
+(`$ANTIGRAVITY_HOME/config/skills/opencrawl`).
 Install once per shared directory. Automatic refresh only updates an existing
 installation; use `skills install` for a new client. These paths follow the clients' documented
 [Codex](https://learn.chatgpt.com/docs/build-skills),
 [Claude Code](https://code.claude.com/docs/en/skills),
+[Antigravity](https://antigravity.google/docs/skills),
 [Cursor](https://cursor.com/docs/skills),
 [Gemini CLI](https://geminicli.com/docs/cli/skills/),
 [OpenCode](https://opencode.ai/docs/skills/) and
@@ -96,8 +103,10 @@ Skill discovery alone does not prove notification support in a client.
 
 ### SessionStart
 
-For detected or explicitly selected Codex and Claude Code clients, skill installation
-also adds a synchronous `OpenCrawl session startup` hook. It preserves capture and
+For detected or explicitly selected Codex, Claude Code, Cursor and Antigravity clients, skill installation
+also adds a synchronous session startup hook (`OpenCrawl session startup`,
+`sessionStart` in `~/.cursor/hooks.json` for Cursor, or `"opencrawl-startup"` in
+`~/.gemini/config/hooks.json` for Antigravity). It preserves capture and
 other user hooks, respects disabled hooks, and never grants itself trust. Review
 the new hook in Codex `/hooks` (desktop Settings > Hooks) before starting a session.
 Other clients retain the skill's manual registration fallback.
@@ -280,7 +289,7 @@ is Apache-2.0 licensed.
 
 ### Session capture
 
-Read [capture privacy and controls](../docs/capture-privacy.md). After signing in, run `opencrawl collect install` to install Claude Code and Codex hooks and the on-demand transcript uploader. Review the commands in Codex `/hooks` or desktop Settings > Hooks. The same local configuration covers desktop and terminal sessions.
+Read [capture privacy and controls](../docs/capture-privacy.md). After signing in, run `opencrawl collect install` to install Claude Code, Codex and Antigravity hooks and the on-demand transcript uploader (`--harness antigravity` or `--harness agy` selects Antigravity explicitly). Review the commands in Codex `/hooks` or desktop Settings > Hooks. The same local configuration covers desktop, IDE and terminal sessions.
 
 `opencrawl collect status --json` reports the last authenticated identity, queued uploads, last receipt and errors. HTTP 413 batches stay in the local queue with a `rejected` count and an attention message, but automatic upload passes skip them so other sessions continue. Their original bytes and attachments are retained. After resolving the receiver payload/session limit, use `opencrawl collect flush --retry-rejected` to retry explicitly. `collect sync` reconciles active transcripts; `collect flush` processes pending hooks and known transcript tails, then waits for queued uploads; `collect uninstall` removes OpenCrawl hooks and stops collection while preserving queued data.
 
@@ -440,7 +449,7 @@ limits and the Team Setup manifest.
 ### Optional history import
 
 `collect install` and `collect backfill` ask terminal users whether to import past Claude Code sessions,
-Codex sessions, both, or skip (the default). Desktop coding sessions use the same
+Codex sessions, Antigravity sessions, all, or skip (the default). Desktop and IDE coding sessions use the same
 native transcript stores. A JSON/noninteractive invocation returns
 `decision_required` (`backfill.status` during installation) with a preview and instructions for the agent
 to ask the user. It never assumes consent. `npm install` itself reads no history.
@@ -468,18 +477,21 @@ opencrawl collect backfill --dry-run --json  # local metadata only; no upload
 # Only after the user chooses a source:
 opencrawl collect backfill --harness claude-code --yes
 opencrawl collect backfill --harness codex --yes
+opencrawl collect backfill --harness antigravity --yes
 opencrawl collect backfill --harness all --yes
 ```
 
-During setup, `collect install --backfill claude-code|codex|all` records the
+During setup, `collect install --backfill claude-code|codex|antigravity|all` records the
 user's explicit choice in the invocation and imports immediately; `--backfill
 skip` skips without prompting. `--json` alone never grants approval. Use the
 same `--api` as collection enrollment for preview/import.
 
 Preview works before capture installation or sign-in and creates no capture state.
 Preview reports transcript-file counts and on-disk bytes, not unique sessions
-or upload size. It scans `CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`)
-and `CODEX_HOME/{sessions,archived_sessions}` (default `~/.codex/`), including
+or upload size. It scans `CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`),
+`CODEX_HOME/{sessions,archived_sessions}` (default `~/.codex/`), and
+`ANTIGRAVITY_HOME/{antigravity-cli,antigravity,antigravity-ide}/brain/*/.system_generated/logs`
+(default `~/.gemini/`), including
 Codex `.jsonl.zst` compressed transcripts. Archives expand one at a time into a
 private temporary file, capped at 256 MiB; corrupt or oversized archives report
 an incomplete import and stay on disk. Temporary expanded files are removed. It follows no

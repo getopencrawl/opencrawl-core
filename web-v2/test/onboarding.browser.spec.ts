@@ -350,7 +350,7 @@ test('received history stays unconfirmed and optional until an explicit completi
   await history.locator('summary').focus();
   await page.keyboard.press('Enter');
   await expect(history.locator('details')).toHaveAttribute('open', '');
-  await expect(history.getByText('Choose Claude Code, Codex, both, or skip in your terminal.')).toBeVisible();
+  await expect(history.getByText('Choose Claude Code, Codex, Antigravity, all, or skip in your terminal.')).toBeVisible();
   await request.post('/__test/state', {data: {status: {...complete, history: {...receipt, state: 'complete'}}}});
   await refresh(page);
   await expect(history).toHaveAttribute('data-complete', '');

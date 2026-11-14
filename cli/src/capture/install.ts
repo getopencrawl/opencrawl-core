@@ -1,16 +1,16 @@
 import {readFileSync, existsSync, mkdirSync, writeFileSync, copyFileSync, unlinkSync, readdirSync, renameSync, statSync, chmodSync} from 'node:fs';
-import {join, dirname} from 'node:path';
+import {join, dirname, resolve} from 'node:path';
 import {homedir} from 'node:os';
 import {removeLegacyService} from './legacy-service.ts';
 import {randomUUID} from 'node:crypto';
-import {HARNESSES, readsTranscript, type Harness} from './parse.ts';
+import {HARNESSES, normalizeHarness, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
 import {GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
 import {atomicFile, atomicJson, configDir, withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
 import {workspaceIdentityEnabled} from '../workspace-identity.ts';
-import {captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, codexHooksAwaitingReview, HOOK_MODE, type CaptureConfig} from './runtime.ts';
+import {ANTIGRAVITY_SURFACES, captureDir, readCaptureConfig, commandForSelf, request, harnessRoot, codexHooksAwaitingReview, HOOK_MODE, type CaptureConfig} from './runtime.ts';
 import {captureNotice, grokBotNotice} from './policy.ts';
 import {hookRunner} from '../hook-runner.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
@@ -45,7 +45,33 @@ function modifyHooks(file:string,events:string[],entry:((event:string)=>HookEntr
   if(entry)for(const event of events)(hooks[event]??=[]).push({hooks:[{type:'command',...entry(event),statusMessage:marker}]});
   backup(file);writeHarnessJson(file,{...config,hooks});
 }
-const hookFile=(config:CaptureConfig,harness:Harness)=>join(harnessRoot(config,harness),harness==='claude-code'?'settings.json':'hooks.json');
+const hookFile=(config:CaptureConfig,harness:Harness)=>harness==='claude-code'?join(harnessRoot(config,harness),'settings.json'):harness==='antigravity'?join(harnessRoot(config,harness),'config','hooks.json'):join(harnessRoot(config,harness),'hooks.json');
+export function antigravityDetected(home=homedir(),env:NodeJS.ProcessEnv=process.env):boolean {
+  const root=env.ANTIGRAVITY_HOME||join(home,'.gemini');
+  if(env.ANTIGRAVITY_HOME&&existsSync(env.ANTIGRAVITY_HOME))return true;
+  if(ANTIGRAVITY_SURFACES.some(surface=>existsSync(join(root,surface)))||existsSync(join(root,'config','hooks.json'))||existsSync(join(root,'config','mcp_config.json')))return true;
+  const isolated=resolve(home)!==resolve(homedir())||Boolean(env.ANTIGRAVITY_HOME||env.CLAUDE_CONFIG_DIR||env.CODEX_HOME||env.CURSOR_CONFIG_DIR);
+  return !isolated&&Boolean(Bun.which('agy',{PATH:env.PATH}));
+}
+/** Antigravity loads ~/.gemini/config/hooks.json as { [hookName]: { SessionStart, PostToolUse, PostInvocation, Stop } }. */
+function modifyAntigravityHooks(file:string,commandForEvent:((event:string)=>string)|null) {
+  if(!commandForEvent&&!existsSync(file))return;
+  const config=readJson(file);
+  if(!config||typeof config!=='object'||Array.isArray(config))throw new CliError('CAPTURE_INVALID_CONFIG','Existing Antigravity hooks config is invalid');
+  for(const value of Object.values(config)) {
+    if(!value||typeof value!=='object'||Array.isArray(value))throw new CliError('CAPTURE_INVALID_CONFIG','Existing Antigravity hooks config is invalid');
+  }
+  const next:Record<string,unknown>={...config};
+  if(commandForEvent) {
+    next['opencrawl-capture']={
+      SessionStart:[{type:'command',command:commandForEvent('SessionStart'),timeout:30}],
+      PostToolUse:[{matcher:'*',hooks:[{type:'command',command:commandForEvent('PostToolUse'),timeout:30}]}],
+      PostInvocation:[{type:'command',command:commandForEvent('PostInvocation'),timeout:30}],
+      Stop:[{type:'command',command:commandForEvent('Stop'),timeout:30}],
+    };
+  } else delete next['opencrawl-capture'];
+  backup(file);writeHarnessJson(file,next);
+}
 // Cursor-format entries have no label field; the command itself marks ownership.
 const cursorFormatOwned=(harness:string,entry:any)=>typeof entry?.command==='string'&&/[\\/]capture[\\/]runner\.(?:cjs|sh|cmd)\b.* collect hook .*--harness (cursor|grok-bot)\b/.exec(entry.command)?.[1]===harness;
 /** Cursor-format clients load ~/.cursor/hooks.json: {version:1,hooks:{event:[{command,timeout}]}}. */
@@ -107,6 +133,7 @@ function configureHooks(config:CaptureConfig,harnesses:Harness[]) {
   // so the command also survives being split on spaces.
   const plain=(s:string)=>/^[\w@%+=:,./-]+$/.test(s)?s:quote(s);
   for(const harness of ['cursor','grok-bot'] as const)if(harnesses.includes(harness))modifyCursorFormatHooks(hookFile(config,harness),(process.platform==='win32'?[plain(runner.file)]:['/bin/sh',plain(runner.file)]).concat(['collect','hook','--harness',harness]).join(' '),harness);
+  if(harnesses.includes('antigravity'))modifyAntigravityHooks(hookFile(config,'antigravity'),event=>hook('antigravity','--harness','antigravity','--event',event).command);
 }
 /** Upgrade existing installations without authentication or changing their queue. */
 export async function upgradeCaptureHooks() {
@@ -135,14 +162,23 @@ export async function upgradeCaptureHooks() {
     }
   },0);}catch(error:any){if(error?.code!=='SESSION_BUSY')throw error;}
 }
-export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
+function defaultHarnesses(home:string):Harness[] {
+  if(process.env.CLAUDE_CODE_REMOTE==='true')return ['claude-code'];
+  return antigravityDetected(home)?['claude-code','codex','antigravity']:['claude-code','codex'];
+}
+export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses:requestedHarnesses}:{background?:boolean;deferAuth?:boolean;home?:string;command?:string[];harnesses?:Harness[]}={}) {
+  let harnesses=(requestedHarnesses?requestedHarnesses.map(h=>normalizeHarness(h) as Harness):defaultHarnesses(home));
   workspaceIdentityEnabled(); // Reject mixed credentials even during image preparation.
   const receiverToken=environmentToken('OPENCRAWL_SESSIONS_TOKEN',api);
-  if(!harnesses.length||harnesses.some(h=>!HARNESSES.includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code, codex, cursor or grok-bot',64);
+  if(!harnesses.length||harnesses.some(h=>!HARNESSES.includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code, codex, cursor, antigravity or grok-bot',64);
   // Image preparation cannot access runtime secrets. First worker authenticates
   // before parsing/spooling; hooks only persist notices even on first launch.
   const {principal,capabilities}=deferAuth?{principal:{tenantId:'pending',userId:'pending'},capabilities:undefined}:await request(api,'/api/sessions/identity');
   if(!deferAuth&&harnesses.includes('cursor')&&!capabilities?.harnesses?.includes('cursor'))throw new CliError('CAPTURE_HARNESS_UNSUPPORTED','This receiver does not support Cursor capture yet. Upgrade it before enrolling Cursor; existing capture is unchanged.');
+  if(!deferAuth&&harnesses.includes('antigravity')&&!capabilities?.harnesses?.includes('antigravity')) {
+    if(requestedHarnesses)throw new CliError('CAPTURE_HARNESS_UNSUPPORTED','This receiver does not support Antigravity capture yet. Upgrade it before enrolling Antigravity; existing capture is unchanged.');
+    harnesses=harnesses.filter(h=>h!=='antigravity');
+  }
   if(!principal?.tenantId || !principal?.userId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   return withSessionLock('capture:configuration',async()=>{
   const previous=readCaptureConfig();
@@ -158,22 +194,25 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
       'claude-code':!harnesses.includes('claude-code')&&previous?.roots['claude-code']||process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),
       cursor:!harnesses.includes('cursor')&&previous?.roots.cursor||process.env.CURSOR_CONFIG_DIR||join(home,'.cursor'),
       codex:!harnesses.includes('codex')&&previous?.roots.codex||process.env.CODEX_HOME||join(home,'.codex'),
-      'grok-bot':!harnesses.includes('grok-bot')&&previous?.roots['grok-bot']||join(home,'.cursor')},
+      'grok-bot':!harnesses.includes('grok-bot')&&previous?.roots['grok-bot']||join(home,'.cursor'),
+      antigravity:!harnesses.includes('antigravity')&&previous?.roots.antigravity||process.env.ANTIGRAVITY_HOME||join(home,'.gemini')},
     claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
   const enrolled=config.harnesses!;
   if(enrolled.includes('cursor')&&enrolled.includes('grok-bot')&&config.roots.cursor===config.roots['grok-bot'])
     throw new CliError('CAPTURE_HARNESS_CONFLICT','Cursor and Grok Bot share a hooks directory on this machine. Enroll the actual client in a separate profile to avoid recording it twice.');
   // Checked before the directories below are created.
-  const absent=harnesses.every(readsTranscript)&&!harnesses.some(harness=>existsSync(harnessRoot(config,harness))||Bun.which(harness==='codex'?'codex':'claude',{PATH:process.env.PATH}));
+  const commandName=(h:TranscriptHarness)=>h==='codex'?'codex':h==='antigravity'?'agy':'claude';
+  const absent=harnesses.every(readsTranscript)&&!harnesses.some(harness=>
+    (harness==='antigravity'?antigravityDetected(home):existsSync(harnessRoot(config,harness)))||Bun.which(commandName(harness),{PATH:process.env.PATH}));
   for(const harness of enrolled)mkdirSync(harnessRoot(config,harness),{recursive:true,mode:0o700});
   // Validate every existing config before changing any of them.
   if(enrolled.includes('claude-code'))readJson(join(config.roots['claude-code'],'settings.json'));
   if(enrolled.includes('codex'))readJson(join(config.roots.codex,'hooks.json'));
-  for(const harness of ['cursor','grok-bot'] as const)if(enrolled.includes(harness))readJson(hookFile(config,harness));
+  for(const harness of ['cursor','grok-bot','antigravity'] as const)if(enrolled.includes(harness))readJson(hookFile(config,harness));
   const toml=join(config.roots.codex,'config.toml');if(harnesses.includes('codex')&&existsSync(toml))Bun.TOML.parse(readFileSync(toml,'utf8'));
   const affected=[join(captureDir(),'config.json'),join(captureDir(),'receiver-token.json'),hookRunner('capture',command).file,
     join(config.roots['claude-code'],'settings.json'),join(config.roots.codex,'hooks.json'),toml,
-    ...(['cursor','grok-bot'] as const).filter(h=>enrolled.includes(h)).map(h=>hookFile(config,h))];
+    ...(['cursor','grok-bot','antigravity'] as const).filter(h=>enrolled.includes(h)).map(h=>hookFile(config,h))];
   const originals=new Map(affected.map(path=>[path,existsSync(path)?readFileSync(path):null]));
   try {
   atomicJson(join(captureDir(),'config.json'),config);
@@ -196,7 +235,8 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
     // An agent that ran the plain command on a Bot's computer reads this and corrects itself.
     ...(absent&&!deferAuth&&!enrolled.includes('grok-bot')&&process.env.CLAUDE_CODE_REMOTE!=='true'?['Neither Claude Code nor Codex was found on this machine. If it is a Grok Bot cloud computer, capture it with opencrawl collect install --yes --harness grok-bot.']:[]),
     ...(harnesses.includes('cursor')?[`Cursor hooks installed in ${hookFile(config,'cursor')}. Start a new Cursor conversation, then check collect status and search for its new message. Existing Cursor history is not imported.`]:[]),
-    ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${hookFile(config,'grok-bot')}. Bots that are already running may keep the hooks they loaded earlier: from a newly created Bot, run a command, then check collect status for a stored receipt.`]:[])];
+    ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${hookFile(config,'grok-bot')}. Bots that are already running may keep the hooks they loaded earlier: from a newly created Bot, run a command, then check collect status for a stored receipt.`]:[]),
+    ...(harnesses.includes('antigravity')?[`Antigravity hooks installed in ${hookFile(config,'antigravity')}. Start a fresh Antigravity session or restart running sessions so hooks reload.`]:[])];
   return {notice:enrolled.includes('grok-bot')?captureNotice(api)+' '+grokBotNotice:captureNotice(api),exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
     nextStep:steps.join(' ')};
   });
@@ -210,6 +250,7 @@ export async function uninstallCapture(home=homedir()) {
   if((config.harnesses??['claude-code','codex']).includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),[],null);
   if((config.harnesses??['claude-code','codex']).includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),[],null);
   for(const harness of ['cursor','grok-bot'] as const)if(config.harnesses?.includes(harness))modifyCursorFormatHooks(hookFile(config,harness),null,harness);
+  if(config.harnesses?.includes('antigravity'))modifyAntigravityHooks(hookFile(config,'antigravity'),null);
   // Stopping collection preserves queued data for an authenticated retry.
   atomicJson(join(captureDir(),'config.json'),{...config,disabled:true});
   return {installed:false,queuedDataPreserved:true};

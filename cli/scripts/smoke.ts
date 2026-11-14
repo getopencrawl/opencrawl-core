@@ -51,13 +51,38 @@ try {
     if (run(['bun',join(install,'node_modules/@getopencrawl/cli/runtime/opencrawl.js'),'--version']).trim() !== pkg.version) throw new Error('Replaceable-runtime bundle version mismatch');
     const status = JSON.parse(run([...command, 'status', '--json']));
     if (status.data.authenticated !== false || status.data.index.available !== null) throw new Error('Incorrect initial status');
-    const skillEnv = {CLAUDE_CONFIG_DIR: join(scratch, 'claude')};
-    const skills = JSON.parse(run([...command, 'skills', 'install', '--client', 'claude-code', '--api', 'http://127.0.0.1:8093', '--json'], undefined, skillEnv));
-    if (skills.data.results.length !== 1 || skills.data.results[0].status !== 'installed') throw new Error('Packaged skill installation failed');
+    const skillEnv = {CLAUDE_CONFIG_DIR: join(scratch, 'claude'), ANTIGRAVITY_HOME: join(scratch, 'gemini')};
+    const skills = JSON.parse(run([...command, 'skills', 'install', '--client', 'claude-code', '--client', 'antigravity', '--api', 'http://127.0.0.1:8093', '--json'], undefined, skillEnv));
+    if (skills.data.results.length !== 2 || skills.data.results.some((r: any) => r.status !== 'installed')) throw new Error('Packaged skill installation failed');
     const skillRoot = join(scratch, 'claude/skills/opencrawl');
     if (!readFileSync(join(skillRoot, 'SKILL.md'), 'utf8').startsWith('---\nname: opencrawl\n') || readFileSync(join(skillRoot, 'references/participation.md'), 'utf8').includes('--api')) throw new Error('Packaged skill documents missing or contain a fixed deployment');
-    const skillStatus = JSON.parse(run(['bun', join(install, 'node_modules/@getopencrawl/cli/runtime/opencrawl.js'), 'skills', 'status', '--client', 'claude-code', '--api', 'http://127.0.0.1:8093', '--json'], undefined, skillEnv));
-    if (skillStatus.data.results[0].status !== 'current') throw new Error('Replaceable runtime could not read the installed skill');
+    if (!readFileSync(join(scratch, 'gemini/config/skills/opencrawl/SKILL.md'), 'utf8').startsWith('---\nname: opencrawl\n')) throw new Error('Packaged Antigravity skill missing');
+    const skillStatus = JSON.parse(run(['bun', join(install, 'node_modules/@getopencrawl/cli/runtime/opencrawl.js'), 'skills', 'status', '--client', 'claude-code', '--client', 'antigravity', '--api', 'http://127.0.0.1:8093', '--json'], undefined, skillEnv));
+    if (skillStatus.data.results.some((r: any) => r.status !== 'current')) throw new Error('Replaceable runtime could not read the installed skill');
+    run([...command, 'collect', 'install', '--yes', '--harness', 'antigravity', '--defer-auth', '--backfill', 'skip', '--api', 'http://127.0.0.1:8093', '--json'], undefined, skillEnv);
+    const agyHooks = JSON.parse(readFileSync(join(scratch, 'gemini/config/hooks.json'), 'utf8'));
+    const captureCmd = agyHooks['opencrawl-capture']?.Stop?.[0]?.command;
+    const startupCmd = agyHooks['opencrawl-startup']?.SessionStart?.[0]?.command;
+    if (!captureCmd || !startupCmd) throw new Error('Missing generated Antigravity hooks');
+    const runShellHook = (hookCommand: string, stdinText: string) => {
+      const shell = process.platform === 'win32'
+        ? [join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe'), '/d', '/s', '/c', hookCommand]
+        : ['/bin/sh', '-c', hookCommand];
+      const proc = Bun.spawnSync(shell, {
+        env: {...environment, ...skillEnv, PATH: join(scratch, 'no-runtimes')},
+        stdin: Buffer.from(stdinText, 'utf8'),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      if (proc.exitCode !== 0) throw new Error(`Generated Antigravity hook failed without Node on PATH (${proc.exitCode}): ${proc.stderr.toString()}`);
+      return JSON.parse(proc.stdout.toString());
+    };
+    if (runShellHook(captureCmd, JSON.stringify({conversationId: 'smoke-agy', hookEventName: 'Stop'})).decision !== 'allow') {
+      throw new Error('Generated Antigravity capture hook did not return allow');
+    }
+    if (!Array.isArray(runShellHook(startupCmd, JSON.stringify({conversationId: 'smoke-agy', hookEventName: 'SessionStart'})).injectSteps)) {
+      throw new Error('Generated Antigravity startup hook did not return injectSteps');
+    }
     const fail = Bun.spawnSync([...command, 'whoami', '--json'], {env: environment, stdout: 'pipe', stderr: 'pipe'});
     if (fail.exitCode !== 2 || JSON.parse(fail.stdout.toString()).error.code !== 'AUTH_REQUIRED') throw new Error('Invalid authentication exit code');
     const requests: string[] = [];

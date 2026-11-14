@@ -7,6 +7,9 @@ import {SourcesSummary, UsagePage, UsageReportView} from '../src/pages/usage.tsx
 import type {ConsoleDataAdapter, UsageReport} from '../src/pages/types.ts';
 import {ago, compact, count, harnessName, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
 import {harnessName as libraryHarnessName} from '../src/pages/library-controls.tsx';
+import {SessionsPage, sessionPath} from '../src/pages/sessions.tsx';
+import type {LibraryAdapter} from '../src/pages/library-types.ts';
+import {ConsoleDataProvider} from '../src/data.tsx';
 import {copyText} from '../src/onboarding/copy.tsx';
 import type {ValueReport} from '../src/pages/types.ts';
 
@@ -162,9 +165,17 @@ test('Agent sessions retains measured activity, breakdowns and contextual facts 
   }
   assert.match(agents, /Agent sessions per day/);
   // Every captured agent has a readable name on Usage and in the session library.
-  for (const [harness, name] of [['claude-code', 'Claude Code'], ['codex', 'Codex'], ['grok-bot', 'Grok Bot']] as const) {
+  for (const [harness, name] of [['claude-code', 'Claude Code'], ['codex', 'Codex'], ['cursor', 'Cursor'], ['grok-bot', 'Grok Bot'], ['antigravity', 'Antigravity']] as const) {
     assert.equal(harnessName(harness), name); assert.equal(libraryHarnessName(harness), name);
   }
+  const library: LibraryAdapter = async () => new Promise(() => {});
+  const viewerHtml = renderToStaticMarkup(createElement(ConsoleDataProvider, {
+    scopeKey: 'antigravity-viewer',
+    children: createElement(MemoryRouter, {initialEntries: [sessionPath({userId: 'alice', harness: 'antigravity', sessionId: 'conv-1'})]},
+      createElement(SessionsPage, {adapter: library})),
+  }));
+  assert.match(viewerHtml, /All sessions/);
+  assert.match(viewerHtml, /Loading session(?!s)/);
   assert.doesNotMatch(agents, /\bturns?\b|analytics come next/i);
 });
 
