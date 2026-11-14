@@ -16,7 +16,7 @@ import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
 import {workspaceIdentityEnabled, workspaceToken} from '../workspace-identity.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
-import {cursorSession,cursorTranscript,cursorMessage} from './cursor.ts';
+import {cursorSession,cursorTranscript,cursorMessage,cursorThoughtDuplicate} from './cursor.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
@@ -570,6 +570,8 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
         const state=read(stateFile,{offset:0,hooks:{},transcript:{},emitted:{}});
         if(state.lastNotice===notice.id){unlinkSync(path);syncDirectory(dirname(path));processed++;continue;}
         if(notice.event.hook_event_name==='sessionStart'){state.startSequence=notice.sequence;state.startAt=notice.at;}
+        if(notice.event.hook_event_name==='beforeSubmitPrompt'&&typeof notice.event.generation_id==='string'&&notice.event.generation_id&&state.thoughtHooks?.generation!==notice.event.generation_id)
+          state.thoughtHooks={generation:notice.event.generation_id,turn:{},model:{}};
         if(session.origin!=='unknown')state.origin=session.origin;
         const meta={harness:'cursor',sessionId:session.sessionId,cwd:session.cwd,origin:state.origin??session.origin,originEvidence:session.originEvidence,parentSessionId:session.parentSessionId,captureMode:'live',harnessVersion:session.version};
         if(captureExcluded(readCaptureConfig()??config,meta)){unlinkSync(path);continue;}
@@ -615,6 +617,7 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
           }
         }
         for(const event of grokBotEvents(notice)) {
+          if(cursorThoughtDuplicate(state.thoughtHooks,notice.event))continue;
           const next=messages(event,'hooks');if(next)events.push(attachmentTransform(next,attachments,session.cwd??homedir()));
         }
         state.lastNotice=notice.id;commit();unlinkSync(path);syncDirectory(dirname(path));processed++;
