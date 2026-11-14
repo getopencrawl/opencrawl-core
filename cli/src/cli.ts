@@ -10,7 +10,7 @@ import {scheduleCliUpdate,updateCli} from './update.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs, stripVTControlCharacters} from 'node:util';
 import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest, DEFAULT_API_ORIGIN} from './oauth.ts';
-import {readSession, saveSession, accessToken, logout, selectOrganization, credentialRotation} from './session.ts';
+import {readSession, saveSession, accessToken, logout, selectOrganization, exitAfterCredentialRotation} from './session.ts';
 import {filesystemError} from './filesystem.ts';
 import {agentSkills} from './skills.ts';
 import {withEnvironmentTokenOrigin} from './environment-token.ts';
@@ -411,12 +411,7 @@ if (import.meta.main) {
   if(delegated!==undefined)process.exit(delegated);
   // Once a one-use refresh has left, save its response before honoring a
   // cooperative shutdown. The request itself has a bounded deadline.
-  const stop = (code: number) => {
-    const renewing = credentialRotation();
-    if (renewing) void renewing.finally(() => process.exit(code));
-    else process.exit(code);
-  };
-  process.on('SIGINT', () => stop(130));
-  process.on('SIGTERM', () => stop(143));
+  process.on('SIGINT', () => exitAfterCredentialRotation(130));
+  process.on('SIGTERM', () => exitAfterCredentialRotation(143));
   process.exitCode = await main();
 }

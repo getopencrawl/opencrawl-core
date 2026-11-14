@@ -6,6 +6,7 @@ import {readFileSync,writeFileSync,mkdirSync,copyFileSync,existsSync,rmSync} fro
 import {join,resolve} from 'node:path';
 import {parseEnv} from 'node:util';
 import {randomBytes,createHash} from 'node:crypto';
+import {pathToFileURL} from 'node:url';
 if(process.env.CI!=='true')throw new Error('Run this destructive acceptance harness only in its disposable CI job');
 const root=process.cwd(),scratch=join(process.env.RUNNER_TEMP,'full-upgrade');mkdirSync(scratch,{recursive:true});
 const target=process.env.UPGRADE_TARGET,old=process.env.UPGRADE_FROM,kind=process.env.UPGRADE_INSTALLATION||'deploy',sqlite=process.env.UPGRADE_SQLITE==='true',airbyte=process.env.UPGRADE_AIRBYTE==='true';
@@ -68,6 +69,34 @@ const oldApp=compose(['ps','-q','app'],{capture:true});
 run('git',['checkout','--detach',target]);
 const check=JSON.parse(run(process.execPath,['deploy/upgrade.mjs','--installation',kind,'--check'],{capture:true}).split('\n').at(-1));
 assert.equal(check.needed,true);assert.ok(readFileSync(envFile).equals(originalEnv));assert.equal(docker(['inspect','-f','{{.State.Running}}',oldApp],{capture:true}),'true');
+// Exercise the image-store failure with tiny, owned scratch images. No customer
+// data or shared image is removed. The full stack below proves the same archive
+// format can restore old binaries together with their original data.
+const driverStatus=JSON.parse(docker(['info','--format','{{json .DriverStatus}}'],{capture:true}));
+const containerd=Array.isArray(driverStatus)&&driverStatus.some(row=>row.includes('io.containerd.snapshotter.v1'));
+if(process.env.UPGRADE_REQUIRE_CONTAINERD==='true')assert.ok(containerd,'Acceptance must actually use the containerd image store');
+const imageProbe=join(scratch,'image-recovery'),imageContext=join(imageProbe,'context'),imageBackup=join(imageProbe,'backup');mkdirSync(imageContext,{recursive:true});
+writeFileSync(join(imageContext,'Dockerfile'),'FROM scratch\nCOPY generation /generation\n');
+const probeTag='opencrawl-upgrade-probe:'+randomBytes(12).toString('hex');
+const buildProbe=generation=>{writeFileSync(join(imageContext,'generation'),generation);docker(['build','--quiet','--tag',probeTag,imageContext]);return docker(['image','inspect','--format','{{.Id}}',probeTag],{capture:true});};
+const firstProbeImage=buildProbe('before');buildProbe('after');
+const unprotectedImageLostAfterRetag=docker(['image','inspect',firstProbeImage],{capture:true,failure:true}).status!==0;
+const protectedImage=buildProbe('before'),probeSnapshot={format:2,project:'upgrade-image-probe',images:[protectedImage],compose:{services:{app:{image:protectedImage}}}};
+const {saveRecoveryImages,ensureRecoveryImages}=await import(pathToFileURL(join(root,'deploy/recovery.mjs')));
+await saveRecoveryImages(imageBackup,probeSnapshot);
+assert.equal(existsSync(join(imageBackup,'manifest.json')),false,'Image archive alone is not a matched data backup');
+const targetProbeImage=buildProbe('after');
+assert.notEqual(targetProbeImage,protectedImage);
+const protectedImageRetainedAfterRetag=docker(['image','inspect',protectedImage],{capture:true,failure:true}).status===0;
+// Force loss even on Docker versions that retain dangling images, then prove
+// reload recovers the exact old ID without overwriting the new mutable tag.
+docker(['image','rm','--force',protectedImage]);
+assert.notEqual(docker(['image','inspect',protectedImage],{capture:true,failure:true}).status,0);
+await ensureRecoveryImages(imageBackup,probeSnapshot);
+assert.equal(docker(['image','inspect','--format','{{.Id}}',protectedImage],{capture:true}),protectedImage);
+assert.equal(docker(['image','inspect','--format','{{.Id}}',probeTag],{capture:true}),targetProbeImage,'Archive loading must not replace the new application tag');
+const imageRecovery={containerd,unprotectedImageLostAfterRetag,protectedImageRetainedAfterRetag,evictedImageRestored:true,targetTagPreserved:true};
+docker(['image','rm','--force',protectedImage,probeTag]);
 // Fail a real migration subprocess after the matched backup and DB transition.
 // No production-only failure switch is added to the upgrader.
 const realDocker=run('which',['docker'],{capture:true}),bin=join(scratch,'bin');mkdirSync(bin);
@@ -124,7 +153,7 @@ if(airbyte){
 // A new Airbyte sync must reach the restored fixture and S3 addresses.
 docker([...recoveryChecks,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(airbyte?['-e','OPENCRAWL_UPGRADE_FRESH_SYNC=true']:['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
 largeSession('restored',recoveryChecks);
-const report={ok:true,largeSessionCeilingReproducedAndRemoved:large,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,freshAirbyteSyncAfterUpgradeAndRestore:airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
+const report={ok:true,imageRecovery,largeSessionCeilingReproducedAndRemoved:large,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,freshAirbyteSyncAfterUpgradeAndRestore:airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
 writeFileSync(join(process.env.RUNNER_TEMP,'full-upgrade-receipt.json'),JSON.stringify(report,null,2));
 docker([...recovery,'down','--volumes','--remove-orphans']);
 if(airbyte)run('bash',['dev/up','reset','--yes']);

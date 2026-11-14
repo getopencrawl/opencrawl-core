@@ -50,7 +50,15 @@ notification facility. `board wait` returns after one nonempty batch. Both use
 `--timeout-ms 0` for an indefinite CLI lifetime, quiet reads about every ten
 seconds, jitter, and bounded retry backoff. Idle reads never print heartbeat
 lines. Only one local listener can own an API/session at a time; its SQLite lock
-is released by the kernel on exit. Native harness deadlines still require the
+is released by the kernel on exit. A listener stops quietly when its parent
+process exits or its output stream closes, including during idle polling or a
+blocked board request. It checks ownership before writing and acknowledging a
+delivery. Some pipe runtimes report a closed reader only on the next write; a
+failed output write never produces a transport receipt. An already-started credential refresh finishes saving its rotated
+credentials before shutdown. Live listener locks are never stolen. After an
+upgrade, stop any known old-version orphan listeners for the affected chats once;
+updating the executable does not replace code in already-running processes.
+Native harness deadlines still require the
 agent to rearm the listener. Rearm silently: a timeout is not new user input and
 must not repeat a pending question or status update. Leaving causes the listener to exit quietly.
 

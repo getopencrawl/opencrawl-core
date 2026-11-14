@@ -1,7 +1,7 @@
 import {CliError} from '../oauth.ts';
 import {installCapture,uninstallCapture,upgradeCaptureHooks} from './install.ts';
 import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush,bindHookIdentity} from './runtime.ts';
-import {credentialRotation} from '../session.ts';
+import {exitAfterCredentialRotation} from '../session.ts';
 import {grokBotResponse} from './grok-bot.ts';
 import {backfill,backfillPreview,selection,setupBackfill,reportBackfillProgress} from './backfill.ts';
 import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
@@ -27,7 +27,7 @@ async function hookInput(eager=false) {
 async function cursorFormatHook(harness:'cursor'|'grok-bot') {
   let answered=false;
   const answer=(event:any)=>{if(!answered){answered=true;process.stdout.write(JSON.stringify(grokBotResponse(event))+'\n');}};
-  const finish=()=>{const renewing=credentialRotation();if(renewing)void renewing.finally(()=>process.exit(0));else process.exit(0);};
+  const finish=()=>exitAfterCredentialRotation(0);
   const deadline=setTimeout(()=>{
     answer(null);
     try{recordError(new CliError('CAPTURE_HOOK_DEADLINE','A capture hook reached its five-second limit. Queued data is retained; run opencrawl collect flush.'));}catch{}

@@ -1,8 +1,6 @@
-import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream, createWriteStream} from 'node:fs';
-import {createZstdDecompress,gzip} from 'node:zlib';
+import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream} from 'node:fs';
+import {gzip} from 'node:zlib';
 import {promisify} from 'node:util';
-import {Transform} from 'node:stream';
-import {pipeline} from 'node:stream/promises';
 import {join, dirname, resolve, sep, basename} from 'node:path';
 import {homedir, hostname} from 'node:os';
 import {compiled,commandForBinary} from '../distribution.ts';
@@ -10,7 +8,7 @@ import {randomUUID} from 'node:crypto';
 import {setImmediate as yieldToOwner} from 'node:timers/promises';
 import {setTimeout as pause} from 'node:timers/promises';
 import {createInterface} from 'node:readline';
-import {configDir, atomicFile, atomicJson, accessToken, readSession, withSessionLock, syncDirectory} from '../session.ts';
+import {configDir, atomicFile, atomicJson, accessToken, readSession, withSessionLock, syncDirectory, exitAfterCredentialRotation} from '../session.ts';
 import {CliError} from '../oauth.ts';
 import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
@@ -25,6 +23,7 @@ import {redactValue,redactAttachment,MAX_REDACTION_DEPTH} from './redact.ts';
 import {replicasAttribution,replicasEventAttribution,replicasTitle,type ReplicasTitle} from './replicas.ts';
 import {enqueueLiveBatch,pendingLiveSince,isPendingLive,recoverLiveSeals,sealLiveBatches} from './live-batches.ts';
 import {attachmentReceipts} from './attachment-receipts.ts';
+import {archiveChunks} from './archive.ts';
 
 const compressBatch=promisify(gzip);
 export const captureDir = () => join(configDir(),'capture');
@@ -248,7 +247,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
   return withSessionLock('capture:'+stateFile,async()=>{
     const source=statSync(path),old=read(stateFile,{offset:0});
     const compressed=path.endsWith('.jsonl.zst');
-    let readPath=path;
+    let archiveComplete=false;
     if(compressed) {
       if(old.archiveSize===source.size && old.archiveMtime===source.mtimeMs && old.ino===source.ino && (!reconcileHistory || old.parserVersion===2)) {
         const platform=await platformTitle(config,old.meta);
@@ -256,18 +255,10 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
         atomicJson(stateFile, old);
         return old.meta;
       }
-      readPath=stateFile+'.expanded.tmp';
-      // The transcript lock makes an abandoned expansion safe to replace after a crash.
-      try{unlinkSync(readPath);}catch(e:any){if(e.code!=='ENOENT')throw e;}
-      let expanded=0;
-      try {
-        await pipeline(createReadStream(path),createZstdDecompress(),new Transform({transform(chunk,encoding,callback){
-          expanded+=chunk.length;
-          callback(expanded>256*1024*1024?new CliError('CAPTURE_ARCHIVE_TOO_LARGE','Compressed transcript exceeds the 256 MiB expanded limit; retained locally.'):null,chunk);
-        }}),createWriteStream(readPath,{mode:0o600,flags:'wx'}));
-      } catch(e) {try{unlinkSync(readPath);}catch{}throw e;}
+      // Retire only the previous implementation's owned, disposable expansion.
+      try{unlinkSync(stateFile+'.expanded.tmp');}catch(e:any){if(e.code!=='ENOENT')throw e;}
     }
-    const st=statSync(readPath);
+    const st=source;
     let offset=old.offset;
     if(st.size<offset || (old.ino && old.ino!==source.ino) || compressed)offset=0;
     // Parser upgrades must not silently start a historical import in hooks/sync.
@@ -276,7 +267,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
     if(reconcileHistory && old.parserVersion!==2)offset=0;
     const parserVersion=offset===0?2:old.parserVersion??1;
     const nativeIds=desktopAudit&&offset<st.size?desktopNativeMessageIds(path):new Set<string>();
-    const fd=openSync(readPath,'r');
+    const fd=compressed?undefined:openSync(path,'r');
     let meta:any=(offset>0?old.meta:null)??{harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path};
     let codexIdentityRead=Boolean(offset>0&&old.meta?.sessionId);
     function metadata(r:any) {
@@ -311,25 +302,30 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
         if(p.cwd || r.cwd)meta.cwd=p.cwd??r.cwd;
       if(p.cli_version || r.version)meta.harnessVersion=p.cli_version??r.version;
     }
-    try {
-      // Apply metadata in record order. Looking ahead at a later working
-      // directory could incorrectly allow earlier records from an excluded project.
+    const chunks=async function*():AsyncGenerator<Buffer>{
+      if(compressed){yield* archiveChunks(path,source.size,complete=>{archiveComplete=complete;});return;}
       while(offset<st.size) {
-        await yieldToOwner();
         // Ordinary reads stay small even for multi-gigabyte histories. Grow only
         // when one native record spans the buffer; retain the existing line cap.
         const remaining=st.size-offset,maxRead=Math.min(remaining,48*1024*1024);
-        let bytes=Buffer.alloc(Math.min(maxRead,8*1024*1024));readSync(fd,bytes,0,bytes.length,offset);
+        let bytes=Buffer.alloc(Math.min(maxRead,8*1024*1024));readSync(fd!,bytes,0,bytes.length,offset);
         let end=bytes.lastIndexOf(10);
         while(end<0&&bytes.length<maxRead){
-          bytes=Buffer.alloc(Math.min(maxRead,bytes.length*2));readSync(fd,bytes,0,bytes.length,offset);
+          bytes=Buffer.alloc(Math.min(maxRead,bytes.length*2));readSync(fd!,bytes,0,bytes.length,offset);
           end=bytes.lastIndexOf(10);
         }
         if(end<0) {
           if(bytes.length<st.size-offset)throw new CliError('CAPTURE_LINE_TOO_LARGE','Transcript line exceeds capture chunk size');
           break; // writer has not completed this record yet
         }
-        bytes=bytes.subarray(0,end+1);
+        yield bytes.subarray(0,end+1);
+      }
+    };
+    try {
+      // Apply metadata in record order. Looking ahead at a later working
+      // directory could incorrectly allow earlier records from an excluded project.
+      for await(const bytes of chunks()) {
+        await yieldToOwner();
         const events:any[]=[],attachments:any[]=[];
         let position=offset,linesSinceYield=0,eventBytes=0;
         for(const line of bytes.toString('utf8').split('\n').slice(0,-1)){
@@ -389,9 +385,15 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
           if(events.length>=(reconcileHistory?1000:200)){await spool({...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
         }
         await spool({...meta,captureMode:reconcileHistory?'history':'live'},events,attachments);
-        offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,...(compressed&&offset===st.size?{archiveSize:source.size,archiveMtime:source.mtimeMs}:{})});
+        offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta});
       }
-    } finally{closeSync(fd);if(compressed)try{unlinkSync(readPath);}catch{}}
+      if(compressed){
+        if(!archiveComplete)throw new CliError('CAPTURE_ARCHIVE_INVALID','Compressed transcript ended with an unfinished JSONL record; repair the archive and rerun the approved import.');
+        const current=statSync(path);
+        if(current.ino!==source.ino||current.size!==source.size||current.mtimeMs!==source.mtimeMs)throw new CliError('CAPTURE_ARCHIVE_CHANGED','Compressed transcript changed during capture; rerun the approved import.');
+        atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,archiveSize:source.size,archiveMtime:source.mtimeMs});
+      }
+    } finally{if(fd!==undefined)closeSync(fd);}
     const platform=await platformTitle(config,meta);
     if(platform?capturePlatformTitle(config,meta,platform):harness==='codex'&&captureCodexTitle(config,meta))atomicJson(stateFile,{...read(stateFile,old),meta});
     return meta;
@@ -702,8 +704,8 @@ export async function ownedCaptureWorker({maxMs=90_000,parentPollMs=1000,flushMs
   if(ownerGone())return;
   // An outer-loop deadline cannot interrupt an infinite lock wait or an upload.
   // Exit cleanup releases locks; the kernel also releases them after a crash.
-  const deadline=setTimeout(()=>process.exit(0),maxMs);
-  const parentCheck=setInterval(()=>{if(ownerGone())process.exit(0);},parentPollMs);
+  const deadline=setTimeout(()=>exitAfterCredentialRotation(0),maxMs);
+  const parentCheck=setInterval(()=>{if(ownerGone())exitAfterCredentialRotation(0);},parentPollMs);
   // Give the final locally recorded window an upload opportunity before the
   // owned process's hard deadline. A blocked upload still leaves exact bytes.
   try{await captureWorker({flushMs,flushBy:Date.now()+Math.max(0,maxMs-flushMs)});}

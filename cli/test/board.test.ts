@@ -49,6 +49,21 @@ test('compact bursts stay below the native monitor aggregate cap and refill rate
   expect(waits.every(ms=>ms>=2500)).toBe(true);expect(acked).toBe(true);
 });
 
+test('ending a listener during compact output leaves the incomplete delivery unreceipted',async()=>{
+  const controller=new AbortController();let parts=0,checkpoints=0,acknowledgments=0;
+  await watchBoard({session:'s',once:true,compact:true,signal:controller.signal,
+    request:async()=>({batch:{receipt:'d'.repeat(64),messages:[{id:1,name:'sender',topic:'test',text:'x'.repeat(2000)}]}}),
+    emit:()=>{parts++;controller.abort();},checkpoint:()=>{checkpoints++;},acknowledge:async()=>{acknowledgments++;},warn:()=>{throw Error('A stopped listener must stay quiet');}});
+  expect(parts).toBe(1);expect(checkpoints).toBe(0);expect(acknowledgments).toBe(0);
+});
+
+test('closing output while a delivery write is pending rejects it',async()=>{
+  const output=new Writable({write(){}});
+  const delivery=writeBoardOutput({text:'pending'},true,output);
+  output.destroy();
+  await expect(delivery).rejects.toMatchObject({code:'BOARD_OUTPUT_CLOSED'});
+});
+
 test('transient malformed responses recover; authorization and valid-JSON protocol failures stop',async()=>{
   let calls=0,acks=0;const warnings:string[]=[];
   await watchBoard({session:'s',once:true,request:async()=>{

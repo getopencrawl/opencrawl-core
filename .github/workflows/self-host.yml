@@ -23,17 +23,32 @@ jobs:
           - {installation: deploy, storage: dedicated-postgres, from: a1238901d505bb6f01f48d973ed3123f98ee20fd, sqlite: true}
           - {installation: dev, storage: legacy-json, from: 831eb9a89b34c2a2e04002f754f3d1e1e8e21bb6, sqlite: false}
           - {installation: dev, storage: dedicated-postgres, from: a1238901d505bb6f01f48d973ed3123f98ee20fd, sqlite: true}
+          - {installation: deploy, storage: containerd-postgres, from: a1238901d505bb6f01f48d973ed3123f98ee20fd, sqlite: true, containerd: true}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24.22.2
+      - name: Enable the containerd image store on this disposable runner
+        if: matrix.containerd
+        run: |
+          sudo node --input-type=module <<'JS'
+          import {existsSync,readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+          const file='/etc/docker/daemon.json';
+          const config=existsSync(file)?JSON.parse(readFileSync(file,'utf8')):{};
+          config.features={...config.features,'containerd-snapshotter':true};
+          mkdirSync('/etc/docker',{recursive:true});
+          writeFileSync(file,JSON.stringify(config));
+          JS
+          sudo systemctl restart docker
+          docker info --format '{{json .DriverStatus}}' | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{if(!JSON.parse(s).some(v=>v[0]==="driver-type"&&v[1]==="io.containerd.snapshotter.v1"))process.exit(1)})'
       - name: Upgrade a running old full application, resume a failure, and restore the old version
         env:
           UPGRADE_FROM: ${{ matrix.from }}
           UPGRADE_TARGET: ${{ github.sha }}
           UPGRADE_INSTALLATION: ${{ matrix.installation }}
           UPGRADE_SQLITE: ${{ matrix.sqlite }}
+          UPGRADE_REQUIRE_CONTAINERD: ${{ matrix.containerd || false }}
         run: |
           cp deploy/test-full-upgrade.mjs "$RUNNER_TEMP/test-full-upgrade.mjs"
           node "$RUNNER_TEMP/test-full-upgrade.mjs"

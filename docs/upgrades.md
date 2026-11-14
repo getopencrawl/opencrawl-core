@@ -23,14 +23,32 @@ phase, recovery directory and result. A failure exits nonzero. Rerun the same
 command after fixing the reported failure; the journal resumes completed work
 and never replaces its original completed backup. If a different release is
 checked out while an upgrade is incomplete, return to the recorded target first.
-Normal startup also resumes the journal.
+Normal startup also resumes the journal for that same target. Pulling a newer
+release, including the image-preservation fix, does not automatically repair a
+previously failed upgrade: it refuses to resume a journal for a different target.
+Keep the recorded target, journal, recovery directory, containers and volumes
+intact. If that earlier attempt lost an old image before exporting it, recovery
+requires the exact original image and a reviewed plan for the recorded phase.
+Do not clear or edit the journal to bypass this check, and do not treat an image
+archive without a complete manifest as a data restore point.
 
-The operation builds the new image before downtime, pauses owned Airbyte jobs
-for a development installation, stops the old application and its dependencies,
-and creates a cold recovery point. It preserves organization IDs, logins, OAuth
+The operation first exports and checksums the old images under unique recovery
+tags, then builds the new image before downtime. This preserves the old binaries
+when Docker's containerd image store replaces a mutable application tag. A
+verified archive can reload a missing old image without changing the new image's
+tag. The operation then pauses owned Airbyte jobs for a development installation,
+stops the old application and its dependencies, and creates a cold recovery
+point. It preserves organization IDs, logins, OAuth
 grants, encryption keys and named volumes. The backup includes all recorded
 Compose volumes, original private configuration, immutable old container images,
-and checksums. Allow free disk for the compressed stores and exported images.
+and checksums. Allow free disk for the compressed stores and exported images;
+the image export is written before the new build begins. `images.json` records
+that first stage, but only `manifest.json` marks a complete matched recovery
+point. An image-export failure leaves old writers running. Retrying verifies and
+reuses the original image archive. If an earlier upgrader already lost the old
+image without exporting it, retain its containers, volumes and journal and
+recover that exact old image before resuming. The upgrader cannot reconstruct
+missing binaries from an incomplete backup.
 Backups contain credentials and user data: keep them private and retain them
 until recovery is no longer needed. Default backups live under
 `deploy/.upgrade/backups` or `.opencrawl-dev/backups` and are excluded from Git
@@ -92,7 +110,9 @@ CI starts immutable older full applications for both startup paths and both
 pre-PostgreSQL and dedicated-PostgreSQL layouts. It checks existing account and
 OAuth identity, search and board persistence, idempotent event retry, conflicting
 event rejection, new writes, failure/resume, restart, and matched old-version
-restore. The legacy OpenSearch case also reproduces the old 413 rejection with
+restore. A containerd image-store variant checks retagging and deliberately
+evicts a disposable old image to verify exact-ID recovery without replacing the
+new tag. The legacy OpenSearch case also reproduces the old 413 rejection with
 125,000 retained event IDs, accepts the next 1,000 after migration, and verifies
 capture and authenticated tail search for a message larger than 6 MiB. Fresh full-application checks cover x64, ARM64 and the SQLite profile. The
 explicit full-Airbyte workflow also upgrades an older default installation and

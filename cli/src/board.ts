@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import type {Writable} from 'node:stream';
+import {setTimeout as pause} from 'node:timers/promises';
 import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 
 export async function boardRequest(api: string, operation: string, input: Record<string, unknown>, fetcher = fetch, options: {signal?: AbortSignal; refresh?: boolean} = {}) {
@@ -15,7 +16,7 @@ export async function boardRequest(api: string, operation: string, input: Record
   if (!configured && options.refresh === false && (!saved || saved.expiresAt <= Date.now() + 10_000)) throw new CliError('AUTH_REQUIRED', 'Run opencrawl whoami to refresh your sign-in, or opencrawl login if signed out.', 2);
   let token = configured || (options.refresh === false ? saved!.accessToken : await accessToken(api, undefined, fetcher, options.signal));
   const request = () => jsonRequest(`${api}/api/board/${operation}`, {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'},
-    body: JSON.stringify(input), signal: options.signal ?? AbortSignal.timeout(30_000), redirect: 'error'}, fetcher);
+    body: JSON.stringify(input), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000), redirect: 'error'}, fetcher);
   let result = await request();
   if (result.response.status === 401 && options.refresh !== false && (!configured || workspaceIdentityEnabled())) {
     token = await configuredToken('OPENCRAWL_TOKEN', api, token, options.signal) || await accessToken(api, token, fetcher, options.signal);
@@ -31,7 +32,7 @@ export async function boardRequest(api: string, operation: string, input: Record
 }
 
 type Options = Record<string, unknown>;
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const sleep = (ms: number, signal?: AbortSignal) => pause(ms,undefined,{signal});
 function sessionId(values: Options) {
   const value = values.session ?? process.env.OPENCRAWL_SESSION_ID ?? process.env.CODEX_THREAD_ID;
   if (typeof value !== 'string' || !value.trim() || value.length > 200) throw new CliError('INVALID_USAGE', 'Pass --session with this agent session’s stable ID. Keep it when resuming.', 64);
@@ -90,26 +91,34 @@ export function compactDelivery(messages: any[]) {
 
 export function writeBoardOutput(data: unknown, json: boolean, output: Writable = process.stdout): Promise<void> {
   return new Promise((resolve, reject) => {
-    const fail = () => reject(new CliError('BOARD_OUTPUT_CLOSED', 'Board output closed before delivery completed.', 2));
+    const fail = () => {
+      output.removeListener('close',fail);
+      reject(new CliError('BOARD_OUTPUT_CLOSED', 'Board output closed before delivery completed.', 2));
+    };
+    if(output.destroyed||output.writableEnded){fail();return;}
     output.once('error', fail);
+    output.once('close', fail);
     output.write((json ? JSON.stringify({schemaVersion:1,data}) : JSON.stringify(data))+'\n', error => {
       if (error) {fail(); return;}
-      output.removeListener('error', fail); resolve();
+      output.removeListener('error', fail);output.removeListener('close',fail);resolve();
     });
   });
 }
 
-export async function watchBoard({request, acknowledge, session, emit, warn, once = false, notifyOnly = false, compact = false, checkpoint = () => {}, lastEmitted = null, timeoutMs = 0, now = Date.now, delay = sleep}: {
+export async function watchBoard({request, acknowledge, session, emit, warn, once = false, notifyOnly = false, compact = false, checkpoint = () => {}, lastEmitted = null, timeoutMs = 0, now = Date.now, delay = sleep, signal, check = () => {}}: {
   request: () => Promise<any>; acknowledge: (receipt: string) => Promise<unknown>; session: string; emit: (data: unknown) => unknown; warn: (message: string) => void;
   once?: boolean; notifyOnly?: boolean; compact?: boolean; checkpoint?: (receipt: string) => unknown; lastEmitted?: string | null;
-  timeoutMs?: number; now?: () => number; delay?: (ms: number) => Promise<unknown>;
+  timeoutMs?: number; now?: () => number; delay?: (ms: number, signal?: AbortSignal) => Promise<unknown>; signal?: AbortSignal; check?: () => void;
 }) {
   const deadline = timeoutMs ? now() + timeoutMs : Infinity;
+  const active=()=>{check();signal?.throwIfAborted();};
   let emitted = lastEmitted, failures = 0;
   while (now() < deadline) {
     let wait = 10_000;
     try {
+      active();
       const result = await request(), batch = result.batch;
+      active();
       if (result.left === true) return;
       if (!(batch === null || (batch && /^[a-f0-9]{64}$/.test(batch.receipt) && Array.isArray(batch.messages) && batch.messages.length > 0))) throw new CliError('BOARD_PROTOCOL_ERROR', 'Invalid inbox batch.', 2);
       if (batch && batch.receipt !== emitted) {
@@ -119,22 +128,26 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
           let bytes = 0;
           for (const part of compactDelivery(batch.messages)) {
             const size = Buffer.byteLength(JSON.stringify({schemaVersion:1,data:part})) + 1;
-            if (bytes + size > 2400) {await delay(2500); bytes = 0;}
+            if (bytes + size > 2400) {await delay(2500,signal); bytes = 0;}
+            active();
             await emit(part); bytes += size;
           }
         } else await emit(notifyOnly ? {type:'board.notice', receipt:batch.receipt, count:batch.messages.length}
           : {type: 'board.delivery', workspace: result.workspace, agent: result.agent, name: result.name, session, ...batch});
+        active();
         if (!notifyOnly) await checkpoint(batch.receipt);
         emitted = batch.receipt;
       }
       // Output completion is a transport receipt, not a claim that a model read
       // or acted on the message. Never make model reasoning gate the next batch.
+      active();
       if (batch && !notifyOnly) await acknowledge(batch.receipt);
       if (failures) warn('Board connection restored.');
       failures = 0;
       if (batch && once) return;
       wait = Math.max(1000, Math.min(30_000, Number(result.pollAfterMs) || 10_000));
     } catch (error) {
+      if(signal?.aborted)return;
       if (error instanceof CliError && error.code === 'BOARD_CONFLICT') {
         // A concurrent leave can race the automatic receipt request.
         try {if ((await request()).left === true) return;}
@@ -145,8 +158,24 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
       failures++;
       wait = Math.max(Math.min(60_000, 2000 * 2 ** Math.min(failures, 5)), error instanceof CliError ? error.retryAfterMs ?? 0 : 0);
     }
-    await delay(Math.min(wait + Math.floor(Math.random() * 500), Math.max(0, deadline - now())));
+    try{await delay(Math.min(wait + Math.floor(Math.random() * 500), Math.max(0, deadline - now())),signal);}
+    catch(error){if(signal?.aborted)return;throw error;}
   }
+}
+
+function listenerLifetime(output:Writable=process.stdout) {
+  const owner=process.ppid,controller=new AbortController();
+  const stop=()=>{if(!controller.signal.aborted){controller.abort();output.destroy();}};
+  const check=()=>{
+    if(controller.signal.aborted)return;
+    if(owner<=0||process.ppid!==owner||output.destroyed||output.writableEnded){stop();return;}
+    try{process.kill(owner,0);}catch(error:any){if(error?.code==='ESRCH')stop();}
+  };
+  // An idle listener has no output writes to reveal a dead parent or sink.
+  // Check again immediately before delivery and receipts, not only on a timer.
+  output.on('close',stop);output.on('error',stop);
+  const timer=setInterval(check,500);timer.unref();check();
+  return {signal:controller.signal,check,stop,close:()=>{clearInterval(timer);output.removeListener('close',stop);output.removeListener('error',stop);}};
 }
 
 export const boardStateFile = (api: string, session: string) => join(configDir(), 'board', createHash('sha256').update(JSON.stringify([api, session])).digest('hex') + '.json');
@@ -196,11 +225,20 @@ export async function boardCommand(operation: string, api: string, values: Optio
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) throw new CliError('INVALID_USAGE', '--timeout-ms must be a nonnegative integer; 0 keeps listening.', 64);
   // One local listener per API/session. A killed process releases the kernel lock.
   if (values.compact && values['notify-only']) throw new CliError('INVALID_USAGE', 'Use --compact or --notify-only, not both.', 64);
-  await withSessionLock(`${api}/board-listener/${session}`, () => watchBoard({session, timeoutMs, once: operation === 'wait', notifyOnly: values['notify-only'] === true, compact: values.compact === true,
-    request: () => boardRequest(api, 'inbox', scoped({session})), acknowledge, checkpoint,
-    lastEmitted:!values['notify-only'] && typeof workspace === 'string' && workspace === saved.workspace ? saved.lastEmitted : null, emit,
-    warn: message => process.stderr.write(`opencrawl: ${message}\n`),
-  }), 1);
+  const lifetime=listenerLifetime();
+  try{
+    await withSessionLock(`${api}/board-listener/${session}`, () => watchBoard({session, timeoutMs, once: operation === 'wait', notifyOnly: values['notify-only'] === true, compact: values.compact === true,
+      request: () => boardRequest(api, 'inbox', scoped({session}),fetch,{signal:lifetime.signal}),
+      acknowledge: receipt=>boardRequest(api,'ack',scoped({session,receipt}),fetch,{signal:lifetime.signal}), checkpoint,
+      lastEmitted:!values['notify-only'] && typeof workspace === 'string' && workspace === saved.workspace ? saved.lastEmitted : null, emit,
+      warn: message => process.stderr.write(`opencrawl: ${message}\n`),signal:lifetime.signal,check:lifetime.check,
+    }), 1,lifetime.signal);
+  }catch(error){
+    // A failed write callback can precede the stream's error/close events.
+    if(error instanceof CliError&&error.code==='BOARD_OUTPUT_CLOSED')lifetime.stop();
+    if(!lifetime.signal.aborted)throw error;
+  }
+  finally{lifetime.close();}
 }
 
 export function participationInstructions(api?: string) {
