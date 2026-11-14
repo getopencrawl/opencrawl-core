@@ -142,6 +142,18 @@ test('Cursor resume rewrites the same inode with a larger file and recovers lega
  expect(captureStatus().pendingHooks).toBe(0);
 }));
 
+test('Cursor content hooks capture normally when metadata points to a text transcript',async()=>fixture(async f=>{
+ await f.install();const directory=join(readCaptureConfig()!.roots.cursor!,'projects','workspace','agent-transcripts');mkdirSync(directory,{recursive:true});
+ const file=join(directory,base.conversation_id+'.txt');writeFileSync(file,'Historical text that must not be imported.\n');
+ await captureHook('cursor',hook('beforeSubmitPrompt',{prompt:'Text metadata prompt',transcript_path:file}));
+ await captureHook('cursor',hook('afterAgentResponse',{text:'Text metadata reply',transcript_path:file}));
+ await drainCaptureNotices();await hookFlush(hook('stop'));
+ const messages=f.batches.flatMap((b:any)=>b.events).filter((e:any)=>e.kind==='message').sort((a:any,b:any)=>a.sequence-b.sequence);
+ expect(messages.map((e:any)=>e.data.content[0].text)).toEqual(['Text metadata prompt','Text metadata reply']);
+ expect(JSON.stringify(f.batches)).not.toContain('Historical text that must not be imported.');
+ expect(captureStatus().pendingHooks).toBe(0);
+}));
+
 test('an older receiver cannot enroll Cursor and parked Cursor batches never block existing client uploads',async()=>fixture(async f=>{
  f.supported=false;await expect(f.install()).rejects.toThrow('does not support Cursor');expect(readCaptureConfig()).toBeNull();
  f.supported=true;await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e',''],harnesses:['codex']});await f.install();
