@@ -66,6 +66,11 @@ async function verify(){try{
     sync([openssl,'req','-new','-newkey','rsa:2048','-sha256','-nodes','-subj','/CN=registry.npmjs.org','-keyout',key,'-out',csr]);
     writeFileSync(extensions,'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:registry.npmjs.org,IP:127.0.0.1\n');
     sync([openssl,'x509','-req','-in',csr,'-CA',cert,'-CAkey',caKey,'-CAcreateserial','-days','1','-sha256','-extfile',extensions,'-out',leaf]);
+    try{sync([openssl,'verify','-CAfile',cert,leaf]);}catch(error){
+      console.error(sync([openssl,'version']));
+      for(const file of [cert,leaf])console.error(sync([openssl,'x509','-in',file,'-noout','-text']));
+      throw error;
+    }
     proxy=Bun.spawn([node,join(root,'scripts/legacy-registry-proxy.mts'),inventoryFile,leaf,key,join(scratch,'proxy-receipt.json')],{stdout:'pipe',stderr:'inherit'});
     const reader=(proxy.stdout as ReadableStream<Uint8Array>).getReader(),first=await reader.read();reader.releaseLock();
     const {port,registryPort}=JSON.parse(new TextDecoder().decode(first.value));
