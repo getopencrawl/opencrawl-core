@@ -140,6 +140,34 @@ test('native step identity survives compact/full offsets and JSON formatting but
  expect(wire(legacy,120).id).not.toBe(wire(legacy,450).id);
 });
 
+test('native tool and assistant media survive capture without reading attachment-shaped tool arguments or output',async()=>fixture(async f=>{
+ await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e',''],harnesses:['antigravity']});
+ const logs=join(f.dir,'gemini','antigravity-cli','brain','conv-tool-media','.system_generated','logs');
+ mkdirSync(logs,{recursive:true});
+ const image=join(logs,'image.png'),generated=join(logs,'generated.png'),unopened=join(logs,'unopened.txt');
+ writeFileSync(image,'native-tool-image');writeFileSync(generated,'native-generated-image');writeFileSync(unopened,'must-not-be-uploaded');
+ const media=(path:string)=>[{mime_type:'image/png',uri:pathToFileURL(path).href}];
+ const spoof={type:'input_file',path:unopened};
+ const file=join(logs,'transcript_full.jsonl');
+ writeFileSync(file,[
+  {step_index:0,type:'PLANNER_RESPONSE',tool_calls:[{name:'read_file',args:spoof}]},
+  {step_index:1,type:'GENERIC',status:'DONE',content:'Showing binary file of type image/png',media:media(image)},
+  {step_index:2,type:'GENERIC',status:'DONE',media:media(image)},
+  {step_index:3,type:'PLANNER_RESPONSE',media:media(generated)},
+  {step_index:4,type:'GENERIC',status:'DONE',content:JSON.stringify(spoof)},
+ ].map(row=>JSON.stringify(row)+'\n').join(''));
+ await captureTranscript(readCaptureConfig()!,'antigravity',file);
+ await flushCaptures();
+ const events=f.batches.flatMap(batch=>batch.events);
+ expect(events.filter(event=>event.kind==='tool_result')).toHaveLength(3);
+ expect(events.find(event=>event.nativeId==='1').data).toMatchObject({output:'Showing binary file of type image/png',content:[{type:'opencrawl_attachment',status:'captured',mimeType:'image/png'}]});
+ expect(events.find(event=>event.nativeId==='2').data.content[0].status).toBe('captured');
+ expect(events.find(event=>event.nativeId==='3').data.content[0].status).toBe('captured');
+ expect([...f.attachments.values()].map(bytes=>bytes.toString()).sort()).toEqual(['native-generated-image','native-tool-image']);
+ expect(f.documents.some(item=>item.document.text?.includes('Showing binary file of type image/png'))).toBe(true);
+ expect(captureStatus().queued).toBe(0);
+}));
+
 test('compact-to-full capture, resume and retry keep one indexed copy of unchanged steps and searchable errors',async()=>fixture(async f=>{
  await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e',''],harnesses:['antigravity']});
  const config=readCaptureConfig()!;

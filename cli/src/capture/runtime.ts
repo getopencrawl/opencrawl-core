@@ -451,6 +451,9 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
                 }
               }
               if(parsed.kind==='message' || parsed.kind==='agent_message')blocks(parsed.data?.content);
+              // Antigravity's native GENERIC.media contains images actually returned
+              // by a tool. Its arbitrary output text and tool arguments stay opaque.
+              if(harness==='antigravity' && parsed.kind==='tool_result')blocks(parsed.data?.content);
               if(parsed.kind==='attachment' && parsed.data)localFiles.add(parsed.data);
               const eventAttachments:any[]=[],event=attachmentTransform(parsed,eventAttachments,meta.cwd??dirname(path),localFiles);
               const size=Buffer.byteLength(JSON.stringify(event))+Buffer.byteLength(JSON.stringify(eventAttachments));
