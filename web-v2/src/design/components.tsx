@@ -15,6 +15,9 @@ export interface ButtonProps extends Styled<ButtonHTMLAttributes<HTMLButtonEleme
 export function Button({variant = 'secondary', busy = false, className = '', disabled, children, type = 'button', ...props}: ButtonProps) {
   return <button {...props} type={type} disabled={disabled || busy} aria-busy={busy || props['aria-busy'] || undefined} className={`oc-button ${variant} ${className}`}>{busy && <Icon name="loader" className="oc-spin"/>}{children}</button>;
 }
+export function ScrollControl({direction = 'down', className = '', children, ...props}: Omit<ButtonProps, 'variant'> & {direction?: 'up' | 'down'}) {
+  return <Button {...props} className={`oc-scroll-control ${className}`}>{children}<Icon name="chevron-down" size={14} className={`oc-scroll-control-${direction}`}/></Button>;
+}
 export function LinkButton({variant = 'secondary', className = '', ...props}: Styled<LinkProps> & {variant?: ButtonVariant}) {
   return <Link {...props} className={`oc-button ${variant} ${className}`}/>;
 }
