@@ -8,7 +8,7 @@ const [inventoryFile,certificate,key,receipt]=process.argv.slice(2) as [string,s
 const inventory=JSON.parse(readFileSync(inventoryFile,'utf8')) as Record<string,{metadata:Record<string,unknown>;file:string;version:string}>;
 const requests:Array<{path:string;npm:boolean;event?:string}>=[];
 function record(path:string,event:string){requests.push({path,npm:false,event});writeFileSync(receipt,JSON.stringify(requests));}
-const registry=https.createServer({cert:readFileSync(certificate),key:readFileSync(key),maxVersion:'TLSv1.2'},(request,response)=>{
+const registry=https.createServer({cert:readFileSync(certificate),key:readFileSync(key)},(request,response)=>{
   const path=decodeURIComponent(request.url??'');
   requests.push({path,npm:(request.headers['user-agent']??'').startsWith('npm/')});
   writeFileSync(receipt,JSON.stringify(requests));
@@ -30,9 +30,11 @@ proxy.on('connect',(request,socket,head)=>{
     if(head.length)upstream.write(head);
     socket.pipe(upstream);upstream.pipe(socket);
   });
+  socket.once('data',data=>record(String(data.length),'client-hello-bytes'));
   upstream.on('error',error=>{record((error as NodeJS.ErrnoException).code??error.message,'upstream-error');socket.destroy();});
   socket.on('error',()=>upstream.destroy());socket.on('close',()=>upstream.destroy());
 });
 registry.on('tlsClientError',error=>record((error as NodeJS.ErrnoException).code??error.message,'tls-error'));
-proxy.listen(0,'127.0.0.1',()=>console.log(JSON.stringify({port:(proxy.address() as {port:number}).port})));
+registry.on('secureConnection',socket=>record(socket.getProtocol()??'unknown','tls-connected'));
+proxy.listen(0,'127.0.0.1',()=>console.log(JSON.stringify({port:(proxy.address() as {port:number}).port,registryPort:(registry.address() as {port:number}).port})));
 process.on('SIGTERM',()=>{writeFileSync(receipt,JSON.stringify(requests));process.exit(0);});
