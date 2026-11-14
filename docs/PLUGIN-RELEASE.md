@@ -21,4 +21,4 @@ GitHub publication is not directory publication or proof of hosted service
 readiness. See the public directory/authentication documents for the remaining
 platform and live verification requirements.
 
-The native Cursor plugin is `plugins/opencrawl-cursor`, selected by the Cursor marketplace manifest. Validate its explicit file allowlist and hooks alongside the portable bundle. The Cursor ZIP and checksum are separate artifacts. Cursor capture requires the released CLI and receiver support; publish those before plugin setup acceptance. Public repository export is distinct from Cursor Marketplace review.
+The native Cursor plugin is `plugins/opencrawl-cursor`, selected by the Cursor marketplace manifest. Validate its explicit file allowlist alongside the portable bundle. The Cursor ZIP and checksum are separate artifacts. Cursor capture requires the released CLI and receiver support; publish those before plugin setup acceptance. Public repository export is distinct from Cursor Marketplace review.

@@ -1,6 +1,6 @@
 import {CliError} from '../oauth.ts';
 import {grokBotEvents, GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
-import {existsSync, readFileSync, realpathSync, openSync, closeSync, readSync, fstatSync} from 'node:fs';
+import {realpathSync, openSync, closeSync, readSync, fstatSync} from 'node:fs';
 import {join, relative, sep, basename} from 'node:path';
 
 // Cursor and Grok Bot implement the same published hook payload format. Keep
@@ -48,12 +48,6 @@ export function cursorMessage(data:any) {
     return match?{...block,text:match[1]}:block;
   });
   return {...data,content};
-}
-export function cursorUserHookInstalled(root: string | undefined, event: string) {
-  if (!root || !existsSync(join(root, 'hooks.json'))) return false;
-  const hooks = JSON.parse(readFileSync(join(root, 'hooks.json'), 'utf8')).hooks;
-  return Array.isArray(hooks?.[event]) && hooks[event].some((entry: any) =>
-    typeof entry?.command === 'string' && /[\\/]capture[\\/]runner\.(?:sh|cmd)\b.* collect hook --harness cursor$/.test(entry.command));
 }
 export function cursorSession(event: any) {
   const sessionId = event?.conversation_id || event?.session_id;

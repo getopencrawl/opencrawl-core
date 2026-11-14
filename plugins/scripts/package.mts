@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export const cursorPluginFiles=['.cursor-plugin/plugin.json','LICENSE','README.md','assets/icon.png','commands/setup.md','hooks/hooks.json','mcp.json','rules/opencrawl.mdc','skills/opencrawl/SKILL.md'].sort();
+export const cursorPluginFiles=['.cursor-plugin/plugin.json','LICENSE','README.md','assets/icon.png','commands/setup.md','mcp.json','rules/opencrawl.mdc','skills/opencrawl/SKILL.md'].sort();
 export const files = ['.claude-plugin/plugin.json', '.mcp.json', 'LICENSE', 'README.md', 'assets/icon.png', 'mcp.json', 'plugin.json', 'skills/opencrawl/SKILL.md'].sort();
 export function crc32(bytes: Buffer) { let crc = 0xffffffff; for (const byte of bytes) {
     crc ^= byte;

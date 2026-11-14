@@ -3,7 +3,7 @@
 Search shared agent sessions and connected workspace sources through authenticated
 MCP, and capture new Cursor conversations with OpenCrawl's native CLI. Supports
 Cursor IDE and Cursor CLI hooks. The plugin bundles an always-on retrieval rule,
-a setup command, an OpenCrawl skill, MCP configuration, and passive capture hooks.
+a setup command, an OpenCrawl skill, and MCP configuration. Capture uses the CLI-managed user hooks.
 
 Install from the repository's `.cursor-plugin/marketplace.json`, or import the
 `opencrawl-cursor` folder in Cursor Customize. For local CLI validation use
@@ -12,8 +12,8 @@ Connect MCP with Cursor OAuth. Capture requires separate CLI sign-in and explici
 enrollment: `opencrawl collect install --yes --harness cursor --backfill skip`.
 The CLI preserves the existing installation and Claude Code/Codex capture.
 
-The plugin hooks do nothing before enrollment. When the CLI's user hooks are
-installed, plugin capture hooks defer to them. Prompts, replies, reasoning, tool
+The plugin does not install its own capture hooks. Its setup command enrolls
+the CLI-managed user hooks, keeping one capture path per conversation. Prompts, replies, reasoning, tool
 calls/results, inline images, and compaction metadata use the same durable spool,
 redaction, attachments, access controls, exclusions, and retry path as other
 clients. Native Cursor conversation IDs remain stable across turns and days.

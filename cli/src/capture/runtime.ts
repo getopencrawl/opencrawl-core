@@ -560,9 +560,16 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
         const meta={harness:'cursor',sessionId:session.sessionId,cwd:session.cwd,origin:state.origin??session.origin,originEvidence:session.originEvidence,parentSessionId:session.parentSessionId,captureMode:'live',harnessVersion:session.version};
         if(captureExcluded(readCaptureConfig()??config,meta)){unlinkSync(path);continue;}
         const messages=(event:any,source:'hooks'|'transcript')=>{
-          if(event.kind!=='message')return event;
-          event.data=cursorMessage(event.data);
-          const key=hash(JSON.stringify([event.data.role,event.data.content]));
+          let signature;
+          if(event.kind==='message') {
+            event.data=cursorMessage(event.data);signature=[event.data.role,event.data.content];
+          } else if(event.kind==='reasoning_summary'&&Array.isArray(event.data?.summary)) {
+            // Cursor also writes thought text as an ordinary assistant transcript
+            // message. Keep its explicit thought hook, not a second visible reply.
+            const text=event.data.summary.map((block:any)=>block.text??'').join('');
+            signature=['assistant',[{type:'text',text}]];
+          } else return event;
+          const key=hash(JSON.stringify(signature));
           const count=(state[source][key]??0)+1;state[source][key]=count;
           if(count<=(state.emitted[key]??0))return null;
           state.emitted[key]=count;return event;

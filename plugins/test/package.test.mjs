@@ -39,8 +39,8 @@ test('Cursor package rejects unexpected files, credential transports and blockin
   await cp(root+'/.cursor-plugin',temp+'/.cursor-plugin',{recursive:true});
   await cp(root+'/LICENSE',temp+'/LICENSE');
   assert.equal(await validateCursor(temp),'0.1.0');
-  const hooks=temp+'/opencrawl-cursor/hooks/hooks.json',before=await readFile(hooks,'utf8');
-  await writeFile(hooks,JSON.stringify({hooks:{preToolUse:[{command:'deny'}]}}));await assert.rejects(validateCursor(temp));await writeFile(hooks,before);
+  const manifestPath=temp+'/opencrawl-cursor/.cursor-plugin/plugin.json',manifest=JSON.parse(await readFile(manifestPath,'utf8'));
+  await writeFile(manifestPath,JSON.stringify({...manifest,hooks:{preToolUse:[{command:'deny'}]}}));await assert.rejects(validateCursor(temp));await writeFile(manifestPath,JSON.stringify(manifest));
   const mcp=temp+'/opencrawl-cursor/mcp.json',original=await readFile(mcp,'utf8');
   await writeFile(mcp,JSON.stringify({mcpServers:{opencrawl:{url:'https://app.getopencrawl.com/mcp',headers:{Authorization:'forbidden'}}}}));await assert.rejects(validateCursor(temp));await writeFile(mcp,original);
   await writeFile(temp+'/opencrawl-cursor/.env','SECRET=never-package');await assert.rejects(validateCursor(temp),/Unexpected Cursor/);

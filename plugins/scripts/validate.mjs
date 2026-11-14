@@ -23,7 +23,7 @@ export function validateManifests(portable, claude, mcp, claudeMcp) {
   }
   for (const key of ['hooks', 'apps']) assert.equal(portable.extensions['com.openai'][key], undefined);
 }
-export const cursorPluginFiles = ['.cursor-plugin/plugin.json','LICENSE','README.md','assets/icon.png','commands/setup.md','hooks/hooks.json','mcp.json','rules/opencrawl.mdc','skills/opencrawl/SKILL.md'].sort();
+export const cursorPluginFiles = ['.cursor-plugin/plugin.json','LICENSE','README.md','assets/icon.png','commands/setup.md','mcp.json','rules/opencrawl.mdc','skills/opencrawl/SKILL.md'].sort();
 export async function validateCursor(directory = root) {
   const base=resolve(directory,'opencrawl-cursor'), files=[];
   async function walk(path='') {
@@ -39,10 +39,7 @@ export async function validateCursor(directory = root) {
   const manifest=await read('.cursor-plugin/plugin.json');
   assert.equal(manifest.name,'opencrawl');assert.equal(manifest.license,'MIT');assert.match(manifest.version,/^\d+\.\d+\.\d+$/);
   assert.deepEqual(await read('mcp.json'),{mcpServers:{opencrawl:{url:endpoint}}});
-  const hookConfig=await read('hooks/hooks.json');assert.equal(hookConfig.version,1);
-  const hooks=hookConfig.hooks;
-  assert.deepEqual(Object.keys(hooks).sort(),['sessionStart','sessionEnd','beforeSubmitPrompt','afterAgentResponse','afterAgentThought','postToolUse','postToolUseFailure','preCompact','stop'].sort());
-  for(const entries of Object.values(hooks))assert.deepEqual(entries,[{command:'opencrawl collect hook --harness cursor --plugin-hook',timeout:30}]);
+  assert.equal(manifest.hooks,undefined,'Capture belongs to CLI-managed user hooks');
   const marketplace=JSON.parse(await readFile(resolve(directory,'.cursor-plugin/marketplace.json'),'utf8'));
   assert.equal(marketplace.plugins.length,1);assert.equal(marketplace.plugins[0].source,'./opencrawl-cursor');assert.equal(marketplace.plugins[0].version,manifest.version);
   assert.equal(await readFile(resolve(base,'LICENSE'),'utf8'),await readFile(resolve(directory,'LICENSE'),'utf8'));

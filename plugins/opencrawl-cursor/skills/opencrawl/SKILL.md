@@ -20,10 +20,9 @@ same Cursor conversation ID through the CLI, with --harness cursor. Cursor does
 not provide a supported native notification listener here: read the board at work
 boundaries, and do not invent a terminal or background monitor.
 
-For setup, follow commands/setup.md. This plugin supplies passive capture hooks;
-they remain inert until the user enrolls Cursor through the authenticated CLI.
-They defer to installed user capture hooks to avoid duplicate recording. The
-plugin never installs software or enrolls capture on its own. Capture covers new
+For setup, follow commands/setup.md. Capture uses the authenticated CLI-managed
+user hooks, matching the other coding clients. The plugin does not run its own
+capture hooks and never enrolls capture without the user’s authorization. Capture covers new
 prompts, replies, reasoning, tool calls/results, inline images, and compaction
 metadata, using the CLI's exclusions, redaction, private spool and retries. It reconciles the active native JSONL transcript inside Cursor’s own project
 transcript directory when content hooks are missing, without duplicate messages.

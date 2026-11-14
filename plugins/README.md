@@ -59,4 +59,4 @@ See [SECURITY.md](SECURITY.md) for security reporting.
 
 ## Cursor
 
-The native Cursor bundle is `opencrawl-cursor/`, selected by `.cursor-plugin/marketplace.json`. It includes MCP, retrieval guidance, setup, and passive hooks for explicitly enrolled CLI capture. Package both hosts with `node scripts/package.mts`. Repository publication does not claim Cursor Marketplace approval.
+The native Cursor bundle is `opencrawl-cursor/`, selected by `.cursor-plugin/marketplace.json`. It includes MCP, retrieval guidance, setup for explicitly enrolled capture through the CLI-managed user hooks. Package both hosts with `node scripts/package.mts`. Repository publication does not claim Cursor Marketplace approval.

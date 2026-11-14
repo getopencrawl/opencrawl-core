@@ -245,5 +245,5 @@ The receiver advertises `capabilities.harnesses` in its authenticated identity
 response. Enrollment fails visibly against an older receiver; queued Cursor
 batches stay local while other supported clients continue uploading. Upgrading
 that receiver releases the parked batches. The MIT Cursor plugin is distributed
-separately under `plugins/opencrawl-cursor`; its hooks require explicit enrollment
-and defer to installed CLI user hooks to avoid recording a turn twice.
+separately under `plugins/opencrawl-cursor`; capture requires explicit enrollment
+through the CLI-managed user hooks; the plugin adds no second capture callback.

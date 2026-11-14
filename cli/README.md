@@ -402,8 +402,8 @@ Read results contain metadata rather than file bytes. Origin stays unknown witho
 
 The MIT Cursor plugin lives in `plugins/opencrawl-cursor` in the public
 `getopencrawl/opencrawl-plugins` repository. It bundles MCP, a retrieval rule,
-setup guidance, and passive hooks that require explicit CLI capture enrollment.
-Plugin hooks defer to installed user hooks to avoid duplicates. Cursor MCP uses
+setup guidance. Capture requires explicit CLI enrollment and uses its managed
+user hooks; the plugin does not install a second set of capture callbacks. Cursor MCP uses
 its own OAuth grant. Verify a fresh stored receipt and search/fetch a unique new
 message filtered to harness=cursor; installation alone does not prove capture.
 Cursor has no supported native board push listener here; read at work boundaries.

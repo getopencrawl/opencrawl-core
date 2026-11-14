@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
 import {hash} from '../src/capture/parse.ts';
-import {cursorSession,cursorEvents,cursorUserHookInstalled,cursorTranscript} from '../src/capture/cursor.ts';
+import {cursorSession,cursorEvents,cursorTranscript} from '../src/capture/cursor.ts';
 import {installCapture,uninstallCapture} from '../src/capture/install.ts';
 import {captureHook,captureDir,captureStatus,readCaptureConfig,drainCaptureNotices,hookFlush} from '../src/capture/runtime.ts';
 import {excludeCapture} from '../src/capture/controls.ts';
@@ -58,10 +58,6 @@ test('Cursor install preserves other clients and foreign hooks, remains idempote
  const first=await f.install();expect(first.installationId).toBe(id);expect(first.harnesses).toEqual(['codex','claude-code','cursor']);
  await f.install();const file=join(f.dir,'.cursor/hooks.json'),config=JSON.parse(readFileSync(file,'utf8'));
  expect(config.hooks.postToolUse).toHaveLength(2);expect(config.hooks.postToolUse[0]).toEqual(other);expect(config.hooks.preToolUse).toEqual([other]);
- expect(cursorUserHookInstalled(join(f.dir,'.cursor'),'postToolUse')).toBe(true);
- expect(cursorUserHookInstalled(join(f.dir,'.cursor'),'unknown')).toBe(false);
- const child=Bun.spawn([process.execPath,join(import.meta.dir,'../src/cli.ts'),'collect','hook','--harness','cursor','--plugin-hook'],{env:process.env,stdin:Buffer.from(JSON.stringify(hook('beforeSubmitPrompt',{prompt:'must not duplicate'}))),stdout:'pipe',stderr:'pipe'});
- expect(await child.exited).toBe(0);expect(await new Response(child.stdout).text()).toBe('{\"continue\":true}\n');expect(captureStatus().pendingHooks).toBe(0);
  const before=readFileSync(file,'utf8');
  await expect(installCapture(f.api,{home:f.dir,harnesses:['grok-bot']})).rejects.toThrow('share a hooks directory');expect(readFileSync(file,'utf8')).toBe(before);
  await uninstallCapture(f.dir);expect(JSON.parse(readFileSync(file,'utf8')).hooks).toEqual({postToolUse:[other],preToolUse:[other]});
@@ -95,8 +91,8 @@ test('Cursor startup uses native hook shape, preserves capture hooks and registe
 test('native Cursor JSONL fills missing content hooks, deduplicates hooks and transcript, and checkpoints partial records and notice replay',async()=>fixture(async f=>{
  await f.install();const root=readCaptureConfig()!.roots.cursor!,directory=join(root,'projects','workspace','agent-transcripts',base.conversation_id),file=join(directory,base.conversation_id+'.jsonl');mkdirSync(directory,{recursive:true});
  const message=(role:string,text:string)=>JSON.stringify({role,message:{content:[{type:'text',text}]}})+'\n';
- writeFileSync(file,message('user','<timestamp>Friday, Nov 13, 2026, 6:20 PM (UTC-8)</timestamp>\n<user_query>\nNative harbor prompt\n</user_query>'));
- await captureHook('cursor',hook('sessionStart'));await captureHook('cursor',hook('beforeSubmitPrompt',{prompt:'Native harbor prompt'}));
+ writeFileSync(file,message('user','<timestamp>Friday, Nov 13, 2026, 6:20 PM (UTC-8)</timestamp>\n<user_query>\nNative harbor prompt\n</user_query>')+message('assistant','A native thought.'));
+ await captureHook('cursor',hook('sessionStart'));await captureHook('cursor',hook('beforeSubmitPrompt',{prompt:'Native harbor prompt'}));await captureHook('cursor',hook('afterAgentThought',{text:'A native thought.'}));
  await captureHook('cursor',hook('postToolUse',{transcript_path:file,tool_name:'Read',tool_use_id:'read-1',tool_input:{file_path:'acceptance.txt'},tool_output:{content_length:9}}));
  await drainCaptureNotices();
  const reply=message('assistant','Native harbor reply');appendFileSync(file,reply.slice(0,-1));
