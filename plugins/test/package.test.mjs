@@ -38,7 +38,7 @@ test('Cursor package rejects unexpected files, credential transports and blockin
   await cp(root+'/opencrawl-cursor',temp+'/opencrawl-cursor',{recursive:true});
   await cp(root+'/.cursor-plugin',temp+'/.cursor-plugin',{recursive:true});
   await cp(root+'/LICENSE',temp+'/LICENSE');
-  assert.equal(await validateCursor(temp),'0.1.0');
+  assert.equal(await validateCursor(temp),'0.1.1');
   const manifestPath=temp+'/opencrawl-cursor/.cursor-plugin/plugin.json',manifest=JSON.parse(await readFile(manifestPath,'utf8'));
   await writeFile(manifestPath,JSON.stringify({...manifest,hooks:{preToolUse:[{command:'deny'}]}}));await assert.rejects(validateCursor(temp));await writeFile(manifestPath,JSON.stringify(manifest));
   const mcp=temp+'/opencrawl-cursor/mcp.json',original=await readFile(mcp,'utf8');
