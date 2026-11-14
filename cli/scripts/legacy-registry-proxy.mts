@@ -30,11 +30,9 @@ proxy.on('connect',(request,socket,head)=>{
     if(head.length)upstream.write(head);
     socket.pipe(upstream);upstream.pipe(socket);
   });
-  socket.once('data',data=>record(String(data.length),'client-hello-bytes'));
   upstream.on('error',error=>{record((error as NodeJS.ErrnoException).code??error.message,'upstream-error');socket.destroy();});
   socket.on('error',()=>upstream.destroy());socket.on('close',()=>upstream.destroy());
 });
 registry.on('tlsClientError',error=>record((error as NodeJS.ErrnoException).code??error.message,'tls-error'));
-registry.on('secureConnection',socket=>record(socket.getProtocol()??'unknown','tls-connected'));
-proxy.listen(0,'127.0.0.1',()=>console.log(JSON.stringify({port:(proxy.address() as {port:number}).port,registryPort:(registry.address() as {port:number}).port})));
+proxy.listen(0,'127.0.0.1',()=>console.log(JSON.stringify({port:(proxy.address() as {port:number}).port})));
 process.on('SIGTERM',()=>{writeFileSync(receipt,JSON.stringify(requests));process.exit(0);});

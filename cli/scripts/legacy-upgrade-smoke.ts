@@ -59,32 +59,24 @@ async function verify(){try{
       const file=join(scratch,pack.filename),bytes=readFileSync(file);
       inventory[pkg.name]={file,version:pkg.version,metadata:{...pkg,dist:{tarball:`https://registry.npmjs.org/${pkg.name}/candidate.tgz`,integrity:'sha512-'+createHash('sha512').update(bytes).digest('base64')}}};
     }
-    const inventoryFile=join(scratch,'inventory.json'),cert=join(scratch,'ca.pem'),caKey=join(scratch,'ca-key.pem'),leaf=join(scratch,'server.pem'),csr=join(scratch,'server.csr'),key=join(scratch,'key.pem'),extensions=join(scratch,'server.ext');
+    const inventoryFile=join(scratch,'inventory.json'),cert=join(scratch,'ca.pem'),caKey=join(scratch,'ca-key.pem'),leaf=join(scratch,'server.pem'),csr=join(scratch,'server.csr'),key=join(scratch,'key.pem'),extensions=join(scratch,'server.ext'),caConfig=join(scratch,'ca.cnf');
     writeFileSync(inventoryFile,JSON.stringify(inventory));
     const openssl=Bun.which('openssl')??'C:\\Program Files\\Git\\usr\\bin\\openssl.exe';
-    sync([openssl,'req','-x509','-newkey','rsa:2048','-sha256','-nodes','-days','1','-subj','/CN=OpenCrawl disposable test CA','-addext','basicConstraints=critical,CA:TRUE','-addext','keyUsage=critical,keyCertSign,cRLSign','-keyout',caKey,'-out',cert]);
-    sync([openssl,'req','-new','-newkey','rsa:2048','-sha256','-nodes','-subj','/CN=registry.npmjs.org','-keyout',key,'-out',csr]);
-    writeFileSync(extensions,'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:registry.npmjs.org,IP:127.0.0.1\n');
+    // Own the configuration: OpenSSL 1.1.1 otherwise appends -addext to its
+    // host's default CA extensions, producing duplicate, invalid constraints.
+    writeFileSync(caConfig,'[req]\ndistinguished_name=dn\nx509_extensions=ca\n[dn]\n[ca]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\n');
+    sync([openssl,'req','-x509','-config',caConfig,'-newkey','rsa:2048','-sha256','-nodes','-days','1','-subj','/CN=OpenCrawl disposable test CA','-keyout',caKey,'-out',cert]);
+    sync([openssl,'req','-new','-config',caConfig,'-newkey','rsa:2048','-sha256','-nodes','-subj','/CN=registry.npmjs.org','-keyout',key,'-out',csr]);
+    writeFileSync(extensions,'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\nsubjectAltName=DNS:registry.npmjs.org,IP:127.0.0.1\n');
     sync([openssl,'x509','-req','-in',csr,'-CA',cert,'-CAkey',caKey,'-CAcreateserial','-days','1','-sha256','-extfile',extensions,'-out',leaf]);
-    try{sync([openssl,'verify','-CAfile',cert,leaf]);}catch(error){
-      console.error(sync([openssl,'version']));
-      for(const file of [cert,leaf])console.error(sync([openssl,'x509','-in',file,'-noout','-text']));
-      throw error;
-    }
+    sync([openssl,'verify','-CAfile',cert,leaf]);
     proxy=Bun.spawn([node,join(root,'scripts/legacy-registry-proxy.mts'),inventoryFile,leaf,key,join(scratch,'proxy-receipt.json')],{stdout:'pipe',stderr:'inherit'});
     const reader=(proxy.stdout as ReadableStream<Uint8Array>).getReader(),first=await reader.read();reader.releaseLock();
-    const {port,registryPort}=JSON.parse(new TextDecoder().decode(first.value));
-    Object.assign(environment,{HTTPS_PROXY:`http://127.0.0.1:${port}`,https_proxy:`http://127.0.0.1:${port}`,NODE_EXTRA_CA_CERTS:cert,SSL_CERT_FILE:cert,NO_PROXY:'127.0.0.1,localhost',no_proxy:'127.0.0.1,localhost'});
+    const {port}=JSON.parse(new TextDecoder().decode(first.value));
+    Object.assign(environment,{HTTPS_PROXY:`http://127.0.0.1:${port}`,https_proxy:`http://127.0.0.1:${port}`,NODE_EXTRA_CA_CERTS:cert,NO_PROXY:'127.0.0.1,localhost',no_proxy:'127.0.0.1,localhost'});
     // Fail with the transport error itself, before the published updater's
     // intentional best-effort error handling turns it into a later timeout.
-    try{
-      await run([process.execPath,'-e',`const response=await fetch('https://registry.npmjs.org/@getopencrawl%2fcli/next',{redirect:'error',signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('Fixture registry status '+response.status);console.log((await response.json()).version);`],environment).then(actual=>assert.equal(actual,expected));
-    }catch(error){
-      console.error(sync([openssl,'verify','-CAfile',cert,leaf]));
-      const probe=`import {readFileSync} from 'node:fs';import https from 'node:https';import {X509Certificate} from 'node:crypto';const ca=readFileSync(process.env.NODE_EXTRA_CA_CERTS);const certificate=new X509Certificate(ca);console.log(JSON.stringify({runtime:process.versions.bun?'bun':'node',caFingerprint:certificate.fingerprint256,validFrom:certificate.validFrom,validTo:certificate.validTo}));for(const [name,url] of [['direct-fixture','https://127.0.0.1:${registryPort}/@getopencrawl%2fcli/next'],['public-registry','https://registry.npmjs.org/@getopencrawl%2fcli/next']]){try{const r=await fetch(url,{proxy:false,signal:AbortSignal.timeout(10000)});console.log(JSON.stringify({name,status:r.status}));}catch(e){console.log(JSON.stringify({name,code:e.code,cause:e.cause?.code,message:e.message}));}}await new Promise(resolve=>{https.get('https://127.0.0.1:${registryPort}/@getopencrawl%2fcli/next',{ca},response=>{console.log(JSON.stringify({name:'explicit-ca',status:response.statusCode}));response.resume();response.on('end',resolve);}).on('error',error=>{console.log(JSON.stringify({name:'explicit-ca',code:error.code}));resolve();});});`;
-      for(const executable of [process.execPath,node])console.error(await run([executable,'--input-type=module','-e',probe],environment));
-      throw error;
-    }
+    await run([process.execPath,'-e',`const response=await fetch('https://registry.npmjs.org/@getopencrawl%2fcli/next',{redirect:'error',signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('Fixture registry status '+response.status);console.log((await response.json()).version);`],environment).then(actual=>assert.equal(actual,expected));
   }
   if(transportOnly){console.log('Candidate registry TLS transport verified.');return;}
 
