@@ -40,7 +40,7 @@ function managedStartup(file: string) {
   return null;
 }
 
-/** Own only our synchronous SessionStart entry. Never enable disabled hooks. */
+/** Own only our startup/context entries. Never enable disabled hooks. */
 export function startupHooks(clients: string[], action: 'status' | 'install', {home = homedir(), env = process.env, command = commandForSelf(), requirementsFile = process.platform === 'win32' ? join(process.env.ProgramData || 'C:\\ProgramData', 'OpenAI', 'Codex', 'requirements.toml') : '/etc/codex/requirements.toml'}: StartupOptions = {}) {
   return clients.filter(client => ['codex', 'claude-code', 'cursor'].includes(client)).map(client => {
     const root = client === 'codex' ? env.CODEX_HOME || join(home, '.codex') : client === 'cursor' ? env.CURSOR_CONFIG_DIR || join(home, '.cursor') : env.CLAUDE_CONFIG_DIR || join(home, '.claude');
@@ -70,14 +70,17 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
       for (const [event, groups] of Object.entries(hooks)) {
         if (!Array.isArray(groups)) throw new Error();
         hooks[event] = groups.flatMap(group => {
-          if(cursor)return typeof group?.command==='string'&&/[\\/]startup[\\/]runner\.(?:sh|cmd)\b.* session start --harness cursor$/.test(group.command)?[]:[group];
+          if(cursor)return typeof group?.command==='string'&&/[\\/]startup[\\/]runner\.(?:sh|cmd)\b.* session start --harness cursor(?: --after-tool)?$/.test(group.command)?[]:[group];
           if (!Array.isArray(group?.hooks)) throw new Error();
           const remaining = group.hooks.filter((entry: any) => entry?.statusMessage !== startupMarker);
           return remaining.length ? [{...group, hooks: remaining}] : [];
         });
         if (!hooks[event].length) delete hooks[event];
       }
-      if(cursor)(hooks.sessionStart ??= []).push({command:cursorCommand+' session start --harness cursor',timeout:7});
+      if(cursor) {
+        (hooks.sessionStart ??= []).push({command:cursorCommand+' session start --harness cursor',timeout:7});
+        (hooks.postToolUse ??= []).push({command:cursorCommand+' session start --harness cursor --after-tool',timeout:7});
+      }
       else (hooks.SessionStart ??= []).push({hooks: [hook]});
       const current = JSON.stringify(config.hooks) === JSON.stringify(hooks) && existsSync(runner.file) && readFileSync(runner.file,'utf8')===runner.script;
       if (action === 'status') return {client, file, status: current ? 'current' : before ? 'outdated' : 'missing'};

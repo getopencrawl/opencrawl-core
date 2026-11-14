@@ -101,9 +101,13 @@ test('desktop model and turn thought aliases pair across durable drains without 
  // No observed generation relationship means no speculative deduplication.
  await emit({...model,generation_id:'unrelated-generation'});await emit({...turn,generation_id:null});
  await emit(hook('afterAgentResponse',{generation_id:'next-generation',text:'Desktop resumed reply'}));
+ // Native board notifications start a new turn without beforeSubmitPrompt.
+ const notification='37347a24-d60c-425b-abbd-24423a667604';
+ await emit({...model,generation_id:notification+'-0-pyaf'});
+ await emit({...turn,generation_id:notification});
  await hookFlush(hook('stop'));
  const events=f.batches.flatMap((b:any)=>b.events).sort((a:any,b:any)=>a.sequence-b.sequence);
- expect(events.filter((e:any)=>e.kind==='reasoning_summary')).toHaveLength(5);
+ expect(events.filter((e:any)=>e.kind==='reasoning_summary')).toHaveLength(6);
  expect(events.filter((e:any)=>e.kind==='message').map((e:any)=>e.data.content[0].text)).toEqual(['Desktop first turn','Desktop first reply','Desktop resumed turn','Desktop resumed reply']);
  expect(captureStatus().pendingHooks).toBe(0);
 }));
@@ -111,7 +115,7 @@ test('desktop model and turn thought aliases pair across durable drains without 
 test('Cursor startup uses native hook shape, preserves capture hooks and registers its conversation',async()=>fixture(async f=>{
  await f.install();const options={home:f.dir,env:process.env,command:[process.execPath,'-e','']};
  expect(startupHooks(['cursor'],'install',options)[0].status).toBe('installed');expect(startupHooks(['cursor'],'install',options)[0].status).toBe('unchanged');
- const config=JSON.parse(readFileSync(join(f.dir,'.cursor/hooks.json'),'utf8'));expect(config.hooks.sessionStart).toHaveLength(2);
+ const config=JSON.parse(readFileSync(join(f.dir,'.cursor/hooks.json'),'utf8'));expect(config.hooks.sessionStart).toHaveLength(2);expect(config.hooks.postToolUse).toHaveLength(2);expect(config.hooks.postToolUse.some((entry:any)=>entry.command.endsWith('session start --harness cursor --after-tool'))).toBe(true);
  let registered:any;const output=await sessionStart(f.api,'cursor',hook('sessionStart',{session_id:base.conversation_id}),async(_api,_operation,args)=>{registered=args;return {session:base.conversation_id,workspace:f.owner.tenantId,agent:'a'.repeat(64),name:null,task:null};});
  expect(registered).toEqual({session:base.conversation_id,harness:'cursor'});expect(output.additional_context).toContain('registered');
  expect((await sessionStart(f.api,'cursor',hook('stop'))).additional_context).toContain('unavailable');

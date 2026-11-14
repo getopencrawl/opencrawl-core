@@ -3,7 +3,7 @@ import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync,
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {PassThrough} from 'node:stream';
-import {readStartEvent, sessionStart} from '../src/session-start.ts';
+import {readStartEvent, sessionStart, cursorToolContext} from '../src/session-start.ts';
 import {startupHooks, startupMarker} from '../src/startup-install.ts';
 import {boardStateFile, saveBoardRegistration, boardRequest} from '../src/board.ts';
 import {sessionFile} from '../src/session.ts';
@@ -15,6 +15,31 @@ async function fixture(run: (home: string) => Promise<void> | void) {
 }
 const event={hook_event_name:'SessionStart',session_id:'native-123',source:'startup'};
 const registration={workspace:'test',agent:'a'.repeat(64),session:'native-123',name:null,task:null};
+
+test('Cursor supplies native identity after a tool once per turn, including resumed turns',()=>fixture(async()=>{
+  let calls=0;
+  const request:typeof boardRequest=async(_api,operation,input)=>{
+    calls++;expect(operation).toBe('bootstrap');expect(input.session).toBe('native-123');
+    return registration;
+  };
+  const hook={hook_event_name:'postToolUse',conversation_id:'native-123',generation_id:'turn-one',tool_output:'not persisted'};
+  const first=await cursorToolContext('https://cursor-test.example',hook,request);
+  expect(first.additional_context).toContain('Session handle: native-123');
+  expect(await cursorToolContext('https://cursor-test.example',hook,request)).toEqual({});
+  expect((await cursorToolContext('https://cursor-test.example',{...hook,generation_id:'turn-two'},request)).additional_context).toContain('registered with');
+  expect(calls).toBe(2);
+  for(const invalid of [{...hook,conversation_id:'invalid\nsecret'},{...hook,hook_event_name:'preToolUse'},{...hook,generation_id:'bad/id'}])
+    expect(await cursorToolContext('https://cursor-test.example',invalid,request)).toEqual({});
+  expect(calls).toBe(2);
+}));
+
+test('Cursor concurrent first tools emit only one startup receipt',()=>fixture(async()=>{
+  let calls=0;
+  const request:typeof boardRequest=async()=>{calls++;await new Promise(resolve=>setTimeout(resolve,20));return registration;};
+  const hook={hook_event_name:'postToolUse',session_id:'native-123',generation_id:'turn-one'};
+  const outputs=await Promise.all([cursorToolContext('https://cursor-test.example',hook,request),cursorToolContext('https://cursor-test.example',hook,request)]);
+  expect(outputs.filter(output=>output.additional_context)).toHaveLength(1);expect(calls).toBe(1);
+}));
 
 test('native input is bounded and completes without waiting for stdin to close',async()=>{
   const input=new PassThrough(), result=readStartEvent(input,100);
