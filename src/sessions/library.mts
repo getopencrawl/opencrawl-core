@@ -327,7 +327,8 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
       if (participant) {
         const matches: QueryBody[] = [{term: {[f('participantId')]: participant}}];
         const owner = participant.startsWith('user:') ? participant.slice(5) : null;
-        if (owner && !owner.startsWith('workload_replicas_')) matches.push({bool: {filter: [{term: {[f('userId')]: owner}}], must_not: [{exists: {field: f('participantVersion')}}]}});
+        const personalOwner = owner && !owner.startsWith('workload_replicas_') ? owner : null;
+        if (personalOwner) matches.push({term: {[f('userId')]: personalOwner}});
         // Select sessions by sender, then summarize the whole conversation.
         // The search words may have been written by another participant.
         type Match = {key: string[]; lastActivity: {value: number | null}};
@@ -339,20 +340,28 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
             ...['userId','harness','sessionId'].slice(0, index).map((prefix, i) => ({term: {[f(prefix)]: cursor![i]}})), {range: {[f(field)]: {gt: cursor![index]}}},
           ]}}))}}] : [];
           const candidates = await collection.search(principal, {size: 0, query: {bool: {filter: [...filter, ...after, {bool: {should: matches, minimum_should_match: 1}}]}},
-            aggs: {sessions: {multi_terms: {terms: fields, size: 200, order: {_key: 'asc'}}}}});
-          const keys = candidates.aggregations?.sessions?.buckets as unknown as Array<{key: string[]}>;
-          if (!Array.isArray(keys)) throw new Error('Invalid participant matches');
-          if (!keys.length) break;
-          const matchFilter = filter.map((value, index) => index === 1 ? listed([...CONVERSATION, ...TITLE_KINDS]) : value);
-          const matched = await collection.search(principal, {size: 0, query: {bool: {filter: [...matchFilter, restrict(keys)], ...(query.trim() ? {must: [{match: {text: {query: query.trim(), operator: 'and'}}}]} : {})}},
-            aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {lastActivity: {max: {field: 'timestamp'}}}}}});
-          const values = matched.aggregations?.sessions?.buckets as unknown as Match[];
-          if (!Array.isArray(values)) throw new Error('Invalid participant matches');
-          selected = [...selected, ...values].sort((a,b) => (b.lastActivity.value ?? 0) - (a.lastActivity.value ?? 0) || JSON.stringify(a.key).localeCompare(JSON.stringify(b.key))).slice(0, limit as number);
-          const next = keys.at(-1)!.key;
+            aggs: {sessions: {multi_terms: {terms: fields, size: 200, order: {_key: 'asc'}}, aggs: {
+              matching: {filter: {term: {[f('participantId')]: participant}}}, known: {filter: {exists: {field: f('participantId')}}}, unknown: {filter: {term: {[f('participantUnknown')]: true}}},
+            }}}});
+          type Candidate = {key: string[]; matching: {doc_count: number}; known: {doc_count: number}; unknown: {doc_count: number}};
+          const candidatesPage = candidates.aggregations?.sessions?.buckets as unknown as Candidate[];
+          if (!Array.isArray(candidatesPage)) throw new Error('Invalid participant matches');
+          if (!candidatesPage.length) break;
+          // Match the summary's personal-owner fallback for incomplete captures,
+          // but never promote an uploader over recorded or unknown senders.
+          const keys = candidatesPage.filter(bucket => bucket.matching.doc_count > 0 || bucket.key[0] === personalOwner && bucket.known.doc_count === 0 && bucket.unknown.doc_count === 0);
+          if (keys.length) {
+            const matchFilter = filter.map((value, index) => index === 1 ? listed([...CONVERSATION, ...TITLE_KINDS]) : value);
+            const matched = await collection.search(principal, {size: 0, query: {bool: {filter: [...matchFilter, restrict(keys)], ...(query.trim() ? {must: [{match: {text: {query: query.trim(), operator: 'and'}}}]} : {})}},
+              aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {lastActivity: {max: {field: 'timestamp'}}}}}});
+            const values = matched.aggregations?.sessions?.buckets as unknown as Match[];
+            if (!Array.isArray(values)) throw new Error('Invalid participant matches');
+            selected = [...selected, ...values].sort((a,b) => (b.lastActivity.value ?? 0) - (a.lastActivity.value ?? 0) || JSON.stringify(a.key).localeCompare(JSON.stringify(b.key))).slice(0, limit as number);
+          }
+          const next = candidatesPage.at(-1)!.key;
           if (JSON.stringify(next) === JSON.stringify(cursor)) throw new Error('Non-advancing participant cursor');
           cursor = next;
-          if (keys.length < 200) break;
+          if (candidatesPage.length < 200) break;
         }
         if (!selected.length) return {sessions: [], limit};
         filter.push(restrict(selected));
