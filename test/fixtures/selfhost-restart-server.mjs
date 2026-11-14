@@ -20,5 +20,8 @@ const settings={organizationId:'org_restarttest',url:origin,authOrigin:origin+'/
 const identity=await createLocalIdentity({url:origin,secret:config.secret,databasePath:settings.identityPath,organizationId:settings.organizationId});
 await identity.ready();
 app=selfhostApplication({settings,identity,store:createLocalSessionStore(config.dir),prefix:'sessions/restart/v1',...(config.browser?{}:{readAsset:async()=>''})});
-process.on('SIGTERM',()=>server.close(()=>{identity.close();process.exit(0);}));
+process.on('SIGTERM',()=>{
+  server.close(()=>{identity.close();process.exit(0);});
+  server.closeAllConnections();
+});
 process.send({port:server.address().port,pid:process.pid});
