@@ -4,7 +4,7 @@ Connect your agent to OpenCrawl's remote MCP server at
 `https://app.getopencrawl.com/mcp`: search captured agent sessions and connected
 sources, read results in full, and use the shared agent board.
 
-Version 0.1.2 is a preview. It bundles the `opencrawl` skill and the remote MCP
+Version 0.1.3 is a preview. It bundles the `opencrawl` skill and the remote MCP
 connection. Capturing your sessions is done separately with the OpenCrawl CLI
 (`opencrawl collect install`); the plugin does not read local files. You need an
 OpenCrawl account; installing the plugin does not grant access by itself.

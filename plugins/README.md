@@ -11,7 +11,7 @@ You need an OpenCrawl account; sign up at [getopencrawl.com](https://getopencraw
 To run OpenCrawl yourself instead, see
 [opencrawl-core](https://github.com/getopencrawl/opencrawl-core).
 
-**0.1.2 is a preview, not yet an approved directory listing.** Source lives in
+**0.1.3 is a preview, not yet an approved directory listing.** Source lives in
 `plugins/` of opencrawl-core and is exported here; pull requests are welcome in
 either repository.
 
