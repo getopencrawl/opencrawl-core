@@ -103,6 +103,10 @@ export function transcriptEntries(event: SessionEvent): TranscriptEntry[] {
   } else if (event.kind === 'tool_call') {
     entries.push({type: 'tool_call', name: String(data.name ?? data.type ?? 'tool'), ...((c => ({input: c.text, truncated: c.truncated}))(clip(stringify(data.arguments ?? data.input ?? data.action ?? ''))))});
   } else if (event.kind === 'tool_result') entries.push({type: 'tool_result', ...clip(stringify(data.output ?? data.content ?? ''))});
+  else if (event.kind === 'error') {
+    const text=[...new Set([data.content,data.error].filter((value):value is string=>typeof value==='string'&&Boolean(value.trim())))].join('\n');
+    if(text)entries.push({type:'note',label:'Error',...clip(text)});
+  }
   else if (event.kind === 'exec_command_end') entries.push({type: 'tool_result', ...clip(stringify(data.aggregated_output ?? data.formatted_output ?? data.stdout ?? ''))});
   else if (event.kind === 'reasoning_summary') {
     const text = Array.isArray(data.summary) ? data.summary.map(part => part && typeof part === 'object' ? String((part as Record<string, unknown>).text ?? '') : '').join('\n') : '';

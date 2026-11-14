@@ -4,12 +4,14 @@ import {readFile, mkdtemp, cp, writeFile, rm, symlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {root, validate, validateManifests} from '../scripts/validate.mjs';
-const configs = await Promise.all(['plugin.json', '.claude-plugin/plugin.json', 'mcp.json', '.mcp.json'].map(async path => JSON.parse(await readFile(join(root, 'opencrawl', path)))));
+const configs = await Promise.all(['plugin.json', '.claude-plugin/plugin.json', 'mcp.json', '.mcp.json', 'mcp_config.json'].map(async path => JSON.parse(await readFile(join(root, 'opencrawl', path)))));
 test('both host manifests and allowlisted package are consistent', async () => {await validate();});
 test('reject embedded credentials and local command transports', () => {
-  for (const change of [s => {s.headers = {Authorization: 'Bearer forbidden'};}, s => {s.command = 'node';}]) {
-    const copy = structuredClone(configs); change(copy[3].mcpServers.opencrawl);
-    assert.throws(() => validateManifests(...copy));
+  for (const index of [3, 4]) {
+    for (const change of [s => {s.headers = {Authorization: 'Bearer forbidden'};}, s => {s.command = 'node';}]) {
+      const copy = structuredClone(configs); change(copy[index].mcpServers.opencrawl);
+      assert.throws(() => validateManifests(...copy));
+    }
   }
 });
 test('reject different resource audiences and no-auth downgrade', () => {

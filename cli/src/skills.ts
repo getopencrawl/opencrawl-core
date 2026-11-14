@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {atomicFile, withSessionLock} from './session.ts';
 import {CliError} from './oauth.ts';
 import {participationInstructions} from './board.ts';
+import {ANTIGRAVITY_SURFACES} from './capture/runtime.ts';
 import {startupHooks, type StartupOptions} from './startup-install.ts';
 
 const revision = 8;
@@ -13,20 +14,28 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 function metadata(path: string) {
   try {return lstatSync(path);} catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
 }
+function hasAntigravityRoot(home: string, env: NodeJS.ProcessEnv) {
+  if (env.ANTIGRAVITY_HOME && existsSync(env.ANTIGRAVITY_HOME)) return true;
+  const root = env.ANTIGRAVITY_HOME || join(home, '.gemini');
+  return ANTIGRAVITY_SURFACES.some(surface => existsSync(join(root, surface)));
+}
 type Options = StartupOptions & {which?: (name: string) => string | null; clients?: string[]; includeExisting?: boolean};
 
-export function skillTargets({home = homedir(), env = process.env, which = Bun.which, clients, includeExisting = false}: Options = {}) {
+export function skillTargets({home = homedir(), env = process.env, which = Bun.which, clients: rawClients, includeExisting = false}: Options = {}) {
+  const clients = rawClients?.map(client => client === 'agy' ? 'antigravity' : client);
   const shared = join(home, '.agents', 'skills', 'opencrawl');
+  const agyBase = env.ANTIGRAVITY_HOME || join(home, '.gemini');
   const known = [
     {client: 'codex', command: 'codex', root: env.CODEX_HOME || join(home, '.codex'), directory: shared},
     {client: 'claude-code', command: 'claude', root: env.CLAUDE_CONFIG_DIR || join(home, '.claude'), directory: join(env.CLAUDE_CONFIG_DIR || join(home, '.claude'), 'skills', 'opencrawl')},
+    {client: 'antigravity', command: 'agy', root: join(agyBase, 'antigravity-cli'), directory: join(agyBase, 'config', 'skills', 'opencrawl')},
     {client: 'cursor', command: 'cursor', root: env.CURSOR_CONFIG_DIR || join(home, '.cursor'), directory: join(env.CURSOR_CONFIG_DIR || join(home, '.cursor'), 'skills', 'opencrawl')},
     {client: 'gemini', command: 'gemini', root: join(home, '.gemini'), directory: shared},
     {client: 'opencode', command: 'opencode', root: join(env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode'), directory: shared},
     {client: 'copilot', command: 'copilot', root: join(home, '.copilot'), directory: shared},
   ];
   if (clients?.some(client => !known.some(entry => entry.client === client))) throw new CliError('INVALID_USAGE', `Use --client ${known.map(entry => entry.client).join('|')}.`, 64);
-  const selected = known.filter(entry => clients ? clients.includes(entry.client) : existsSync(entry.root) || Boolean(which(entry.command)) || entry.client === 'cursor' && Boolean(which('cursor-agent')) || includeExisting && metadata(entry.directory) !== null || entry.client === 'claude-code' && env.CLAUDE_CODE_REMOTE === 'true');
+  const selected = known.filter(entry => clients ? clients.includes(entry.client) : (entry.client === 'antigravity' ? hasAntigravityRoot(home, env) : existsSync(entry.root)) || Boolean(which(entry.command)) || entry.client === 'cursor' && Boolean(which('cursor-agent')) || includeExisting && metadata(entry.directory) !== null || entry.client === 'claude-code' && env.CLAUDE_CODE_REMOTE === 'true');
   const groups = new Map<string, string[]>();
   for (const entry of selected) groups.set(entry.directory, [...(groups.get(entry.directory) ?? []), entry.client]);
   return [...groups].map(([directory, clients]) => ({directory, clients}));
@@ -168,9 +177,12 @@ export async function agentSkills(action: string, api: string, options: Options 
     // A shared skill may belong to Cursor alone. Its existence must not install
     // hooks for every other client which happens to share that skill directory.
     const {home = homedir(), env = process.env, which = Bun.which} = options;
-    const supportsStartup = (client: string) => options.clients?.includes(client) ||
+    const requestedClients = options.clients?.map(client => client === 'agy' ? 'antigravity' : client);
+    const supportsStartup = (client: string) => requestedClients?.includes(client) ||
       client === 'codex' && (existsSync(env.CODEX_HOME || join(home, '.codex')) || Boolean(which('codex'))) ||
-      client === 'claude-code' && (existsSync(env.CLAUDE_CONFIG_DIR || join(home, '.claude')) || Boolean(which('claude')) || env.CLAUDE_CODE_REMOTE === 'true');
+      client === 'claude-code' && (existsSync(env.CLAUDE_CONFIG_DIR || join(home, '.claude')) || Boolean(which('claude')) || env.CLAUDE_CODE_REMOTE === 'true') ||
+      client === 'cursor' && (existsSync(env.CURSOR_CONFIG_DIR || join(home, '.cursor')) || Boolean(which('cursor')) || Boolean(which('cursor-agent'))) ||
+      client === 'antigravity' && (hasAntigravityRoot(home, env) || Boolean(which('agy')));
     const results = targets.map(target => {
       try {
         const existed = metadata(target.directory) !== null;
