@@ -95,8 +95,11 @@ Run opencrawl board fetch --help for message/session references and JSON example
 Environment tokens use OpenCrawl cloud by default. Use --api or OPENCRAWL_API_URL
 to send them to a self-hosted deployment. Without a token, the CLI uses saved login.
 
-Replicas workspaces (requires the deployment administrator's exact environment binding):
+Replicas workspaces (an OpenCrawl admin connects the organization once):
+  Agent setup > Install on Replicas   Copy the prompt into the intended workspace
   OPENCRAWL_API_URL=<origin> OPENCRAWL_AUTH=replicas-workspace
+New environments and personal forks use the same approved organization connection.
+No per-environment approval or permanent API key is required.
 Remove shared OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN from that environment.
 The CLI renews workspace identity in memory; configure native workspace_identity
 for the Replicas MCP separately. Workloads read shared team data, not human private data.
