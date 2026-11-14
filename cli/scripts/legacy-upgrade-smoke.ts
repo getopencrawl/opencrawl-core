@@ -8,6 +8,7 @@ import {tmpdir,homedir} from 'node:os';
 import {createRequire} from 'node:module';
 
 const root=resolve(import.meta.dir,'..'),published=process.argv.includes('--published');
+const transportOnly=process.argv.includes('--transport-only');
 const expected=process.argv.find(arg=>arg.startsWith('--version='))?.slice(10)??JSON.parse(readFileSync(join(root,'package.json'),'utf8')).version;
 const oldVersion='0.4.60',platform=process.platform+'-'+process.arch;
 const bootstrapVersion=process.argv.find(arg=>arg.startsWith('--bootstrap-version='))?.slice(20)??oldVersion;
@@ -29,12 +30,15 @@ async function run(command:string[],env=environment){
   const [out,err,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
   assert.equal(code,0,err);return out.trim();
 }
-try{
+async function verify(){try{
   const prefix=join(scratch,'npm');
+  if(!transportOnly){
   await run([...npm,'install','--global','--prefix',prefix,'--no-audit','--no-fund','--registry=https://registry.npmjs.org','--@getopencrawl:registry=https://registry.npmjs.org','@getopencrawl/cli@'+bootstrapVersion]);
+  }
   const modules=join(prefix,...process.platform==='win32'?['node_modules']:['lib','node_modules']);
   const launcher=join(modules,'@getopencrawl/cli/bin/opencrawl.cjs');
-  const oldBytes=readFileSync(launcher);
+  const oldBytes=transportOnly?Buffer.alloc(0):readFileSync(launcher);
+  if(!transportOnly){
   assert.equal(createHash('sha256').update(oldBytes).digest('hex'),bootstrapVersion===oldVersion?'a91eaef546eb5a5122d38662af8c371911e347cb5506a289e58022fba3cafbb8':'5c6acd874e4b46bca803d039f8cafb6975fe2cf30a520ab29cf585554a3e2be0');
   if(bootstrapVersion!==oldVersion){
     const previous=join(environment.XDG_CACHE_HOME!,'opencrawl/releases',oldVersion);mkdirSync(previous,{recursive:true});
@@ -43,10 +47,12 @@ try{
   }
   assert.equal(sync([node,launcher,'--version']),oldVersion);
   sync([node,launcher,'skills','install','--client','claude-code','--client','codex','--json']);
+  }
 
   if(!published){
     const inventory:Record<string,unknown>={};
-    for(const folder of ['cli',platform]){
+    if(transportOnly)inventory['@getopencrawl/cli']={file:join(root,'package.json'),version:expected,metadata:{name:'@getopencrawl/cli',version:expected}};
+    for(const folder of transportOnly?[]:['cli',platform]){
       const directory=join(root,'dist',folder),pkg=JSON.parse(readFileSync(join(directory,'package.json'),'utf8'));
       assert.equal(pkg.version,expected);
       const pack=JSON.parse(sync([...npm,'pack','--json','--pack-destination',scratch],environment,directory))[0];
@@ -65,6 +71,7 @@ try{
     // intentional best-effort error handling turns it into a later timeout.
     await run([process.execPath,'-e',`const response=await fetch('https://registry.npmjs.org/@getopencrawl%2fcli/next',{redirect:'error',signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('Fixture registry status '+response.status);console.log((await response.json()).version);`],environment).then(actual=>assert.equal(actual,expected));
   }
+  if(transportOnly){console.log('Candidate registry TLS transport verified.');return;}
 
   const held=new Promise<void>(resolve=>{finishSearch=resolve;});
   api=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
@@ -145,4 +152,5 @@ try{
   api?.stop(true);
   if(proxy){proxy.kill('SIGTERM');await proxy.exited;}
   rmSync(scratch,{recursive:true,force:true,maxRetries:10,retryDelay:100});
-}
+}}
+await verify();

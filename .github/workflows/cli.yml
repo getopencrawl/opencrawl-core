@@ -35,6 +35,8 @@ jobs:
       - name: Allocate the automatic CLI release version
         id: version
         run: node tools/delivery.mts cli-version
+      - name: Verify the legacy upgrade fixture transport
+        run: bun cli/scripts/legacy-upgrade-smoke.ts --transport-only
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - run: bun install --cwd cli --frozen-lockfile --ignore-scripts

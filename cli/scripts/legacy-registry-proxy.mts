@@ -8,7 +8,7 @@ const [inventoryFile,certificate,key,receipt]=process.argv.slice(2) as [string,s
 const inventory=JSON.parse(readFileSync(inventoryFile,'utf8')) as Record<string,{metadata:Record<string,unknown>;file:string;version:string}>;
 const requests:Array<{path:string;npm:boolean;event?:string}>=[];
 function record(path:string,event:string){requests.push({path,npm:false,event});writeFileSync(receipt,JSON.stringify(requests));}
-const registry=https.createServer({cert:readFileSync(certificate),key:readFileSync(key)},(request,response)=>{
+const registry=https.createServer({cert:readFileSync(certificate),key:readFileSync(key),maxVersion:'TLSv1.2'},(request,response)=>{
   const path=decodeURIComponent(request.url??'');
   requests.push({path,npm:(request.headers['user-agent']??'').startsWith('npm/')});
   writeFileSync(receipt,JSON.stringify(requests));
