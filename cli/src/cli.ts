@@ -17,6 +17,7 @@ import {withEnvironmentTokenOrigin} from './environment-token.ts';
 import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 import {tokenCommand} from './token.ts';
 import {version,delegateToNewest,installBinary,compiled,cacheRoot,read as readDistributionState} from './distribution.ts';
+import {migrateLegacyLauncher,findLegacyLaunchers} from './legacy-migration.ts';
 import {join} from 'node:path';
 import {atomicJson} from './session.ts';
 import {sessionStartCommand} from './session-start.ts';
@@ -191,7 +192,10 @@ export async function identity(api: string, fetcher = fetch, initialToken?: stri
 }
 
 export async function main(args = process.argv.slice(2)) {
-  if (args[0] === 'session' && args[1] === 'start') return sessionStartCommand(args.slice(2));
+  if (args[0] === 'session' && args[1] === 'start') {
+    await automaticNativeMigration();
+    return sessionStartCommand(args.slice(2));
+  }
   // Process-owned work overlaps commands and async hooks. It is cancelled when
   // the command ends, so quick commands never wait and no orphan worker exists.
   const memoryJob:{current?:ReturnType<typeof scheduleMemoryRefresh>}={};
@@ -220,6 +224,7 @@ export async function main(args = process.argv.slice(2)) {
     if (organizationId !== undefined && (command !== 'login' || !/^org_[A-Za-z0-9]+$/.test(organizationId))) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
     if (organizationId && process.env.OPENCRAWL_TOKEN?.trim()) throw new CliError('ENVIRONMENT_TOKEN_ACTIVE', 'Unset OPENCRAWL_TOKEN before selecting a workspace with your saved sign-in. Environment tokens remain bound to the workspace that issued them.', 2);
     if (parsed.values.client && command !== 'skills') throw new CliError('INVALID_USAGE', 'Use --client with skills install or skills status.', 64);
+    if(command!=='install')await automaticNativeMigration();
     if(command==='install'){if(!compiled())throw new CliError('INSTALL_UNAVAILABLE','Run install from a released executable.');const data=await installBinary();await agentSkills('refresh',apiOrigin((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL??readCaptureConfig()?.api??DEFAULT_API_ORIGIN),{});emit(data,`Installed opencrawl ${data.version} at ${data.path}. Add its directory to PATH if needed.`);return 0;}
     if(command==='update'){const data=await updateCli();emit(data,data.updated?`Installed opencrawl ${data.version}. Your next invocation will use it.`:`opencrawl ${data.version} is current.`);return 0;}
     updateJob=scheduleCliUpdate();
@@ -366,6 +371,35 @@ async function refreshManagedSkills(api:string){
     atomicJson(file,{version,checkedAt:Date.now(),complete:!errors,result});
     if(errors)process.stderr.write('opencrawl: Managed skill refresh needs attention; run opencrawl skills refresh --json.\n');
   }catch{} // Sandboxed skill directories must not prevent normal CLI use.
+}
+
+async function automaticNativeMigration(){
+  if(!compiled()||process.env.OPENCRAWL_NO_UPDATE==='1')return;
+  let attention=false;
+  try{
+    const config=readCaptureConfig();
+    const launchers=findLegacyLaunchers([process.env.OPENCRAWL_LAUNCHER,config?.command.find(part=>part.endsWith('/opencrawl.cjs')||part.endsWith('\\opencrawl.cjs'))]);
+    if(!launchers.length)return;
+    let changed=false;
+    for(const launcher of launchers){
+      try{const result=await migrateLegacyLauncher({launcher});if(result){changed=true;attention||=!result.complete;}}
+      catch(error){if(!(error instanceof CliError&&error.code==='SESSION_BUSY'))attention=true;}
+    }
+    if(!changed&&!attention)return;
+    // Existing capture enrollment is retained. These operations refresh only
+    // CLI-owned hooks/skills and never enroll a new capture installation.
+    await upgradeCaptureHooks();
+    await agentSkills('refresh',apiOrigin(config?.api??DEFAULT_API_ORIGIN),{});
+  }catch(error){
+    if(error instanceof CliError&&error.code==='SESSION_BUSY')return;
+    attention=true;
+  } // A protected prefix must not interrupt capture.
+  if(attention){
+    const file=join(cacheRoot(),'native-migration-notice.json'),previous=readDistributionState(file);
+    if(previous?.version===version&&previous.checkedAt>Date.now()-15*60_000)return;
+    try{atomicJson(file,{version,checkedAt:Date.now()});}catch{}
+    process.stderr.write('opencrawl: Automatic native migration preserved a customized or protected command. Use the native installer to finish migration; your credentials and capture data are unchanged.\n');
+  }
 }
 
 if (import.meta.main) {

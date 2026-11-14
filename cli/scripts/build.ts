@@ -1,4 +1,4 @@
-import {mkdirSync, readFileSync, writeFileSync, copyFileSync, chmodSync} from 'node:fs';
+import {mkdirSync, readFileSync, writeFileSync, copyFileSync, chmodSync, rmSync} from 'node:fs';
 import {resolve, join} from 'node:path';
 const root = resolve(import.meta.dir, '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -34,13 +34,14 @@ for (const [os, arch, target] of selected) {
   optionalDependencies[name] = pkg.version;
 }
 const launcher = join(dist, 'cli');
+rmSync(launcher,{recursive:true,force:true});
 mkdirSync(join(launcher, 'bin'), {recursive: true});
 const {scripts, devDependencies, ...published} = pkg;
-writeFileSync(join(launcher, 'package.json'), JSON.stringify({...published, scripts:{postinstall:'node install.cjs'}, optionalDependencies}, null, 2) + '\n');
-copyFileSync(join(root, 'bin/opencrawl.cjs'), join(launcher, 'bin/opencrawl.cjs'));
+// Legacy automatic updaters reject any additional archive paths. Keep the npm
+// installer inside the existing bridge and create the executable before npm links
+// commands. The downloaded archive must retain the pre-native file layout.
+writeFileSync(join(launcher, 'package.json'), JSON.stringify({...published, scripts:{preinstall:'node bin/opencrawl.cjs --internal-npm-install'}, optionalDependencies}, null, 2) + '\n');
+copyFileSync(join(root,'bin/opencrawl.cjs'),join(launcher,'bin/opencrawl.cjs'));
 chmodSync(join(launcher, 'bin/opencrawl.cjs'), 0o755);
-copyFileSync(join(root,'install.cjs'),join(launcher,'install.cjs'));
-// No shebang: npm creates a direct executable shim on Windows too.
-writeFileSync(join(launcher,'bin/opencrawl.exe'),'OpenCrawl native executable is missing. Run the native installer or npm rebuild @getopencrawl/cli.\n');
 copyReleaseFiles(launcher);
 console.log(`Prepared ${selected.length} platform packages and ${pkg.name}@${pkg.version} in cli/dist.`);
