@@ -49,6 +49,7 @@ export interface InvitationList {
 
 /** Runtime adapters own authorization, persistence, invitation delivery, and OAuth. */
 export interface OnboardingAdapter {
+  replicasSetup?(signal: AbortSignal): Promise<{prompt: string; expiresAt: string}>;
   status(signal: AbortSignal): Promise<OnboardingStatus>;
   sources(signal: AbortSignal): Promise<{items: OnboardingSource[]}>;
   connectSource(id: string, input: {apiKey?: string}, signal: AbortSignal): Promise<{redirectUrl?: string; ok?: boolean}>;

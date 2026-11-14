@@ -693,3 +693,15 @@ test('completion dismisses manual setup even when receipts arrive together',asyn
   await expect(page.getByLabel('Prompt to copy')).toHaveCount(0);
   await expect(page.getByRole('link',{name:'Next',exact:true})).toBeInViewport({ratio:1});
 });
+
+for (const width of [1280,390]) test(`shared Replicas setup also offers independent personal-machine setup at ${width}px`,async({page,request})=>{
+ await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'env',name:'Replicas',owner:'shared'}}}});
+ await page.setViewportSize({width,height:844});await page.goto('/onboarding?role=member');
+ await page.getByRole('button',{name:'Set up a personal computer'}).click();
+ await expect(page.getByRole('heading',{name:'Connect your primary coding agent'})).toBeVisible();
+ await expect(page.getByText('Waiting for CLI sign-in',{exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Install on Replicas'})).toHaveCount(0);
+ await page.getByRole('button',{name:'Back to shared setup'}).click();
+ await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});

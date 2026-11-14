@@ -1,5 +1,8 @@
+import type {ReplicasIdentityKey} from '../identity/replicas.mjs';
+import {createReplicasConnections} from '../identity/replicas-connections.mjs';
+import {replicasConnectionHandler} from '../identity/replicas-http.mjs';
 import type {EventIdentityStore} from '../sessions/types.mjs';
-import {createReplicasWorkloads, replicasSharedInstallations, isReplicasToken, isWorkloadPrincipal} from '../identity/replicas.mjs';
+import {createReplicasWorkloads, createReplicasVerifier, isReplicasToken, isWorkloadPrincipal} from '../identity/replicas.mjs';
 import type {createSlackOAuth} from '../integrations/slack-oauth.mjs';
 import {connectorProxyHandler,type SourceCredentialProxy} from '../integrations/proxy-http.mjs';
 import type {IncomingMessage,ServerResponse} from 'node:http';
@@ -56,20 +59,35 @@ export interface SelfhostApplicationOptions {
   scheduleSessionIndexing?:(key:string)=>Promise<unknown>;
   scheduleSessionDeletion?:(key:string)=>Promise<unknown>;
   workloadIdentity?:ReturnType<typeof createReplicasWorkloads>;
+  workloadIdentityKey?:ReplicasIdentityKey;
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,eventIdentities,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,
+export function selfhostApplication({settings,store,eventIdentities,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
 }:SelfhostApplicationOptions) {
-  const workloads=workloadIdentity??createReplicasWorkloads({audience:settings.url,bindings:()=>settings.replicasBindings??[]});
   const directory=identity.directory;
+  const replicas = createReplicasConnections({store,prefix,tenantId:settings.organizationId,
+    verify:workloadIdentity?.verify ?? createReplicasVerifier({audience:settings.url,key:workloadIdentityKey}),
+    isAdmin:async principal=>{
+      if(principal.tenantId!==settings.organizationId)return false;
+      const current=await currentVerifiedUser(directory,principal.userId);
+      if(current.status!==200)return false;
+      const result=await directory.userManagement.listOrganizationMemberships({userId:principal.userId,organizationId:principal.tenantId,statuses:['active'],limit:100});
+      const rows=result.autoPagination?await result.autoPagination():result.data;
+      return rows.some(row=>row.userId===principal.userId&&row.organizationId===principal.tenantId&&row.status==='active'&&isAdmin(row));
+    }});
+  const replicasConnect=replicasConnectionHandler(replicas);
+  const workloads=workloadIdentity??createReplicasWorkloads({audience:settings.url,key:workloadIdentityKey,bindings:()=>settings.replicasBindings??[],resolveOrganization:async org=>{
+    const record=await replicas.lookupOrganization(org);
+    return record ? replicas.resolveOrganization(org) : undefined;
+  }});
   const credentialProxy=sourceCredentials?connectorProxyHandler(sourceCredentials):null;
   const admit=singleOrganizationIdentity(directory,settings.organizationId),resolve=singleOrganizationPrincipal(directory,settings.organizationId);
   const accounts=localAuth({identity,url:settings.url,organizationId:settings.organizationId,setupToken:settings.setupToken,member:async browser=>(await admit(browser)).status===200});
   const credentials=createCaptureCredentials({store,prefix});
   const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(store,prefix),credentials.revokeAll);
-  const onboarding=createOnboardingStatus({store,prefix,sharedInstallations:()=>replicasSharedInstallations(settings.replicasBindings??[])}),observe=createOnboardingObserver(onboarding);
+  const onboarding=createOnboardingStatus({store,prefix,onSharedReady:principal=>replicas.confirmInstallation(principal),sharedInstallations:principal=>replicas.sharedInstallations(principal,settings.replicasBindings??[])}),observe=createOnboardingObserver(onboarding);
   const values=valueReports({store,prefix});
   const search=createSessionSearch({...settings.search,store,prefix});
   async function authorize(principal:Principal,requested?:unknown) {
@@ -138,6 +156,7 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
       if(url.pathname==='/.well-known/opencrawl-cli')return req.method==='GET'?json(200,accounts.cliConfiguration()):respond(405,'Method not allowed');
       if(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'].includes(url.pathname)){res.setHeader('Access-Control-Allow-Origin','*');return req.method==='GET'?json(200,mcpMetadata(settings)):respond(405,'Method not allowed');}
       if(url.pathname==='/api/connector-proxy')return credentialProxy?await credentialProxy(req,res):respond(503,'Connector proxy unavailable');
+      if(url.pathname==='/api/replicas/connect')return await replicasConnect(req,res);
       if(url.pathname==='/mcp')return await mcp(req,res);
       if(url.pathname.startsWith('/api/sessions/'))return await capture(req,res);
       if(url.pathname==='/api/search')return await query(req,res);
@@ -171,12 +190,12 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
       if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
       const sources=(p:Principal)=>integrations?integrations.list(p):Promise.resolve([]);
-      const consoleApi=createConsoleApi({invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
+      const consoleApi=createConsoleApi({replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),removeMember:(u,id,target)=>organizations.removeMember(u,id,target),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
         usage:p=>usageReport({principal:p,directory,integrations,search,connectors,onboarding,values}),progress:guided.progress,next:guided.next,library,libraryFailure});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{
         if(selected.name.startsWith('/api/console/')){
-          if(selected.name!=='/api/console/bootstrap'&&!hasCompletedOnboarding(await guided.progress(principal)))return reply(409,JSON.stringify({error:'Complete onboarding before opening the workspace.',onboardingUrl:await guided.next(principal)}),'application/json');
+          if(!['/api/console/bootstrap','/api/console/replicas/setup'].includes(selected.name)&&!hasCompletedOnboarding(await guided.progress(principal)))return reply(409,JSON.stringify({error:'Complete onboarding before opening the workspace.',onboardingUrl:await guided.next(principal)}),'application/json');
           const result=await consoleApi(request,selected.name,{principal,user,member,cacheScope,admitted:true,revalidate:rpc?async()=>true:revalidate});return reply(result.status,JSON.stringify(result.body),'application/json');
         }
         if(request.method==='GET'&&consolePages.has(target.pathname)){
