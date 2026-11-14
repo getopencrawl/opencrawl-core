@@ -15,7 +15,7 @@ export interface SearchDocument {
   parentId?: string | null; parentKind?: string; channelId?: string; heading?: string;
   boardId?: string;
 }
-export type NamedWritePolicy = 'session' | 'connector' | 'memory-head' | 'session-projection' | 'session-tokens';
+export type NamedWritePolicy = 'session' | 'connector' | 'memory-head' | 'session-projection' | 'session-tokens' | 'session-participants';
 export type WritePolicy = NamedWritePolicy | {name: 'memory-projection-rollback'; expectedProjectionId: string};
 export interface DocumentItem<T extends SearchDocument = SearchDocument> {id: string; document: T; script?: string; policy?: WritePolicy}
 export interface IndexHit<T extends SearchDocument = SearchDocument> {

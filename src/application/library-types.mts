@@ -8,7 +8,9 @@ export type SessionHarness = Harness | 'grok-bot';
 export interface SessionRef {userId: string; harness: SessionHarness; sessionId: string}
 /** Capture-machine names, not a verified original execution host. Optional for older adapters. */
 export interface SessionHosts {host?: string | null; hosts?: string[]; hostsTruncated?: boolean}
+export type {SessionParticipant} from '../sessions/participants.mjs';
 export interface SessionSummary extends SessionRef, SessionHosts {
+  participants?: import('../sessions/participants.mjs').SessionParticipant[]; participantsTruncated?: boolean;
   title: string; private: boolean; mine: boolean; origin: string | null; host: string | null;
   firstActivityAt: string | null; lastActivityAt: string | null; events: number; capturedTokens?: number | null;
 }
@@ -31,7 +33,7 @@ export interface MemoryDocument {memory: Omit<MemorySummary, 'description'>; tex
 export interface Authors {authors?: Record<string, string>}
 
 export interface LibraryContract {
-  'sessions/list': {input: {scope: LibraryScope; query?: string; limit?: number}; output: {sessions: SessionSummary[]; limit: number} & Authors};
+  'sessions/list': {input: {scope: LibraryScope; query?: string; participant?: string; limit?: number}; output: {sessions: SessionSummary[]; limit: number} & Authors};
   'sessions/read': {input: SessionRef & {cursor?: string | null; limit?: number}; output: SessionTranscript & Authors};
   'sessions/visibility': {input: {harness: SessionHarness; sessionId: string; visibility: Visibility}; output: {visibility: Visibility}};
   'sessions/delete': {input: {harness: SessionHarness; sessionId: string}; output: {deleted: boolean; pending?: boolean}};

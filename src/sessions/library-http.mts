@@ -3,6 +3,7 @@ export const sessionDeletionExecution = 'temporal' as const;
 import type {Principal, Authenticate, HttpHandler} from './types.mjs';
 import {parseJson, serviceError, SESSION_HARNESSES} from './types.mjs';
 import {z} from 'zod';
+import {validParticipant} from './participants.mjs';
 import {sessionScope} from './event-identity.mjs';
 import type {createSessionLibrary} from './library.mjs';
 import type {createMemoryLibrary} from '../memories/library.mjs';
@@ -15,7 +16,7 @@ const path = z.string().min(4).max(2048);
 const visibility = z.enum(['team', 'private']);
 const scope = z.enum(['all', 'mine']).default('all');
 export const libraryOperations = {
-  'sessions/list': z.strictObject({scope, query: z.string().max(500).default(''), limit: z.number().int().min(1).max(500).default(50)}),
+  'sessions/list': z.strictObject({scope, participant: z.string().refine(validParticipant).optional(), query: z.string().max(500).default(''), limit: z.number().int().min(1).max(500).default(50)}),
   'sessions/read': z.strictObject({userId: id, harness, sessionId: id, cursor: z.string().max(2048).nullish(), limit: z.number().int().min(1).max(200).default(100)}),
   'sessions/visibility': z.strictObject({harness, sessionId: id, visibility}),
   'sessions/delete': z.strictObject({harness, sessionId: id}),

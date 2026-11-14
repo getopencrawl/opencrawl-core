@@ -2,6 +2,7 @@ import type {NamedWritePolicy, WritePolicy} from './types.mjs';
 import type {SearchDocument} from './types.mjs';
 
 const scripts: Record<NamedWritePolicy,string> = {
+  'session-participants': "if (ctx._source.session == null) { ctx.op = 'none'; } else if (ctx._source.tenantId != params.doc.tenantId || ctx._source.session.userId != params.doc.session.userId || ctx._source.session.harness != params.doc.session.harness || ctx._source.session.sessionId != params.doc.session.sessionId || ctx._source.session.eventId != params.doc.session.eventId || ctx._source.session.chunk != 0 || params.doc.session.chunk != 0) { throw new IllegalArgumentException('Session participant ownership mismatch'); } else if (ctx._source.session.containsKey('participantVersion')) { ctx.op = 'none'; } else { for (def key : ['participantVersion','participantId','participantName','participantUnknown']) { if (params.doc.session.containsKey(key)) { ctx._source.session[key] = params.doc.session[key]; } } }",
   'session-tokens': "if (ctx._source.session == null) { ctx.op = 'none'; } else if (ctx._source.tenantId != params.doc.tenantId || ctx._source.session.userId != params.doc.session.userId || ctx._source.session.harness != params.doc.session.harness || ctx._source.session.sessionId != params.doc.session.sessionId || ctx._source.session.eventId != params.doc.session.eventId || ctx._source.session.chunk != 0 || params.doc.session.chunk != 0) { throw new IllegalArgumentException('Session token ownership mismatch'); } else if (ctx._source.session.containsKey('capturedTokens')) { ctx.op = 'none'; } else { ctx._source.session.capturedTokens = params.doc.session.capturedTokens; }",
   'session': "if (ctx._source.session != null && (ctx._source.tenantId != params.doc.tenantId || ctx._source.session.userId != params.doc.session.userId)) { throw new IllegalArgumentException('Session document ownership mismatch'); } if (ctx._source.session == null || ctx._source.session.receivedAt == null || (params.doc.session.containsKey('passageVersion') && (!ctx._source.session.containsKey('passageVersion') || params.doc.session.passageVersion > ctx._source.session.passageVersion)) || params.doc.session.receivedAt.compareTo(ctx._source.session.receivedAt) > 0) { ctx._source = params.doc; } else { ctx.op = 'none'; }",
   'connector': `if (ctx._source.connector == null) { ctx._source = params.doc; }
@@ -48,6 +49,12 @@ export function applyWrite(policy: WritePolicy | undefined, previous: SearchDocu
   const after = next[corpus] as Record<string, unknown>;
   const number = (d: Record<string, unknown>, key: string) => typeof d[key] === 'number' ? d[key] as number : -Infinity;
   if(typeof policy!=='string')return previous&&before&&previous.tenantId===next.tenantId&&before.userId===after.userId&&before.snapshotId===after.snapshotId&&before.generation===after.generation&&before.projectionId===policy.expectedProjectionId?next:null;
+  if (policy === 'session-participants') {
+    if (!previous || !before) return null;
+    if (previous.tenantId !== next.tenantId || ['userId','harness','sessionId','eventId'].some(key => before[key] !== after[key]) || before.chunk !== 0 || after.chunk !== 0) throw new Error('Session participant ownership mismatch');
+    if (Object.hasOwn(before, 'participantVersion')) return null;
+    return {...previous, session: {...before, ...Object.fromEntries(['participantVersion','participantId','participantName','participantUnknown'].filter(key => Object.hasOwn(after, key)).map(key => [key, after[key]]))}};
+  }
   if (policy === 'session-tokens') {
     if (!previous || !before) return null;
     if (previous.tenantId !== next.tenantId || ['userId','harness','sessionId','eventId'].some(key => before[key] !== after[key]) || before.chunk !== 0 || after.chunk !== 0) throw new Error('Session token ownership mismatch');

@@ -7,7 +7,7 @@ async function fixture(page: Page, change?: (route: Route, input: Change) => Pro
   const sessions: SessionSummary[] = [own, {...own, sessionId: 'private', title: 'Private session', private: true}, {...own, userId: 'bob', sessionId: 'colleague', title: 'Colleague session', mine: false}].map(session => ({...session}));
   const writes: Change[] = [];
   await page.route('**/api/library/**', async route => {
-    const input = route.request().postDataJSON() as Change & {scope?: string};
+    const input = route.request().postDataJSON() as Change & {scope?: string; participant?: string};
     const operation = route.request().url().split('/').at(-1);
     if (operation === 'visibility') {
       writes.push(input);
@@ -19,21 +19,21 @@ async function fixture(page: Page, change?: (route: Route, input: Change) => Pro
     } else if (operation === 'read') {
       await route.fulfill({json: {session: sessions.find(session => session.sessionId === input.sessionId), events: [], total: 0, next: null, authors: {alice: 'Alex', bob: 'Blake'}}});
     } else {
-      await route.fulfill({json: {sessions: sessions.filter(session => input.scope !== 'mine' || session.mine), limit: 50, authors: {alice: 'Alex', bob: 'Blake'}}});
+      await route.fulfill({json: {sessions: sessions.filter(session => (input.scope !== 'mine' || session.mine) && (!input.participant || input.participant === 'user:' + session.userId)), limit: 50, authors: {alice: 'Alex', bob: 'Blake'}}});
     }
   });
   return writes;
 }
 
 for (const width of [1440, 390]) {
-  test(`My sessions eye toggles sharing without opening a transcript at ${width}px`, async ({page}, testInfo) => {
+  test(`owner sharing controls work in participant-filtered sessions at ${width}px`, async ({page}, testInfo) => {
     const writes = await fixture(page);
     await page.setViewportSize({width, height: 900});
     await page.goto('/sessions');
     await expect(page.getByRole('link', {name: /Colleague session/})).toBeVisible();
-    await expect(page.getByRole('button', {name: /^Share session with team:/})).toHaveCount(0);
-    await page.getByRole('tab', {name: 'My sessions'}).click();
-    await expect(page).toHaveURL(/scope=mine/);
+    await expect(page.getByRole('tab', {name: 'My sessions'})).toHaveCount(0);
+    await page.locator('.oc-row-participants').getByRole('link', {name: 'You', exact: true}).first().click();
+    await expect(page).toHaveURL(/participant=user%3Aalice/);
     const shared = page.getByRole('button', {name: 'Share session with team: Shared session', exact: true});
     const privateSession = page.getByRole('button', {name: 'Share session with team: Private session', exact: true});
     await expect(shared).toHaveAttribute('aria-pressed', 'true');
@@ -54,17 +54,17 @@ for (const width of [1440, 390]) {
     const row = page.locator('.oc-row-item').filter({has: shared});
     await expect(row.getByText('Private', {exact: true})).toBeVisible();
     expect(writes).toEqual([{harness: 'codex', sessionId: 'shared', visibility: 'private'}]);
-    await expect(page).toHaveURL(/scope=mine/);
+    await expect(page).toHaveURL(/participant=user%3Aalice/);
     await shared.click();
     await expect(shared).toHaveAttribute('aria-pressed', 'true');
     await expect(row.getByText('Private', {exact: true})).toHaveCount(0);
     expect(writes.at(-1)).toEqual({harness: 'codex', sessionId: 'shared', visibility: 'team'});
-    await page.getByRole('tab', {name: 'All sessions'}).click();
-    await expect(page.getByRole('button', {name: /^Share session with team:/})).toHaveCount(0);
+    await page.getByRole('button', {name: 'Remove participant filter: You'}).click();
+    await expect(page.getByRole('link', {name: /Colleague session/})).toBeVisible();
     await page.goBack();
     await expect(shared).toHaveAttribute('aria-pressed', 'true');
     await page.goForward();
-    await expect(page.getByRole('tab', {name: 'All sessions'})).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('button', {name: 'Remove participant filter: You'})).toHaveCount(0);
     expect(navigations).toBe(0);
   });
 }
