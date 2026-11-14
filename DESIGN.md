@@ -486,6 +486,41 @@ All receipts, connections and search results come from the runtime adapter;
 there are no prototype variants, demo data or state controls in the product.
 See [the behavior contract](docs/onboarding.md) and [QA](docs/onboarding-qa.md).
 
+### Captured session conversations
+
+Session detail uses a compact title and back link within AppShell. The normal
+secondary icon button, with the shared Lucide Info icon, opens session details.
+Retain Night surfaces, Geist, shared controls and visible keyboard focus.
+
+Render each server-normalized message in full through shared Markdown. User
+messages sit in right-aligned neutral bubbles, with captured sender attribution
+above; assistant prose stays unboxed, with its harness caption below. For
+attributed messages, human names come from structured actor metadata, never
+prompt text or capture ownership. An explicitly unknown actor remains Unknown sender.
+
+Consecutive activity disclosures say only N events, counting distinct source
+event IDs rather than normalized entries or inferred actions. Include events
+with no displayable entries. Expanded rows preserve recorded kind, timestamp and
+normalized tool/note content; empty records stay explicit rather than becoming
+reconstructed prose. Paginated status distinguishes loaded events from the
+server-reported total.
+
+The reading column is centered at a 796px maximum, including 40px side insets;
+insets reduce to 32px at 1100px and below, and 20px at 800px and below. Jump to latest is
+a floating secondary button centered over the reading pane, with no footer bar.
+It loads remaining pages before scrolling to the end. Keep bottom space for the
+button and device safe area so the last message remains readable.
+
+The optional 290px desktop rail holds capture/source facts and existing
+permission-dependent controls. At 800px and below, it overlays the reading pane
+at up to 320px wide. Opening it focuses its heading; closing it or pressing Escape
+returns focus to Info. On narrow screens the title wraps to two lines, messages
+retain their full text, and controls and disclosures have 44px targets. Preserve
+independent transcript scrolling without document overflow.
+
+The Info icon license is retained at
+[web/assets/lucide-info-LICENSE.txt](web/assets/lucide-info-LICENSE.txt).
+
 ## Do's and Don'ts
 
 ### Do:

@@ -30,7 +30,20 @@ const components: Components = {
   img: ({alt}) => <span>{alt || 'Image'}</span>,
 };
 
+/** Captured HTML is evidence to read, never executable page markup. */
+function literalCapturedHtml() {
+  return (tree: unknown) => {
+    const visit = (value: unknown) => {
+      if (!value || typeof value !== 'object') return;
+      const node = value as {type?: string; children?: unknown[]};
+      if (node.type === 'html') node.type = 'text';
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
 /** Read-only Markdown rendered as React nodes, with no embedded HTML execution. */
-export function Markdown({children}: {children: string}) {
-  return <div className="oc-markdown"><ReactMarkdown skipHtml remarkPlugins={[remarkGfm, remarkFrontmatter]} components={components}>{children}</ReactMarkdown></div>;
+export function Markdown({children, mode = 'document'}: {children: string; mode?: 'document' | 'transcript'}) {
+  return <div className="oc-markdown"><ReactMarkdown skipHtml remarkPlugins={mode === 'transcript' ? [remarkGfm, literalCapturedHtml] : [remarkGfm, remarkFrontmatter]} components={components}>{children}</ReactMarkdown></div>;
 }

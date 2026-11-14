@@ -98,11 +98,85 @@ for (const width of [1440, 1024, 801, 390]) {
     const link = row('Continued on another machine').getByRole('link', {name: 'Continued on another machine', exact: true});
     await link.focus();
     await page.keyboard.press('Enter');
+    await page.getByRole('button', {name: 'Session details', exact: true}).click();
     await expect(page.locator('.oc-library-meta')).toContainText('laptop.local, runner-42');
     await page.goBack();
     await expect(row('Single machine')).toBeVisible();
     await page.goForward();
+    await page.getByRole('button', {name: 'Session details', exact: true}).click();
     await expect(page.locator('.oc-library-meta')).toContainText('laptop.local, runner-42');
     expect(documents).toBe(0);
   });
 }
+
+for (const width of [1440, 390]) test(`conversation shows full messages, event counts and the actual latest page at ${width}px`, async ({page, request}, testInfo) => {
+  await request.post('/__test/reset', {data: {}});
+  await page.setViewportSize({width, height: 844});
+  const actor: NonNullable<TranscriptEvent['actor']> = {provider: 'replicas', assurance: 'collector-reported', kind: 'human', workspaceId: 'workspace', nativeId: 'session', messageId: 'human', userId: 'alice', name: 'Alice'};
+  const empty: TranscriptEvent = {eventId: 'empty', kind: 'capture', timestamp: null, entries: []};
+  const tool: TranscriptEvent = {eventId: 'tool', kind: 'tool', timestamp: null, entries: [{type: 'tool_call', name: 'Read', input: 'file', truncated: false}, {type: 'tool_result', text: 'result', truncated: false}]};
+  const human: TranscriptEvent = {eventId: 'human', kind: 'message', timestamp: '2026-11-13T21:37:27Z', actor, entries: [{type: 'message', role: 'user', text: 'Complete beginning. ' + 'Recorded paragraph. '.repeat(180) + 'Final sentence.'}]};
+  const assistant: TranscriptEvent = {eventId: 'assistant', kind: 'message', timestamp: '2026-11-13T21:38:00Z', entries: [{type: 'message', role: 'assistant', text: 'Latest response.'}]};
+  const cursors: Array<string | undefined> = [];
+  await page.route('**/api/library/**', async route => {
+    const {cursor} = route.request().postDataJSON() as {cursor?: string}; cursors.push(cursor);
+    await route.fulfill({json: {session: {...base, mine: false}, events: cursor === 'second' ? [human, assistant] : cursor === 'third' ? [{...empty, eventId: 'last'}] : [empty, tool, human], total: 5, next: cursor === 'third' ? null : cursor === 'second' ? 'third' : 'second', authors: {alice: 'Workspace capture'}}});
+  });
+  await page.goto('/sessions?user=alice&harness=codex&id=single');
+  await expect(page.locator('.oc-log-user')).toContainText('Final sentence.');
+  await expect(page.getByRole('button', {name: 'Show full message'})).toHaveCount(0);
+  await expect(page.locator('.oc-log-tools > summary').first()).toHaveText('2 events');
+  await page.locator('.oc-log-tools > summary').first().click();
+  await page.locator('.oc-log-tool > summary').first().click();
+  await expect(page.getByText('No displayable content in this event.')).toBeVisible();
+  const info = page.getByRole('button', {name: 'Session details', exact: true});
+  await expect(info).toHaveClass(/secondary/); await expect(info).toHaveText('');
+  await info.press('Enter');
+  await expect(page.getByRole('heading', {name: 'Session details'})).toBeFocused();
+  await expect(page.getByRole('button', {name: 'Delete session', exact: true})).toHaveCount(0);
+  await page.keyboard.press('Escape'); await expect(info).toBeFocused();
+  await page.getByRole('button', {name: 'Jump to latest', exact: true}).click();
+  await expect(page.getByRole('status')).toContainText('Showing 5 of 5 captured events.');
+  await expect(page.locator('.oc-log-user')).toHaveCount(1);
+  await expect(page.locator('.oc-log-assistant')).toContainText('Latest response.');
+  expect(cursors).toEqual([undefined, 'second', 'third']);
+  expect(await page.locator('.oc-session-reading').evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(2);
+  expect(await page.locator('.oc-session-jump').evaluate(el => getComputedStyle(el).position)).toBe('absolute');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({path: testInfo.outputPath(`conversation-${width}.png`)});
+});
+
+test('a denied transcript page clears already loaded conversation content', async ({page, request}) => {
+  await request.post('/__test/reset', {data: {}});
+  await page.route('**/api/library/**', async route => {
+    const {cursor} = route.request().postDataJSON() as {cursor?: string};
+    if (cursor) return route.fulfill({status: 403, json: {error: 'Session access was revoked.'}});
+    await route.fulfill({json: {session: base, events: [{eventId: 'user', kind: 'message', timestamp: null, entries: [{type: 'message', role: 'user', text: 'Previously readable message.'}]}], total: 2, next: 'denied'}});
+  });
+  await page.goto('/sessions?user=alice&harness=codex&id=single');
+  await expect(page.getByText('Previously readable message.')).toBeVisible();
+  await page.getByRole('button', {name: 'Jump to latest'}).click();
+  await expect(page.getByText('Session access was revoked.')).toBeVisible();
+  await expect(page.getByText('Previously readable message.')).toHaveCount(0);
+});
+
+test('a network failure clears the transcript and retry refetches its initial page', async ({page, request}) => {
+  await request.post('/__test/reset', {data: {}});
+  let starts = 0;
+  await page.route('**/api/library/**', async route => {
+    const {cursor} = route.request().postDataJSON() as {cursor?: string};
+    if (cursor) return route.abort('failed');
+    starts++;
+    await route.fulfill({json: {session: base, events: [{eventId: 'user', kind: 'message', timestamp: null, entries: [{type: 'message', role: 'user', text: starts === 1 ? 'Initially readable message.' : 'Freshly recovered message.'}]}], total: starts === 1 ? 2 : 1, next: starts === 1 ? 'unavailable' : null}});
+  });
+  await page.goto('/sessions?user=alice&harness=codex&id=single');
+  await expect(page.getByText('Initially readable message.')).toBeVisible();
+  await page.getByRole('button', {name: 'Jump to latest'}).click();
+  const retry = page.getByRole('button', {name: 'Try again', exact: true});
+  await expect(retry).toBeVisible();
+  await expect(page.getByText('Initially readable message.')).toHaveCount(0);
+  await retry.click();
+  await expect(page.getByText('Freshly recovered message.')).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Showing 1 of 1 captured events.');
+  expect(starts).toBe(2);
+});
