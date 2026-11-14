@@ -12,7 +12,7 @@ const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(condition:()=>boolean){const end=Date.now()+5000;while(!condition()){if(Date.now()>end)throw new Error('Credential lifecycle probe timed out');await sleep(10);}}
 async function fixture(run:(f:any)=>Promise<void>){
  const directory=mkdtempSync(join(tmpdir(),'opencrawl-credential-lifecycle-')),saved={...process.env};
- let requests=0,rejections=0,delay=0,uploads=0,active='refresh-0',onRefresh=()=>{},stallBody=false;
+ let requests=0,rejections=0,delay=0,uploads=0,active='refresh-0',onRefresh=()=>{},stallBody=false,refreshGate:Promise<void>|undefined;
  const owner={tenantId:'fixture',userId:'fixture'};
  const server=createServer(async(req,res)=>{
   res.setHeader('content-type','application/json');
@@ -22,7 +22,7 @@ async function fixture(run:(f:any)=>Promise<void>){
    if(new URLSearchParams(body).get('refresh_token')!==active){rejections++;res.statusCode=400;res.end(JSON.stringify({error:'invalid_grant'}));return;}
    active='refresh-'+requests;onRefresh();
    if(stallBody){res.writeHead(200);res.write('{"access_token":');return;}
-   await sleep(delay);
+   await sleep(delay);await refreshGate;
    res.end(JSON.stringify({access_token:'access-'+requests,refresh_token:active,expires_in:3600}));return;
   }
   if(req.url==='/api/sessions/identity'){res.end(JSON.stringify({data:{principal:owner}}));return;}
@@ -36,7 +36,7 @@ async function fixture(run:(f:any)=>Promise<void>){
   Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(directory,'config'),OPENCRAWL_API_URL:api,OPENCRAWL_NO_UPDATE:'1',CLAUDE_CONFIG_DIR:join(directory,'claude'),CODEX_HOME:join(directory,'codex')});
   const session={auth:{clientId:'fixture',tokenEndpoint:api+'/token',deviceAuthorizationEndpoint:api+'/device'},accessToken:'access-0',refreshToken:'refresh-0',expiresAt:0};
   await saveSession(api,session);
-  await run({directory,api,session,get requests(){return requests;},get rejections(){return rejections;},get uploads(){return uploads;},set delay(value:number){delay=value;},set onRefresh(value:()=>void){onRefresh=value;},set stallBody(value:boolean){stallBody=value;}});
+  await run({directory,api,session,get requests(){return requests;},get rejections(){return rejections;},get uploads(){return uploads;},set delay(value:number){delay=value;},set onRefresh(value:()=>void){onRefresh=value;},set stallBody(value:boolean){stallBody=value;},set refreshGate(value:Promise<void>|undefined){refreshGate=value;}});
  }finally{
   server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));
   for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);
@@ -107,18 +107,23 @@ for(const termination of ['deadline','owner-exit'] as const)test(`capture ${term
  const queue=join(captureDir(),'queue'),before=new Map(readdirSync(queue).map(name=>[name,readFileSync(join(queue,name),'utf8')]));
  expect(before.size).toBeGreaterThan(0);
  await saveSession(f.api,f.session);f.delay=700;
- const runtime=resolve(import.meta.dir,'../src/capture/runtime.ts'),output=join(f.directory,'worker-exit.json');
- const code=`import{ownedCaptureWorker}from ${JSON.stringify(runtime)};import{writeFileSync}from'node:fs';process.on('exit',code=>writeFileSync(${JSON.stringify(output)},JSON.stringify({code})));await ownedCaptureWorker({flushMs:0,maxMs:${termination==='deadline'?300:5000},parentPollMs:20});`;
+ let releaseRefresh=()=>{};
+ if(termination==='owner-exit')f.refreshGate=new Promise<void>(resolve=>{releaseRefresh=resolve;});
+ const runtime=resolve(import.meta.dir,'../src/capture/runtime.ts'),output=join(f.directory,'worker-exit.json'),childLog=join(f.directory,'child.log');
+ const code=`import{ownedCaptureWorker}from ${JSON.stringify(runtime)};import{writeFileSync}from'node:fs';process.on('exit',code=>writeFileSync(${JSON.stringify(output)},JSON.stringify({code})));await ownedCaptureWorker({flushMs:0,maxMs:${termination==='deadline'?300:30_000},parentPollMs:20});`;
  let pid:number|undefined,child:ReturnType<typeof Bun.spawn>|undefined;
  try{
   if(termination==='deadline'){
    child=Bun.spawn([process.execPath,'-e',code],{env:process.env,stdout:'ignore',stderr:'pipe'});pid=child.pid;
   }else{
    const pidFile=join(f.directory,'worker.pid'),releaseFile=join(f.directory,'release-parent');
-   const parent=`import{spawn}from'node:child_process';import{writeFileSync,existsSync,openSync}from'node:fs';const fd=openSync(${JSON.stringify(join(f.directory,'child.log'))},'w');const child=spawn(${JSON.stringify(process.execPath)},['-e',${JSON.stringify(code)}],{env:process.env,stdio:['ignore',fd,fd]});writeFileSync(${JSON.stringify(pidFile)},String(child.pid));child.unref();const timer=setInterval(()=>{if(existsSync(${JSON.stringify(releaseFile)})){clearInterval(timer);process.exit(0);}},10);`;
+   // Windows otherwise puts the worker in a kill-on-close Job Object: parent
+   // exit would hard-kill it before the cooperative owner check can run.
+   const parent=`import{spawn}from'node:child_process';import{writeFileSync,existsSync,openSync}from'node:fs';const fd=openSync(${JSON.stringify(childLog)},'w');const child=spawn(${JSON.stringify(process.execPath)},['-e',${JSON.stringify(code)}],{env:process.env,detached:process.platform==='win32',stdio:['ignore',fd,fd]});writeFileSync(${JSON.stringify(pidFile)},String(child.pid));child.unref();const timer=setInterval(()=>{if(existsSync(${JSON.stringify(releaseFile)})){clearInterval(timer);process.exit(0);}},10);`;
    child=Bun.spawn([process.execPath,'-e',parent],{env:process.env,stdout:'ignore',stderr:'pipe'});
    await until(()=>existsSync(pidFile));pid=Number(readFileSync(pidFile,'utf8'));
    await until(()=>f.requests===1);writeFileSync(releaseFile,'exit');expect(await child.exited).toBe(0);
+   await sleep(50);expect(()=>process.kill(pid!,0)).not.toThrow();expect(existsSync(output)).toBe(false);releaseRefresh();
   }
   await until(()=>existsSync(output));
   expect(JSON.parse(readFileSync(output,'utf8')).code).toBe(0);
@@ -127,8 +132,11 @@ for(const termination of ['deadline','owner-exit'] as const)test(`capture ${term
   expect(f.uploads).toBe(0);
   for(const [name,bytes]of before)expect(readFileSync(join(queue,name),'utf8')).toBe(bytes);
   f.delay=0;await flushCaptures({wait:false});expect(f.requests).toBe(1);expect(f.rejections).toBe(0);expect(f.uploads).toBe(before.size);
+ }catch(error){
+  let alive=false;try{if(pid){process.kill(pid,0);alive=true;}}catch{}
+  throw new Error('Credential lifecycle child failed: '+JSON.stringify({termination,pid,alive,exited:existsSync(output),log:existsSync(childLog)?readFileSync(childLog,'utf8'):''}),{cause:error});
  }finally{
-  if(pid)try{process.kill(pid,'SIGKILL');}catch{}if(child){child.kill();await child.exited;}
+  releaseRefresh();if(pid)try{process.kill(pid,'SIGKILL');}catch{}if(child){child.kill();await child.exited;}
   await uninstallCapture(f.directory);
  }
 }),10_000);

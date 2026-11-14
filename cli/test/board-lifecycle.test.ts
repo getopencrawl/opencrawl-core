@@ -6,13 +6,19 @@ import {spawn} from 'node:child_process';
 
 const boardModule=resolve(import.meta.dir,'../src/board.ts');
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
-async function until(check:()=>boolean,ms=5000){
+async function until(check:()=>boolean,ms=5000,diagnostic?:()=>unknown){
   const end=Date.now()+ms;
-  while(!check()){if(Date.now()>end)throw new Error('Board lifecycle probe timed out');await pause(20);}
+  while(!check()){if(Date.now()>end)throw new Error('Board lifecycle probe timed out'+(diagnostic?': '+JSON.stringify(diagnostic()):''));await pause(20);}
+}
+function processState(pid:number|undefined){
+  if(!pid)return 'not-started';
+  try{process.kill(pid,0);return 'alive';}catch(error:any){return error.code??'unknown';}
 }
 
 // The parent deliberately leaves the listener's log handle alive. A successful
 // write to that handle must not make a dead chat consume new board messages.
+// Detach Windows children from libuv's kill-on-parent-exit job so the CLI itself
+// must detect the orphan and unwind; an OS hard kill cannot run its finally.
 for(const operation of ['watch','wait'])for(const mode of ['quiet','late-response','blocked'])test(`${operation} stops after its parent exits (${mode})`,async()=>{
   const root=mkdtempSync(join(tmpdir(),'board-lifecycle-'));
   const receipt='f'.repeat(64),requests:string[]=[];let acknowledgments=0,deliver=false,unblock:(()=>void)|undefined;
@@ -25,27 +31,29 @@ for(const operation of ['watch','wait'])for(const mode of ['quiet','late-respons
   }});
   const api=`http://127.0.0.1:${server.port}`;
   const env={...process.env,OPENCRAWL_CONFIG_HOME:root,OPENCRAWL_API_URL:api,OPENCRAWL_TOKEN:'disposable-board-lifecycle-token',OPENCRAWL_NO_UPDATE:'1'};
-  const stopped=join(root,'stopped'),pidFile=join(root,'pid'),output=join(root,'output');
+  const stopped=join(root,'stopped'),pidFile=join(root,'pid'),ownerFile=join(root,'owner'),output=join(root,'output');
   const watcher=join(root,'watcher.ts');
   writeFileSync(watcher,`import {boardCommand,writeBoardOutput} from ${JSON.stringify(boardModule)};import {writeFileSync} from 'node:fs';
+    writeFileSync(${JSON.stringify(ownerFile)},String(process.ppid));
     try{await boardCommand(${JSON.stringify(operation)},${JSON.stringify(api)},{session:'lifecycle'},d=>writeBoardOutput(d,true));}
     finally{writeFileSync(${JSON.stringify(stopped)},'stopped');}`);
   const parentCode=`import{spawn}from'node:child_process';import{openSync,writeFileSync}from'node:fs';
     const fd=openSync(${JSON.stringify(output)},'a');
-    const child=spawn(${JSON.stringify(process.execPath)},[${JSON.stringify(watcher)}],{env:process.env,stdio:['ignore',fd,fd]});
+    const child=spawn(${JSON.stringify(process.execPath)},[${JSON.stringify(watcher)}],{env:process.env,stdio:['ignore',fd,fd],detached:process.platform==='win32'});
     writeFileSync(${JSON.stringify(pidFile)},String(child.pid));setInterval(()=>{},1000);`;
   const parent=Bun.spawn([process.execPath,'-e',parentCode],{env,stdout:'ignore',stderr:'pipe'});
   let pid:number|undefined;
   try{
     await until(()=>existsSync(pidFile));pid=Number(readFileSync(pidFile,'utf8'));
     await until(()=>requests.length>0);
+    expect(Number(readFileSync(ownerFile,'utf8'))).toBe(parent.pid);
     expect(existsSync(stopped)).toBe(false);
     const duplicate=Bun.spawn([process.execPath,'-e',`import{boardCommand}from ${JSON.stringify(boardModule)};try{await boardCommand('watch',${JSON.stringify(api)},{session:'lifecycle'},()=>{});}catch(e){console.log(e.code);process.exitCode=2;}`],{env,stdout:'pipe',stderr:'pipe'});
     expect(await new Response(duplicate.stdout).text()).toContain('SESSION_BUSY');expect(await duplicate.exited).toBe(2);
     parent.kill('SIGKILL');await parent.exited;
     // Send a response after the parent is gone, before its next periodic check.
     if(mode==='late-response'){deliver=true;unblock?.();}
-    await until(()=>existsSync(stopped));
+    await until(()=>existsSync(stopped),5000,()=>({pid,state:processState(pid),parentState:processState(parent.pid),owner:readFileSync(ownerFile,'utf8'),output:readFileSync(output,'utf8')}));
     expect(acknowledgments).toBe(0);
     expect(readFileSync(output,'utf8')).toBe('');
     // The released lock must be immediately reusable by this chat's next watch.
@@ -91,17 +99,19 @@ test('parent exit waits for a rotating credential to be saved without delivering
   const setup=Bun.spawn([process.execPath,'-e',`import{saveSession,sessionFile}from ${JSON.stringify(sessionModule)};
     await saveSession(${JSON.stringify(api)},{auth:{clientId:'fixture',deviceAuthorizationEndpoint:${JSON.stringify(api+'/device')},tokenEndpoint:${JSON.stringify(api+'/token')}},accessToken:'expired',refreshToken:'original',expiresAt:0});console.log(sessionFile(${JSON.stringify(api)}));`],{env,stdout:'pipe',stderr:'pipe'});
   const savedFile=(await new Response(setup.stdout).text()).trim();expect(await setup.exited).toBe(0);
-  const stopped=join(root,'stopped'),pidFile=join(root,'pid'),output=join(root,'output'),watcher=join(root,'watcher.ts');
+  const stopped=join(root,'stopped'),pidFile=join(root,'pid'),ownerFile=join(root,'owner'),output=join(root,'output'),watcher=join(root,'watcher.ts');
   writeFileSync(watcher,`import{boardCommand,writeBoardOutput}from ${JSON.stringify(boardModule)};import{writeFileSync}from'node:fs';
+    writeFileSync(${JSON.stringify(ownerFile)},String(process.ppid));
     try{await boardCommand('watch',${JSON.stringify(api)},{session:'rotation'},d=>writeBoardOutput(d,true));}finally{writeFileSync(${JSON.stringify(stopped)},'stopped');}`);
   const code=`import{spawn}from'node:child_process';import{openSync,writeFileSync}from'node:fs';
-    const fd=openSync(${JSON.stringify(output)},'a');const child=spawn(${JSON.stringify(process.execPath)},[${JSON.stringify(watcher)}],{env:process.env,stdio:['ignore',fd,fd]});writeFileSync(${JSON.stringify(pidFile)},String(child.pid));setInterval(()=>{},1000);`;
+    const fd=openSync(${JSON.stringify(output)},'a');const child=spawn(${JSON.stringify(process.execPath)},[${JSON.stringify(watcher)}],{env:process.env,stdio:['ignore',fd,fd],detached:process.platform==='win32'});writeFileSync(${JSON.stringify(pidFile)},String(child.pid));setInterval(()=>{},1000);`;
   const parent=Bun.spawn([process.execPath,'-e',code],{env,stdout:'ignore',stderr:'pipe'});let pid:number|undefined;
   try{
     await until(()=>existsSync(pidFile));pid=Number(readFileSync(pidFile,'utf8'));
-    await until(()=>refreshes===1);parent.kill('SIGKILL');await parent.exited;
+    await until(()=>refreshes===1);expect(Number(readFileSync(ownerFile,'utf8'))).toBe(parent.pid);parent.kill('SIGKILL');await parent.exited;
     await pause(700);expect(existsSync(stopped)).toBe(false);
-    finishRefresh?.();await until(()=>existsSync(stopped));
+    expect(processState(pid)).toBe('alive');
+    finishRefresh?.();await until(()=>existsSync(stopped),5000,()=>({pid,state:processState(pid),parentState:processState(parent.pid),owner:readFileSync(ownerFile,'utf8'),output:readFileSync(output,'utf8')}));
     expect(JSON.parse(readFileSync(savedFile,'utf8')).refreshToken).toBe('rotated');
     expect(boardRequests).toBe(0);expect(readFileSync(output,'utf8')).toBe('');
   }finally{parent.kill();await parent.exited;if(pid)try{process.kill(pid,'SIGKILL');}catch{}finishRefresh?.();server.stop(true);rmSync(root,{recursive:true,force:true});}

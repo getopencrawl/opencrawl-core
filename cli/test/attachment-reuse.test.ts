@@ -128,4 +128,6 @@ test('bounded receipt cache preserves destination isolation and safely evicts ol
   expect(JSON.parse(readFileSync(path,'utf8')).keys).toHaveLength(1024);
   await attachmentReceipts(path).ensure(scope,sha,upload);expect(calls).toBe(1027);
  }finally{rmSync(dir,{recursive:true,force:true});}
-});
+ // Exercise every durable receipt write. Windows flushes can exceed Bun's
+ // default five-second test budget on the shared CI filesystem.
+},process.platform==='win32'?30_000:5000);
