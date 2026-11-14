@@ -23,6 +23,32 @@ export function validateManifests(portable, claude, mcp, claudeMcp) {
   }
   for (const key of ['hooks', 'apps']) assert.equal(portable.extensions['com.openai'][key], undefined);
 }
+export const cursorPluginFiles = ['.cursor-plugin/plugin.json','LICENSE','README.md','assets/icon.png','commands/setup.md','hooks/hooks.json','mcp.json','rules/opencrawl.mdc','skills/opencrawl/SKILL.md'].sort();
+export async function validateCursor(directory = root) {
+  const base=resolve(directory,'opencrawl-cursor'), files=[];
+  async function walk(path='') {
+    for(const name of await readdir(resolve(base,path))) {
+      const relative=path?`${path}/${name}`:name,stat=await lstat(resolve(base,relative));
+      assert(!stat.isSymbolicLink(),`Symlink: ${relative}`);
+      if(stat.isDirectory())await walk(relative);else {assert(stat.isFile());files.push(relative);}
+    }
+  }
+  assert(!(await lstat(base)).isSymbolicLink());await walk();
+  assert.deepEqual(files.sort(),cursorPluginFiles,'Unexpected Cursor plugin file');
+  const read=async path=>JSON.parse(await readFile(resolve(base,path),'utf8'));
+  const manifest=await read('.cursor-plugin/plugin.json');
+  assert.equal(manifest.name,'opencrawl');assert.equal(manifest.license,'MIT');assert.match(manifest.version,/^\d+\.\d+\.\d+$/);
+  assert.deepEqual(await read('mcp.json'),{mcpServers:{opencrawl:{url:endpoint}}});
+  const hookConfig=await read('hooks/hooks.json');assert.equal(hookConfig.version,1);
+  const hooks=hookConfig.hooks;
+  assert.deepEqual(Object.keys(hooks).sort(),['sessionStart','sessionEnd','beforeSubmitPrompt','afterAgentResponse','afterAgentThought','postToolUse','postToolUseFailure','preCompact','stop'].sort());
+  for(const entries of Object.values(hooks))assert.deepEqual(entries,[{command:'opencrawl collect hook --harness cursor --plugin-hook',timeout:30}]);
+  const marketplace=JSON.parse(await readFile(resolve(directory,'.cursor-plugin/marketplace.json'),'utf8'));
+  assert.equal(marketplace.plugins.length,1);assert.equal(marketplace.plugins[0].source,'./opencrawl-cursor');assert.equal(marketplace.plugins[0].version,manifest.version);
+  assert.equal(await readFile(resolve(base,'LICENSE'),'utf8'),await readFile(resolve(directory,'LICENSE'),'utf8'));
+  assert((await readFile(resolve(base,'skills/opencrawl/SKILL.md'),'utf8')).startsWith('---\nname: opencrawl\n'));
+  return manifest.version;
+}
 export async function validate(directory = root) {
   const base = resolve(directory, 'opencrawl');
   const read = async path => JSON.parse(await readFile(resolve(base, path), 'utf8'));
@@ -59,6 +85,7 @@ export async function validate(directory = root) {
   assert.equal(png.readUInt32BE(16), png.readUInt32BE(20));
   assert(png.readUInt32BE(16) >= 512 && png.readUInt32BE(16) <= 2048);
   assert(png.length < 2_000_000);
+  await validateCursor(directory);
   return configs[0].version;
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) console.log(`Validated OpenCrawl plugin ${await validate()} for both hosts`);
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) console.log(`Validated OpenCrawl plugin ${await validate()} for portable, Claude and Cursor hosts`);

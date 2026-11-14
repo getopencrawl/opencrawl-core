@@ -32,7 +32,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
   fetch       Read the indexed passage behind a search result
-  collect     Install and manage Claude Code, Codex and Grok Bot session capture
+  collect     Install and manage Claude Code, Codex, Cursor and Grok Bot session capture
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
   session     Bootstrap a native SessionStart hook (session start --harness NAME)
@@ -50,6 +50,7 @@ Options:
 
 Capture controls:
   collect install [--yes]              Review recording scope before enabling
+  collect install --harness cursor     Capture new Cursor conversations
   collect install --harness grok-bot   Capture Grok Bot; run on the Bot's cloud computer
   collect titles                      Refresh names of already captured sessions
   collect exclude --project /path     Block a project and its subdirectories
@@ -208,7 +209,7 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {organization:{type:'string'},'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},'retry-rejected':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {organization:{type:'string'},'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'plugin-hook':{type:'boolean'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},'retry-rejected':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';

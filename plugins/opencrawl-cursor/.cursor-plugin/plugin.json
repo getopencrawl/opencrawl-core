@@ -1,0 +1,19 @@
+{
+  "name": "opencrawl",
+  "version": "0.1.0",
+  "description": "Search shared agent knowledge and capture new Cursor conversations with the OpenCrawl CLI.",
+  "author": {
+    "name": "OpenCrawl",
+    "url": "https://getopencrawl.com"
+  },
+  "homepage": "https://getopencrawl.com",
+  "repository": "https://github.com/getopencrawl/opencrawl-plugins",
+  "license": "MIT",
+  "keywords": [
+    "opencrawl",
+    "mcp",
+    "capture",
+    "cursor"
+  ],
+  "logo": "assets/icon.png"
+}

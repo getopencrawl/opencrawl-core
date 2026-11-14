@@ -16,6 +16,7 @@ import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
 import {workspaceIdentityEnabled, workspaceToken} from '../workspace-identity.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
+import {cursorSession,cursorTranscript,cursorMessage} from './cursor.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
@@ -30,7 +31,7 @@ export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
 /** Bump when installed hook entries change so the next hook rewrites existing installs. */
 export const HOOK_MODE='native-v4';
-export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:typeof HOOK_MODE|'managed-v3'|'managed-v2'|'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<TranscriptHarness,string>&{'grok-bot'?:string},claudeDesktopSessionsRoot?:string,command:string[]};
+export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:typeof HOOK_MODE|'managed-v3'|'managed-v2'|'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:Record<TranscriptHarness,string>&{'grok-bot'?:string,cursor?:string},claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 /** Installations made before a harness existed have no directory for it. */
 export function harnessRoot(config:CaptureConfig,harness:Harness) {
@@ -57,7 +58,7 @@ async function captureIdentity(config:CaptureConfig,token?:string,signal?:AbortS
     }
     atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
   },20_000,signal);
-  return {principal,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip')};
+  return {principal,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip'),cursor:capabilities?.harnesses?.includes('cursor')===true};
 }
 export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
   return (await captureIdentity(config,token,signal)).principal;
@@ -463,12 +464,13 @@ export async function captureHook(harness:Harness,event:any) {
   const config=readCaptureConfig();if(!config||config.disabled)return;
   ensureDirectories();
   const id=randomUUID(),at=new Date().toISOString();
-  if(harness==='grok-bot') {
+  if(harness==='grok-bot'||harness==='cursor') {
     if(!event||typeof event!=='object'||Array.isArray(event))throw new CliError('CAPTURE_EVENT_INVALID','Hook payload is not an object');
     // Prepared with --defer-auth and nobody has signed in: a computer whose
     // owner never opts in must not accumulate what their Bots do.
     if(config.authPending)return;
-    const session=grokBotSession(event,at);
+    if(!config.harnesses?.includes(harness))return;
+    const session=harness==='cursor'?cursorSession(event):grokBotSession(event,at);
     if(captureExcluded(config,{sessionId:session.sessionId,cwd:session.cwd??undefined}))return;
     // Hook payloads carry no time or order. Microseconds since the epoch keep
     // events from separate hook processes in the order they were recorded.
@@ -482,7 +484,7 @@ export async function captureHook(harness:Harness,event:any) {
   if(captureExcluded(config,{sessionId,cwd:event.cwd}))return;
   atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,harness,event});
   // A Bot is waiting on a Grok Bot hook: give up on a held lock rather than queue behind it.
-  },harness==='grok-bot'?2000:Infinity);
+  },harness==='grok-bot'||harness==='cursor'?2000:Infinity);
 }
 
 // The original event is kept only until its immutable batch is spooled. Its ID
@@ -490,7 +492,7 @@ export async function captureHook(harness:Harness,event:any) {
 export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Infinity}:{until?:number}={}) {
   ensureDirectories();
   return withSessionLock('capture:notices',async()=>{
-  let processed=0,firstError:any;
+  let processed=0,firstError:any;const blockedCursorSessions=new Set<string>();
   // Grok Bot notices are the conversation itself, not pointers to a transcript.
   // They are spooled in bounded rounds: a backlog never has to fit in memory,
   // and a hook can stop between rounds with its progress kept.
@@ -499,9 +501,9 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
   const spoolRound=async()=>{
     const groups=new Map<string,{meta:any,title:any,notices:GrokBotNotice[]}>();
     for(const item of round) {
-      const session=grokBotSession(item.notice.event,item.notice.at),key=JSON.stringify([session.sessionId,session.cwd]);
-      const group=groups.get(key)??{meta:{harness:'grok-bot',sessionId:session.sessionId,origin:'cloud',
-        originEvidence:session.identified?'Grok Bot cloud computer hook':'Grok Bot hook without a conversation ID; grouped by workspace and UTC day',
+      const harness=item.notice.harness,session=harness==='cursor'?cursorSession(item.notice.event):grokBotSession(item.notice.event,item.notice.at),key=JSON.stringify([harness,session.sessionId,session.cwd]);
+      const group=groups.get(key)??{meta:{harness,sessionId:session.sessionId,origin:harness==='cursor'?(session as ReturnType<typeof cursorSession>).origin:'cloud',
+        originEvidence:harness==='cursor'?'Cursor native conversation hook':session.identified?'Grok Bot cloud computer hook':'Grok Bot hook without a conversation ID; grouped by workspace and UTC day',
         parentSessionId:null,...(session.conversationId?{conversationId:session.conversationId}:{}),...(session.cwd?{cwd:session.cwd}:{}),...(session.version?{harnessVersion:session.version}:{}),captureMode:'live'},
         title:session.title?grokBotTitleEvent(session.sessionId,session.title,session.day):null,notices:[]};
       group.notices.push(item);groups.set(key,group);
@@ -541,11 +543,56 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
       }
     }
   };
-  for(const name of readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json'))) {
+  for(const name of readdirSync(join(captureDir(),'notices')).filter(n=>n.endsWith('.json')).sort((a,b)=>statSync(join(captureDir(),'notices',a)).mtimeMs-statSync(join(captureDir(),'notices',b)).mtimeMs)) {
     await yieldToOwner();
     if(Date.now()>=until)break;
     const path=join(captureDir(),'notices',name),notice=read(path);
     if(!notice)continue;
+    if(notice.harness==='cursor') {
+      const native=notice.event?.conversation_id||notice.event?.session_id;
+      if(blockedCursorSessions.has(native))continue;
+      try {
+        const session=cursorSession(notice.event),stateFile=join(captureDir(),'state','cursor-'+hash(session.sessionId)+'.json');
+        const state=read(stateFile,{offset:0,hooks:{},transcript:{},emitted:{}});
+        if(state.lastNotice===notice.id){unlinkSync(path);syncDirectory(dirname(path));processed++;continue;}
+        if(notice.event.hook_event_name==='sessionStart'){state.startSequence=notice.sequence;state.startAt=notice.at;}
+        if(session.origin!=='unknown')state.origin=session.origin;
+        const meta={harness:'cursor',sessionId:session.sessionId,cwd:session.cwd,origin:state.origin??session.origin,originEvidence:session.originEvidence,parentSessionId:session.parentSessionId,captureMode:'live',harnessVersion:session.version};
+        if(captureExcluded(readCaptureConfig()??config,meta)){unlinkSync(path);continue;}
+        const messages=(event:any,source:'hooks'|'transcript')=>{
+          if(event.kind!=='message')return event;
+          event.data=cursorMessage(event.data);
+          const key=hash(JSON.stringify([event.data.role,event.data.content]));
+          const count=(state[source][key]??0)+1;state[source][key]=count;
+          if(count<=(state.emitted[key]??0))return null;
+          state.emitted[key]=count;return event;
+        };
+        let events:any[]=[],attachments:any[]=[],eventBytes=0;
+        const commit=()=>{
+          if(events.length)enqueue(config,meta,events,attachments);
+          atomicJson(stateFile,state);events=[];attachments=[];eventBytes=0;
+        };
+        const file=notice.event.transcript_path;
+        if(typeof file==='string'&&existsSync(file)) {
+          const transcriptState={offset:state.offset,ino:state.ino};
+          for(const record of cursorTranscript(harnessRoot(config,'cursor'),session.sessionId,file,transcriptState.offset,transcriptState.ino)) {
+            if(record.start===0&&state.offset>0){state.transcript={};state.offset=0;}
+            if(record.data) {
+              const event=messages({id:hash('cursor-transcript:'+session.sessionId+':'+record.start),kind:'message',sequence:record.data.role==='user'?(state.startSequence??notice.sequence):notice.sequence,
+                timestamp:record.data.role==='user'?(state.startAt??notice.at):notice.at,nativeId:null,parentId:null,turnId:notice.event.generation_id??null,agentId:null,data:record.data},'transcript');
+              if(event){const transformed=attachmentTransform(event,attachments,session.cwd??homedir());events.push(transformed);eventBytes+=Buffer.byteLength(JSON.stringify(transformed));}
+            }
+            state.offset=record.offset;state.ino=record.ino;
+            if(events.length>=100||attachments.length>=8||eventBytes>=1024*1024){await yieldToOwner();commit();}
+          }
+        }
+        for(const event of grokBotEvents(notice)) {
+          const next=messages(event,'hooks');if(next)events.push(attachmentTransform(next,attachments,session.cwd??homedir()));
+        }
+        state.lastNotice=notice.id;commit();unlinkSync(path);syncDirectory(dirname(path));processed++;
+      }catch(error){firstError??=error;blockedCursorSessions.add(native);}
+      continue;
+    }
     if(notice.harness==='grok-bot') {
       round.push({path,notice});roundBytes+=statSync(path).size;
       if(round.length>=200||roundBytes>=16*1024*1024)await spoolRound();
@@ -766,20 +813,20 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     const staticToken=staticCaptureToken(config.api);
     let token=staticToken||(workspaceIdentityEnabled()?await workspaceToken(config.api):await accessToken(config.api));
     const identity=await captureIdentity(config,token),principal=identity.principal;
-    let useGzip=identity.gzip;
+    let useGzip=identity.gzip,cursorSupported=identity.cursor;
     // A long flush outlives a short-lived sign-in token. Renew before each request
     // and after a rejection, re-verifying identity whenever the token changes.
     const adopt=async(next:string)=>{
       if(next===token)return token;
       const refreshed=await captureIdentity(config,next),current=refreshed.principal;
-      useGzip=refreshed.gzip;
+      useGzip=refreshed.gzip;cursorSupported=refreshed.cursor;
       if(current.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Signed-in user changed during upload. Sign back in as the queued author; queued data is retained.');
       if(current.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Signed-in team changed during upload. Sign back into the original destination; queued data is retained.');
       return token=next;
     };
     const current=async()=>staticToken||await adopt(workspaceIdentityEnabled()?await workspaceToken(config.api):await accessToken(config.api));
     const renew=staticToken?undefined:async(rejected:string)=>adopt(workspaceIdentityEnabled()?await workspaceToken(config.api,rejected):await accessToken(config.api,rejected));
-    let uploaded=0,excluded=0,visited=0,scheduled=0,stopped=false,failure:unknown,nextUploadAt=0;
+    let uploaded=0,excluded=0,unsupported=0,visited=0,scheduled=0,stopped=false,failure:unknown,nextUploadAt=0;
     if(retryRejected)for(const name of rejectedNames())retryWindowsSharing(()=>unlinkSync(join(captureDir(),'rejected',name)));
     let names=queuedNames().filter(name=>!isPendingLive(captureDir(),name));
     if(!wait){
@@ -865,6 +912,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
           if(batch.owner?.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Queued capture belongs to another user. Sign back in as its author to upload it; queued data is retained.');
           if(batch.owner?.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Queued capture belongs to another team. Sign back into its original destination or explicitly purge local pending data.');
           if(captureExcluded(latest??config,batch)){excluded++;continue;}
+          if(batch.harness==='cursor'&&!cursorSupported){unsupported++;continue;}
           scheduled++;
           if(batchDelayMs){const start=Math.max(Date.now(),nextUploadAt);nextUploadAt=start+batchDelayMs;await pause(Math.max(0,start-Date.now()));if(failure)break;}
           try{await upload(name,batch);}
@@ -881,7 +929,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     checkpointReceipt();
     if(failure)throw failure;
     const rejected=rejectedNames().length;
-    const result=excluded?{uploaded,excluded}:{uploaded};
+    const result={uploaded,...(excluded?{excluded}:{}),...(unsupported?{unsupportedHarnesses:['cursor']}: {})};
     if(visited<names.length||stopped){if(rejected)throw new CliError('CAPTURE_BATCH_REJECTED',rejectedNotice(rejected));return result;}
     const referenced=new Set<string>();
     for(const name of readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json'))) {

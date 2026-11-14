@@ -42,13 +42,14 @@ function managedStartup(file: string) {
 
 /** Own only our synchronous SessionStart entry. Never enable disabled hooks. */
 export function startupHooks(clients: string[], action: 'status' | 'install', {home = homedir(), env = process.env, command = commandForSelf(), requirementsFile = process.platform === 'win32' ? join(process.env.ProgramData || 'C:\\ProgramData', 'OpenAI', 'Codex', 'requirements.toml') : '/etc/codex/requirements.toml'}: StartupOptions = {}) {
-  return clients.filter(client => ['codex', 'claude-code'].includes(client)).map(client => {
-    const root = client === 'codex' ? env.CODEX_HOME || join(home, '.codex') : env.CLAUDE_CONFIG_DIR || join(home, '.claude');
-    const file = join(root, client === 'codex' ? 'hooks.json' : 'settings.json');
+  return clients.filter(client => ['codex', 'claude-code', 'cursor'].includes(client)).map(client => {
+    const root = client === 'codex' ? env.CODEX_HOME || join(home, '.codex') : client === 'cursor' ? env.CURSOR_CONFIG_DIR || join(home, '.cursor') : env.CLAUDE_CONFIG_DIR || join(home, '.claude');
+    const file = join(root, client === 'claude-code' ? 'settings.json' : 'hooks.json');
     try {
       const before = existsSync(file) ? readFileSync(file, 'utf8') : '';
       const config = before ? JSON.parse(before) : {};
       if (!config || typeof config !== 'object' || Array.isArray(config) || config.hooks !== undefined && (!config.hooks || typeof config.hooks !== 'object' || Array.isArray(config.hooks))) throw new Error();
+      if(client==='cursor'&&config.version!==undefined&&config.version!==1)throw new Error();
       const toml = join(root, 'config.toml');
       const managed = client === 'codex' ? managedStartup(requirementsFile) : null;
       const locallyDisabled = config.disableAllHooks === true || client === 'codex' && existsSync(toml) && (Bun.TOML.parse(readFileSync(toml, 'utf8')) as {features?: {hooks?: boolean}}).features?.hooks === false;
@@ -61,19 +62,23 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
       }
       const runner=hookRunner('startup',command);
       const invocation=runner.invocation(client);
+      const cursor=client==='cursor';
+      const cursorCommand=(process.platform==='win32'?'':'/bin/sh ')+quote(runner.file);
       const hook = {type:'command',...invocation,command:invocation.command+' session start --harness '+client,
         timeout: 7, statusMessage: startupMarker};
       const hooks = {...config.hooks};
       for (const [event, groups] of Object.entries(hooks)) {
         if (!Array.isArray(groups)) throw new Error();
         hooks[event] = groups.flatMap(group => {
+          if(cursor)return typeof group?.command==='string'&&/[\\/]startup[\\/]runner\.(?:sh|cmd)\b.* session start --harness cursor$/.test(group.command)?[]:[group];
           if (!Array.isArray(group?.hooks)) throw new Error();
           const remaining = group.hooks.filter((entry: any) => entry?.statusMessage !== startupMarker);
           return remaining.length ? [{...group, hooks: remaining}] : [];
         });
         if (!hooks[event].length) delete hooks[event];
       }
-      (hooks.SessionStart ??= []).push({hooks: [hook]});
+      if(cursor)(hooks.sessionStart ??= []).push({command:cursorCommand+' session start --harness cursor',timeout:7});
+      else (hooks.SessionStart ??= []).push({hooks: [hook]});
       const current = JSON.stringify(config.hooks) === JSON.stringify(hooks) && existsSync(runner.file) && readFileSync(runner.file,'utf8')===runner.script;
       if (action === 'status') return {client, file, status: current ? 'current' : before ? 'outdated' : 'missing'};
       if (current) return {client, file, status: 'unchanged'};
@@ -82,7 +87,7 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
       // Keep a private recovery copy, original permissions and JSON indentation.
       if (before) atomicFile(join(configDir(), 'startup', 'backups', randomUUID() + '.json'), before);
       const indent = /\n([ \t]+)\S/.exec(before)?.[1] ?? (before && !before.includes('\n') ? '' : '  ');
-      const text = JSON.stringify({...config, hooks}, null, indent) + '\n';
+      const text = JSON.stringify({...config, ...(cursor?{version:1}:{}), hooks}, null, indent) + '\n';
       mkdirSync(root, {recursive: true});
       const temp = file + '.' + randomUUID() + '.tmp';
       try {

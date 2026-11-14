@@ -7,6 +7,8 @@ import {backfill,backfillPreview,selection,setupBackfill,reportBackfillProgress}
 import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
 import {captureNoticeFor} from './policy.ts';
 import {agentSkills} from '../skills.ts';
+import {readCaptureConfig} from './runtime.ts';
+import {cursorUserHookInstalled} from './cursor.ts';
 /** With eager set, return as soon as a whole document has arrived: a runtime
  * may keep the pipe open after writing the payload. */
 async function hookInput(eager=false) {
@@ -24,7 +26,7 @@ async function hookInput(eager=false) {
  * request in flight, so the process ends at five seconds, well inside the
  * installed hook timeout. The one thing it waits for is a sign-in renewal
  * already in flight: abandoning that would lose the sign-in. */
-async function grokBotHook() {
+async function cursorFormatHook(harness:'cursor'|'grok-bot',plugin=false) {
   let answered=false;
   const answer=(event:any)=>{if(!answered){answered=true;process.stdout.write(JSON.stringify(grokBotResponse(event))+'\n');}};
   const finish=()=>{const renewing=credentialRotation();if(renewing)void renewing.finally(()=>process.exit(0));else process.exit(0);};
@@ -36,8 +38,12 @@ async function grokBotHook() {
   try {
     const event=await hookInput(true);
     answer(event);
+    // User hooks and plugin hooks both run in Cursor. Only one records content.
+    if(plugin&&cursorUserHookInstalled(readCaptureConfig()?.roots.cursor,event.hook_event_name)) {
+      clearTimeout(deadline);finish();return null;
+    }
     await bindHookIdentity(event);
-    await captureHook('grok-bot',event);
+    await captureHook(harness,event);
     await upgradeCaptureHooks();
     await hookFlush(event);
   }catch(e){answer(null);try{recordError(e);}catch{}}
@@ -55,7 +61,7 @@ export async function collectCommand(action:string,api:string,values:any) {
   switch(action) {
     case 'install': {
       // Grok Bot keeps no local history to import.
-      const mode=values.backfill??(process.env.CLAUDE_CODE_REMOTE==='true'||values.harness==='grok-bot'?'skip':'ask');
+      const mode=values.backfill??(process.env.CLAUDE_CODE_REMOTE==='true'||['grok-bot','cursor'].includes(values.harness)?'skip':'ask');
       if(!['ask','skip','all','claude-code','codex'].includes(mode))throw new CliError('INVALID_USAGE','Use --backfill ask, skip, all, claude-code, or codex.',64);
       const notice=captureNoticeFor(api,values.harness);
       if(!await approveCapture(values.yes===true,values.json,notice))return {status:'consent_required',notice,nextStep:'Confirm the destination and recording scope with the user, then run collect install --yes. This does not approve history import.'};
@@ -83,7 +89,7 @@ export async function collectCommand(action:string,api:string,values:any) {
     case 'flush': try{return await flushCaptureWork({retryRejected:values['retry-rejected']===true});}catch(e){recordError(e);throw e;}
     case 'worker': {try{await ownedCaptureWorker();}catch(e){try{recordError(e);}catch{}}return null;}
     case 'hook': {
-      if(values.harness==='grok-bot')return grokBotHook();
+      if(values.harness==='grok-bot'||values.harness==='cursor')return cursorFormatHook(values.harness,values['plugin-hook']===true);
       // Only harness-managed async hooks may upload. Legacy sync hooks stay local.
       try {
         if(!['claude-code','codex'].includes(values.harness))throw new Error('Invalid harness');

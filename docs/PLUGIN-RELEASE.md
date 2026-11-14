@@ -13,10 +13,12 @@ repository is `getopencrawl/opencrawl-plugins`.
 Export only the `plugins/` subtree with `git subtree split --prefix=plugins`,
 inspect the resulting Git tree/history, and push that split commit to the public
 repository. Never push a core branch or tag to the public repository. Release
-ZIPs come from `plugins/scripts/package.py`; upload only the ZIP and checksum.
+ZIPs come from `plugins/scripts/package.mts`; upload only the ZIP and checksum.
 Do not include a private repository archive, source history, credentials,
 server binaries, or reviewer accounts. Keep public and private Git tags separate.
 
 GitHub publication is not directory publication or proof of hosted service
 readiness. See the public directory/authentication documents for the remaining
 platform and live verification requirements.
+
+The native Cursor plugin is `plugins/opencrawl-cursor`, selected by the Cursor marketplace manifest. Validate its explicit file allowlist and hooks alongside the portable bundle. The Cursor ZIP and checksum are separate artifacts. Cursor capture requires the released CLI and receiver support; publish those before plugin setup acceptance. Public repository export is distinct from Cursor Marketplace review.

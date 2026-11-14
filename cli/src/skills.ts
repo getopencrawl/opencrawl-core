@@ -7,7 +7,7 @@ import {CliError} from './oauth.ts';
 import {participationInstructions} from './board.ts';
 import {startupHooks, type StartupOptions} from './startup-install.ts';
 
-const revision = 7;
+const revision = 8;
 const manifestName = '.opencrawl-skill.json';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 function metadata(path: string) {
@@ -20,13 +20,13 @@ export function skillTargets({home = homedir(), env = process.env, which = Bun.w
   const known = [
     {client: 'codex', command: 'codex', root: env.CODEX_HOME || join(home, '.codex'), directory: shared},
     {client: 'claude-code', command: 'claude', root: env.CLAUDE_CONFIG_DIR || join(home, '.claude'), directory: join(env.CLAUDE_CONFIG_DIR || join(home, '.claude'), 'skills', 'opencrawl')},
-    {client: 'cursor', command: 'cursor', root: join(home, '.cursor'), directory: shared},
+    {client: 'cursor', command: 'cursor', root: env.CURSOR_CONFIG_DIR || join(home, '.cursor'), directory: join(env.CURSOR_CONFIG_DIR || join(home, '.cursor'), 'skills', 'opencrawl')},
     {client: 'gemini', command: 'gemini', root: join(home, '.gemini'), directory: shared},
     {client: 'opencode', command: 'opencode', root: join(env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode'), directory: shared},
     {client: 'copilot', command: 'copilot', root: join(home, '.copilot'), directory: shared},
   ];
   if (clients?.some(client => !known.some(entry => entry.client === client))) throw new CliError('INVALID_USAGE', `Use --client ${known.map(entry => entry.client).join('|')}.`, 64);
-  const selected = known.filter(entry => clients ? clients.includes(entry.client) : existsSync(entry.root) || Boolean(which(entry.command)) || includeExisting && metadata(entry.directory) !== null || entry.client === 'claude-code' && env.CLAUDE_CODE_REMOTE === 'true');
+  const selected = known.filter(entry => clients ? clients.includes(entry.client) : existsSync(entry.root) || Boolean(which(entry.command)) || entry.client === 'cursor' && Boolean(which('cursor-agent')) || includeExisting && metadata(entry.directory) !== null || entry.client === 'claude-code' && env.CLAUDE_CODE_REMOTE === 'true');
   const groups = new Map<string, string[]>();
   for (const entry of selected) groups.set(entry.directory, [...(groups.get(entry.directory) ?? []), entry.client]);
   return [...groups].map(([directory, clients]) => ({directory, clients}));

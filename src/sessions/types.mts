@@ -38,7 +38,7 @@ export interface ObjectStore extends ConditionalStore {
 }
 /** Capture clients with their own session namespace. Memory snapshots are
  * narrower: only harnesses that keep native memory files (see memories/). */
-export const SESSION_HARNESSES = ['claude-code', 'codex', 'grok-bot'] as const;
+export const SESSION_HARNESSES = ['claude-code', 'codex', 'cursor', 'grok-bot'] as const;
 export type SessionHarness = typeof SESSION_HARNESSES[number];
 export const isSessionHarness = (value: unknown): value is SessionHarness => (SESSION_HARNESSES as readonly unknown[]).includes(value);
 export interface Attachment {type?: string; status?: string; sha256?: string; size?: number; mimeType?: string; path?: string; objectKey?: string | null}

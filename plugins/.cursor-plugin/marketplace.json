@@ -1,0 +1,14 @@
+{
+  "name": "opencrawl",
+  "owner": {
+    "name": "OpenCrawl"
+  },
+  "plugins": [
+    {
+      "name": "opencrawl",
+      "source": "./opencrawl-cursor",
+      "description": "Shared agent knowledge and Cursor capture.",
+      "version": "0.1.0"
+    }
+  ]
+}

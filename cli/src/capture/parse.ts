@@ -1,11 +1,11 @@
 import {createHash} from 'node:crypto';
 import {CliError} from '../oauth.ts';
-export type Harness = 'claude-code'|'codex'|'grok-bot';
-/** Harnesses that persist a native transcript this collector reads. Grok Bot
+export type Harness = 'claude-code'|'codex'|'cursor'|'grok-bot';
+/** Harnesses that persist a native transcript this collector reads. Cursor and Grok Bot
  * sessions are assembled from hook payloads instead; see grok-bot.ts. */
-export type TranscriptHarness = Exclude<Harness,'grok-bot'>;
-export const HARNESSES:Harness[] = ['claude-code','codex','grok-bot'];
-export const readsTranscript = (harness:Harness): harness is TranscriptHarness => harness!=='grok-bot';
+export type TranscriptHarness = Exclude<Harness,'grok-bot'|'cursor'>;
+export const HARNESSES:Harness[] = ['claude-code','codex','cursor','grok-bot'];
+export const readsTranscript = (harness:Harness): harness is TranscriptHarness => harness==='claude-code'||harness==='codex';
 export type Origin = 'cli'|'desktop'|'cloud'|'subagent'|'unknown';
 export const hash = (data: string|Buffer) => createHash('sha256').update(data).digest('hex');
 /** Finalize only after attachment extraction and metadata normalization. The

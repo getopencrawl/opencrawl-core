@@ -1,5 +1,5 @@
 import type {Principal, ObjectStore, EventIdentityStore, SessionBatch, Authenticate, HttpHandler} from './types.mjs';
-import {parseJson, isSessionHarness} from './types.mjs';
+import {parseJson, isSessionHarness, SESSION_HARNESSES} from './types.mjs';
 import type {MemorySnapshot} from '../memories/types.mjs';
 import type {SearchAdapter} from '../search/types.mjs';
 import type {createCaptureCredentials} from './credentials.mjs';
@@ -155,7 +155,7 @@ export function createCaptureHandler({ingest, authenticate, search=undefined, cr
       if(credentials && req.method==='POST' && url.pathname==='/api/sessions/credentials') return await privateResult(200,{data:await credentials.issue(principal)});
       const credential=/^\/api\/sessions\/credentials\/([a-f0-9]{64})$/.exec(url.pathname);
       if(credentials && req.method==='DELETE' && credential) return send(200,{data:await credentials.revoke(principal,credential[1])});
-      if (req.method === 'GET' && url.pathname === '/api/sessions/identity') return await privateResult(200, {data:{principal,capabilities:{batchEncodings:['gzip']}}});
+      if (req.method === 'GET' && url.pathname === '/api/sessions/identity') return await privateResult(200, {data:{principal,capabilities:{batchEncodings:['gzip'],harnesses:SESSION_HARNESSES}}});
       if(req.method==='GET' && url.pathname==='/api/sessions/search') {
         if(!search)return send(503,{error:{code:'SEARCH_NOT_CONFIGURED'}});
         return await privateResult(200,{data:await search.search(principal,{query:url.searchParams.get('q')??'',limit:Number(url.searchParams.get('limit')??20)})});

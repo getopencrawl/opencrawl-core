@@ -47,17 +47,17 @@ function modifyHooks(file:string,events:string[],entry:((event:string)=>HookEntr
 }
 const hookFile=(config:CaptureConfig,harness:Harness)=>join(harnessRoot(config,harness),harness==='claude-code'?'settings.json':'hooks.json');
 // Cursor-format entries have no label field; the command itself marks ownership.
-const grokBotOwned=(entry:any)=>typeof entry?.command==='string'&&/[\\/]capture[\\/]runner\.(?:cjs|sh|cmd)\b.* collect hook .*--harness grok-bot\b/.test(entry.command);
-/** Grok Bot loads ~/.cursor/hooks.json: {version:1,hooks:{event:[{command,timeout}]}}. */
-function modifyGrokBotHooks(file:string,command:string|null) {
+const cursorFormatOwned=(harness:string,entry:any)=>typeof entry?.command==='string'&&/[\\/]capture[\\/]runner\.(?:cjs|sh|cmd)\b.* collect hook .*--harness (cursor|grok-bot)\b/.exec(entry.command)?.[1]===harness;
+/** Cursor-format clients load ~/.cursor/hooks.json: {version:1,hooks:{event:[{command,timeout}]}}. */
+function modifyCursorFormatHooks(file:string,command:string|null,harness:'cursor'|'grok-bot') {
   if(!command&&!existsSync(file))return;
   const config=readJson(file);
   if(!config||typeof config!=='object'||Array.isArray(config)||config.version!==undefined&&config.version!==1||
-    config.hooks!==undefined&&(!config.hooks||typeof config.hooks!=='object'||Array.isArray(config.hooks)))throw new CliError('CAPTURE_INVALID_CONFIG','Existing Grok Bot hooks file is not a version 1 Cursor hooks file');
+    config.hooks!==undefined&&(!config.hooks||typeof config.hooks!=='object'||Array.isArray(config.hooks)))throw new CliError('CAPTURE_INVALID_CONFIG','Existing hooks file is not a version 1 Cursor hooks file');
   const hooks=config.hooks??{};
   for(const [event,entries] of Object.entries(hooks)) {
     if(!Array.isArray(entries))throw new CliError('CAPTURE_INVALID_CONFIG','Existing hook entries are invalid');
-    hooks[event]=entries.filter(entry=>!grokBotOwned(entry));
+    hooks[event]=entries.filter(entry=>!cursorFormatOwned(harness,entry));
     if(!hooks[event].length)delete hooks[event];
   }
   // Every hook is passive, so a failure or the timeout never blocks the Bot. The
@@ -106,7 +106,7 @@ function configureHooks(config:CaptureConfig,harnesses:Harness[]) {
   // Cursor does not document a shell for hook commands. Quote only when needed
   // so the command also survives being split on spaces.
   const plain=(s:string)=>/^[\w@%+=:,./-]+$/.test(s)?s:quote(s);
-  if(harnesses.includes('grok-bot'))modifyGrokBotHooks(hookFile(config,'grok-bot'),(process.platform==='win32'?[plain(runner.file)]:['/bin/sh',plain(runner.file)]).concat(['collect','hook','--harness','grok-bot']).join(' '));
+  for(const harness of ['cursor','grok-bot'] as const)if(harnesses.includes(harness))modifyCursorFormatHooks(hookFile(config,harness),(process.platform==='win32'?[plain(runner.file)]:['/bin/sh',plain(runner.file)]).concat(['collect','hook','--harness',harness]).join(' '),harness);
 }
 /** Upgrade existing installations without authentication or changing their queue. */
 export async function upgradeCaptureHooks() {
@@ -138,10 +138,11 @@ export async function upgradeCaptureHooks() {
 export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses=(process.env.CLAUDE_CODE_REMOTE==='true'?['claude-code']:['claude-code','codex']) as Harness[]}={}) {
   workspaceIdentityEnabled(); // Reject mixed credentials even during image preparation.
   const receiverToken=environmentToken('OPENCRAWL_SESSIONS_TOKEN',api);
-  if(!harnesses.length||harnesses.some(h=>!HARNESSES.includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code, codex or grok-bot',64);
+  if(!harnesses.length||harnesses.some(h=>!HARNESSES.includes(h)))throw new CliError('INVALID_USAGE','Use --harness claude-code, codex, cursor or grok-bot',64);
   // Image preparation cannot access runtime secrets. First worker authenticates
   // before parsing/spooling; hooks only persist notices even on first launch.
-  const {principal}=deferAuth?{principal:{tenantId:'pending',userId:'pending'}}:await request(api,'/api/sessions/identity');
+  const {principal,capabilities}=deferAuth?{principal:{tenantId:'pending',userId:'pending'},capabilities:undefined}:await request(api,'/api/sessions/identity');
+  if(!deferAuth&&harnesses.includes('cursor')&&!capabilities?.harnesses?.includes('cursor'))throw new CliError('CAPTURE_HARNESS_UNSUPPORTED','This receiver does not support Cursor capture yet. Upgrade it before enrolling Cursor; existing capture is unchanged.');
   if(!principal?.tenantId || !principal?.userId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   return withSessionLock('capture:configuration',async()=>{
   const previous=readCaptureConfig();
@@ -155,21 +156,24 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   const config:CaptureConfig={schemaVersion:1,exclusions:previous?.exclusions,hookMode:HOOK_MODE,api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:preserveOwner?previous.owner:principal,...(authPending?{authPending:true}:{}),
     harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
       'claude-code':!harnesses.includes('claude-code')&&previous?.roots['claude-code']||process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),
+      cursor:!harnesses.includes('cursor')&&previous?.roots.cursor||process.env.CURSOR_CONFIG_DIR||join(home,'.cursor'),
       codex:!harnesses.includes('codex')&&previous?.roots.codex||process.env.CODEX_HOME||join(home,'.codex'),
       'grok-bot':!harnesses.includes('grok-bot')&&previous?.roots['grok-bot']||join(home,'.cursor')},
     claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
   const enrolled=config.harnesses!;
+  if(enrolled.includes('cursor')&&enrolled.includes('grok-bot')&&config.roots.cursor===config.roots['grok-bot'])
+    throw new CliError('CAPTURE_HARNESS_CONFLICT','Cursor and Grok Bot share a hooks directory on this machine. Enroll the actual client in a separate profile to avoid recording it twice.');
   // Checked before the directories below are created.
   const absent=harnesses.every(readsTranscript)&&!harnesses.some(harness=>existsSync(harnessRoot(config,harness))||Bun.which(harness==='codex'?'codex':'claude',{PATH:process.env.PATH}));
   for(const harness of enrolled)mkdirSync(harnessRoot(config,harness),{recursive:true,mode:0o700});
   // Validate every existing config before changing any of them.
   if(enrolled.includes('claude-code'))readJson(join(config.roots['claude-code'],'settings.json'));
   if(enrolled.includes('codex'))readJson(join(config.roots.codex,'hooks.json'));
-  if(enrolled.includes('grok-bot'))readJson(hookFile(config,'grok-bot'));
+  for(const harness of ['cursor','grok-bot'] as const)if(enrolled.includes(harness))readJson(hookFile(config,harness));
   const toml=join(config.roots.codex,'config.toml');if(harnesses.includes('codex')&&existsSync(toml))Bun.TOML.parse(readFileSync(toml,'utf8'));
   const affected=[join(captureDir(),'config.json'),join(captureDir(),'receiver-token.json'),hookRunner('capture',command).file,
     join(config.roots['claude-code'],'settings.json'),join(config.roots.codex,'hooks.json'),toml,
-    ...(enrolled.includes('grok-bot')?[hookFile(config,'grok-bot')]:[])];
+    ...(['cursor','grok-bot'] as const).filter(h=>enrolled.includes(h)).map(h=>hookFile(config,h))];
   const originals=new Map(affected.map(path=>[path,existsSync(path)?readFileSync(path):null]));
   try {
   atomicJson(join(captureDir(),'config.json'),config);
@@ -191,6 +195,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
     ...(harnesses.some(readsTranscript)?[process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':[...(codexHooksAwaitingReview(config)?['Codex needs you to trust the new hooks: open Codex, run /hooks (or desktop Settings > Hooks), trust "OpenCrawl session capture" and start a new session. collect status reports any hook still awaiting review.']:[]),'Restart existing Claude sessions if hooks have not reloaded.'].join(' ')]:[]),
     // An agent that ran the plain command on a Bot's computer reads this and corrects itself.
     ...(absent&&!deferAuth&&!enrolled.includes('grok-bot')&&process.env.CLAUDE_CODE_REMOTE!=='true'?['Neither Claude Code nor Codex was found on this machine. If it is a Grok Bot cloud computer, capture it with opencrawl collect install --yes --harness grok-bot.']:[]),
+    ...(harnesses.includes('cursor')?[`Cursor hooks installed in ${hookFile(config,'cursor')}. Start a new Cursor conversation, then check collect status and search for its new message. Existing Cursor history is not imported.`]:[]),
     ...(harnesses.includes('grok-bot')?[`Grok Bot hooks installed in ${hookFile(config,'grok-bot')}. Bots that are already running may keep the hooks they loaded earlier: from a newly created Bot, run a command, then check collect status for a stored receipt.`]:[])];
   return {notice:enrolled.includes('grok-bot')?captureNotice(api)+' '+grokBotNotice:captureNotice(api),exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
     nextStep:steps.join(' ')};
@@ -204,7 +209,7 @@ export async function uninstallCapture(home=homedir()) {
   removeLegacyService(home);
   if((config.harnesses??['claude-code','codex']).includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),[],null);
   if((config.harnesses??['claude-code','codex']).includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),[],null);
-  if(config.harnesses?.includes('grok-bot'))modifyGrokBotHooks(hookFile(config,'grok-bot'),null);
+  for(const harness of ['cursor','grok-bot'] as const)if(config.harnesses?.includes(harness))modifyCursorFormatHooks(hookFile(config,harness),null,harness);
   // Stopping collection preserves queued data for an authenticated retry.
   atomicJson(join(captureDir(),'config.json'),{...config,disabled:true});
   return {installed:false,queuedDataPreserved:true};

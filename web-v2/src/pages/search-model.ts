@@ -73,7 +73,7 @@ export function safeSourceUrl(value: unknown): string | undefined {
     return url.href;
   } catch {return;}
 }
-const names: Record<string, string> = {codex: 'Codex', 'claude-code': 'Claude Code', 'grok-bot': 'Grok Bot', claude: 'Claude', slack: 'Slack', notion: 'Notion', github: 'GitHub', google_drive: 'Google Drive', granola: 'Granola', circleback: 'Circleback'};
+const names: Record<string, string> = {codex: 'Codex', 'claude-code': 'Claude Code', cursor: 'Cursor', 'grok-bot': 'Grok Bot', claude: 'Claude', slack: 'Slack', notion: 'Notion', github: 'GitHub', google_drive: 'Google Drive', granola: 'Granola', circleback: 'Circleback'};
 function readable(value: string) {return names[value] || value.replace(/[_-]+/g, ' ').replace(/^./u, letter => letter.toLocaleUpperCase());}
 function timestamp(value: unknown): string | undefined {
   if (typeof value !== 'number' && typeof value !== 'string') return;

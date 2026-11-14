@@ -56,3 +56,7 @@ Open an issue or pull request for plugin changes. Keep changes limited to
 published capabilities, preserve both host formats, and run the checks above.
 Do not commit tokens, account data, reviewer credentials or session transcripts.
 See [SECURITY.md](SECURITY.md) for security reporting.
+
+## Cursor
+
+The native Cursor bundle is `opencrawl-cursor/`, selected by `.cursor-plugin/marketplace.json`. It includes MCP, retrieval guidance, setup, and passive hooks for explicitly enrolled CLI capture. Package both hosts with `node scripts/package.mts`. Repository publication does not claim Cursor Marketplace approval.

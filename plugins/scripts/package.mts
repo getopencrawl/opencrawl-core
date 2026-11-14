@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+export const cursorPluginFiles=['.cursor-plugin/plugin.json','LICENSE','README.md','assets/icon.png','commands/setup.md','hooks/hooks.json','mcp.json','rules/opencrawl.mdc','skills/opencrawl/SKILL.md'].sort();
 export const files = ['.claude-plugin/plugin.json', '.mcp.json', 'LICENSE', 'README.md', 'assets/icon.png', 'mcp.json', 'plugin.json', 'skills/opencrawl/SKILL.md'].sort();
 export function crc32(bytes: Buffer) { let crc = 0xffffffff; for (const byte of bytes) {
     crc ^= byte;
@@ -54,6 +55,24 @@ export function archive(entries: ReadonlyArray<{
     end.writeUInt32LE(offset, 16);
     return Buffer.concat([...local, directory, end]);
 }
-export function packagePlugin() { execFileSync(process.execPath, [join(root, 'scripts/validate.mjs')], { stdio: 'inherit' }); const version: unknown = JSON.parse(readFileSync(join(root, 'opencrawl/plugin.json'), 'utf8')).version; assert(typeof version === 'string' && /^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version)); const out = join(root, 'dist'); mkdirSync(out, { recursive: true }); const name = 'opencrawl-' + version + '.zip', bytes = archive(files.map(name => ({ name, bytes: readFileSync(join(root, 'opencrawl', name)) }))); writeFileSync(join(out, name), bytes); const hash = createHash('sha256').update(bytes).digest('hex'); writeFileSync(join(out, 'SHA256SUMS'), hash + '  ' + name + '\n'); console.log(name + ': ' + hash); }
+export function packagePlugin() {
+    execFileSync(process.execPath, [join(root, 'scripts/validate.mjs')], {stdio: 'inherit'});
+    const out=join(root,'dist'),checksums:string[]=[];
+    mkdirSync(out,{recursive:true});
+    for(const plugin of [
+        {directory:'opencrawl',manifest:'plugin.json',files},
+        {directory:'opencrawl-cursor',manifest:'.cursor-plugin/plugin.json',files:cursorPluginFiles},
+    ]) {
+        const version:unknown=JSON.parse(readFileSync(join(root,plugin.directory,plugin.manifest),'utf8')).version;
+        assert(typeof version==='string'&&/^\d+\.\d+\.\d+$/.test(version));
+        const name=plugin.directory+'-'+version+'.zip';
+        const bytes=archive(plugin.files.map(name=>({name,bytes:readFileSync(join(root,plugin.directory,name))})));
+        writeFileSync(join(out,name),bytes);
+        const hash=createHash('sha256').update(bytes).digest('hex');
+        checksums.push(hash+'  '+name);console.log(name+': '+hash);
+    }
+    writeFileSync(join(out,'SHA256SUMS'),checksums.join('\n')+'\n');
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)
     packagePlugin();
