@@ -5,7 +5,8 @@ import https from 'node:https';
 import {readFileSync,writeFileSync} from 'node:fs';
 const [inventoryFile,certificate,key,receipt]=process.argv.slice(2) as [string,string,string,string];
 const inventory=JSON.parse(readFileSync(inventoryFile,'utf8')) as Record<string,{metadata:Record<string,unknown>;file:string;version:string}>;
-const requests:Array<{path:string;npm:boolean}>=[];
+const requests:Array<{path:string;npm:boolean;event?:string}>=[];
+function record(path:string,event:string){requests.push({path,npm:false,event});writeFileSync(receipt,JSON.stringify(requests));}
 const registry=https.createServer({cert:readFileSync(certificate),key:readFileSync(key)},(request,response)=>{
   const path=decodeURIComponent(request.url??'');
   requests.push({path,npm:(request.headers['user-agent']??'').startsWith('npm/')});
@@ -18,10 +19,12 @@ const registry=https.createServer({cert:readFileSync(certificate),key:readFileSy
 });
 const proxy=http.createServer((_request,response)=>response.writeHead(403).end());
 proxy.on('connect',(request,socket,head)=>{
+  record(request.url??'','connect');
   if(request.url!=='registry.npmjs.org:443'){socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');return;}
   socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
   if(head.length)socket.unshift(head);
   registry.emit('connection',socket);
 });
+registry.on('tlsClientError',error=>record((error as NodeJS.ErrnoException).code??error.message,'tls-error'));
 proxy.listen(0,'127.0.0.1',()=>console.log(JSON.stringify({port:(proxy.address() as {port:number}).port})));
 process.on('SIGTERM',()=>{writeFileSync(receipt,JSON.stringify(requests));process.exit(0);});

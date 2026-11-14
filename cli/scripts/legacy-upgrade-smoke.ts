@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,rmSync,existsSync,realpathSync} from 'node:fs';
-import {join,resolve} from 'node:path';
+import {join,resolve,dirname,delimiter} from 'node:path';
 import {tmpdir,homedir} from 'node:os';
 import {createRequire} from 'node:module';
 
@@ -25,7 +25,7 @@ function sync(command:string[],env=environment,cwd?:string){
   assert.equal(child.exitCode,0,child.stderr.toString());return child.stdout.toString().trim();
 }
 async function run(command:string[],env=environment){
-  const child=Bun.spawn(command,{env,stdout:'pipe',stderr:'pipe'});
+  const child=Bun.spawn(command,{env,stdout:'pipe',stderr:'pipe',windowsVerbatimArguments:process.platform==='win32'&&command[0]!.toLowerCase().endsWith('cmd.exe')});
   const [out,err,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
   assert.equal(code,0,err);return out.trim();
 }
@@ -61,6 +61,9 @@ try{
     const reader=(proxy.stdout as ReadableStream<Uint8Array>).getReader(),first=await reader.read();reader.releaseLock();
     const {port}=JSON.parse(new TextDecoder().decode(first.value));
     Object.assign(environment,{HTTPS_PROXY:`http://127.0.0.1:${port}`,https_proxy:`http://127.0.0.1:${port}`,NODE_EXTRA_CA_CERTS:cert,NO_PROXY:'127.0.0.1,localhost',no_proxy:'127.0.0.1,localhost'});
+    // Fail with the transport error itself, before the published updater's
+    // intentional best-effort error handling turns it into a later timeout.
+    await run([process.execPath,'-e',`const response=await fetch('https://registry.npmjs.org/@getopencrawl%2fcli/next',{redirect:'error',signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('Fixture registry status '+response.status);console.log((await response.json()).version);`],environment).then(actual=>assert.equal(actual,expected));
   }
 
   const held=new Promise<void>(resolve=>{finishSearch=resolve;});
@@ -96,12 +99,13 @@ try{
   finishSearch();
   assert.equal(await running.exited,0,await errors+await output);running=undefined;
   delete environment.OPENCRAWL_TOKEN;
-  // The next normal invocation uses the same old installation and migrates it.
-  await run([node,launcher,'board','instructions'],environment);
   const entry=join(prefix,...process.platform==='win32'?['opencrawl.cmd']:['bin','opencrawl']);
-  const command=process.platform==='win32'?[join(process.env.SystemRoot||'C:\\Windows','System32/cmd.exe'),'/d','/s','/c',`""${entry}" --version"`]:[entry,'--version'];
+  const command=(args:string[])=>process.platform==='win32'?[join(process.env.SystemRoot||'C:\\Windows','System32/cmd.exe'),'/d','/s','/c',`""${entry}" ${args.join(' ')}"`]:[entry,...args];
+  // Invoke the actual old npm command, including its active Windows .cmd shim.
+  // It still needs Node for this invocation; subsequent calls must not need it.
+  await run(command(['board','instructions']),{...environment,PATH:environment.PATH+delimiter+dirname(node)});
   const noRuntime={...environment,OPENCRAWL_NO_UPDATE:'1',PATH:join(scratch,'no-runtimes')};
-  assert.equal(sync(command,noRuntime),expected,'Original npm command still requires Node');
+  assert.equal(sync(command(['--version']),noRuntime),expected,'Original npm command still requires Node');
   if(process.platform==='win32'){
     const powershell=join(process.env.SystemRoot||'C:\\Windows','System32/WindowsPowerShell/v1.0/powershell.exe');
     assert.equal(sync([powershell,'-NoProfile','-ExecutionPolicy','Bypass','-File',entry.replace(/\.cmd$/,'.ps1'),'--version'],noRuntime),expected);
