@@ -8,12 +8,19 @@ import {sessionScope} from './sessions/ingest.mjs';
 import {isSessionHarness} from './sessions/types.mjs';
 
 /** Durable per-user setup milestones, not a claim that credentials remain valid forever. */
-export function createOnboardingStatus({store, prefix = 'capture-v1', now = () => new Date(), sharedInstallations = () => []}: {store: Pick<ObjectStore, 'put' | 'get'>; prefix?: string; now?: () => Date; sharedInstallations?: () => readonly SharedInstallation[]}) {
+export function createOnboardingStatus({store, prefix = 'capture-v1', now = () => new Date(), sharedInstallations = () => [], onSharedReady}: {store: Pick<ObjectStore, 'put' | 'get'>; prefix?: string; now?: () => Date; sharedInstallations?: (principal: Principal) => readonly SharedInstallation[] | Promise<readonly SharedInstallation[]>; onSharedReady?: (principal: Principal) => Promise<void>}) {
   if (!store?.put || !store?.get) throw new Error('Onboarding requires durable storage');
   const key = (principal: Principal, kind: OnboardingKind) => `${prefix}/${sessionScope(principal)}/onboarding/${kind}.json`;
   async function record(principal: Principal, kind: OnboardingKind, details: Omit<Partial<OnboardingReceipt>, 'observedAt'> = {}) {
     const value = {observedAt: now().toISOString(), ...details};
     await store.put(key(principal, kind), Buffer.from(JSON.stringify(value)), 'application/json');
+    if (onSharedReady && principal.owner?.kind === 'shared' && ['cli','mcpTest','session'].includes(kind)) {
+      const receipts = await Promise.all((['cli','mcpTest','session'] as const).map(async item => {
+        const bytes = await store.get(key(principal,item));
+        return bytes ? JSON.parse(bytes.toString()) as OnboardingReceipt : null;
+      }));
+      if (deriveOnboarding({cli:receipts[0],mcpTest:receipts[1],session:receipts[2]}).complete) await onSharedReady(principal);
+    }
     return value;
   }
   return {
@@ -46,7 +53,7 @@ export function createOnboardingStatus({store, prefix = 'capture-v1', now = () =
         return bytes ? JSON.parse(bytes.toString()) : null;
       }));
       const status: OnboardingReceipts = {cli: values[0], mcp: values[1], mcpTest: values[2], session: values[3], history: values[4], completed: values[5]};
-      for (const installation of sharedInstallations().filter(row => row.tenantId === principal.tenantId)) {
+      for (const installation of (await sharedInstallations(principal)).filter(row => row.tenantId === principal.tenantId)) {
         const receipts = await Promise.all((['cli', 'mcpTest', 'session'] as const).map(async kind => {
           const bytes = await store.get(key(installation, kind));
           return bytes ? JSON.parse(bytes.toString()) as OnboardingReceipt : null;
