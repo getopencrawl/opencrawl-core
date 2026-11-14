@@ -134,7 +134,8 @@ test('Cursor resume rewrites the same inode with a larger file and recovers lega
  // Previously released cursors have no boundary fingerprint. Upgrade must replay safely.
  const stateFile=join(captureDir(),'state','cursor-'+hash(base.conversation_id)+'.json'),state=JSON.parse(readFileSync(stateFile,'utf8'));delete state.checkpoint;writeFileSync(stateFile,JSON.stringify(state));
  await captureHook('cursor',hook('stop',{transcript_path:file}));await drainCaptureNotices();await hookFlush(hook('stop'));
- const messages=f.batches.flatMap((b:any)=>b.events).filter((e:any)=>e.kind==='message');
+ // Parallel HTTP completion order is unrelated to recorded conversation order.
+ const messages=f.batches.flatMap((b:any)=>b.events).filter((e:any)=>e.kind==='message').sort((a:any,b:any)=>a.sequence-b.sequence);
  expect(messages.map((e:any)=>e.data.content[0].text)).toEqual(['First prompt','First reply','Resumed prompt '+ 'x'.repeat(512),'Resumed reply']);
  expect(messages.every((event:any,index:number)=>index===0||event.sequence>messages[index-1].sequence)).toBe(true);
  expect(messages[2].timestamp).toBe(resumedAt);
