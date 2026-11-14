@@ -599,7 +599,9 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
           atomicJson(stateFile,state);events=[];attachments=[];eventBytes=0;
         };
         const file=notice.event.transcript_path;
-        if(typeof file==='string'&&existsSync(file)) {
+        // Text transcript metadata is not the native JSONL fallback. Keep the
+        // authoritative content hooks working without opening referenced text.
+        if(typeof file==='string'&&file.endsWith('.jsonl')&&existsSync(file)) {
           const transcriptState={offset:state.offset,ino:state.ino,checkpoint:state.checkpoint};
           for(const record of cursorTranscript(harnessRoot(config,'cursor'),session.sessionId,file,transcriptState.offset,transcriptState.ino,transcriptState.checkpoint)) {
             if(record.start===0&&state.offset>0){state.transcript={};state.offset=0;}
