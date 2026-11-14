@@ -1,15 +1,63 @@
-# Replicas workspace identity
+# Replicas organization connections
 
-Replicas can supply a signed, short-lived workspace identity to OpenCrawl. The
-operator explicitly admits an organization/environment pair. Neither an email
-domain nor a workspace creator establishes tenant access.
+A workspace admin opens **Agent setup**, chooses **Install on Replicas**, and
+pastes the generated prompt into the intended Replicas workspace. The prompt
+contains a one-time setup capability valid for 30 minutes. OpenCrawl stores only
+its hash. Enrollment also requires a signed Replicas workspace token minted for
+this OpenCrawl origin. The request cannot supply a destination tenant or a
+Replicas organization: those come from the admin approval and the verified token.
+The approving admin must still be an active admin when the prompt is redeemed.
 
-For self-hosting, set `OPENCRAWL_REPLICAS_BINDINGS` to a JSON array containing
-`organizationId` and `environmentId`. The receiver always pins these bindings to
-`OPENCRAWL_ORGANIZATION_ID`; a conflicting `tenantId` is rejected. Hosted adapters
-also supply an explicit `tenantId` for every binding. Duplicate pairs fail closed.
-Removing the binding and restarting the receiver revokes admission even while
-previously issued Replicas tokens remain unexpired.
+The resulting organization connection is ordinary product data in the configured
+object store. It authorizes native identities from that Replicas organization,
+including new environments and personal environment forks. No long-lived human
+or machine API key, environment allowlist, or AWS Parameter Store configuration
+is required for new connections. A Replicas organization cannot be connected to
+two OpenCrawl organizations. An environment ID still contributes to the stable
+workspace owner ID; migration never rewrites existing owners or captured data.
+
+The prompt configures the supported persistent Replicas environment hooks and
+native MCP identity authentication. One workspace must produce actual CLI,
+MCP test, and fresh-session receipts before OpenCrawl reports the team setup as
+ready. Imported history and a successful enrollment cannot satisfy that check.
+The receipt writer records the verified shared installation automatically; no
+operator needs to nominate a VM after setup. Everyone in the OpenCrawl workspace
+can use that shared setup, and **Set up a personal computer** retains the normal
+personal login and capture path in the same workspace.
+
+The workspace is a shared principal. It does not inherit its creator's personal
+permissions. Message authorship remains separate from authentication; names and
+email text are not verified human identity. Existing private-resource rules apply.
+
+## Storage and migration
+
+`identity/replicas-v1/organizations/<org>.json` is the authoritative connection,
+written with conditional updates. The tenant indexes only locate records; reads
+recheck the record's tenant and revocation state. Setup hashes live under
+`identity/replicas-v1/setup/`. Neither location contains Replicas tokens.
+The same adapter operates in self-hosted installations and pins their configured
+single organization. Hosted routing supplies the verified connection's tenant.
+
+`createReplicasConnections.migrateLegacy` imports an operator-approved legacy
+configuration. It validates the whole input for conflicting tenants before writing,
+preserves existing shared-installation owner IDs and references to real receipts,
+is retryable across partial writes, and cannot restore a revoked connection.
+It is an operator operation, never an HTTP endpoint accepting user-provided rows.
+
+During a staged hosted rollout, an absent connection may continue using the old
+exact-environment admission. A present connection is authoritative: denial,
+revocation, or a storage error must never fall back to legacy admission. Migrate
+and verify the operator's own organization first, then each customer organization.
+Retain the legacy configuration and previous runtime for rollback until the new
+runtime is independently verified. Remove deployment readers and the legacy
+parameter only after every approved organization resolves through product data.
+Do not leave a permanent dual source of authority.
+
+Existing VMs may retain their creation-time startup scripts. Updating Global
+controls new workspaces; the authorization migration does not require developers
+to log in again, replace their tokens, or reassign their recorded sessions.
+
+## Runtime verification, capture and lifecycle
 
 The verifier fixes the issuer and JWKS URL to `https://api.replicas.dev`, accepts
 only RS256, checks the exact receiver origin as audience, validates all scope IDs

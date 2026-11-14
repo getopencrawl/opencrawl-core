@@ -31,6 +31,7 @@ return {
   changeRole:(userId:string,role:WorkspaceRole,signal?:AbortSignal)=>write(()=>webRpc.console.changeRole.mutate({userId,role},{signal}),signal),
   removeMember:(userId:string,signal?:AbortSignal)=>write(()=>webRpc.console.removeMember.mutate({userId},{signal}),signal),
   renameOrganization:(name:string,signal?:AbortSignal)=>write(()=>webRpc.console.rename.mutate({name},{signal}),signal),
+  replicasSetup:(signal?:AbortSignal)=>write(()=>webRpc.onboarding.replicasSetup.mutate(undefined,{signal}),signal),
   onboardingStatus:(signal?:AbortSignal)=>read(()=>webRpc.onboarding.status.query(undefined,{signal}),signal),
   onboardingSources:(signal?:AbortSignal)=>read(()=>webRpc.onboarding.sources.query(undefined,{signal}),signal),
   onboardingInvitations:(signal?:AbortSignal)=>read(()=>webRpc.onboarding.invitations.query(undefined,{signal}),signal),

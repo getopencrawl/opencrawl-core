@@ -45,6 +45,7 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
     }),
   }),
   onboarding: t.router({
+    replicasSetup: p.input(empty).mutation(({ctx})=>ctx.invoke<{prompt:string;expiresAt:string}>('/api/console/replicas/setup','POST',{})),
     status: p.input(empty).query(({ctx})=>ctx.invoke<{data:OnboardingStatus}>('/api/onboarding')),
     sources: p.input(empty).query(({ctx})=>ctx.invoke<{items:OnboardingSource[]}>('/api/onboarding/sources')),
     invitations: p.input(empty).query(({ctx})=>ctx.invoke<InvitationList>('/api/onboarding/invites')),

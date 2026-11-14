@@ -1,5 +1,5 @@
 import {hasCompletedOnboarding} from '../onboarding-state.mjs';
-import {replicasSetupPrompt} from '../sessions/cloud-setup.mjs';
+import {replicasSetupPrompt, replicasEnrollmentPrompt} from '../sessions/cloud-setup.mjs';
 import type {IncomingMessage} from 'node:http';
 import type {SourceCard, TeamReport, InvitationPolicy} from './types.mjs';
 
@@ -13,6 +13,7 @@ export interface ConsoleServices {
   url: string;
   setupPrompt: string;
   invitationPolicy?: InvitationPolicy;
+  replicas?: {issue(principal: Principal, member: Membership): Promise<{code: string; expiresAt: string}>};
   organization: (id: string) => Promise<Organization>;
   members: (id: string) => Promise<Membership[]>;
   user: (id: string) => Promise<User>;
@@ -33,7 +34,7 @@ const LIBRARY = /^\/api\/console\/library\/((?:sessions|memories)\/(?:list|read|
 export const consolePages = new Set(['/', '/usage', '/sessions', '/memories', '/sources', '/integrations', '/data', '/diagnostics', '/settings', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
 export function consoleRoute(method: string, path: string) {
   if (['/api/console/bootstrap','/api/console/sources','/api/console/usage','/api/console/team'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
-  if (['/api/console/team/invite','/api/console/team/role','/api/console/team/remove','/api/console/team/organization'].includes(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
+  if (['/api/console/replicas/setup','/api/console/team/invite','/api/console/team/role','/api/console/team/remove','/api/console/team/organization'].includes(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
   if (['/sources','/data','/diagnostics','/settings','/sessions','/memories'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
   if (LIBRARY.test(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
   return null;
@@ -78,10 +79,16 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
       if (url.search) throw consoleFailure(400,'This endpoint does not accept scope or query parameters.');
       if (!context.admitted && !await revalidate()) throw consoleFailure(403,'Workspace access changed. Sign in again.');
       let body: unknown;
-      if (path === '/api/console/bootstrap') {
+      if (path === '/api/console/replicas/setup') {
+        if (!admin(member) || member.status !== 'active' || member.userId !== principal.userId || member.organizationId !== principal.tenantId) throw consoleFailure(403,'Only a current workspace admin can connect Replicas.');
+        if (!services.replicas) throw consoleFailure(503,'Replicas setup is unavailable.');
+        if (Object.keys(await input(req)).length) throw consoleFailure(400,'This action does not accept a workspace or organization.');
+        const setup = await services.replicas.issue(principal,member);
+        body = {prompt:replicasEnrollmentPrompt(services.url,setup.code),expiresAt:setup.expiresAt};
+      } else if (path === '/api/console/bootstrap') {
         const [organization, progress, extension] = await Promise.all([services.organization(principal.tenantId), services.progress(principal), extensions.bootstrap?.(context)]);
         const completed = hasCompletedOnboarding(progress);
-        body = {...extension,...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope:context.cacheScope || [principal.tenantId,principal.userId,admin(member)?'admin':'member'].join(':'),workspace:{name:organization.name,userName:name(user),email:user.email,role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,...(admin(member)?{replicasSetupPrompt:replicasSetupPrompt(services.url)}:{}),canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
+        body = {...extension,...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope:context.cacheScope || [principal.tenantId,principal.userId,admin(member)?'admin':'member'].join(':'),workspace:{name:organization.name,userName:name(user),email:user.email,role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,...(admin(member)?{replicasSetupPrompt:replicasSetupPrompt(services.url),canInstallReplicas:Boolean(services.replicas)}:{}),canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
       } else if (path === '/api/console/usage') {
         body = await services.usage(principal);
       } else if (path === '/api/console/sources') {
