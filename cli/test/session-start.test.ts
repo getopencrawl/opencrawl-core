@@ -3,7 +3,7 @@ import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync,
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {PassThrough} from 'node:stream';
-import {readStartEvent, sessionStart} from '../src/session-start.ts';
+import {readStartEvent, sessionStart, cursorToolContext} from '../src/session-start.ts';
 import {startupHooks, startupMarker} from '../src/startup-install.ts';
 import {boardStateFile, saveBoardRegistration, boardRequest} from '../src/board.ts';
 import {sessionFile} from '../src/session.ts';
@@ -23,6 +23,31 @@ test('older Antigravity hook input gives an actionable minimum version without r
  expect(result.injectSteps[0].systemMessage.systemMessage).toContain('agy 1.5.4');
  expect(result.injectSteps[0].systemMessage.systemMessage).toContain('hookEventName');
  expect(calls).toBe(0);
+}));
+
+test('Cursor supplies native identity after a tool once per turn, including resumed turns',()=>fixture(async()=>{
+  let calls=0;
+  const request:typeof boardRequest=async(_api,operation,input)=>{
+    calls++;expect(operation).toBe('bootstrap');expect(input.session).toBe('native-123');
+    return registration;
+  };
+  const hook={hook_event_name:'postToolUse',conversation_id:'native-123',generation_id:'turn-one',tool_output:'not persisted'};
+  const first=await cursorToolContext('https://cursor-test.example',hook,request);
+  expect(first.additional_context).toContain('Session handle: native-123');
+  expect(await cursorToolContext('https://cursor-test.example',hook,request)).toEqual({});
+  expect((await cursorToolContext('https://cursor-test.example',{...hook,generation_id:'turn-two'},request)).additional_context).toContain('registered with');
+  expect(calls).toBe(2);
+  for(const invalid of [{...hook,conversation_id:'invalid\nsecret'},{...hook,hook_event_name:'preToolUse'},{...hook,generation_id:'bad/id'}])
+    expect(await cursorToolContext('https://cursor-test.example',invalid,request)).toEqual({});
+  expect(calls).toBe(2);
+}));
+
+test('Cursor concurrent first tools emit only one startup receipt',()=>fixture(async()=>{
+  let calls=0;
+  const request:typeof boardRequest=async()=>{calls++;await new Promise(resolve=>setTimeout(resolve,20));return registration;};
+  const hook={hook_event_name:'postToolUse',session_id:'native-123',generation_id:'turn-one'};
+  const outputs=await Promise.all([cursorToolContext('https://cursor-test.example',hook,request),cursorToolContext('https://cursor-test.example',hook,request)]);
+  expect(outputs.filter(output=>output.additional_context)).toHaveLength(1);expect(calls).toBe(1);
 }));
 
 test('native input is bounded and completes without waiting for stdin to close',async()=>{
@@ -124,6 +149,10 @@ test('real startup CLI and board server preserve the agent-chosen profile across
     const agyStart=await run(['session','start','--harness','agy'],{hookEventName:'SessionStart',conversationId:'agy-conv-123',workspacePaths:[home]});
     expect(agyStart.injectSteps[0].systemMessage.systemMessage).toContain('registered with');
     expect(agyStart.injectSteps[0].systemMessage.systemMessage).toContain('Session handle: agy-conv-123');
+    const cursorArgs=['session','start','--harness','cursor','--after-tool'];
+    const cursorEvent={hook_event_name:'postToolUse',conversation_id:'cursor-native',generation_id:'turn-one'};
+    expect((await run(cursorArgs,cursorEvent)).additional_context).toContain('Session handle: cursor-native');
+    expect(await run(cursorArgs,cursorEvent)).toEqual({});
     const agyInvalid=await run(['session','start','--harness','antigravity'],{hookEventName:'SessionStart',conversationId:'bad\nsecret'});
     expect(agyInvalid.injectSteps[0].systemMessage.systemMessage).toContain('unavailable');
     expect(JSON.stringify(agyInvalid)).not.toContain('secret');

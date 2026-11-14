@@ -1,5 +1,8 @@
 import type {Readable} from 'node:stream';
 import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {join} from 'node:path';
+import {atomicJson, configDir, withSessionLock} from './session.ts';
 import {boardRequest, boardStateFile, saveBoardRegistration} from './board.ts';
 import {apiOrigin, DEFAULT_API_ORIGIN, CliError} from './oauth.ts';
 import {readCaptureConfig} from './capture/runtime.ts';
@@ -18,7 +21,7 @@ const context = (harness: string, text: string): AntigravityStartOutput | Cursor
 const unavailable = (harness: string, reason: string) => context(harness, `OpenCrawl session setup unavailable: ${reason} Continue the task. Read the installed opencrawl skill for recovery and participation; do not assume registration succeeded.`);
 
 /** Read a small hook event, including harnesses which keep stdin open. */
-export function readStartEvent(input: Readable, timeoutMs = 1000): Promise<unknown> {
+export function readStartEvent(input: Readable, timeoutMs = 1000, maxBytes = 16_384): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let bytes = Buffer.alloc(0);
     const finish = (error?: Error, value?: unknown) => {
@@ -29,7 +32,7 @@ export function readStartEvent(input: Readable, timeoutMs = 1000): Promise<unkno
     const end = () => {try {finish(undefined, JSON.parse(bytes.toString('utf8')));} catch {fail();}};
     const data = (chunk: Buffer | string) => {
       bytes = Buffer.concat([bytes, Buffer.from(chunk)]);
-      if (bytes.length > 16_384) {fail(); return;}
+      if (bytes.length > maxBytes) {fail(); return;}
       try {const value = JSON.parse(bytes.toString('utf8')); finish(undefined, value);} catch { /* Await remaining bytes or EOF. */ }
     };
     const timer = setTimeout(fail, timeoutMs);
@@ -82,17 +85,37 @@ export async function sessionStart(api: string, rawHarness: string, event: any, 
   }
 }
 
+/** Cursor sessionStart is fire-and-forget and may miss the initial model request.
+ * Deliver the confirmed identity after the first tool of each native turn too.
+ * Persist only the generation ID, never the tool input or output. */
+export async function cursorToolContext(api: string, event: any, request = boardRequest): Promise<Partial<CursorStartOutput>> {
+  const session = event?.conversation_id || event?.session_id;
+  const generation = event?.generation_id ?? 'session';
+  if (event?.hook_event_name !== 'postToolUse' || typeof session !== 'string' || !sessionPattern.test(session) ||
+      typeof generation !== 'string' || !sessionPattern.test(generation)) return {};
+  const key = createHash('sha256').update(JSON.stringify([api, session])).digest('hex');
+  const file = join(configDir(), 'startup', 'cursor-context', key + '.json');
+  return withSessionLock('cursor-context:' + key, async () => {
+    try {if (JSON.parse(readFileSync(file, 'utf8')).generation === generation) return {};}
+    catch (error: any) {if (error.code !== 'ENOENT') throw error;}
+    const result = await sessionStart(api, 'cursor', {hook_event_name:'sessionStart', session_id:session}, request);
+    atomicJson(file, {generation});
+    return result;
+  }, 5000);
+}
+
 /** Separate from ordinary CLI work: no update, upload, capture check or login. */
 export async function sessionStartCommand(args: string[], input: Readable = process.stdin) {
   let result;
   let harness = '';
   try {
-    const parsed = parseArgs({args, options: {api: {type: 'string'}, harness: {type: 'string'}}});
+    const parsed = parseArgs({args, options: {api: {type: 'string'}, harness: {type: 'string'}, 'after-tool': {type:'boolean'}}});
     harness = normalizeHarness(parsed.values.harness ?? '');
     const api = apiOrigin(parsed.values.api ?? process.env.OPENCRAWL_API_URL ?? readCaptureConfig()?.api ?? DEFAULT_API_ORIGIN);
-    const event = await readStartEvent(input);
+    if (parsed.values['after-tool'] && harness !== 'cursor') throw new Error('Unsupported hook');
+    const event = await readStartEvent(input, 1000, parsed.values['after-tool'] ? 8 * 1024 * 1024 : 16_384);
     result = await withEnvironmentTokenOrigin(parsed.values.api ?? process.env.OPENCRAWL_API_URL,
-      () => sessionStart(api, harness, event));
+      async () => parsed.values['after-tool'] ? await cursorToolContext(api, event) : await sessionStart(api, harness, event));
   } catch {result = unavailable(harness, 'The local hook input or configuration could not be read.');}
   process.stdout.write(JSON.stringify(result) + '\n');
   return 0;
