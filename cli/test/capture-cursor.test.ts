@@ -22,6 +22,8 @@ test('Cursor uses the native conversation identity across turns and days, and re
  expect(cursorSession(hook('stop',{generation_id:'generation-2'})).sessionId).toBe(base.conversation_id);
  expect(cursorSession(hook('sessionStart',{session_id:base.conversation_id}))).toMatchObject({origin:'unknown',cwd:'/work/project'});
  expect(cursorSession(hook('sessionStart',{is_background_agent:true})).origin).toBe('cloud');
+ expect(cursorSession(hook('postToolUse',{cwd:'/another/project'})).cwd).toBe('/work/project');
+ expect(cursorSession(hook('sessionStart',{parent_conversation_id:'parent-chat'}))).toMatchObject({origin:'subagent',parentSessionId:'parent-chat'});
  for(const conversation_id of [null,'','../escape','has spaces','x'.repeat(201)])expect(()=>cursorSession(hook('stop',{conversation_id}))).toThrow('native conversation ID');
  const events=cursorEvents({id:'event',at:'2026-11-14T00:00:00Z',event:hook('postToolUse',{tool_name:'Shell',tool_input:{command:'echo marker'},tool_output:'{"stdout":"marker"}',tool_use_id:'tool-1'})});
  expect(events.map(e=>e.kind)).toEqual(['tool_call','tool_result']);
@@ -112,7 +114,7 @@ test('native Cursor JSONL fills missing content hooks, deduplicates hooks and tr
  expect(captureStatus().pendingHooks).toBe(0);
  // Neither a forged project path nor a symlink can turn a hook into a file reader.
  const outside=join(f.dir,'outside.jsonl');writeFileSync(outside,message('user','private outside'));expect(()=>[...cursorTranscript(root,base.conversation_id,outside)]).toThrow('outside');
- rmSync(file);symlinkSync(outside,file);expect(()=>[...cursorTranscript(root,base.conversation_id,file)]).toThrow('outside');
+ if(process.platform!=='win32'){rmSync(file);symlinkSync(outside,file);expect(()=>[...cursorTranscript(root,base.conversation_id,file)]).toThrow('outside');}
 }));
 
 test('an older receiver cannot enroll Cursor and parked Cursor batches never block existing client uploads',async()=>fixture(async f=>{
