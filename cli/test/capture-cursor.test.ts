@@ -121,20 +121,23 @@ test('Cursor resume rewrites the same inode with a larger file and recovers lega
  await f.install();const root=readCaptureConfig()!.roots.cursor!,directory=join(root,'projects','workspace','agent-transcripts',base.conversation_id),file=join(directory,base.conversation_id+'.jsonl');mkdirSync(directory,{recursive:true});
  const message=(role:string,text:string)=>({role,message:{content:[{type:'text',text}]}});
  const original=[message('user','First prompt'),message('assistant','First reply')];
+ await captureHook('cursor',hook('sessionStart'));await drainCaptureNotices();
  // Cursor changes earlier JSON serialization when reconstructing a resumed chat.
  writeFileSync(file,original.map(r=>JSON.stringify(r,null,1).replaceAll('\n',' ')).join('\n')+'\n');
  await captureHook('cursor',hook('stop',{transcript_path:file}));await drainCaptureNotices();
  const before=statSync(file),resumed=[...original,message('user','Resumed prompt '+ 'x'.repeat(512)),message('assistant','Resumed reply')];
  writeFileSync(file,resumed.map(r=>JSON.stringify(r)).join('\n')+'\n');
  expect(statSync(file).ino).toBe(before.ino);expect(statSync(file).size).toBeGreaterThan(before.size);
- await captureHook('cursor',hook('stop',{transcript_path:file}));await drainCaptureNotices();
+ await captureHook('cursor',hook('stop',{transcript_path:file}));
+ const noticeFile=join(captureDir(),'notices',readdirSync(join(captureDir(),'notices')).find(n=>n.endsWith('.json'))!),notice=JSON.parse(readFileSync(noticeFile,'utf8'));
+ const resumedAt=new Date(Date.parse(notice.at)+60_000).toISOString();notice.at=resumedAt;writeFileSync(noticeFile,JSON.stringify(notice));await drainCaptureNotices();
  // Previously released cursors have no boundary fingerprint. Upgrade must replay safely.
  const stateFile=join(captureDir(),'state','cursor-'+hash(base.conversation_id)+'.json'),state=JSON.parse(readFileSync(stateFile,'utf8'));delete state.checkpoint;writeFileSync(stateFile,JSON.stringify(state));
  await captureHook('cursor',hook('stop',{transcript_path:file}));await drainCaptureNotices();await hookFlush(hook('stop'));
  const messages=f.batches.flatMap((b:any)=>b.events).filter((e:any)=>e.kind==='message');
  expect(messages.map((e:any)=>e.data.content[0].text)).toEqual(['First prompt','First reply','Resumed prompt '+ 'x'.repeat(512),'Resumed reply']);
  expect(messages.every((event:any,index:number)=>index===0||event.sequence>messages[index-1].sequence)).toBe(true);
- expect(messages[2].timestamp).not.toBe(messages[0].timestamp);
+ expect(messages[2].timestamp).toBe(resumedAt);
  expect(captureStatus().pendingHooks).toBe(0);
 }));
 
