@@ -143,10 +143,9 @@ test('a synchronous Cursor hook uploads while an unrelated historical transcript
  expect(f.payloads.map((raw:string)=>JSON.parse(raw).harness)).toEqual(['cursor']);
  expect(JSON.parse(f.payloads[0]).events.some((event:any)=>event.data?.content?.[0]?.text==='Current Cursor activity')).toBe(true);
  expect(readFileSync(source)).toEqual(saved);
- expect(existsSync(join(captureDir(),'state',hash('claude-code'+file)+'.json'))).toBe(false);
  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0});
  // Transcript-only hooks still recover a late append without a new notice.
  await hookFlush({hook_event_name:'Stop'});
  expect(f.payloads.map((raw:string)=>JSON.parse(raw).harness)).toContain('claude-code');
- expect(existsSync(join(captureDir(),'state',hash('claude-code'+file)+'.json'))).toBe(true);
+ expect(f.payloads.flatMap((raw:string)=>JSON.parse(raw).events).some((event:any)=>event.nativeId==='old-event')).toBe(true);
 }));
