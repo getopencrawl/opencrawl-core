@@ -31,7 +31,7 @@ function MemoryList({adapter}: {adapter: LibraryAdapter}) {
   const {data, error, loading, retry} = useResource(adapter, 'memories/list', scope, 0, signal => adapter('memories/list', {scope}, signal), 'Memories could not load. Try again.');
   const words = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const shown = data?.memories.filter(memory => words.every(word => [memory.title, memory.path, memory.description, memory.project].some(value => value.toLowerCase().includes(word)))) ?? [];
-  return <Page title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them. Private memories are visible only to the person who captured them." bodyClassName="oc-library">
+  return <Page title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them." bodyClassName="oc-library">
     {params.get('deleted') === '1' && <Notice tone="success">Memory deleted. If the agent rewrites the file later, the new version is captured again.</Notice>}
     <Tabs label="Memories shown" value={scope} onChange={value => setParams(value === 'mine' ? {scope: 'mine'} : {})} items={[{value: 'all', label: 'All memories'}, {value: 'mine', label: 'My memories'}]}/>
     {data && data.memories.length > 0 && <div className="query-form"><Field label="Filter memories"><Input type="search" value={filter} maxLength={200} onChange={event => setFilter(event.target.value)} placeholder="Title, path, project or description"/></Field></div>}
