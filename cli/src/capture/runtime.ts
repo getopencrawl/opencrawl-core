@@ -898,9 +898,13 @@ export async function bindHookIdentity(event:any,{now=Date.now}={}) {
 }
 export const hookFlush=(event:any,{now=Date.now}={})=>readCaptureConfig()?.authPending?Promise.resolve():hookPass(event,now,async config=>{
   let failure:any;
-  // Leave half the hook's five seconds for the uploads themselves.
-  try{const deadline=Date.now()+2500;await drainCaptureNotices(config,{until:deadline});if(Date.now()<deadline)await reconcileSources(config,new Map());}catch(error){failure=error;}
-  try{if(queuedNames().length)await flushCaptures({wait:false});}catch(error){failure??=error;}
+  // Notices already reconcile the active transcript. Scanning every historical
+  // source here can spend the entire five-second hook budget before uploading;
+  // the owned worker and explicit flush retain that full reconciliation.
+  try{await drainCaptureNotices(config,{until:Date.now()+2500});}catch(error){failure=error;}
+  // One concurrent wave leaves time to checkpoint receipts before the watchdog.
+  // Oldest/newest scheduling still advances both retained and current activity.
+  try{if(queuedNames().length)await flushCaptures({wait:false,maxBatches:4});}catch(error){failure??=error;}
   if(failure)throw failure;
 });
 
@@ -922,8 +926,10 @@ export async function syncCaptures() {
   if(errors.length){recordError(errors[0]);throw errors[0];}
   return result;
 }
-export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUploaded,retryRejected=false,liveReady=true}: {wait?:boolean;concurrency?:number;batchDelayMs?:number;onUploaded?:()=>void;retryRejected?:boolean;liveReady?:boolean}={}) {
+export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUploaded,retryRejected=false,liveReady=true,maxBatches}: {wait?:boolean;concurrency?:number;batchDelayMs?:number;onUploaded?:()=>void;retryRejected?:boolean;liveReady?:boolean;maxBatches?:number}={}) {
   const workers=concurrency??(wait?1:4);
+  const limit=maxBatches??(wait?Infinity:32);
+  if(maxBatches!==undefined&&(!Number.isInteger(maxBatches)||maxBatches<1))throw new CliError('INVALID_USAGE','Capture batch limit must be a positive integer.',64);
   if(!Number.isInteger(workers)||workers<1||workers>4)throw new CliError('INVALID_USAGE','Capture upload concurrency must be between 1 and 4.',64);
   if(!Number.isInteger(batchDelayMs)||batchDelayMs<0||batchDelayMs>60000)throw new CliError('INVALID_USAGE','Capture batch delay must be between 0 and 60000 milliseconds.',64);
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
@@ -1030,7 +1036,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     const worker=async()=>{
       try {
         while(!failure&&!stopped&&visited<names.length){
-          if(!wait&&(scheduled>=32||Date.now()>=deadline))break;
+          if(scheduled>=limit||Date.now()>=deadline)break;
           const latest=readCaptureConfig();
           if(!wait&&(!latest||latest.disabled)){stopped=true;break;}
           if(latest&&(latest.api!==config.api||latest.installationId!==config.installationId||latest.owner.userId!==principal.userId||latest.owner.tenantId!==principal.tenantId))throw new CliError('CAPTURE_DESTINATION_CHANGED','Capture destination changed during upload; queued data is retained.');
