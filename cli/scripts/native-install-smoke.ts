@@ -39,32 +39,40 @@ try{
   const cursorSettings=JSON.parse(readFileSync(join(scratch,'.cursor','hooks.json'),'utf8'));
   const agySettings=JSON.parse(readFileSync(join(scratch,'.gemini','config','hooks.json'),'utf8'));
   const searchHooks=[
-    {client:'claude-code',entry:settings.hooks.PreToolUse.flatMap((g:any)=>g.hooks).find((h:any)=>h.statusMessage==='OpenCrawl search context'),event:{hook_event_name:'PreToolUse',session_id:'native-claude',tool_name:'mcp__opencrawl__opencrawl_search',tool_input:{query:'evidence',includeToolOutputs:true}},id:'native-claude'},
-    {client:'codex',entry:codexSettings.hooks.PreToolUse.flatMap((g:any)=>g.hooks).find((h:any)=>h.statusMessage==='OpenCrawl search context'),event:{hook_event_name:'PreToolUse',session_id:'native-codex',tool_name:'mcp__opencrawl__opencrawl_search',tool_input:{query:'evidence',includeToolOutputs:true}},id:'native-codex'},
-    {client:'cursor',entry:cursorSettings.hooks.preToolUse[0],event:{hook_event_name:'preToolUse',conversation_id:'native-cursor',tool_name:'MCP:opencrawl_search',tool_input:{query:'evidence',includeToolOutputs:true}},id:'native-cursor'},
-    {client:'antigravity',entry:agySettings['opencrawl-startup'].PreToolUse[0].hooks[0],event:{hookEventName:'PreToolUse',conversationId:'native-agy',toolCall:{name:'mcp_opencrawl_opencrawl_search',args:{query:'evidence',includeToolOutputs:true}}},id:'native-agy'},
+    {client:'claude-code',entry:settings.hooks.PreToolUse.flatMap((g:any)=>g.hooks).find((h:any)=>h.statusMessage==='OpenCrawl search context'),event:{hook_event_name:'PreToolUse',session_id:'native-claude',tool_name:'mcp__opencrawl__opencrawl_search_v1',tool_input:{query:'evidence',includeToolOutputs:true}},id:'native-claude'},
+    {client:'codex',entry:codexSettings.hooks.PreToolUse.flatMap((g:any)=>g.hooks).find((h:any)=>h.statusMessage==='OpenCrawl search context'),event:{hook_event_name:'PreToolUse',session_id:'native-codex',tool_name:'mcp__opencrawl__opencrawl_search_v1',tool_input:{query:'evidence',includeToolOutputs:true}},id:'native-codex'},
+    {client:'cursor',entry:cursorSettings.hooks.preToolUse[0],event:{hook_event_name:'preToolUse',conversation_id:'native-cursor',tool_name:'MCP:opencrawl_search_v1',tool_input:{query:'evidence',includeToolOutputs:true}},id:'native-cursor'},
+    {client:'antigravity',entry:agySettings['opencrawl-startup'].PreToolUse[0].hooks[0],event:{hookEventName:'PreToolUse',conversationId:'native-agy',toolCall:{name:'mcp_opencrawl_opencrawl_search_v1',args:{query:'evidence',includeToolOutputs:true}}},id:'native-agy'},
+    {client:'antigravity',entry:agySettings['opencrawl-startup'].PreToolUse[0].hooks[0],event:{hookEventName:'PreToolUse',conversationId:'native-agy-plugin',toolCall:{name:'mcp_opencrawl_opencrawl_opencrawl_search_v1',args:{query:'evidence',includeToolOutputs:true}}},id:'native-agy-plugin'},
+    {client:'antigravity',entry:agySettings['opencrawl-startup'].PreToolUse[0].hooks[0],event:{hookEventName:'PreToolUse',conversationId:'native-agy-wrapper',toolCall:{name:'call_mcp_tool',args:{ServerName:'opencrawl_opencrawl',ToolName:'opencrawl_search_v1',Arguments:{query:'evidence',includeToolOutputs:true,includeCurrentSession:true}}}},id:'native-agy-wrapper'},
   ];
   for(const {client,entry:searchHook,event,id} of searchHooks){
     if(!searchHook||searchHook.command.includes('runner.cjs'))throw new Error('Missing native search context hook for '+client);
+    const matcher=client==='antigravity'?agySettings['opencrawl-startup'].PreToolUse[0].matcher
+      :client==='cursor'?cursorSettings.hooks.preToolUse[0].matcher
+      :(client==='codex'?codexSettings:settings).hooks.PreToolUse.find((group:any)=>group.hooks.includes(searchHook))?.matcher;
+    if(typeof matcher!=='string'||!new RegExp(matcher).test(event.toolCall?.name??event.tool_name!))throw new Error('Native search matcher missed v1 for '+client);
+    if(client==='antigravity'&&new RegExp(matcher).test('mcp_opencrawl_opencrawl_search'))throw new Error('Antigravity matcher retained ambiguous legacy name');
     const powershellHook=windows&&client==='claude-code';
     const invocation=powershellHook?[powershell,'-NoProfile','-Command',searchHook.command]:windows?[join(process.env.SystemRoot||'C:\\Windows','System32','cmd.exe'),'/d','/s','/c','"'+searchHook.command+'"']:['/bin/sh','-c',searchHook.command];
     const child=Bun.spawn(invocation,{env,windowsVerbatimArguments:windows&&!powershellHook,stdin:new Blob([JSON.stringify(event)]),stdout:'pipe',stderr:'pipe'});
     const [out,err,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
     if(code)throw new Error('Native search hook failed for '+client+': '+err);
-    const answer=JSON.parse(out),updated=answer.hookSpecificOutput?.updatedInput??answer.updated_input??answer.overwrite;
+    const answer=JSON.parse(out),updated=answer.hookSpecificOutput?.updatedInput??answer.updated_input??answer.overwrite?.Arguments??answer.overwrite;
     if(updated?.currentSession?.harness!==client||updated.currentSession.sessionId!==id)throw new Error('Native search hook identity mismatch for '+client);
-    if(client!=='antigravity'&&(updated.query!=='evidence'||updated.includeToolOutputs!==true))throw new Error('Native search hook changed explicit arguments');
+    if((client!=='antigravity'||event.toolCall?.name==='call_mcp_tool')&&(updated.query!=='evidence'||updated.includeToolOutputs!==true))throw new Error('Native search hook changed explicit arguments');
+    if(event.toolCall?.name==='call_mcp_tool'&&updated.includeCurrentSession!==true)throw new Error('Native wrapper hook changed current-session override');
     if(client==='claude-code'&&answer.hookSpecificOutput.permissionDecision!==undefined)throw new Error('Claude search hook granted approval');
   }
   // An existing installation must activate new guidance/hooks through the native
   // lifecycle too. SessionStart does not schedule update checks, so leave the
   // update opt-out unset without introducing a network/update test bypass.
   const skill=join(env.CLAUDE_CONFIG_DIR,'skills','opencrawl'),manifest=join(skill,'.opencrawl-skill.json');
-  const previous=JSON.parse(readFileSync(manifest,'utf8'));previous.revision=8;
-  writeFileSync(manifest,JSON.stringify(previous));writeFileSync(join(skill,'SKILL.md'),'Previous revision 8 guidance.\n');
+  const previous=JSON.parse(readFileSync(manifest,'utf8'));previous.revision=10;
+  writeFileSync(manifest,JSON.stringify(previous));writeFileSync(join(skill,'SKILL.md'),'Previous revision 10 guidance.\n');
   const oldSettings=JSON.parse(readFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
-  oldSettings.hooks.PreToolUse=oldSettings.hooks.PreToolUse.map((group:any)=>({...group,
-    hooks:group.hooks.filter((entry:any)=>entry.statusMessage!=='OpenCrawl search context')})).filter((group:any)=>group.hooks.length);
+  for(const group of oldSettings.hooks.PreToolUse)if(group.hooks.some((entry:any)=>entry.statusMessage==='OpenCrawl search context'))
+    group.matcher='^(?:mcp__opencrawl__opencrawl_search|mcp__plugin_opencrawl_opencrawl__opencrawl_search|mcp__codex_apps__opencrawl_opencrawl_search)$';
   writeFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),JSON.stringify(oldSettings));
   rmSync(join(env.XDG_CACHE_HOME,'opencrawl','skills-update.json'),{force:true});
   rmSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl','skills-update.json'),{force:true});
@@ -77,9 +85,11 @@ try{
   if(activationCode||apiRequests!==requestsBeforeActivation)throw new Error('Native lifecycle activation failed or requested authentication/network: '+activationErr+activationOut);
   const refreshed=JSON.parse(readFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
   const restored=refreshed.hooks.PreToolUse.flatMap((group:any)=>group.hooks).find((entry:any)=>entry.statusMessage==='OpenCrawl search context');
-  if(JSON.parse(readFileSync(manifest,'utf8')).revision!==10||!readFileSync(join(skill,'SKILL.md'),'utf8').includes('Native hooks target only opencrawl_search')||
-    restored?.command!==searchHooks[0]!.entry.command||JSON.parse(activationOut).hookSpecificOutput?.reloadSkills!==true)
-    throw new Error('Native SessionStart did not activate revision 10 guidance and search hooks');
+  const restoredMatcher=refreshed.hooks.PreToolUse.find((group:any)=>group.hooks.includes(restored))?.matcher;
+  if(JSON.parse(readFileSync(manifest,'utf8')).revision!==11||!readFileSync(join(skill,'SKILL.md'),'utf8').includes('Prefer opencrawl_search_v1 when advertised, then opencrawl_search, then search.')||
+    restored?.command!==searchHooks[0]!.entry.command||typeof restoredMatcher!=='string'||!new RegExp(restoredMatcher).test('mcp__opencrawl__opencrawl_search_v1')||
+    JSON.parse(activationOut).hookSpecificOutput?.reloadSkills!==true)
+    throw new Error('Native SessionStart did not activate revision 11 guidance and search hooks');
   await run(command(['collect','install','--yes','--defer-auth','--backfill','skip','--harness','claude-code','--json']));
   const capture=JSON.parse(readFileSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl/capture/config.json'),'utf8'));
   if(capture.command.length!==1||capture.command[0]!==entry)throw new Error('Capture did not use the durable native command');
@@ -94,5 +104,5 @@ try{
   corrupt=true;
   let rejected=false;try{await run(installer,{OPENCRAWL_DOWNLOAD_BASE:server.url.origin});}catch(error){if(!String(error).includes('checksum mismatch'))throw error;rejected=true;}
   if(!rejected||await run(command(['--version']))!==pkg.version)throw new Error('Corrupted download was accepted or damaged the active version');
-  console.log('Native installer, versioned launcher, revision 8 skill/hook activation and capture setup run without Node/npm/Bun on PATH.');
+  console.log('Native installer, versioned launcher, revision 10 to 11 skill/hook activation and capture setup run without Node/npm/Bun on PATH.');
 }finally{server.stop(true);rmSync(scratch,{recursive:true,force:true});}

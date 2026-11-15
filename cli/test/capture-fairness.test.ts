@@ -155,11 +155,11 @@ for(const activate of [false,true])test(activate
  expect(readFileSync(source)).toEqual(saved);
  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0});
  if(activate){
-  expect(JSON.parse(readFileSync(join(skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(10);
-  expect(readFileSync(join(skill,'SKILL.md'),'utf8')).toContain('Native hooks target only opencrawl_search');
+  expect(JSON.parse(readFileSync(join(skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(11);
+  expect(readFileSync(join(skill,'SKILL.md'),'utf8')).toContain('Prefer opencrawl_search_v1 when advertised, then opencrawl_search, then search.');
   const settings=JSON.parse(readFileSync(join(process.env.CURSOR_CONFIG_DIR!,'hooks.json'),'utf8'));
   const adapters=settings.hooks.preToolUse.filter((entry:any)=>entry.command.endsWith('search-context --harness cursor'));
-  expect(adapters).toHaveLength(1);expect(adapters[0].matcher).toBe('^MCP:opencrawl_search$');
+  expect(adapters).toHaveLength(1);expect(adapters[0].matcher).toBe('^(?:MCP:opencrawl_search|MCP:opencrawl_search_v1)$');
  }
 }));
 

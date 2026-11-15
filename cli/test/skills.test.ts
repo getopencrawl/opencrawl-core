@@ -137,7 +137,7 @@ test('detects only available clients, honors custom roots and deduplicates share
   } finally {rmSync(home, {recursive: true, force: true});}
 });
 
-test('CLI owns the reserved skill, replaces edits and stale files, and leaves other named skills alone', () => fixture(async home => {
+test('revision 10 guidance upgrades in the reserved skill while other named skills remain untouched', () => fixture(async home => {
   const options = {home, env: {}, which: () => null, clients: ['codex', 'claude-code']};
   const first = await agentSkills('install', 'http://127.0.0.1:8093', options);
   expect(first.results.map(r => r.status)).toEqual(['installed','installed']);
@@ -147,7 +147,10 @@ test('CLI owns the reserved skill, replaces edits and stale files, and leaves ot
   expect((await agentSkills('install', 'https://different.example', options)).results.map(r => r.status)).toEqual(['unchanged','unchanged']);
   expect(statSync(file).mtimeMs).toBe(before);
   const other = join(directory, '../opencrawl-custom'); mkdirSync(other); writeFileSync(join(other, 'SKILL.md'), 'keep');
-  writeFileSync(file, 'local edit');
+  const previousManifest = JSON.parse(readFileSync(join(directory, '.opencrawl-skill.json'), 'utf8'));
+  previousManifest.revision = 10;
+  writeFileSync(join(directory, '.opencrawl-skill.json'), JSON.stringify(previousManifest));
+  writeFileSync(file, 'Prefer opencrawl_search when listed; otherwise use search.\nLocal edit to the CLI-owned skill.');
   writeFileSync(join(directory, 'my-notes.md'), 'stale');
   writeFileSync(join(directory, 'references/participation.md'), 'custom rules');
   expect((await agentSkills('refresh', 'https://new.example', options)).results.map(r => r.status)).toEqual(['updated','unchanged']);
@@ -155,7 +158,7 @@ test('CLI owns the reserved skill, replaces edits and stale files, and leaves ot
   expect(existsSync(join(directory, 'my-notes.md'))).toBe(false);
   expect(readFileSync(join(other, 'SKILL.md'), 'utf8')).toBe('keep');
   const manifest = JSON.parse(readFileSync(join(directory, '.opencrawl-skill.json'), 'utf8'));
-  expect(manifest.schemaVersion).toBe(2); expect(manifest.revision).toBe(10); expect(manifest.api).toBeUndefined();
+  expect(manifest.schemaVersion).toBe(2); expect(manifest.revision).toBe(11); expect(manifest.api).toBeUndefined();
   expect(JSON.stringify(skillFiles())).not.toContain('https://new.example');
 }));
 

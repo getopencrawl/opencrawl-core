@@ -9,7 +9,7 @@ import {ANTIGRAVITY_SURFACES} from './capture/runtime.ts';
 import {startupHooks, type StartupOptions} from './startup-install.ts';
 import {retrievalInstruction} from './retrieval-instruction.ts';
 
-export const skillRevision = 10;
+export const skillRevision = 11;
 const manifestName = '.opencrawl-skill.json';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 function metadata(path: string) {
@@ -75,7 +75,7 @@ Before CLI registration or listening, check the harness's declared restrictions.
 
 ${retrievalInstruction}
 
-Prefer the native opencrawl_search tool when listed; otherwise use search. Use only arguments exposed by the selected tool schema. Native hooks target only opencrawl_search so older servers remain compatible during rolling upgrades. The legacy search alias needs an explicit currentSession for current-chat exclusion, but send it only when its schema supports it and the actual native identity is known.
+Prefer opencrawl_search_v1 when advertised, then opencrawl_search, then search. Use only arguments exposed by the selected tool schema. Native hooks attach current-chat identity to opencrawl_search_v1. After the CLI update, Antigravity uses only this versioned alias for automatic identity; older aliases remain compatible fallbacks. Their defaults and current-chat exclusion are unconfirmed unless searchContext in the response proves them. Explicit currentSession is allowed only when the selected schema supports it and the actual native identity is known; never guess or copy another chat's ID.
 
 On servers supporting these options, defaults exclude session tool/command output and the identified calling chat. Use includeToolOutputs=true for debugging, logs, tests and execution receipts, and includeCurrentSession=true to include this chat, only when the selected tool schema exposes those arguments. Check searchContext on each response: currentSessionStatus=unavailable means this chat was not excluded. If searchContext is missing, defaults and current-chat exclusion are unconfirmed; never infer legacy defaults. CLI equivalents --include-tool-outputs, --include-current-session and --current-session JSON also require server support. Explicit filters intersect supported defaults. A searchContext warning means legacy candidates still need the server classification migration; respect that coverage limit.
 
@@ -93,9 +93,9 @@ CLI updates regenerate the CLI-owned opencrawl skill, replacing local edits and 
 `,
     'references/search.md': `# Lexical search recipe
 
-Search matches words, not the meaning of a question. Prefer the native opencrawl_search tool when listed; otherwise use search. Use fetch to expand evidence. CLI equivalents are opencrawl search and opencrawl fetch. Use only arguments exposed by the selected tool schema. Never send tenant IDs, credentials, raw query DSL or an index name.
+Search matches words, not the meaning of a question. Prefer opencrawl_search_v1 when advertised, then opencrawl_search, then search. Use fetch to expand evidence. CLI equivalents are opencrawl search and opencrawl fetch. Use only arguments exposed by the selected tool schema. Never send tenant IDs, credentials, raw query DSL or an index name.
 
-On servers supporting the context options, defaults omit session tool/command output and, when currentSession is supplied, the asking chat. Use includeToolOutputs=true for errors, command logs, tests or execution receipts, and includeCurrentSession=true to search this chat, only when the selected tool schema exposes those arguments. Inspect searchContext on each response: currentSessionStatus=unavailable means self-chat exclusion was not applied. If searchContext is missing, defaults and current-chat exclusion are unconfirmed; never infer legacy defaults. Do not guess an ID or send currentSession to a schema that does not support it. Native hooks attach identity only to opencrawl_search; the legacy search alias requires supported explicit context. Explicit kinds/roles/toolNames filters intersect supported defaults; they do not turn tool output back on. Fetch by known passage ID remains available. CLI options --include-tool-outputs, --include-current-session and --current-session JSON also require server support.
+On servers supporting the context options, defaults omit session tool/command output and, when currentSession is supplied, the asking chat. Use includeToolOutputs=true for errors, command logs, tests or execution receipts, and includeCurrentSession=true to search this chat, only when the selected tool schema exposes those arguments. Inspect searchContext on each response: currentSessionStatus=unavailable means self-chat exclusion was not applied. If searchContext is missing, defaults and current-chat exclusion are unconfirmed; never infer legacy defaults. Do not guess an ID or send currentSession to a schema that does not support it. Native hooks attach identity to opencrawl_search_v1. After the CLI update, Antigravity attaches identity automatically only to that versioned alias; older fallbacks need supported explicit context, and their exclusions remain unconfirmed unless the response proves them. Explicit kinds/roles/toolNames filters intersect supported defaults; they do not turn tool output back on. Fetch by known passage ID remains available. CLI options --include-tool-outputs, --include-current-session and --current-session JSON also require server support.
 
 For a multi-part question, identify what each part needs to establish before the first query. After each fetch, track which parts the evidence supports. Direct follow-up queries at an uncovered part; a topical match alone does not answer it. One passage may support several parts. Stop when fetched evidence covers the question, or state precisely which part remains unresolved.
 

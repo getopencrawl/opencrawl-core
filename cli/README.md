@@ -591,11 +591,14 @@ defaults and current-chat exclusion are unconfirmed; never infer legacy defaults
 The context options require server support. These controls do not delete captures
 or prevent fetching an authorized passage by ID.
 
-Prefer `opencrawl_search` when listed; otherwise use `search`. Native hooks
-attach `currentSession` only to `opencrawl_search`. Send only arguments exposed
-by the selected tool schema. The legacy `search` alias accepts explicit context only
-when its schema supports it and is not rewritten by native hooks; this keeps new
-CLIs compatible with older self-hosted servers. With server support, an ordinary
+Prefer `opencrawl_search_v1` when advertised, then `opencrawl_search`, then
+`search`. Native hooks attach `currentSession` to the versioned alias. After the
+CLI update, Antigravity uses only `opencrawl_search_v1` for automatic identity;
+its older aliases remain compatible fallbacks. Send only arguments exposed by
+the selected tool schema, and verify defaults and current-chat exclusion from
+the response's `searchContext`. Older fallback behavior is unconfirmed without
+that report. The legacy `search` alias accepts explicit context only when its
+schema supports it. With server support, an ordinary
 CLI search can pass `--current-session '{"harness":"codex","sessionId":"native-chat-id"}'`.
 Use the actual caller identity, never the newest chat, current directory, board
 display name or another chat's receipt. Workspace and user remain server-derived.
@@ -653,7 +656,7 @@ Codex must review the new **OpenCrawl search context** hook in `/hooks` or Setti
 SessionStart requests a skill rescan when it refreshes guidance. Cursor watches
 hook settings; restart if they have not reloaded. Start a fresh Antigravity
 session: `/skills reload` refreshes skills, but live hook reload is unverified.
-Reconnect MCP if the new `opencrawl_search` alias is missing, and verify an actual
+Reconnect MCP if the new `opencrawl_search_v1` alias is missing, and verify an actual
 response's `searchContext.currentSessionStatus`. See
 [client activation details](../docs/search-context.md#client-attachment).
 

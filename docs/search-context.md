@@ -14,6 +14,10 @@ Search responses include `searchContext`, including `currentSessionStatus`:
 `excluded`, `included`, or `unavailable`. Missing native context does not guess a
 chat: search continues and reports that self-chat exclusion was unavailable.
 Check this status before concluding that a search covered the current chat.
+Prefer the advertised `opencrawl_search_v1` tool, then `opencrawl_search`, then
+`search`, and send only arguments exposed by the selected tool schema. Older
+fallback servers may lack these defaults or context options. If `searchContext`
+is absent, default exclusions and current-chat exclusion are unconfirmed.
 
 Both constraints apply inside the authorized session query before the candidate
 limit, ranking, facets and grouping. Cursors bind the context and inclusion
@@ -24,9 +28,14 @@ quoted inside another ordinary message is not automatically removed.
 ## Client attachment
 
 A synchronous native pre-tool hook merges the native chat identity into the
-original `opencrawl_search` arguments on each request. Hooks target only this new
-alias, which older servers do not advertise, so a CLI upgrade cannot inject new
-arguments into an older server's strict `search` schema. It does not read credentials,
+original `opencrawl_search_v1` arguments on each request. The versioned alias
+is advertised only by servers supporting these context options. Antigravity
+uses only this alias for automatic identity after the CLI update: its native
+plugin prefixes can make the older `opencrawl_search` name indistinguishable
+from a plugin's legacy `search` tool. Claude, Codex and Cursor also retain their
+unambiguous older `opencrawl_search` adapter names for compatibility. Hooks never
+target a bare legacy `search` tool or add arguments based only on an older
+server's name. The hook does not read credentials,
 transcripts, a global current-chat file or the latest board registration. Two
 concurrent chats can therefore share credentials without sharing caller context.
 Disabled or unapproved hooks remain disabled; setup does not grant trust or
@@ -59,9 +68,11 @@ that identity attachment is active. See the native [Codex hook review](https://l
 [Cursor hooks](https://cursor.com/docs/hooks), and
 [Antigravity skill discovery](https://antigravity.google/docs/customization-discovery) references.
 
-Prefer `opencrawl_search`; `search` is the compatible existing alias. Both execute
-the same server operation. Cursor's pre-tool event omits the MCP server name,
-so its adapter requires the unique `opencrawl_search` name. It never rewrites
+The three search aliases execute the same operation on updated servers. Prefer
+`opencrawl_search_v1`; reconnect MCP if its tool list is stale. Older aliases
+remain available, but do not assume automatic attachment or default exclusions
+without the response's `searchContext` report. Cursor's pre-tool event omits the
+MCP server name, so its adapter selects the unique OpenCrawl alias names. It never rewrites
 another service's bare `search` arguments. Cursor cloud HTTP-MCP execution ignores
 argument rewrites; that path reports missing context rather than claiming
 automatic exclusion. Google-managed Antigravity Remote Agents do not load the

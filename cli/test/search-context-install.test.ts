@@ -40,6 +40,25 @@ test('startup installs one exact search adapter per harness without capture, pre
         expect(installed.hooks[0].async).toBeUndefined();
       }
       expect(startupHooks([client],'status',options)[0]!.status).toBe('current');
+      // Model an owned revision-10 hook with its original matcher. Refresh
+      // must replace that matcher, especially AGY's ambiguous plugin name.
+      const owned=client==='antigravity'?config['opencrawl-startup'].PreToolUse[0]
+        :client==='cursor'?config.hooks.preToolUse[1]:config.hooks.PreToolUse[1];
+      const currentMatcher=owned.matcher;
+      owned.matcher=client==='antigravity'?'^(?:mcp_opencrawl_opencrawl_search)$'
+        :client==='cursor'?'^MCP:opencrawl_search$'
+        :'^(?:mcp__opencrawl__opencrawl_search|mcp__plugin_opencrawl_opencrawl__opencrawl_search|mcp__codex_apps__opencrawl_opencrawl_search)$';
+      writeFileSync(file,JSON.stringify(config));
+      expect(startupHooks([client],'status',options)[0]!.status).toBe('outdated');
+      expect(startupHooks([client],'install',options)[0]!.status).toBe('installed');
+      owned.matcher=currentMatcher;
+      expect(JSON.parse(readFileSync(file,'utf8'))).toEqual(config);
+      if(client==='antigravity') {
+        expect(new RegExp(currentMatcher).test('mcp_opencrawl_opencrawl_search')).toBe(false);
+        expect(new RegExp(currentMatcher).test('mcp_opencrawl_opencrawl_search_v1')).toBe(true);
+        expect(new RegExp(currentMatcher).test('mcp_opencrawl_opencrawl_opencrawl_search_v1')).toBe(true);
+        expect(new RegExp(currentMatcher).test('call_mcp_tool')).toBe(true);
+      }
       const before=readFileSync(file,'utf8');
       expect(startupHooks([client],'install',options)[0]!.status).toBe('unchanged');
       expect(readFileSync(file,'utf8')).toBe(before);

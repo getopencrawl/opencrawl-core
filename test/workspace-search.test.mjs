@@ -1,9 +1,11 @@
 import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {standaloneMcp} from '../dist/tools/test-fixtures/mcp.mjs';
 import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
+import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
 
 const principal = {tenantId: 'team-a', userId: 'alice'};
 const hit = (id, extra = {}) => ({id, tenantId: 'team-a', userId: 'bob', sessionId: 'past', text: 'evidence', ...extra});
@@ -48,11 +50,12 @@ test('real MCP and HTTP expose the same operation and reject forged scope, origi
   const client=new Client({name:'workspace-search-test',version:'1'});await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers}}));t.after(()=>client.close());
   const searchTools=(await client.listTools()).tools;
   assert.ok(searchTools.some(t=>t.name==='search'));
-  const preferred=searchTools.find(t=>t.name==='opencrawl_search');
+  const preferred=searchTools.find(t=>t.name==='opencrawl_search_v1');
   assert.ok(preferred);assert.match(preferred.description,/includeToolOutputs=true/);assert.match(preferred.description,/currentSessionStatus=unavailable/);
   assert.ok((await client.listTools()).tools.some(t=>t.name==='fetch'));
   const mcp=await client.callTool({name:'search',arguments:{query:'evidence'}});assert.deepEqual(mcp.structuredContent,http.data);
   assert.deepEqual((await client.callTool({name:'opencrawl_search',arguments:{query:'evidence'}})).structuredContent,http.data);
+  assert.deepEqual((await client.callTool({name:'opencrawl_search_v1',arguments:{query:'evidence'}})).structuredContent,http.data);
   assert.equal((await client.callTool({name:'search',arguments:{query:'x',index:'*'}})).isError,true);
   assert.equal(http.data.results[0].provenance.userId,'bob');
   const input={id:http.data.results[0].id,length:3};
@@ -61,6 +64,69 @@ test('real MCP and HTTP expose the same operation and reject forged scope, origi
   assert.deepEqual((await client.callTool({name:'fetch',arguments:input})).structuredContent,fetched.data);
   assert.equal((await fetch(origin+'/api/search/fetch',{method:'POST',body:JSON.stringify(input)})).status,401);
   assert.equal((await fetch(origin+'/api/search/fetch',{method:'POST',headers:{...headers,origin:'https://evil.test'},body:JSON.stringify(input)})).status,403);
+});
+
+test('native search aliases share schemas, context options, authorized cursors and operation accounting', async t => {
+  const aliases=['opencrawl_search_v1','opencrawl_search','search'];
+  let handler, activePrincipal=principal, adapterCalls=0;
+  const accounting=[], observations=[];
+  const operation=createWorkspaceSearch({now:()=>1000,sessions:{search:async(who,input)=>{
+    adapterCalls++;assert.deepEqual(who,principal);
+    assert.deepEqual(input.currentSession,{harness:'codex',sessionId:'current'});
+    assert.equal(input.includeCurrentSession,true);assert.equal(input.includeToolOutputs,true);
+    return {total:2,hits:[hit('s1',{text:'first evidence',containsToolOutput:false}),hit('s2',{text:'second evidence',containsToolOutput:false})]};
+  }}});
+  const server=createServer((req,res)=>handler(req,res));
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const origin='http://127.0.0.1:'+server.address().port;
+  handler=createOpenCrawlMcp({origin,authenticate:req=>req.headers.authorization==='Bearer local-alias-test'?activePrincipal:null,
+    search:{...operation,search:async(who,input)=>{
+      const result=await operation.search(who,input);
+      // Runtime accounting wraps this same operation regardless of MCP alias.
+      accounting.push({who,query:input.query,results:result.results.length});return result;
+    }},onAuthenticated:(who,_info,exchange)=>{if(exchange.method==='tools/call')observations.push({who,tool:exchange.tool});},
+  });
+  t.after(async()=>{await handler.close();await new Promise(resolve=>server.close(resolve));});
+  const client=new Client({name:'native-alias-test',version:'1'});
+  await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers:{authorization:'Bearer local-alias-test'}}}));
+  t.after(()=>client.close());
+  const tools=(await client.listTools()).tools, preferred=tools.find(tool=>tool.name===aliases[0]);
+  assert.ok(preferred);assert.match(preferred.description,/Preferred search tool/);
+  assert.match(preferred.description,/includeCurrentSession=true/);assert.match(preferred.description,/includeToolOutputs=true/);
+  assert.match(preferred.description,/currentSessionStatus=unavailable/);
+  for(const name of aliases){
+    const tool=tools.find(tool=>tool.name===name);assert.ok(tool);
+    assert.deepEqual(tool.inputSchema,preferred.inputSchema);assert.deepEqual(tool.annotations,preferred.annotations);
+  }
+  // Reserving this raw name prevents AGY's flattened manual/plugin collision.
+  assert.equal(tools.some(tool=>tool.name==='search_v1'),false);
+  const input={query:'evidence',source:'sessions',limit:1,dedupe:false,groupBy:'none',
+    currentSession:{harness:'codex',sessionId:'current'},includeCurrentSession:true,includeToolOutputs:true};
+  const first=[];
+  for(const name of aliases){const result=await client.callTool({name,arguments:input});assert.equal(result.isError,undefined);first.push(result.structuredContent);}
+  assert.ok(first[0].next);assert.deepEqual(first[1],first[0]);assert.deepEqual(first[2],first[0]);
+  assert.equal(first[0].searchContext.currentSessionStatus,'included');assert.equal(first[0].searchContext.toolOutputsIncluded,true);
+  const second=[];
+  for(const name of aliases){const result=await client.callTool({name,arguments:{...input,cursor:first[0].next}});assert.equal(result.isError,undefined);second.push(result.structuredContent);}
+  assert.deepEqual(second[1],second[0]);assert.deepEqual(second[2],second[0]);assert.equal(second[0].next,null);
+  assert.notEqual(second[0].results[0].id,first[0].results[0].id);
+  assert.equal(adapterCalls,6);assert.deepEqual(accounting,Array.from({length:6},()=>({who:principal,query:'evidence',results:1})));
+  assert.deepEqual(observations,aliases.concat(aliases).map(tool=>({who:principal,tool})));
+  for(const name of aliases)assert.equal((await client.callTool({name,arguments:{...input,tenantId:'team-b'}})).isError,true);
+  await assert.rejects(client.callTool({name:'search_v1',arguments:input}),/Tool search_v1 not found/);
+  activePrincipal={...principal,userId:'eve'};
+  for(const name of aliases)assert.equal((await client.callTool({name,arguments:{...input,cursor:first[0].next}})).isError,true);
+  activePrincipal={...principal,captureAccess:'write'};
+  for(const name of aliases)assert.equal((await client.callTool({name,arguments:input})).isError,true);
+  activePrincipal={userId:'alice'};
+  for(const name of aliases)assert.equal((await client.callTool({name,arguments:input})).isError,true);
+  const observed=observations.length;
+  for(const name of aliases){
+    const response=await fetch(origin+'/mcp',{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream'},
+      body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:input}})});
+    assert.equal(response.status,401);await response.text();
+  }
+  assert.equal(adapterCalls,6);assert.equal(accounting.length,6);assert.equal(observations.length,observed);
 });
 
 test('partial OpenSearch shard responses cannot masquerade as complete searches', async () => {

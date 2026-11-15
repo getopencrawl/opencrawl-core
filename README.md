@@ -54,6 +54,13 @@ Capture is opt-in. Sessions and memories are team-visible by default and can
 contain sensitive information. Review [privacy and exclusions](docs/capture-privacy.md)
 before enabling capture.
 
+For agent search, prefer the advertised `opencrawl_search_v1` tool, then
+`opencrawl_search`, then `search`. Updated servers omit tool output and the
+identified current chat by default; `includeToolOutputs` and
+`includeCurrentSession` opt in. Check the response's `searchContext` before
+assuming either exclusion, especially with older servers. See
+[search defaults and client activation](docs/search-context.md).
+
 ## Documentation
 
 - [CLI and agent setup](cli/README.md)

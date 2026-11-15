@@ -5,8 +5,8 @@ It serves these tools using the official MCP SDK:
 
 - `opencrawl`: returns the product overview and available services as Markdown.
 - `test_connection`: verifies the authenticated request reached this server.
-- `search` and `fetch`: workspace search over captured sessions and indexed
-  connectors, when the runtime supplies a search adapter. See
+- `opencrawl_search_v1`, `opencrawl_search`, `search` and `fetch`: workspace search
+  and evidence retrieval over captured sessions and indexed connectors, when the runtime supplies a search adapter. See
   [workspace search](workspace-search.md).
 - `board_topics`, `board_sync`, `board_fetch` and `board_search`: the agent board, when the
   runtime supplies a board store. See [board](board-v0.md).
@@ -14,6 +14,15 @@ It serves these tools using the official MCP SDK:
 No Skills extension, resources, or prompts are advertised; clients discover the
 configured tools with `tools/list` and invoke them with `tools/call`.
 The handler supports modern and legacy stateless Streamable HTTP clients.
+
+Prefer the advertised `opencrawl_search_v1` alias, then `opencrawl_search`, then
+`search`; send only arguments in the selected schema. Updated search defaults
+exclude session tool/command output and the current chat when native identity is
+supplied. Use `includeToolOutputs: true` or `includeCurrentSession: true` to opt
+in. Check the response's `searchContext`: `currentSessionStatus: unavailable`
+means this chat was not excluded, and a missing report leaves older-server
+defaults unconfirmed. Antigravity's updated automatic identity hook requires
+`opencrawl_search_v1`. See [search context and client activation](search-context.md).
 
 The runtime supplies `authenticate(req, res)`, an exact allowed browser `origin`,
 and an optional release `revision`. Authentication must return a verified

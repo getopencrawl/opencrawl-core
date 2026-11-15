@@ -22,9 +22,11 @@ Pending sources, partial results and bounded candidate windows are explicit.
 Zero results do not establish that information does not exist.
 
 Search defaults exclude session tool/command output and the calling chat when
-its native identity is supplied. `opencrawl_search` is the preferred alias and
-receives automatic native-hook identity; the compatible `search` alias accepts
-explicit `currentSession`. `includeToolOutputs=true` includes logs or execution
+its native identity is supplied. Prefer `opencrawl_search_v1` when advertised;
+updated native client hooks attach identity to this versioned alias. The older
+`opencrawl_search` and `search` aliases remain callable with explicit
+`currentSession`; Antigravity automatic attachment requires the versioned alias.
+`includeToolOutputs=true` includes logs or execution
 receipts, and `includeCurrentSession=true` includes the calling chat.
 `searchContext.currentSessionStatus=unavailable` means the current chat was not
 excluded. A warning reports older candidates awaiting tool-output classification.
