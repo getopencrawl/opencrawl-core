@@ -61,6 +61,21 @@ async function fixture(run: (home: string) => Promise<void>) {
   try {await run(home);} finally {process.env = saved; rmSync(home, {recursive: true, force: true});}
 }
 
+test('install returns explicit retrieval guidance for global instructions and each installed skill', () => fixture(async home => {
+  const result = await agentSkills('install', 'https://self-host.example', {
+    home, env: {}, which: () => null, clients: ['codex', 'claude-code', 'cursor', 'antigravity'],
+    command: ['/installed/opencrawl'], requirementsFile: join(home, 'no-policy.toml'),
+  });
+  const instruction = result.startupInstruction;
+  expect(instruction).toContain('use OpenCrawl search to find relevant prior decisions and related work, then fetch the relevant evidence');
+  expect(instruction).toContain('current owning source');
+  expect(instruction).toContain('Short unrelated questions do not need a search');
+  expect(instruction).toContain("skill's registration fallback");
+  expect(instruction).toContain('opencrawl board instructions');
+  const retrieval = instruction.split('\n\n')[0]!;
+  for (const row of result.results) expect(readFileSync(join(row.directory, 'SKILL.md'), 'utf8')).toContain(retrieval);
+}));
+
 test('refresh preserves other profiles across clients; explicit install can move only the selected client', () => fixture(async home => {
   const primary = join(home, "primary profile's config"), secondary = join(home, "secondary profile's config");
   const clients = ['codex', 'claude-code', 'cursor', 'antigravity'];
