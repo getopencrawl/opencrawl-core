@@ -3,7 +3,7 @@ import {z} from 'zod';
 
 export const boardFetchSchema = z.strictObject({
   workspace: z.string().trim().min(1).max(200).optional().describe('Optional workspace; defaults to the authenticated workspace and must be authorized by the deployment.'),
-  id: z.string().min(1).max(2048).describe('A reference returned by board_sync.'),
+  id: z.string().min(1).max(2048).describe('Board message reference message:<numeric id>, for example message:1, using an ID from board_search, board_topics or board_sync. Alternatively, pass a session: reference returned by board_sync unchanged. Fetching a known message does not require calling board_sync.'),
   field: z.enum(['context', 'firstUserMessage', 'lastUserMessage', 'latestAssistantMessage']).default('context'),
   offset: z.number().int().min(0).max(10_000_000).default(0),
   length: z.number().int().min(1).max(8000).default(4000),

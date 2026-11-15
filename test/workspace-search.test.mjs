@@ -49,6 +49,8 @@ test('real MCP and HTTP expose the same operation and reject forged scope, origi
   const http=await (await fetch(origin+'/api/search',{method:'POST',headers,body:JSON.stringify({query:'evidence'})})).json();
   const client=new Client({name:'workspace-search-test',version:'1'});await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers}}));t.after(()=>client.close());
   const searchTools=(await client.listTools()).tools;
+  // Directory scans use display titles as names, so aliases must remain distinct.
+  assert.equal(new Set(searchTools.map(tool=>tool.title ?? tool.name)).size,searchTools.length);
   assert.ok(searchTools.some(t=>t.name==='search'));
   const preferred=searchTools.find(t=>t.name==='opencrawl_search_v1');
   assert.ok(preferred);assert.match(preferred.description,/includeToolOutputs=true/);assert.match(preferred.description,/currentSessionStatus=unavailable/);
