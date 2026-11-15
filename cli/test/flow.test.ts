@@ -1,7 +1,8 @@
 import {test, expect} from 'bun:test';
-import {mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, readdirSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join, resolve} from 'node:path';
+import {basename, join, resolve} from 'node:path';
+import {sessionFile} from '../src/session.ts';
 
 test('real CLI processes sign in, rotate once concurrently, verify identity and log out without leaking tokens', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'opencrawl-flow-'));
@@ -30,6 +31,7 @@ test('real CLI processes sign in, rotate once concurrently, verify identity and 
   // Login refreshes installed client skills and startup hooks. Keep every native
   // client root in the fixture, including Antigravity when installed on the host.
   const env = {...process.env, OPENCRAWL_CONFIG_HOME: directory, HOME: directory, USERPROFILE: directory,
+    XDG_CACHE_HOME: join(directory,'cache'), OPENCRAWL_NO_UPDATE: '0',
     CLAUDE_CONFIG_DIR: join(directory,'claude'), CODEX_HOME: join(directory,'codex'),
     CURSOR_CONFIG_DIR: join(directory,'cursor'), ANTIGRAVITY_HOME: join(directory,'gemini')};
   mkdirSync(join(env.ANTIGRAVITY_HOME,'config','skills','opencrawl'),{recursive:true});
@@ -47,7 +49,7 @@ test('real CLI processes sign in, rotate once concurrently, verify identity and 
     const hooks=JSON.parse(readFileSync(join(env.ANTIGRAVITY_HOME,'config','hooks.json'),'utf8'));
     expect(hooks['opencrawl-startup'].SessionStart[0].command).toContain(directory);
     expect(polls).toBe(1);
-    const file = join(directory, 'opencrawl', readdirSync(join(directory, 'opencrawl')).find(file => file.endsWith('.json'))!);
+    const file = join(directory, 'opencrawl', basename(sessionFile(server.url.origin)));
     const credentials = JSON.parse(readFileSync(file, 'utf8'));
     writeFileSync(file, JSON.stringify({...credentials, expiresAt: 0}));
     const identities = await Promise.all([run('whoami'), run('whoami')]);
