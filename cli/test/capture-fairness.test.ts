@@ -25,7 +25,9 @@ async function fixture(run:(f:any)=>Promise<void>){
  });
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=api;
  try{
-  Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),OPENCRAWL_SESSIONS_TOKEN:'synthetic',CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex'),CURSOR_CONFIG_DIR:join(dir,'cursor')});
+  Object.assign(process.env,{HOME:dir,USERPROFILE:dir,XDG_CONFIG_HOME:join(dir,'config'),XDG_CACHE_HOME:join(dir,'cache'),XDG_DATA_HOME:join(dir,'data'),
+   OPENCRAWL_CONFIG_HOME:join(dir,'config'),OPENCRAWL_SESSIONS_TOKEN:'synthetic',OPENCRAWL_NO_UPDATE:'1',
+   CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex'),CURSOR_CONFIG_DIR:join(dir,'cursor'),ANTIGRAVITY_HOME:join(dir,'gemini')});
   await installCapture(api,{background:false,home:dir,command:[],harnesses:['codex','claude-code','cursor']});
   const config=readCaptureConfig()!;
   const enqueue=(n:number,sessionId='session')=>{
@@ -121,7 +123,15 @@ test('disabling capture lets only already in-flight uploads finish and retains t
  expect(f.payloads).toHaveLength(4);expect(readdirSync(join(captureDir(),'queue'))).toHaveLength(8);
 }));
 
-test('a synchronous Cursor hook uploads while an unrelated historical transcript is locked',async()=>fixture(async f=>{
+for(const activate of [false,true])test(activate
+ ?'first Cursor lifecycle activation installs search hooks and uploads within budget while historical transcript is locked'
+ :'a synchronous Cursor hook uploads while an unrelated historical transcript is locked',async()=>fixture(async f=>{
+ const skill=join(process.env.CURSOR_CONFIG_DIR!,'skills','opencrawl');
+ if(activate){
+  mkdirSync(skill,{recursive:true});
+  writeFileSync(join(skill,'SKILL.md'),'Previous revision 8 guidance.');
+  writeFileSync(join(skill,'.opencrawl-skill.json'),JSON.stringify({schemaVersion:2,revision:8,files:{'SKILL.md':'old'}}));
+ }
  const config=readCaptureConfig()!,file=join(config.roots['claude-code'],'projects','old','old.jsonl');
  mkdirSync(join(file,'..'),{recursive:true});
  writeFileSync(file,JSON.stringify({type:'user',uuid:'old-event',sessionId:'old',message:{role:'user',content:'Unrelated historical activity'}})+'\n');
@@ -132,11 +142,11 @@ test('a synchronous Cursor hook uploads while an unrelated historical transcript
  const held=withSessionLock('capture:spool',()=>new Promise<void>(resolve=>{release=resolve;}));
  while(!release)await new Promise(resolve=>setTimeout(resolve,1));
  const child=Bun.spawn([process.execPath,resolve(import.meta.dir,'../src/cli.ts'),'collect','hook','--harness','cursor'],{
-  env:{...process.env,OPENCRAWL_NO_UPDATE:'1'},stdin:new Blob([JSON.stringify({hook_event_name:'stop',conversation_id:'fresh-cursor'})]),stdout:'ignore',stderr:'ignore',
+  env:{...process.env,OPENCRAWL_NO_UPDATE:activate?'0':'1'},stdin:new Blob([JSON.stringify({hook_event_name:'stop',conversation_id:'fresh-cursor'})]),stdout:'ignore',stderr:'ignore',
  });
  const flushing=child.exited;
  let timer:ReturnType<typeof setTimeout>|undefined,completed=false;
- try{completed=await Promise.race([flushing.then(()=>true),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),2500);})]);}
+ try{completed=await Promise.race([flushing.then(()=>true),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),activate?4000:2500);})]);}
  finally{clearTimeout(timer);release();await held;await flushing;}
  expect(completed).toBe(true);
  expect(await flushing).toBe(0);
@@ -144,6 +154,13 @@ test('a synchronous Cursor hook uploads while an unrelated historical transcript
  expect(JSON.parse(f.payloads[0]).events.some((event:any)=>event.data?.content?.[0]?.text==='Current Cursor activity')).toBe(true);
  expect(readFileSync(source)).toEqual(saved);
  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0});
+ if(activate){
+  expect(JSON.parse(readFileSync(join(skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(9);
+  expect(readFileSync(join(skill,'SKILL.md'),'utf8')).toContain('Native hooks target only opencrawl_search');
+  const settings=JSON.parse(readFileSync(join(process.env.CURSOR_CONFIG_DIR!,'hooks.json'),'utf8'));
+  const adapters=settings.hooks.preToolUse.filter((entry:any)=>entry.command.endsWith('search-context --harness cursor'));
+  expect(adapters).toHaveLength(1);expect(adapters[0].matcher).toBe('^MCP:opencrawl_search$');
+ }
 }));
 
 test('transcript-only hooks still reconcile a known source without a new notice',async()=>fixture(async f=>{
