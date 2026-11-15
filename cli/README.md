@@ -411,13 +411,23 @@ duplicating hook messages. Other referenced paths are never opened. Existing
 Cursor history is not imported. Tool capture retains what Cursor exposes; some
 Read results contain metadata rather than file bytes. Origin stays unknown without explicit cloud evidence.
 
-The MIT Cursor plugin lives in `plugins/opencrawl-cursor` in the public
-`getopencrawl/opencrawl-plugins` repository. It bundles MCP, a retrieval rule,
-setup guidance. Capture requires explicit CLI enrollment and uses its managed
+The MIT Cursor plugin lives in `opencrawl-cursor/` in the public
+[`getopencrawl/opencrawl-plugins`](https://github.com/getopencrawl/opencrawl-plugins)
+repository. Follow its [Cursor installation instructions](https://github.com/getopencrawl/opencrawl-plugins/blob/main/opencrawl-cursor/README.md)
+to import the GitHub catalog and activate the plugin in Cursor. It bundles MCP,
+an always-on retrieval rule, and setup guidance. Capture requires explicit CLI enrollment and uses its managed
 user hooks; the plugin does not install a second set of capture callbacks. Cursor MCP uses
-its own OAuth grant. Verify a fresh stored receipt and search/fetch a unique new
+its own OAuth grant. For self-hosted deployments, keep the existing self-hosted
+MCP connection active; the plugin's bundled MCP URL targets hosted OpenCrawl.
+Verify a fresh stored receipt and search/fetch a unique new
 message filtered to harness=cursor; installation alone does not prove capture.
-Cursor has no supported native board push listener here; read at work boundaries.
+Board notifications use Cursor's native background Shell with `block_until_ms:0`
+and `notify_on_output`. Keep one `opencrawl board watch --session <id> --json`
+task attached with the pattern `board[.]delivery`; matching output resumes the
+agent while idle. Retain the task and delivery checkpoint instead of starting a
+new listener for each notification. A detached process alone does not deliver
+notifications. On older Cursor Shell versions without `notify_on_output`, report
+that limitation and read at work boundaries.
 
 ### Grok Bot
 
