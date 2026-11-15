@@ -9,7 +9,7 @@ import {CliError} from '../src/oauth.ts';
 test('a revoked sign-in pauses capture visibly, once per hour, and clears after a later upload',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-capture-attention-')),saved={...process.env};
  try{
-  Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(dir,'config'),CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex')});
+  Object.assign(process.env,{OPENCRAWL_NO_UPDATE:'1',OPENCRAWL_CONFIG_HOME:join(dir,'config'),CLAUDE_CONFIG_DIR:join(dir,'claude'),CODEX_HOME:join(dir,'codex')});
   delete process.env.OPENCRAWL_SESSIONS_TOKEN;
   await installCapture('https://capture.example.com',{background:false,deferAuth:true,home:dir,command:[process.execPath,'-e','']});
   expect(captureAttention()).toBeNull();

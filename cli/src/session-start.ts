@@ -10,10 +10,11 @@ import {normalizeHarness} from './capture/parse.ts';
 import {withEnvironmentTokenOrigin} from './environment-token.ts';
 import {parseArgs} from 'node:util';
 import {retrievalInstruction} from './retrieval-instruction.ts';
+import {refreshManagedSkills} from './skill-activation.ts';
 
 export type AntigravityStartOutput = {injectSteps: [{systemMessage: {systemMessage: string}}]};
 export type CursorStartOutput = {additional_context: string};
-export type StandardStartOutput = {hookSpecificOutput: {hookEventName: 'SessionStart'; additionalContext: string}};
+export type StandardStartOutput = {hookSpecificOutput: {hookEventName: 'SessionStart'; additionalContext: string; reloadSkills?: boolean}};
 const sessionPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/;
 const context = (harness: string, text: string): AntigravityStartOutput | CursorStartOutput | StandardStartOutput =>
   harness === 'antigravity' ? {injectSteps: [{systemMessage: {systemMessage: text}}]}
@@ -116,8 +117,10 @@ export async function sessionStartCommand(args: string[], input: Readable = proc
     const api = apiOrigin(parsed.values.api ?? process.env.OPENCRAWL_API_URL ?? readCaptureConfig()?.api ?? DEFAULT_API_ORIGIN);
     if (parsed.values['after-tool'] && harness !== 'cursor') throw new Error('Unsupported hook');
     const event = await readStartEvent(input, 1000, parsed.values['after-tool'] ? 8 * 1024 * 1024 : 16_384);
+    const activation = await refreshManagedSkills(api,{hook:true});
     result = await withEnvironmentTokenOrigin(parsed.values.api ?? process.env.OPENCRAWL_API_URL,
       async () => parsed.values['after-tool'] ? await cursorToolContext(api, event) : await sessionStart(api, harness, event));
+    if(harness==='claude-code'&&activation?.updated&&'hookSpecificOutput' in result)result.hookSpecificOutput.reloadSkills=true;
   } catch {result = unavailable(harness, 'The local hook input or configuration could not be read.');}
   process.stdout.write(JSON.stringify(result) + '\n');
   return 0;

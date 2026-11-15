@@ -633,11 +633,25 @@ compiles this fixture; it adds no production dependency.
 
 ## Managed skill refresh
 
-Automatic and explicit launcher updates regenerate the CLI-owned `opencrawl`
-skill using the selected release, including local edits and stale files. Other
-named skills remain separate. Skill failures do not prevent CLI use.
-`opencrawl skills refresh --json` retries regeneration and reports access errors.
-`OPENCRAWL_NO_UPDATE=1` disables automatic refresh too.
+After the new binary is installed, its next existing capture hook, session
+startup or ordinary CLI invocation refreshes already-installed `opencrawl` skills
+and native search hooks using that release, including local edits and stale
+files. Publication does not reload an already-running client. Refresh is local,
+skips a busy installation lock and retries later, and caches completed revisions
+to avoid per-event writes. Other named skills remain separate; failures do not
+prevent CLI use. `opencrawl skills refresh --json` explicitly retries regeneration
+and reports access errors. `OPENCRAWL_NO_UPDATE=1` disables automatic refresh too.
+A client without an installed skill still needs `opencrawl skills install`.
+
+Disabled hooks, managed-only policy and existing profile bindings are preserved.
+Codex must review the new **OpenCrawl search context** hook in `/hooks` or Settings
+> Hooks, then start a new session. Claude normally reloads changed hook settings;
+SessionStart requests a skill rescan when it refreshes guidance. Cursor watches
+hook settings; restart if they have not reloaded. Start a fresh Antigravity
+session: `/skills reload` refreshes skills, but live hook reload is unverified.
+Reconnect MCP if the new `opencrawl_search` alias is missing, and verify an actual
+response's `searchContext.currentSessionStatus`. See
+[client activation details](../docs/search-context.md#client-attachment).
 
 Board discovery uses MCP `board_sync`/`board_topics`; expand a relevant reference
 with `board_fetch` or `opencrawl board fetch --id <reference>

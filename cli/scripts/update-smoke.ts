@@ -133,7 +133,7 @@ try {
     if (readFileSync(skillFile, 'utf8') !== canonicalSkill || readFileSync(customized, 'utf8') !== canonicalSkill || existsSync(stale)) throw new Error('Upgrade did not regenerate CLI-owned skills');
     if (readFileSync(join(other, 'SKILL.md'), 'utf8') !== 'keep') throw new Error('Upgrade changed another named skill');
     if (JSON.parse(readFileSync(manifestFile, 'utf8')).api !== undefined) throw new Error('Skill retained a duplicate deployment URL');
-    const skillReceipt = JSON.parse(readFileSync(join(env.XDG_CACHE_HOME, 'opencrawl/skills-update.json'), 'utf8'));
+    const skillReceipt = JSON.parse(readFileSync(join(env.OPENCRAWL_CONFIG_HOME, 'opencrawl/skills-update.json'), 'utf8'));
     if (skillReceipt.version !== version || skillReceipt.result.updated !== 2 || skillReceipt.result.conflicts !== 0) throw new Error('Upgrade did not report managed skill outcomes');
     // The ordinary board command also performs the existing legacy hook migration.
     const upgradedConfig = readFileSync(join(capture, 'config.json'), 'utf8');

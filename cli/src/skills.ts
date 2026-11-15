@@ -9,7 +9,7 @@ import {ANTIGRAVITY_SURFACES} from './capture/runtime.ts';
 import {startupHooks, type StartupOptions} from './startup-install.ts';
 import {retrievalInstruction} from './retrieval-instruction.ts';
 
-const revision = 9;
+export const skillRevision = 9;
 const manifestName = '.opencrawl-skill.json';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 function metadata(path: string) {
@@ -20,7 +20,7 @@ function hasAntigravityRoot(home: string, env: NodeJS.ProcessEnv) {
   const root = env.ANTIGRAVITY_HOME || join(home, '.gemini');
   return ANTIGRAVITY_SURFACES.some(surface => existsSync(join(root, surface)));
 }
-type Options = StartupOptions & {which?: (name: string) => string | null; clients?: string[]; includeExisting?: boolean};
+type Options = StartupOptions & {which?: (name: string) => string | null; clients?: string[]; includeExisting?: boolean; lockWaitMs?: number; deadline?: number};
 
 export function skillTargets({home = homedir(), env = process.env, which = Bun.which, clients: rawClients, includeExisting = false}: Options = {}) {
   const clients = rawClients?.map(client => client === 'agy' ? 'antigravity' : client);
@@ -75,7 +75,7 @@ Before CLI registration or listening, check the harness's declared restrictions.
 
 ${retrievalInstruction}
 
-Prefer the native opencrawl_search tool when listed (search is its compatibility alias). Cursor must use opencrawl_search for automatic current-chat identity; its hook cannot distinguish servers for a bare search tool. Search defaults: tool/command output is excluded. Set includeToolOutputs=true for debugging, logs, tests and execution receipts. The calling chat is excluded when the native search hook supplies currentSession; set includeCurrentSession=true to include it. Always check searchContext.currentSessionStatus: unavailable means this chat was not excluded. CLI equivalents are --include-tool-outputs, --include-current-session and --current-session JSON. Explicit filters intersect these defaults. A searchContext warning means legacy candidates still need the server classification migration; respect that coverage limit.
+Prefer the native opencrawl_search tool when listed (search is its compatibility alias). Native hooks target only opencrawl_search so older servers remain compatible during rolling upgrades; legacy search requires an explicit currentSession. Search defaults: tool/command output is excluded. Set includeToolOutputs=true for debugging, logs, tests and execution receipts. The calling chat is excluded when the native search hook supplies currentSession; set includeCurrentSession=true to include it. Always check searchContext.currentSessionStatus: unavailable means this chat was not excluded. CLI equivalents are --include-tool-outputs, --include-current-session and --current-session JSON. Explicit filters intersect these defaults. A searchContext warning means legacy candidates still need the server classification migration; respect that coverage limit.
 
 For knowledge retrieval, read [the lexical search recipe](references/search.md). Agents should translate questions into short keyword queries, select the relevant source and filters, then fetch original evidence.
 
@@ -178,7 +178,7 @@ function prepareTree(directory: string, files: Record<string, string>, relative 
 export async function agentSkills(action: string, api: string, options: Options = {}) {
   if (!['install', 'status', 'refresh'].includes(action)) throw new CliError('INVALID_USAGE', 'Use skills install, skills status or skills refresh.', 64);
   const targets = skillTargets({...options, includeExisting: true}), content = skillFiles();
-  const files = {...content, [manifestName]: JSON.stringify({schemaVersion: 2, revision,
+  const files = {...content, [manifestName]: JSON.stringify({schemaVersion: 2, revision:skillRevision,
     files: Object.fromEntries(Object.entries(content).map(([name, text]) => [name, digest(text)]))}) + '\n'};
   const run = async () => {
     // A shared skill may belong to Cursor alone. Its existence must not install
@@ -192,6 +192,7 @@ export async function agentSkills(action: string, api: string, options: Options 
       client === 'antigravity' && (hasAntigravityRoot(home, env) || Boolean(which('agy')));
     const results = targets.map(target => {
       try {
+        if (options.deadline !== undefined && Date.now() >= options.deadline) return {...target, status:'deferred'};
         const existed = metadata(target.directory) !== null;
         // Background refresh updates an existing installation; first install is explicit.
         if (action === 'refresh' && !existed) return {...target, status: 'skipped'};
@@ -210,8 +211,8 @@ export async function agentSkills(action: string, api: string, options: Options 
     });
     return {api, results, startupInstruction: startupInstruction(),
       ...(results.some(result => 'startupHooks' in result && result.startupHooks?.some(hook => hook.client === 'codex' && !['disabled', 'managed', 'preserved'].includes(hook.status)))
-        ? {hookReview: 'Codex requires review of new or changed hooks in /hooks (desktop Settings > Hooks). Trust OpenCrawl session startup there, then start a new session. Installation does not grant hook trust.'} : {}),
+        ? {hookReview: 'Codex requires review of new or changed hooks in /hooks (desktop Settings > Hooks). Review OpenCrawl session startup and OpenCrawl search context there, then start a new session. Installation does not grant hook trust.'} : {}),
       ...(targets.length ? {} : {message: 'No supported client detected. Use --client to select a client explicitly.'})};
   };
-  return action !== 'status' ? withSessionLock('skills:installation', run) : run();
+  return action !== 'status' ? withSessionLock('skills:installation', run, options.lockWaitMs) : run();
 }

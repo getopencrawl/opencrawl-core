@@ -152,7 +152,7 @@ test('startup installation preserves capture and user hooks, is idempotent, and 
 }));
 
 test('real startup CLI and board server preserve the agent-chosen profile across native lifecycle events',()=>fixture(async home=>{
-  const env={...process.env,HOME:home,USERPROFILE:home,CODEX_HOME:join(home,'codex'),CLAUDE_CONFIG_DIR:join(home,'claude'),OPENCRAWL_TOKEN:'disposable-board-test-token'};
+  const env={...process.env,OPENCRAWL_NO_UPDATE:'1',HOME:home,USERPROFILE:home,CODEX_HOME:join(home,'codex'),CLAUDE_CONFIG_DIR:join(home,'claude'),OPENCRAWL_TOKEN:'disposable-board-test-token'};
   const server=Bun.spawn(['node',resolve(import.meta.dir,'fixtures/board-server.mjs'),join(home,'board.sqlite')],{env,stdout:'pipe',stderr:'pipe'});
   try {
     const reader=server.stdout.getReader(), first=await reader.read();

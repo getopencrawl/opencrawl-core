@@ -8,6 +8,7 @@ import {backfill,backfillPreview,selection,setupBackfill,reportBackfillProgress}
 import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
 import {captureNoticeFor} from './policy.ts';
 import {agentSkills} from '../skills.ts';
+import {refreshManagedSkills} from '../skill-activation.ts';
 /** With eager set, return as soon as a whole document has arrived: a runtime
  * may keep the pipe open after writing the payload. */
 async function hookInput(eager=false) {
@@ -25,7 +26,7 @@ async function hookInput(eager=false) {
  * request in flight, so the process ends at five seconds, well inside the
  * installed hook timeout. The one thing it waits for is a sign-in renewal
  * already in flight: abandoning that would lose the sign-in. */
-async function cursorFormatHook(harness:'cursor'|'grok-bot') {
+async function cursorFormatHook(harness:'cursor'|'grok-bot',api:string) {
   let answered=false;
   const answer=(event:any)=>{if(!answered){answered=true;process.stdout.write(JSON.stringify(grokBotResponse(event))+'\n');}};
   const finish=()=>exitAfterCredentialRotation(0);
@@ -37,6 +38,7 @@ async function cursorFormatHook(harness:'cursor'|'grok-bot') {
   try {
     const event=await hookInput(true);
     answer(event);
+    await refreshManagedSkills(api,{hook:true});
     await bindHookIdentity(event);
     await captureHook(harness,event);
     await upgradeCaptureHooks();
@@ -54,7 +56,7 @@ export function antigravityResponse(event:any,eventFlag?:string,notice?:string|n
   if(name==='SessionStart'&&notice)return {injectSteps:[{systemMessage:{systemMessage:notice,metadata:{user_markdown:notice}}}]};
   return {};
 }
-async function antigravityHook(eventFlag?:string) {
+async function antigravityHook(api:string,eventFlag?:string) {
   let answered=false;
   const answer=(event:any,notice?:string|null)=>{if(!answered){answered=true;process.stdout.write(JSON.stringify(antigravityResponse(event,eventFlag,notice))+'\n');}};
   const finish=()=>exitAfterCredentialRotation(0);
@@ -68,6 +70,7 @@ async function antigravityHook(eventFlag?:string) {
     const eventName=typeof event?.hookEventName==='string'?event.hookEventName:eventFlag;
     const notice=eventName==='SessionStart'?captureAttentionNotice():null;
     answer(event,notice);
+    await refreshManagedSkills(api,{hook:true});
     await bindHookIdentity(event);
     await captureHook('antigravity',event);
     await upgradeCaptureHooks();
@@ -121,8 +124,8 @@ export async function collectCommand(action:string,api:string,values:any) {
     case 'flush': try{return await flushCaptureWork({retryRejected:values['retry-rejected']===true});}catch(e){recordError(e);throw e;}
     case 'worker': {try{await ownedCaptureWorker();}catch(e){try{recordError(e);}catch{}}return null;}
     case 'hook': {
-      if(harness==='grok-bot'||harness==='cursor')return cursorFormatHook(harness);
-      if(harness==='antigravity')return antigravityHook(values.event);
+      if(harness==='grok-bot'||harness==='cursor')return cursorFormatHook(harness,api);
+      if(harness==='antigravity')return antigravityHook(api,values.event);
       // Only harness-managed async hooks may upload. Legacy sync hooks stay local.
       try {
         if(!['claude-code','codex'].includes(harness??''))throw new Error('Invalid harness');
@@ -131,6 +134,7 @@ export async function collectCommand(action:string,api:string,values:any) {
         // files and wait on every hook. That is not a Claude Code or Codex
         // session: record nothing and never start the uploader there.
         if(typeof event?.cursor_version==='string')return null;
+        await refreshManagedSkills(api,{hook:true});
         await captureHook(harness as any,event);
         // Async Claude Code hooks deliver this JSON on the next turn, so a
         // paused capture is visible to the person instead of failing silently.

@@ -11,7 +11,9 @@ const HOUR=60*60*1000;
 
 async function fixture(run:(f:{dir:string;root:string;cache:string;launcher:any})=>Promise<void>) {
   const dir=mkdtempSync(join(tmpdir(),'opencrawl-auto-update-')),previous={...process.env};
-  process.env.XDG_CACHE_HOME=join(dir,'cache');delete process.env.OPENCRAWL_NO_UPDATE;
+  Object.assign(process.env,{HOME:dir,USERPROFILE:dir,XDG_CACHE_HOME:join(dir,'cache'),
+    CODEX_HOME:join(dir,'codex'),CLAUDE_CONFIG_DIR:join(dir,'claude'),CURSOR_CONFIG_DIR:join(dir,'cursor'),ANTIGRAVITY_HOME:join(dir,'gemini')});
+  delete process.env.OPENCRAWL_NO_UPDATE;
   const root=makePackage(join(dir,'installed'),'0.1.0'),cache=cli.cacheRoot();
   const launcher={...cli,activeRoot:()=>cli.activeRoot(root),automaticUpdate:(options:object)=>cli.automaticUpdate({...options,root})};
   try{await run({dir,root,cache,launcher});}finally{

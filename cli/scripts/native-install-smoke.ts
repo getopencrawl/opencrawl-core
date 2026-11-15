@@ -10,8 +10,8 @@ const env={...process.env,HOME:scratch,USERPROFILE:scratch,OPENCRAWL_CONFIG_HOME
 if(process.platform==='win32')env.PATH=join(process.env.SystemRoot||'C:\\Windows','System32');
 else for(const name of ['sh','curl','uname','sed','grep','awk','sha256sum','shasum','mktemp','rm','tar','gzip','chmod','sysctl','ldd']){const file=Bun.which(name);if(file)symlinkSync(file,join(systemBin,name));}
 async function run(command:string[],extra:Record<string,string>={}){const child=Bun.spawn(command,{env:{...env,...extra},stdout:'pipe',stderr:'pipe'});const [out,err,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);if(code)throw new Error('Native smoke failed: '+err+out);return out.trim();}
-let corrupt=false;
-const server=Bun.serve({hostname:'127.0.0.1',port:0,fetch(request){const name=new URL(request.url).pathname.slice(1);if(!/^(SHA256SUMS|opencrawl-(darwin|linux|win32)-(arm64|x64)\.tgz)$/.test(name))return new Response('',{status:404});if(corrupt&&name.endsWith('.tgz'))return new Response('corrupted download');return new Response(Bun.file(join(root,'native',name)));}});
+let corrupt=false,apiRequests=0;
+const server=Bun.serve({hostname:'127.0.0.1',port:0,fetch(request){const name=new URL(request.url).pathname.slice(1);if(!/^(SHA256SUMS|opencrawl-(darwin|linux|win32)-(arm64|x64)\.tgz)$/.test(name)){apiRequests++;return new Response('',{status:404});}if(corrupt&&name.endsWith('.tgz'))return new Response('corrupted download');return new Response(Bun.file(join(root,'native',name)));}});
 try{
   const windows=process.platform==='win32',powershell=windows?join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'):'';
   const installer=windows?[powershell,'-NoProfile','-File',join(root,'install.ps1'),pkg.version]:['/bin/sh',join(root,'install.sh'),pkg.version];
@@ -56,6 +56,30 @@ try{
     if(client!=='antigravity'&&(updated.query!=='evidence'||updated.includeToolOutputs!==true))throw new Error('Native search hook changed explicit arguments');
     if(client==='claude-code'&&answer.hookSpecificOutput.permissionDecision!==undefined)throw new Error('Claude search hook granted approval');
   }
+  // An existing installation must activate new guidance/hooks through the native
+  // lifecycle too. SessionStart does not schedule update checks, so leave the
+  // update opt-out unset without introducing a network/update test bypass.
+  const skill=join(env.CLAUDE_CONFIG_DIR,'skills','opencrawl'),manifest=join(skill,'.opencrawl-skill.json');
+  const previous=JSON.parse(readFileSync(manifest,'utf8'));previous.revision=8;
+  writeFileSync(manifest,JSON.stringify(previous));writeFileSync(join(skill,'SKILL.md'),'Previous revision 8 guidance.\n');
+  const oldSettings=JSON.parse(readFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
+  oldSettings.hooks.PreToolUse=oldSettings.hooks.PreToolUse.map((group:any)=>({...group,
+    hooks:group.hooks.filter((entry:any)=>entry.statusMessage!=='OpenCrawl search context')})).filter((group:any)=>group.hooks.length);
+  writeFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),JSON.stringify(oldSettings));
+  rmSync(join(env.XDG_CACHE_HOME,'opencrawl','skills-update.json'),{force:true});
+  rmSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl','skills-update.json'),{force:true});
+  const activationEnv:NodeJS.ProcessEnv={...env,OPENCRAWL_API_URL:server.url.origin};
+  for(const name of ['OPENCRAWL_NO_UPDATE','OPENCRAWL_TOKEN','OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_AUTH','OPENCRAWL_LAUNCHER','OPENCRAWL_NODE'])delete activationEnv[name];
+  const requestsBeforeActivation=apiRequests;
+  const activation=Bun.spawn(hook,{env:activationEnv,timeout:15_000,killSignal:'SIGKILL',
+    stdin:new Blob([JSON.stringify({hook_event_name:'SessionStart',session_id:'native-activation',source:'startup'})]),stdout:'pipe',stderr:'pipe'});
+  const [activationOut,activationErr,activationCode]=await Promise.all([new Response(activation.stdout).text(),new Response(activation.stderr).text(),activation.exited]);
+  if(activationCode||apiRequests!==requestsBeforeActivation)throw new Error('Native lifecycle activation failed or requested authentication/network: '+activationErr+activationOut);
+  const refreshed=JSON.parse(readFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
+  const restored=refreshed.hooks.PreToolUse.flatMap((group:any)=>group.hooks).find((entry:any)=>entry.statusMessage==='OpenCrawl search context');
+  if(JSON.parse(readFileSync(manifest,'utf8')).revision!==9||!readFileSync(join(skill,'SKILL.md'),'utf8').includes('Native hooks target only opencrawl_search')||
+    restored?.command!==searchHooks[0]!.entry.command||JSON.parse(activationOut).hookSpecificOutput?.reloadSkills!==true)
+    throw new Error('Native SessionStart did not activate revision 9 guidance and search hooks');
   await run(command(['collect','install','--yes','--defer-auth','--backfill','skip','--harness','claude-code','--json']));
   const capture=JSON.parse(readFileSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl/capture/config.json'),'utf8'));
   if(capture.command.length!==1||capture.command[0]!==entry)throw new Error('Capture did not use the durable native command');
@@ -70,5 +94,5 @@ try{
   corrupt=true;
   let rejected=false;try{await run(installer,{OPENCRAWL_DOWNLOAD_BASE:server.url.origin});}catch(error){if(!String(error).includes('checksum mismatch'))throw error;rejected=true;}
   if(!rejected||await run(command(['--version']))!==pkg.version)throw new Error('Corrupted download was accepted or damaged the active version');
-  console.log('Native installer, versioned launcher, skills and capture setup run without Node/npm/Bun on PATH.');
+  console.log('Native installer, versioned launcher, revision 8 skill/hook activation and capture setup run without Node/npm/Bun on PATH.');
 }finally{server.stop(true);rmSync(scratch,{recursive:true,force:true});}

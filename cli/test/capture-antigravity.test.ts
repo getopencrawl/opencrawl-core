@@ -109,6 +109,7 @@ async function fixture(run:(ctx:{
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
  const api='http://127.0.0.1:'+(server.address() as any).port;
  Object.assign(process.env,{
+  OPENCRAWL_NO_UPDATE:'1',
   OPENCRAWL_CONFIG_HOME:join(dir,'config'),
   OPENCRAWL_API_URL:api,
   OPENCRAWL_SESSIONS_TOKEN:token,

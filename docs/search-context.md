@@ -30,7 +30,34 @@ arguments into an older server's strict `search` schema. It does not read creden
 transcripts, a global current-chat file or the latest board registration. Two
 concurrent chats can therefore share credentials without sharing caller context.
 Disabled or unapproved hooks remain disabled; setup does not grant trust or
-change permission policy. Reload the client's hooks after installing an update.
+change permission policy.
+
+After a newer CLI has been installed, its next existing capture hook or session
+startup refreshes already-installed OpenCrawl skills and native search hooks
+locally. Ordinary CLI commands also refresh them. Publication alone does not
+activate a client, and a running process keeps its loaded binary. The refresh
+uses a nonblocking lock and a short cooperative budget, retries on a later event
+when busy, and caches a completed version/revision to avoid per-event writes.
+It performs no network or sign-in work. `OPENCRAWL_NO_UPDATE=1` disables automatic
+refresh; `opencrawl skills refresh --json` explicitly retries it. Refresh does
+not create a first skill installation: use `opencrawl skills install` for a client
+that has never installed the skill. Disabled hooks, managed-only policy and an
+existing hook's different OpenCrawl profile remain preserved.
+
+Codex requires normal review of the new **OpenCrawl search context** hook in
+`/hooks` or desktop Settings > Hooks; review it and start a new session. The
+installer never grants trust. Claude normally watches hook settings for changes;
+when its SessionStart refresh changes guidance, it requests the documented
+`reloadSkills` rescan. Cursor reloads changed hook settings; restart if the
+adapter is not loaded. Start a fresh Antigravity session after activation;
+`/skills reload` refreshes its CLI skill list, but we have not verified that it
+reloads hooks in an already-running session. Reconnect MCP or start a new session
+if the client still lacks the server's new tool alias. These are host activation
+steps; inspect `searchContext.currentSessionStatus` on an actual search to verify
+that identity attachment is active. See the native [Codex hook review](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks),
+[Claude hook reload](https://code.claude.com/docs/en/hooks#reload-skills-that-a-hook-installs),
+[Cursor hooks](https://cursor.com/docs/hooks), and
+[Antigravity skill discovery](https://antigravity.google/docs/customization-discovery) references.
 
 Prefer `opencrawl_search`; `search` is the compatible existing alias. Both execute
 the same server operation. Cursor's pre-tool event omits the MCP server name,

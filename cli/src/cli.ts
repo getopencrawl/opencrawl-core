@@ -13,6 +13,7 @@ import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest, DEF
 import {readSession, saveSession, accessToken, logout, selectOrganization, exitAfterCredentialRotation} from './session.ts';
 import {filesystemError} from './filesystem.ts';
 import {agentSkills} from './skills.ts';
+import {refreshManagedSkills} from './skill-activation.ts';
 import {withEnvironmentTokenOrigin} from './environment-token.ts';
 import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 import {tokenCommand} from './token.ts';
@@ -368,18 +369,6 @@ export async function main(args = process.argv.slice(2)) {
     // Upgrade only our hook settings locally; never launch an unowned process.
     if(!informational && args[0]!=='collect' && args[0]!=='logout' && args[0]!=='skills')try{await upgradeCaptureHooks();}catch{}
   }
-}
-
-async function refreshManagedSkills(api:string){
-  const file=join(cacheRoot(),'skills-update.json'),previous=readDistributionState(file);
-  if(previous?.version===version&&(previous.complete||previous.checkedAt>Date.now()-15*60_000))return;
-  try{
-    const data=await agentSkills('refresh',api,{}),rows=data.results;
-    const conflicts=rows.filter(row=>row.status==='conflict').length,errors=rows.filter(row=>row.status==='error').length;
-    const result={status:conflicts||errors?'attention_required':'current',updated:rows.filter(row=>['installed','updated'].includes(row.status)).length,conflicts,errors};
-    atomicJson(file,{version,checkedAt:Date.now(),complete:!errors,result});
-    if(errors)process.stderr.write('opencrawl: Managed skill refresh needs attention; run opencrawl skills refresh --json.\n');
-  }catch{} // Sandboxed skill directories must not prevent normal CLI use.
 }
 
 async function automaticNativeMigration(){
