@@ -93,7 +93,7 @@ test('native search aliases share schemas, context options, authorized cursors a
   await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers:{authorization:'Bearer local-alias-test'}}}));
   t.after(()=>client.close());
   const tools=(await client.listTools()).tools, preferred=tools.find(tool=>tool.name===aliases[0]);
-  assert.ok(preferred);assert.match(preferred.description,/Preferred search tool/);
+  assert.ok(preferred);assert.match(preferred.description,/native client hooks attach currentSession/);
   assert.match(preferred.description,/includeCurrentSession=true/);assert.match(preferred.description,/includeToolOutputs=true/);
   assert.match(preferred.description,/currentSessionStatus=unavailable/);
   for(const name of aliases){
