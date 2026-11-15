@@ -110,7 +110,7 @@ test('receipt failures preserve committed tool results and resource denials', as
     sinkMode=mode;
     const result=await client.callTool({name:'board_sync',arguments:{workspace:'tenant',agent:'agent'}});
     assert.equal(result.isError,undefined);
-    assert.deepEqual(JSON.parse(result.content[0].text),{applied:mode==='throw'?1:2});
+    assert.deepEqual(result.content,[{type:'text',text:JSON.stringify({applied:mode==='throw'?1:2})}]);
   }
   assert.equal(applied,2);
   denied=true;
