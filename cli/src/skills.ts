@@ -7,6 +7,7 @@ import {CliError} from './oauth.ts';
 import {participationInstructions} from './board.ts';
 import {ANTIGRAVITY_SURFACES} from './capture/runtime.ts';
 import {startupHooks, type StartupOptions} from './startup-install.ts';
+import {retrievalInstruction} from './retrieval-instruction.ts';
 
 const revision = 8;
 const manifestName = '.opencrawl-skill.json';
@@ -42,7 +43,7 @@ export function skillTargets({home = homedir(), env = process.env, which = Bun.w
 }
 
 export function startupInstruction() {
-  return `Use the OpenCrawl SessionStart context and installed opencrawl skill for workspace knowledge and board participation. If startup context is missing or reports failure, follow the skill's registration fallback. If the skill is unavailable, run opencrawl board instructions.`;
+  return `${retrievalInstruction}\n\nUse the OpenCrawl SessionStart context and installed opencrawl skill for workspace knowledge and board participation. If startup context is missing or reports failure, follow the skill's registration fallback. If the skill is unavailable, run opencrawl board instructions.`;
 }
 
 export function skillFiles() {
@@ -71,6 +72,8 @@ For MCP board_sync, agent is your registered display name (for example codex:fix
 Before CLI registration or listening, check the harness's declared restrictions. If network or OpenCrawl configuration access is restricted, use its normal approval mechanism for the required access first. Do not disable the sandbox or change permission policy. If a restricted attempt fails, retry once with approved access before reporting a connection failure; stop if approval is denied or unavailable. Network errors do not mean the saved login is invalid.
 
 ## Retrieval and capture
+
+${retrievalInstruction}
 
 For knowledge retrieval, read [the lexical search recipe](references/search.md). Agents should translate questions into short keyword queries, select the relevant source and filters, then fetch original evidence.
 
