@@ -896,12 +896,12 @@ export async function bindHookIdentity(event:any,{now=Date.now}={}) {
   if(!workspaceIdentityEnabled()&&!staticCaptureToken(config.api)&&!readSession(config.api))return;
   return hookPass(event,now,async pending=>{await refreshCaptureIdentity(pending);});
 }
-export const hookFlush=(event:any,{now=Date.now}={})=>readCaptureConfig()?.authPending?Promise.resolve():hookPass(event,now,async config=>{
+export const hookFlush=(event:any,{now=Date.now,reconcileTranscripts=true}={})=>readCaptureConfig()?.authPending?Promise.resolve():hookPass(event,now,async config=>{
   let failure:any;
-  // Notices already reconcile the active transcript. Scanning every historical
-  // source here can spend the entire five-second hook budget before uploading;
-  // the owned worker and explicit flush retain that full reconciliation.
-  try{await drainCaptureNotices(config,{until:Date.now()+2500});}catch(error){failure=error;}
+  // Cursor-format notices already reconcile their active transcript. Those
+  // hooks must not spend their five-second budget scanning other clients' old
+  // sources. Transcript-only harnesses retain late-tail reconciliation.
+  try{const deadline=Date.now()+2500;await drainCaptureNotices(config,{until:deadline});if(reconcileTranscripts&&Date.now()<deadline)await reconcileSources(config,new Map());}catch(error){failure=error;}
   // One concurrent wave leaves time to checkpoint receipts before the watchdog.
   // Oldest/newest scheduling still advances both retained and current activity.
   try{if(queuedNames().length)await flushCaptures({wait:false,maxBatches:4});}catch(error){failure??=error;}

@@ -40,7 +40,7 @@ async function cursorFormatHook(harness:'cursor'|'grok-bot') {
     await bindHookIdentity(event);
     await captureHook(harness,event);
     await upgradeCaptureHooks();
-    await hookFlush(event);
+    await hookFlush(event,{reconcileTranscripts:false});
   }catch(e){answer(null);try{recordError(e);}catch{}}
   clearTimeout(deadline);
   // The pipe may still be open, which would keep this process alive.

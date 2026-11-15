@@ -1,7 +1,7 @@
 import {test,expect} from 'bun:test';
 import {createServer,type ServerResponse} from 'node:http';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,utimesSync,existsSync} from 'node:fs';
-import {join} from 'node:path';
+import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {installCapture} from '../src/capture/install.ts';
 import {captureDir,readCaptureConfig,flushCaptures,captureHook,captureWorker,hookFlush,captureStatus} from '../src/capture/runtime.ts';
@@ -131,14 +131,22 @@ test('a synchronous Cursor hook uploads while an unrelated historical transcript
  let release!:()=>void;
  const held=withSessionLock('capture:spool',()=>new Promise<void>(resolve=>{release=resolve;}));
  while(!release)await new Promise(resolve=>setTimeout(resolve,1));
- const flushing=hookFlush({hook_event_name:'stop'});
+ const child=Bun.spawn([process.execPath,resolve(import.meta.dir,'../src/cli.ts'),'collect','hook','--harness','cursor'],{
+  env:{...process.env,OPENCRAWL_NO_UPDATE:'1'},stdin:new Blob([JSON.stringify({hook_event_name:'stop',conversation_id:'fresh-cursor'})]),stdout:'ignore',stderr:'ignore',
+ });
+ const flushing=child.exited;
  let timer:ReturnType<typeof setTimeout>|undefined,completed=false;
- try{completed=await Promise.race([flushing.then(()=>true),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),1000);})]);}
+ try{completed=await Promise.race([flushing.then(()=>true),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),2500);})]);}
  finally{clearTimeout(timer);release();await held;await flushing;}
  expect(completed).toBe(true);
+ expect(await flushing).toBe(0);
  expect(f.payloads.map((raw:string)=>JSON.parse(raw).harness)).toEqual(['cursor']);
  expect(JSON.parse(f.payloads[0]).events.some((event:any)=>event.data?.content?.[0]?.text==='Current Cursor activity')).toBe(true);
  expect(readFileSync(source)).toEqual(saved);
  expect(existsSync(join(captureDir(),'state',hash('claude-code'+file)+'.json'))).toBe(false);
  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0});
+ // Transcript-only hooks still recover a late append without a new notice.
+ await hookFlush({hook_event_name:'Stop'});
+ expect(f.payloads.map((raw:string)=>JSON.parse(raw).harness)).toContain('claude-code');
+ expect(existsSync(join(captureDir(),'state',hash('claude-code'+file)+'.json'))).toBe(true);
 }));
