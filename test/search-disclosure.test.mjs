@@ -118,9 +118,9 @@ test('connector fetch still requires public channel and current available parent
       assert.ok(body.query.bool.must[0].bool.filter.some(f=>f.term?.id===id));
       return realmResponse('connector',{hits:{hits:[{_id:id,_source:{...base,kind:'file_chunk',sourceId:'chunk',text:'private full text',channelId:'C',parentId:'F',parentKind:'file',resourceVersion:'v1'}}]}});
     }
-    const channel=body.ids[0].includes(documentId(binding,'channel','C'));
-    const d=channel?{...base,kind:'channel',sourceId:'C',publicChannel}:{...base,kind:'file',sourceId:'F',resourceVersion:currentVersion,available};
-    return realmResponse('connector',{docs:[{_id:documentId(binding,d.kind,d.sourceId),found:true,_source:d}]});
+    const documents=[{...base,kind:'channel',sourceId:'C',publicChannel},{...base,kind:'file',sourceId:'F',resourceVersion:currentVersion,available}];
+    const byId=new Map(documents.map(d=>['connector:'+documentId(binding,d.kind,d.sourceId),{_id:documentId(binding,d.kind,d.sourceId),found:true,_source:d}]));
+    return realmResponse('connector',{docs:body.ids.map(id=>{assert.ok(byId.has(id),'unexpected metadata ID');return byId.get(id);})});
   }});
   const service=createWorkspaceSearch({connectors:{search:(p,q)=>adapter.search(p,[binding],q)}});
   assert.equal((await service.fetch(principal,{id:'connectors:'+id})).text,'private full text');

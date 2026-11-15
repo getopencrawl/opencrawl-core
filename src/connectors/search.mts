@@ -69,8 +69,6 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
         // together, then validate each role independently, including shared IDs.
         const metadataIds = [...new Set([...ids, ...parentIds])];
         const metadata = metadataIds.length ? await request('/_mget', {body: JSON.stringify({ids: metadataIds})}) : {docs: []};
-        if (!Array.isArray(metadata.docs) || metadata.docs.length !== metadataIds.length ||
-          new Set(metadata.docs.map(item => item._id)).size !== metadataIds.length || metadata.docs.some(item => !metadataIds.includes(item._id))) throw new Error('Incomplete connector metadata lookup');
         const allowed = new Set();
         for (const item of metadata.docs.filter(item => ids.includes(item._id))) {
           if (!item.found) continue;

@@ -55,7 +55,11 @@ test('file chunks require a current available unsuppressed manifest AND a public
  const search=createConnectorSearch({endpoint:'http://localhost:9200',index:'test',tenantId:binding.tenantId,fetch:async(url,options)=>{
   if(url.pathname.endsWith('/_search'))return realmResponse('connector',{hits:{hits:[{_id:hit.id,_source:hit.document,_score:1}]}});
   const ids=JSON.parse(options.body).ids;
-  return realmResponse('connector',{docs:ids.includes('connector:'+channel.id)?[{_id:channel.id,found:true,_source:{...channel.document,publicChannel}}]:[{_id:n.manifest.id,found,_source:manifest}]});
+  const documents=new Map([
+   ['connector:'+channel.id,{_id:channel.id,found:true,_source:{...channel.document,publicChannel}}],
+   ['connector:'+n.manifest.id,{_id:n.manifest.id,found,_source:manifest}],
+  ]);
+  return realmResponse('connector',{docs:ids.map(id=>{assert.ok(documents.has(id),'unexpected metadata ID');return documents.get(id);})});
  }});
  const run=()=>search.search({tenantId:binding.tenantId},[binding],{query:'full body'});
  assert.equal((await run()).hits.length,1);
