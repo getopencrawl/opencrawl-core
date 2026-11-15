@@ -144,8 +144,15 @@ test('a synchronous Cursor hook uploads while an unrelated historical transcript
  expect(JSON.parse(f.payloads[0]).events.some((event:any)=>event.data?.content?.[0]?.text==='Current Cursor activity')).toBe(true);
  expect(readFileSync(source)).toEqual(saved);
  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0});
- // Transcript-only hooks still recover a late append without a new notice.
+}));
+
+test('transcript-only hooks still reconcile a known source without a new notice',async()=>fixture(async f=>{
+ const file=join(f.config.roots['claude-code'],'projects','old','old.jsonl');
+ mkdirSync(join(file,'..'),{recursive:true});
+ writeFileSync(file,JSON.stringify({type:'user',uuid:'late-event',sessionId:'old',message:{role:'user',content:'Late transcript content'}})+'\n');
+ const source=join(captureDir(),'sources','old.json');mkdirSync(join(source,'..'),{recursive:true});
+ writeFileSync(source,JSON.stringify({harness:'claude-code',path:file,sessionId:'old'}));
  await hookFlush({hook_event_name:'Stop'});
  expect(f.payloads.map((raw:string)=>JSON.parse(raw).harness)).toContain('claude-code');
- expect(f.payloads.flatMap((raw:string)=>JSON.parse(raw).events).some((event:any)=>event.nativeId==='old-event')).toBe(true);
+ expect(f.payloads.flatMap((raw:string)=>JSON.parse(raw).events).some((event:any)=>event.nativeId==='late-event')).toBe(true);
 }));
