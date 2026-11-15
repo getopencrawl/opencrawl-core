@@ -38,6 +38,18 @@ async function fixture(t,backend){
   await realm.ensureIndex();
   return {principal,store,prefix,realm,options,sessions:createSessionSearch({...options,store,prefix})};
 }
+async function migrationSources(f,count){
+  const {principal,store,prefix,realm}=f,ingest=createSessionIngest({store,prefix});
+  for(let i=0;i<count;i++)await ingest.putBatch(principal,{
+    schemaVersion:1,owner:principal,harness:'claude-code',origin:'cli',installationId:'device',sessionId:'concurrency',attachments:[],
+    events:[{id:'event-'+String(i).padStart(2,'0'),kind:'message',data:{role:'user',content:[i%2?{type:'tool_result',content:'Tool evidence'}:{type:'text',text:'Human evidence'}]}}],
+  });
+  const legacy=[...store.data].filter(([key])=>key.endsWith('.json.gz'))
+    .flatMap(([key,body])=>batchDocuments({prefix,key,batch:JSON.parse(gunzipSync(body)),principal}))
+    .map(({id,document})=>{const {containsToolOutput,...rest}=document;return {id,document:rest};});
+  const collection=realm.collection('session');await collection.bulk(principal,legacy);await realm.refresh(principal);
+  return {legacy,collection};
+}
 for(const backend of ['sqlite','opensearch']){
   test(backend+': search defaults filter before limits, totals and facets, preserving owner/harness and explicit access', {skip:backend==='opensearch'&&!process.env.OPENCRAWL_TEST_OPENSEARCH_URL},async t=>{
     const f=await fixture(t,backend),{principal,realm,sessions}=f;
@@ -116,7 +128,60 @@ for(const backend of ['sqlite','opensearch']){
     await assert.rejects(collection.bulk(principal,[{...patch,document:{...patch.document,userId:'other'}}]),/ownership|bulk/i);
     await collection.delete(principal,[target.id]);await collection.bulk(principal,[patch]);assert.equal((await collection.mget(principal,[target.id])).docs[0].found,false);
   });
+
+  for(const sourceConcurrency of [undefined,1,8,16])test(backend+': migration bounds active source reads at '+(sourceConcurrency??'default 4'),{skip:backend==='opensearch'&&!process.env.OPENCRAWL_TEST_OPENSEARCH_URL},async t=>{
+    const f=await fixture(t,backend),{store,principal}=f,{legacy,collection}=await migrationSources(f,18);
+    const get=store.get;let active=0,maximum=0,reads=0;
+    store.get=async(key,options)=>{
+      if(!key.endsWith('.json.gz'))return get(key,options);
+      active++;reads++;maximum=Math.max(maximum,active);
+      try{await new Promise(resolve=>setImmediate(resolve));return await get(key,options);}finally{active--;}
+    };
+    const report=await migrateSessionSearchContext({...f,dryRun:false,pageSize:17,sourceConcurrency});
+    assert.equal(report.passages,18);assert.equal(report.complete,true);assert.equal(active,0);assert.equal(reads,18);
+    assert.equal(maximum,sourceConcurrency??4,'each batch reaches but never exceeds its configured bound');
+    for(const hit of (await collection.mget(principal,legacy.map(item=>item.id))).docs){
+      assert.equal(hit._source.containsToolOutput,Number(hit._source.eventId.slice(-2))%2===1);
+    }
+  });
+
+  test(backend+': failed migration source waits for its batch and never writes the page',{skip:backend==='opensearch'&&!process.env.OPENCRAWL_TEST_OPENSEARCH_URL},async t=>{
+    const f=await fixture(t,backend),{store,principal,realm}=f,{legacy,collection}=await migrationSources(f,6);
+    const before=(await collection.mget(principal,legacy.map(item=>item.id))).docs;
+    const get=store.get,entered=Promise.withResolvers(),release=Promise.withResolvers(),failure=new Error('Source read failed');
+    let reads=0,finished=false,settled=false,objectWrites=0,indexWrites=0,checkpoints=0;
+    store.get=async(key,options)=>{
+      if(!key.endsWith('.json.gz'))return get(key,options);
+      if(++reads===1)throw failure;
+      entered.resolve();await release.promise;finished=true;return get(key,options);
+    };
+    for(const method of ['put','compareAndSet']){const write=store[method];store[method]=(...args)=>{objectWrites++;return write(...args);};}
+    const observedRealm={...realm,collection(name){
+      const c=realm.collection(name);return {...c,bulk(...args){indexWrites++;return c.bulk(...args);}};
+    }};
+    const outcome=migrateSessionSearchContext({...f,realm:observedRealm,dryRun:false,sourceConcurrency:2,onPage:async()=>{checkpoints++;}})
+      .then(value=>({value}),error=>({error})).then(result=>{settled=true;return result;});
+    try{
+      await entered.promise;await new Promise(resolve=>setImmediate(resolve));
+      assert.equal(settled,false,'failure cannot return while a sibling source read is still active');
+      assert.equal(reads,2,'a failed batch does not start later sources');
+      assert.equal(objectWrites,0);assert.equal(indexWrites,0);assert.equal(checkpoints,0);
+    }finally{release.resolve();}
+    assert.equal((await outcome).error,failure);assert.equal(finished,true);assert.equal(reads,2);
+    assert.equal(objectWrites,0,'failed preparation never acquires a write fence');
+    assert.equal(indexWrites,0);assert.equal(checkpoints,0);
+    assert.deepEqual((await collection.mget(principal,legacy.map(item=>item.id))).docs,before);
+  });
 }
+
+test('migration rejects invalid source concurrency before any I/O',async()=>{
+  let calls=0;const io=()=>{calls++;throw Error('Unexpected I/O');};
+  const realm={tenantId:'tenant',ensureIndex:io,collection:io},store=new Proxy({},{get:()=>io});
+  for(const sourceConcurrency of [0,-1,1.5,17,NaN,Infinity,'4',null])for(const dryRun of [true,false]){
+    await assert.rejects(migrateSessionSearchContext({realm,store,prefix:'capture',principal:{tenantId:'tenant'},dryRun,sourceConcurrency}),/Invalid search context migration bounds/);
+  }
+  assert.equal(calls,0);
+});
 
 test('migration reuses source classifications across interleaved pages without retaining them across invocations',async t=>{
   const {principal,realm,store,prefix}=await fixture(t,'sqlite'),ingest=createSessionIngest({store,prefix});
