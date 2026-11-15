@@ -9,14 +9,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const cursorPluginFiles=['.cursor-plugin/plugin.json','LICENSE','README.md','assets/icon.png','commands/setup.md','mcp.json','rules/opencrawl.mdc','skills/opencrawl/SKILL.md'].sort();
-export const files = ['.claude-plugin/plugin.json', '.mcp.json', 'LICENSE', 'README.md', 'assets/icon.png', 'mcp.json', 'plugin.json', 'skills/opencrawl/SKILL.md'].sort();
+export const files = ['.claude-plugin/plugin.json', '.mcp.json', 'LICENSE', 'README.md', 'assets/icon.png', 'mcp.json', 'mcp_config.json', 'plugin.json', 'skills/opencrawl/SKILL.md'].sort();
 export function crc32(bytes: Buffer) { let crc = 0xffffffff; for (const byte of bytes) {
     crc ^= byte;
     for (let bit = 0; bit < 8; bit++)
         crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
 } return (crc ^ 0xffffffff) >>> 0; }
 // The original ZipInfo entries used zlib’s default level 6 despite the outer ZIP level 9.
-/** ZIP32 is sufficient for this fixed eight-file plugin; no platform ZIP command or dependency. */
+/** ZIP32 is sufficient for this fixed nine-file plugin; no platform ZIP command or dependency. */
 export function archive(entries: ReadonlyArray<{
     name: string;
     bytes: Buffer;

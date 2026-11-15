@@ -99,7 +99,7 @@ services:
       DISABLE_SECURITY_PLUGIN: "true"
       DISABLE_INSTALL_DEMO_CONFIG: "true"
       node.store.allow_mmap: "false"
-      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+      OPENSEARCH_JAVA_OPTS: ${OPENCRAWL_OPENSEARCH_JAVA_OPTS:--Xms512m -Xmx512m}
     volumes: ["opensearch:/usr/share/opensearch/data"]
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow"]

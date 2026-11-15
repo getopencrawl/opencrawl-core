@@ -10,7 +10,7 @@ import {scheduleCliUpdate,updateCli} from './update.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs, stripVTControlCharacters} from 'node:util';
 import {CliError, apiOrigin, discover, startDevice, pollDevice, jsonRequest, DEFAULT_API_ORIGIN} from './oauth.ts';
-import {readSession, saveSession, accessToken, logout, selectOrganization, credentialRotation} from './session.ts';
+import {readSession, saveSession, accessToken, logout, selectOrganization, exitAfterCredentialRotation} from './session.ts';
 import {filesystemError} from './filesystem.ts';
 import {agentSkills} from './skills.ts';
 import {withEnvironmentTokenOrigin} from './environment-token.ts';
@@ -32,7 +32,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
   fetch       Read the indexed passage behind a search result
-  collect     Install and manage Claude Code, Codex, Cursor and Grok Bot session capture
+  collect     Install and manage Claude Code, Codex, Cursor, Antigravity and Grok Bot session capture
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
   session     Bootstrap a native SessionStart hook (session start --harness NAME)
@@ -65,11 +65,11 @@ History import (optional, asks during collect install):
   collect flush --retry-rejected       Retry held HTTP 413 batches after fixing the receiver limit
   collect backfill --dry-run --json     Preview local transcript counts; no upload
   collect backfill --harness all --yes  Import after the user approves
-  --harness claude-code|codex|all        Limit the history import to chosen sources
+  --harness claude-code|codex|antigravity|all  Limit the history import to chosen sources
   --concurrency 1..4                    History upload workers (default: 4)
   --batch-delay-ms 0..60000              Minimum gap between batch starts (default: 0)
-  collect install --backfill claude-code|codex|all  Explicit setup import choice
-Agents: ask the user to choose Claude, Codex, both, or skip before importing.
+  collect install --backfill claude-code|codex|antigravity|all  Explicit setup import choice
+Agents: ask the user to choose Claude, Codex, Antigravity, all, or skip before importing.
 History includes messages, tool arguments/results and available attachments.
 
 Search: opencrawl search "words" --json
@@ -117,7 +117,7 @@ OPENCRAWL_NO_UPDATE=1 disables automatic updates.
 Board: board register --session ID --name codex:unique-name --task "Current work"
   board profile --session ID --name NAME --task "Current work"  Name a bootstrapped session
   board directory [--after N]                   Discover taggable agents
-  board fetch --workspace ID --id REF           Expand selected discovery content
+  board fetch --id REF                          Expand selected discovery content
   --field firstUserMessage|lastUserMessage|latestAssistantMessage|context
   --offset N --length 1..8000 --content-version VERSION   Page selected text
   board subscribe --session ID [--topic TOPIC]  Replace topic subscriptions
@@ -139,7 +139,7 @@ Skills: skills install [--client NAME] [--json]
   skills status                 Inspect without changing skill files
   skills refresh                Regenerate the CLI-owned opencrawl skill
   --client NAME                 Select explicitly; repeat for multiple clients
-  Clients: codex, claude-code, cursor, gemini, opencode, copilot
+  Clients: codex, claude-code, antigravity, cursor, gemini, opencode, copilot
 Default: detect installed clients and install once per shared skill directory.
 CLI updates regenerate opencrawl, replacing local edits and stale files. Other named skills are separate.
 No authentication is required.
@@ -209,7 +209,7 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {organization:{type:'string'},'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},'retry-rejected':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {organization:{type:'string'},'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},'retry-rejected':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, event: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
@@ -247,7 +247,6 @@ export async function main(args = process.argv.slice(2)) {
       if(parsed.positionals[1]==='fetch'&&parsed.positionals.length>2){
         if(parsed.values.id)throw new CliError('INVALID_USAGE','Use positional references or --id, not both. See opencrawl board fetch --help.',64);
         const ids=parsed.positionals.slice(2);
-        if(typeof parsed.values.workspace!=='string'||!parsed.values.workspace.trim())throw new CliError('INVALID_USAGE','Use --workspace with the workspace returned by discovery. See opencrawl board fetch --help.',64);
         for(const id of ids)boardInput('fetch',{...parsed.values,id});
         if(ids.length===1){await boardCommand('fetch',api,{...parsed.values,id:ids[0]},data=>writeBoardOutput(data,json));return 0;}
         const result=await fetchMany(ids,parsed.values.concurrency,async id=>{
@@ -411,12 +410,7 @@ if (import.meta.main) {
   if(delegated!==undefined)process.exit(delegated);
   // Once a one-use refresh has left, save its response before honoring a
   // cooperative shutdown. The request itself has a bounded deadline.
-  const stop = (code: number) => {
-    const renewing = credentialRotation();
-    if (renewing) void renewing.finally(() => process.exit(code));
-    else process.exit(code);
-  };
-  process.on('SIGINT', () => stop(130));
-  process.on('SIGTERM', () => stop(143));
+  process.on('SIGINT', () => exitAfterCredentialRotation(130));
+  process.on('SIGTERM', () => exitAfterCredentialRotation(143));
   process.exitCode = await main();
 }

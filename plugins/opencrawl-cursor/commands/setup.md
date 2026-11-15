@@ -12,7 +12,10 @@ https://github.com/getopencrawl/opencrawl-core/tree/main/cli and sign in with
 `opencrawl login`. Then run `opencrawl collect install --yes --harness cursor
 --backfill skip --json` and `opencrawl skills install --client cursor --json`.
 Preserve all other clients, hooks, ownership, exclusions, and pending data.
-Start a new Cursor conversation; verify a stored receipt and search/fetch a new
+Reload Cursor after setup and start a new conversation. Use the startup/first-tool
+identity receipt and attach one native Shell board listener as described in the
+skill, then continue the user's task. Run board diagnostics only when requested.
+Verify a stored capture receipt and search/fetch a new
 unique message with harness=cursor. Installation and test_connection alone do not
 prove capture. Existing history is not imported. If CLI or account access is
 missing, state the specific next action. Never request credentials in chat.

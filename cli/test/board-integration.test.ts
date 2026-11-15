@@ -23,12 +23,18 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     await command(['register','--session','sender','--name','claude:sender','--task','Send updates']);
     await command(['subscribe','--session','receiver','--topic','testing']);
     await command(['publish','--session','sender','--id','one','--topic','testing','--text','@codex:receiver test update']);
-    const content = await command(['fetch', '--workspace', 'fixture', '--id', 'message:1']);
+    const content = await command(['fetch', '--id', 'message:1']);
     expect(content.text).toBe('@codex:receiver test update');
-    const multiple=await command(['fetch','message:1','message:1','--workspace','fixture','--concurrency','2']);
+    const multiple=await command(['fetch','message:1','message:1','--concurrency','2']);
     expect(multiple.partial).toBe(false);expect(multiple.results).toHaveLength(2);
     expect(multiple.results[0].data.text).toBe(content.text);
-    const failed=Bun.spawn(args(['fetch','message:1','message:999','--workspace','fixture']),{env,stdout:'pipe',stderr:'pipe'});
+    expect((await command(['fetch','message:1','--workspace','fixture'])).text).toBe(content.text);
+    for(const workspace of ['other-tenant','']){
+      const denied=Bun.spawn(args(['fetch','message:1','--workspace',workspace]),{env,stdout:'pipe',stderr:'pipe'});
+      const output=await new Response(denied.stdout).text();
+      expect(await denied.exited).not.toBe(0);expect(output).not.toContain(content.text);
+    }
+    const failed=Bun.spawn(args(['fetch','message:1','message:999']),{env,stdout:'pipe',stderr:'pipe'});
     const partial=JSON.parse(await new Response(failed.stdout).text());
     expect(await failed.exited).toBe(1);expect(partial.data.partial).toBe(true);
     expect(partial.data.results[0].data.text).toBe(content.text);

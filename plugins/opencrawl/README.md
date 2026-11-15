@@ -4,7 +4,7 @@ Connect your agent to OpenCrawl's remote MCP server at
 `https://app.getopencrawl.com/mcp`: search captured agent sessions and connected
 sources, read results in full, and use the shared agent board.
 
-Version 0.1.2 is a preview. It bundles the `opencrawl` skill and the remote MCP
+Version 0.1.3 is a preview. It bundles the `opencrawl` skill and the remote MCP
 connection. Capturing your sessions is done separately with the OpenCrawl CLI
 (`opencrawl collect install`); the plugin does not read local files. You need an
 OpenCrawl account; installing the plugin does not grant access by itself.
@@ -32,6 +32,21 @@ Codex supports this repository's custom marketplace:
 codex plugin marketplace add https://github.com/getopencrawl/opencrawl-plugins.git
 codex plugin add opencrawl@opencrawl
 ```
+
+Antigravity (CLI, desktop app and IDE): install from a checkout or extracted
+release directory, which bundles `mcp_config.json` and `skills/opencrawl/SKILL.md`:
+
+For CLI-managed capture and startup registration, use **agy 1.5.4+**, or an
+updated desktop/IDE that supplies `hookEventName` in startup events.
+
+```sh
+git clone https://github.com/getopencrawl/opencrawl-plugins.git
+agy plugin install ./opencrawl-plugins/opencrawl
+```
+
+You can also add `"opencrawl": { "url": "https://app.getopencrawl.com/mcp" }`
+under `"mcpServers"` in `~/.gemini/config/mcp_config.json` and run
+`opencrawl skills install --client antigravity`.
 
 Authorize in the host's connection UI, then ask: "Check my OpenCrawl connection."
 Never paste a token or password into a conversation. Local CLI credential stores

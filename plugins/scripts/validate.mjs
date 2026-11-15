@@ -3,16 +3,18 @@ import {readFile, readdir, lstat} from 'node:fs/promises';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
 export const root = fileURLToPath(new URL('../', import.meta.url));
-export const pluginFiles = ['.claude-plugin/plugin.json', '.mcp.json', 'LICENSE', 'README.md', 'assets/icon.png', 'mcp.json', 'plugin.json', 'skills/opencrawl/SKILL.md'].sort();
+export const pluginFiles = ['.claude-plugin/plugin.json', '.mcp.json', 'LICENSE', 'README.md', 'assets/icon.png', 'mcp.json', 'mcp_config.json', 'plugin.json', 'skills/opencrawl/SKILL.md'].sort();
 const endpoint = 'https://app.getopencrawl.com/mcp';
-export function validateManifests(portable, claude, mcp, claudeMcp) {
+export function validateManifests(portable, claude, mcp, claudeMcp, agyMcp) {
   for (const key of ['name', 'version', 'description', 'author', 'homepage', 'repository', 'license', 'keywords']) assert.deepEqual(portable[key], claude[key], `Host manifest mismatch: ${key}`);
   assert.equal(portable.name, 'opencrawl');
   assert.match(portable.version, /^\d+\.\d+\.\d+$/);
   assert.equal(portable.license, 'MIT');
   assert.deepEqual(Object.keys(mcp.mcpServers), ['opencrawl']);
   assert.deepEqual(Object.keys(claudeMcp.mcpServers), ['opencrawl']);
+  assert.deepEqual(Object.keys(agyMcp.mcpServers), ['opencrawl']);
   assert.deepEqual(claudeMcp.mcpServers.opencrawl, {type: 'http', url: endpoint});
+  assert.deepEqual(agyMcp.mcpServers.opencrawl, {url: endpoint});
   assert.deepEqual(mcp.mcpServers.opencrawl, {
     type: 'streamable-http', url: endpoint,
     extensions: {'com.openai': {auth: {type: 'oauth', client: {mode: 'cimd'}, resource: endpoint, baseScopes: ['offline_access']}}},
@@ -49,7 +51,7 @@ export async function validateCursor(directory = root) {
 export async function validate(directory = root) {
   const base = resolve(directory, 'opencrawl');
   const read = async path => JSON.parse(await readFile(resolve(base, path), 'utf8'));
-  const configs = await Promise.all(['plugin.json', '.claude-plugin/plugin.json', 'mcp.json', '.mcp.json'].map(read));
+  const configs = await Promise.all(['plugin.json', '.claude-plugin/plugin.json', 'mcp.json', '.mcp.json', 'mcp_config.json'].map(read));
   validateManifests(...configs);
   const files = [];
   async function walk(path = '') {
@@ -85,4 +87,4 @@ export async function validate(directory = root) {
   await validateCursor(directory);
   return configs[0].version;
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) console.log(`Validated OpenCrawl plugin ${await validate()} for portable, Claude and Cursor hosts`);
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) console.log(`Validated OpenCrawl plugin ${await validate()} for portable, Claude, Antigravity and Cursor hosts`);

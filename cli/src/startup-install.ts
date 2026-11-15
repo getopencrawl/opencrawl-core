@@ -9,7 +9,27 @@ import {retryWindowsSharing} from './filesystem.ts';
 
 export const startupMarker = 'OpenCrawl session startup';
 const quote = (s: string) => process.platform === 'win32' ? '"' + s.replace(/"/g, '""') + '"' : "'" + s.replace(/'/g, "'\\''") + "'";
-export type StartupOptions = {home?: string; env?: NodeJS.ProcessEnv; command?: string[]; node?: string; requirementsFile?: string};
+export type StartupOptions = {home?: string; env?: NodeJS.ProcessEnv; command?: string[]; node?: string; requirementsFile?: string; preserveProfile?: boolean};
+
+/** A runner binds its own configuration directory. Refreshing one profile must
+ * not redirect an already-installed client to the caller's ambient profile. */
+function otherStartupProfile(config: any, client: string, file: string) {
+  const groups = Object.values(config.hooks ?? {}).flatMap(value => Array.isArray(value) ? value : []);
+  const entries = client === 'antigravity' ? config['opencrawl-startup']?.SessionStart ?? []
+    : client === 'cursor' ? groups : groups.flatMap(group => Array.isArray(group?.hooks) ? group.hooks : []);
+  const prefix = join(dirname(file), 'runner.');
+  const spellings = [prefix, prefix.replace(/'/g, "'\\''"), prefix.replace(/'/g, "''"), prefix.replace(/%/g, '%%')];
+  return Array.isArray(entries) && entries.some(entry => {
+    const command = entry?.command;
+    if (typeof command !== 'string' || client !== 'cursor' && client !== 'antigravity' && entry.statusMessage !== startupMarker ||
+      client === 'cursor' && !/session start --harness cursor(?: --after-tool)?$/.test(command) ||
+      !/[\\/]startup[\\/]runner\.(?:sh|cmd|cjs)\b/.test(command)) return false;
+    return !spellings.some(value => {
+      const index = command.indexOf(value);
+      return index >= 0 && (index === 0 || /[\s'"]/.test(command[index - 1]));
+    });
+  });
+}
 
 /** Inspect the documented system policy without changing it or granting trust.
  * Recognize only an unconditional synchronous invocation of an installed CLI.
@@ -40,16 +60,43 @@ function managedStartup(file: string) {
   return null;
 }
 
-/** Own only our synchronous SessionStart entry. Never enable disabled hooks. */
-export function startupHooks(clients: string[], action: 'status' | 'install', {home = homedir(), env = process.env, command = commandForSelf(), requirementsFile = process.platform === 'win32' ? join(process.env.ProgramData || 'C:\\ProgramData', 'OpenAI', 'Codex', 'requirements.toml') : '/etc/codex/requirements.toml'}: StartupOptions = {}) {
-  return clients.filter(client => ['codex', 'claude-code', 'cursor'].includes(client)).map(client => {
-    const root = client === 'codex' ? env.CODEX_HOME || join(home, '.codex') : client === 'cursor' ? env.CURSOR_CONFIG_DIR || join(home, '.cursor') : env.CLAUDE_CONFIG_DIR || join(home, '.claude');
+/** Own only our startup/context entries. Never enable disabled hooks. */
+export function startupHooks(clients: string[], action: 'status' | 'install', {home = homedir(), env = process.env, command = commandForSelf(), preserveProfile = false, requirementsFile = process.platform === 'win32' ? join(process.env.ProgramData || 'C:\\ProgramData', 'OpenAI', 'Codex', 'requirements.toml') : '/etc/codex/requirements.toml'}: StartupOptions = {}) {
+  return clients.filter(client => ['codex', 'claude-code', 'cursor', 'antigravity'].includes(client)).map(client => {
+    const root = client === 'codex' ? env.CODEX_HOME || join(home, '.codex') : client === 'cursor' ? env.CURSOR_CONFIG_DIR || join(home, '.cursor') : client === 'antigravity' ? join(env.ANTIGRAVITY_HOME || join(home, '.gemini'), 'config') : env.CLAUDE_CONFIG_DIR || join(home, '.claude');
     const file = join(root, client === 'claude-code' ? 'settings.json' : 'hooks.json');
     try {
       const before = existsSync(file) ? readFileSync(file, 'utf8') : '';
       const config = before ? JSON.parse(before) : {};
-      if (!config || typeof config !== 'object' || Array.isArray(config) || config.hooks !== undefined && (!config.hooks || typeof config.hooks !== 'object' || Array.isArray(config.hooks))) throw new Error();
-      if(client==='cursor'&&config.version!==undefined&&config.version!==1)throw new Error();
+      if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error();
+      if (client === 'antigravity') {
+        for (const value of Object.values(config)) {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+        }
+        if ((config as Record<string, any>)['opencrawl-startup']?.enabled === false) return {client, file, status: 'disabled'};
+        const runner = hookRunner('startup', command);
+        if (preserveProfile && otherStartupProfile(config, client, runner.file)) return {client, file, status: 'preserved', reason: 'different_profile'};
+        const invocation = runner.invocation(client);
+        const entry = {SessionStart: [{type: 'command', command: invocation.command + ' session start --harness antigravity', timeout: 7}]};
+        const current = JSON.stringify((config as Record<string, any>)['opencrawl-startup']) === JSON.stringify(entry) && existsSync(runner.file) && readFileSync(runner.file, 'utf8') === runner.script;
+        if (action === 'status') return {client, file, status: current ? 'current' : before ? 'outdated' : 'missing'};
+        if (current) return {client, file, status: 'unchanged'};
+        if (existsSync(file) && lstatSync(file).isSymbolicLink()) throw new Error();
+        runner.write();
+        if (before) atomicFile(join(configDir(), 'startup', 'backups', randomUUID() + '.json'), before);
+        const indent = /\n([ \t]+)\S/.exec(before)?.[1] ?? (before && !before.includes('\n') ? '' : '  ');
+        const text = JSON.stringify({...config, 'opencrawl-startup': entry}, null, indent) + '\n';
+        mkdirSync(root, {recursive: true});
+        const temp = file + '.' + randomUUID() + '.tmp';
+        try {
+          writeFileSync(temp, text, {mode: 0o600, flag: 'wx'});
+          chmodSync(temp, existsSync(file) ? statSync(file).mode & 0o777 : 0o600);
+          retryWindowsSharing(() => renameSync(temp, file));
+        } finally {try {unlinkSync(temp);} catch {}}
+        return {client, file, status: 'installed'};
+      }
+      if (config.hooks !== undefined && (!config.hooks || typeof config.hooks !== 'object' || Array.isArray(config.hooks))) throw new Error();
+      if (client === 'cursor' && config.version !== undefined && config.version !== 1) throw new Error();
       const toml = join(root, 'config.toml');
       const managed = client === 'codex' ? managedStartup(requirementsFile) : null;
       const locallyDisabled = config.disableAllHooks === true || client === 'codex' && existsSync(toml) && (Bun.TOML.parse(readFileSync(toml, 'utf8')) as {features?: {hooks?: boolean}}).features?.hooks === false;
@@ -61,6 +108,7 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
         return {client, ...status};
       }
       const runner=hookRunner('startup',command);
+      if (preserveProfile && otherStartupProfile(config, client, runner.file)) return {client, file, status: 'preserved', reason: 'different_profile'};
       const invocation=runner.invocation(client);
       const cursor=client==='cursor';
       const cursorCommand=(process.platform==='win32'?'':'/bin/sh ')+quote(runner.file);
@@ -70,14 +118,17 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
       for (const [event, groups] of Object.entries(hooks)) {
         if (!Array.isArray(groups)) throw new Error();
         hooks[event] = groups.flatMap(group => {
-          if(cursor)return typeof group?.command==='string'&&/[\\/]startup[\\/]runner\.(?:sh|cmd)\b.* session start --harness cursor$/.test(group.command)?[]:[group];
+          if(cursor)return typeof group?.command==='string'&&/[\\/]startup[\\/]runner\.(?:sh|cmd)\b.* session start --harness cursor(?: --after-tool)?$/.test(group.command)?[]:[group];
           if (!Array.isArray(group?.hooks)) throw new Error();
           const remaining = group.hooks.filter((entry: any) => entry?.statusMessage !== startupMarker);
           return remaining.length ? [{...group, hooks: remaining}] : [];
         });
         if (!hooks[event].length) delete hooks[event];
       }
-      if(cursor)(hooks.sessionStart ??= []).push({command:cursorCommand+' session start --harness cursor',timeout:7});
+      if(cursor) {
+        (hooks.sessionStart ??= []).push({command:cursorCommand+' session start --harness cursor',timeout:7});
+        (hooks.postToolUse ??= []).push({command:cursorCommand+' session start --harness cursor --after-tool',timeout:7});
+      }
       else (hooks.SessionStart ??= []).push({hooks: [hook]});
       const current = JSON.stringify(config.hooks) === JSON.stringify(hooks) && existsSync(runner.file) && readFileSync(runner.file,'utf8')===runner.script;
       if (action === 'status') return {client, file, status: current ? 'current' : before ? 'outdated' : 'missing'};

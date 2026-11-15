@@ -147,18 +147,41 @@ export async function logout(api: string) {
   return withSessionLock(api, async () => { try { unlinkSync(sessionFile(api)); } catch (error: any) { if (error.code !== 'ENOENT') throw error; } });
 }
 
-let rotation: Promise<void> | null = null;
+const rotations = new Set<Promise<void>>();
+let exiting = false;
 /** A refresh token is single-use. Once the request has left, the process must
  * live to save the reply, or the sign-in is lost. Deadlines wait on this. */
-export const credentialRotation = () => rotation;
+export const credentialRotation = () => rotations.size ? Promise.all([...rotations]).then(() => {}) : null;
+function trackRotation<T>(renewed: Promise<T>): Promise<T> {
+  const settled: Promise<void> = renewed.then(() => {}, () => {}).finally(() => rotations.delete(settled));
+  rotations.add(settled);
+  return renewed;
+}
+function requireRunning() {
+  if (exiting) throw new CliError('PROCESS_STOPPING', 'OpenCrawl is shutting down.', 0);
+}
+/** Stop new credential work, but preserve replies to already-issued refreshes.
+ * Each request retains its independent network deadline, including body reads. */
+export function exitAfterCredentialRotation(code: number): void {
+  if (exiting) return;
+  exiting = true;
+  const finish = () => {
+    const pending = credentialRotation();
+    if (pending) void pending.finally(finish);
+    else process.exit(code);
+  };
+  finish();
+}
 
 /** Selection is a provider-authorized refresh, followed by service verification.
  * Keep rotated tokens recoverable even if verification fails, but do not let
  * ordinary commands use the new scope until that verification succeeds. */
 export async function selectOrganization<T extends {workspace?: {id: string}}>(api: string, organizationId: string,
   verify: (token: string) => Promise<T>, initialSession?: Session, fetcher = fetch): Promise<T> {
+  requireRunning();
   if (!/^org_[A-Za-z0-9]+$/.test(organizationId)) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
   return withSessionLock(api, async () => {
+    requireRunning();
     const saved = readSession(api);
     if (initialSession && saved) throw new CliError('SESSION_CHANGED', 'Another process saved a sign-in during browser approval. Retry workspace selection using that saved sign-in.', 2);
     const session = saved ?? initialSession;
@@ -170,19 +193,19 @@ export async function selectOrganization<T extends {workspace?: {id: string}}>(a
     const renewed = (async () => {
       const next = {...session, ...await refresh(session.auth, session.refreshToken, fetcher, organizationId), pendingOrganization: organizationId};
       atomicJson(sessionFile(api), next);
+      requireRunning();
       const verified = await verify(next.accessToken);
       if (verified.workspace?.id !== organizationId) throw new CliError('ORGANIZATION_MISMATCH', `The server did not confirm workspace ${organizationId}. Your rotated sign-in is retained but cannot be used until workspace selection succeeds. Retry opencrawl login --organization ${organizationId} --api ${api}.`, 2);
       const {pendingOrganization: _, ...ready} = next;
       atomicJson(sessionFile(api), ready);
       return verified;
     })();
-    const settled: Promise<void> = renewed.then(() => {}, () => {}).finally(() => {if (rotation === settled) rotation = null;});
-    rotation = settled;
-    return renewed;
+    return trackRotation(renewed);
   });
 }
 
 export async function accessToken(api: string, rejectedToken?: string, fetcher = fetch,signal?:AbortSignal): Promise<string> {
+  requireRunning();
   signal?.throwIfAborted();
   const usable = (session: Session) => session.expiresAt > Date.now() + 60_000 && (!rejectedToken || rejectedToken !== session.accessToken);
   const current = readSession(api);
@@ -195,19 +218,22 @@ export async function accessToken(api: string, rejectedToken?: string, fetcher =
   // Rotation still rereads under the cross-process lock after a 401 or expiry.
   if (usable(current)) return current.accessToken;
   return withSessionLock(api, async () => {
+    requireRunning();
     signal?.throwIfAborted();
     const session = readSession(api);
     if (!session) throw new CliError('AUTH_REQUIRED', 'Run opencrawl login to sign in.', 2);
     requireReady(session);
     if (usable(session)) return session.accessToken;
-    const cancellable=signal?((input:any,init:any)=>fetcher(input,{...init,signal:init?.signal?AbortSignal.any([signal,init.signal]):signal})) as typeof fetch:fetcher;
     const renewed = (async () => {
-      const next = {...session, ...await refresh(session.auth, session.refreshToken, cancellable)};
+      // The caller can stop before dispatch, or after durable publication. Once
+      // sent, aborting a rotating refresh can lose the only usable credential.
+      // refresh/jsonRequest keeps its own bounded network deadline.
+      const next = {...session, ...await refresh(session.auth, session.refreshToken, fetcher)};
       atomicJson(sessionFile(api), next);
+      signal?.throwIfAborted();
+      requireRunning();
       return next.accessToken;
     })();
-    const settled: Promise<void> = renewed.then(() => {}, () => {}).finally(() => {if (rotation === settled) rotation = null;});
-    rotation = settled;
-    return renewed;
+    return trackRotation(renewed);
   },20_000,signal);
 }

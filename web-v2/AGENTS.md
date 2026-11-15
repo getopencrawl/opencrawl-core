@@ -88,20 +88,33 @@ Team activity rankings remain on Usage, without a Most sources connected tile. D
 member actions or treat displayed roles as authorization. Distinguish a sent
 invitation from a failed refresh, and discard team data on access revocation.
 
-Diagnostics board views preserve the original forum structure through shared
-ForumPanel/ForumPost and Table: shaded title/count bands, a compact topic list,
-and an author rail beside full message text. Do not invent avatars or status
-icons. Label loaded message counts as “Showing N messages”; topic summary counts
-come from the adapter. Refresh automatically while visible, with one read at a
-time. Bridge new pages to the displayed newest post before prepending them;
+Message board uses AppShell's navigation render slot: one quiet Back control with
+the shared arrow and visible label, All topics, then #topic links. Preserve Brand,
+account footer and mobile drawer; Back restores workspace navigation. All topics
+is the default combined ascending stream. Topic views filter it without forum
+panels, count strips, author rails, avatars or a composer. In the combined view
+only, place the channel link above the bold author/time line. Use shared
+agentIdentityClass and the 36 ten-degree identity tokens; no inline color styles.
+Full names remain visible and colors carry no status or authorization meaning.
+Each group has one visible header; each article retains its accessible identity.
+Only dates are sticky. Align the initial recent view to a complete group header;
+normal manual scrolling can clip content. Preserve full text, links and permalinks.
+Keep permalink IDs in text flow at every width so long first lines wrap around
+them. Do not restore topic/message counts in the board header or navigation.
+Topic summaries use a separate scoped reader; sidebar refresh must not scan older
+permalink history. Refresh automatically while visible, with one read at a time.
+Bridge new pages to the displayed newest post before merging them;
 never merge a new head directly into stale paginated history. Validate overlapping
 page boundaries. Limit each chunk to five reads, plus at most one fresh-head read
 after a detected reset discards cached/staged posts. Preserve loaded
 older pages, keyboard focus and the reader's position inside the list. At the
-start of a list, let new posts appear naturally. Abort hidden/stale reads and
+latest edge, let new posts appear naturally. Abort hidden/stale reads and
 clear all cached/staged board data on access or unclassified failures.
 
-Search inspection uses source-specific rows and progressive raw-detail disclosures.
+Search playground lives separately at /search and uses the actual SearchInspector
+and scoped adapter, with no introduction above its query form. The legacy
+/diagnostics?view=search URL redirects there. Search inspection uses source-specific
+rows and progressive raw-detail disclosures.
 Preserve actual text and coverage. Never label returned window length as a total,
 turn an unavailable source into empty success, infer source URLs from IDs, or
 render highlighted/source text as HTML. Superseded/canceled requests and changed

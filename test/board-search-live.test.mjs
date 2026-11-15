@@ -83,3 +83,18 @@ test('more than 10000 messages remain searchable with exact facets and exhaustiv
   const tail=await search.search(principal,messages,key,{...args,query:'priority'});
   assert.equal(tail.total,5);assert.deepEqual(tail.messages.map(m=>m.id),[10005,10004,10003,10002,10001]);
 });
+
+test('real OpenSearch indexes long board posts through their tail and pages complete bodies', {skip:!endpoint}, async t => {
+  const environment='test-'+randomUUID().slice(0,8),principal={tenantId:'long-board',userId:'author'},index=realmIndex(environment,principal.tenantId);
+  t.after(async()=>{const response=await fetch(endpoint+'/'+index,{method:'DELETE'});assert.ok(response.ok||response.status===404);});
+  const bodies=['marker short',('詳🧪 detail '.repeat(1800))+' marker uniquetail',('more detail '.repeat(2000))+' marker uniquetail'];
+  const messages=bodies.map((text,i)=>({id:i+1,timestamp:1700000000000+i,topic:'work',agent:'writer',author:'author',name:'Writer',text,requestId:String(i)}));
+  const search=createBoardSearch({endpoint,environment}),args={query:'marker',sort:'newest',limit:10};
+  const first=await search.search(principal,messages,'long-board',args);
+  assert.equal(first.total,3);assert.deepEqual(first.messages.map(m=>m.id),[3]);assert.equal(first.messages[0].text,bodies[2]);
+  const second=await search.search(principal,messages,'long-board',{...args,cursor:first.next});
+  assert.deepEqual(second.messages.map(m=>m.id),[2]);assert.equal(second.messages[0].text,bodies[1]);
+  const third=await search.search(principal,messages,'long-board',{...args,cursor:second.next});
+  assert.deepEqual(third.messages.map(m=>m.id),[1]);assert.equal(third.next,null);
+  assert.equal((await search.search(principal,messages,'long-board',{query:'uniquetail'})).total,2);
+});

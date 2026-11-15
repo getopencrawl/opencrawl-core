@@ -70,24 +70,59 @@ export function snapshot(installation,containers) {
     configurations:installation.configuration.map(path=>({path:relative(root,path),content:readFileSync(path,'utf8')})),
     images:[...new Set(containers.map(c=>c.Image))]};
 }
+function saveSnapshot(directory,snapshot) {
+  mkdirSync(directory,{recursive:true,mode:0o700});
+  const saved=join(directory,'snapshot.json');
+  if(existsSync(saved)&&readFileSync(saved,'utf8')!==JSON.stringify(snapshot,null,2)+'\n')throw new Error('Recovery snapshot changed while backup was incomplete');
+  if(!existsSync(saved))privateFile(saved,snapshot);
+}
+function archive(directory,name,args){
+  const partial=join(directory,name+'.partial'),fd=openSync(partial,'w',0o600);
+  try{docker(args,{stdio:['ignore',fd,'inherit']});fsyncSync(fd);}finally{closeSync(fd);}
+  renameSync(partial,join(directory,name));
+}
+async function verifyImageArchive(directory,snapshot) {
+  const receipt=JSON.parse(readFileSync(join(directory,'images.json'),'utf8'));
+  if(receipt.format!==1||receipt.snapshot!==await digest(join(directory,'snapshot.json'))||receipt.archive!==await digest(join(directory,'images.tar'))
+    ||!Array.isArray(receipt.images)||receipt.images.length!==snapshot.images.length
+    ||receipt.images.some((entry,index)=>entry.id!==snapshot.images[index]||!/^opencrawl-recovery:[a-f0-9]{64}$/.test(entry.tag)))throw new Error('Recovery image archive checksum or identity mismatch');
+  return receipt;
+}
+/** Images are immutable and can be exported while the old application runs.
+ * This is not a consistent data backup: manifest.json is written only after all
+ * writers stop and their stores are archived by saveRecovery. */
+export async function saveRecoveryImages(directory,snapshot) {
+  saveSnapshot(directory,snapshot);
+  if(existsSync(join(directory,'images.json')))return verifyImageArchive(directory,snapshot);
+  const images=snapshot.images.map(id=>({id,tag:'opencrawl-recovery:'+createHash('sha256').update(JSON.stringify([directory,snapshot.project,id])).digest('hex')}));
+  for(const {id,tag} of images) {
+    // Archive only recovery tags: loading it must never retag the newly built
+    // application back to the old image on containerd or the classic store.
+    docker(['image','tag',id,tag]);
+    if(docker(['image','inspect','--format','{{.Id}}',tag])!==id)throw new Error('Recovery image tag does not resolve to the recorded image');
+  }
+  archive(directory,'images.tar',['image','save',...images.map(image=>image.tag)]);
+  const receipt={format:1,snapshot:await digest(join(directory,'snapshot.json')),archive:await digest(join(directory,'images.tar')),images};
+  // privateFile fsyncs the directory after the archive rename as well.
+  privateFile(join(directory,'images.json'),receipt);
+  return verifyImageArchive(directory,snapshot);
+}
+export async function ensureRecoveryImages(directory,snapshot) {
+  await saveRecoveryImages(directory,snapshot);
+  const available=()=>snapshot.images.every(id=>{try{return docker(['image','inspect','--format','{{.Id}}',id])===id;}catch{return false;}});
+  if(available())return;
+  const fd=openSync(join(directory,'images.tar'),'r');
+  try{docker(['image','load'],{stdio:[fd,'ignore','inherit']});}finally{closeSync(fd);}
+  if(!available())throw new Error('The verified archive did not restore the recorded images; preserve this recovery directory before retrying');
+}
 export async function saveRecovery(directory,snapshot) {
   // The caller has already stopped every recorded writer. Never replace a
   // complete backup on retry, even if migration has partially changed storage.
   if(existsSync(join(directory,'manifest.json')))return verifyRecovery(directory);
-  mkdirSync(directory,{recursive:true,mode:0o700});
-  const saved=join(directory,'snapshot.json');
-  if(existsSync(saved)&&readFileSync(saved,'utf8')!==JSON.stringify(snapshot,null,2)+'\n')throw new Error('Recovery snapshot changed while backup was incomplete');
-  privateFile(saved,snapshot);
+  await ensureRecoveryImages(directory,snapshot);
   const helper=snapshot.compose.services.app.image;
   const mounts=snapshot.stores.flatMap(s=>['--mount',`type=volume,source=${s.name},target=/stores/${s.key},readonly`]);
-  function archive(name,args){
-    const partial=join(directory,name+'.partial'),fd=openSync(partial,'w',0o600);
-    try{docker(args,{stdio:['ignore',fd,'inherit']});fsyncSync(fd);}finally{closeSync(fd);}
-    renameSync(partial,join(directory,name));
-  }
-  archive('stores.tgz',['run','--rm','--network','none','--user','0:0',...mounts,'--entrypoint','tar',helper,'-czf','-','-C','/stores','.']);
-  // Image IDs in the snapshot must remain recoverable after image pruning.
-  archive('images.tar',['image','save',...snapshot.images]);
+  archive(directory,'stores.tgz',['run','--rm','--network','none','--user','0:0',...mounts,'--entrypoint','tar',helper,'-czf','-','-C','/stores','.']);
   const files={};for(const name of ['snapshot.json','stores.tgz','images.tar'])files[name]=await digest(join(directory,name));
   privateFile(join(directory,'manifest.json'),{format:2,files,project:snapshot.project,createdAt:new Date().toISOString()});
   return verifyRecovery(directory);

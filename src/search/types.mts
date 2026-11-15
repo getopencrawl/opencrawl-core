@@ -40,6 +40,8 @@ export interface IndexResponse<T extends SearchDocument = SearchDocument> {
 }
 /** Compatibility name for existing consumers. */
 export type OpenSearchResponse<T extends SearchDocument = SearchDocument> = IndexResponse<T>;
+/** Aggregations include term_count:{field,value}, a keyword document-count
+ * metric. Adapters own its implementation; domain queries contain no scripts. */
 export interface QueryBody {[name: string]: unknown; query?: unknown; _source?: string[] | boolean}
 export interface SearchCollection {
   field(field: string): string;

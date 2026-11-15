@@ -11,6 +11,8 @@ export interface AppShellProps {
   routes: ReadonlyArray<NavigationItem>;
   children?: ReactNode;
   footer?: ReactNode;
+  navigation?: (closeNavigation: () => void) => ReactNode;
+  navigationLabel?: string;
 }
 
 /** The only workspace shell. Runtime adapters supply pages, never duplicate chrome. */
@@ -18,7 +20,7 @@ export function AppShell(props: AppShellProps) {
   const provided = useHasConsoleCache();
   return provided ? <WorkspaceShell {...props}/> : <ConsoleDataProvider scopeKey="single-tenant"><WorkspaceShell {...props}/></ConsoleDataProvider>;
 }
-function WorkspaceShell({workspace, routes, children, footer}: AppShellProps) {
+function WorkspaceShell({workspace, routes, children, footer, navigation, navigationLabel}: AppShellProps) {
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -77,7 +79,7 @@ function WorkspaceShell({workspace, routes, children, footer}: AppShellProps) {
     <aside ref={navigationPanel} className="oc-sidebar" aria-label="Workspace" hidden={compact && !menuOpen} onKeyDown={trapMenu}>
       <div className="oc-nav-brand"><Brand/>{compact && <Button variant="quiet" className="oc-icon-button" aria-label="Close workspace navigation" onClick={closeMenu}><Icon name="close"/></Button>}</div>
 
-      <nav id="workspace-navigation" aria-label="Workspace navigation">{(['workspace', 'manage'] as const).map(group => <div className="oc-nav-group" key={group}>{routes.filter(route => route.navigation !== false && (route.group ?? 'workspace') === group).map(route => <NavLink key={route.path} to={route.path} onClick={() => {if (compact) closeMenu();}} end={route.end ?? route.path === '/'} className={({isActive}) => `oc-nav-link${isActive ? ' oc-nav-active' : ''}`}><Icon name={route.icon ?? 'overview'}/><span>{route.label}</span></NavLink>)}</div>)}</nav>
+      <nav id="workspace-navigation" aria-label={navigationLabel ?? 'Workspace navigation'}>{navigation ? navigation(() => {if (compact) closeMenu();}) : (['workspace', 'manage'] as const).map(group => <div className="oc-nav-group" key={group}>{routes.filter(route => route.navigation !== false && (route.group ?? 'workspace') === group).map(route => <NavLink key={route.path} to={route.path} onClick={() => {if (compact) closeMenu();}} end={route.end ?? route.path === '/'} className={({isActive}) => `oc-nav-link${isActive ? ' oc-nav-active' : ''}`}><Icon name={route.icon ?? 'overview'}/><span>{route.label}</span></NavLink>)}</div>)}</nav>
 
       <footer className="oc-account-zone" onKeyDown={event => {if (event.key === 'Escape' && accountPanel.current?.matches(':popover-open')) {event.preventDefault(); event.stopPropagation(); closeAccount();}}}>
         {hasAccountDetails ? <>

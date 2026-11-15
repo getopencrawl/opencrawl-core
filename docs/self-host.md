@@ -119,6 +119,31 @@ Transient auth throttling and server failures retry with bounded backoff; queued
 data and cursors remain available if retries are exhausted. Rerun the same approved
 import to resume. Membership, destination and revoked-grant failures stop immediately.
 
+Compressed Codex `.jsonl.zst` archives are decoded incrementally, including those
+larger than 256 MiB after expansion. The importer keeps bounded record buffers and
+does not write a full expanded copy. The per-record limit remains 48 MiB. A damaged
+archive or oversized record fails visibly; it is never silently counted as imported.
+The original file is retained, and unchanged completed archives are skipped on rerun.
+
+### OpenSearch memory
+
+The bundled 512 MiB JVM heap is a small starter configuration, not a capacity
+recommendation for a large history corpus. Set `OPENCRAWL_OPENSEARCH_JAVA_OPTS` in
+`deploy/.env` to size the existing OpenSearch service without forking Compose files.
+For example, a 2 GiB heap uses `OPENCRAWL_OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g`.
+Keep the minimum and maximum heap equal. Budget RAM for the application, workers,
+PostgreSQL, object store, filesystem cache and optional Airbyte as well; do not give
+the search heap all host memory. Check sustained JVM garbage collection, container
+memory, indexing throughput and search latency before increasing concurrency.
+See the [OpenSearch memory guidance](https://docs.opensearch.org/latest/install-and-configure/install-opensearch/index/).
+
+Apply a changed heap during a planned service restart with `./deploy/up.sh` using
+the installation's existing Airbyte mode. Then check `docker stats` and
+`docker compose --env-file deploy/.env -f deploy/compose.yaml logs --tail 100 opensearch`.
+Heap tuning does not replace enough disk space for the index and upgrade backups.
+
+### Existing infrastructure
+
 Use an existing Airbyte workspace and API application. Set `AIRBYTE_URL`,
 `AIRBYTE_CLIENT_ID`, `AIRBYTE_CLIENT_SECRET`, and `AIRBYTE_WORKSPACE_ID`. The app
 creates source definitions, sources, destinations, and connections only inside

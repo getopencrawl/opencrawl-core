@@ -1,10 +1,11 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {and, field, integer, keys, literal, object, QueryCompiler, readHits, unsupported} from './sqlite-query.mjs';
 import type {Sql} from './sqlite-query.mjs';
+import {termCount} from './aggregations.mjs';
 
 /** Aggregations used by the product's board, library and usage views. SQL does
  * the filtering/grouping; no whole-corpus materialization in application memory. */
-export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql, input: unknown, budget = {buckets: 10000}, depth = 0): Record<string, unknown> {
+export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql, input: unknown, budget = {buckets: 50000}, depth = 0): Record<string, unknown> {
   if (depth > 12) return unsupported('aggregation depth');
   const result: Record<string, unknown> = {};
   for (const [name, raw] of Object.entries(object(input))) {
@@ -13,7 +14,11 @@ export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql,
     const type = types[0], option = spec[type];
     const children = (filter: Sql) => spec.aggs ? aggregate(db, fts, filter, score, spec.aggs, budget, depth + 1) : {};
     const count = (filter: Sql) => Number(db.prepare('SELECT count(*) AS n FROM documents d WHERE ' + filter.sql).get(...filter.args)!.n);
-    if (type === 'filter') {
+    if (type === 'term_count') {
+      if (Object.keys(spec).length !== 1) return unsupported('term_count children');
+      const {field, value} = termCount(option);
+      result[name] = {value: count(and(where, new QueryCompiler(fts).query({term: {[field]: value}}, false)))};
+    } else if (type === 'filter') {
       const filter = and(where, new QueryCompiler(fts).query(option, false));
       result[name] = {doc_count: count(filter), ...children(filter)};
     } else if (type === 'top_hits') {
@@ -31,9 +36,25 @@ export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql,
       const excluded = opts.exclude === undefined ? [] : opts.exclude === '' ? [''] : Array.isArray(opts.exclude) && opts.exclude.every(v => typeof v === 'string') ? opts.exclude : unsupported('terms exclude (only exact values supported)');
       const names = type === 'terms' ? [opts.field] : Array.isArray(opts.terms) ? opts.terms.map(x => {const t = object(x); keys(t, ['field']); return t.field;}) : unsupported('multi_terms');
       if (!names.length || names.length > 8) return unsupported('aggregation fields');
-      const fields = names.map(field), size = integer(opts.size, 10), joins = fields.map((f, i) => `json_each(d.document, '${f.path}') j${i}`).join(',');
+      const fields = names.map(field), size = integer(opts.size, 10, 50000), joins = fields.map((f, i) => `json_each(d.document, '${f.path}') j${i}`).join(',');
       const keyColumns = fields.map((_, i) => `j${i}.value AS k${i}`), group = fields.map((_, i) => `k${i}`).join(',');
       const childSpecs = spec.aggs ? object(spec.aggs) : {};
+      // Scalar group summaries run in the same SQL statement. Avoid one extra
+      // full-corpus query per metric per bucket for large exact span reports.
+      const summaries: Array<{name: string; sql: string; args: Sql['args']; date: boolean}> = [];
+      let inline = true;
+      for (const [name, raw] of Object.entries(childSpecs)) {
+        const metric = object(raw), types = Object.keys(metric), type = types[0];
+        if (types.length !== 1 || !['min', 'max', 'term_count'].includes(type)) {inline = false; break;}
+        if (type === 'term_count') {
+          const {field, value} = termCount(metric[type]);
+          const predicate = new QueryCompiler(fts).query({term: {[field]: value}}, false);
+          summaries.push({name, sql: `count(DISTINCT CASE WHEN ${predicate.sql} THEN d.rowid END)`, args: predicate.args, date: false});
+        } else {
+          const opts = object(metric[type]); keys(opts, ['field']); const f = field(opts.field);
+          summaries.push({name, sql: `${type}((SELECT ${type}(${f.date ? 'epoch(m.value)' : 'm.value'}) FROM json_each(d.document, '${f.path}') m))`, args: [], date: f.date});
+        }
+      }
       const orderInput = opts.order ?? [{_count: 'desc'}, {_key: 'asc'}], orders = Array.isArray(orderInput) ? orderInput : [orderInput];
       const ordering: string[] = [];
       for (const rawOrder of orders) {
@@ -55,14 +76,18 @@ export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql,
       if (type === 'multi_terms' && excluded.length) unsupported('multi_terms exclude');
       const exclusion = excluded.length ? ' AND j0.value NOT IN (' + excluded.map(() => '?').join(',') + ')' : '';
       const args = [...where.args, ...excluded];
-      const sql = `SELECT ${keyColumns.join(',')}, count(DISTINCT d.rowid) AS n FROM documents d, ${joins} WHERE ${where.sql} AND ${present}${exclusion} GROUP BY ${group}`;
-      const total = Number(db.prepare(`SELECT coalesce(sum(n),0) AS n FROM (${sql})`).get(...args)!.n);
-      const rows = db.prepare(sql + ' ORDER BY ' + ordering.join(',') + ' LIMIT ?').all(...args, size);
+      const from = `FROM documents d, ${joins} WHERE ${where.sql} AND ${present}${exclusion} GROUP BY ${group}`;
+      const base = `SELECT ${keyColumns.join(',')}, count(DISTINCT d.rowid) AS n`;
+      const sql = base + (inline ? summaries.map((metric, i) => `, ${metric.sql} AS m${i}`).join('') : '') + ' ' + from;
+      const total = Number(db.prepare(`SELECT coalesce(sum(n),0) AS n FROM (${base} ${from})`).get(...args)!.n);
+      const rows = db.prepare(sql + ' ORDER BY ' + ordering.join(',') + ' LIMIT ?').all(...(inline ? summaries.flatMap(metric => metric.args) : []), ...args, size);
       if ((budget.buckets -= rows.length) < 0) return unsupported('too many aggregation buckets');
       const buckets = rows.map(row => {
         const values = fields.map((_, i) => row['k' + i]);
-        const filter = and(where, new QueryCompiler(fts).query({bool: {filter: names.map((f, i) => ({term: {[String(f)]: values[i]}}))}}, false));
-        return {key: type === 'terms' ? values[0] : values, doc_count: Number(row.n), doc_count_error_upper_bound: 0, ...children(filter)};
+        const metrics = inline ? Object.fromEntries(summaries.map((metric, i) => [metric.name, {value: row['m' + i],
+          ...(metric.date && row['m' + i] !== null ? {value_as_string: new Date(Number(row['m' + i])).toISOString()} : {})}]))
+          : children(and(where, new QueryCompiler(fts).query({bool: {filter: names.map((f, i) => ({term: {[String(f)]: values[i]}}))}}, false)));
+        return {key: type === 'terms' ? values[0] : values, doc_count: Number(row.n), doc_count_error_upper_bound: 0, ...metrics};
       });
       result[name] = {buckets, doc_count_error_upper_bound: 0, sum_other_doc_count: total - rows.reduce((n, row) => n + Number(row.n), 0)};
     } else if (type === 'date_histogram') {

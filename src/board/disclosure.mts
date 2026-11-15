@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 
 export const boardFetchSchema = z.strictObject({
-  workspace: z.string().trim().min(1).max(200),
+  workspace: z.string().trim().min(1).max(200).optional().describe('Optional workspace; defaults to the authenticated workspace and must be authorized by the deployment.'),
   id: z.string().min(1).max(2048).describe('A reference returned by board_sync.'),
   field: z.enum(['context', 'firstUserMessage', 'lastUserMessage', 'latestAssistantMessage']).default('context'),
   offset: z.number().int().min(0).max(10_000_000).default(0),

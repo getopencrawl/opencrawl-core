@@ -2,9 +2,49 @@
 
 Read [capture privacy and controls](capture-privacy.md) before enabling collection.
 
-The CLI installs capture for local Claude Code and Codex sessions, including sessions run by their desktop apps, and for [Grok Bot](#grok-bot) on a Bot's cloud computer. Run `opencrawl login`, then `opencrawl collect install`. Codex requires reviewing/trusting the installed commands in `/hooks` or desktop Settings > Hooks. Existing sessions may need a restart.
+The CLI installs capture for local Claude Code, Codex and [Antigravity](#antigravity) sessions, including sessions run by their desktop apps and IDEs, and for [Grok Bot](#grok-bot) on a Bot's cloud computer. Run `opencrawl login`, then `opencrawl collect install`. Codex requires reviewing/trusting the installed commands in `/hooks` or desktop Settings > Hooks. Existing sessions may need a restart.
 
 Capture uses command hooks and incremental reads of native JSONL transcripts. The harness supervises asynchronous hooks. Each hook durably saves its event, then attempts a nonblocking uploader lock; the winner uploads in that same process, and competing hooks exit. Unix dispatch uses exec to preserve the harness-owned PID. Capture never starts detached children. Each uploader has a 90-second process deadline and exits on detected parent loss (checked every second), including while waiting for locks or network responses. Durable unacknowledged bytes remain for the next hook. Foreground flush/backfill is unaffected. If the harness itself dies, reaping adopted children remains the host’s responsibility. The same mechanism runs on macOS, Linux and Windows without an init service. Legacy OpenCrawl LaunchAgents/user timers are removed during installation. The installer preserves existing hook groups, backs up changed files, and rolls back configuration writes if installation fails. It uses absolute executable paths so desktop launch environments do not need the interactive shell's PATH.
+
+## Antigravity
+
+Requires **agy 1.5.4 or newer** for the CLI, or a desktop/IDE release that supplies
+`hookEventName` in startup events. Check `agy --version` and update Antigravity
+before enrolling it. Older startup payloads receive an upgrade diagnostic instead
+of a registration receipt; they never block the conversation. See the
+[Antigravity changelog](https://antigravity.google/docs/changelog).
+
+Google Antigravity shares `~/.gemini/config/hooks.json` across the Antigravity CLI
+(`agy`), the Antigravity desktop app, and the Antigravity IDE, while writing native
+JSONL transcripts under `~/.gemini/{antigravity-cli,antigravity,antigravity-ide}/brain/<conversationId>/.system_generated/logs/`.
+`opencrawl collect install` automatically enrolls Antigravity whenever `agy` or an
+Antigravity directory under `~/.gemini` is present (`--harness antigravity` or
+`--harness agy` selects it explicitly).
+
+The installer writes `"opencrawl-capture"` entries for `SessionStart`,
+`PostToolUse`, `PostInvocation` and `Stop` in
+`~/.gemini/config/hooks.json`, preserving unrelated user and startup hooks.
+Antigravity hooks run synchronously, so the capture hook reads stdin immediately,
+writes `{}` (`{"decision":"allow"}` for `Stop`) to stdout right away, saves a
+local notice pointing to `transcript_full.jsonl` (falling back to
+`transcript.jsonl`), and runs at most a five-second bounded upload pass at turn
+boundaries (`Stop`, `SessionStart` or every 20 seconds). It never spawns detached
+subprocesses and never sweeps other artifacts or scratch files in
+`<appDataDir>/brain/<conversationId>/`.
+
+Origins map `antigravity-cli` to `cli` and `antigravity` / `antigravity-ide` to
+`desktop`. Subagent calls (`invoke_subagent`) are captured as normal tool calls on
+the parent conversation; subagent transcripts have their own `<conversationId>`
+directories without an unverified parent pointer on disk. Native `media` URIs on
+user messages are hashed and uploaded through the standard attachment pipeline.
+
+Capture retains user and assistant text, available thinking, tool calls/results,
+compaction records, automation messages and standalone `ERROR_MESSAGE` failures.
+Failures are searchable and appear as Error notes in the transcript. Native
+`step_index` identifies a step across compact/full logs and resumed collection:
+unchanged steps deduplicate, while richer content remains an immutable revision.
+This is normalized session capture, not a raw transcript archive or native model
+token-usage export. Rules such as `GEMINI.md` are not collected as memory.
 
 ## Grok Bot
 
@@ -157,7 +197,7 @@ transactions. Database unavailability returns a retryable failure without
 publishing the raw batch. See [PostgreSQL migration](event-identity-migration.md)
 for existing installations, failed-upload reservations, backups and rollback.
 
-Installation enrolls new sessions and existing sessions modified afterward. Existing active transcripts are read from the beginning on first encounter. It does not automatically import inactive historical sessions. Setup offers an optional one-time history import: terminal users choose Claude Code, Codex, both, or skip; noninteractive/JSON installs return a decision for the agent to ask the user. `collect backfill --dry-run --json` previews file counts without reading transcript content or contacting a server. After explicit user approval, `collect backfill --harness claude-code|codex|all --yes` imports the selected local stores, including desktop coding, host-mirrored Claude Desktop `.claude/projects` histories and subagents, and archived Codex sessions, through the same authenticated capture pipeline. `collect install --backfill skip` skips history. A repeat import resumes existing cursors; it never enables recurring history import. Claude Desktop mirrors are discovered only within native runtime directories under its `local-agent-mode-sessions` application-data store. Messages in each runtime’s audit log are preserved when their native UUID is absent from its project transcripts; duplicate audit copies and transport bookkeeping are skipped. Audit messages retain their individual session IDs and timestamps. Cloud-only chats and records available only inside a VM remain outside this local transcript importer.
+Installation enrolls new sessions and existing sessions modified afterward. Existing active transcripts are read from the beginning on first encounter. It does not automatically import inactive historical sessions. Setup offers an optional one-time history import: terminal users choose Claude Code, Codex, Antigravity, all, or skip; noninteractive/JSON installs return a decision for the agent to ask the user. `collect backfill --dry-run --json` previews file counts without reading transcript content or contacting a server. After explicit user approval, `collect backfill --harness claude-code|codex|antigravity|all --yes` imports the selected local stores, including desktop coding, host-mirrored Claude Desktop `.claude/projects` histories and subagents, archived Codex sessions, and Antigravity `transcript_full.jsonl` logs across CLI, desktop and IDE surfaces, through the same authenticated capture pipeline. `collect install --backfill skip` skips history. A repeat import resumes existing cursors; it never enables recurring history import. Claude Desktop mirrors are discovered only within native runtime directories under its `local-agent-mode-sessions` application-data store. Messages in each runtime’s audit log are preserved when their native UUID is absent from its project transcripts; duplicate audit copies and transport bookkeeping are skipped. Audit messages retain their individual session IDs and timestamps. Cloud-only chats and records available only inside a VM remain outside this local transcript importer.
 
 ## Reliability and control
 

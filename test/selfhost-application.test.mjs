@@ -485,3 +485,18 @@ test('admin connects Replicas through the product before onboarding; native fork
  const progress=(await (await f.request('/api/onboarding','admin')).json()).data;
  assert.equal(progress.shared,undefined,'enrollment without actual MCP/capture receipts is not completed setup');
 });
+
+test('ordinary login reuses only a current member session and keeps redirects local',async t=>{
+  const f=await fixture(t);await f.admin();
+  assert.equal((await f.request('/auth/login')).status,200);
+  for(const [next,expected] of [['/device?user_code=ABCD','/device?user_code=ABCD'],['https://example.com','/'],['//example.com','/'],['/\\example.com','/']]){
+    const response=await f.request('/auth/login?next='+encodeURIComponent(next),'admin');
+    assert.equal(response.status,303);assert.equal(response.headers.get('location'),expected);
+  }
+  // Invitation sign-in may intentionally switch accounts; do not consume it.
+  assert.equal((await f.request('/auth/login?invitation=pending','admin')).status,200);
+  const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
+  await f.identity.directory.userManagement.deleteOrganizationMembership(member.id);
+  assert.equal((await f.request('/auth/login','admin')).status,200);
+  assert.equal((await f.request('/api/console/bootstrap','admin')).status,401);
+});

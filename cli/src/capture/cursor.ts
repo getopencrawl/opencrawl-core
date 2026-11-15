@@ -9,8 +9,18 @@ import {join, relative, sep, basename} from 'node:path';
 export const CURSOR_HOOK_EVENTS = GROK_BOT_HOOK_EVENTS;
 export const cursorEvents = grokBotEvents;
 export type CursorThoughtHooks = {generation: string; turn: Record<string,number>; model: Record<string,number>};
+/** Native notification turns have no beforeSubmitPrompt. Recognize only the
+ * UUID / UUID-modelIndex-suffix pair observed in desktop hooks, so their first
+ * thought can establish the turn without guessing at arbitrary generation IDs. */
+export function cursorThoughtState(state: CursorThoughtHooks | undefined, event: any): CursorThoughtHooks | undefined {
+  const id=event.generation_id;
+  if(typeof id!=='string'||!id)return state;
+  const generation=event.hook_event_name==='beforeSubmitPrompt'?id:
+    event.hook_event_name==='afterAgentThought'?/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:-\d+-[a-z0-9]+)?$/i.exec(id)?.[1]:undefined;
+  return generation&&generation!==state?.generation?{generation,turn:{},model:{}}:state;
+}
 /** Desktop emits the same thought through its model and turn hooks. Pair only
- * aliases of the generation observed in beforeSubmitPrompt. Occurrence counts
+ * aliases of the observed native generation. Occurrence counts
  * preserve repeated thoughts within a turn and leave unidentified hooks alone. */
 export function cursorThoughtDuplicate(state: CursorThoughtHooks | undefined, event: any) {
   const generation=event.generation_id;

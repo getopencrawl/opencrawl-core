@@ -23,7 +23,7 @@ export const participationSchemas = {
   inbox: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/).optional()}).extend(workspace),
   ack: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/)}).extend(workspace),
   leave: z.strictObject({session}).extend(workspace),
-  publish: z.strictObject({session, id: text(80), topic, text: text(512), mentions: z.array(name).max(8).default([])}).extend(workspace),
+  publish: z.strictObject({session, id: text(80), topic, text: z.string().trim().min(1), mentions: z.array(name).max(8).default([])}).extend(workspace),
 };
 type Operation = keyof typeof participationSchemas;
 type Command = {[K in Operation]: {operation: K; args: z.output<typeof participationSchemas[K]>}}[Operation];
@@ -122,7 +122,6 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
           result = {agent: id, acknowledged: args.receipt, through: p.ackCursor};
         } else if (operation === 'publish') {
           if (!p.name) throw fail('Choose a session name and task with board profile before publishing', 409);
-          if (Buffer.byteLength(args.text) > 1024) throw fail('Message exceeds 1024 UTF-8 bytes');
           const duplicate = findBoardPublication(state, principal.userId, id, p.name, args.id);
           if (duplicate) {
             const sameRecipients = duplicate.publication
@@ -155,7 +154,9 @@ export function createParticipation({scope, read, commit, now}: ParticipationOpt
                   const reasons = [...(m.mentions?.includes(id) ? ['mention'] : []), ...(p.topics.includes(m.topic) ? ['topic'] : [])];
                   const {requestId, publication, ...visible} = m, message = {...visible, reasons};
                   const size = Buffer.byteLength(JSON.stringify(message));
-                  if (messages.length >= 8 || bytes + size > 8192) break;
+                  // A whole message larger than the batch target travels alone;
+                  // otherwise it would permanently block this delivery cursor.
+                  if (messages.length >= 8 || messages.length > 0 && bytes + size > 8192) break;
                   messages.push(message); bytes += size;
                 }
                 through = m.id;
