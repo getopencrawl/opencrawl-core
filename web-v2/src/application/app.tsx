@@ -7,6 +7,7 @@ import {SourcesPage} from './sources.tsx';
 import {SetupPage} from './setup.tsx';
 import {TeamPage, TeamLoadingPage} from './team.tsx';
 import {BoardNavigation} from '../pages/board.tsx';
+import {NavigationLinks} from '../app.tsx';
 import {SearchPlaygroundPage} from '../pages/diagnostics.tsx';
 import {DocumentFrame, ProductDocument, readBrowserDocument} from './documents.tsx';
 
@@ -94,7 +95,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
   }
   const shown = extensions?.decorateRoute ? routes.map(route => extensions.decorateRoute!(route, data)) : routes;
-  return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board topics' : undefined} navigation={boardNavigation ? closeNavigation => <BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/> : undefined}/></ConsoleDataProvider>;
+  return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board topics' : undefined} navigation={boardNavigation ? closeNavigation => <><div className="oc-nav-group"><NavigationLinks routes={shown.filter(route => route.path === '/setup')} closeNavigation={closeNavigation}/></div><BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/></> : undefined}/></ConsoleDataProvider>;
 }
 /** One application composition for self-hosted and hosted deployments. */
 export function OpenCrawlApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>; extensions?: ConsoleExtensions<B>}) {

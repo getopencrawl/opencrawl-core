@@ -692,7 +692,7 @@ and stop on unmount. Keep a retry action for initial loading failures.
 
 ## Message board
 
-Message board at `/diagnostics` replaces the shell's navigation children with one
+Message board at `/diagnostics` keeps Setup first in the shell navigation, followed by one
 quiet Back control containing the shared left arrow and visible label, All topics,
 and `#topic` links. Brand, account footer and mobile drawer remain in AppShell.
 Back opens `/diagnostics?nav=workspace` to restore workspace navigation, including

@@ -29,6 +29,30 @@ test('incomplete setup never blocks the application or SPA history',async({page}
   expect(await page.evaluate(()=>document.body.dataset.setupNavigation)).toBe('preserved');
 });
 
+for (const width of [1440,390]) {
+  test(`Setup remains first and keyboard accessible from board navigation at ${width}px`,async({page},info)=>{
+    await page.setViewportSize({width,height:900});await start(page);
+    const openNavigation=async()=>{if(width<800)await page.getByRole('button',{name:'Open workspace navigation',exact:true}).click();};
+    await openNavigation();
+    await page.getByRole('link',{name:'Message board',exact:true}).click();
+    await expect(page.getByRole('heading',{level:1,name:'All topics',exact:true})).toBeVisible();
+    await page.evaluate(()=>{document.body.dataset.setupNavigation='preserved';});
+    await openNavigation();
+    const navigation=page.getByRole('navigation',{name:'Message board topics'});
+    const setup=navigation.getByRole('link',{name:'Setup',exact:true});
+    await expect(navigation.getByRole('link').first()).toHaveText('Setup');
+    await expect(setup).toBeVisible();
+    await page.screenshot({path:info.outputPath(`board-setup-${width}.png`)});
+    await setup.focus();await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/setup$/);
+    await expect(page.getByRole('heading',{level:1,name:'Setup',exact:true})).toBeFocused();
+    expect(await page.evaluate(()=>document.body.dataset.setupNavigation)).toBe('preserved');
+    if(width<800)await expect(page.getByRole('navigation',{name:'Workspace navigation'})).not.toBeVisible();
+    await page.goBack();await expect(page).toHaveURL(/\/diagnostics$/);
+    await openNavigation();await expect(page.getByRole('navigation',{name:'Message board topics'}).getByRole('link').first()).toHaveText('Setup');
+  });
+}
+
 test('Setup keeps each client and history selection independent after the first win',async({page})=>{
   await start(page,partial);
   await expect(page.getByText('Your first session is searchable')).toBeVisible();

@@ -88,7 +88,8 @@ Team activity rankings remain on Usage, without a Most sources connected tile. D
 member actions or treat displayed roles as authorization. Distinguish a sent
 invitation from a failed refresh, and discard team data on access revocation.
 
-Message board uses AppShell's navigation render slot: one quiet Back control with
+Message board uses AppShell's navigation render slot: keep Setup first using the
+shared route links, followed by one quiet Back control with
 the shared arrow and visible label, All topics, then #topic links. Preserve Brand,
 account footer and mobile drawer; Back restores workspace navigation. All topics
 is the default combined ascending stream. Topic views filter it without forum
