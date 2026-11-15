@@ -104,9 +104,11 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       const next = offset < grouped.results.length ? encode({fingerprint, offset, expires: page.expires}) : null;
       const coverage = groups.map(({source, state, hits, truncated}) => ({source, state, candidates: hits.length, truncated}));
       const partial = coverage.some(g => g.state === 'unavailable' || g.state === 'pending');
+      const unclassifiedSessionCandidates=groups.filter(group=>group.source==='sessions').reduce((count,group)=>count+group.hits.filter(hit=>typeof hit.containsToolOutput!=='boolean').length,0);
       return {query: query.query, searchContext:{currentSession:query.currentSession??null,
         currentSessionStatus:query.currentSession?(query.includeCurrentSession?'included':'excluded'):'unavailable',
-        currentSessionExcluded:Boolean(query.currentSession)&&!query.includeCurrentSession,toolOutputsIncluded:query.includeToolOutputs},
+        currentSessionExcluded:Boolean(query.currentSession)&&!query.includeCurrentSession,toolOutputsIncluded:query.includeToolOutputs,
+        unclassifiedSessionCandidates,...(unclassifiedSessionCandidates&&!query.includeToolOutputs?{warning:'Some session candidates predate tool-output classification. Legacy embedded tool outputs may remain until the server metadata migration completes.'}:{})},
         results, next, coverage, partial, deduplicated: deduped.suppressed, grouped:grouped.suppressed,
         truncated: Boolean(next) || coverage.some(g => g.truncated),
         windowExhausted: !next && coverage.some(g => g.truncated),

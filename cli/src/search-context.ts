@@ -67,8 +67,8 @@ export function readSearchContextEvent(input: Readable, timeoutMs = 1000, maxByt
     const fail = () => finish(new Error('Invalid search hook input'));
     const end = () => {try {finish(undefined, JSON.parse(bytes.toString('utf8')));} catch {fail();}};
     const data = (chunk: Buffer | string) => {
+      if (bytes.length + Buffer.byteLength(chunk) > maxBytes) {fail(); return;}
       bytes = Buffer.concat([bytes, Buffer.from(chunk)]);
-      if (bytes.length > maxBytes) {fail(); return;}
       try {const value = JSON.parse(bytes.toString('utf8')); finish(undefined, value);} catch { /* Await remaining bytes. */ }
     };
     const timer = setTimeout(fail, timeoutMs);

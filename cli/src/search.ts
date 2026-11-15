@@ -81,7 +81,7 @@ export function formatSearch(data: any): string {
   const text = data.results.map((r: any) => [`[${r.id}]${r.title?' '+r.title:''}`,r.provenance?JSON.stringify(r.provenance):'',r.url,
     r.text!==undefined?`${r.excerpt?.start>0?'…':''}${r.text}${r.excerpt?.end<r.excerpt?.totalChars?'…':''}`:'',
     r.duplicateCount?`${r.duplicateCount} additional equivalent passages grouped.`:'',r.groupedCount?`${r.groupedCount} other passages in this resource.`:''].filter(Boolean).join('\n')).join('\n\n');
-  return [defaults, text || 'No matching indexed passages.', `Coverage: ${data.coverage.map((c: any) => `${c.source}=${c.state}${c.truncated ? ' (bounded)' : ''}`).join(', ')}`,
+  return [defaults, context?.warning, text || 'No matching indexed passages.', `Coverage: ${data.coverage.map((c: any) => `${c.source}=${c.state}${c.truncated ? ' (bounded)' : ''}`).join(', ')}`,
     data.facets?`Facets (${data.facetScope}): ${JSON.stringify(data.facets)}`:'',
     data.results.length ? 'Read more: opencrawl fetch <result-id>. Use --group-by none --no-dedupe to inspect every occurrence.' : '',
     data.next ? `Next cursor: ${data.next}` : '', data.windowExhausted ? 'Candidate window exhausted. Narrow the query or source to explore further.' : '', data.partial ? 'Some sources could not be searched. These results are incomplete.' : ''].filter(Boolean).join('\n\n');

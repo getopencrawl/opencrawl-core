@@ -61,7 +61,8 @@ for(const backend of ['sqlite','opensearch']){
     assert.equal((await search.fetch(principal,{id:'sessions:past'})).text,'evidence past');
     const input={query:'evidence',source:'sessions',currentSession,order:'newest',dedupe:false,groupBy:'none',facets:['kind','author','sessionId'],limit:1};
     const first=await search.search(principal,input);
-    assert.deepEqual(first.searchContext,{currentSession,currentSessionStatus:'excluded',currentSessionExcluded:true,toolOutputsIncluded:false});
+    assert.deepEqual(first.searchContext,{currentSession,currentSessionStatus:'excluded',currentSessionExcluded:true,toolOutputsIncluded:false,unclassifiedSessionCandidates:3,
+      warning:'Some session candidates predate tool-output classification. Legacy embedded tool outputs may remain until the server metadata migration completes.'});
     assert.equal(first.coverage[0].candidates,3);assert.equal(first.coverage[0].truncated,false);
     assert.deepEqual(first.facets.kind.values,[{value:'message',count:3}]);
     assert.deepEqual(first.facets.author.values,[{value:'alice',count:2},{value:'bob',count:1}]);
@@ -108,6 +109,7 @@ for(const backend of ['sqlite','opensearch']){
     assert.deepEqual(store.data.get(key),raw);assert.equal((await migrateSessionSearchContext({...migration,dryRun:false})).passages,0);
     const search=createWorkspaceSearch({sessions}),result=await search.search(principal,{query:'evidence',source:'sessions',groupBy:'none',dedupe:false});
     assert.equal(result.results.length,1);assert.equal(result.results[0].provenance.eventId,'human');
+    assert.equal(result.searchContext.unclassifiedSessionCandidates,0);assert.equal(result.searchContext.warning,undefined);
     assert.ok((await search.search(principal,{query:'evidence',source:'sessions',includeToolOutputs:true,groupBy:'none',dedupe:false})).results.length>1);
     await assert.rejects(migrateSessionSearchContext({...migration,principal:{...principal,tenantId:'foreign'}}),{status:403});
     const target=legacy[0],patch={...target,document:{...target.document,containsToolOutput:true},policy:'session-search-context'};
@@ -115,6 +117,33 @@ for(const backend of ['sqlite','opensearch']){
     await collection.delete(principal,[target.id]);await collection.bulk(principal,[patch]);assert.equal((await collection.mget(principal,[target.id])).docs[0].found,false);
   });
 }
+
+test('migration reuses source classifications across interleaved pages without retaining them across invocations',async t=>{
+  const {principal,realm,store,prefix}=await fixture(t,'sqlite'),ingest=createSessionIngest({store,prefix});
+  for(const ids of [['event-1','event-3'],['event-2','event-4']])await ingest.putBatch(principal,{
+    schemaVersion:1,owner:principal,harness:'claude-code',origin:'cli',installationId:'device',sessionId:'cached',attachments:[],
+    events:ids.map((id,i)=>({id,kind:'message',data:{role:'user',content:[i?{type:'tool_result',content:'Tool evidence'}:{type:'text',text:'Human evidence'}]}})),
+  });
+  const raw=[...store.data].filter(([key])=>key.endsWith('.json.gz'));
+  const legacy=raw.flatMap(([key,body])=>batchDocuments({prefix,key,batch:JSON.parse(gunzipSync(body)),principal}))
+    .map(({id,document})=>{const {containsToolOutput,...rest}=document;return {id,document:rest};});
+  assert.equal(legacy.length,4);
+  const collection=realm.collection('session');await collection.bulk(principal,legacy);await realm.refresh(principal);
+  const get=store.get,reads=new Map();store.get=async(key,options)=>{
+    if(key.endsWith('.json.gz'))reads.set(key,(reads.get(key)??0)+1);
+    return get(key,options);
+  };
+  const options={realm,principal,store,prefix,pageSize:1};
+  for(let invocation=1;invocation<=2;invocation++){
+    const report=await migrateSessionSearchContext(options);assert.equal(report.passages,4);assert.equal(report.complete,true);
+    assert.deepEqual([...reads.values()],[invocation,invocation],'each source is read once per invocation despite interleaved pages');
+  }
+  await migrateSessionSearchContext({...options,dryRun:false});
+  assert.deepEqual([...reads.values()],[3,3]);
+  for(const hit of (await collection.mget(principal,legacy.map(item=>item.id))).docs)
+    assert.equal(hit._source.containsToolOutput,['event-3','event-4'].includes(hit._source.eventId));
+  for(const [key,body]of raw)assert.deepEqual(store.data.get(key),body);
+});
 
 test('session defaults never filter connector records and bind only session adapter inputs',async()=>{
   const principal={tenantId:'tenant',userId:'owner'},calls=[];

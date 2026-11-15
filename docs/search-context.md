@@ -54,7 +54,10 @@ user-role messages as well as canonical result events from other clients. A mixe
 human-text/result event is excluded as a whole unless tool outputs are requested.
 Classification does not rely on words in text and does not change the original
 message. Known legacy result kinds are filtered before migration; ambiguous
-historical content blocks require the metadata backfill below.
+historical content blocks require the metadata backfill below. During rollout,
+`searchContext.unclassifiedSessionCandidates` counts candidates without the new
+metadata and an explicit warning reports possible legacy embedded tool output.
+This count describes the bounded query window, not the entire corpus.
 
 Deploy updated indexing workers first, then call `migrateSessionSearchContext`
 from `@getopencrawl/opencrawl-core/sessions/search-context-migration` with the
