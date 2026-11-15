@@ -1,6 +1,6 @@
 {
   "name": "opencrawl",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Search shared agent knowledge and capture new Cursor conversations with the OpenCrawl CLI.",
   "author": {
     "name": "OpenCrawl",

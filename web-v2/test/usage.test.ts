@@ -174,7 +174,7 @@ test('Agent sessions retains measured activity, breakdowns and contextual facts 
     children: createElement(MemoryRouter, {initialEntries: [sessionPath({userId: 'alice', harness: 'antigravity', sessionId: 'conv-1'})]},
       createElement(SessionsPage, {adapter: library})),
   }));
-  assert.match(viewerHtml, /All sessions/);
+  assert.match(viewerHtml, /aria-label="Back to sessions"[^>]*href="\/sessions"/);
   assert.match(viewerHtml, /Loading session(?!s)/);
   assert.doesNotMatch(agents, /\bturns?\b|analytics come next/i);
 });

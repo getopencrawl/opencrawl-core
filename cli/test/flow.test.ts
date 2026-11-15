@@ -1,5 +1,5 @@
 import {test, expect} from 'bun:test';
-import {mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, readdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 
@@ -27,7 +27,12 @@ test('real CLI processes sign in, rotate once concurrently, verify identity and 
     }
     return Response.json({}, {status: 404});
   }});
-  const env = {...process.env, OPENCRAWL_CONFIG_HOME: directory};
+  // Login refreshes installed client skills and startup hooks. Keep every native
+  // client root in the fixture, including Antigravity when installed on the host.
+  const env = {...process.env, OPENCRAWL_CONFIG_HOME: directory, HOME: directory, USERPROFILE: directory,
+    CLAUDE_CONFIG_DIR: join(directory,'claude'), CODEX_HOME: join(directory,'codex'),
+    CURSOR_CONFIG_DIR: join(directory,'cursor'), ANTIGRAVITY_HOME: join(directory,'gemini')};
+  mkdirSync(join(env.ANTIGRAVITY_HOME,'config','skills','opencrawl'),{recursive:true});
   async function run(command: string) {
     const child = Bun.spawn(['bun', resolve(import.meta.dir, '../src/cli.ts'), command, '--api', server.url.origin, '--json', '--no-browser'], {env, stdout: 'pipe', stderr: 'pipe'});
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
@@ -39,6 +44,8 @@ test('real CLI processes sign in, rotate once concurrently, verify identity and 
     expect(login.code).toBe(0);
     expect(login.stderr).toContain('TEST-CODE');
     expect(JSON.parse(login.stdout).data.authenticated).toBe(true);
+    const hooks=JSON.parse(readFileSync(join(env.ANTIGRAVITY_HOME,'config','hooks.json'),'utf8'));
+    expect(hooks['opencrawl-startup'].SessionStart[0].command).toContain(directory);
     expect(polls).toBe(1);
     const file = join(directory, 'opencrawl', readdirSync(join(directory, 'opencrawl')).find(file => file.endsWith('.json'))!);
     const credentials = JSON.parse(readFileSync(file, 'utf8'));

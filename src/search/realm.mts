@@ -11,6 +11,7 @@ export {realmIndex,realmField,realmDocument};
 import {createSqliteRealm} from './sqlite.mjs';
 import {patchScript} from './mutations.mjs';
 import {bulkItemLine,INITIAL_BULK_TARGET_BYTES} from './bulk.mjs';
+import {openSearchAggregations} from './aggregations.mjs';
 const gzip=promisify(gzipCallback);
 const fail = (message: string,status=503) => Object.assign(new Error(message),{status,permanent:status===403});
 const corpora = new Set(['connector','session','board','memory']);
@@ -114,7 +115,7 @@ export function createOpenSearchRealm({endpoint,index,tenantId,environment='self
           const query={bool:{filter:[{term:{tenantId}},{term:{corpus}}],must:[body.query||{match_all:{}}]}};
           // Scope/identity fields are always fetched, including for ID-only board snapshots.
           const source=Array.isArray(body._source)?[...new Set(['schema','tenantId','corpus','id',...body._source.map(f=>realmField(corpus,f))])]:body._source;
-          const scopedBody={...body,query,...(source?{_source:source}:{})};
+          const scopedBody={...body,query,...(body.aggs?{aggs:openSearchAggregations(body.aggs)}:{}),...(source?{_source:source}:{})};
           let result;
           try{result=checkSearch(await request('/_search',scopedBody));}
           catch(caught){const e=serviceError(caught);if(e.status!==404)throw e;ready=undefined;if(!createIfMissing)throw e;await ensureIndex();result=checkSearch(await request('/_search',scopedBody));}

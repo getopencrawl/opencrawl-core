@@ -89,7 +89,6 @@ export function SearchInspector({adapter}: {adapter: Pick<ConsoleDataAdapter, 's
   useEffect(() => () => reader.suspend(), [reader]);
   return (
     <Section className="oc-search-inspector" aria-label="Inspect search">
-      <p className="oc-search-intro">Run a diagnostic query to inspect the indexed text and source metadata available to your agents.</p>
       <form className="query-form" onSubmit={event => {event.preventDefault(); void reader.search(query);}}>
         <Field label="Search query">
           <Input ref={input} type="search" value={query} onChange={event => setQuery(event.target.value)} maxLength={4000} required placeholder="Enter a diagnostic query"/>

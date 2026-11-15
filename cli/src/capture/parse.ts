@@ -119,6 +119,7 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
       const blocks:any[]=[];
       if(typeof record.thinking==='string'&&record.thinking.trim())blocks.push({type:'thinking',thinking:record.thinking});
       if(typeof record.content==='string'&&record.content.trim())blocks.push({type:'text',text:record.content});
+      blocks.push(...antigravityMediaBlocks(record.media));
       if(Array.isArray(record.tool_calls))for(const tc of record.tool_calls) {
         if(tc&&typeof tc.name==='string'&&tc.name)blocks.push({type:'tool_use',...(typeof tc.id==='string'&&tc.id?{id:tc.id}:{}),name:tc.name,input:tc.args??tc.input??{}});
       }
@@ -126,8 +127,14 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
       kind='message';data={role:'assistant',content:blocks};
     } else if (record.type === 'GENERIC') {
       const output=typeof record.content==='string'&&record.content?record.content:(typeof record.error==='string'?record.error:'');
-      if(!output&&record.status!=='ERROR')return null;
-      kind='tool_result';data={type:'tool_result',output,...(record.status==='ERROR'?{is_error:true,...(typeof record.error==='string'?{error:record.error}:{})}:{})};
+      const media=antigravityMediaBlocks(record.media);
+      if(!output&&!media.length&&record.status!=='ERROR')return null;
+      kind='tool_result';data={type:'tool_result',output,...(media.length?{content:media}:{}),...(record.status==='ERROR'?{is_error:true,...(typeof record.error==='string'?{error:record.error}:{})}:{})};
+    } else if (record.type === 'SYSTEM_MESSAGE' && record.source === 'SYSTEM' && typeof record.content === 'string'
+      && /(?:^|\n)\[Message\] timestamp=\S+ sender=\S+ priority=\S+ content=/.test(record.content)) {
+      // Native task completions and inbox notices carry new execution evidence.
+      // SessionStart prompts and repeated environment context remain filtered.
+      kind='automation_message';data={source:record.source,content:record.content};
     } else if (record.type === 'CHECKPOINT' && typeof record.content === 'string' && record.content.trim()) {
       kind='compaction';data={content:record.content};
     } else if (record.type === 'ERROR_MESSAGE') {

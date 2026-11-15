@@ -25,3 +25,12 @@ test('captured Markdown cannot execute HTML, load remote images, or create unsaf
   assert.match(html, /href="https:\/\/example.com\/guide" target="_blank" rel="noopener noreferrer"/);
   assert.match(html, /Unsafe/);
 });
+
+test('transcript Markdown preserves frontmatter and raw HTML as visible inert source', () => {
+  const source = '---\nrecorded: important source text\n---\n\n<div>\nRetain this recorded instruction\n</div>\n\n<!-- recorded comment -->\n\n<script>window.capturedScript = true</script>\n\nVisible end.';
+  const html = renderToStaticMarkup(createElement(Markdown, {children: source, mode: 'transcript'}));
+  for (const text of ['recorded: important source text', 'Retain this recorded instruction', 'recorded comment', 'window.capturedScript = true', 'Visible end.']) assert.ok(html.includes(text), text);
+  assert.match(html, /&lt;div&gt;/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.doesNotMatch(html, /<script>|<div>\nRetain|<!-- recorded comment/);
+});

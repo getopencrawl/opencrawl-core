@@ -123,7 +123,7 @@ test('wait exits on a nonempty delivery; revoked access stops immediately rather
 
 test('installed participation instructions describe native delivery without model-managed acknowledgments',()=>{
   const text=participationInstructions('https://example.com');
-  for(const phrase of ['board register','board watch','automatically','board leave','Monitor','notify(output)','tty:false','Deduplicate','native session ID','not a detached shell alone','After compaction or resume','current native context'])expect(text).toContain(phrase);
+  for(const phrase of ['board register','board watch','automatically','board leave','Monitor','notify(output)','tty:false','Deduplicate','native session ID','not a detached shell alone','After compaction or resume','current native context','In Cursor','notify_on_output','block_until_ms:0','board[.]delivery'])expect(text).toContain(phrase);
 });
 
 test('bounded monitor notices never truncate the receipt and fetch binds the exact pending batch',async()=>{

@@ -1,11 +1,12 @@
 import {useEffect, useRef, useState} from 'react';
-import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader} from '../design/components.js';
+import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, ScrollControl} from '../design/components.js';
+import {Markdown} from '../design/markdown.js';
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
-import type {SessionHarness, SessionHosts, LibraryAdapter, LibraryScope, SessionRef, SessionSummary, TranscriptEntry, TranscriptEvent, Visibility} from './library-types.js';
+import type {SessionHarness, SessionHosts, LibraryAdapter, LibraryScope, SessionRef, SessionSummary, TranscriptEntry, TranscriptEvent, SessionTranscript, Visibility} from './library-types.js';
 import {MetaList, OwnerControls, VisibilityBadge, When, authorName, byDay, harnessName} from './library-controls.js';
-import {failureMessage, useLibraryMutation, useResource} from './use-resource.js';
-import {consoleResourceKey, useConsoleModel} from '../data.tsx';
+import {failureMessage, failureStatus, useLibraryMutation, useResource} from './use-resource.js';
+import {consoleResourceKey, useConsoleAccessFailure, useConsoleModel} from '../data.tsx';
 
 const PAGE = 50, MAX = 500;
 const harnessOf = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'cursor' || value === 'grok-bot' || value === 'antigravity' ? value : null;
@@ -39,7 +40,7 @@ function CapturedTokens({value}: {value?: number | null}) {
 export function SessionsPage({adapter}: {adapter: LibraryAdapter}) {
   const [params] = useSearchParams();
   const userId = params.get('user'), harness = harnessOf(params.get('harness')), sessionId = params.get('id');
-  if (userId && harness && sessionId) return <SessionViewer key={sessionPath({userId, harness, sessionId})} adapter={adapter} reference={{userId, harness, sessionId}}/>;
+  if (userId && harness && sessionId) return <SessionViewer key={consoleResourceKey(adapter).join(':') + sessionPath({userId, harness, sessionId})} adapter={adapter} reference={{userId, harness, sessionId}}/>;
   return <SessionList adapter={adapter}/>;
 }
 
@@ -145,89 +146,172 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
 }
 
 type Activity = Exclude<TranscriptEntry, {type: 'message'}>;
-type Block = {kind: 'message'; key: string; role: 'user' | 'assistant'; text: string; timestamp: string | null; first: boolean; actor?: TranscriptEvent['actor']} | {kind: 'activity'; key: string; entries: Activity[]};
-/** Consecutive tool calls, results and notes collapse into one line between messages. */
+interface ActivityEvent {eventId: string; kind: string; timestamp: string | null; entries: Activity[]}
+type Block = {kind: 'message'; key: string; role: 'user' | 'assistant'; text: string; timestamp: string | null; actor?: TranscriptEvent['actor']}
+  | {kind: 'activity'; key: string; events: ActivityEvent[]};
+/** Keep source events, including empty records, while rendering normalized entries. */
 export function transcriptBlocks(events: ReadonlyArray<TranscriptEvent>): Block[] {
   const blocks: Block[] = [];
-  let speaker: string | null = null;
-  for (const event of events) event.entries.forEach((entry, index) => {
-    const key = `${event.eventId}:${index}`;
-    if (entry.type === 'message') {
-      const actor = entry.role === 'user' ? event.actor : undefined;
-      const nextSpeaker = actor ? `${entry.role}:${actor.provider}:${actor.userId ?? actor.messageId}` : entry.role;
-      blocks.push({kind: 'message', key, role: entry.role, text: entry.text, timestamp: event.timestamp, first: nextSpeaker !== speaker, ...(actor ? {actor} : {})});
-      speaker = nextSpeaker; return;
-    }
-    const last = blocks.at(-1);
-    if (last?.kind === 'activity') last.entries.push(entry); else blocks.push({kind: 'activity', key, entries: [entry]});
-  });
+  const activity = (event: TranscriptEvent, entries: Activity[], key: string) => {
+    let block = blocks.at(-1);
+    if (block?.kind !== 'activity') {block = {kind: 'activity', key, events: []}; blocks.push(block);}
+    const previous = block.events.at(-1);
+    if (previous?.eventId === event.eventId) previous.entries.push(...entries);
+    else block.events.push({eventId: event.eventId, kind: event.kind, timestamp: event.timestamp, entries: [...entries]});
+  };
+  for (const event of events) {
+    if (!event.entries.length) activity(event, [], event.eventId);
+    event.entries.forEach((entry, index) => {
+      const key = `${event.eventId}:${index}`;
+      if (entry.type === 'message') blocks.push({kind: 'message', key, role: entry.role, text: entry.text, timestamp: event.timestamp,
+        ...(entry.role === 'user' && event.actor ? {actor: event.actor} : {})});
+      else activity(event, [entry], key);
+    });
+  }
   return blocks;
 }
-function activitySummary(entries: ReadonlyArray<Activity>) {
-  const calls = entries.filter(entry => entry.type === 'tool_call').map(entry => entry.type === 'tool_call' ? entry.name : '');
-  if (!calls.length) return entries.map(entry => entry.type === 'note' ? entry.label : 'Tool result').filter((value, index, all) => all.indexOf(value) === index).join(', ');
-  const names = calls.filter((value, index, all) => all.indexOf(value) === index);
-  return `${calls.length} tool ${calls.length === 1 ? 'call' : 'calls'}: ${names.slice(0, 4).join(', ')}${names.length > 4 ? ` and ${names.length - 4} more` : ''}`;
+export function capturedSender(actor: TranscriptEvent['actor'], fallback: string) {
+  if (!actor) return fallback;
+  if (actor.kind !== 'human') return 'Unknown sender';
+  return actor.name || actor.email || actor.userId || 'Unknown sender';
 }
+const dateLabel = (value: string | null, long = false) => value ? new Date(value).toLocaleDateString(undefined, {month: long ? 'long' : 'short', day: 'numeric', year: 'numeric'}) : '';
+const timeLabel = (value: string | null) => value ? new Date(value).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'}) : '';
+const fullTime = (value: string | null) => value ? new Date(value).toLocaleString() : 'Not recorded';
 function ActivityDetail({entry}: {entry: Activity}) {
   const label = entry.type === 'tool_call' ? <>Call <code>{entry.name}</code></> : entry.type === 'tool_result' ? 'Result' : entry.label;
-  const body = entry.type === 'tool_call' ? entry.input : entry.text;
-  if (!body) return <li className="muted">{label}</li>;
-  return <li><details className="oc-log-tool"><summary>{label}</summary><pre className="code-block">{body}</pre>{entry.truncated && <p className="muted">Showing the first 20,000 characters.</p>}</details></li>;
+  return <div className="oc-session-entry"><span>{label}</span><pre className="code-block">{entry.type === 'tool_call' ? entry.input : entry.text}</pre>
+    {entry.truncated && <p className="muted">This entry was truncated by the transcript API.</p>}</div>;
 }
-const LONG = 1200;
-function MessageText({text}: {text: string}) {
-  const long = text.length > LONG || text.split('\n').length > 14;
-  const [open, setOpen] = useState(false);
-  return <div className="oc-log-body">
-    <div className={`preserve-text oc-log-text${long && !open ? ' oc-log-clamped' : ''}`}>{text}</div>
-    {long && <Button variant="quiet" className="oc-log-more" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Show less' : 'Show full message'}</Button>}
-  </div>;
-}
-function TranscriptBlock({block, turn}: {block: Block; turn: boolean}) {
-  if (block.kind === 'activity') return <li className="oc-log-activity"><span className="oc-log-gutter"/><details className="oc-log-tools"><summary>{activitySummary(block.entries)}</summary><ol>{block.entries.map((entry, index) => <ActivityDetail key={index} entry={entry}/>)}</ol></details></li>;
-  return <li className={`oc-log-${block.role}${turn ? ' oc-log-turn' : ''}`}>
-    <span className="oc-log-gutter">{block.first && <><strong title={block.actor ? `Replicas sender reported by capture${block.actor.email ? ': ' + block.actor.email : ''}` : undefined}>{block.role === 'assistant' ? 'Agent' : block.actor ? block.actor.name || block.actor.email || (block.actor.kind === 'human' ? 'Replicas user' : 'Unknown sender') : 'User'}</strong><When value={block.timestamp}/></>}</span>
-    <MessageText text={block.text}/>
+function TranscriptBlock({block, agent, user}: {block: Block; agent: string; user: string}) {
+  const [copyState, setCopyState] = useState('');
+  useEffect(() => {if (copyState) {const timer = setTimeout(() => setCopyState(''), 1800); return () => clearTimeout(timer);}}, [copyState]);
+  if (block.kind === 'activity') {
+    const count = new Set(block.events.map(event => event.eventId)).size;
+    return <li className="oc-log-activity"><details className="oc-log-tools"><summary><Icon name="chevron-right" size={14}/>{count} {count === 1 ? 'event' : 'events'}</summary>
+      <ol>{block.events.map(event => <li key={event.eventId}><details className="oc-log-tool"><summary><Icon name="chevron-right" size={12}/><code>{event.kind}</code>{event.timestamp && <time dateTime={event.timestamp}>{timeLabel(event.timestamp)}</time>}</summary>
+        {event.entries.length ? event.entries.map((entry, index) => <ActivityDetail key={index} entry={entry}/>) : <p className="muted">No displayable content in this event.</p>}
+      </details></li>)}</ol></details></li>;
+  }
+  const name = block.role === 'assistant' ? agent : capturedSender(block.actor, user);
+  const meta = <div className="oc-log-gutter"><strong title={block.actor ? `Replicas sender reported by capture${block.actor.email ? ': ' + block.actor.email : ''}` : undefined}>{name}</strong>
+    {block.timestamp && <time dateTime={block.timestamp} title={fullTime(block.timestamp)}>{timeLabel(block.timestamp)}</time>}
+    <Button variant="quiet" className="oc-icon-button oc-session-copy" title={copyState || 'Copy message'} aria-label={copyState || 'Copy message'} onClick={async () => {
+      try {await navigator.clipboard.writeText(block.text); setCopyState('Copied message');} catch {setCopyState('Could not copy message');}
+    }}><Icon name={copyState === 'Copied message' ? 'check' : 'copy'} size={13}/></Button></div>;
+  return <li className={`oc-log-${block.role}`} aria-label={`${name} message`}>
+    {block.role === 'user' && meta}<div className="oc-log-body"><Markdown mode="transcript">{block.text}</Markdown></div>{block.role === 'assistant' && meta}
   </li>;
 }
 
 function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference: SessionRef}) {
-  const navigate = useNavigate();
-  const {data, error, loading, retry} = useResource(adapter, 'sessions/read', sessionPath(reference), 0, signal => adapter('sessions/read', reference, signal), 'This session could not load. Try again.');
+  const navigate = useNavigate(), deny = useConsoleAccessFailure();
+  const {data: loaded, error, loading, retry, replace} = useResource(adapter, 'sessions/read', sessionPath(reference), 0, signal => adapter('sessions/read', reference, signal), 'This session could not load. Try again.');
   const mutate = useLibraryMutation(adapter);
-  const [more, setMore] = useState<{events: TranscriptEvent[]; next: string | null} | null>(null);
+  const [more, setMore] = useState<{events: TranscriptEvent[]; next: string | null; total: number} | null>(null);
   const [moreState, setMoreState] = useState({busy: false, error: ''}), [visibility, setVisibility] = useState<Visibility | null>(null);
-  const controller = useRef<AbortController | null>(null);
+  const [details, setDetails] = useState(false), [readFailure, setReadFailure] = useState('');
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
+  const reader = useRef<HTMLDivElement>(null), transcript = useRef<HTMLDivElement>(null);
+  const controller = useRef<AbortController | null>(null), end = useRef<HTMLDivElement>(null), panelHeading = useRef<HTMLHeadingElement>(null), info = useRef<HTMLButtonElement>(null), jumpPending = useRef(false);
   useEffect(() => () => controller.current?.abort(), []);
-  const events = [...data?.events ?? [], ...more?.events ?? []], next = more ? more.next : data?.next ?? null;
-  async function loadMore() {
-    if (!next) return;
-    controller.current?.abort(); const current = new AbortController(); controller.current = current;
+  useEffect(() => {if (details) panelHeading.current?.focus();}, [details]);
+  const data = readFailure ? null : loaded;
+  const events = [...new Map([...data?.events ?? [], ...(data ? more?.events ?? [] : [])].map(event => [event.eventId, event])).values()];
+  const next = data ? more ? more.next : data.next : null;
+  const transcriptVisible = Boolean(data);
+  useEffect(() => {
+    const viewport = reader.current, content = transcript.current;
+    if (!viewport || !content) return;
+    const measure = () => setAwayFromBottom(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop > 200);
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport); observer.observe(content);
+    viewport.addEventListener('scroll', measure, {passive: true}); measure();
+    return () => {observer.disconnect(); viewport.removeEventListener('scroll', measure);};
+  }, [transcriptVisible]);
+  useEffect(() => {if (jumpPending.current && !moreState.busy && !next) {end.current?.scrollIntoView({behavior: 'instant', block: 'end'}); jumpPending.current = false;}}, [events.length, next, moreState.busy]);
+  async function loadMore(all = false) {
+    if (!next || controller.current) return;
+    const current = new AbortController(); controller.current = current;
     setMoreState({busy: true, error: ''});
+    let cursor: string | null = next, collected = more?.events ?? [];
+    const seen = new Set<string>();
     try {
-      const page = await adapter('sessions/read', {...reference, cursor: next}, current.signal);
-      if (!current.signal.aborted) {setMore(value => ({events: [...value?.events ?? [], ...page.events], next: page.next})); setMoreState({busy: false, error: ''});}
-    } catch (failure) {if (!current.signal.aborted) setMoreState({busy: false, error: failureMessage(failure, 'More of this session could not load. Try again.')});}
+      do {
+        if (seen.has(cursor)) throw new Error('The next transcript page repeated. Try again.');
+        seen.add(cursor);
+        const page: SessionTranscript = await adapter('sessions/read', {...reference, cursor}, current.signal);
+        if (current.signal.aborted) return;
+        collected = [...new Map([...collected, ...page.events].map(event => [event.eventId, event])).values()];
+        setMore({events: collected, next: page.next, total: page.total}); cursor = page.next;
+      } while (all && cursor);
+      setMoreState({busy: false, error: ''});
+    } catch (failure) {
+      if (!current.signal.aborted) {
+        jumpPending.current = false;
+        const message = failureMessage(failure, 'More of this session could not load. Try again.');
+        if (failureStatus(failure) === undefined || (failureStatus(failure) ?? 0) < 500) {
+          setMore(null); setReadFailure(message);
+          if ([401, 402, 403].includes(failureStatus(failure) ?? 0)) deny?.(failure);
+        }
+        setMoreState({busy: false, error: message});
+      }
+    } finally {if (controller.current === current) controller.current = null;}
   }
-  const back = <Link to="/sessions" className="oc-library-back"><Icon name="arrow-left"/>All sessions</Link>;
-  if (!data) return <div className="oc-library">{back}<PageHeader title="Session"/>{loading ? <LoadingState label="Loading session"/> : <>
-    <Notice tone="danger">{error}</Notice><div className="actions"><Button onClick={retry}>Try again</Button></div></>}</div>;
+  async function retryTranscript() {
+    if (controller.current) return;
+    const current = new AbortController(); controller.current = current;
+    jumpPending.current = false; setMore(null); setMoreState({busy: true, error: ''});
+    try {
+      const page = await adapter('sessions/read', reference, current.signal);
+      if (!current.signal.aborted) {replace(() => page); setReadFailure(''); setMoreState({busy: false, error: ''});}
+    } catch (failure) {
+      if (!current.signal.aborted) {
+        setReadFailure(failureMessage(failure, 'This session could not load. Try again.'));
+        setMoreState({busy: false, error: ''});
+        if ([401, 402, 403].includes(failureStatus(failure) ?? 0)) deny?.(failure);
+      }
+    } finally {if (controller.current === current) controller.current = null;}
+  }
+  const closeDetails = () => {setDetails(false); info.current?.focus();};
+  const back = <Link to="/sessions" className="oc-session-back" aria-label="Back to sessions" title="Back to sessions"><Icon name="arrow-left" size={18}/></Link>;
+  if (!data) return <div className="oc-session-viewer"><header className="oc-session-header">{back}<PageHeader title="Session"/></header><div className="oc-session-loading">{loading ? <LoadingState label="Loading session"/> : <>
+    <Notice tone="danger">{readFailure || error}</Notice>{<div className="actions"><Button busy={moreState.busy} onClick={readFailure ? () => void retryTranscript() : retry}>Try again</Button></div>}</>}</div></div>;
   const {session} = data, current: Visibility = visibility ?? (session.private ? 'private' : 'team');
-  const blocks = transcriptBlocks(events);
-  return <div className="oc-library oc-library-viewer">
-    {back}
-    <PageHeader title={session.title} actions={session.mine ? <OwnerControls noun="session" visibility={current}
-      onVisibility={async (value, signal) => {await mutate('sessions/visibility', {harness: session.harness, sessionId: session.sessionId, visibility: value}, signal); setVisibility(value);}}
-      onDelete={async signal => {await mutate('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, signal); navigate('/sessions', {replace: true});}}
-      deleteDescription="Permanently remove this transcript, uploaded attachments, and search results for everyone. This session cannot be captured again, including from another installation. Local files on your computer are unchanged."/> : undefined}/>
-    <MetaList items={[{label: 'Status', value: current === 'private' ? <VisibilityBadge value/> : null}, {label: 'Captured by', value: authorName(session.userId, session.mine, data.authors)}, {label: 'Agent', value: harnessName(session.harness)},
-      {label: 'Origin', value: session.origin}, {label: 'Hostname', value: <CaptureHostname session={session} expanded/>}, {label: 'Events', value: data.total.toLocaleString('en-US')}, {label: 'Session ID', value: <code>{session.sessionId}</code>}]}/>
-    {current === 'private' && <Notice>Only you can see this session. Teammates and their agents cannot read or search it.</Notice>}
-    {blocks.length ? <ol className="oc-log" aria-label="Transcript">{blocks.map((block, index) => <TranscriptBlock key={block.key} block={block} turn={index > 0 && block.kind === 'message' && block.role === 'user' && block.first}/>)}</ol>
-      : <EmptyState title="No readable messages yet" description="This page contains only capture metadata. Load more of the session to continue."/>}
-    <p className="muted" role="status">Showing {events.length.toLocaleString('en-US')} of {data.total.toLocaleString('en-US')} captured events.</p>
-    {moreState.error && <Notice tone="danger">{moreState.error}</Notice>}
-    {next && <div className="actions"><Button busy={moreState.busy} onClick={() => void loadMore()}>Show more of this session</Button></div>}
+  const first = events.find(event => event.timestamp)?.timestamp ?? null, last = events.findLast(event => event.timestamp)?.timestamp ?? null;
+  const replicas = session.userId.startsWith('workload_replicas_') || events.some(event => event.actor?.provider === 'replicas');
+  const source = replicas ? 'Replicas' : session.origin === 'desktop' ? 'Desktop' : session.origin === 'cli' ? 'CLI' : session.origin === 'cloud' ? 'Cloud' : session.origin;
+  const captureOwner = session.userId.startsWith('workload_replicas_') ? 'Workspace capture' : authorName(session.userId, session.mine, data.authors);
+  const blocks = transcriptBlocks(events), total = more?.total ?? data.total;
+  return <div className="oc-session-viewer">
+    <header className="oc-session-header"><div className="oc-session-title">{back}<div><PageHeader title={session.title}/><div className="oc-session-subtitle"><span>{harnessName(session.harness)}</span>{source && <span>{source}</span>}{first && <span className="oc-session-date">{dateLabel(first)}</span>}</div></div></div>
+      <Button ref={info} className="oc-icon-button" title="Session details" aria-label="Session details" aria-expanded={details} aria-controls="session-details" onClick={() => details ? closeDetails() : setDetails(true)}><Icon name="info"/></Button></header>
+    <div className="oc-session-workspace">
+      <div className="oc-session-reading-pane"><div ref={reader} className="oc-session-reading" tabIndex={0} aria-label="Session transcript">
+        <div ref={transcript} className="oc-session-transcript">{error && <Notice tone="danger">{error}</Notice>}{first && <p className="oc-session-day">{dateLabel(first, true)}</p>}
+          {blocks.length ? <ol className="oc-log" aria-label="Transcript">{blocks.map(block => <TranscriptBlock key={block.key} block={block} agent={harnessName(session.harness)} user={replicas ? 'Unknown sender' : authorName(session.userId, session.mine, data.authors)}/>)}</ol>
+            : <EmptyState title="No readable messages yet" description="This page contains only capture metadata. Load more of the session to continue."/>}
+          <p className="oc-session-count" role="status">Showing {events.length.toLocaleString()} of {total.toLocaleString()} captured events.</p>
+          {moreState.error && <Notice tone="danger">{moreState.error}</Notice>}
+          <div ref={end} className="oc-session-end" aria-hidden="true"/>
+        </div></div>
+        {(awayFromBottom || next) && <ScrollControl className="oc-session-jump" busy={moreState.busy} onClick={() => {
+          if (!awayFromBottom) {void loadMore();}
+          else if (next) {jumpPending.current = true; void loadMore(true);}
+          else end.current?.scrollIntoView({behavior: 'instant', block: 'end'});
+        }}>{awayFromBottom ? 'Jump to latest' : 'Load more'}</ScrollControl>}
+      </div>
+      {details && <aside id="session-details" className="oc-session-details" aria-labelledby="session-details-title" onKeyDown={event => {if (event.key === 'Escape') closeDetails();}}>
+        <div className="oc-session-details-title"><h2 id="session-details-title" ref={panelHeading} tabIndex={-1}>Session details</h2><Button variant="quiet" className="oc-icon-button" aria-label="Close details" onClick={closeDetails}><Icon name="close" size={16}/></Button></div>
+        <MetaList items={[{label: 'Captured by', value: captureOwner}, {label: 'Agent', value: harnessName(session.harness)}, {label: 'Source', value: source}, {label: 'Origin', value: session.origin},
+          {label: 'First event', value: fullTime(first)}, {label: next ? 'Last loaded event' : 'Last event', value: fullTime(last)}, {label: 'Captured events', value: total.toLocaleString()},
+          {label: 'Captured on', value: <CaptureHostname session={session} expanded/>}, {label: 'Visibility', value: current === 'private' ? <VisibilityBadge value/> : 'Shared with workspace'}, {label: 'Session ID', value: <code>{session.sessionId}</code>}]}/>
+        {current === 'private' && <Notice>Only you can see this session. Teammates and their agents cannot read or search it.</Notice>}
+        {session.mine && <OwnerControls noun="session" visibility={current}
+          onVisibility={async (value, signal) => {await mutate('sessions/visibility', {harness: session.harness, sessionId: session.sessionId, visibility: value}, signal); setVisibility(value);}}
+          onDelete={async signal => {await mutate('sessions/delete', {harness: session.harness, sessionId: session.sessionId}, signal); navigate('/sessions', {replace: true});}}
+          deleteDescription="Permanently remove this transcript, uploaded attachments, and search results for everyone. This session cannot be captured again, including from another installation. Local files on your computer are unchanged."/>}
+      </aside>}
+    </div>
   </div>;
 }

@@ -12,7 +12,8 @@ import {CallbackChoices, readContinuation} from '../../src/application/callback-
 import {SessionsPage} from '../../src/pages/sessions.tsx';
 import type {LibraryAdapter} from '../../src/pages/library-types.ts';
 import {UsagePage} from '../../src/pages/usage.tsx';
-import {DiagnosticsPage} from '../../src/pages/diagnostics.tsx';
+import {DiagnosticsPage, SearchPlaygroundPage} from '../../src/pages/diagnostics.tsx';
+import {BoardNavigation} from '../../src/pages/board.tsx';
 import type {ConsoleDataAdapter} from '../../src/pages/types.ts';
 
 declare global {
@@ -63,7 +64,11 @@ function Fixture() {
   const location = useLocation();
   useEffect(() => {window.__onboardingTestNavigate = path => {void navigate(path);}; return () => {delete window.__onboardingTestNavigate;};}, [navigate]);
   if (location.pathname === '/usage') return <ConsoleDataProvider scopeKey="usage-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/usage', label: 'Usage', icon: 'usage', element: <UsagePage adapter={usageAdapter}/>}]}/></ConsoleDataProvider>;
-  if (location.pathname === '/diagnostics') return <ConsoleDataProvider scopeKey="diagnostics-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/diagnostics', label: 'Diagnostics', icon: 'diagnostics', element: <DiagnosticsPage adapter={diagnosticsAdapter} canInspect/>}]}/></ConsoleDataProvider>;
+  if (location.pathname === '/diagnostics' || location.pathname === '/search') {
+    const query = new URLSearchParams(location.search), board = location.pathname === '/diagnostics' && query.get('nav') !== 'workspace' && query.get('view') !== 'search';
+    const topic = query.get('view') === 'stream' ? '' : query.get('topic') || '';
+    return <ConsoleDataProvider scopeKey="diagnostics-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} navigationLabel={board ? 'Message board topics' : undefined} navigation={board ? closeNavigation => <BoardNavigation adapter={diagnosticsAdapter} topic={topic} closeNavigation={closeNavigation}/> : undefined} routes={[{path: '/diagnostics', label: 'Message board', icon: 'diagnostics', element: <DiagnosticsPage adapter={diagnosticsAdapter} canInspect/>}, {path: '/search', label: 'Search playground', icon: 'search', element: <SearchPlaygroundPage adapter={diagnosticsAdapter} canInspect/>}]}/></ConsoleDataProvider>;
+  }
   if (location.pathname === '/sessions') return <ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/sessions', label: 'Sessions', icon: 'sessions', element: <SessionsPage adapter={libraryAdapter}/>}]}/></ConsoleDataProvider>;
   if (location.pathname === '/integrations-fixture') return <ConsoleDataProvider scopeKey="fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[{path:'/integrations-fixture',label:'Integrations',icon:'sources',element:<SourcesPage adapter={sourcesAdapter} canConfigure={!location.search.includes('role=member')}/>}]}/></ConsoleDataProvider>;
   if (location.pathname.startsWith('/workspace')) return <AppShell

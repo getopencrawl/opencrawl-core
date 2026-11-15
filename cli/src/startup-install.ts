@@ -42,7 +42,7 @@ function managedStartup(file: string) {
   return null;
 }
 
-/** Own only our synchronous SessionStart entry. Never enable disabled hooks. */
+/** Own only our startup/context entries. Never enable disabled hooks. */
 export function startupHooks(clients: string[], action: 'status' | 'install', {home = homedir(), env = process.env, command = commandForSelf(), requirementsFile = process.platform === 'win32' ? join(process.env.ProgramData || 'C:\\ProgramData', 'OpenAI', 'Codex', 'requirements.toml') : '/etc/codex/requirements.toml'}: StartupOptions = {}) {
   return clients.filter(client => ['codex', 'claude-code', 'cursor', 'antigravity'].includes(client)).map(client => {
     const root = client === 'codex' ? env.CODEX_HOME || join(home, '.codex') : client === 'cursor' ? env.CURSOR_CONFIG_DIR || join(home, '.cursor') : client === 'antigravity' ? join(env.ANTIGRAVITY_HOME || join(home, '.gemini'), 'config') : env.CLAUDE_CONFIG_DIR || join(home, '.claude');
@@ -99,8 +99,10 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
         if (!cursor && groups.some(group => !Array.isArray(group?.hooks))) throw new Error();
       }
       const hooks = cursor
-        ? reconcileHookEntries(config.hooks ?? {}, {sessionStart: {command:cursorCommand+' session start --harness cursor',timeout:7}},
-          entry => entry !== null && typeof entry === 'object' && 'command' in entry && typeof entry.command === 'string' && /[\\/]startup[\\/]runner\.(?:sh|cmd)\b.* session start --harness cursor$/.test(entry.command))
+        ? reconcileHookEntries(config.hooks ?? {}, {
+          sessionStart: {command:cursorCommand+' session start --harness cursor',timeout:7},
+          postToolUse: {command:cursorCommand+' session start --harness cursor --after-tool',timeout:7},
+        }, entry => entry !== null && typeof entry === 'object' && 'command' in entry && typeof entry.command === 'string' && /[\\/]startup[\\/]runner\.(?:sh|cmd)\b.* session start --harness cursor(?: --after-tool)?$/.test(entry.command))
         : reconcileHookGroups(config.hooks ?? {}, {SessionStart: hook},
           entry => entry !== null && typeof entry === 'object' && 'statusMessage' in entry && entry.statusMessage === startupMarker);
       const next = {...config, ...(cursor?{version:1}:{}), hooks};

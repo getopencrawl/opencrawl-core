@@ -112,6 +112,26 @@ for (const backend of ['sqlite', 'opensearch']) {
       assert.deepEqual(ids(await collection.search(principal,{query:lexicalQuery('red fox','phrase')})),['ranking-direct']);
       assert.deepEqual(ids(await collection.search(principal,{query:lexicalQuery('red','all')})),['ranking-direct','ranking-partial','ranking-scattered']);
     });
+    await t.test('one exact group read exceeds old page and SQLite bucket limits without nested count buckets', async () => {
+      const count=12001,first=Date.parse('2026-11-01T00:00:00Z');
+      await collection.bulk(principal,Array.from({length:count},(_,i)=>({id:'atomic-'+i,document:{...principal,
+        harness:'codex',sessionId:'atomic-'+String(i).padStart(5,'0'),kind:'message',sequence:i,
+        timestamp:new Date(first+i*1000).toISOString(),origin:i%3===0?['subagent','subagent']:'desktop'}})));
+      await realm.refresh(principal);
+      const body={size:0,track_total_hits:true,query:{range:{'session.sessionId':{gte:'atomic-',lt:'atomic.'}}},aggs:{
+        sessions:{multi_terms:{terms:[{field:collection.field('userId')},{field:collection.field('harness')},{field:collection.field('sessionId')}],size:50000,order:{_key:'asc'}},aggs:{
+          first:{min:{field:'session.timestamp'}},last:{max:{field:'session.timestamp'}},subagents:{term_count:{field:'session.origin',value:'subagent'}}}},
+        children:{term_count:{field:'session.origin',value:'subagent'}}}};
+      const result=await collection.search(principal,body),group=result.aggregations.sessions;
+      assert.equal(result.hits.total.value,count);assert.equal(group.buckets.length,count);assert.equal(group.sum_other_doc_count,0);
+      assert.deepEqual(group.buckets[0].key,[principal.userId,'codex','atomic-00000']);
+      assert.equal(result.aggregations.children.value,Math.ceil(count/3),'duplicate keyword values count once per document');
+      assert.equal(group.buckets[0].first.value,first);assert.equal(group.buckets.at(-1).last.value,first+(count-1)*1000);
+      assert.equal(group.buckets[0].subagents.value,1);assert.equal(group.buckets[1].subagents.value,0);
+      await assert.rejects(collection.search({...principal,tenantId:'foreign'},body),/scope/i);
+      await assert.rejects(collection.search(principal,{size:0,aggs:{bad:{term_count:{field:'text',value:'x'}}}}),{status:400});
+      await assert.rejects(collection.search(principal,{size:0,aggs:{bad:{term_count:{field:'session.origin',value:'subagent'},aggs:{}}}}),{status:400});
+    });
     await t.test('memory projection activation and conditional rollback preserve newer heads', async () => {
       const memories=realm.collection('memory'),head={...principal,kind:'snapshot',generation:1,snapshotId:'snapshot-one'};
       const one={...head,projectionId:'a'.repeat(64),passageVersion:2},two={...head,projectionId:'b'.repeat(64),passageVersion:3};
