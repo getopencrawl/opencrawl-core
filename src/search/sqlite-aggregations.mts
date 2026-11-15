@@ -15,6 +15,7 @@ export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql,
     const children = (filter: Sql) => spec.aggs ? aggregate(db, fts, filter, score, spec.aggs, budget, depth + 1) : {};
     const count = (filter: Sql) => Number(db.prepare('SELECT count(*) AS n FROM documents d WHERE ' + filter.sql).get(...filter.args)!.n);
     if (type === 'term_count') {
+      if (Object.keys(spec).length !== 1) return unsupported('term_count children');
       const {field, value} = termCount(option);
       result[name] = {value: count(and(where, new QueryCompiler(fts).query({term: {[field]: value}}, false)))};
     } else if (type === 'filter') {

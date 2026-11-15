@@ -129,6 +129,7 @@ for (const backend of ['sqlite', 'opensearch']) {
       assert.equal(group.buckets[0].subagents.value,1);assert.equal(group.buckets[1].subagents.value,0);
       await assert.rejects(collection.search({...principal,tenantId:'foreign'},body),/scope/i);
       await assert.rejects(collection.search(principal,{size:0,aggs:{bad:{term_count:{field:'text',value:'x'}}}}),{status:400});
+      await assert.rejects(collection.search(principal,{size:0,aggs:{bad:{term_count:{field:'session.origin',value:'subagent'},aggs:{}}}}),{status:400});
     });
     await t.test('memory projection activation and conditional rollback preserve newer heads', async () => {
       const memories=realm.collection('memory'),head={...principal,kind:'snapshot',generation:1,snapshotId:'snapshot-one'};
