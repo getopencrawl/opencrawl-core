@@ -748,10 +748,13 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
   },Infinity);
 }
 
-async function reconcileSources(config:CaptureConfig,seen:Map<string,string>) {
+async function reconcileSources(config:CaptureConfig,seen:Map<string,string>,until=Infinity) {
   let changed=false;
   for(const name of readdirSync(join(captureDir(),'sources')).filter(n=>n.endsWith('.json'))) {
     await yieldToOwner();
+    // A source may finish after the hook's budget. Leave the remaining sources
+    // for a later pass so queued batches can still receive their acknowledgements.
+    if(Date.now()>=until)break;
     const sourceFile=join(captureDir(),'sources',name),source=read(sourceFile);
     const rawPath=source.path || findTranscript(config,source.harness,source.sessionId);
     const path=source.harness==='antigravity'&&rawPath?resolveAntigravityTranscript(rawPath):rawPath;
@@ -901,7 +904,7 @@ export const hookFlush=(event:any,{now=Date.now,reconcileTranscripts=true}={})=>
   // Cursor-format notices already reconcile their active transcript. Those
   // hooks must not spend their five-second budget scanning other clients' old
   // sources. Transcript-only harnesses retain late-tail reconciliation.
-  try{const deadline=Date.now()+2500;await drainCaptureNotices(config,{until:deadline});if(reconcileTranscripts&&Date.now()<deadline)await reconcileSources(config,new Map());}catch(error){failure=error;}
+  try{const deadline=Date.now()+2500;await drainCaptureNotices(config,{until:deadline});if(reconcileTranscripts&&Date.now()<deadline)await reconcileSources(config,new Map(),deadline);}catch(error){failure=error;}
   // One concurrent wave leaves time to checkpoint receipts before the watchdog.
   // Oldest/newest scheduling still advances both retained and current activity.
   try{if(queuedNames().length)await flushCaptures({wait:false,maxBatches:4});}catch(error){failure??=error;}
