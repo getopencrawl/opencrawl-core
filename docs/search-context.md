@@ -37,7 +37,9 @@ the same server operation. Cursor's pre-tool event omits the MCP server name,
 so its adapter requires the unique `opencrawl_search` name. It never rewrites
 another service's bare `search` arguments. Cursor cloud HTTP-MCP execution ignores
 argument rewrites; that path reports missing context rather than claiming
-automatic exclusion. A generic MCP client without a native hook can supply the
+automatic exclusion. Google-managed Antigravity Remote Agents do not load the
+local MCP/hooks configuration; Antigravity Remote Control retains local execution.
+These managed cloud surfaces are outside native-hook support. A generic MCP client without a native hook can supply the
 exact context explicitly but does not gain automatic identity attachment.
 
 CLI equivalents are `--include-tool-outputs`, `--include-current-session`, and
@@ -67,3 +69,9 @@ The metadata is additive: older readers ignore it. Runtime rollback therefore
 uses the previous tested release without deleting or restoring captures. Inspect
 all migration receipts and remaining unclassified counts before claiming that
 historical tool output is fully filtered.
+
+Administrator-managed Codex SessionStart configuration does not imply a managed
+search-context hook. If policy allows only managed hooks, the administrator must
+install the corresponding synchronous `PreToolUse` invocation of
+`opencrawl search-context --harness codex` for the exact new tool alias. Setup
+preserves that policy and does not approve hooks on the administrator's behalf.

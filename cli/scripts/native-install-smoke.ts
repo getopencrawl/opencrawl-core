@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 const root=resolve(import.meta.dir,'..'),pkg=JSON.parse(readFileSync(join(root,'dist/cli/package.json'),'utf8'));
 const scratch=mkdtempSync(join(tmpdir(),'opencrawl-native-smoke-'));
 const systemBin=join(scratch,'system-bin');mkdirSync(systemBin);
-const env={...process.env,HOME:scratch,USERPROFILE:scratch,OPENCRAWL_CONFIG_HOME:join(scratch,'config'),XDG_CONFIG_HOME:join(scratch,'config'),XDG_CACHE_HOME:join(scratch,'cache'),XDG_DATA_HOME:join(scratch,'data'),OPENCRAWL_INSTALL_DIR:join(scratch,'bin'),CLAUDE_CONFIG_DIR:join(scratch,'claude'),CODEX_HOME:join(scratch,'codex'),OPENCRAWL_NO_UPDATE:'1',PATH:systemBin};
+const env={...process.env,HOME:scratch,USERPROFILE:scratch,OPENCRAWL_CONFIG_HOME:join(scratch,'config'),XDG_CONFIG_HOME:join(scratch,'config'),XDG_CACHE_HOME:join(scratch,'cache'),XDG_DATA_HOME:join(scratch,'data'),OPENCRAWL_INSTALL_DIR:join(scratch,'bin'),CLAUDE_CONFIG_DIR:join(scratch,'claude'),CODEX_HOME:join(scratch,'codex'),CURSOR_CONFIG_DIR:join(scratch,'.cursor'),ANTIGRAVITY_HOME:join(scratch,'.gemini'),OPENCRAWL_NO_UPDATE:'1',PATH:systemBin};
 if(process.platform==='win32')env.PATH=join(process.env.SystemRoot||'C:\\Windows','System32');
 else for(const name of ['sh','curl','uname','sed','grep','awk','sha256sum','shasum','mktemp','rm','tar','gzip','chmod','sysctl','ldd']){const file=Bun.which(name);if(file)symlinkSync(file,join(systemBin,name));}
 async function run(command:string[],extra:Record<string,string>={}){const child=Bun.spawn(command,{env:{...env,...extra},stdout:'pipe',stderr:'pipe'});const [out,err,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);if(code)throw new Error('Native smoke failed: '+err+out);return out.trim();}
@@ -20,7 +20,7 @@ try{
   if(!existsSync(entry))throw new Error('Installer did not create its command: '+installed);
   const command=(args:string[])=>windows?[powershell,'-NoProfile','-Command',`& '${entry.replace(/'/g,"''")}' ${args.map(v=>"'"+v.replace(/'/g,"''")+"'").join(' ')}`]:[entry,...args];
   if(await run(command(['--version']))!==pkg.version)throw new Error('Native install version mismatch');
-  await run(command(['skills','install','--client','claude-code','--client','codex','--json']));
+  await run(command(['skills','install','--client','claude-code','--client','codex','--client','cursor','--client','antigravity','--json']));
   const settings=JSON.parse(readFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
   const startup=settings.hooks.SessionStart.flatMap((g:any)=>g.hooks).find((h:any)=>h.statusMessage==='OpenCrawl session startup');
   if(!startup||startup.command.includes('node')||startup.command.includes('runner.cjs'))throw new Error('Startup hook still needs Node');
@@ -36,6 +36,26 @@ try{
   const codex=Bun.spawn(codexHook,{env,windowsVerbatimArguments:windows,stdin:new Blob([JSON.stringify({hook_event_name:'SessionStart',session_id:'native-smoke-codex'})]),stdout:'pipe',stderr:'pipe'});
   const [codexOut,codexErr,codexCode]=await Promise.all([new Response(codex.stdout).text(),new Response(codex.stderr).text(),codex.exited]);
   if(codexCode||!codexOut.includes('OpenCrawl'))throw new Error('Native Codex startup hook failed: '+codexErr+codexOut);
+  const cursorSettings=JSON.parse(readFileSync(join(scratch,'.cursor','hooks.json'),'utf8'));
+  const agySettings=JSON.parse(readFileSync(join(scratch,'.gemini','config','hooks.json'),'utf8'));
+  const searchHooks=[
+    {client:'claude-code',entry:settings.hooks.PreToolUse.flatMap((g:any)=>g.hooks).find((h:any)=>h.statusMessage==='OpenCrawl search context'),event:{hook_event_name:'PreToolUse',session_id:'native-claude',tool_name:'mcp__opencrawl__opencrawl_search',tool_input:{query:'evidence',includeToolOutputs:true}},id:'native-claude'},
+    {client:'codex',entry:codexSettings.hooks.PreToolUse.flatMap((g:any)=>g.hooks).find((h:any)=>h.statusMessage==='OpenCrawl search context'),event:{hook_event_name:'PreToolUse',session_id:'native-codex',tool_name:'mcp__opencrawl__opencrawl_search',tool_input:{query:'evidence',includeToolOutputs:true}},id:'native-codex'},
+    {client:'cursor',entry:cursorSettings.hooks.preToolUse[0],event:{hook_event_name:'preToolUse',conversation_id:'native-cursor',tool_name:'MCP:opencrawl_search',tool_input:{query:'evidence',includeToolOutputs:true}},id:'native-cursor'},
+    {client:'antigravity',entry:agySettings['opencrawl-startup'].PreToolUse[0].hooks[0],event:{hookEventName:'PreToolUse',conversationId:'native-agy',toolCall:{name:'mcp_opencrawl_opencrawl_search',args:{query:'evidence',includeToolOutputs:true}}},id:'native-agy'},
+  ];
+  for(const {client,entry:searchHook,event,id} of searchHooks){
+    if(!searchHook||searchHook.command.includes('runner.cjs'))throw new Error('Missing native search context hook for '+client);
+    const powershellHook=windows&&client==='claude-code';
+    const invocation=powershellHook?[powershell,'-NoProfile','-Command',searchHook.command]:windows?[join(process.env.SystemRoot||'C:\\Windows','System32','cmd.exe'),'/d','/s','/c','"'+searchHook.command+'"']:['/bin/sh','-c',searchHook.command];
+    const child=Bun.spawn(invocation,{env,windowsVerbatimArguments:windows&&!powershellHook,stdin:new Blob([JSON.stringify(event)]),stdout:'pipe',stderr:'pipe'});
+    const [out,err,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
+    if(code)throw new Error('Native search hook failed for '+client+': '+err);
+    const answer=JSON.parse(out),updated=answer.hookSpecificOutput?.updatedInput??answer.updated_input??answer.overwrite;
+    if(updated?.currentSession?.harness!==client||updated.currentSession.sessionId!==id)throw new Error('Native search hook identity mismatch for '+client);
+    if(client!=='antigravity'&&(updated.query!=='evidence'||updated.includeToolOutputs!==true))throw new Error('Native search hook changed explicit arguments');
+    if(client==='claude-code'&&answer.hookSpecificOutput.permissionDecision!==undefined)throw new Error('Claude search hook granted approval');
+  }
   await run(command(['collect','install','--yes','--defer-auth','--backfill','skip','--harness','claude-code','--json']));
   const capture=JSON.parse(readFileSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl/capture/config.json'),'utf8'));
   if(capture.command.length!==1||capture.command[0]!==entry)throw new Error('Capture did not use the durable native command');

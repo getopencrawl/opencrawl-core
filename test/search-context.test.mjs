@@ -98,8 +98,11 @@ for(const backend of ['sqlite','opensearch']){
     const migration={realm,principal,store,prefix};
     const dry=await migrateSessionSearchContext(migration);assert.equal(dry.passages,legacy.length);assert.equal(dry.complete,true);
     assert.deepEqual((await collection.mget(principal,legacy.map(d=>d.id))).docs,before);
+    await assert.rejects(migrateSessionSearchContext({...migration,dryRun:false,maxPassages:1,onPage:async()=>{throw Error('Checkpoint unavailable');}}),/Checkpoint unavailable/);
+    assert.equal((await collection.mget(principal,legacy.map(d=>d.id))).docs.filter(hit=>typeof hit._source.containsToolOutput==='boolean').length,1);
+    // Replaying without a saved cursor skips the already committed classification.
     const first=await migrateSessionSearchContext({...migration,dryRun:false,maxPassages:1});assert.equal(first.passages,1);assert.equal(first.complete,false);assert.ok(first.after);
-    const rest=await migrateSessionSearchContext({...migration,dryRun:false,pageSize:1,after:first.after});assert.equal(rest.passages,legacy.length-1);assert.equal(rest.complete,true);
+    const rest=await migrateSessionSearchContext({...migration,dryRun:false,pageSize:1,after:first.after});assert.equal(rest.passages,legacy.length-2);assert.equal(rest.complete,true);
     const migrated=(await collection.mget(principal,legacy.map(d=>d.id))).docs;
     for(let i=0;i<before.length;i++){const {containsToolOutput,...unchanged}=migrated[i]._source;assert.deepEqual(unchanged,before[i]._source);assert.equal(containsToolOutput,before[i]._source.eventId==='mixed');}
     assert.deepEqual(store.data.get(key),raw);assert.equal((await migrateSessionSearchContext({...migration,dryRun:false})).passages,0);
