@@ -1,0 +1,63 @@
+name: Publish reviewed MCP registry metadata
+
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_sha256:
+        description: SHA-256 of the reviewed plugins/registry/server.json
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-registry-opencrawl
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'getopencrawl/opencrawl-core' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REVIEWED_SHA256: ${{ inputs.reviewed_sha256 }}
+      MCP_PUBLISHER_VERSION: v1.8.9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Match the reviewed metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REVIEWED_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$REVIEWED_SHA256" plugins/registry/server.json | sha256sum --check -
+          jq -e '.name == "io.github.getopencrawl/opencrawl" and .remotes == [{"type":"streamable-http","url":"https://app.getopencrawl.com/mcp"}]' plugins/registry/server.json
+      - name: Install signature verifier
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      - name: Download and verify publisher
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=mcp-publisher_linux_amd64.tar.gz
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/$MCP_PUBLISHER_VERSION"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          printf '%s  %s\n' 4d527ca8f1ced0394c962dc925c2a4a4addef441cbefd62501c875e9481823a8 "$archive" | sha256sum --check -
+          cosign verify-blob --bundle "$archive.sigstore.json" --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/$MCP_PUBLISHER_VERSION" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$archive"
+          tar xzf "$archive" mcp-publisher
+      - name: Authenticate using this organization's repository identity
+        run: ./mcp-publisher login github-oidc
+      - name: Publish the reviewed metadata
+        run: ./mcp-publisher publish plugins/registry/server.json
+      - name: Verify the public registry record
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(jq -r '.version' plugins/registry/server.json)
+          curl --fail --silent --show-error "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.getopencrawl%2Fopencrawl/versions/$version" > published-server.json
+          jq -e --arg version "$version" '.server.name == "io.github.getopencrawl/opencrawl" and .server.version == $version and .server.remotes == [{"type":"streamable-http","url":"https://app.getopencrawl.com/mcp"}]' published-server.json

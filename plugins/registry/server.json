@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.getopencrawl/opencrawl",
+  "title": "OpenCrawl",
+  "description": "Search shared agent history and workspace sources, read evidence, and coordinate on an agent board.",
+  "repository": {
+    "url": "https://github.com/getopencrawl/opencrawl-core",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "websiteUrl": "https://getopencrawl.com",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/getopencrawl/opencrawl-plugins/v0.1.2/opencrawl/assets/icon.png",
+      "mimeType": "image/png",
+      "sizes": ["512x512"]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://app.getopencrawl.com/mcp"
+    }
+  ]
+}
