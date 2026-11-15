@@ -75,7 +75,11 @@ export function createConnectorResolver({environment, generation, registry, stor
       if (new Set(resolved.map(value => value.binding.connectionId)).size !== resolved.length) denied();
       // Core owns counting and scope checks. Keep connection attribution distinct
       // from provider totals: a card may show one of several same-provider connections.
-      const counts = await Promise.all(resolved.map(value => value.search.count(principal, [value.binding])));
+      const counts: Record<string, ConnectionCount> = {};
+      for (let offset = 0; offset < resolved.length; offset += 100) {
+        const batch = resolved.slice(offset, offset + 100);
+        Object.assign(counts, await batch[0].search.countByConnection(principal, batch.map(value => value.binding)));
+      }
       // Match search's revocation rule when a disconnect races the reporting query.
       for (const record of records) await resolve({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation});
       const result: CountSummary = {total: 0, kinds: {}, providers: {}, connections: {}};
@@ -84,7 +88,7 @@ export function createConnectorResolver({environment, generation, registry, stor
         for (const [kind, countForKind] of Object.entries(count.kinds)) target.kinds[kind] = (target.kinds[kind] || 0) + countForKind;
       };
       for (let i = 0; i < resolved.length; i++) {
-        const {provider, connectionId} = resolved[i].binding, count = counts[i];
+        const {provider, connectionId} = resolved[i].binding, count = counts[connectionId];
         result.connections[connectionId] = count;
         add(result, count);
         add(result.providers[provider] ||= {total: 0, kinds: {}}, count);

@@ -12,8 +12,10 @@ export function createAirbyteTransport({url, clientId, clientSecret, fetch: fetc
   const api = `${url.replace(/\/+$/, '')}/api/public/v1`;
   let token: string | null = null, expiresAt = 0, pending: Promise<string> | null = null;
 
-  function accessToken(refresh = false) {
-    if (!refresh && token && Date.now() < expiresAt - 60_000) return token;
+  function accessToken(rejected?: string) {
+    // A delayed 401 may refer to a token another request already replaced.
+    if (rejected === token) expiresAt = 0;
+    if (token && token !== rejected && Date.now() < expiresAt - 60_000) return token;
     pending ||= (async () => {
       const res = await fetchImpl(`${api}/applications/token`, {method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({client_id: clientId, client_secret: clientSecret, 'grant-type': 'client_credentials'}), redirect: 'error', signal: AbortSignal.timeout(15000)});
@@ -30,8 +32,12 @@ export function createAirbyteTransport({url, clientId, clientSecret, fetch: fetc
     const send = async (bearer: string) => fetchImpl(`${api}${path}`, {method, headers: {
       Authorization: `Bearer ${bearer}`, Accept: 'application/json', ...(body === undefined ? {} : {'Content-Type': 'application/json'}),
     }, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(timeout)});
-    let res = await send(await accessToken());
-    if (res.status === 401) res = await send(await accessToken(true));
+    const bearer = await accessToken();
+    let res = await send(bearer);
+    if (res.status === 401) {
+      await res.body?.cancel().catch(() => {});
+      res = await send(await accessToken(bearer));
+    }
     const text = await res.text();
     if (!res.ok) {
       // Destination errors can echo the capability or a source secret. The

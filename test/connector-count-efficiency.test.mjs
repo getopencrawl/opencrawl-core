@@ -19,7 +19,7 @@ function fixture(count = 3, searchFactory) {
   const bindings = Array.from({length: count}, (_, i) => bindingFor(i + 1));
   const records = bindings.map(binding => ({tenantId, userId: 'user_owner', integrationId: binding.connectionId, provider: binding.provider,
     scope: 'team', status: 'active', environment: 'selfhost', workspace: tenantId, s3Prefix: binding.rawPrefix.slice(0, -1)}));
-  const inventories = new Map(bindings.map((binding, i) => [binding.connectionId, i === count - 1 ? {} : {issue: i + 1, ...(i % 2 ? {comment: 1} : {})}]));
+  const inventories = new Map(bindings.map((binding, i) => [binding.connectionId, i === count - 1 ? {} : {issue: i + 1, ...(i % 2 ? {comment: 1} : {}), ...(i === 0 ? {future_kind: 1} : {})}]));
   const state = {requests: [], records, afterSearch: () => {}, reply: value => value};
   const buckets = kinds => Object.entries(kinds).map(([key, doc_count]) => ({key, doc_count}));
   const total = kinds => Object.values(kinds).reduce((sum, n) => sum + n, 0);
@@ -98,6 +98,56 @@ test('connector inventory rejects incomplete search responses', async () => {
   }
 });
 
+test('connection aggregation is bounded, scoped, and exact even when buckets are reordered or empty', async () => {
+  const f = fixture();
+  f.state.reply = response => {response.aggregations.connections.buckets.reverse(); return response;};
+  assert.deepEqual(await f.resolver.count(principal), f.expected);
+  const empty = fixture(1);
+  assert.deepEqual(await empty.resolver.count(principal), empty.expected);
+  for (const [who, bindings] of [[principal, []], [principal, fixture(101).bindings], [principal, [f.bindings[0], f.bindings[0]]],
+    [principal, [f.bindings[0], bindingFor(1, 'org_other')]], [{...principal, captureAccess: 'write'}, f.bindings]]) {
+    const before = f.state.requests.length;
+    await assert.rejects(f.search.countByConnection(who, bindings));
+    assert.equal(f.state.requests.length, before, 'invalid scope/bounds never reach the backend');
+  }
+});
+
+test('connection inventory rejects malformed, truncated, duplicate, or foreign aggregation buckets', async t => {
+  const mutations = {
+    'missing connections': r => {delete r.aggregations.connections;},
+    'non-array buckets': r => {r.aggregations.connections.buckets = null;},
+    'truncated connections': r => {r.aggregations.connections.sum_other_doc_count = 1;},
+    'inexact connections': r => {r.aggregations.connections.doc_count_error_upper_bound = 1;},
+    'missing total': r => {delete r.hits.total;},
+    'inexact total': r => {r.hits.total.relation = 'gte';},
+    'negative total': r => {r.hits.total.value = -1;},
+    'fractional total': r => {r.hits.total.value = 0.5;},
+    'foreign connection': r => {r.aggregations.connections.buckets[0].key = bindingFor(99, 'org_other').connectionId;},
+    'duplicate connection': r => {r.aggregations.connections.buckets.push(r.aggregations.connections.buckets[0]);},
+    'omitted connection': r => {r.aggregations.connections.buckets.pop();},
+    'negative connection count': r => {r.aggregations.connections.buckets[0].doc_count = -1;},
+    'inexact connection count': r => {r.aggregations.connections.buckets[0].doc_count_error_upper_bound = 1;},
+    'missing kinds': r => {delete r.aggregations.connections.buckets[0].kinds;},
+    'truncated kinds': r => {r.aggregations.connections.buckets[0].kinds.sum_other_doc_count = 1;},
+    'inexact kinds': r => {r.aggregations.connections.buckets[0].kinds.doc_count_error_upper_bound = 1;},
+    'duplicate kind': r => {const kinds = r.aggregations.connections.buckets[0].kinds.buckets; kinds.push(kinds[0]);},
+    'invalid kind': r => {r.aggregations.connections.buckets[0].kinds.buckets[0].key = null;},
+    'fractional kind count': r => {r.aggregations.connections.buckets[0].kinds.buckets[0].doc_count = 0.5;},
+    'mismatched kind sum': r => {r.aggregations.connections.buckets[0].kinds.buckets[0].doc_count++;},
+  };
+  for (const [name, mutate] of Object.entries(mutations)) await t.test(name, async () => {
+    const f = fixture(); f.state.reply = response => {mutate(response); return response;};
+    await assert.rejects(f.resolver.count(principal), /Incomplete connector connection counts/);
+  });
+});
+
+test('disconnect in a later count batch still rejects the complete inventory', async () => {
+  const f = fixture(101);
+  f.state.afterSearch = () => {if (f.state.requests.length === 2) f.state.records[100].status = 'disconnected';};
+  await assert.rejects(f.resolver.count(principal), error => error.status === 403);
+  assert.deepEqual(f.state.requests.map(ids => ids.length), [100, 1]);
+});
+
 test('real SQLite counts match per-connection and provider inventory including empty connections', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'connector-count-efficiency-'));
   t.after(() => rm(directory, {recursive: true, force: true}));
@@ -117,8 +167,16 @@ test('real SQLite counts match per-connection and provider inventory including e
     for (const kind of ['passage', 'transcript', 'file_chunk']) documents.push({id: documentId(binding, kind, 'excluded'),
       document: {tenantId, connectionId: binding.connectionId, workspaceId: binding.workspaceId, provider: binding.provider,
         kind, sourceId: 'excluded', deleted: false, text: 'excluded', extractedAt: 1, contentHash: 'b'.repeat(64)}});
+    documents.push({id: documentId(binding, 'file', 'deleted'), document: {tenantId, connectionId: binding.connectionId,
+      workspaceId: binding.workspaceId, provider: binding.provider, kind: 'file', sourceId: 'deleted', deleted: false,
+      text: 'deleted', extractedAt: 1, contentHash: 'b'.repeat(64)}});
     await f.search.putDocuments(principal, binding, documents);
+    await f.search.suppress(principal, binding, {kind: 'file', sourceId: 'deleted'});
   }
+  const unlisted = bindingFor(4);
+  await f.search.putDocuments(principal, unlisted, [{id: documentId(unlisted, 'issue', 'unlisted'), document: {
+    tenantId, connectionId: unlisted.connectionId, workspaceId: unlisted.workspaceId, provider: unlisted.provider,
+    kind: 'issue', sourceId: 'unlisted', deleted: false, text: 'unlisted', extractedAt: 1, contentHash: 'c'.repeat(64)}}]);
   const foreign = bindingFor(1, 'org_other'), other = createConnectorSearch({endpoint, tenantId: foreign.tenantId});
   await other.ensureIndex();
   await other.putDocuments({tenantId: foreign.tenantId}, foreign, [{id: documentId(foreign, 'issue', 'foreign'), document: {

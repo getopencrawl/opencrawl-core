@@ -131,10 +131,11 @@ test('real S3/OpenSearch: workspace providers, linked passages, shorter edits, r
   t.after(async () => {for (const key of objects) await store.delete(key); await fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL + '/' + index, {method: 'DELETE'});});
   const tracked = {...store, put: async (key, bytes, type) => {objects.push(key); await store.put(key, bytes, type);}};
   await search.ensureIndex();
-  const principal = {tenantId}, date = '2026-11-05T12:00:00Z';
+  const principal = {tenantId}, date = '2026-11-05T12:00:00Z', bindings = [];
   for (const provider of ['notion', 'granola', 'circleback', 'github']) {
     const connectionId = `${provider}-${run}`;
     const binding = {tenantId, connectionId, workspaceId: 'workspace', provider, access: 'workspace-global', rawPrefix: `raw/v1/source=${provider}/workspace=workspace/connection=${connectionId}/`};
+    bindings.push(binding);
     const pipeline = createConnectorPipeline({binding, store: tracked, search});
     async function raw(stream, data, name = '1', at = 2000) {
       const key = `${binding.rawPrefix}stream=${stream}/date=2026-11-05/sync=1/${name}.jsonl.gz`;
@@ -170,6 +171,13 @@ test('real S3/OpenSearch: workspace providers, linked passages, shorter edits, r
       assert.equal((await search.search(principal, [binding], {query: 'obsolete'})).hits.length, 0);
     }
   }
+  const empty = {...bindings[0], connectionId: `empty-${run}`, rawPrefix: `raw/v1/source=notion/workspace=workspace/connection=empty-${run}/`};
+  bindings.push(empty);
+  const expected = Object.fromEntries(await Promise.all(bindings.map(async binding => [binding.connectionId, await search.count(principal, [binding])])));
+  // Exercise the real engine's nested terms, shard_size and exact count metadata.
+  assert.deepEqual(await search.countByConnection(principal, bindings), expected);
+  assert.deepEqual(expected[empty.connectionId], {total: 0, kinds: {}});
+  await assert.rejects(search.countByConnection({tenantId: 'other'}, bindings), /scope/);
 });
 
 test('real S3/OpenSearch: complete file suffixes, shorter replacement, late replay and file suppression', {
