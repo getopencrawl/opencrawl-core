@@ -61,6 +61,46 @@ async function fixture(run: (home: string) => Promise<void>) {
   try {await run(home);} finally {process.env = saved; rmSync(home, {recursive: true, force: true});}
 }
 
+test('refresh preserves other profiles across clients; explicit install can move only the selected client', () => fixture(async home => {
+  const primary = join(home, "primary profile's config"), secondary = join(home, "secondary profile's config");
+  const clients = ['codex', 'claude-code', 'cursor', 'antigravity'];
+  const options = {home, env: {}, which: () => null, command: ['/installed/opencrawl'], requirementsFile: join(home, 'no-policy.toml')};
+  const paths = ['.codex/hooks.json', '.claude/settings.json', '.cursor/hooks.json', '.gemini/config/hooks.json'].map(path => join(home, path));
+  mkdirSync(join(home, '.gemini/antigravity-cli'), {recursive: true});
+  process.env.OPENCRAWL_CONFIG_HOME = primary;
+  await agentSkills('install', 'https://primary.example', {...options, clients});
+  const originals = paths.map(path => readFileSync(path, 'utf8'));
+  const extension = process.platform === 'win32' ? 'cmd' : 'sh';
+  const primaryRunner = join(primary, 'opencrawl/startup/runner.' + extension);
+  const originalRunner = readFileSync(primaryRunner, 'utf8');
+
+  process.env.OPENCRAWL_CONFIG_HOME = secondary;
+  const refreshed = await agentSkills('refresh', 'https://secondary.example', options);
+  expect(paths.map(path => readFileSync(path, 'utf8'))).toEqual(originals);
+  expect(readFileSync(primaryRunner, 'utf8')).toBe(originalRunner);
+  expect(existsSync(join(secondary, 'opencrawl/startup/runner.' + extension))).toBe(false);
+  expect(refreshed.hookReview).toBeUndefined();
+  const hooks = refreshed.results.flatMap(row => 'startupHooks' in row ? row.startupHooks ?? [] : []);
+  expect(hooks.filter(hook => hook.status === 'preserved').map(hook => hook.client).sort()).toEqual([...clients].sort());
+
+  await agentSkills('install', 'https://secondary.example', {...options, clients: ['cursor']});
+  const cursor = readFileSync(paths[2]!, 'utf8');
+  expect(cursor).not.toBe(originals[2]);
+  for (const index of [0, 1, 3]) expect(readFileSync(paths[index]!, 'utf8')).toBe(originals[index]);
+  await agentSkills('refresh', 'https://secondary.example', {...options, command: ['/updated/opencrawl']});
+  expect(readFileSync(join(secondary, 'opencrawl/startup/runner.' + extension), 'utf8')).toContain('/updated/opencrawl');
+  expect(readFileSync(primaryRunner, 'utf8')).toBe(originalRunner);
+
+  process.env.OPENCRAWL_CONFIG_HOME = primary;
+  // Same-profile legacy runners still migrate; the independently selected
+  // Cursor profile stays bound to its own configuration.
+  writeFileSync(paths[0]!, originals[0]!.replaceAll('runner.' + extension, 'runner.cjs'));
+  await agentSkills('refresh', 'https://primary.example', {...options, command: ['/upgraded/opencrawl']});
+  expect(readFileSync(paths[0]!, 'utf8')).toBe(originals[0]);
+  expect(readFileSync(paths[2]!, 'utf8')).toBe(cursor);
+  expect(readFileSync(primaryRunner, 'utf8')).toContain('/upgraded/opencrawl');
+}));
+
 test('detects only available clients, honors custom roots and deduplicates shared skill paths', () => {
   const home = mkdtempSync(join(tmpdir(), 'opencrawl-skill-targets-'));
   try {

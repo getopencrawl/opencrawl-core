@@ -9,7 +9,27 @@ import {retryWindowsSharing} from './filesystem.ts';
 
 export const startupMarker = 'OpenCrawl session startup';
 const quote = (s: string) => process.platform === 'win32' ? '"' + s.replace(/"/g, '""') + '"' : "'" + s.replace(/'/g, "'\\''") + "'";
-export type StartupOptions = {home?: string; env?: NodeJS.ProcessEnv; command?: string[]; node?: string; requirementsFile?: string};
+export type StartupOptions = {home?: string; env?: NodeJS.ProcessEnv; command?: string[]; node?: string; requirementsFile?: string; preserveProfile?: boolean};
+
+/** A runner binds its own configuration directory. Refreshing one profile must
+ * not redirect an already-installed client to the caller's ambient profile. */
+function otherStartupProfile(config: any, client: string, file: string) {
+  const groups = Object.values(config.hooks ?? {}).flatMap(value => Array.isArray(value) ? value : []);
+  const entries = client === 'antigravity' ? config['opencrawl-startup']?.SessionStart ?? []
+    : client === 'cursor' ? groups : groups.flatMap(group => Array.isArray(group?.hooks) ? group.hooks : []);
+  const prefix = join(dirname(file), 'runner.');
+  const spellings = [prefix, prefix.replace(/'/g, "'\\''"), prefix.replace(/'/g, "''"), prefix.replace(/%/g, '%%')];
+  return Array.isArray(entries) && entries.some(entry => {
+    const command = entry?.command;
+    if (typeof command !== 'string' || client !== 'cursor' && client !== 'antigravity' && entry.statusMessage !== startupMarker ||
+      client === 'cursor' && !/session start --harness cursor(?: --after-tool)?$/.test(command) ||
+      !/[\\/]startup[\\/]runner\.(?:sh|cmd|cjs)\b/.test(command)) return false;
+    return !spellings.some(value => {
+      const index = command.indexOf(value);
+      return index >= 0 && (index === 0 || /[\s'"]/.test(command[index - 1]));
+    });
+  });
+}
 
 /** Inspect the documented system policy without changing it or granting trust.
  * Recognize only an unconditional synchronous invocation of an installed CLI.
@@ -41,7 +61,7 @@ function managedStartup(file: string) {
 }
 
 /** Own only our startup/context entries. Never enable disabled hooks. */
-export function startupHooks(clients: string[], action: 'status' | 'install', {home = homedir(), env = process.env, command = commandForSelf(), requirementsFile = process.platform === 'win32' ? join(process.env.ProgramData || 'C:\\ProgramData', 'OpenAI', 'Codex', 'requirements.toml') : '/etc/codex/requirements.toml'}: StartupOptions = {}) {
+export function startupHooks(clients: string[], action: 'status' | 'install', {home = homedir(), env = process.env, command = commandForSelf(), preserveProfile = false, requirementsFile = process.platform === 'win32' ? join(process.env.ProgramData || 'C:\\ProgramData', 'OpenAI', 'Codex', 'requirements.toml') : '/etc/codex/requirements.toml'}: StartupOptions = {}) {
   return clients.filter(client => ['codex', 'claude-code', 'cursor', 'antigravity'].includes(client)).map(client => {
     const root = client === 'codex' ? env.CODEX_HOME || join(home, '.codex') : client === 'cursor' ? env.CURSOR_CONFIG_DIR || join(home, '.cursor') : client === 'antigravity' ? join(env.ANTIGRAVITY_HOME || join(home, '.gemini'), 'config') : env.CLAUDE_CONFIG_DIR || join(home, '.claude');
     const file = join(root, client === 'claude-code' ? 'settings.json' : 'hooks.json');
@@ -55,6 +75,7 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
         }
         if ((config as Record<string, any>)['opencrawl-startup']?.enabled === false) return {client, file, status: 'disabled'};
         const runner = hookRunner('startup', command);
+        if (preserveProfile && otherStartupProfile(config, client, runner.file)) return {client, file, status: 'preserved', reason: 'different_profile'};
         const invocation = runner.invocation(client);
         const entry = {SessionStart: [{type: 'command', command: invocation.command + ' session start --harness antigravity', timeout: 7}]};
         const current = JSON.stringify((config as Record<string, any>)['opencrawl-startup']) === JSON.stringify(entry) && existsSync(runner.file) && readFileSync(runner.file, 'utf8') === runner.script;
@@ -87,6 +108,7 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
         return {client, ...status};
       }
       const runner=hookRunner('startup',command);
+      if (preserveProfile && otherStartupProfile(config, client, runner.file)) return {client, file, status: 'preserved', reason: 'different_profile'};
       const invocation=runner.invocation(client);
       const cursor=client==='cursor';
       const cursorCommand=(process.platform==='win32'?'':'/bin/sh ')+quote(runner.file);
