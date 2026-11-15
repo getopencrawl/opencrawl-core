@@ -49,8 +49,10 @@ import {captureSetupPrompt,cloudCapturePage} from '../sessions/cloud-setup.mjs';
 import {createCaptureCredentials,isCaptureCredential} from '../sessions/credentials.mjs';
 import {createSessionIngest,createCaptureHandler} from '../sessions/ingest.mjs';
 import {errorInfo} from '../errors.mjs';
+import type {Log} from '../integrations/ports.mjs';
 type Store=ReturnType<typeof createObjectStore>;
 export interface SelfhostApplicationOptions {
+  log?: Log;
   settings:SelfhostSettings;store:Store;eventIdentities?:EventIdentityStore;prefix:string;identity:LocalIdentity;
   integrations?:Integrations;providers?:ProviderCatalog;connectors?:ReturnType<typeof createConnectorResolver>;
   oauth?:ReturnType<typeof createSlackOAuth>;sourceCredentials?:SourceCredentialProxy;
@@ -65,6 +67,7 @@ export interface SelfhostApplicationOptions {
 /** Full product composition for one self-hosted organization with its own accounts. */
 export function selfhostApplication({settings,store,eventIdentities,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
+  log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
 }:SelfhostApplicationOptions) {
   const directory=identity.directory;
   const replicas = createReplicasConnections({store,prefix,tenantId:settings.organizationId,
@@ -190,9 +193,9 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
       if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
       const sources=(p:Principal)=>integrations?integrations.list(p):Promise.resolve([]);
-      const consoleApi=createConsoleApi({replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
+      const consoleApi=createConsoleApi({log,replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),removeMember:(u,id,target)=>organizations.removeMember(u,id,target),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
-        usage:p=>usageReport({principal:p,directory,integrations,search,connectors,onboarding,values}),progress:guided.progress,next:guided.next,library,libraryFailure});
+        usage:p=>usageReport({principal:p,directory,integrations,search,connectors,onboarding,values,log}),progress:guided.progress,next:guided.next,library,libraryFailure});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{
         if(selected.name.startsWith('/api/console/')){
           if(!['/api/console/bootstrap','/api/console/replicas/setup'].includes(selected.name)&&!hasCompletedOnboarding(await guided.progress(principal)))return reply(409,JSON.stringify({error:'Complete onboarding before opening the workspace.',onboardingUrl:await guided.next(principal)}),'application/json');

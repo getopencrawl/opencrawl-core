@@ -25,11 +25,17 @@ export interface ValueReport {
   /** Search results agents went on to use and fixes they picked up from the board, with what the searches found. */
   value: {searchesUsed: number; fixesReused: number; found: {teammateWork: number; whereThingsLive: number; pastDecisions: number; pastFixes: number; other: number}};
 }
+export type UsageSource = 'organization' | 'members' | 'integrations' | 'sessions' | 'overlap' | 'connectors' | 'value' | 'capture' | 'onboarding';
+export type UsageSection = 'workspace' | 'agents' | 'overlap' | 'ingestion' | 'members' | 'value' | 'capture';
 interface UsageReportBase {
   workspace: string | null;
   team?: boolean;
   days: number;
   generatedAt: string;
+  /** Failed reads are distinct from an unconfigured service or a measured zero. */
+  failedSources?: UsageSource[];
+  /** Client-retained measurements keep their original freshness timestamp. */
+  staleSections?: Partial<Record<UsageSection, string>>;
   ingestion: null | {
     sources: Array<{name: string; icon: string; account?: string; state: string; records: number | null; indexed: number | null; indexedSpecies?: NamedCount[]; lastSyncedAt: string | null; connectedBy?: string; units?: [string, string]; rows?: Array<{label: string; count: number}>}>;
     index: null | {sessionEvents: number | null; connectorDocuments: number | null; sources: NamedCount[]; searchMs: number | null; probes?: number[]};
@@ -47,11 +53,8 @@ interface AgentUsage {
   firstAt: string | null; lastAt: string | null;
   daily: Array<{date: string; events: number; sessions: number}>;
 }
-/** Session activity always includes overlap. Only an unconfigured session service omits both. */
-export type UsageReport = UsageReportBase & (
-  | {agents: AgentUsage | null; overlap: SessionOverlap}
-  | {agents: null; overlap: null}
-);
+/** Independent measurements can fail without discarding the rest of the report. */
+export type UsageReport = UsageReportBase & {agents: AgentUsage | null; overlap: SessionOverlap | null};
 export interface DiagnosticHit {_id?: string; _score?: number; _source?: Record<string, unknown>}
 export interface SearchResponse {
   state?: string; truncated?: boolean; timed_out?: boolean; _shards?: {failed?: number};

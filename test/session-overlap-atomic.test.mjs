@@ -26,14 +26,32 @@ test('more than one old page of intervals comes from one read, with current priv
  assert.equal(result.sessions,2002);assert.equal(result.daily[0].peak,2002);assert.deepEqual(owners.sort(),['alice','bob']);
 });
 
-test('oversized and incomplete reports fail closed without paginating, retrying, or reading resource controls',async()=>{
+test('oversized reports and permission failures fail closed; timeouts have only one retry',async()=>{
  let calls=0;const controls={async list(){assert.fail('incomplete results must not reach resource reads');}};
  const collection={field:f=>'session.'+f,async search(){calls++;return page([bucket('alice','a')],2);}};
  await assert.rejects(sessionOverlap(collection,controls,principal,{days:1,now}),/scan limit exceeded/);assert.equal(calls,1);
  collection.search=async()=>{calls++;return {...page([]),timed_out:true};};calls=0;
- await assert.rejects(sessionOverlap(collection,controls,principal,{days:1,now}),/Incomplete/);assert.equal(calls,1);
+ await assert.rejects(sessionOverlap(collection,controls,principal,{days:1,now}),/Incomplete/);assert.equal(calls,2);
  const denied=Object.assign(new Error('denied'),{status:403});calls=0;collection.search=async()=>{calls++;throw denied;};
  await assert.rejects(sessionOverlap(collection,controls,principal,{days:1,now}),error=>error===denied);assert.equal(calls,1);
+});
+
+test('a transient failed read is discarded before a complete atomic retry',async()=>{
+ for(const failure of ['timeout','shard','transport']){
+  let calls=0;const requests=[];
+  const collection={field:f=>'session.'+f,async search(scope,body){
+   requests.push(structuredClone(body));calls++;
+   if(calls===1){
+    if(failure==='transport')throw Object.assign(new Error('Busy'),{status:503});
+    return {...page([bucket('alice','partial')]),timed_out:failure==='timeout',_shards:{failed:failure==='shard'?1:0}};
+   }
+   return page([bucket('alice','complete')]);
+  }};
+  let checks=0;const controls={async list(){checks++;return new Map();}};
+  const result=await sessionOverlap(collection,controls,principal,{days:1,now});
+  assert.equal(calls,2);assert.equal(checks,1);assert.deepEqual(requests[0],requests[1]);
+  assert.equal(result.sessions,1);assert.equal(result.daily[0].peak,1);
+ }
 });
 
 test('the complete single read still rejects duplicate keys, malformed metrics and missing coverage',async()=>{

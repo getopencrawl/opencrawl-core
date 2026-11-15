@@ -1,0 +1,28 @@
+import type {UsageReport} from './types.ts';
+import type {UsageSection, UsageSource} from '../../../src/application/reports.mjs';
+
+const dependencies: Record<UsageSection, readonly UsageSource[]> = {
+  workspace: ['organization'], agents: ['sessions'], overlap: ['overlap'],
+  ingestion: ['integrations', 'connectors'], members: ['members', 'sessions', 'integrations', 'onboarding'],
+  value: ['value'], capture: ['capture'],
+};
+
+export function usageSectionFailed(report: UsageReport, section: UsageSection) {
+  return dependencies[section].some(source => report.failedSources?.includes(source));
+}
+
+/** Called only within the current authenticated query cache; never crosses scopes. */
+export function reconcileUsage(previous: UsageReport | undefined, next: UsageReport): UsageReport {
+  const staleSections: Partial<Record<UsageSection, string>> = {};
+  const result: UsageReport = {...next, staleSections};
+  if (!previous || previous.days !== next.days) return result;
+  const cached = previous;
+  function retain<K extends UsageSection>(section: K) {
+    if (!usageSectionFailed(next, section) || cached[section] == null) return;
+    if (usageSectionFailed(cached, section) && !cached.staleSections?.[section]) return;
+    result[section] = cached[section];
+    staleSections[section] = cached.staleSections?.[section] ?? cached.generatedAt;
+  }
+  for (const section of Object.keys(dependencies) as UsageSection[]) retain(section);
+  return result;
+}
