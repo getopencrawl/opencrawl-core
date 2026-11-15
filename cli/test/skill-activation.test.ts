@@ -52,7 +52,7 @@ test('a capture-only invocation activates prior skills and exact native hooks on
   oldInstallation(home);
   await invoke(['collect','hook','--harness','claude-code']);
   for(const client of clients) {
-    expect(JSON.parse(readFileSync(join(home,client.skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(9);
+    expect(JSON.parse(readFileSync(join(home,client.skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(10);
     expect(readFileSync(join(home,client.skill,'SKILL.md'),'utf8')).toContain('Native hooks target only opencrawl_search');
     expect(readFileSync(join(home,client.hooks),'utf8')).toContain('search-context --harness '+client.name);
   }
@@ -71,7 +71,7 @@ test('new-session activation requests Claude skill rediscovery and does not wait
   expect(JSON.parse(readFileSync(join(home,clients[1]!.skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(8);
   const result=await invoke(start);
   expect(result.hookSpecificOutput.reloadSkills).toBe(true);
-  expect(JSON.parse(readFileSync(join(home,clients[1]!.skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(9);
+  expect(JSON.parse(readFileSync(join(home,clients[1]!.skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(10);
 }));
 
 test('activation honors opt-out, disabled hooks and first-install boundary; per-search hook stays pure',()=>fixture(async(home,invoke)=>{
@@ -120,7 +120,7 @@ test('already-refreshed skills create a current profile receipt with zero change
   const before=snapshot(),receipt=join(home,'config','opencrawl','skills-update.json');
   expect(existsSync(receipt)).toBe(false);
   await invoke(['collect','hook','--harness','claude-code']);
-  expect(JSON.parse(readFileSync(receipt,'utf8'))).toMatchObject({version:'0.4.64',revision:9,complete:true,
+  expect(JSON.parse(readFileSync(receipt,'utf8'))).toMatchObject({version:'0.4.64',revision:10,complete:true,
     result:{status:'current',updated:0,conflicts:0,errors:0}});
   expect(snapshot()).toEqual(before);
 }));

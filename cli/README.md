@@ -581,17 +581,21 @@ tokens. Changing that fixed identity invalidates old delegations.
 
 ## Search workspace knowledge
 
-Search excludes session tool/command output by default. Use
-`--include-tool-outputs` for logs, failures, test output and execution receipts.
+On servers supporting search context, defaults exclude session tool/command output.
+Use `--include-tool-outputs` for logs, failures, test output and execution receipts.
 The current chat is also excluded when the client supplies its exact native
 identity. Use `--include-current-session` to include it. Check
 `data.searchContext`: `currentSessionStatus: "unavailable"` means native identity
-was missing and this chat was **not** excluded. These controls do not delete
-captures or prevent fetching an authorized passage by ID.
+was missing and this chat was **not** excluded. If `searchContext` is missing,
+defaults and current-chat exclusion are unconfirmed; never infer legacy defaults.
+The context options require server support. These controls do not delete captures
+or prevent fetching an authorized passage by ID.
 
-Native search hooks attach `currentSession` to the preferred `opencrawl_search`
-MCP tool. The legacy `search` alias accepts explicit context but is not rewritten;
-this keeps new CLIs compatible with older self-hosted servers. An ordinary
+Prefer `opencrawl_search` when listed; otherwise use `search`. Native hooks
+attach `currentSession` only to `opencrawl_search`. Send only arguments exposed
+by the selected tool schema. The legacy `search` alias accepts explicit context only
+when its schema supports it and is not rewritten by native hooks; this keeps new
+CLIs compatible with older self-hosted servers. With server support, an ordinary
 CLI search can pass `--current-session '{"harness":"codex","sessionId":"native-chat-id"}'`.
 Use the actual caller identity, never the newest chat, current directory, board
 display name or another chat's receipt. Workspace and user remain server-derived.

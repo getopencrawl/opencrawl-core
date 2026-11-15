@@ -75,7 +75,9 @@ Agents: ask the user to choose Claude, Codex, Antigravity, all, or skip before i
 History includes messages, tool arguments/results and available attachments.
 
 Search: opencrawl search "words" --json
-  Tool output is excluded by default; current chat is excluded when identified.
+  On supporting servers, defaults exclude tool output and the identified current chat.
+  Missing data.searchContext leaves defaults and current-chat exclusion unconfirmed.
+  The three context options below require server support.
   --include-tool-outputs            Include tool/command output for debugging and verification
   --include-current-session         Include the calling chat
   --current-session JSON            Exact {"harness":"codex","sessionId":"native-chat-id"}

@@ -2,9 +2,11 @@ const common='\nOptions: --json (versioned JSON), --api https://host (deployment
 export function commandHelp(command:string, operation?:string):string|undefined {
   if(command==='search')return `Usage: opencrawl search "keywords" [options]
 
-Defaults: exclude session tool/command output; exclude the current chat when
-its exact native identity is supplied. Check data.searchContext in JSON output.
-currentSessionStatus=unavailable means the calling chat could not be excluded.
+On supporting servers, defaults exclude session tool/command output and the
+current chat when its exact native identity is supplied. Check data.searchContext:
+currentSessionStatus=unavailable means the calling chat was not excluded.
+If searchContext is missing, defaults and current-chat exclusion are unconfirmed.
+The three context options below require server support; never infer legacy defaults.
 
   --include-tool-outputs            Include logs, errors and execution receipts
   --include-current-session         Include the calling chat
@@ -22,9 +24,9 @@ currentSessionStatus=unavailable means the calling chat could not be excluded.
   --cursor TOKEN                  Repeat identical arguments for the next page
   --no-dedupe                     Show equivalent passage occurrences
 
-For debugging, add --include-tool-outputs even with an explicit kind or tool-name
-filter. Filters intersect the defaults. Stored captures and fetch-by-ID remain
-available. Do not invent a current chat ID or use another chat's startup receipt.
+For debugging on supporting servers, add --include-tool-outputs even with an
+explicit kind or tool-name filter. Filters intersect the supported defaults.
+Stored captures and fetch-by-ID remain available. Do not invent a current chat ID or use another chat's startup receipt.
 `+common;
   if(command==='board') {
     if(operation==='fetch')return `Usage: opencrawl board fetch --id REF [options]

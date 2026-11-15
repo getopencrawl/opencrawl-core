@@ -77,9 +77,9 @@ try{
   if(activationCode||apiRequests!==requestsBeforeActivation)throw new Error('Native lifecycle activation failed or requested authentication/network: '+activationErr+activationOut);
   const refreshed=JSON.parse(readFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
   const restored=refreshed.hooks.PreToolUse.flatMap((group:any)=>group.hooks).find((entry:any)=>entry.statusMessage==='OpenCrawl search context');
-  if(JSON.parse(readFileSync(manifest,'utf8')).revision!==9||!readFileSync(join(skill,'SKILL.md'),'utf8').includes('Native hooks target only opencrawl_search')||
+  if(JSON.parse(readFileSync(manifest,'utf8')).revision!==10||!readFileSync(join(skill,'SKILL.md'),'utf8').includes('Native hooks target only opencrawl_search')||
     restored?.command!==searchHooks[0]!.entry.command||JSON.parse(activationOut).hookSpecificOutput?.reloadSkills!==true)
-    throw new Error('Native SessionStart did not activate revision 9 guidance and search hooks');
+    throw new Error('Native SessionStart did not activate revision 10 guidance and search hooks');
   await run(command(['collect','install','--yes','--defer-auth','--backfill','skip','--harness','claude-code','--json']));
   const capture=JSON.parse(readFileSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl/capture/config.json'),'utf8'));
   if(capture.command.length!==1||capture.command[0]!==entry)throw new Error('Capture did not use the durable native command');

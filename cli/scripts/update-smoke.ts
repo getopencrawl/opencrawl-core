@@ -143,7 +143,7 @@ try {
     assert.deepEqual(outcome(legacySkillReceipt),{version,complete:true,status:'current',updated:2,conflicts:0,errors:0},
       'Legacy launcher did not report both regenerated managed skills');
     assert.deepEqual({...outcome(skillReceipt),revision:skillReceipt.revision},
-      {version,revision:9,complete:true,status:'current',updated:0,conflicts:0,errors:0},
+      {version,revision:10,complete:true,status:'current',updated:0,conflicts:0,errors:0},
       'Native profile did not record the already-current managed skills');
     // The ordinary board command also performs the existing legacy hook migration.
     const upgradedConfig = readFileSync(join(capture, 'config.json'), 'utf8');
