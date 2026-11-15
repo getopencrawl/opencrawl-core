@@ -50,6 +50,10 @@ jobs:
           UPGRADE_SQLITE: ${{ matrix.sqlite }}
           UPGRADE_REQUIRE_CONTAINERD: ${{ matrix.containerd || false }}
         run: |
+          docker version
+          docker compose version
+          docker buildx version
+          docker buildx inspect
           cp deploy/test-full-upgrade.mjs "$RUNNER_TEMP/test-full-upgrade.mjs"
           node "$RUNNER_TEMP/test-full-upgrade.mjs"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

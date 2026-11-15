@@ -22,7 +22,12 @@ run('git',['fetch','--depth','1','origin',old]);run('git',['checkout','--detach'
 let project='ocdev-0123456789ab',envFile=join(root,'deploy/.env'),override;
 if(kind==='deploy'){
  env.COMPOSE_PROJECT_NAME=project;if(sqlite)env.COMPOSE_FILE='compose.yaml:compose.sqlite.yaml';
- run('sh',['deploy/up.sh',...(sqlite?['--sqlite']:[]),'--no-airbyte']);run('sh',['deploy/up.sh','--no-airbyte']);
+ run('sh',['deploy/up.sh',...(sqlite?['--sqlite']:[]),'--no-airbyte']);
+ // Historical startup builds several services into the same tag concurrently.
+ // Build its unchanged source once, then override that old script's --build.
+ // Target startup below still exercises the normal command with no workaround.
+ docker(['compose','build','app'],{cwd:join(root,'deploy')});
+ run('sh',['deploy/up.sh','--no-airbyte','--build=false','--no-build']);
  const values=parseEnv(readFileSync(envFile,'utf8'));
  writeFileSync(join(seedDir,'seed-input.json'),JSON.stringify({format:1,project,origin:env.OPENCRAWL_URL,connectOrigin:'http://app:8092',organization:values.OPENCRAWL_ORGANIZATION_ID,setupToken:values.OPENCRAWL_SETUP_TOKEN,email:'upgrade@example.com',password:randomBytes(24).toString('hex'),airbyteEnabled:false}),{mode:0o600});
 }else{
@@ -153,7 +158,7 @@ if(airbyte){
 // A new Airbyte sync must reach the restored fixture and S3 addresses.
 docker([...recoveryChecks,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(airbyte?['-e','OPENCRAWL_UPGRADE_FRESH_SYNC=true']:['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
 largeSession('restored',recoveryChecks);
-const report={ok:true,imageRecovery,largeSessionCeilingReproducedAndRemoved:large,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,freshAirbyteSyncAfterUpgradeAndRestore:airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
+const report={ok:true,imageRecovery,historicalDeploySingleImagePrebuild:kind==='deploy',largeSessionCeilingReproducedAndRemoved:large,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,freshAirbyteSyncAfterUpgradeAndRestore:airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
 writeFileSync(join(process.env.RUNNER_TEMP,'full-upgrade-receipt.json'),JSON.stringify(report,null,2));
 docker([...recovery,'down','--volumes','--remove-orphans']);
 if(airbyte)run('bash',['dev/up','reset','--yes']);

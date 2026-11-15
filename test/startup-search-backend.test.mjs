@@ -13,13 +13,22 @@ function fixture(t){
   for(const name of ['dev','deploy','bin'])mkdirSync(join(root,name));
   for(const name of ['dev/installer.mts','dev/airbyte-routes.mts','dev/pins.json','deploy/up.sh','deploy/.env.example'])copyFileSync(join(source,name),join(root,name));
   // Upgrade behavior has its own stateful acceptance suite; this fixture isolates backend selection.
-  writeFileSync(join(root,'deploy/upgrade.mjs'),'process.exit(0);\n');
+  writeFileSync(join(root,'deploy/upgrade.mjs'),"import{appendFileSync}from'node:fs';appendFileSync(process.env.TEST_COMMAND_LOG,JSON.stringify(['upgrade',...process.argv.slice(2)])+'\\n');\n");
   writeFileSync(join(root,'dev/up'),'#!/bin/sh\nprintf \"%s\\n\" \"$TEST_NODE_RUNTIME\"\n',{mode:0o755});
   const log=join(root,'calls');
-  writeFileSync(join(root,'bin/docker'),`#!/bin/sh\nprintf '%s\\n' "$*" >> "$TEST_LOG"\ncase "$1" in inspect) exit 1 ;; info) echo '{"MemTotal":0,"NCPU":0}' ;; esac\n`,{mode:0o755});
-  const env={...process.env,PATH:join(root,'bin')+':'+process.env.PATH,TEST_LOG:log,TEST_NODE_RUNTIME:process.execPath};
+  writeFileSync(join(root,'bin/docker'),`#!${process.execPath}\nconst fs=require('node:fs'),args=process.argv.slice(2);fs.appendFileSync(process.env.TEST_LOG,args.join(' ')+'\\n');fs.appendFileSync(process.env.TEST_COMMAND_LOG,JSON.stringify(args)+'\\n');
+if(args[0]==='inspect')process.exit(1);
+if(args[0]==='info')console.log(JSON.stringify({MemTotal:0,NCPU:0}));
+if(args[0]==='compose'&&args[1]==='build'&&process.env.TEST_FAIL_BUILD==='1')process.exit(17);
+if(args[0]==='compose'&&args[1]==='up'&&process.env.TEST_REJECT_SHARED_BUILD==='1'){
+ let build=false;for(const arg of args.slice(2)){if(arg==='--')break;if(arg==='--build')build=true;if(arg.startsWith('--build='))build=['true','1','t','T','TRUE','True'].includes(arg.slice(8));}
+ if(build){console.error('parallel shared-tag export rejected');process.exit(73);}
+}
+`,{mode:0o755});
+  const env={...process.env,PATH:join(root,'bin')+':'+process.env.PATH,TEST_LOG:log,TEST_COMMAND_LOG:join(root,'commands.jsonl'),TEST_NODE_RUNTIME:process.execPath};
   delete env.COMPOSE_FILE;
   return {root,env,log:()=>existsSync(log)?readFileSync(log,'utf8'):'',
+    commands:()=>existsSync(env.TEST_COMMAND_LOG)?readFileSync(env.TEST_COMMAND_LOG,'utf8').trim().split('\n').map(JSON.parse):[],
     dev:args=>spawnSync(process.execPath,[join(root,'dev/installer.mts'),...args],{env,encoding:'utf8',timeout:10000}),
     deploy:args=>spawnSync('/bin/sh',[join(root,'deploy/up.sh'),...args],{env,encoding:'utf8',timeout:10000})};
 }
@@ -54,7 +63,7 @@ for(const args of [['--sqlite','--no-airbyte'],['--no-airbyte','--sqlite']])test
   const saved=readFileSync(path,'utf8');assert.match(saved,/^COMPOSE_FILE=compose.yaml:compose.sqlite.yaml$/m);
   assert.doesNotMatch(f.log(),/compose up/);
   const resume=f.deploy(['--no-airbyte']);assert.equal(resume.status,0,resume.stderr);
-  assert.match(f.log(),/compose up -d --build --wait/);assert.equal(readFileSync(path,'utf8'),saved);
+  assert.match(f.log(),/compose build app/);assert.match(f.log(),/compose up -d --no-build --wait/);assert.equal(readFileSync(path,'utf8'),saved);
   const explicit=f.deploy(args);assert.equal(explicit.status,0,explicit.stderr);assert.equal(readFileSync(path,'utf8'),saved);
 });
 
@@ -67,4 +76,39 @@ test('deployment startup refuses to replace an existing OpenSearch profile or co
   f.env.COMPOSE_FILE='custom.yaml';
   const conflict=f.deploy(['--sqlite']);assert.equal(conflict.status,1);assert.match(conflict.stderr,/conflicts/);
   assert.equal(readFileSync(path,'utf8'),before);assert.equal(f.log(),calls);
+});
+
+test('deployment builds its shared image once before starting services and records success last',t=>{
+  const f=fixture(t);assert.equal(f.deploy(['--no-airbyte']).status,0);f.env.TEST_REJECT_SHARED_BUILD='1';
+  const result=f.deploy(['--no-airbyte','--scale','worker=2','--no-recreate','app','worker']);assert.equal(result.status,0,result.stderr);
+  assert.deepEqual(f.commands().slice(0,4),[
+    ['upgrade','--automatic'],['compose','build','app'],
+    ['compose','up','-d','--no-build','--wait','--wait-timeout','600','--scale','worker=2','--no-recreate','app','worker'],
+    ['upgrade','--record-startup'],
+  ]);
+});
+
+test('a failed shared-image build never starts services or records startup',t=>{
+  const f=fixture(t);assert.equal(f.deploy([]).status,0);f.env.TEST_FAIL_BUILD='1';
+  const result=f.deploy([]);assert.equal(result.status,17,result.stderr);
+  assert.deepEqual(f.commands(),[['upgrade','--automatic'],['compose','build','app']]);
+});
+
+for(const [args,build,flag] of [
+  [['--build'],true,'--no-build'],[['--build=false'],false,'--build=false'],[['--no-build'],false,'--no-build'],
+  [['--build=false','--no-build'],false,'--no-build'],[['--build','--build=false'],false,'--build=false'],
+  [['--build=false','--build'],true,'--no-build'],[['--no-build','--no-build=false'],true,'--no-build'],
+  [['--build=0','--no-build=1'],false,'--no-build'],[['--','--build=false'],true,'--no-build'],
+])test('deployment preserves Compose build selection: '+args.join(' '),t=>{
+  const f=fixture(t);assert.equal(f.deploy([]).status,0);f.env.TEST_REJECT_SHARED_BUILD='1';
+  const result=f.deploy(args);assert.equal(result.status,0,result.stderr);
+  const commands=f.commands();assert.equal(commands.filter(args=>args[1]==='build').length,Number(build));
+  const forwarded=args.includes('--')?args:[];
+  assert.deepEqual(commands.find(args=>args[1]==='up'),['compose','up','-d',flag,'--wait','--wait-timeout','600',...forwarded]);
+});
+
+test('explicit contradictory Compose build flags fail before upgrade or build',t=>{
+  const f=fixture(t);assert.equal(f.deploy([]).status,0);
+  const result=f.deploy(['--build','--no-build']);assert.notEqual(result.status,0);assert.match(result.stderr,/incompatible/);
+  assert.deepEqual(f.commands(),[]);
 });
