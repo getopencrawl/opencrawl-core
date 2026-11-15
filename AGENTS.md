@@ -80,6 +80,26 @@ its commercial and hosted tenancy extensions must reuse the same design system.
 
 Backend source under `src/` uses strict TypeScript (`.mts`, or `.cts` for Temporal workflow bundles). Run `npm run build` before invoking compiled entrypoints under `dist/src/`; `npm test` builds first. Keep runtime import extensions `.mjs`/`.cjs`, preserve public package export names, and ship declarations with the compiled package. Do not weaken strict checks or add type-check suppression directives.
 
+## Query and network efficiency
+
+- Review the full operation, including adapters, pagination and retries. For a
+  performance fix, first reproduce excess requests, returned rows/bytes or serial
+  waits through the real module; retain an executable before/after budget test.
+  Mock request counts are not production latency measurements.
+- Prefer scoped bulk reads and server-side aggregates over a query per result or
+  connection. Return only the fields/rows consumed. Bound batch sizes and concurrent
+  work; preserve ordering, empty results, completeness checks and adapter parity.
+- Share only equivalent reads. Include trusted scope and all result-changing
+  arguments in keys; bound cache size/lifetime, clear rejected promises and prevent
+  stale completions from repopulating invalidated state. Serialize overlapping
+  background passes without losing later work or independent writes.
+- Optimization must preserve fresh per-resource checks and final authorization
+  barriers. Buffer results until those checks finish; test cross-tenant collisions,
+  revocation/disconnect and dependency failures. Never add a blanket auth cache.
+- Coalesce credential refresh within its owning client. On a delayed 401, compare
+  the rejected token with the current token before refreshing again; retain a
+  bounded retry limit and test staggered failures, not just simultaneous ones.
+
 ## Shared application seam
 
 The single-tenant product uses Better Auth with local accounts in an operator-owned
