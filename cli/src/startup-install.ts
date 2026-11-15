@@ -6,6 +6,7 @@ import {atomicFile, configDir} from './session.ts';
 import {commandForSelf} from './capture/runtime.ts';
 import {hookRunner} from './hook-runner.ts';
 import {retryWindowsSharing} from './filesystem.ts';
+import {searchContextMarker, searchContextMatcher, cursorSearchContextMatcher, antigravitySearchContextMatcher} from './search-context.ts';
 
 export const startupMarker = 'OpenCrawl session startup';
 const quote = (s: string) => process.platform === 'win32' ? '"' + s.replace(/"/g, '""') + '"' : "'" + s.replace(/'/g, "'\\''") + "'";
@@ -21,8 +22,8 @@ function otherStartupProfile(config: any, client: string, file: string) {
   const spellings = [prefix, prefix.replace(/'/g, "'\\''"), prefix.replace(/'/g, "''"), prefix.replace(/%/g, '%%')];
   return Array.isArray(entries) && entries.some(entry => {
     const command = entry?.command;
-    if (typeof command !== 'string' || client !== 'cursor' && client !== 'antigravity' && entry.statusMessage !== startupMarker ||
-      client === 'cursor' && !/session start --harness cursor(?: --after-tool)?$/.test(command) ||
+    if (typeof command !== 'string' || client !== 'cursor' && client !== 'antigravity' && ![startupMarker, searchContextMarker].includes(entry.statusMessage) ||
+      client === 'cursor' && !/(?:session start --harness cursor(?: --after-tool)?|search-context --harness cursor)$/.test(command) ||
       !/[\\/]startup[\\/]runner\.(?:sh|cmd|cjs)\b/.test(command)) return false;
     return !spellings.some(value => {
       const index = command.indexOf(value);
@@ -77,7 +78,10 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
         const runner = hookRunner('startup', command);
         if (preserveProfile && otherStartupProfile(config, client, runner.file)) return {client, file, status: 'preserved', reason: 'different_profile'};
         const invocation = runner.invocation(client);
-        const entry = {SessionStart: [{type: 'command', command: invocation.command + ' session start --harness antigravity', timeout: 7}]};
+        const entry = {
+          SessionStart: [{type: 'command', command: invocation.command + ' session start --harness antigravity', timeout: 7}],
+          PreToolUse: [{matcher:antigravitySearchContextMatcher, hooks:[{type:'command',command:invocation.command+' search-context --harness antigravity', timeout:2}]}],
+        };
         const current = JSON.stringify((config as Record<string, any>)['opencrawl-startup']) === JSON.stringify(entry) && existsSync(runner.file) && readFileSync(runner.file, 'utf8') === runner.script;
         if (action === 'status') return {client, file, status: current ? 'current' : before ? 'outdated' : 'missing'};
         if (current) return {client, file, status: 'unchanged'};
@@ -118,9 +122,9 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
       for (const [event, groups] of Object.entries(hooks)) {
         if (!Array.isArray(groups)) throw new Error();
         hooks[event] = groups.flatMap(group => {
-          if(cursor)return typeof group?.command==='string'&&/[\\/]startup[\\/]runner\.(?:sh|cmd)\b.* session start --harness cursor(?: --after-tool)?$/.test(group.command)?[]:[group];
+          if(cursor)return typeof group?.command==='string'&&/[\\/]startup[\\/]runner\.(?:sh|cmd)\b.* (?:session start --harness cursor(?: --after-tool)?|search-context --harness cursor)$/.test(group.command)?[]:[group];
           if (!Array.isArray(group?.hooks)) throw new Error();
-          const remaining = group.hooks.filter((entry: any) => entry?.statusMessage !== startupMarker);
+          const remaining = group.hooks.filter((entry: any) => ![startupMarker, searchContextMarker].includes(entry?.statusMessage));
           return remaining.length ? [{...group, hooks: remaining}] : [];
         });
         if (!hooks[event].length) delete hooks[event];
@@ -128,8 +132,15 @@ export function startupHooks(clients: string[], action: 'status' | 'install', {h
       if(cursor) {
         (hooks.sessionStart ??= []).push({command:cursorCommand+' session start --harness cursor',timeout:7});
         (hooks.postToolUse ??= []).push({command:cursorCommand+' session start --harness cursor --after-tool',timeout:7});
+        (hooks.preToolUse ??= []).push({matcher:cursorSearchContextMatcher,command:cursorCommand+' search-context --harness cursor',timeout:2});
       }
-      else (hooks.SessionStart ??= []).push({hooks: [hook]});
+      else {
+        (hooks.SessionStart ??= []).push({hooks: [hook]});
+        (hooks.PreToolUse ??= []).push({matcher: searchContextMatcher, hooks: [{
+          type:'command', ...invocation, command:invocation.command+' search-context --harness '+client,
+          timeout:2, statusMessage:searchContextMarker,
+        }]});
+      }
       const current = JSON.stringify(config.hooks) === JSON.stringify(hooks) && existsSync(runner.file) && readFileSync(runner.file,'utf8')===runner.script;
       if (action === 'status') return {client, file, status: current ? 'current' : before ? 'outdated' : 'missing'};
       if (current) return {client, file, status: 'unchanged'};

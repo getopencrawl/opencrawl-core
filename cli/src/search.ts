@@ -42,6 +42,17 @@ export function searchInput(query: string | undefined, values: Record<string, un
   if(filters.roles&&(!(filters.roles as string[]).every(r=>['user','assistant','system','developer'].includes(r))||(filters.roles as string[]).length>4))throw new CliError('INVALID_USAGE','Invalid roles filter.',64);
   if(filters.after&&filters.before&&Date.parse(String(filters.after))>Date.parse(String(filters.before)))throw new CliError('INVALID_USAGE','after must not exceed before.',64);
   const extra:Record<string,unknown>={};
+  if(values['current-session']!==undefined){
+    let current:unknown;
+    try{current=JSON.parse(String(values['current-session']));}catch{throw new CliError('INVALID_USAGE','--current-session requires {"harness":"codex","sessionId":"native-chat-id"}.',64);}
+    if(!current||typeof current!=='object'||Array.isArray(current))throw new CliError('INVALID_USAGE','Invalid --current-session.',64);
+    const identity=current as Record<string,unknown>;
+    if(Object.keys(identity).some(key=>!['harness','sessionId'].includes(key))||!['codex','claude-code','cursor','antigravity'].includes(String(identity.harness))||typeof identity.sessionId!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/.test(identity.sessionId))throw new CliError('INVALID_USAGE','Use the exact native chat ID and harness in --current-session; no user or workspace fields.',64);
+    extra.currentSession=identity;
+  }
+  for(const [flag,key] of [['include-current-session','includeCurrentSession'],['include-tool-outputs','includeToolOutputs']] as const){
+    if(values[flag]!==undefined){if(typeof values[flag]!=='boolean')throw new CliError('INVALID_USAGE','Invalid --'+flag+'.',64);extra[key]=values[flag];}
+  }
   for(const [flag,key,allowed] of [['select','select',['title','text','url','provenance']],['facets','facets',['source','kind','author','harness','origin','provider','repository','project','path','role','sessionId']]] as const){
     if(values[flag]===undefined)continue;const selected=String(values[flag]).split(',').filter(Boolean);
     if(selected.some(v=>!(allowed as readonly string[]).includes(v))||selected.length>allowed.length)throw new CliError('INVALID_USAGE','Invalid --'+flag+'.',64);extra[key]=selected;
@@ -65,10 +76,12 @@ export function formatFetch(data: any): string {
 }
 
 export function formatSearch(data: any): string {
+  const context=data.searchContext;
+  const defaults=context?`Search scope: tool outputs ${context.toolOutputsIncluded?'included':'excluded (use --include-tool-outputs for execution evidence)'}; current chat ${context.currentSessionStatus==='excluded'?'excluded (use --include-current-session to include it)':context.currentSessionStatus==='included'?'included by request':'not excluded: native identity unavailable (supply --current-session)'}.`:'';
   const text = data.results.map((r: any) => [`[${r.id}]${r.title?' '+r.title:''}`,r.provenance?JSON.stringify(r.provenance):'',r.url,
     r.text!==undefined?`${r.excerpt?.start>0?'…':''}${r.text}${r.excerpt?.end<r.excerpt?.totalChars?'…':''}`:'',
     r.duplicateCount?`${r.duplicateCount} additional equivalent passages grouped.`:'',r.groupedCount?`${r.groupedCount} other passages in this resource.`:''].filter(Boolean).join('\n')).join('\n\n');
-  return [text || 'No matching indexed passages.', `Coverage: ${data.coverage.map((c: any) => `${c.source}=${c.state}${c.truncated ? ' (bounded)' : ''}`).join(', ')}`,
+  return [defaults, text || 'No matching indexed passages.', `Coverage: ${data.coverage.map((c: any) => `${c.source}=${c.state}${c.truncated ? ' (bounded)' : ''}`).join(', ')}`,
     data.facets?`Facets (${data.facetScope}): ${JSON.stringify(data.facets)}`:'',
     data.results.length ? 'Read more: opencrawl fetch <result-id>. Use --group-by none --no-dedupe to inspect every occurrence.' : '',
     data.next ? `Next cursor: ${data.next}` : '', data.windowExhausted ? 'Candidate window exhausted. Narrow the query or source to explore further.' : '', data.partial ? 'Some sources could not be searched. These results are incomplete.' : ''].filter(Boolean).join('\n\n');

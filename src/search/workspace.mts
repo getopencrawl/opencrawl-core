@@ -11,6 +11,7 @@ import {sessionScope} from '../sessions/ingest.mjs';
 import {excerpt, groupDuplicates, groupResources, prioritizeEvidence, workspaceHit} from './presentation.mjs';
 import {digest,sessionScope as ownerScope} from '../sessions/event-identity.mjs';
 import {searchFiltersSchema} from './controls.mjs';
+import {currentSessionSchema} from './context.mjs';
 import {candidateFacets, facetNames} from './facets.mjs';
 import {memoryPassageId} from '../memories/projection.mjs';
 
@@ -19,6 +20,9 @@ export const workspaceSearchSchema = z.strictObject({
   source: z.enum(['all', 'sessions', 'connectors','memories']).default('all'),
   match: z.enum(['any', 'all', 'phrase']).default('any').describe('any ranks passages matching any words; all requires every analyzed term in one indexed passage, across its title/text fields. Terms do not combine across a chat. phrase requires analyzed words in order.'),
   sessionId: z.string().min(1).max(200).optional().describe('Restrict to a known session; requires source=sessions.'),
+  currentSession: currentSessionSchema.optional(),
+  includeCurrentSession: z.boolean().default(false).describe('Default false: exclude the current chat when its native identity is available. Set true to search it explicitly.'),
+  includeToolOutputs: z.boolean().default(false).describe('Default false: omit captured tool output, including messages containing tool-result blocks. Set true to include it; connector documents are unaffected.'),
   limit: z.number().int().min(1).max(40).default(10),
   dedupe: z.boolean().default(true).describe('Group whitespace-equivalent passages within the same session/resource. Use false with groupBy=none to inspect every occurrence.'),
   cursor: z.string().max(2048).optional(),
@@ -62,7 +66,7 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       sessionScope(principal);
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot search workspace data.');
       const parsed = workspaceSearchSchema.safeParse(input);
-      if (!parsed.success) fail(400, 'Invalid search request. Check query, source, match, filters, order, facets, select, excerptChars, sessionId, limit, dedupe, groupBy and cursor. Empty query requires a time order.');
+      if (!parsed.success) fail(400, 'Invalid search request. Check query, source, match, filters, order, facets, select, excerptChars, sessionId, currentSession, includeCurrentSession, includeToolOutputs, limit, dedupe, groupBy and cursor. Empty query requires a time order.');
       // Preserve the original dedupe=false inspection contract for older clients.
       if(!parsed.data.dedupe&&(input as {groupBy?:unknown}).groupBy===undefined)parsed.data.groupBy='none';
       const {cursor, ...query} = parsed.data;
@@ -73,7 +77,7 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
         const adapter = source === 'sessions' ? sessions : source==='memories'?memories:connectors;
         if (!adapter) return {source, state: 'not_configured', hits: [], truncated: false};
         let result;
-        try {result = await adapter.search(principal, {query: query.query, match: query.match, filters:query.filters, order:query.order, ...(query.sessionId ? {sessionId: query.sessionId} : {}), limit: WINDOW});}
+        try {result = await adapter.search(principal, {query: query.query, match: query.match, filters:query.filters, order:query.order, ...(query.sessionId ? {sessionId: query.sessionId} : {}), ...(source==='sessions'?{currentSession:query.currentSession,includeCurrentSession:query.includeCurrentSession,includeToolOutputs:query.includeToolOutputs}:{}), limit: WINDOW});}
         catch(caught){const error=serviceError(caught);
           if ([401, 403].includes(error.status ?? 0)) throw error;
           return {source, state: error.status === 404 && error.type === 'index_not_found_exception' ? 'pending' : 'unavailable', hits: [], truncated: false};
@@ -100,7 +104,10 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       const next = offset < grouped.results.length ? encode({fingerprint, offset, expires: page.expires}) : null;
       const coverage = groups.map(({source, state, hits, truncated}) => ({source, state, candidates: hits.length, truncated}));
       const partial = coverage.some(g => g.state === 'unavailable' || g.state === 'pending');
-      return {query: query.query, results, next, coverage, partial, deduplicated: deduped.suppressed, grouped:grouped.suppressed,
+      return {query: query.query, searchContext:{currentSession:query.currentSession??null,
+        currentSessionStatus:query.currentSession?(query.includeCurrentSession?'included':'excluded'):'unavailable',
+        currentSessionExcluded:Boolean(query.currentSession)&&!query.includeCurrentSession,toolOutputsIncluded:query.includeToolOutputs},
+        results, next, coverage, partial, deduplicated: deduped.suppressed, grouped:grouped.suppressed,
         truncated: Boolean(next) || coverage.some(g => g.truncated),
         windowExhausted: !next && coverage.some(g => g.truncated),
         ...(query.facets.length?{facets:candidateFacets(ranked,query.facets),facetScope:'authorized_candidate_window'}:{}),

@@ -15,3 +15,9 @@ matching output resumes the idle agent. Registration alone is not listening.
 If the receipt is missing, use the skill's registration fallback. Only fall back
 to reads at meaningful work boundaries when this Shell lacks `notify_on_output`,
 and state that limitation. Do not start board diagnostics unless requested.
+
+Prefer the native `opencrawl_search` tool; its unique name lets the OpenCrawl
+search hook attach this conversation ID automatically. Tool output is excluded
+by default: set `includeToolOutputs=true` for logs and execution receipts, and
+`includeCurrentSession=true` to include this chat. Inspect `searchContext`;
+`currentSessionStatus=unavailable` means self-chat exclusion was not applied.

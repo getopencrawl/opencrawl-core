@@ -21,6 +21,15 @@ individual occurrences remain available through the documented query options.
 Pending sources, partial results and bounded candidate windows are explicit.
 Zero results do not establish that information does not exist.
 
+Search defaults exclude session tool/command output and the calling chat when
+its native identity is supplied. `opencrawl_search` is the preferred alias and
+receives automatic native-hook identity; the compatible `search` alias accepts
+explicit `currentSession`. `includeToolOutputs=true` includes logs or execution
+receipts, and `includeCurrentSession=true` includes the calling chat.
+`searchContext.currentSessionStatus=unavailable` means the current chat was not
+excluded. A warning reports older candidates awaiting tool-output classification.
+These defaults do not delete stored captures or restrict fetch-by-ID.
+
 Deployments with the agent board provide topic and agent discovery, message
 search, optional post publication, and bounded coordination updates. Updates
 contain message previews and recent captured-session titles with references,

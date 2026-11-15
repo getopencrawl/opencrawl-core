@@ -4,7 +4,7 @@ import type {TenantPrincipal} from '../sessions/types.mjs';
 import {serviceError} from '../sessions/types.mjs';
 import type {Corpus, SearchDocument, DocumentItem, IndexHit, OpenSearchResponse, QueryBody, RealmOptions, IndexTransportOptions, Mapping, SearchRealm} from './types.mjs';
 import {signRequest} from '../sessions/s3-store.mjs';
-import {realmMapping,passageFields,memoryProjectionFields,sessionTokenFields,sessionParticipantFields} from './mapping.mjs';
+import {realmMapping,passageFields,memoryProjectionFields,sessionTokenFields,sessionParticipantFields,sessionSearchContextFields} from './mapping.mjs';
 export {realmMapping};
 import {realmIndex,realmField,realmDocument} from './realm-format.mjs';
 export {realmIndex,realmField,realmDocument};
@@ -42,9 +42,13 @@ export function createOpenSearchRealm({endpoint,index,tenantId,environment='self
       try{await request('',{settings:{number_of_shards:1,number_of_replicas:replicas},mappings:{...realmMapping,_meta:{schema:1,tenantId}}},'PUT');}
       catch(caught){const e=serviceError(caught);if(e.status!==400||e.type!=='resource_already_exists_exception')throw e;}
       let mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
+      for(const [key,expected] of Object.entries(sessionSearchContextFields)){
+        const actual=mapping?.properties?.session?.properties?.[key];if(actual&&!compatible(actual,expected))throw fail('Incompatible search context mapping');
+      }
       // The only in-place schema upgrade is an additive normalization revision.
       // Validate ownership and every existing field before making any change.
-      const withoutParticipants=(value:Mapping)=>{for(const key of Object.keys(sessionParticipantFields))delete value.properties?.session?.properties?.[key];return value;};
+      const withoutSearchContext=(value:Mapping)=>{for(const key of Object.keys(sessionSearchContextFields))delete value.properties?.session?.properties?.[key];return value;};
+      const withoutParticipants=(value:Mapping)=>{withoutSearchContext(value);for(const key of Object.keys(sessionParticipantFields))delete value.properties?.session?.properties?.[key];return value;};
       const withoutTokens=(value:Mapping)=>{withoutParticipants(value);delete value.properties?.session?.properties?.capturedTokens;return value;};
       const withoutProjection=(value:Mapping)=>{for(const key of Object.keys(memoryProjectionFields))delete value.properties?.memory?.properties?.[key];return withoutTokens(value);};
       const withoutPassages=(value:Mapping)=>{for(const corpus of ['session','memory'])for(const key of Object.keys(passageFields))delete value.properties?.[corpus]?.properties?.[key];return withoutProjection(value);};
@@ -69,7 +73,7 @@ export function createOpenSearchRealm({endpoint,index,tenantId,environment='self
         await request('/_mapping',{properties:{session:{properties:{private:{type:'boolean'}}},memory:{properties:{private:{type:'boolean'}}}}},'PUT');
         mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
-      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&compatible(mapping,legacy)&&!compatible(mapping,realmMapping)) {
+      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&compatible(mapping,legacy)&&!compatible(mapping,withoutSearchContext(structuredClone(realmMapping)))) {
         // Add only missing fields; an existing incompatible field fails closed.
         for(const corpus of ['session','memory'])for(const [key,expected] of Object.entries(passageFields)){
           const actual=mapping.properties?.[corpus]?.properties?.[key];if(actual&&!compatible(actual,expected))throw fail('Incompatible passage mapping');
@@ -85,9 +89,14 @@ export function createOpenSearchRealm({endpoint,index,tenantId,environment='self
         await request('/_mapping',{properties:{session:{properties:sessionTokenFields}}},'PUT');
         mapping=(await request<Record<string,{mappings:Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
-      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&compatible(mapping,withoutParticipants(structuredClone(realmMapping)))&&!compatible(mapping,realmMapping)){
+      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&compatible(mapping,withoutParticipants(structuredClone(realmMapping)))&&!compatible(mapping,withoutSearchContext(structuredClone(realmMapping)))){
         for(const [key,expected] of Object.entries(sessionParticipantFields)){const actual=mapping.properties?.session?.properties?.[key];if(actual&&!compatible(actual,expected))throw fail('Incompatible participant mapping');}
         await request('/_mapping',{properties:{session:{properties:sessionParticipantFields}}},'PUT');
+        mapping=(await request<Record<string,{mappings:Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
+      }
+      if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&compatible(mapping,withoutSearchContext(structuredClone(realmMapping)))&&!compatible(mapping,realmMapping)){
+        for(const [key,expected] of Object.entries(sessionSearchContextFields)){const actual=mapping.properties?.session?.properties?.[key];if(actual&&!compatible(actual,expected))throw fail('Incompatible search context mapping');}
+        await request('/_mapping',{properties:{session:{properties:sessionSearchContextFields}}},'PUT');
         mapping=(await request<Record<string,{mappings:Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
       if(mapping?._meta?.tenantId!==tenantId||mapping?._meta?.schema!==1||!compatible(mapping,realmMapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');

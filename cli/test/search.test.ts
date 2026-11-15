@@ -48,3 +48,14 @@ test('agent discovery controls survive the CLI with strict field validation',()=
   for(const values of [{filters:'{"tenantId":"foreign"}'},{filters:'[]'},{filters:'{"roles":["anything"]}'},{role:'tool'},{facets:'secret'},{select:'sourceKey'},{'group-by':'tenant'},{after:'2026-12-01T00:00:00Z',before:'2026-11-01T00:00:00Z'}])expect(()=>searchInput('x',values)).toThrow();
   expect(formatSearch({results:[{id:'sessions:x',source:'sessions',title:'Discovery'}],coverage:[],partial:false})).not.toContain('undefined');
 });
+
+test('search exclusion overrides and native identity survive CLI validation without granting scope',()=>{
+  const currentSession={harness:'claude-code',sessionId:'parent:worker'};
+  expect(searchInput('failure',{'current-session':JSON.stringify(currentSession),'include-current-session':true,'include-tool-outputs':true})).toMatchObject({currentSession,includeCurrentSession:true,includeToolOutputs:true});
+  for(const current of [{...currentSession,userId:'other'}, {...currentSession,tenantId:'other'}, {harness:'other',sessionId:'x'}, {harness:'codex',sessionId:'../guess'}, null, [], 'not-object'])expect(()=>searchInput('x',{'current-session':JSON.stringify(current)})).toThrow();
+  expect(()=>searchInput('x',{'include-tool-outputs':'false'})).toThrow();
+  const rendered=formatSearch({results:[],coverage:[],partial:false,searchContext:{currentSession:null,currentSessionStatus:'unavailable',currentSessionExcluded:false,toolOutputsIncluded:false}});
+  expect(rendered).toContain('tool outputs excluded');
+  expect(rendered).toContain('native identity unavailable');
+  expect(rendered).toContain('--include-tool-outputs');
+});

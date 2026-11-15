@@ -1,4 +1,4 @@
-import type {Principal, TenantPrincipal, CredentialProvider, JsonValue} from '../sessions/types.mjs';
+import type {Principal, TenantPrincipal, CredentialProvider, JsonValue, SessionHarness} from '../sessions/types.mjs';
 import type {SearchFilters, SearchOrder} from './controls.mjs';
 
 export type Corpus = 'connector' | 'session' | 'board' | 'memory';
@@ -15,7 +15,7 @@ export interface SearchDocument {
   parentId?: string | null; parentKind?: string; channelId?: string; heading?: string;
   boardId?: string;
 }
-export type NamedWritePolicy = 'session' | 'connector' | 'memory-head' | 'session-projection' | 'session-tokens' | 'session-participants';
+export type NamedWritePolicy = 'session' | 'connector' | 'memory-head' | 'session-projection' | 'session-tokens' | 'session-participants' | 'session-search-context';
 export type WritePolicy = NamedWritePolicy | {name: 'memory-projection-rollback'; expectedProjectionId: string};
 export interface DocumentItem<T extends SearchDocument = SearchDocument> {id: string; document: T; script?: string; policy?: WritePolicy}
 export interface IndexHit<T extends SearchDocument = SearchDocument> {
@@ -77,7 +77,8 @@ export interface Mapping {
   type?: string; dynamic?: string; properties?: Record<string, Mapping>; fields?: Record<string, Mapping>;
   _meta?: {schema?: number; tenantId?: string};
 }
-export interface SearchInput {query?: string; limit?: number; raw?: boolean; match?: string; sessionId?: string; id?: string; filters?: SearchFilters; order?: SearchOrder}
+export interface CurrentSession {harness: SessionHarness; sessionId: string}
+export interface SearchInput {query?: string; limit?: number; raw?: boolean; match?: string; sessionId?: string; id?: string; filters?: SearchFilters; order?: SearchOrder; currentSession?: CurrentSession; includeCurrentSession?: boolean; includeToolOutputs?: boolean}
 export interface Passage extends SearchDocument {id: string; score?: number}
 export interface SearchResult {hits: Passage[]; total?: number; truncated?: boolean}
 export interface SearchAdapter {search(principal: Principal, input: SearchInput & {raw?: false}): Promise<SearchResult>}

@@ -46,9 +46,13 @@ test('real MCP and HTTP expose the same operation and reject forged scope, origi
   assert.equal((await fetch(origin+'/api/search',{method:'POST',headers,body:JSON.stringify({query:'x',tenantId:'team-b'})})).status,400);
   const http=await (await fetch(origin+'/api/search',{method:'POST',headers,body:JSON.stringify({query:'evidence'})})).json();
   const client=new Client({name:'workspace-search-test',version:'1'});await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers}}));t.after(()=>client.close());
-  assert.ok((await client.listTools()).tools.some(t=>t.name==='search'));
+  const searchTools=(await client.listTools()).tools;
+  assert.ok(searchTools.some(t=>t.name==='search'));
+  const preferred=searchTools.find(t=>t.name==='opencrawl_search');
+  assert.ok(preferred);assert.match(preferred.description,/includeToolOutputs=true/);assert.match(preferred.description,/currentSessionStatus=unavailable/);
   assert.ok((await client.listTools()).tools.some(t=>t.name==='fetch'));
   const mcp=await client.callTool({name:'search',arguments:{query:'evidence'}});assert.deepEqual(mcp.structuredContent,http.data);
+  assert.deepEqual((await client.callTool({name:'opencrawl_search',arguments:{query:'evidence'}})).structuredContent,http.data);
   assert.equal((await client.callTool({name:'search',arguments:{query:'x',index:'*'}})).isError,true);
   assert.equal(http.data.results[0].provenance.userId,'bob');
   const input={id:http.data.results[0].id,length:3};

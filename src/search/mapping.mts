@@ -1,6 +1,7 @@
 import type {Mapping} from './types.mjs';
 export const passageFields={passageVersion:{type:'integer'},textStart:{type:'integer'},textEnd:{type:'integer'},chunkCount:{type:'integer'}};
 export const memoryProjectionFields={projectionId:{type:'keyword'}};
+export const sessionSearchContextFields={containsToolOutput:{type:'boolean'}};
 export const sessionTokenFields={capturedTokens:{type:'long'}};
 export const sessionParticipantFields={participantVersion:{type:'integer'},participantId:{type:'keyword'},participantName:{type:'keyword',ignore_above:320},participantUnknown:{type:'boolean'}};
 export const connectorMapping = {dynamic: 'strict', properties: {
@@ -19,7 +20,7 @@ export const sessionIndexMapping={dynamic:'strict',properties:{
   text:{type:'text'},sourceKey:{type:'keyword',index:false,doc_values:false},
   nativeId:{type:'keyword'},parentId:{type:'keyword'},turnId:{type:'keyword'},toolCallId:{type:'keyword'},
   toolNames:{type:'keyword'},attachments:{type:'object',enabled:false},host:{type:'keyword',ignore_above:256},
-  private:{type:'boolean'},...passageFields,...sessionTokenFields,...sessionParticipantFields,
+  private:{type:'boolean'},...passageFields,...sessionTokenFields,...sessionParticipantFields,...sessionSearchContextFields,
 }};
 
 export const boardIndexMapping = {dynamic: 'strict', properties: {

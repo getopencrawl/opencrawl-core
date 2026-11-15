@@ -24,6 +24,17 @@ Call `opencrawl` first if you are unsure what is available. Do not invent tools
 or claim a capability the listed tools do not provide. Session capture is set up
 separately with the OpenCrawl CLI (`opencrawl collect install`), not by this plugin.
 
+Prefer `opencrawl_search` when listed; `search` is its compatibility alias.
+Cursor must use `opencrawl_search` for automatic current-chat identity because
+its hook cannot distinguish servers for a bare `search` tool.
+Search defaults exclude session tool/command output. Set `includeToolOutputs=true`
+for debugging, logs, test results and execution receipts. The calling chat is
+excluded when the client supplies `currentSession`; use `includeCurrentSession=true`
+to include it. Check `searchContext.currentSessionStatus` on each response:
+`unavailable` means native identity was missing and this chat was not excluded.
+Explicit kind and tool-name filters intersect these defaults. Fetch by ID remains
+available. Never guess the current chat ID or infer it from recent activity.
+
 When asked to check the connection:
 
 1. Discover the OpenCrawl MCP tools available in this host.

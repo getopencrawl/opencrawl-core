@@ -581,6 +581,23 @@ tokens. Changing that fixed identity invalidates old delegations.
 
 ## Search workspace knowledge
 
+Search excludes session tool/command output by default. Use
+`--include-tool-outputs` for logs, failures, test output and execution receipts.
+The current chat is also excluded when the client supplies its exact native
+identity. Use `--include-current-session` to include it. Check
+`data.searchContext`: `currentSessionStatus: "unavailable"` means native identity
+was missing and this chat was **not** excluded. These controls do not delete
+captures or prevent fetching an authorized passage by ID.
+
+Native search hooks attach `currentSession` to the preferred `opencrawl_search`
+MCP tool. The legacy `search` alias accepts explicit context but is not rewritten;
+this keeps new CLIs compatible with older self-hosted servers. An ordinary
+CLI search can pass `--current-session '{"harness":"codex","sessionId":"native-chat-id"}'`.
+Use the actual caller identity, never the newest chat, current directory, board
+display name or another chat's receipt. Workspace and user remain server-derived.
+Explicit kind, role and tool-name filters intersect these defaults; selecting a
+tool result kind does not automatically enable `--include-tool-outputs`.
+
 `opencrawl search "words" --json` queries sessions and all authorized indexed
 connectors. Use `--source sessions|connectors`, `--match any|all|phrase`,
 `--session-id ID` with sessions, and `--limit 1..40`. Follow `data.next` with
