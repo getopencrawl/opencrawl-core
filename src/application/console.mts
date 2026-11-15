@@ -2,6 +2,8 @@ import {hasCompletedOnboarding} from '../onboarding-state.mjs';
 import {replicasSetupPrompt, replicasEnrollmentPrompt} from '../sessions/cloud-setup.mjs';
 import type {IncomingMessage} from 'node:http';
 import type {SourceCard, TeamReport, InvitationPolicy} from './types.mjs';
+import {errorInfo} from '../errors.mjs';
+import type {Log} from '../integrations/ports.mjs';
 
 export type Principal = {tenantId: string; userId: string};
 export type User = {id: string; email: string; firstName?: string | null; lastName?: string | null};
@@ -10,6 +12,7 @@ export type Organization = {id: string; name: string; metadata?: Record<string, 
 type Progress = {completed?: {observedAt?: string} | null; shared?: {observedAt?: string} | null};
 export interface ConsoleContext {principal: Principal; user: User; member: Membership; revalidate: () => Promise<boolean>; admitted?: boolean; cacheScope?: string}
 export interface ConsoleServices {
+  log?: Log;
   url: string;
   setupPrompt: string;
   invitationPolicy?: InvitationPolicy;
@@ -134,6 +137,7 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
     } catch (error) {
       const safe = error instanceof Error && 'expose' in error && error.expose === true;
       const status = safe && 'status' in error && typeof error.status === 'number' ? error.status : 503;
+      services.log?.('console.request.failed', {path, status, message: errorInfo(error).message});
       return {status,body:{error:{code:status === 403 ? 'WORKSPACE_ACCESS_DENIED' : 'CONSOLE_UNAVAILABLE',message:safe ? error.message : 'This information is temporarily unavailable. Please try again.'}}};
     }
   };

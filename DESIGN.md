@@ -646,9 +646,11 @@ peak, UTC day labels, and a zero-based session axis. Both series share one scale
 Keep the description concise, with date/value details and the partial current day
 identified in hover titles. Do not add a data-table disclosure, persistent caption,
 or explanatory notes. Unavailable data never becomes a zero line.
-Session activity responses require overlap data. Failed overlap reads reject the
-shared Usage query so its scoped cache retains the last complete report; never
-replace the chart with a per-panel unavailable message on refresh.
+Usage measurements fail independently. Retain the last successful affected
+measurement in the authenticated scoped cache with its original update time,
+while healthy sections continue updating. A first-load failure belongs beside
+that measurement with a retry action; it must not hide healthy sections or show
+an invented zero. Access failures still clear all cached workspace data.
 
 ## Integrations
 

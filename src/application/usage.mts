@@ -6,7 +6,8 @@ import type {createSessionSearch} from '../sessions/search.mjs';
 import type {createOnboardingStatus, OnboardingReceipts} from '../onboarding-status.mjs';
 import {indexedSourceInventory} from './usage-inventory.mjs';
 import type {ValueReports} from './value-report.mjs';
-import type {SessionOverlap} from './reports.mjs';
+import type {SessionOverlap, UsageSource} from './reports.mjs';
+import {consoleFailure} from './console.mjs';
 import {dailyOverlap} from '../sessions/overlap.mjs';
 type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage' | 'overlap'>;
 interface ConnectionCount {total: number; kinds: Record<string, number>}
@@ -17,20 +18,24 @@ interface IndexReport {sessionEvents: number | null; connectorDocuments: number 
 // Shared usage report: integrations, WorkOS members, and session activity.
 // Activity and setup receipts are scoped to the selected organization.
 const empty = (): Usage => ({events: 0, lifetimeEvents: 0, sessions: 0, subagentSessions: 0, messages: 0, toolCalls: 0, machines: 0, opencrawlCalls: 0, tools: [], harnesses: [], origins: [], firstAt: null, lastAt: null, daily: [], people: []});
-const missing = (error: unknown) => errorInfo(error).status === 404 || errorInfo(error).type === 'index_not_found_exception';
+const missing = (error: unknown) => errorInfo(error).type === 'index_not_found_exception';
 
 /**
- * principal must already be verified for its tenant. Session overlap must succeed
- * with activity so a failed refresh cannot replace the cached chart with null.
+ * principal must already be verified for its tenant. Independent failed reads
+ * are explicit so clients can retain only the affected measurement.
  */
 export async function usageReport({principal, directory, integrations, search, connectors, onboarding, values, captured, tab, days = 30, log = () => {}}: UsageOptions) {
   const team = principal.tenantId.startsWith('org_');
   const memberScope = (userId: string) => ({tenantId: principal.tenantId, userId});
-  function soft<T>(name: string, operation: () => Promise<T>): Promise<T | null>;
-  function soft<T, F>(name: string, operation: () => Promise<T>, fallback: F): Promise<T | F | null>;
-  function soft<T, F>(name: string, operation: () => Promise<T>, fallback: F | null = null): Promise<T | F | null> {
+  const failedSources = new Set<UsageSource>();
+  function soft<T>(name: UsageSource, operation: () => Promise<T>): Promise<T | null>;
+  function soft<T, F>(name: UsageSource, operation: () => Promise<T>, fallback: F): Promise<T | F | null>;
+  function soft<T, F>(name: UsageSource, operation: () => Promise<T>, fallback: F | null = null): Promise<T | F | null> {
     return Promise.resolve().then(operation).catch(error => {
       if (missing(error)) return fallback;
+      const {status} = errorInfo(error);
+      if (status === 401 || status === 402 || status === 403) throw consoleFailure(status, 'Workspace access changed. Sign in again.');
+      failedSources.add(name);
       log('usage.source.failed', {source: name, message: errorInfo(error).message});
       return null;
     });
@@ -53,10 +58,7 @@ export async function usageReport({principal, directory, integrations, search, c
       const now = Date.now();
       const [agents, overlap] = await Promise.all([
         soft('sessions', () => search.usage(principal, {team: true, days, now}), empty()),
-        search.overlap(principal, {days, now}).catch((error: unknown): SessionOverlap => {
-          if (errorInfo(error).type === 'index_not_found_exception') return {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 0, daily: dailyOverlap([], days, now)};
-          throw error;
-        }),
+        soft('overlap', () => search.overlap(principal, {days, now}), {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 0, daily: dailyOverlap([], days, now)} satisfies SessionOverlap),
       ]);
       return {agents, overlap};
     })(),
@@ -66,7 +68,7 @@ export async function usageReport({principal, directory, integrations, search, c
   const {agents} = sessions;
   const members = users || [];
   // The adapter defines the measurement period; billing policy stays in the host.
-  const capture = organization && captured ? await soft('capture', () => captured(principal)) : null;
+  const capture = team && captured ? await soft('capture', () => captured(principal)) : null;
   const connectionCounts = counted?.connections || null;
   const providerNames = new Map((cards || []).map(card => [card.provider, card.name]));
   const index: IndexReport | null = search || connectors ? {
@@ -85,14 +87,17 @@ export async function usageReport({principal, directory, integrations, search, c
 
   const setup = await Promise.all(members.map(async user => {
     if (!onboarding) return {};
-    const receipt: Partial<OnboardingReceipts> | null = await soft('onboarding', () => onboarding.read(memberScope(user.id)), {});
+    const receipt: Partial<OnboardingReceipts> | null = await soft('onboarding', () => onboarding.read(memberScope(user.id)).catch(error => {
+      if (errorInfo(error).status === 404) return {};
+      throw error;
+    }), {});
     const {cli = null, mcp = null, session = null} = receipt || {};
     return {cli, mcp, session, client: mcp?.client || null, ...(receipt?.shared ? {shared: receipt.shared} : {})};
   }));
 
   const activity = new Map((agents?.people || []).map(p => [p.userId, p]));
   const report = {
-    tab, team, days, generatedAt: new Date().toISOString(), integrationsUrl: '/integrations',
+    tab, team, days, generatedAt: new Date().toISOString(), failedSources: [...failedSources].sort(), integrationsUrl: '/integrations',
     workspace: organization?.name || (team ? null : 'Personal workspace'),
     ingestion: cards ? {sources, index} : null, ...sessions, value, capture: capture ? {tokens:capture.tokens,since:capture.since} : null,
     members: members.map((user, i) => {

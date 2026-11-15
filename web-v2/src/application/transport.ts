@@ -11,7 +11,7 @@ const rpcFetch = async (url:RequestInfo|URL, init?:RequestInit):Promise<Response
     return Response.json(target.searchParams.get('batch')==='1'?target.pathname.split('/').at(-1)!.split(',').map(()=>error):error,{status});
   };
 /** Independent POST reads keep slow operations and cancellation isolated. */
-export const rpcTransportOptions = (url = '/api/trpc') => ({url, fetch: rpcFetch, methodOverride: 'POST' as const});
+export const rpcTransportOptions = (url = '/api/trpc') => ({url, fetch: rpcFetch, headers: {'x-opencrawl-usage-sections':'1'}, methodOverride: 'POST' as const});
 /** Compatibility for older consumers: never combine unrelated operations. */
 export const rpcBatchOptions = (url = '/api/trpc') => ({...rpcTransportOptions(url), maxItems: 1, maxURLLength: 8000});
 

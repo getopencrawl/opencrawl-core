@@ -5,6 +5,7 @@ import {visibleTo} from './controls.mjs';
 import type {createControls} from './controls.mjs';
 import type {SearchCollection, QueryBody} from '../search/types.mjs';
 import type {DailyOverlap, SessionOverlap} from '../application/reports.mjs';
+import {errorInfo} from '../errors.mjs';
 interface Interval {first: number; last: number}
 const DAY = 86_400_000;
 const date = (time: number) => new Date(time).toISOString().slice(0, 10);
@@ -57,11 +58,23 @@ export async function sessionOverlap(collection: SearchCollection, controls: Ret
   const f = (field: string) => collection.field(field);
   const filter: QueryBody[] = [{term: {tenantId: principal.tenantId}}, {term: {[f('chunk')]: 0}}, visibleTo('session', principal),
     {range: {[f('timestamp')]: {lte: until}}}, {range: {[f('receivedAt')]: {lte: until}}}];
-  const result = await collection.search(principal, {size: 0, track_total_hits: true, timeout: '2s', query: {bool: {filter}}, aggs: {
+  const query = {size: 0, track_total_hits: true, timeout: '2s', query: {bool: {filter}}, aggs: {
     sessions: {multi_terms: {terms: fields.map(field => ({field: f(field)})), size: MAX_GROUPS, order: {_key: 'asc'}, show_term_doc_count_error: true}, aggs: {
       first: {min: {field: f('timestamp')}}, last: {max: {field: f('timestamp')}}, subagents: {term_count: {field: f('origin'), value: 'subagent'}},
     }},
-  }});
+  }};
+  // A transient search failure discards the entire attempt. A retry is another
+  // atomic read with the same time window, never a continuation of partial data.
+  const read = () => collection.search(principal, query);
+  let result;
+  try {result = await read();}
+  catch (error) {
+    if (![429, 502, 503, 504].includes(errorInfo(error).status ?? 0) || Date.now() > deadline) throw error;
+    result = await read();
+    // The transport retry already consumed the second attempt.
+    if (result.timed_out || result._shards?.failed) throw new Error('Incomplete session overlap response after retry');
+  }
+  if ((result.timed_out || result._shards?.failed) && Date.now() <= deadline) result = await read();
   if (Date.now() > deadline) throw new Error('Session overlap scan limit exceeded');
   const aggregation = result.aggregations?.sessions as unknown as Buckets | undefined;
   if (result.timed_out || result._shards?.failed || result.hits.total?.relation !== 'eq' || !aggregation || !Array.isArray(aggregation.buckets)
@@ -86,7 +99,9 @@ export async function sessionOverlap(collection: SearchCollection, controls: Ret
   const groups = new Map<string, Bucket[]>();
   for (const bucket of candidates) {
     const key = JSON.stringify(bucket.key.slice(0, 2));
-    groups.set(key, [...(groups.get(key) ?? []), bucket]);
+    const group = groups.get(key);
+    if (group) group.push(bucket);
+    else groups.set(key, [bucket]);
   }
   const intervals: Interval[] = [], entries = [...groups.values()];
   for (let offset = 0; offset < entries.length; offset += 8) await Promise.all(entries.slice(offset, offset + 8).map(async buckets => {

@@ -12,6 +12,7 @@ import type {LibraryAdapter} from '../src/pages/library-types.ts';
 import {ConsoleDataProvider} from '../src/data.tsx';
 import {copyText} from '../src/onboarding/copy.tsx';
 import type {ValueReport} from '../src/pages/types.ts';
+import {reconcileUsage} from '../src/pages/usage-recovery.ts';
 
 const now = Date.parse('2026-11-07T20:00:00Z');
 
@@ -58,6 +59,35 @@ function sourceCard(html: string, name: string) {
   assert.notEqual(start, -1);
   return html.slice(start, html.indexOf('</article>', start));
 }
+
+test('first-load overlap failure leaves activity, sources and team visible without a fake chart', () => {
+  const data={...report(),overlap:null,failedSources:['overlap'] as const};
+  const html=render({...data,failedSources:[...data.failedSources]});
+  assert.match(html,/Daily agent sessions/);assert.match(html,/aria-label="Slack"/);assert.match(html,/Member activity/);
+  assert.match(html,/Session overlap.*couldn’t/);assert.doesNotMatch(html,/report-line-chart/);
+});
+
+test('partial refresh preserves only failed sections and their original freshness; recovery clears stale state', () => {
+  const initial=report(),later={...report(),generatedAt:'2026-11-07T21:00:00Z',overlap:null,failedSources:['overlap'] as UsageReport['failedSources']};
+  later.agents!.sessions=99;
+  const partial=reconcileUsage(initial,later);
+  assert.equal(partial.agents!.sessions,99);assert.deepEqual(partial.overlap,initial.overlap);
+  assert.deepEqual(partial.staleSections,{overlap:initial.generatedAt});
+  const again=reconcileUsage(partial,{...later,generatedAt:'2026-11-07T22:00:00Z'});
+  assert.deepEqual(again.staleSections,partial.staleSections);
+  const recovered=reconcileUsage(again,report());assert.deepEqual(recovered.staleSections,{});
+  assert.equal(reconcileUsage(undefined,later).overlap,null);
+  assert.equal(reconcileUsage(initial,{...later,days:7}).overlap,null);
+  assert.equal(reconcileUsage(initial,{...later,failedSources:[]}).overlap,null);
+  const missing={...report(),members:[],failedSources:['members'] as UsageReport['failedSources']};
+  assert.deepEqual(reconcileUsage(missing,missing).staleSections,{});
+});
+
+test('failed session activity does not invent a zero team ranking or hide healthy overlap', () => {
+  const html=render({...report(),agents:null,failedSources:['sessions']});
+  assert.match(html,/report-line-chart/);assert.match(html,/Team activity.*couldn’t/);
+  assert.doesNotMatch(html,/Ranked by sessions|active this week/);
+});
 
 test('main-session overlap distinguishes measured zero from unavailable and exposes both series with hover details', () => {
   const data = report();

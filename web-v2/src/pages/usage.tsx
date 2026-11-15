@@ -6,6 +6,8 @@ import {CopyPromptButton} from '../onboarding/copy.tsx';
 import type {ConsoleDataAdapter, UsageReport, ValueReport} from './types.js';
 import {ago, compact, count, harnessName, memberName, originName, plural, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
 import type {UsageMember, UsageSource} from './usage-model.ts';
+import type {UsageSection} from '../../../src/application/reports.mjs';
+import {reconcileUsage, usageSectionFailed} from './usage-recovery.ts';
 
 export {count} from './usage-model.ts';
 
@@ -16,7 +18,7 @@ export function date(value: string | number | null | undefined) {
 }
 
 export function useUsage(adapter: ConsoleDataAdapter) {
-  const resource = useConsoleResource<UsageReport>(consoleResourceKey(adapter, 'usage'), signal => adapter.usage(signal), {autoRefreshMilliseconds: 60_000, staleMilliseconds: 60_000});
+  const resource = useConsoleResource<UsageReport>(consoleResourceKey(adapter, 'usage'), signal => adapter.usage(signal), {autoRefreshMilliseconds: 60_000, staleMilliseconds: 60_000, reconcile: reconcileUsage});
   return {...resource, refresh: resource.reload};
 }
 
@@ -79,11 +81,18 @@ function alignmentCards(value: ValueReport): MetricItem[] {
   ];
 }
 
-function DataSourcesReport({report, now}: {report: UsageReport; now: number}) {
+function MeasurementStatus({report, section, label, now, retry}: {report: UsageReport; section: UsageSection; label: string; now: number; retry?: () => void}) {
+  if (!usageSectionFailed(report, section)) return null;
+  const previous = report.staleSections?.[section];
+  return <Notice tone="warning">{label} couldn’t {previous ? 'update' : 'load'}.{previous && ` Showing data updated ${ago(previous, now)}.`} We’ll retry automatically.{retry && <Button onClick={retry}>Try again</Button>}</Notice>;
+}
+
+function DataSourcesReport({report, now, retry}: {report: UsageReport; now: number; retry?: () => void}) {
   const data = report.ingestion;
   return (
     <Section className="report-section" title="Data sources">
-      {!data ? <EmptyState title="Source reporting isn’t available on this deployment."/> : data.sources.length ? (
+      <MeasurementStatus report={report} section="ingestion" label="Source counts" now={now} retry={retry}/>
+      {!data ? (usageSectionFailed(report, 'ingestion') ? null : <EmptyState title="Source reporting isn’t available on this deployment."/>) : data.sources.length ? (
         <div className="report-source-grid">
           {data.sources.map((source, index) => <SourceCard key={`${source.name}:${source.account || index}`} source={source} now={now}/>)}
         </div>
@@ -92,7 +101,7 @@ function DataSourcesReport({report, now}: {report: UsageReport; now: number}) {
   );
 }
 
-function AgentReport({report, now}: {report: UsageReport; now: number}) {
+function AgentReport({report, now, retry}: {report: UsageReport; now: number; retry?: () => void}) {
   const data = report.agents;
   const people = data?.people?.length;
   const daily = data?.daily || [];
@@ -119,8 +128,11 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
 
   return (
     <Section className="report-section" title={value ? 'Agent alignment' : 'Agent sessions'} description={description}>
+      <MeasurementStatus report={report} section="agents" label="Session activity" now={now} retry={retry}/>
+      <MeasurementStatus report={report} section="value" label="Agent alignment" now={now} retry={retry}/>
+      <MeasurementStatus report={report} section="capture" label="Captured tokens" now={now} retry={retry}/>
       {cards.length > 0 && <MetricGrid items={cards}/>}
-      {!data ? (value ? null : <EmptyState title="Agent reporting isn’t available on this deployment."/>) : <>
+      {!data ? (value || usageSectionFailed(report, 'agents') ? null : <EmptyState title="Agent reporting isn’t available on this deployment."/>) : <>
         <p className="report-note">
           Machines capturing: <strong>{count(data.machines)}</strong>. Last capture: <strong>{data.lastAt ? ago(data.lastAt, now) : 'Not yet'}</strong>
           {data.firstAt && <>. Capturing since {data.firstAt.slice(0, 10)}</>}
@@ -131,9 +143,7 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
           <Section className="report-panel" headingLevel={3} title="Daily agent sessions" description={busiest && busiest.sessions > 0 ? `Busiest day: ${busiest.date} with ${plural(busiest.sessions, 'session')}.` : undefined}>
             <ActivityChart daily={data.daily}/>
           </Section>
-          <Section className="report-panel" headingLevel={3} title="Main session overlap" description="Concurrent sessions by day.">
-            <DailyLineChart daily={report.overlap.daily} label="Main session overlap"/>
-          </Section>
+          <OverlapReport report={report} now={now} retry={retry}/>
           <div className="report-split">
             <Section className="report-panel" headingLevel={3} title="Where agents run" description="Captured events by agent and surface.">
               <BarList rows={data.harnesses.map(row => ({...row, name: harnessName(row.name)}))} label="Captured events by agent"/>
@@ -145,8 +155,16 @@ function AgentReport({report, now}: {report: UsageReport; now: number}) {
           </div>
         </>}
       </>}
+      {!data && (report.overlap || usageSectionFailed(report, 'overlap')) && <OverlapReport report={report} now={now} retry={retry}/>}
     </Section>
   );
+}
+
+function OverlapReport({report, now, retry}: {report: UsageReport; now: number; retry?: () => void}) {
+  return <Section className="report-panel" headingLevel={3} title="Main session overlap" description="Concurrent sessions by day.">
+    <MeasurementStatus report={report} section="overlap" label="Session overlap" now={now} retry={retry}/>
+    {report.overlap && <DailyLineChart daily={report.overlap.daily} label="Main session overlap"/>}
+  </Section>;
 }
 
 function SetupDots({member}: {member: UsageMember}) {
@@ -162,19 +180,21 @@ function SetupDots({member}: {member: UsageMember}) {
   </>;
 }
 
-function TeamReport({report, now}: {report: UsageReport; now: number}) {
+function TeamReport({report, now, retry}: {report: UsageReport; now: number; retry?: () => void}) {
   const members = report.members;
   const user = topMember(members, 'sessions');
   const builder = topMember(members, 'toolCalls');
   const active = members.filter(member => member.weekEvents > 0).length;
+  const unavailable = usageSectionFailed(report, 'members') && !report.staleSections?.members;
   const highlights = [
     {label: 'Most sessions', member: user, value: user && plural(user.sessions, 'session')},
     {label: 'Most tool calls', member: builder, value: builder && plural(builder.toolCalls, 'tool call')},
   ];
 
   return (
-    <Section className="report-section" title="Team" description={members.length ? `${active} of ${plural(members.length, 'member')} active this week.` : undefined}>
-      {!members.length ? <EmptyState title="Team reporting isn’t available on this deployment."/> : <>
+    <Section className="report-section" title="Team" description={members.length && !unavailable ? `${active} of ${plural(members.length, 'member')} active this week.` : undefined}>
+      <MeasurementStatus report={report} section="members" label="Team activity" now={now} retry={retry}/>
+      {unavailable ? null : !members.length ? <EmptyState title="Team reporting isn’t available on this deployment."/> : <>
         {highlights.some(item => item.member) && (
           <dl className="report-highlights">{highlights.map(item => item.member ? (
             <div key={item.label} className="report-highlight">
@@ -203,11 +223,11 @@ function TeamReport({report, now}: {report: UsageReport; now: number}) {
   );
 }
 
-export function UsageReportView({data, now = Date.now()}: {data: UsageReport; now?: number}) {
+export function UsageReportView({data, now = Date.now(), retry}: {data: UsageReport; now?: number; retry?: () => void}) {
   return <>
-    <AgentReport report={data} now={now}/>
-    <DataSourcesReport report={data} now={now}/>
-    <TeamReport report={data} now={now}/>
+    <AgentReport report={data} now={now} retry={retry}/>
+    <DataSourcesReport report={data} now={now} retry={retry}/>
+    <TeamReport report={data} now={now} retry={retry}/>
   </>;
 }
 
@@ -219,7 +239,7 @@ export function UsagePage({adapter, setupPrompt}: {adapter: ConsoleDataAdapter; 
     <Page title="Usage" description={scope} bodyClassName="usage-report" actions={setupPrompt ? <CopyPromptButton text={setupPrompt}/> : undefined}>
       {error && <Notice tone={data ? 'warning' : 'danger'}>{data ? 'Usage couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}{!data && <Button onClick={refresh} disabled={loading}>Try again</Button>}</Notice>}
       {loading && <LoadingState label="Loading usage"/>}
-      {data && <UsageReportView data={data} now={now}/>}
+      {data && <UsageReportView data={data} now={now} retry={refresh}/>}
     </Page>
   );
 }

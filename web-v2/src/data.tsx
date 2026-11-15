@@ -56,15 +56,16 @@ export function useConsoleModel<T>(key: readonly unknown[], create: () => T): T 
   }, [client, JSON.stringify(key)]);
 }
 
-interface ResourceOptions<T> {autoRefreshMilliseconds?: number | ((data: T | undefined) => number | false); paused?: boolean; enabled?: boolean; staleMilliseconds?: number; initial?: T}
+interface ResourceOptions<T> {autoRefreshMilliseconds?: number | ((data: T | undefined) => number | false); paused?: boolean; enabled?: boolean; staleMilliseconds?: number; initial?: T; reconcile?: (previous: T | undefined, next: T) => T}
 /** Serve cached data immediately; only the first read blocks, and server failures retain it. */
-export function useConsoleResource<T>(key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>, {autoRefreshMilliseconds, paused = false, enabled = true, staleMilliseconds = 30_000, initial}: ResourceOptions<T> = {}) {
+export function useConsoleResource<T>(key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>, {autoRefreshMilliseconds, paused = false, enabled = true, staleMilliseconds = 30_000, initial, reconcile}: ResourceOptions<T> = {}) {
   const stableKey = useMemo(() => key, [JSON.stringify(key)]);
   const scoped = useContext(CacheContext);
   const [local] = useState(() => createConsoleQueryClient());
   const client = scoped ?? local;
   const [invalidated, setInvalidated] = useState('');
   const query = useQuery({queryKey: stableKey, queryFn: ({signal}) => read(signal), enabled: enabled && !paused,
+    ...(reconcile ? {structuralSharing: (previous: unknown, next: unknown) => reconcile(previous as T | undefined, next as T)} : {}),
     meta:{staleMilliseconds},initialData:initial, staleTime: staleMilliseconds, refetchInterval: typeof autoRefreshMilliseconds === 'function' ? query => autoRefreshMilliseconds(query.state.data) : autoRefreshMilliseconds || false, refetchIntervalInBackground: false}, client);
   useEffect(() => {if (paused) void client.cancelQueries({queryKey: stableKey, exact: true});}, [client, paused, stableKey]);
   // Query cancellation is shared: a prefetch and mounted page never duplicate a read.
