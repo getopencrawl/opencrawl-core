@@ -195,7 +195,7 @@ export async function agentSkills(action: string, api: string, options: Options 
         // Background refresh updates an existing installation; first install is explicit.
         if (action === 'refresh' && !existed) return {...target, status: 'skipped'};
         const current = currentTree(target.directory, files);
-        const hooks = startupHooks(target.clients.filter(supportsStartup), action === 'status' ? 'status' : 'install', options);
+        const hooks = startupHooks(target.clients.filter(supportsStartup), action === 'status' ? 'status' : 'install', {...options, preserveProfile: action === 'refresh'});
         if (action === 'status') return {...target, startupHooks: hooks, status: current ? 'current' : existed ? 'outdated' : 'missing'};
         if (hooks.some(hook => hook.status === 'error')) return {...target, startupHooks: hooks, status: 'error', message: 'Session startup installation failed; skill fallback remains available.'};
         if (current) return {...target, startupHooks: hooks, status: 'unchanged'};
@@ -208,7 +208,7 @@ export async function agentSkills(action: string, api: string, options: Options 
       }
     });
     return {api, results, startupInstruction: startupInstruction(),
-      ...(results.some(result => 'startupHooks' in result && result.startupHooks?.some(hook => hook.client === 'codex' && !['disabled', 'managed'].includes(hook.status)))
+      ...(results.some(result => 'startupHooks' in result && result.startupHooks?.some(hook => hook.client === 'codex' && !['disabled', 'managed', 'preserved'].includes(hook.status)))
         ? {hookReview: 'Codex requires review of new or changed hooks in /hooks (desktop Settings > Hooks). Trust OpenCrawl session startup there, then start a new session. Installation does not grant hook trust.'} : {}),
       ...(targets.length ? {} : {message: 'No supported client detected. Use --client to select a client explicitly.'})};
   };
