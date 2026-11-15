@@ -104,3 +104,23 @@ test('each existing OpenCrawl profile activates its own hooks after another prof
   for(const profile of ['config','other-profile'])expect(JSON.parse(readFileSync(join(home,profile,'opencrawl','skills-update.json'),'utf8')).complete).toBe(true);
   expect(JSON.parse(readFileSync(join(home,'cache','opencrawl','skills-update.json'),'utf8')).revision).toBe(8);
 }));
+
+test('already-refreshed skills create a current profile receipt with zero changes and no file churn',()=>fixture(async(home,invoke)=>{
+  const selected=[clients[0]!,clients[1]!];
+  oldInstallation(home,selected);
+  const refreshed=await invoke(['skills','refresh','--json']);
+  expect(refreshed.data.results.filter((row:any)=>row.status==='updated')).toHaveLength(2);
+  // The legacy launcher has its own global receipt; the native profile still
+  // verifies the installed integration and records its own zero-change outcome.
+  const legacy=join(home,'cache','opencrawl','skills-update.json');
+  writeFileSync(legacy,JSON.stringify({version:'0.4.64',complete:true,result:{status:'current',updated:2,conflicts:0,errors:0}}));
+  const paths=selected.flatMap(client=>[join(home,client.hooks),join(home,client.skill,'SKILL.md'),join(home,client.skill,'.opencrawl-skill.json')]);
+  paths.push(legacy,join(home,'config','opencrawl','startup',process.platform==='win32'?'runner.cmd':'runner.sh'));
+  const snapshot=()=>paths.map(file=>({text:readFileSync(file,'utf8'),mtime:statSync(file).mtimeMs}));
+  const before=snapshot(),receipt=join(home,'config','opencrawl','skills-update.json');
+  expect(existsSync(receipt)).toBe(false);
+  await invoke(['collect','hook','--harness','claude-code']);
+  expect(JSON.parse(readFileSync(receipt,'utf8'))).toMatchObject({version:'0.4.64',revision:9,complete:true,
+    result:{status:'current',updated:0,conflicts:0,errors:0}});
+  expect(snapshot()).toEqual(before);
+}));
