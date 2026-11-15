@@ -1,6 +1,6 @@
 {
   "name": "@getopencrawl/opencrawl-core",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "opencrawlCliVersion": "0.4.73",
   "type": "module",
   "license": "Apache-2.0",
@@ -136,7 +136,7 @@
     "test": "npm run build && npm run typecheck:tooling && node --test test/*.test.mjs",
     "build": "node tools/build.mts",
     "typecheck": "tsc --noEmit",
-    "prepack": "npm run build && npm run build --prefix web-v2",
+    "prepack": "npm run build && npm run build --prefix web-v2 && node tools/package-contents.mts",
     "typecheck:tooling": "tsc --project tsconfig.tooling.json",
     "app": "node dist/src/selfhost/server.mjs",
     "app:worker": "node dist/src/selfhost/worker.mjs"
