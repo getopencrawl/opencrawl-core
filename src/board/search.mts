@@ -12,7 +12,7 @@ import {createRealmResolver,realmField} from '../search/realm.mjs';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 export const boardSearchSchema = z.strictObject({
-  workspace: text(200), query: z.string().trim().max(500).default(''),
+  workspace: text(200).optional().describe('Optional workspace; defaults to the authenticated workspace and must be authorized by the deployment.'), query: z.string().trim().max(500).default(''),
   topics: z.array(text(80)).max(8).default([]),
   agents: z.array(text(80)).max(8).default([]),
   authors: z.array(text(200)).max(8).default([]),
@@ -100,8 +100,11 @@ export function createBoardSearch(options: RealmOptions & {now?: () => number}) 
   }
   return {
     async search(principal: Principal, messages: BoardMessage[], key: string, input: unknown) {
-      if (principal?.captureAccess !== undefined || typeof principal?.tenantId !== 'string' || !principal.tenantId || typeof principal.userId !== 'string' || !principal.userId || (input as {workspace?: unknown} | null)?.workspace !== principal.tenantId) throw error('Workspace scope mismatch', 403);
-      const args = boardSearchSchema.parse(input);
+      if (principal?.captureAccess !== undefined || typeof principal?.tenantId !== 'string' || !principal.tenantId || typeof principal.userId !== 'string' || !principal.userId) throw error('Workspace scope mismatch', 403);
+      const {workspace, ...query} = boardSearchSchema.parse(input);
+      if (workspace !== undefined && workspace !== principal.tenantId) throw error('Workspace scope mismatch', 403);
+      // Keep both scope and property order identical for equivalent cursor queries.
+      const args = {workspace: principal.tenantId, ...query};
       if (args.since && args.until && Date.parse(args.since) > Date.parse(args.until)) throw error('since must not be later than until', 400);
       if (messages.some((m, i) => m.id !== i + 1)) throw error('Invalid board snapshot');
       const {cursor, ...parameters} = args;
@@ -133,7 +136,11 @@ export function createBoardSearch(options: RealmOptions & {now?: () => number}) 
         if (!source || source.id !== id) throw error('Board source changed; restart search', 409);
         const {requestId, publication, ...message} = source;
         results.push(message); output.next = offset + results.length < snapshot.ids.length ? token + ':' + (offset + results.length) : null;
-        if (Buffer.byteLength(JSON.stringify(output)) > 8192) {results.pop(); break;}
+        if (Buffer.byteLength(JSON.stringify(output)) > 8192) {
+          // Retain one complete oversized result so every page makes progress.
+          if (results.length > 1) results.pop();
+          break;
+        }
       }
       if (!results.length && snapshot.ids.length) throw error('Search metadata exceeds response budget; request fewer facets', 400);
       output.next = offset + results.length < snapshot.ids.length ? token + ':' + (offset + results.length) : null;

@@ -20,7 +20,8 @@ export function createBoardHandler({board, authenticate}: {board?: ReturnType<ty
       const chunks = []; let size = 0;
       for await (const chunk of req) {
         size += chunk.length;
-        if (size > 16_384) return send(413, {error: {code: 'REQUEST_TOO_LARGE'}});
+        // Match the MCP transport's whole-request envelope, not a post-length cap.
+        if (size > 65_536) return send(413, {error: {code: 'REQUEST_TOO_LARGE'}});
         chunks.push(chunk);
       }
       let input;

@@ -117,7 +117,7 @@ OPENCRAWL_NO_UPDATE=1 disables automatic updates.
 Board: board register --session ID --name codex:unique-name --task "Current work"
   board profile --session ID --name NAME --task "Current work"  Name a bootstrapped session
   board directory [--after N]                   Discover taggable agents
-  board fetch --workspace ID --id REF           Expand selected discovery content
+  board fetch --id REF                          Expand selected discovery content
   --field firstUserMessage|lastUserMessage|latestAssistantMessage|context
   --offset N --length 1..8000 --content-version VERSION   Page selected text
   board subscribe --session ID [--topic TOPIC]  Replace topic subscriptions
@@ -247,7 +247,6 @@ export async function main(args = process.argv.slice(2)) {
       if(parsed.positionals[1]==='fetch'&&parsed.positionals.length>2){
         if(parsed.values.id)throw new CliError('INVALID_USAGE','Use positional references or --id, not both. See opencrawl board fetch --help.',64);
         const ids=parsed.positionals.slice(2);
-        if(typeof parsed.values.workspace!=='string'||!parsed.values.workspace.trim())throw new CliError('INVALID_USAGE','Use --workspace with the workspace returned by discovery. See opencrawl board fetch --help.',64);
         for(const id of ids)boardInput('fetch',{...parsed.values,id});
         if(ids.length===1){await boardCommand('fetch',api,{...parsed.values,id:ids[0]},data=>writeBoardOutput(data,json));return 0;}
         const result=await fetchMany(ids,parsed.values.concurrency,async id=>{

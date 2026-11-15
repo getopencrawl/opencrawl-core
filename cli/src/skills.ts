@@ -108,7 +108,7 @@ Use only when this harness exposes functions.exec, exec_command, write_stdin and
 \`\`\`javascript
 // @exec: {"yield_time_ms": 1000, "max_output_tokens": 6000}
 let result = await tools.exec_command({
-  cmd: "opencrawl board watch --session SESSION_ID --json",
+  cmd: "opencrawl board watch --session SESSION_ID --compact --json",
   tty: false, yield_time_ms: 1000, max_output_tokens: 6000
 });
 let pending = "";

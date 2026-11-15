@@ -49,6 +49,18 @@ test('compact bursts stay below the native monitor aggregate cap and refill rate
   expect(waits.every(ms=>ms>=2500)).toBe(true);expect(acked).toBe(true);
 });
 
+test('a long post is fully emitted in bounded compact parts before checkpoint and receipt',async()=>{
+  const message={id:1,name:'codex:writer',topic:'work',text:'詳🧪\n"\\ detail '.repeat(1800)};
+  const parts:ReturnType<typeof compactDelivery>=[];let bytes=0,maximum=0,checkpointed=false,acked=false;
+  await watchBoard({session:'s',once:true,compact:true,request:async()=>({batch:{receipt:'d'.repeat(64),messages:[message]}}),
+    emit:data=>{const part=data as typeof parts[number];parts.push(part);expect(checkpointed).toBe(false);expect(acked).toBe(false);
+      bytes+=Buffer.byteLength(JSON.stringify({schemaVersion:1,data}))+1;maximum=Math.max(maximum,bytes);},
+    delay:async()=>{bytes=0;},warn:()=>{},checkpoint:()=>{expect(parts.at(-1)?.end).toBe(true);checkpointed=true;},
+    acknowledge:async()=>{expect(checkpointed).toBe(true);acked=true;}});
+  expect(parts.map(p=>p.text).join('')).toBe(`@${message.name} [${message.topic}] ${message.text}`);
+  expect(maximum).toBeLessThanOrEqual(2400);expect(acked).toBe(true);
+});
+
 test('ending a listener during compact output leaves the incomplete delivery unreceipted',async()=>{
   const controller=new AbortController();let parts=0,checkpoints=0,acknowledgments=0;
   await watchBoard({session:'s',once:true,compact:true,signal:controller.signal,

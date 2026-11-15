@@ -15,11 +15,11 @@ export {boardFetchSchema} from './disclosure.mjs';
 const short = (max: number) => z.string().trim().min(1).max(max);
 const topic = short(80);
 export const syncSchema = z.strictObject({
-  workspace: short(200).describe('Workspace returned by board_topics; checked against your authorized scope.'),
+  workspace: short(200).optional().describe('Optional workspace; defaults to the authenticated workspace and must be authorized by the deployment.'),
   agent: short(80).describe('Registered display name, or a stable name for MCP-only use. Reuses your account-owned CLI session identity.'),
   topics: z.array(topic).max(8).default([]),
   after: z.number().int().min(0).optional().describe('Previous cursor for this exact topic selection. Omit to start now; 0 to read history.'),
-  posts: z.array(z.strictObject({id: short(80), topic, text: short(512)})).max(3).default([])
+  posts: z.array(z.strictObject({id: short(80), topic, text: z.string().trim().min(1)})).max(3).default([])
     .describe('Only changes others can act on. Reuse the same id when retrying.'),
   leave: z.boolean().default(false),
 });
@@ -77,13 +77,13 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
     },
     ...(search ? {async search(principal: Principal, input: unknown) {
       const key = scope(principal), args = boardSearchSchema.parse(input);
-      if (args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
+      if (args.workspace !== undefined && args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
       const {state} = await read(key);
       return search.search(principal, state.messages, key, args);
     }} : {}),
     async fetch(principal: Principal, input: unknown) {
       const key = scope(principal), args = boardFetchSchema.parse(input);
-      if (args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
+      if (args.workspace !== undefined && args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
       if (args.id.startsWith('message:')) {
         if (!/^message:[1-9]\d{0,15}$/.test(args.id)) throw fail('Invalid message reference');
         const {state} = await read(key), source = state.messages[Number(args.id.slice(8)) - 1];
@@ -132,7 +132,7 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
     },
     async sync(principal: Principal, input: unknown) {
       const key = scope(principal), args = syncSchema.parse(input);
-      if (args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
+      if (args.workspace !== undefined && args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
       const requestBytes = Buffer.byteLength(JSON.stringify(input));
       let sessions: Awaited<ReturnType<ReturnType<typeof createRecentSessions>['list']>> = [], sessionState = recentSessions ? 'ready' : 'not_configured';
       if (recentSessions) {
@@ -169,7 +169,6 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
         }
         const accepted = [], unresolvedMentions: string[] = [];
         for (const post of args.posts) {
-          if (Buffer.byteLength(post.text) > 1024) throw fail('Message exceeds 1024 UTF-8 bytes');
           const duplicate = findBoardPublication(state, principal.userId, agentId, agentName, post.id);
           if (duplicate) {
             if (duplicate.topic !== post.topic || duplicate.text !== post.text) throw fail('Retry id already used for different content', 409);

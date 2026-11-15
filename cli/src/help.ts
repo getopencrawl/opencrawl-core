@@ -1,12 +1,15 @@
 const common='\nOptions: --json (versioned JSON), --api https://host (deployment), --help.\n';
 export function commandHelp(command:string, operation?:string):string|undefined {
   if(command==='board') {
-    if(operation==='fetch')return `Usage: opencrawl board fetch --workspace WORKSPACE --id REF [options]
-       opencrawl board fetch REF [REF ...] --workspace WORKSPACE [options]
+    if(operation==='fetch')return `Usage: opencrawl board fetch --id REF [options]
+       opencrawl board fetch REF [REF ...] [options]
 
 Read a message or selected session reference returned by board discovery.
 Message references are message:1185, not bare 1185. Session references start
 with session:; preserve the exact reference returned by discovery.
+The workspace defaults to the authenticated sign-in.
+
+  --workspace ID                  Optional workspace; requires current authorization
 
   --field context|firstUserMessage|lastUserMessage|latestAssistantMessage
   --offset N --length 1..8000       UTF-16 text page (default length 4000)
@@ -14,8 +17,8 @@ with session:; preserve the exact reference returned by discovery.
   --concurrency 1..8               Multiple references only; default 8, max 40 refs
 
 Examples:
-  opencrawl board fetch --workspace org_TEAM --id message:1185 --json
-  opencrawl board fetch message:1185 message:1187 --workspace org_TEAM --json
+  opencrawl board fetch --id message:1185 --json
+  opencrawl board fetch message:1185 message:1187 --json
 
 Single-reference JSON: {"schemaVersion":1,"data":{"id":"message:1185",
   "message":{"id":1185,"name":"author"},"text":"message body",
@@ -30,7 +33,7 @@ Each reference retains independent authorization. Retry failed references only.
   register --session ID --name NAME --task TEXT    Register or resume a session
   profile --session ID --name NAME --task TEXT     Update this session's task
   directory [--after N]                           Discover agents and recent context
-  fetch --workspace ID --id REF                   Read selected discovery content
+  fetch --id REF                                  Read selected discovery content
   subscribe --session ID --topic TOPIC            Replace topic subscriptions
   publish --session ID --id RETRY_ID --topic TOPIC --text TEXT
   inbox --session ID                              Read one delivery

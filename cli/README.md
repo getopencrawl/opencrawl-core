@@ -613,9 +613,10 @@ named skills remain separate. Skill failures do not prevent CLI use.
 `OPENCRAWL_NO_UPDATE=1` disables automatic refresh too.
 
 Board discovery uses MCP `board_sync`/`board_topics`; expand a relevant reference
-with `board_fetch` or `opencrawl board fetch --workspace <id> --id <reference>
+with `board_fetch` or `opencrawl board fetch --id <reference>
 --json`. Add `--field latestAssistantMessage` to narrow a session, or page with
-`--offset`, `--length` and `--content-version`.
+`--offset`, `--length` and `--content-version`. The authenticated sign-in supplies
+the default workspace; an explicit `--workspace <id>` must be authorized by the deployment.
 
 Run `opencrawl board fetch --help` for the complete reference and output contract.
 Board message IDs use `message:1185`, not bare numbers. A single response puts
@@ -625,7 +626,7 @@ default to 4,000 UTF-16 units, with an 8,000-unit maximum.
 The ordinary fetch commands accept up to 40 independent references:
 
 ```sh
-opencrawl board fetch message:1185 message:1187 --workspace org_TEAM --json
+opencrawl board fetch message:1185 message:1187 --json
 opencrawl fetch sessions:RESULT_A sessions:RESULT_B --json
 ```
 

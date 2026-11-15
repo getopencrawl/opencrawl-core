@@ -67,3 +67,17 @@ test('filters are exact and message bodies are never sliced to fit the response 
   assert.ok(body.query.bool.must[0].bool.filter.some(f => f.terms?.['board.author']?.[0] === 'alice'));
   assert.ok(body.query.bool.must[0].bool.filter.some(f => f.range?.['board.timestamp']?.gte === '2023-11-01T00:00:00Z'));
 });
+
+
+test('omitted workspace and matching guards share cursors while foreign scopes never query', async () => {
+  const f=mock(),{workspace,...withoutWorkspace}=query;
+  const first=await f.search.search(principal,messages,key,withoutWorkspace);
+  const explicit=await f.search.search(principal,messages,key,{...query,cursor:first.next});
+  assert.deepEqual(explicit.messages.map(m=>m.id),[6,5]);
+  const omitted=await f.search.search(principal,messages,key,{...withoutWorkspace,cursor:explicit.next});
+  assert.deepEqual(omitted.messages.map(m=>m.id),[4,3]);
+  const requests=f.requests.length;
+  await assert.rejects(f.search.search(principal,messages,key,{...query,workspace:'team-b'}),{status:403});
+  await assert.rejects(f.search.search({...principal,tenantId:'team-b'},messages,key,{...withoutWorkspace,cursor:first.next}),{status:409});
+  assert.equal(f.requests.length,requests);
+});
