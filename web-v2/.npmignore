@@ -1,0 +1,5 @@
+# The root package files list selects dist/selfhost. Do not inherit Git's dist exclusion.
+node_modules/
+.env*
+test-results/
+playwright-report/
