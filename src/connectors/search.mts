@@ -63,21 +63,23 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
           if (!binding || d.tenantId !== tenantId || d.workspaceId !== binding.workspaceId || d.provider !== binding.provider || !SEARCHABLE_KINDS.includes(d.kind) || d.deleted || hit._id !== documentId(binding, d.kind, d.sourceId)) throw new Error('Search returned an invalid connector scope');
         }
         const ids = [...new Set(candidates.filter(hit => hit._source.provider === 'slack').map(hit => documentId(byConnection.get(hit._source.connectionId)!, 'channel', hit._source.channelId!)))];
-        const channels = ids.length ? await request('/_mget', {body: JSON.stringify({ids})}) : {docs: []};
-        if (!Array.isArray(channels.docs)) throw new Error('Missing channel visibility metadata');
+        const children = candidates.filter(hit => hit._source.parentId);
+        const parentIds = [...new Set(children.map(hit => documentId(byConnection.get(hit._source.connectionId)!, hit._source.parentKind!, hit._source.parentId!)))];
+        // Both guards depend only on this candidate page. Read their metadata
+        // together, then validate each role independently, including shared IDs.
+        const metadataIds = [...new Set([...ids, ...parentIds])];
+        const metadata = metadataIds.length ? await request('/_mget', {body: JSON.stringify({ids: metadataIds})}) : {docs: []};
+        if (!Array.isArray(metadata.docs) || metadata.docs.length !== metadataIds.length ||
+          new Set(metadata.docs.map(item => item._id)).size !== metadataIds.length || metadata.docs.some(item => !metadataIds.includes(item._id))) throw new Error('Incomplete connector metadata lookup');
         const allowed = new Set();
-        for (const item of channels.docs) {
+        for (const item of metadata.docs.filter(item => ids.includes(item._id))) {
           if (!item.found) continue;
           const d = item._source, binding = byConnection.get(d?.connectionId);
           if (!binding || d.tenantId !== tenantId || d.workspaceId !== binding.workspaceId || d.provider !== 'slack' || d.kind !== 'channel' || !ids.includes(item._id) || item._id !== documentId(binding, 'channel', d.sourceId)) throw new Error('Channel metadata scope mismatch');
           if (d.publicChannel === true && !d.deleted) allowed.add(item._id);
         }
-        const children = candidates.filter(hit => hit._source.parentId);
-        const parentIds = [...new Set(children.map(hit => documentId(byConnection.get(hit._source.connectionId)!, hit._source.parentKind!, hit._source.parentId!)))];
-        const parents = parentIds.length ? await request('/_mget', {body: JSON.stringify({ids: parentIds})}) : {docs: []};
-        if (!Array.isArray(parents.docs)) throw new Error('Missing resource revision metadata');
         const current = new Map();
-        for (const item of parents.docs) {
+        for (const item of metadata.docs.filter(item => parentIds.includes(item._id))) {
           if (!item.found) continue;
           const d = item._source, binding = byConnection.get(d?.connectionId);
           if (!binding || d.tenantId !== tenantId || d.workspaceId !== binding.workspaceId || d.provider !== binding.provider || !parentIds.includes(item._id) || item._id !== documentId(binding, d.kind, d.sourceId)) throw new Error('Parent metadata scope mismatch');

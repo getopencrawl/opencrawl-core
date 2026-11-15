@@ -53,9 +53,11 @@ export function createConnectorResolver({environment, generation, registry, stor
       const accessed = new Set<string>();
       const result = await resolved[0].search.search(principal, resolved.map(r => r.binding), query, async (binding, sourceId) => {
         const match = resolved.find(item => item.binding.connectionId === binding.connectionId);
-        if (!match?.resourceAccess) return false;
+        if (!match?.drive) return false;
         accessed.add(binding.connectionId);
-        return match.resourceAccess(sourceId);
+        // No results leave this operation before the final audience check.
+        // Every file still receives its own fresh provider ACL inspection.
+        return Boolean(await match.drive.inspect(sourceId));
       });
       // A concurrent disconnect must not return results after we observe it.
       for (const record of records) await resolve({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation});
