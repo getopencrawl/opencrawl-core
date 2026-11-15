@@ -119,11 +119,12 @@ for (const backend of ['sqlite', 'opensearch']) {
         timestamp:new Date(first+i*1000).toISOString(),origin:i%3===0?['subagent','subagent']:'desktop'}})));
       await realm.refresh(principal);
       const body={size:0,track_total_hits:true,query:{range:{'session.sessionId':{gte:'atomic-',lt:'atomic.'}}},aggs:{
-        sessions:{multi_terms:{terms:[{field:'session.sessionId'}],size:50000,order:{_key:'asc'}},aggs:{
+        sessions:{multi_terms:{terms:[{field:collection.field('userId')},{field:collection.field('harness')},{field:collection.field('sessionId')}],size:50000,order:{_key:'asc'}},aggs:{
           first:{min:{field:'session.timestamp'}},last:{max:{field:'session.timestamp'}},subagents:{term_count:{field:'session.origin',value:'subagent'}}}},
         children:{term_count:{field:'session.origin',value:'subagent'}}}};
       const result=await collection.search(principal,body),group=result.aggregations.sessions;
       assert.equal(result.hits.total.value,count);assert.equal(group.buckets.length,count);assert.equal(group.sum_other_doc_count,0);
+      assert.deepEqual(group.buckets[0].key,[principal.userId,'codex','atomic-00000']);
       assert.equal(result.aggregations.children.value,Math.ceil(count/3),'duplicate keyword values count once per document');
       assert.equal(group.buckets[0].first.value,first);assert.equal(group.buckets.at(-1).last.value,first+(count-1)*1000);
       assert.equal(group.buckets[0].subagents.value,1);assert.equal(group.buckets[1].subagents.value,0);
