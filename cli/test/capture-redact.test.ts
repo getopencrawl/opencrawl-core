@@ -8,6 +8,7 @@ const samples=[
   'ghp_'+'A'.repeat(36), 'github_pat_'+'b'.repeat(82), 'glpat-'+'c'.repeat(20),
   'AKIA'+'A'.repeat(16), 'ASIA'+'B'.repeat(16), 'AIza'+'d'.repeat(35),
   'ya29.'+'e'.repeat(50), 'sk-ant-api03-'+'f'.repeat(93)+'AA',
+  'crsr_'+'c'.repeat(64),
   'sk-proj-'+'g'.repeat(140), 'sk-'+'a'.repeat(20)+'T3BlbkFJ'+'b'.repeat(20),
   'sk_live_'+'h'.repeat(24), 'rk_test_'+'i'.repeat(30),
   'xoxb-'+'1'.repeat(12)+'-'+'2'.repeat(12)+'-'+'j'.repeat(24),

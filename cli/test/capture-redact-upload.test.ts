@@ -7,6 +7,7 @@ import {captureDir,captureTranscript,drainCaptureNotices,flushCaptures,type Capt
 import {hash} from '../src/capture/parse.ts';
 
 const secret='ghp_'+'S'.repeat(36),uuid='550e8400-e29b-41d4-a716-446655440000';
+const cursorWorkerSecret='crsr_'+'c'.repeat(64);
 test('all capture sources and legacy retries mask locally before batch and decoded attachment egress',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'opencrawl-mask-')),saved={...process.env};
   const writes:{url:string,body:Buffer}[]=[];let lostAck=true;
@@ -34,7 +35,7 @@ test('all capture sources and legacy retries mask locally before batch and decod
       {type:'session_meta',payload:{id:uuid,source:'cli',cwd:sensitiveProject,title:'title '+secret}},
       {type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'prompt '+secret+' '+uuid},{type:'input_image',image_url:'data:text/plain;base64,'+Buffer.from('attachment '+secret+' '+uuid).toString('base64')}]}},
       {type:'response_item',payload:{type:'function_call',call_id:uuid,arguments:JSON.stringify({api_key:'opaque-sensitive-value',traceId:uuid})}},
-      {type:'response_item',payload:{type:'function_call_output',call_id:uuid,output:'tool result '+secret}},
+      {type:'response_item',payload:{type:'function_call_output',call_id:uuid,output:'tool result '+secret+' cursor-agent --api-key '+cursorWorkerSecret}},
       {type:'response_item',payload:{type:'message',role:'assistant',content:'reply '+secret}},
     ];
     const transcript=records.map(r=>JSON.stringify(r)+'\n').join('');writeFileSync(codex,transcript);
@@ -64,6 +65,7 @@ test('all capture sources and legacy retries mask locally before batch and decod
     expect((await flushCaptures()).uploaded).toBe(5);
     for(const write of writes) {
       expect(write.body.toString()).not.toContain(secret);expect(write.body.toString()).not.toContain('opaque-sensitive-value');
+      expect(write.body.toString()).not.toContain(cursorWorkerSecret);
       if(write.url.startsWith('/api/sessions/attachments/')){
         const url=new URL(write.url,api);expect(url.pathname).toBe('/api/sessions/attachments/'+hash(write.body));
         expect(url.searchParams.get('installationId')).toBe(uuid);

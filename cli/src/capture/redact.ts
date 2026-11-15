@@ -18,6 +18,8 @@ const credentials:RegExp[] = [
   /\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g,
   /\bya29\.[A-Za-z0-9_-]{20,}/g,
   /\bsk-ant-(?:api03|admin01)-[A-Za-z0-9_-]{20,}/g,
+  // Cursor worker credentials can appear as bare command-line arguments.
+  /\bcrsr_[a-f0-9]{64}\b/g,
   /\bsk-(?:(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})/g,
   /\b(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{10,}/g,
   /\bxox[baprse]-[A-Za-z0-9-]{20,}/g,
