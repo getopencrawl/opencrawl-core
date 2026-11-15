@@ -87,19 +87,17 @@ for (const backend of ['sqlite', 'opensearch']) test(`${backend}: captured spans
   await assert.rejects(search.overlap(null), /Authentication|scope/);
 });
 
-test('key pagination keeps complete intervals and rejects truncated, repeated or malformed pages', async () => {
-  const bucket = (user, session) => ({key: [user, 'codex', session], doc_count: 2, first: {value: midnight}, last: {value: now}, subagents: {doc_count: 0}});
+test('one bounded aggregation rejects truncated, repeated or malformed groups', async () => {
+  const bucket = (user, session) => ({key: [user, 'codex', session], doc_count: 2, first: {value: midnight}, last: {value: now}, subagents: {value: 0}});
   const principal = {tenantId: 'org_a', userId: 'a'}, controls = createControls({store: memorySessionStore(), prefix: 'test'});
-  let mode = 'ok', reads = 0, bodies = [];
+  let mode = 'ok', bodies = [];
   const collection = {field: f => 'session.' + f, search: async (_, body) => {
-    bodies.push(body); const second = reads++ % 2 === 1;
-    return {timed_out: mode === 'timeout', _shards: {failed: mode === 'shard' ? 1 : 0}, hits: {total: {relation: 'eq', value: second ? 2 : 4}}, aggregations: {sessions: {
-      buckets: [bucket(second && mode !== 'repeat' ? 'b' : 'a', 's')], sum_other_doc_count: second ? 0 : 2, doc_count_error_upper_bound: mode === 'inexact' ? 1 : 0,
+    bodies.push(body);
+    return {timed_out: mode === 'timeout', _shards: {failed: mode === 'shard' ? 1 : 0}, hits: {total: {relation: 'eq', value: mode === 'truncated' ? 6 : 4}}, aggregations: {sessions: {
+      buckets: [bucket('a', 's'), bucket(mode === 'repeat' ? 'a' : 'b', 's')], sum_other_doc_count: mode === 'truncated' ? 2 : 0, doc_count_error_upper_bound: mode === 'inexact' ? 1 : 0,
     }}};
   }};
   assert.equal((await sessionOverlap(collection, controls, principal, {days: 1, now})).daily[0].peak, 2);
-  assert.match(JSON.stringify(bodies[1]), /"gt":"a"/);
-  assert.match(JSON.stringify(bodies[1]), /"gt":"codex"/);
-  assert.match(JSON.stringify(bodies[1]), /"gt":"s"/);
-  for (mode of ['timeout', 'shard', 'inexact', 'repeat']) {reads = 0; await assert.rejects(sessionOverlap(collection, controls, principal, {days: 1, now}));}
+  assert.equal(bodies.length, 1);assert.equal(bodies[0].aggs.sessions.multi_terms.size, 50000);
+  for (mode of ['timeout', 'shard', 'inexact', 'repeat', 'truncated']) await assert.rejects(sessionOverlap(collection, controls, principal, {days: 1, now}));
 });

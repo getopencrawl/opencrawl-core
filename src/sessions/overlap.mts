@@ -40,11 +40,11 @@ export function dailyOverlap(intervals: readonly Interval[], days: number, now: 
 }
 
 const fields = ['userId', 'harness', 'sessionId'] as const;
-interface Bucket {key: string[]; doc_count: number; first: {value: number}; last: {value: number}; subagents: {doc_count: number}}
+interface Bucket {key: string[]; doc_count: number; first: {value: number}; last: {value: number}; subagents: {value: number}}
 interface Buckets {buckets: Bucket[]; sum_other_doc_count: number; doc_count_error_upper_bound: number}
-class IncompleteOverlapResponse extends Error {}
+const MAX_GROUPS = 50_000;
 
-/** Key-ordered terms pages keep complete per-session spans on both realm backends.
+/** One bounded aggregation keeps every interval on the same search read view.
  * Never restrict event time to the displayed window: a span may begin earlier.
  * Bounds fail closed instead of turning a partial scan into low concurrency. */
 export async function sessionOverlap(collection: SearchCollection, controls: ReturnType<typeof createControls> | null,
@@ -57,55 +57,30 @@ export async function sessionOverlap(collection: SearchCollection, controls: Ret
   const f = (field: string) => collection.field(field);
   const filter: QueryBody[] = [{term: {tenantId: principal.tenantId}}, {term: {[f('chunk')]: 0}}, visibleTo('session', principal),
     {range: {[f('timestamp')]: {lte: until}}}, {range: {[f('receivedAt')]: {lte: until}}}];
-  let pageReads = 0;
-  async function scan(): Promise<Bucket[]> {
-    let after: string[] | undefined;
-    let remaining: number | undefined;
-    const candidates: Bucket[] = [];
-    const seen = new Set<string>();
-    for (;;) {
-      if (pageReads++ >= 25 || Date.now() > deadline) throw new Error('Session overlap scan limit exceeded');
-      const continuation = after ? [{bool: {minimum_should_match: 1, should: fields.map((field, i) => ({bool: {filter: [
-        ...fields.slice(0, i).map((previous, j) => ({term: {[f(previous)]: after![j]}})), {range: {[f(field)]: {gt: after![i]}}},
-      ]}}))}}] : [];
-      const result = await collection.search(principal, {size: 0, track_total_hits: true, timeout: '2s', query: {bool: {filter: [...filter, ...continuation]}}, aggs: {
-        sessions: {multi_terms: {terms: fields.map(field => ({field: f(field)})), size: 2000, order: {_key: 'asc'}, show_term_doc_count_error: true}, aggs: {
-          first: {min: {field: f('timestamp')}}, last: {max: {field: f('timestamp')}}, subagents: {filter: {term: {[f('origin')]: 'subagent'}}},
-        }},
-      }});
-      const aggregation = result.aggregations?.sessions as unknown as Buckets | undefined;
-      if (result.timed_out || result._shards?.failed || result.hits.total?.relation !== 'eq' || !aggregation || !Array.isArray(aggregation.buckets)
-        || !Number.isSafeInteger(result.hits.total.value) || result.hits.total.value < 0 || aggregation.buckets.length > 2000
-        || remaining !== undefined && result.hits.total.value !== remaining
-        || aggregation.doc_count_error_upper_bound !== 0 || !Number.isSafeInteger(aggregation.sum_other_doc_count) || aggregation.sum_other_doc_count < 0) throw new IncompleteOverlapResponse('Incomplete session overlap response');
-      let counted = 0;
-      for (const bucket of aggregation.buckets) {
-        const [userId, harness, sessionId] = bucket.key ?? [];
-        if (bucket.key?.length !== 3 || typeof userId !== 'string' || !userId || !isSessionHarness(harness) || typeof sessionId !== 'string' || !sessionId
-          || !Number.isSafeInteger(bucket.doc_count) || bucket.doc_count <= 0 || !Number.isSafeInteger(bucket.subagents?.doc_count) || bucket.subagents.doc_count < 0 || bucket.subagents.doc_count > bucket.doc_count
-          || !Number.isFinite(bucket.first?.value) || !Number.isFinite(bucket.last?.value) || bucket.last.value < bucket.first.value || bucket.last.value > now) throw new Error('Invalid session overlap bucket');
-        const key = JSON.stringify(bucket.key);
-        if (seen.has(key)) throw new Error('Session overlap cursor did not advance');
-        seen.add(key); counted += bucket.doc_count;
-        if (!bucket.subagents.doc_count && bucket.last.value > since && bucket.first.value < now) candidates.push(bucket);
-      }
-      if (counted + aggregation.sum_other_doc_count !== result.hits.total.value) throw new IncompleteOverlapResponse('Incomplete session overlap coverage');
-      if (!aggregation.sum_other_doc_count) break;
-      remaining = aggregation.sum_other_doc_count;
-      after = aggregation.buckets.at(-1)?.key;
-      if (!after) throw new Error('Session overlap cursor missing');
-    }
-    return candidates;
+  const result = await collection.search(principal, {size: 0, track_total_hits: true, timeout: '2s', query: {bool: {filter}}, aggs: {
+    sessions: {multi_terms: {terms: fields.map(field => ({field: f(field)})), size: MAX_GROUPS, order: {_key: 'asc'}, show_term_doc_count_error: true}, aggs: {
+      first: {min: {field: f('timestamp')}}, last: {max: {field: f('timestamp')}}, subagents: {term_count: {field: f('origin'), value: 'subagent'}},
+    }},
+  }});
+  if (Date.now() > deadline) throw new Error('Session overlap scan limit exceeded');
+  const aggregation = result.aggregations?.sessions as unknown as Buckets | undefined;
+  if (result.timed_out || result._shards?.failed || result.hits.total?.relation !== 'eq' || !aggregation || !Array.isArray(aggregation.buckets)
+    || !Number.isSafeInteger(result.hits.total.value) || result.hits.total.value < 0 || aggregation.buckets.length > MAX_GROUPS
+    || aggregation.doc_count_error_upper_bound !== 0 || !Number.isSafeInteger(aggregation.sum_other_doc_count) || aggregation.sum_other_doc_count < 0) throw new Error('Incomplete session overlap response');
+  let counted = 0;
+  const candidates: Bucket[] = [], seen = new Set<string>();
+  for (const bucket of aggregation.buckets) {
+    const [userId, harness, sessionId] = bucket.key ?? [];
+    if (bucket.key?.length !== 3 || typeof userId !== 'string' || !userId || !isSessionHarness(harness) || typeof sessionId !== 'string' || !sessionId
+      || !Number.isSafeInteger(bucket.doc_count) || bucket.doc_count <= 0 || !Number.isSafeInteger(bucket.subagents?.value) || bucket.subagents.value < 0 || bucket.subagents.value > bucket.doc_count
+      || !Number.isFinite(bucket.first?.value) || !Number.isFinite(bucket.last?.value) || bucket.last.value < bucket.first.value || bucket.last.value > now) throw new Error('Invalid session overlap bucket');
+    const key = JSON.stringify(bucket.key);
+    if (seen.has(key)) throw new Error('Duplicate session overlap bucket');
+    seen.add(key); counted += bucket.doc_count;
+    if (!bucket.subagents.value && bucket.last.value > since && bucket.first.value < now) candidates.push(bucket);
   }
-  // Index refresh can change a later page after the earlier aggregation was read.
-  // Discard that entire attempt and restart once, sharing the original deadline
-  // and page limit. Never return partial intervals or retry authorization errors.
-  let candidates: Bucket[];
-  try {candidates = await scan();}
-  catch (error) {
-    if (!(error instanceof IncompleteOverlapResponse)) throw error;
-    candidates = await scan();
-  }
+  if (counted + aggregation.sum_other_doc_count !== result.hits.total.value) throw new Error('Incomplete session overlap coverage');
+  if (aggregation.sum_other_doc_count) throw new Error('Session overlap scan limit exceeded');
   // Permission state is authoritative even when the search projection is stale.
   // Inventory controls once per owner/harness rather than one object read per session.
   const groups = new Map<string, Bucket[]>();
