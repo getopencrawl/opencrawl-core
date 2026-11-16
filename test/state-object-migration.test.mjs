@@ -243,3 +243,17 @@ test('finite reviewed tenant sets preserve colliding resource IDs and reject cro
  const marker=sessionCatchupMarker({prefix,sourceId:'shared-hosted-source',taskQueue:'session-indexing-v1',generation:'old-generation'});
  assert.deepEqual((await bound.process(marker.markerKey,encode(marker.marker),{write:true})).target,marker.marker);
 });
+
+
+test('retained Slack catalogs require the original registry workspace even for disconnected records',{skip:!postgresUrl},async t=>{
+ const f=await setup(t),entry=sources(f).find(([key])=>key.endsWith('/capture/messages-v1/catalog.json'));
+ assert.equal(f.record.status,'disconnected');
+ const {workspace,...missing}=f.record;
+ await assert.rejects(createObjectMigration({...f.options,registryRecords:[missing]}).process(...entry,{write:false}),/Invalid connector scope/);
+ await assert.rejects(createObjectMigration({...f.options,registryRecords:[{...f.record,workspace:'TFOREIGN'}]}).process(...entry,{write:false}),/prefix does not match/);
+ const correct=await f.migration.process(...entry,{write:false});assert.equal(correct.target,null);
+ const migrated=await f.migration.process(...entry,{write:true});assert.deepEqual(migrated.target,migrated.source);
+ const state=await createApplicationState({database:f.database});
+ const binding={tenantId:f.record.tenantId,connectionId:f.record.integrationId,workspaceId:workspace,provider:'slack',access:'team-public',rawPrefix:f.record.s3Prefix+'/'};
+ assert.deepEqual(await state.slackCapture.readCatalog(binding,'messages-v1'),JSON.parse(entry[1]));
+});

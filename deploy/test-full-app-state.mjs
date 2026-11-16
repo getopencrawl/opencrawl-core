@@ -147,8 +147,10 @@ if(phase==='seed'){
  await store.put(valueReportKey(prefix,owner.tenantId),Buffer.from(JSON.stringify(expected.report)),'application/json');
  const identity=await createLocalIdentity({url:required('OPENCRAWL_URL'),secret:required('OPENCRAWL_AUTH_SECRET'),databasePath:required('OPENCRAWL_IDENTITY_PATH'),organizationId:owner.tenantId});
  try{expected.invitation=await identity.directory.userManagement.sendInvitation({organizationId:owner.tenantId,email:'pending-upgrade@example.com',inviterUserId:owner.userId,roleSlug:'member'});assert.equal(await identity.setupRequired(),false);}finally{identity.close();}
+ // The published lifecycle stores workspace before it creates the landing
+ // prefix and preserves it on disconnect. Seed that same authoritative binding.
  const registry=createSingleOrganizationRegistry({path:required('OPENCRAWL_REGISTRY_PATH'),organizationId:owner.tenantId});
- try{expected.integration=await registry.create({tenantId:owner.tenantId,userId:owner.userId,integrationId:expected.integrationId,provider:'slack',environment:'selfhost',scope:'team',status:'disconnected',createdAt:new Date().toISOString(),startDate:'2026-01-01T00:00:00Z',s3Bucket:raw.bucket,s3Prefix:binding.rawPrefix.slice(0,-1),connectedAccountId:expected.grant.id,provisionProtocol:1,provisionRun:'retained-run',provisionVersion:'retained-version'});}finally{registry.close();}
+ try{expected.integration=await registry.create({tenantId:owner.tenantId,userId:owner.userId,integrationId:expected.integrationId,provider:'slack',environment:'selfhost',scope:'team',status:'disconnected',createdAt:new Date().toISOString(),startDate:'2026-01-01T00:00:00Z',s3Bucket:raw.bucket,s3Prefix:binding.rawPrefix.slice(0,-1),workspace:binding.workspaceId,connectedAccountId:expected.grant.id,provisionProtocol:1,provisionRun:'retained-run',provisionVersion:'retained-version'});}finally{registry.close();}
  for(const [key,unit] of touched){const bytes=await raw.get(key);assert.ok(bytes);manifest.objects.push({key,unit,sha256:sha(bytes)});}
  manifest.objects.sort((a,b)=>a.key.localeCompare(b.key));
  writeFileSync(path,JSON.stringify(manifest),{mode:0o600});const {uid,gid}=statSync('/dev-state');chownSync(path,uid,gid);
