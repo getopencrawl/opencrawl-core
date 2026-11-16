@@ -523,9 +523,10 @@ or top padding. Do not stack two rules below the tabs.
 ### Settings and account menu
 
 The docked account row opens a native popover with the existing subtle surface,
-strong hairline boundary and panel radius. Email and the muted role form its
-summary. Below them, one full-width Settings link pairs the shared gear icon with
-a trailing chevron; Sign out is a separate quiet action with its shared icon.
+strong hairline boundary and panel radius. One full-width Settings link pairs the
+shared gear icon with a trailing chevron; Sign out is a separate quiet action with
+its shared icon. Keep identity in the docked row and omit the static email/role
+summary. Do not open an empty popover when no actions are available.
 Use the established hover and focus treatments. The account chevron turns while
 the popover is open; Escape closes it and returns focus to the account row.
 
