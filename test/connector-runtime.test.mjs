@@ -48,7 +48,7 @@ test('real runtime image: Drive continues past excluded pages and emits complete
 test('real runtime image: every connector manifest passes discovery on the pinned declarative runtime',{skip:!process.env.OPENCRAWL_TEST_CONNECTOR_RUNTIME},async t=>{
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-connector-runtime-'));t.after(()=>rm(dir,{recursive:true,force:true}));
   const image=`airbyte/source-declarative-manifest:${pin.version}@${pin.imageSha}`;
-  for(const id of ['slack','googledrive','notion','circleback','granola']){
+  for(const id of ['slack','googledrive','notion','circleback','granola','linear']){
     const manifest=connectorManifest(id),spec=manifest.spec.connection_specification,config={__injected_declarative_manifest:manifest};
     for(const key of spec.required)config[key]=key==='start_date'?'2026-01-01T00:00:00Z':key==='connected_account_id'?'ca_placeholder':spec.properties[key].type==='integer'?1:'placeholder';
     const file=join(dir,id+'.json');await writeFile(file,JSON.stringify(config));await chmod(file,0o644);
@@ -57,4 +57,33 @@ test('real runtime image: every connector manifest passes discovery on the pinne
     const refused=messages.find(message=>message.type==='TRACE'&&message.trace?.error)?.trace.error.message;
     assert.ok(messages.some(message=>message.type==='CATALOG'&&message.catalog.streams.length),`${id} does not load on declarative runtime ${pin.version}: ${refused||String(result.stderr||result.message||'no catalog').slice(0,400)}`);
   }
+});
+
+test('real runtime image: Linear continues past excluded pages and emits both supported streams',{skip:!process.env.OPENCRAWL_TEST_CONNECTOR_RUNTIME},async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'opencrawl-linear-runtime-'));
+  await chmod(dir,0o755); // The runtime reads the mounted fixture as its non-root user.
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const seen=[],document={id:'issue:22222222-2222-4222-8222-222222222222',kind:'issue',title:'ENG-42: Shared issue',url:'https://linear.app/example/issue/ENG-42',updatedAt:'2026-11-16T00:00:00Z',text:'Full body including the distant suffix',access:{policy:'linear-public-team-v1',contentHash:'receipt-preserved'}};
+  const server=createServer(async(req,res)=>{
+    let body='';for await(const part of req)body+=part;
+    const input=JSON.parse(body);seen.push(input);
+    if(req.url!=='/api/connector-proxy'||req.headers['x-api-key']!=='fixture-source-capability'||!['opencrawl://linear/issues','opencrawl://linear/comments'].includes(input.endpoint)) {res.writeHead(403);return res.end('{}');}
+    const token=input.parameters?.find(p=>p.name==='pageToken')?.value;
+    res.setHeader('Content-Type','application/json');
+    const row=input.endpoint.endsWith('/comments')?{...document,id:document.id.replace('issue:','comment:'),kind:'comment'}:document;
+    res.end(JSON.stringify({status:200,data:token==='next-page'?{documents:[row]}:{documents:[],nextPageToken:'next-page'}}));
+  });
+  await new Promise(resolve=>server.listen(0,'0.0.0.0',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const manifest=connectorManifest('linear'),host=process.platform==='linux'?'127.0.0.1':'host.docker.internal';
+  const config={__injected_declarative_manifest:manifest,credential_proxy_base_url:`http://${host}:${server.address().port}`,credential_proxy_api_key:'fixture-source-capability',connected_account_id:'ca_fixture',user_id:'selfhost:org_fixture:user_fixture'};
+  const catalog={streams:manifest.streams.map(stream=>({stream:{name:stream.name,json_schema:stream.schema_loader.schema,supported_sync_modes:['full_refresh']},sync_mode:'full_refresh',destination_sync_mode:'append'}))};
+  for(const [name,value] of [['config',config],['catalog',catalog]]){const file=join(dir,name+'.json');await writeFile(file,JSON.stringify(value));await chmod(file,0o644);}
+  const image=`airbyte/source-declarative-manifest:${pin.version}@${pin.imageSha}`;
+  const result=await run('docker',['run','--rm',...(process.platform==='linux'?['--network','host']:[]),'-v',`${dir}:/fixture:ro`,image,'read','--config','/fixture/config.json','--catalog','/fixture/catalog.json'],{maxBuffer:16*1024*1024,timeout:120000});
+  const messages=result.stdout.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}});
+  assert.deepEqual(messages.filter(m=>m.type==='RECORD').map(m=>m.record.stream).sort(),['comments','issues']);
+  assert.deepEqual(messages.filter(m=>m.type==='RECORD').map(m=>m.record.data.kind).sort(),['comment','issue']);
+  assert.ok(messages.filter(m=>m.type==='RECORD').every(m=>m.record.data.text===document.text));
+  assert.equal(messages.filter(m=>m.type==='TRACE'&&m.trace?.error).length,0);
+  assert.equal(seen.length,4);assert.equal(seen.filter(input=>input.parameters?.[0]?.value==='next-page').length,2);
 });

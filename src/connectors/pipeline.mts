@@ -3,6 +3,8 @@ import {authorize, objectStream, receiptKey, selectedObject, validateBinding} fr
 import {normalizeSlackFile} from './slack-files.mjs';
 import {normalizeSlack} from './slack.mjs';
 import {normalizeGitHub} from './github.mjs';
+import {normalizeLinear} from './linear.mjs';
+import type {LinearDocument} from '../integrations/linear-source.mjs';
 import {normalizeGoogleDrive} from './google-drive.mjs';
 import type {DriveDocumentRecord} from '../integrations/google-drive-source.mjs';
 import {readRecords} from './records.mjs';
@@ -61,7 +63,7 @@ export function createConnectorPipeline({binding, store, search, checkActive = a
           await active();await search.putDocuments(principal,binding,[file.manifest]);
           records++;heartbeat({records});return;
         }
-        const documents = binding.provider === 'slack' ? [normalizeSlack(binding, stream, envelope as AirbyteEnvelope<SlackRecord>, key)] : normalizeGitHub(binding, stream, envelope as AirbyteEnvelope<GitHubRecord>, key);
+        const documents = binding.provider === 'slack' ? [normalizeSlack(binding, stream, envelope as AirbyteEnvelope<SlackRecord>, key)] : binding.provider === 'linear' ? normalizeLinear(binding, stream, envelope as AirbyteEnvelope<LinearDocument>, key) : normalizeGitHub(binding, stream, envelope as AirbyteEnvelope<GitHubRecord>, key);
         for (const normalized of documents) {
           const bytes = Buffer.byteLength(JSON.stringify(normalized));
           if (batch.length >= 100 || batchBytes + bytes > 1024 * 1024) await flush();
