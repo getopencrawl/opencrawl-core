@@ -1,4 +1,5 @@
 import {test, expect} from 'bun:test';
+import {skillFiles, skillRevision} from '../src/skills.ts';
 import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
@@ -40,23 +41,25 @@ const clients=[
 function oldInstallation(home:string,selected=clients) {
   for(const client of selected) {
     mkdirSync(join(home,client.hooks,'..'),{recursive:true});
-    mkdirSync(join(home,client.skill),{recursive:true});
+    mkdirSync(join(home,client.skill,'references'),{recursive:true});
+    for(const name of ['search.md','participation.md','codex-listener.md']) writeFileSync(join(home,client.skill,'references',name),'old guidance');
     writeFileSync(join(home,client.skill,'SKILL.md'),'previous installed guidance');
-    writeFileSync(join(home,client.skill,'.opencrawl-skill.json'),JSON.stringify({schemaVersion:2,revision:10,files:{'SKILL.md':'old'}}));
+    writeFileSync(join(home,client.skill,'.opencrawl-skill.json'),JSON.stringify({schemaVersion:2,revision:11,files:{'SKILL.md':'old'}}));
   }
   mkdirSync(join(home,'cache','opencrawl'),{recursive:true});
-  writeFileSync(join(home,'cache','opencrawl','skills-update.json'),JSON.stringify({version:'0.4.64',revision:10,complete:true}));
+  writeFileSync(join(home,'cache','opencrawl','skills-update.json'),JSON.stringify({version:'0.4.64',revision:11,complete:true}));
 }
 
-test('a capture-only invocation upgrades revision 10 despite a current-version receipt, without network or repeated writes',()=>fixture(async(home,invoke)=>{
+test('a capture-only invocation upgrades revision 11 despite a current-version receipt, without network or repeated writes',()=>fixture(async(home,invoke)=>{
   oldInstallation(home);
   mkdirSync(join(home,'config','opencrawl'),{recursive:true});
-  writeFileSync(join(home,'config','opencrawl','skills-update.json'),JSON.stringify({version:'0.4.64',revision:10,complete:true,
+  writeFileSync(join(home,'config','opencrawl','skills-update.json'),JSON.stringify({version:'0.4.64',revision:11,complete:true,
     result:{status:'current',updated:0,conflicts:0,errors:0}}));
   await invoke(['collect','hook','--harness','claude-code']);
   for(const client of clients) {
-    expect(JSON.parse(readFileSync(join(home,client.skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(11);
-    expect(readFileSync(join(home,client.skill,'SKILL.md'),'utf8')).toContain('Prefer opencrawl_search_v1 when advertised, then opencrawl_search, then search.');
+    expect(JSON.parse(readFileSync(join(home,client.skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(skillRevision);
+    expect(readFileSync(join(home,client.skill,'SKILL.md'),'utf8')).toBe(skillFiles()['SKILL.md']);
+    expect(existsSync(join(home,client.skill,'references'))).toBe(false);
     expect(readFileSync(join(home,client.hooks),'utf8')).toContain('search-context --harness '+client.name);
   }
   const paths=clients.flatMap(client=>[join(home,client.hooks),join(home,client.skill,'SKILL.md')]);
@@ -71,10 +74,10 @@ test('new-session activation requests Claude skill rediscovery and does not wait
   const start=['session','start','--harness','claude-code'];
   const then=Date.now();await invoke(start,{busy:true});
   expect(Date.now()-then).toBeLessThan(3000);
-  expect(JSON.parse(readFileSync(join(home,clients[1]!.skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(10);
+  expect(JSON.parse(readFileSync(join(home,clients[1]!.skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(11);
   const result=await invoke(start);
   expect(result.hookSpecificOutput.reloadSkills).toBe(true);
-  expect(JSON.parse(readFileSync(join(home,clients[1]!.skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(11);
+  expect(JSON.parse(readFileSync(join(home,clients[1]!.skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(skillRevision);
 }));
 
 test('activation honors opt-out, disabled hooks and first-install boundary; per-search hook stays pure',()=>fixture(async(home,invoke)=>{
@@ -105,7 +108,7 @@ test('each existing OpenCrawl profile activates its own hooks after another prof
   expect(readFileSync(hooks,'utf8')).toContain('search-context --harness claude-code');
   expect(readFileSync(hooks,'utf8')).toContain('other-profile');
   for(const profile of ['config','other-profile'])expect(JSON.parse(readFileSync(join(home,profile,'opencrawl','skills-update.json'),'utf8')).complete).toBe(true);
-  expect(JSON.parse(readFileSync(join(home,'cache','opencrawl','skills-update.json'),'utf8')).revision).toBe(10);
+  expect(JSON.parse(readFileSync(join(home,'cache','opencrawl','skills-update.json'),'utf8')).revision).toBe(11);
 }));
 
 test('already-refreshed skills create a current profile receipt with zero changes and no file churn',()=>fixture(async(home,invoke)=>{
@@ -123,7 +126,7 @@ test('already-refreshed skills create a current profile receipt with zero change
   const before=snapshot(),receipt=join(home,'config','opencrawl','skills-update.json');
   expect(existsSync(receipt)).toBe(false);
   await invoke(['collect','hook','--harness','claude-code']);
-  expect(JSON.parse(readFileSync(receipt,'utf8'))).toMatchObject({version:'0.4.64',revision:11,complete:true,
+  expect(JSON.parse(readFileSync(receipt,'utf8'))).toMatchObject({version:'0.4.64',revision:skillRevision,complete:true,
     result:{status:'current',updated:0,conflicts:0,errors:0}});
   expect(snapshot()).toEqual(before);
 }));

@@ -1,6 +1,6 @@
 // Exercise real packaged installs with a disposable local npm registry. The
 // registry serves exactly the artifacts built by build.ts; nothing is published.
-import {readFileSync, mkdtempSync, rmSync, writeFileSync, mkdirSync} from 'node:fs';
+import {existsSync,readFileSync, mkdtempSync, rmSync, writeFileSync, mkdirSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
@@ -55,7 +55,7 @@ try {
     const skills = JSON.parse(run([...command, 'skills', 'install', '--client', 'claude-code', '--client', 'antigravity', '--api', 'http://127.0.0.1:8093', '--json'], undefined, skillEnv));
     if (skills.data.results.length !== 2 || skills.data.results.some((r: any) => r.status !== 'installed')) throw new Error('Packaged skill installation failed');
     const skillRoot = join(scratch, 'claude/skills/opencrawl');
-    if (!readFileSync(join(skillRoot, 'SKILL.md'), 'utf8').startsWith('---\nname: opencrawl\n') || readFileSync(join(skillRoot, 'references/participation.md'), 'utf8').includes('--api')) throw new Error('Packaged skill documents missing or contain a fixed deployment');
+    if (!readFileSync(join(skillRoot, 'SKILL.md'), 'utf8').startsWith('---\nname: opencrawl\n') || existsSync(join(skillRoot, 'references'))) throw new Error('Packaged skill missing or contains obsolete references');
     if (!readFileSync(join(scratch, 'gemini/config/skills/opencrawl/SKILL.md'), 'utf8').startsWith('---\nname: opencrawl\n')) throw new Error('Packaged Antigravity skill missing');
     const skillStatus = JSON.parse(run(['bun', join(install, 'node_modules/@getopencrawl/cli/runtime/opencrawl.js'), 'skills', 'status', '--client', 'claude-code', '--client', 'antigravity', '--api', 'http://127.0.0.1:8093', '--json'], undefined, skillEnv));
     if (skillStatus.data.results.some((r: any) => r.status !== 'current')) throw new Error('Replaceable runtime could not read the installed skill');

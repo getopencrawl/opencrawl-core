@@ -2,6 +2,7 @@
 // command available. The parent test harness serves only these built artifacts.
 import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync,existsSync} from 'node:fs';
 import {join,resolve,dirname} from 'node:path';
+import {skillFiles,skillRevision} from '../src/skills.ts';
 import {tmpdir} from 'node:os';
 const root=resolve(import.meta.dir,'..'),pkg=JSON.parse(readFileSync(join(root,'dist/cli/package.json'),'utf8'));
 const scratch=mkdtempSync(join(tmpdir(),'opencrawl-native-smoke-'));
@@ -68,8 +69,10 @@ try{
   // lifecycle too. SessionStart does not schedule update checks, so leave the
   // update opt-out unset without introducing a network/update test bypass.
   const skill=join(env.CLAUDE_CONFIG_DIR,'skills','opencrawl'),manifest=join(skill,'.opencrawl-skill.json');
-  const previous=JSON.parse(readFileSync(manifest,'utf8'));previous.revision=10;
-  writeFileSync(manifest,JSON.stringify(previous));writeFileSync(join(skill,'SKILL.md'),'Previous revision 10 guidance.\n');
+  const previous=JSON.parse(readFileSync(manifest,'utf8'));previous.revision=11;
+  writeFileSync(manifest,JSON.stringify(previous));writeFileSync(join(skill,'SKILL.md'),'Previous revision 11 guidance.\n');
+  mkdirSync(join(skill,'references'),{recursive:true});
+  for(const name of ['search.md','participation.md','codex-listener.md']) writeFileSync(join(skill,'references',name),'old guidance');
   const oldSettings=JSON.parse(readFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
   for(const group of oldSettings.hooks.PreToolUse)if(group.hooks.some((entry:any)=>entry.statusMessage==='OpenCrawl search context'))
     group.matcher='^(?:mcp__opencrawl__opencrawl_search|mcp__plugin_opencrawl_opencrawl__opencrawl_search|mcp__codex_apps__opencrawl_opencrawl_search)$';
@@ -86,10 +89,10 @@ try{
   const refreshed=JSON.parse(readFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
   const restored=refreshed.hooks.PreToolUse.flatMap((group:any)=>group.hooks).find((entry:any)=>entry.statusMessage==='OpenCrawl search context');
   const restoredMatcher=refreshed.hooks.PreToolUse.find((group:any)=>group.hooks.includes(restored))?.matcher;
-  if(JSON.parse(readFileSync(manifest,'utf8')).revision!==11||!readFileSync(join(skill,'SKILL.md'),'utf8').includes('Prefer opencrawl_search_v1 when advertised, then opencrawl_search, then search.')||
+  if(JSON.parse(readFileSync(manifest,'utf8')).revision!==skillRevision||readFileSync(join(skill,'SKILL.md'),'utf8')!==skillFiles()['SKILL.md']||existsSync(join(skill,'references'))||
     restored?.command!==searchHooks[0]!.entry.command||typeof restoredMatcher!=='string'||!new RegExp(restoredMatcher).test('mcp__opencrawl__opencrawl_search_v1')||
     JSON.parse(activationOut).hookSpecificOutput?.reloadSkills!==true)
-    throw new Error('Native SessionStart did not activate revision 11 guidance and search hooks');
+    throw new Error('Native SessionStart did not activate current guidance and search hooks');
   await run(command(['collect','install','--yes','--defer-auth','--backfill','skip','--harness','claude-code','--json']));
   const capture=JSON.parse(readFileSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl/capture/config.json'),'utf8'));
   if(capture.command.length!==1||capture.command[0]!==entry)throw new Error('Capture did not use the durable native command');

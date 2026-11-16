@@ -2,7 +2,7 @@ import {test, expect} from 'bun:test';
 import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, statSync, chmodSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
-import {agentSkills, skillTargets, skillFiles} from '../src/skills.ts';
+import {agentSkills, skillTargets, skillFiles, skillRevision} from '../src/skills.ts';
 import {startupHooks} from '../src/startup-install.ts';
 
 test('managed startup is reported without adding user hooks or asking for trust', () => fixture(async home => {
@@ -137,7 +137,7 @@ test('detects only available clients, honors custom roots and deduplicates share
   } finally {rmSync(home, {recursive: true, force: true});}
 });
 
-test('revision 10 guidance upgrades in the reserved skill while other named skills remain untouched', () => fixture(async home => {
+test('revision 11 guidance upgrades in the reserved skill while other named skills remain untouched', () => fixture(async home => {
   const options = {home, env: {}, which: () => null, clients: ['codex', 'claude-code']};
   const first = await agentSkills('install', 'http://127.0.0.1:8093', options);
   expect(first.results.map(r => r.status)).toEqual(['installed','installed']);
@@ -148,17 +148,19 @@ test('revision 10 guidance upgrades in the reserved skill while other named skil
   expect(statSync(file).mtimeMs).toBe(before);
   const other = join(directory, '../opencrawl-custom'); mkdirSync(other); writeFileSync(join(other, 'SKILL.md'), 'keep');
   const previousManifest = JSON.parse(readFileSync(join(directory, '.opencrawl-skill.json'), 'utf8'));
-  previousManifest.revision = 10;
+  previousManifest.revision = 11;
   writeFileSync(join(directory, '.opencrawl-skill.json'), JSON.stringify(previousManifest));
   writeFileSync(file, 'Prefer opencrawl_search when listed; otherwise use search.\nLocal edit to the CLI-owned skill.');
   writeFileSync(join(directory, 'my-notes.md'), 'stale');
-  writeFileSync(join(directory, 'references/participation.md'), 'custom rules');
+  mkdirSync(join(directory, 'references'));
+  for (const name of ['search.md', 'participation.md', 'codex-listener.md']) writeFileSync(join(directory, 'references', name), 'old guidance');
   expect((await agentSkills('refresh', 'https://new.example', options)).results.map(r => r.status)).toEqual(['updated','unchanged']);
   for (const [name, content] of Object.entries(skillFiles())) expect(readFileSync(join(directory, name), 'utf8')).toBe(content);
   expect(existsSync(join(directory, 'my-notes.md'))).toBe(false);
+  expect(existsSync(join(directory, 'references'))).toBe(false);
   expect(readFileSync(join(other, 'SKILL.md'), 'utf8')).toBe('keep');
   const manifest = JSON.parse(readFileSync(join(directory, '.opencrawl-skill.json'), 'utf8'));
-  expect(manifest.schemaVersion).toBe(2); expect(manifest.revision).toBe(11); expect(manifest.api).toBeUndefined();
+  expect(manifest.schemaVersion).toBe(2); expect(manifest.revision).toBe(skillRevision); expect(manifest.api).toBeUndefined();
   expect(JSON.stringify(skillFiles())).not.toContain('https://new.example');
 }));
 
@@ -174,7 +176,7 @@ test('adopts any skill with the reserved name and repairs links without changing
     expect((await agentSkills('refresh', 'https://self-host.example', options)).results[0]!.status).toBe('updated');
     expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('untouched');
     expect(existsSync(join(outside, 'SKILL.md'))).toBe(false);
-    rmSync(join(directory, 'references'), {recursive: true}); symlinkSync(outside, join(directory, 'references'));
+    symlinkSync(outside, join(directory, 'references'));
     expect((await agentSkills('refresh', 'https://self-host.example', options)).results[0]!.status).toBe('updated');
     expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('untouched');
     expect(existsSync(join(outside, 'participation.md'))).toBe(false);

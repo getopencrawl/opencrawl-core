@@ -1,4 +1,5 @@
 import {test,expect} from 'bun:test';
+import {skillFiles,skillRevision} from '../src/skills.ts';
 import {createServer,type ServerResponse} from 'node:http';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,utimesSync,existsSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -157,8 +158,8 @@ for(const activate of [false,true])test(activate
  expect(readFileSync(source)).toEqual(saved);
  expect(captureStatus()).toMatchObject({pendingHooks:0,queued:0});
  if(activate){
-  expect(JSON.parse(readFileSync(join(skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(11);
-  expect(readFileSync(join(skill,'SKILL.md'),'utf8')).toContain('Prefer opencrawl_search_v1 when advertised, then opencrawl_search, then search.');
+  expect(JSON.parse(readFileSync(join(skill,'.opencrawl-skill.json'),'utf8')).revision).toBe(skillRevision);
+  expect(readFileSync(join(skill,'SKILL.md'),'utf8')).toBe(skillFiles()['SKILL.md']);
   const settings=JSON.parse(readFileSync(join(process.env.CURSOR_CONFIG_DIR!,'hooks.json'),'utf8'));
   const adapters=settings.hooks.preToolUse.filter((entry:any)=>entry.command.endsWith('search-context --harness cursor'));
   expect(adapters).toHaveLength(1);expect(adapters[0].matcher).toBe('^(?:MCP:opencrawl_search|MCP:opencrawl_search_v1)$');

@@ -9,6 +9,7 @@ import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {createServer} from 'node:http';
 import {installNativeRelease} from '../src/update.ts';
+import {skillRevision} from '../src/skills.ts';
 import {standaloneCapture} from '../../dist/tools/test-fixtures/capture.mjs';
 import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
 import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
@@ -144,7 +145,7 @@ try {
     assert.deepEqual(outcome(legacySkillReceipt),{version,complete:true,status:'current',updated:2,conflicts:0,errors:0},
       'Legacy launcher did not report both regenerated managed skills');
     assert.deepEqual({...outcome(skillReceipt),revision:skillReceipt.revision},
-      {version,revision:11,complete:true,status:'current',updated:0,conflicts:0,errors:0},
+      {version,revision:skillRevision,complete:true,status:'current',updated:0,conflicts:0,errors:0},
       'Native profile did not record the already-current managed skills');
     // The ordinary board command also performs the existing legacy hook migration.
     const upgradedConfig = readFileSync(join(capture, 'config.json'), 'utf8');
