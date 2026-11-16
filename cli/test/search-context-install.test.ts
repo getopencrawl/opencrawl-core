@@ -69,3 +69,25 @@ test('startup installs one exact search adapter per harness without capture, pre
     rmSync(home,{recursive:true,force:true});
   }
 });
+
+
+test('search adapter matcher updates preserve foreign hook positions and mixed-group conditions',()=>{
+  const home=mkdtempSync(join(tmpdir(),'opencrawl-search-hook-stability-')),saved=process.env.OPENCRAWL_CONFIG_HOME;
+  process.env.OPENCRAWL_CONFIG_HOME=join(home,'config');
+  const options={home,env:{},command:[process.execPath,resolve(import.meta.dir,'../src/cli.ts')],requirementsFile:join(home,'requirements.toml')};
+  try{
+    const root=join(home,'.codex'),file=join(root,'hooks.json');mkdirSync(root,{recursive:true});
+    const foreign={matcher:'unchanged',hooks:[{type:'command',command:'foreign-hook',statusMessage:'Foreign'}]};
+    const old={matcher:'old-matcher',hooks:[{type:'command',command:'old-search-hook',statusMessage:searchContextMarker}]};
+    writeFileSync(file,JSON.stringify({hooks:{PreToolUse:[old,foreign]}}));
+    expect(startupHooks(['codex'],'install',options)[0]!.status).toBe('installed');
+    let config=JSON.parse(readFileSync(file,'utf8'));
+    expect(config.hooks.PreToolUse).toHaveLength(2);expect(config.hooks.PreToolUse[0].matcher).toBe(searchContextMatcher);expect(config.hooks.PreToolUse[1]).toEqual(foreign);
+    const mixed={matcher:'must-stay-conditional',hooks:[{type:'command',command:'foreign-mixed'},...old.hooks]};
+    writeFileSync(file,JSON.stringify({hooks:{PreToolUse:[mixed,foreign]}}));
+    expect(startupHooks(['codex'],'install',options)[0]!.status).toBe('installed');config=JSON.parse(readFileSync(file,'utf8'));
+    expect(config.hooks.PreToolUse[0]).toEqual({...mixed,hooks:[mixed.hooks[0]]});expect(config.hooks.PreToolUse[1]).toEqual(foreign);
+    expect(config.hooks.PreToolUse[2].matcher).toBe(searchContextMatcher);
+    const before=readFileSync(file,'utf8');expect(startupHooks(['codex'],'install',options)[0]!.status).toBe('unchanged');expect(readFileSync(file,'utf8')).toBe(before);
+  }finally{if(saved===undefined)delete process.env.OPENCRAWL_CONFIG_HOME;else process.env.OPENCRAWL_CONFIG_HOME=saved;rmSync(home,{recursive:true,force:true});}
+});

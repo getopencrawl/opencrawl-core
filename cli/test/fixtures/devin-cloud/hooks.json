@@ -1,0 +1,313 @@
+{
+  "provenance": {
+    "date": "2026-11-15",
+    "surface": "Devin Cloud Linux personal plugin 0.0.1",
+    "originalSha256": "15c8914799131213705c82c1b92fdd003aa7e14c1aa0b5be0366b277331b43f3",
+    "sanitized": [
+      "session_id",
+      "received_chat_message sender attributes"
+    ],
+    "note": "Two real synthetic turns. First prompt, interim message and first exec absent. No synthetic events added."
+  },
+  "records": [
+    {
+      "file": "PostToolUse.Bm4dYx9k",
+      "event": {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "exec",
+        "tool_input": {
+          "command": "echo OC_DEVIN_REPEAT_c3d59f21",
+          "workdir": "/tmp/opencrawl-devin-probe-v1"
+        },
+        "tool_use_id": "toolu_01YDvvXEMSeuQhDsrezxrYMv",
+        "tool_response": {
+          "success": true,
+          "output": "Output from command in shell 4977da:\nOC_DEVIN_REPEAT_c3d59f21\n\n\nExit code: 0",
+          "error": null
+        },
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PostToolUse.DuwuCOS4",
+      "event": {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "message_user",
+        "tool_input": {
+          "message": "OC_DEVIN_INTERIM_0a4f7b82: running the four shell steps in /tmp/opencrawl-devin-probe-v1 now.",
+          "block_on_user": false,
+          "attachments": []
+        },
+        "tool_use_id": "toolu_01XkZ1EzMXSQwbdt5gp9sMLv",
+        "tool_response": {
+          "success": true,
+          "output": "Message sent to user.",
+          "error": null
+        },
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PostToolUse.SYvWORmr",
+      "event": {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "message_user",
+        "tool_input": {
+          "message": "All four steps ran in /tmp/opencrawl-devin-probe-v1, each as a separate shell call:\n1. `echo OC_DEVIN_REPEAT_c3d59f21` printed the marker (exit 0).\n2. The same command again printed the marker again (exit 0).\n3. `sh -c 'printf OC_DEVIN_FAIL_81ecdd39 >&2; exit 7'` wrote OC_DEVIN_FAIL_81ecdd39 to stderr and exited with code 7, as intended.\n4. The long-output command printed 5,000 numbered OC_DEVIN_LONG_4623bb10 lines, then OC_DEVIN_LONG_END_b4cc78fd (5,001 lines, exit 0).\n\nI sent all four calls in one batch, so they may have run at the same time rather than strictly one after another. If your hook records need exact ordering, check the timestamps.\n\nI didn't touch any hook files, repos, credentials or external services.\n\nOC_DEVIN_REPLY_2_c1500bf8",
+          "block_on_user": true,
+          "attachments": [],
+          "user_action_required": "None"
+        },
+        "tool_use_id": "toolu_0199erHWp11WWW2fEFY9wskD",
+        "tool_response": {
+          "success": true,
+          "output": "Message sent to user.\nWork stopped and awaiting user response.",
+          "error": null
+        },
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PostToolUse.TIiklRkr",
+      "event": {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "exec",
+        "tool_input": {
+          "command": "sh -c 'printf OC_DEVIN_FAIL_81ecdd39 >&2; exit 7'",
+          "workdir": "/tmp/opencrawl-devin-probe-v1"
+        },
+        "tool_use_id": "toolu_01SAqCt4MfbsKDDTncoL6qcA",
+        "tool_response": {
+          "success": true,
+          "output": "Output from command in shell ff5c8b:\nOC_DEVIN_FAIL_81ecdd39\n\nExit code: 7",
+          "error": null
+        },
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PostToolUse.gszEca2c",
+      "event": {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "exec",
+        "tool_input": {
+          "command": "echo OC_DEVIN_REPEAT_c3d59f21",
+          "workdir": "/tmp/opencrawl-devin-probe-v1"
+        },
+        "tool_use_id": "toolu_01RfgbMxthD6YxCL3n88Lx1A",
+        "tool_response": {
+          "success": true,
+          "output": "Output from command in shell cfd58b:\nOC_DEVIN_REPEAT_c3d59f21\n\n\nExit code: 0",
+          "error": null
+        },
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PostToolUse.iXy7Fi1p",
+      "event": {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "exec",
+        "tool_input": {
+          "command": "for i in $(seq 1 5000); do echo \"$i OC_DEVIN_LONG_4623bb10\"; done; echo OC_DEVIN_LONG_END_b4cc78fd",
+          "workdir": "/tmp/opencrawl-devin-probe-v1"
+        },
+        "tool_use_id": "toolu_017BygWZWW3p3RdkJg9J7KqD",
+        "tool_response": {
+          "success": true,
+          "output": "Output from command in shell c2ead3. The full terminal output is being written live to /home/ubuntu/.devin-files/devin-remote-overflows-1000/shell-c2ead3-ed305e8a7a5fc2ae/content.txt; read or grep it for anything omitted below. Preview:\n<file-view path=\"/home/ubuntu/.devin-files/devin-remote-overflows-1000/shell-c2ead3-ed305e8a7a5fc2ae/content.txt\" start_line=\"1\" end_line=\"225\" total_lines=\"5001\">\n   1|1 OC_DEVIN_LONG_4623bb10\n   2|2 OC_DEVIN_LONG_4623bb10\n   3|3 OC_DEVIN_LONG_4623bb10\n   4|4 OC_DEVIN_LONG_4623bb10\n   5|5 OC_DEVIN_LONG_4623bb10\n   6|6 OC_DEVIN_LONG_4623bb10\n   7|7 OC_DEVIN_LONG_4623bb10\n   8|8 OC_DEVIN_LONG_4623bb10\n   9|9 OC_DEVIN_LONG_4623bb10\n  10|10 OC_DEVIN_LONG_4623bb10\n  11|11 OC_DEVIN_LONG_4623bb10\n  12|12 OC_DEVIN_LONG_4623bb10\n  13|13 OC_DEVIN_LONG_4623bb10\n  14|14 OC_DEVIN_LONG_4623bb10\n  15|15 OC_DEVIN_LONG_4623bb10\n  16|16 OC_DEVIN_LONG_4623bb10\n  17|17 OC_DEVIN_LONG_4623bb10\n  18|18 OC_DEVIN_LONG_4623bb10\n  19|19 OC_DEVIN_LONG_4623bb10\n  20|20 OC_DEVIN_LONG_4623bb10\n  21|21 OC_DEVIN_LONG_4623bb10\n  22|22 OC_DEVIN_LONG_4623bb10\n  23|23 OC_DEVIN_LONG_4623bb10\n  24|24 OC_DEVIN_LONG_4623bb10\n  25|25 OC_DEVIN_LONG_4623bb10\n  26|26 OC_DEVIN_LONG_4623bb10\n  27|27 OC_DEVIN_LONG_4623bb10\n  28|28 OC_DEVIN_LONG_4623bb10\n  29|29 OC_DEVIN_LONG_4623bb10\n  30|30 OC_DEVIN_LONG_4623bb10\n  31|31 OC_DEVIN_LONG_4623bb10\n  32|32 OC_DEVIN_LONG_4623bb10\n  33|33 OC_DEVIN_LONG_4623bb10\n  34|34 OC_DEVIN_LONG_4623bb10\n  35|35 OC_DEVIN_LONG_4623bb10\n  36|36 OC_DEVIN_LONG_4623bb10\n  37|37 OC_DEVIN_LONG_4623bb10\n  38|38 OC_DEVIN_LONG_4623bb10\n  39|39 OC_DEVIN_LONG_4623bb10\n  40|40 OC_DEVIN_LONG_4623bb10\n  41|41 OC_DEVIN_LONG_4623bb10\n  42|42 OC_DEVIN_LONG_4623bb10\n  43|43 OC_DEVIN_LONG_4623bb10\n  44|44 OC_DEVIN_LONG_4623bb10\n  45|45 OC_DEVIN_LONG_4623bb10\n  46|46 OC_DEVIN_LONG_4623bb10\n  47|47 OC_DEVIN_LONG_4623bb10\n  48|48 OC_DEVIN_LONG_4623bb10\n  49|49 OC_DEVIN_LONG_4623bb10\n  50|50 OC_DEVIN_LONG_4623bb10\n  51|51 OC_DEVIN_LONG_4623bb10\n  52|52 OC_DEVIN_LONG_4623bb10\n  53|53 OC_DEVIN_LONG_4623bb10\n  54|54 OC_DEVIN_LONG_4623bb10\n  55|55 OC_DEVIN_LONG_4623bb10\n  56|56 OC_DEVIN_LONG_4623bb10\n  57|57 OC_DEVIN_LONG_4623bb10\n  58|58 OC_DEVIN_LONG_4623bb10\n  59|59 OC_DEVIN_LONG_4623bb10\n  60|60 OC_DEVIN_LONG_4623bb10\n  61|61 OC_DEVIN_LONG_4623bb10\n  62|62 OC_DEVIN_LONG_4623bb10\n  63|63 OC_DEVIN_LONG_4623bb10\n  64|64 OC_DEVIN_LONG_4623bb10\n  65|65 OC_DEVIN_LONG_4623bb10\n  66|66 OC_DEVIN_LONG_4623bb10\n  67|67 OC_DEVIN_LONG_4623bb10\n  68|68 OC_DEVIN_LONG_4623bb10\n  69|69 OC_DEVIN_LONG_4623bb10\n  70|70 OC_DEVIN_LONG_4623bb10\n  71|71 OC_DEVIN_LONG_4623bb10\n  72|72 OC_DEVIN_LONG_4623bb10\n  73|73 OC_DEVIN_LONG_4623bb10\n  74|74 OC_DEVIN_LONG_4623bb10\n  75|75 OC_DEVIN_LONG_4623bb10\n  76|76 OC_DEVIN_LONG_4623bb10\n  77|77 OC_DEVIN_LONG_4623bb10\n  78|78 OC_DEVIN_LONG_4623bb10\n  79|79 OC_DEVIN_LONG_4623bb10\n  80|80 OC_DEVIN_LONG_4623bb10\n  81|81 OC_DEVIN_LONG_4623bb10\n  82|82 OC_DEVIN_LONG_4623bb10\n  83|83 OC_DEVIN_LONG_4623bb10\n  84|84 OC_DEVIN_LONG_4623bb10\n  85|85 OC_DEVIN_LONG_4623bb10\n  86|86 OC_DEVIN_LONG_4623bb10\n  87|87 OC_DEVIN_LONG_4623bb10\n  88|88 OC_DEVIN_LONG_4623bb10\n  89|89 OC_DEVIN_LONG_4623bb10\n  90|90 OC_DEVIN_LONG_4623bb10\n  91|91 OC_DEVIN_LONG_4623bb10\n  92|92 OC_DEVIN_LONG_4623bb10\n  93|93 OC_DEVIN_LONG_4623bb10\n  94|94 OC_DEVIN_LONG_4623bb10\n  95|95 OC_DEVIN_LONG_4623bb10\n  96|96 OC_DEVIN_LONG_4623bb10\n  97|97 OC_DEVIN_LONG_4623bb10\n  98|98 OC_DEVIN_LONG_4623bb10\n  99|99 OC_DEVIN_LONG_4623bb10\n 100|100 OC_DEVIN_LONG_4623bb10\n 101|101 OC_DEVIN_LONG_4623bb10\n 102|102 OC_DEVIN_LONG_4623bb10\n 103|103 OC_DEVIN_LONG_4623bb10\n 104|104 OC_DEVIN_LONG_4623bb10\n 105|105 OC_DEVIN_LONG_4623bb10\n 106|106 OC_DEVIN_LONG_4623bb10\n 107|107 OC_DEVIN_LONG_4623bb10\n 108|108 OC_DEVIN_LONG_4623bb10\n 109|109 OC_DEVIN_LONG_4623bb10\n 110|110 OC_DEVIN_LONG_4623bb10\n 111|111 OC_DEVIN_LONG_4623bb10\n 112|112 OC_DEVIN_LONG_4623bb10\n 113|113 OC_DEVIN_LONG_4623bb10\n 114|114 OC_DEVIN_LONG_4623bb10\n 115|115 OC_DEVIN_LONG_4623bb10\n 116|116 OC_DEVIN_LONG_4623bb10\n 117|117 OC_DEVIN_LONG_4623bb10\n 118|118 OC_DEVIN_LONG_4623bb10\n 119|119 OC_DEVIN_LONG_4623bb10\n 120|120 OC_DEVIN_LONG_4623bb10\n 121|121 OC_DEVIN_LONG_4623bb10\n 122|122 OC_DEVIN_LONG_4623bb10\n 123|123 OC_DEVIN_LONG_4623bb10\n 124|124 OC_DEVIN_LONG_4623bb10\n 125|125 OC_DEVIN_LONG_4623bb10\n 126|126 OC_DEVIN_LONG_4623bb10\n 127|127 OC_DEVIN_LONG_4623bb10\n 128|128 OC_DEVIN_LONG_4623bb10\n 129|129 OC_DEVIN_LONG_4623bb10\n 130|130 OC_DEVIN_LONG_4623bb10\n 131|131 OC_DEVIN_LONG_4623bb10\n 132|132 OC_DEVIN_LONG_4623bb10\n 133|133 OC_DEVIN_LONG_4623bb10\n 134|134 OC_DEVIN_LONG_4623bb10\n 135|135 OC_DEVIN_LONG_4623bb10\n 136|136 OC_DEVIN_LONG_4623bb10\n 137|137 OC_DEVIN_LONG_4623bb10\n 138|138 OC_DEVIN_LONG_4623bb10\n 139|139 OC_DEVIN_LONG_4623bb10\n 140|140 OC_DEVIN_LONG_4623bb10\n 141|141 OC_DEVIN_LONG_4623bb10\n 142|142 OC_DEVIN_LONG_4623bb10\n 143|143 OC_DEVIN_LONG_4623bb10\n 144|144 OC_DEVIN_LONG_4623bb10\n 145|145 OC_DEVIN_LONG_4623bb10\n 146|146 OC_DEVIN_LONG_4623bb10\n 147|147 OC_DEVIN_LONG_4623bb10\n 148|148 OC_DEVIN_LONG_4623bb10\n 149|149 OC_DEVIN_LONG_4623bb10\n 150|150 OC_DEVIN_LONG_4623bb10\n 151|151 OC_DEVIN_LONG_4623bb10\n 152|152 OC_DEVIN_LONG_4623bb10\n 153|153 OC_DEVIN_LONG_4623bb10\n 154|154 OC_DEVIN_LONG_4623bb10\n 155|155 OC_DEVIN_LONG_4623bb10\n 156|156 OC_DEVIN_LONG_4623bb10\n 157|157 OC_DEVIN_LONG_4623bb10\n 158|158 OC_DEVIN_LONG_4623bb10\n 159|159 OC_DEVIN_LONG_4623bb10\n 160|160 OC_DEVIN_LONG_4623bb10\n 161|161 OC_DEVIN_LONG_4623bb10\n 162|162 OC_DEVIN_LONG_4623bb10\n 163|163 OC_DEVIN_LONG_4623bb10\n 164|164 OC_DEVIN_LONG_4623bb10\n 165|165 OC_DEVIN_LONG_4623bb10\n 166|166 OC_DEVIN_LONG_4623bb10\n 167|167 OC_DEVIN_LONG_4623bb10\n 168|168 OC_DEVIN_LONG_4623bb10\n 169|169 OC_DEVIN_LONG_4623bb10\n 170|170 OC_DEVIN_LONG_4623bb10\n 171|171 OC_DEVIN_LONG_4623bb10\n 172|172 OC_DEVIN_LONG_4623bb10\n 173|173 OC_DEVIN_LONG_4623bb10\n 174|174 OC_DEVIN_LONG_4623bb10\n 175|175 OC_DEVIN_LONG_4623bb10\n 176|176 OC_DEVIN_LONG_4623bb10\n 177|177 OC_DEVIN_LONG_4623bb10\n 178|178 OC_DEVIN_LONG_4623bb10\n 179|179 OC_DEVIN_LONG_4623bb10\n 180|180 OC_DEVIN_LONG_4623bb10\n 181|181 OC_DEVIN_LONG_4623bb10\n 182|182 OC_DEVIN_LONG_4623bb10\n 183|183 OC_DEVIN_LONG_4623bb10\n 184|184 OC_DEVIN_LONG_4623bb10\n 185|185 OC_DEVIN_LONG_4623bb10\n 186|186 OC_DEVIN_LONG_4623bb10\n 187|187 OC_DEVIN_LONG_4623bb10\n 188|188 OC_DEVIN_LONG_4623bb10\n 189|189 OC_DEVIN_LONG_4623bb10\n 190|190 OC_DEVIN_LONG_4623bb10\n 191|191 OC_DEVIN_LONG_4623bb10\n 192|192 OC_DEVIN_LONG_4623bb10\n 193|193 OC_DEVIN_LONG_4623bb10\n 194|194 OC_DEVIN_LONG_4623bb10\n 195|195 OC_DEVIN_LONG_4623bb10\n 196|196 OC_DEVIN_LONG_4623bb10\n 197|197 OC_DEVIN_LONG_4623bb10\n 198|198 OC_DEVIN_LONG_4623bb10\n 199|199 OC_DEVIN_LONG_4623bb10\n 200|200 OC_DEVIN_LONG_4623bb10\n 201|201 OC_DEVIN_LONG_4623bb10\n 202|202 OC_DEVIN_LONG_4623bb10\n 203|203 OC_DEVIN_LONG_4623bb10\n 204|204 OC_DEVIN_LONG_4623bb10\n 205|205 OC_DEVIN_LONG_4623bb10\n 206|206 OC_DEVIN_LONG_4623bb10\n 207|207 OC_DEVIN_LONG_4623bb10\n 208|208 OC_DEVIN_LONG_4623bb10\n 209|209 OC_DEVIN_LONG_4623bb10\n 210|210 OC_DEVIN_LONG_4623bb10\n 211|211 OC_DEVIN_LONG_4623bb10\n 212|212 OC_DEVIN_LONG_4623bb10\n 213|213 OC_DEVIN_LONG_4623bb10\n 214|214 OC_DEVIN_LONG_4623bb10\n 215|215 OC_DEVIN_LONG_4623bb10\n 216|216 OC_DEVIN_LONG_4623bb10\n 217|217 OC_DEVIN_LONG_4623bb10\n 218|218 OC_DEVIN_LONG_4623bb10\n 219|219 OC_DEVIN_LONG_4623bb10\n 220|220 OC_DEVIN_LONG_4623bb10\n 221|221 OC_DEVIN_LONG_4623bb10\n 222|222 OC_DEVIN_LONG_4623bb10\n 223|223 OC_DEVIN_LONG_4623bb10\n 224|224 OC_DEVIN_LONG_4623bb10\n 225|225 OC_DEVIN_LONG_4623… (4 chars truncated)\n</file-view>\n… 4276 lines omitted …\n<file-view path=\"/home/ubuntu/.devin-files/devin-remote-overflows-1000/shell-c2ead3-ed305e8a7a5fc2ae/content.txt\" start_line=\"4502\" end_line=\"5001\" total_lines=\"5001\">\n4502|4502 OC_DEVIN_LONG_4623bb10\n4503|4503 OC_DEVIN_LONG_4623bb10\n4504|4504 OC_DEVIN_LONG_4623bb10\n4505|4505 OC_DEVIN_LONG_4623bb10\n4506|4506 OC_DEVIN_LONG_4623bb10\n4507|4507 OC_DEVIN_LONG_4623bb10\n4508|4508 OC_DEVIN_LONG_4623bb10\n4509|4509 OC_DEVIN_LONG_4623bb10\n4510|4510 OC_DEVIN_LONG_4623bb10\n4511|4511 OC_DEVIN_LONG_4623bb10\n4512|4512 OC_DEVIN_LONG_4623bb10\n4513|4513 OC_DEVIN_LONG_4623bb10\n4514|4514 OC_DEVIN_LONG_4623bb10\n4515|4515 OC_DEVIN_LONG_4623bb10\n4516|4516 OC_DEVIN_LONG_4623bb10\n4517|4517 OC_DEVIN_LONG_4623bb10\n4518|4518 OC_DEVIN_LONG_4623bb10\n4519|4519 OC_DEVIN_LONG_4623bb10\n4520|4520 OC_DEVIN_LONG_4623bb10\n4521|4521 OC_DEVIN_LONG_4623bb10\n4522|4522 OC_DEVIN_LONG_4623bb10\n4523|4523 OC_DEVIN_LONG_4623bb10\n4524|4524 OC_DEVIN_LONG_4623bb10\n4525|4525 OC_DEVIN_LONG_4623bb10\n4526|4526 OC_DEVIN_LONG_4623bb10\n4527|4527 OC_DEVIN_LONG_4623bb10\n4528|4528 OC_DEVIN_LONG_4623bb10\n4529|4529 OC_DEVIN_LONG_4623bb10\n4530|4530 OC_DEVIN_LONG_4623bb10\n4531|4531 OC_DEVIN_LONG_4623bb10\n4532|4532 OC_DEVIN_LONG_4623bb10\n4533|4533 OC_DEVIN_LONG_4623bb10\n4534|4534 OC_DEVIN_LONG_4623bb10\n4535|4535 OC_DEVIN_LONG_4623bb10\n4536|4536 OC_DEVIN_LONG_4623bb10\n4537|4537 OC_DEVIN_LONG_4623bb10\n4538|4538 OC_DEVIN_LONG_4623bb10\n4539|4539 OC_DEVIN_LONG_4623bb10\n4540|4540 OC_DEVIN_LONG_4623bb10\n4541|4541 OC_DEVIN_LONG_4623bb10\n4542|4542 OC_DEVIN_LONG_4623bb10\n4543|4543 OC_DEVIN_LONG_4623bb10\n4544|4544 OC_DEVIN_LONG_4623bb10\n4545|4545 OC_DEVIN_LONG_4623bb10\n4546|4546 OC_DEVIN_LONG_4623bb10\n4547|4547 OC_DEVIN_LONG_4623bb10\n4548|4548 OC_DEVIN_LONG_4623bb10\n4549|4549 OC_DEVIN_LONG_4623bb10\n4550|4550 OC_DEVIN_LONG_4623bb10\n4551|4551 OC_DEVIN_LONG_4623bb10\n4552|4552 OC_DEVIN_LONG_4623bb10\n4553|4553 OC_DEVIN_LONG_4623bb10\n4554|4554 OC_DEVIN_LONG_4623bb10\n4555|4555 OC_DEVIN_LONG_4623bb10\n4556|4556 OC_DEVIN_LONG_4623bb10\n4557|4557 OC_DEVIN_LONG_4623bb10\n4558|4558 OC_DEVIN_LONG_4623bb10\n4559|4559 OC_DEVIN_LONG_4623bb10\n4560|4560 OC_DEVIN_LONG_4623bb10\n4561|4561 OC_DEVIN_LONG_4623bb10\n4562|4562 OC_DEVIN_LONG_4623bb10\n4563|4563 OC_DEVIN_LONG_4623bb10\n4564|4564 OC_DEVIN_LONG_4623bb10\n4565|4565 OC_DEVIN_LONG_4623bb10\n4566|4566 OC_DEVIN_LONG_4623bb10\n4567|4567 OC_DEVIN_LONG_4623bb10\n4568|4568 OC_DEVIN_LONG_4623bb10\n4569|4569 OC_DEVIN_LONG_4623bb10\n4570|4570 OC_DEVIN_LONG_4623bb10\n4571|4571 OC_DEVIN_LONG_4623bb10\n4572|4572 OC_DEVIN_LONG_4623bb10\n4573|4573 OC_DEVIN_LONG_4623bb10\n4574|4574 OC_DEVIN_LONG_4623bb10\n4575|4575 OC_DEVIN_LONG_4623bb10\n4576|4576 OC_DEVIN_LONG_4623bb10\n4577|4577 OC_DEVIN_LONG_4623bb10\n4578|4578 OC_DEVIN_LONG_4623bb10\n4579|4579 OC_DEVIN_LONG_4623bb10\n4580|4580 OC_DEVIN_LONG_4623bb10\n4581|4581 OC_DEVIN_LONG_4623bb10\n4582|4582 OC_DEVIN_LONG_4623bb10\n4583|4583 OC_DEVIN_LONG_4623bb10\n4584|4584 OC_DEVIN_LONG_4623bb10\n4585|4585 OC_DEVIN_LONG_4623bb10\n4586|4586 OC_DEVIN_LONG_4623bb10\n4587|4587 OC_DEVIN_LONG_4623bb10\n4588|4588 OC_DEVIN_LONG_4623bb10\n4589|4589 OC_DEVIN_LONG_4623bb10\n4590|4590 OC_DEVIN_LONG_4623bb10\n4591|4591 OC_DEVIN_LONG_4623bb10\n4592|4592 OC_DEVIN_LONG_4623bb10\n4593|4593 OC_DEVIN_LONG_4623bb10\n4594|4594 OC_DEVIN_LONG_4623bb10\n4595|4595 OC_DEVIN_LONG_4623bb10\n4596|4596 OC_DEVIN_LONG_4623bb10\n4597|4597 OC_DEVIN_LONG_4623bb10\n4598|4598 OC_DEVIN_LONG_4623bb10\n4599|4599 OC_DEVIN_LONG_4623bb10\n4600|4600 OC_DEVIN_LONG_4623bb10\n4601|4601 OC_DEVIN_LONG_4623bb10\n4602|4602 OC_DEVIN_LONG_4623bb10\n4603|4603 OC_DEVIN_LONG_4623bb10\n4604|4604 OC_DEVIN_LONG_4623bb10\n4605|4605 OC_DEVIN_LONG_4623bb10\n4606|4606 OC_DEVIN_LONG_4623bb10\n4607|4607 OC_DEVIN_LONG_4623bb10\n4608|4608 OC_DEVIN_LONG_4623bb10\n4609|4609 OC_DEVIN_LONG_4623bb10\n4610|4610 OC_DEVIN_LONG_4623bb10\n4611|4611 OC_DEVIN_LONG_4623bb10\n4612|4612 OC_DEVIN_LONG_4623bb10\n4613|4613 OC_DEVIN_LONG_4623bb10\n4614|4614 OC_DEVIN_LONG_4623bb10\n4615|4615 OC_DEVIN_LONG_4623bb10\n4616|4616 OC_DEVIN_LONG_4623bb10\n4617|4617 OC_DEVIN_LONG_4623bb10\n4618|4618 OC_DEVIN_LONG_4623bb10\n4619|4619 OC_DEVIN_LONG_4623bb10\n4620|4620 OC_DEVIN_LONG_4623bb10\n4621|4621 OC_DEVIN_LONG_4623bb10\n4622|4622 OC_DEVIN_LONG_4623bb10\n4623|4623 OC_DEVIN_LONG_4623bb10\n4624|4624 OC_DEVIN_LONG_4623bb10\n4625|4625 OC_DEVIN_LONG_4623bb10\n4626|4626 OC_DEVIN_LONG_4623bb10\n4627|4627 OC_DEVIN_LONG_4623bb10\n4628|4628 OC_DEVIN_LONG_4623bb10\n4629|4629 OC_DEVIN_LONG_4623bb10\n4630|4630 OC_DEVIN_LONG_4623bb10\n4631|4631 OC_DEVIN_LONG_4623bb10\n4632|4632 OC_DEVIN_LONG_4623bb10\n4633|4633 OC_DEVIN_LONG_4623bb10\n4634|4634 OC_DEVIN_LONG_4623bb10\n4635|4635 OC_DEVIN_LONG_4623bb10\n4636|4636 OC_DEVIN_LONG_4623bb10\n4637|4637 OC_DEVIN_LONG_4623bb10\n4638|4638 OC_DEVIN_LONG_4623bb10\n4639|4639 OC_DEVIN_LONG_4623bb10\n4640|4640 OC_DEVIN_LONG_4623bb10\n4641|4641 OC_DEVIN_LONG_4623bb10\n4642|4642 OC_DEVIN_LONG_4623bb10\n4643|4643 OC_DEVIN_LONG_4623bb10\n4644|4644 OC_DEVIN_LONG_4623bb10\n4645|4645 OC_DEVIN_LONG_4623bb10\n4646|4646 OC_DEVIN_LONG_4623bb10\n4647|4647 OC_DEVIN_LONG_4623bb10\n4648|4648 OC_DEVIN_LONG_4623bb10\n4649|4649 OC_DEVIN_LONG_4623bb10\n4650|4650 OC_DEVIN_LONG_4623bb10\n4651|4651 OC_DEVIN_LONG_4623bb10\n4652|4652 OC_DEVIN_LONG_4623bb10\n4653|4653 OC_DEVIN_LONG_4623bb10\n4654|4654 OC_DEVIN_LONG_4623bb10\n4655|4655 OC_DEVIN_LONG_4623bb10\n4656|4656 OC_DEVIN_LONG_4623bb10\n4657|4657 OC_DEVIN_LONG_4623bb10\n4658|4658 OC_DEVIN_LONG_4623bb10\n4659|4659 OC_DEVIN_LONG_4623bb10\n4660|4660 OC_DEVIN_LONG_4623bb10\n4661|4661 OC_DEVIN_LONG_4623bb10\n4662|4662 OC_DEVIN_LONG_4623bb10\n4663|4663 OC_DEVIN_LONG_4623bb10\n4664|4664 OC_DEVIN_LONG_4623bb10\n4665|4665 OC_DEVIN_LONG_4623bb10\n4666|4666 OC_DEVIN_LONG_4623bb10\n4667|4667 OC_DEVIN_LONG_4623bb10\n4668|4668 OC_DEVIN_LONG_4623bb10\n4669|4669 OC_DEVIN_LONG_4623bb10\n4670|4670 OC_DEVIN_LONG_4623bb10\n4671|4671 OC_DEVIN_LONG_4623bb10\n4672|4672 OC_DEVIN_LONG_4623bb10\n4673|4673 OC_DEVIN_LONG_4623bb10\n4674|4674 OC_DEVIN_LONG_4623bb10\n4675|4675 OC_DEVIN_LONG_4623bb10\n4676|4676 OC_DEVIN_LONG_4623bb10\n4677|4677 OC_DEVIN_LONG_4623bb10\n4678|4678 OC_DEVIN_LONG_4623bb10\n4679|4679 OC_DEVIN_LONG_4623bb10\n4680|4680 OC_DEVIN_LONG_4623bb10\n4681|4681 OC_DEVIN_LONG_4623bb10\n4682|4682 OC_DEVIN_LONG_4623bb10\n4683|4683 OC_DEVIN_LONG_4623bb10\n4684|4684 OC_DEVIN_LONG_4623bb10\n4685|4685 OC_DEVIN_LONG_4623bb10\n4686|4686 OC_DEVIN_LONG_4623bb10\n4687|4687 OC_DEVIN_LONG_4623bb10\n4688|4688 OC_DEVIN_LONG_4623bb10\n4689|4689 OC_DEVIN_LONG_4623bb10\n4690|4690 OC_DEVIN_LONG_4623bb10\n4691|4691 OC_DEVIN_LONG_4623bb10\n4692|4692 OC_DEVIN_LONG_4623bb10\n4693|4693 OC_DEVIN_LONG_4623bb10\n4694|4694 OC_DEVIN_LONG_4623bb10\n4695|4695 OC_DEVIN_LONG_4623bb10\n4696|4696 OC_DEVIN_LONG_4623bb10\n4697|4697 OC_DEVIN_LONG_4623bb10\n4698|4698 OC_DEVIN_LONG_4623bb10\n4699|4699 OC_DEVIN_LONG_4623bb10\n4700|4700 OC_DEVIN_LONG_4623bb10\n4701|4701 OC_DEVIN_LONG_4623bb10\n4702|4702 OC_DEVIN_LONG_4623bb10\n4703|4703 OC_DEVIN_LONG_4623bb10\n4704|4704 OC_DEVIN_LONG_4623bb10\n4705|4705 OC_DEVIN_LONG_4623bb10\n4706|4706 OC_DEVIN_LONG_4623bb10\n4707|4707 OC_DEVIN_LONG_4623bb10\n4708|4708 OC_DEVIN_LONG_4623bb10\n4709|4709 OC_DEVIN_LONG_4623bb10\n4710|4710 OC_DEVIN_LONG_4623bb10\n4711|4711 OC_DEVIN_LONG_4623bb10\n4712|4712 OC_DEVIN_LONG_4623bb10\n4713|4713 OC_DEVIN_LONG_4623bb10\n4714|4714 OC_DEVIN_LONG_4623bb10\n4715|4715 OC_DEVIN_LONG_4623bb10\n4716|4716 OC_DEVIN_LONG_4623bb10\n4717|4717 OC_DEVIN_LONG_4623bb10\n4718|4718 OC_DEVIN_LONG_4623bb10\n4719|4719 OC_DEVIN_LONG_4623bb10\n4720|4720 OC_DEVIN_LONG_4623bb10\n4721|4721 OC_DEVIN_LONG_4623bb10\n4722|4722 OC_DEVIN_LONG_4623bb10\n4723|4723 OC_DEVIN_LONG_4623bb10\n4724|4724 OC_DEVIN_LONG_4623bb10\n4725|4725 OC_DEVIN_LONG_4623bb10\n4726|4726 OC_DEVIN_LONG_4623bb10\n4727|4727 OC_DEVIN_LONG_4623bb10\n4728|4728 OC_DEVIN_LONG_4623bb10\n4729|4729 OC_DEVIN_LONG_4623bb10\n4730|4730 OC_DEVIN_LONG_4623bb10\n4731|4731 OC_DEVIN_LONG_4623bb10\n4732|4732 OC_DEVIN_LONG_4623bb10\n4733|4733 OC_DEVIN_LONG_4623bb10\n4734|4734 OC_DEVIN_LONG_4623bb10\n4735|4735 OC_DEVIN_LONG_4623bb10\n4736|4736 OC_DEVIN_LONG_4623bb10\n4737|4737 OC_DEVIN_LONG_4623bb10\n4738|4738 OC_DEVIN_LONG_4623bb10\n4739|4739 OC_DEVIN_LONG_4623bb10\n4740|4740 OC_DEVIN_LONG_4623bb10\n4741|4741 OC_DEVIN_LONG_4623bb10\n4742|4742 OC_DEVIN_LONG_4623bb10\n4743|4743 OC_DEVIN_LONG_4623bb10\n4744|4744 OC_DEVIN_LONG_4623bb10\n4745|4745 OC_DEVIN_LONG_4623bb10\n4746|4746 OC_DEVIN_LONG_4623bb10\n4747|4747 OC_DEVIN_LONG_4623bb10\n4748|4748 OC_DEVIN_LONG_4623bb10\n4749|4749 OC_DEVIN_LONG_4623bb10\n4750|4750 OC_DEVIN_LONG_4623bb10\n4751|4751 OC_DEVIN_LONG_4623bb10\n4752|4752 OC_DEVIN_LONG_4623bb10\n4753|4753 OC_DEVIN_LONG_4623bb10\n4754|4754 OC_DEVIN_LONG_4623bb10\n4755|4755 OC_DEVIN_LONG_4623bb10\n4756|4756 OC_DEVIN_LONG_4623bb10\n4757|4757 OC_DEVIN_LONG_4623bb10\n4758|4758 OC_DEVIN_LONG_4623bb10\n4759|4759 OC_DEVIN_LONG_4623bb10\n4760|4760 OC_DEVIN_LONG_4623bb10\n4761|4761 OC_DEVIN_LONG_4623bb10\n4762|4762 OC_DEVIN_LONG_4623bb10\n4763|4763 OC_DEVIN_LONG_4623bb10\n4764|4764 OC_DEVIN_LONG_4623bb10\n4765|4765 OC_DEVIN_LONG_4623bb10\n4766|4766 OC_DEVIN_LONG_4623bb10\n4767|4767 OC_DEVIN_LONG_4623bb10\n4768|4768 OC_DEVIN_LONG_4623bb10\n4769|4769 OC_DEVIN_LONG_4623bb10\n4770|4770 OC_DEVIN_LONG_4623bb10\n4771|4771 OC_DEVIN_LONG_4623bb10\n4772|4772 OC_DEVIN_LONG_4623bb10\n4773|4773 OC_DEVIN_LONG_4623bb10\n4774|4774 OC_DEVIN_LONG_4623bb10\n4775|4775 OC_DEVIN_LONG_4623bb10\n4776|4776 OC_DEVIN_LONG_4623bb10\n4777|4777 OC_DEVIN_LONG_4623bb10\n4778|4778 OC_DEVIN_LONG_4623bb10\n4779|4779 OC_DEVIN_LONG_4623bb10\n4780|4780 OC_DEVIN_LONG_4623bb10\n4781|4781 OC_DEVIN_LONG_4623bb10\n4782|4782 OC_DEVIN_LONG_4623bb10\n4783|4783 OC_DEVIN_LONG_4623bb10\n4784|4784 OC_DEVIN_LONG_4623bb10\n4785|4785 OC_DEVIN_LONG_4623bb10\n4786|4786 OC_DEVIN_LONG_4623bb10\n4787|4787 OC_DEVIN_LONG_4623bb10\n4788|4788 OC_DEVIN_LONG_4623bb10\n4789|4789 OC_DEVIN_LONG_4623bb10\n4790|4790 OC_DEVIN_LONG_4623bb10\n4791|4791 OC_DEVIN_LONG_4623bb10\n4792|4792 OC_DEVIN_LONG_4623bb10\n4793|4793 OC_DEVIN_LONG_4623bb10\n4794|4794 OC_DEVIN_LONG_4623bb10\n4795|4795 OC_DEVIN_LONG_4623bb10\n4796|4796 OC_DEVIN_LONG_4623bb10\n4797|4797 OC_DEVIN_LONG_4623bb10\n4798|4798 OC_DEVIN_LONG_4623bb10\n4799|4799 OC_DEVIN_LONG_4623bb10\n4800|4800 OC_DEVIN_LONG_4623bb10\n4801|4801 OC_DEVIN_LONG_4623bb10\n4802|4802 OC_DEVIN_LONG_4623bb10\n4803|4803 OC_DEVIN_LONG_4623bb10\n4804|4804 OC_DEVIN_LONG_4623bb10\n4805|4805 OC_DEVIN_LONG_4623bb10\n4806|4806 OC_DEVIN_LONG_4623bb10\n4807|4807 OC_DEVIN_LONG_4623bb10\n4808|4808 OC_DEVIN_LONG_4623bb10\n4809|4809 OC_DEVIN_LONG_4623bb10\n4810|4810 OC_DEVIN_LONG_4623bb10\n4811|4811 OC_DEVIN_LONG_4623bb10\n4812|4812 OC_DEVIN_LONG_4623bb10\n4813|4813 OC_DEVIN_LONG_4623bb10\n4814|4814 OC_DEVIN_LONG_4623bb10\n4815|4815 OC_DEVIN_LONG_4623bb10\n4816|4816 OC_DEVIN_LONG_4623bb10\n4817|4817 OC_DEVIN_LONG_4623bb10\n4818|4818 OC_DEVIN_LONG_4623bb10\n4819|4819 OC_DEVIN_LONG_4623bb10\n4820|4820 OC_DEVIN_LONG_4623bb10\n4821|4821 OC_DEVIN_LONG_4623bb10\n4822|4822 OC_DEVIN_LONG_4623bb10\n4823|4823 OC_DEVIN_LONG_4623bb10\n4824|4824 OC_DEVIN_LONG_4623bb10\n4825|4825 OC_DEVIN_LONG_4623bb10\n4826|4826 OC_DEVIN_LONG_4623bb10\n4827|4827 OC_DEVIN_LONG_4623bb10\n4828|4828 OC_DEVIN_LONG_4623bb10\n4829|4829 OC_DEVIN_LONG_4623bb10\n4830|4830 OC_DEVIN_LONG_4623bb10\n4831|4831 OC_DEVIN_LONG_4623bb10\n4832|4832 OC_DEVIN_LONG_4623bb10\n4833|4833 OC_DEVIN_LONG_4623bb10\n4834|4834 OC_DEVIN_LONG_4623bb10\n4835|4835 OC_DEVIN_LONG_4623bb10\n4836|4836 OC_DEVIN_LONG_4623bb10\n4837|4837 OC_DEVIN_LONG_4623bb10\n4838|4838 OC_DEVIN_LONG_4623bb10\n4839|4839 OC_DEVIN_LONG_4623bb10\n4840|4840 OC_DEVIN_LONG_4623bb10\n4841|4841 OC_DEVIN_LONG_4623bb10\n4842|4842 OC_DEVIN_LONG_4623bb10\n4843|4843 OC_DEVIN_LONG_4623bb10\n4844|4844 OC_DEVIN_LONG_4623bb10\n4845|4845 OC_DEVIN_LONG_4623bb10\n4846|4846 OC_DEVIN_LONG_4623bb10\n4847|4847 OC_DEVIN_LONG_4623bb10\n4848|4848 OC_DEVIN_LONG_4623bb10\n4849|4849 OC_DEVIN_LONG_4623bb10\n4850|4850 OC_DEVIN_LONG_4623bb10\n4851|4851 OC_DEVIN_LONG_4623bb10\n4852|4852 OC_DEVIN_LONG_4623bb10\n4853|4853 OC_DEVIN_LONG_4623bb10\n4854|4854 OC_DEVIN_LONG_4623bb10\n4855|4855 OC_DEVIN_LONG_4623bb10\n4856|4856 OC_DEVIN_LONG_4623bb10\n4857|4857 OC_DEVIN_LONG_4623bb10\n4858|4858 OC_DEVIN_LONG_4623bb10\n4859|4859 OC_DEVIN_LONG_4623bb10\n4860|4860 OC_DEVIN_LONG_4623bb10\n4861|4861 OC_DEVIN_LONG_4623bb10\n4862|4862 OC_DEVIN_LONG_4623bb10\n4863|4863 OC_DEVIN_LONG_4623bb10\n4864|4864 OC_DEVIN_LONG_4623bb10\n4865|4865 OC_DEVIN_LONG_4623bb10\n4866|4866 OC_DEVIN_LONG_4623bb10\n4867|4867 OC_DEVIN_LONG_4623bb10\n4868|4868 OC_DEVIN_LONG_4623bb10\n4869|4869 OC_DEVIN_LONG_4623bb10\n4870|4870 OC_DEVIN_LONG_4623bb10\n4871|4871 OC_DEVIN_LONG_4623bb10\n4872|4872 OC_DEVIN_LONG_4623bb10\n4873|4873 OC_DEVIN_LONG_4623bb10\n4874|4874 OC_DEVIN_LONG_4623bb10\n4875|4875 OC_DEVIN_LONG_4623bb10\n4876|4876 OC_DEVIN_LONG_4623bb10\n4877|4877 OC_DEVIN_LONG_4623bb10\n4878|4878 OC_DEVIN_LONG_4623bb10\n4879|4879 OC_DEVIN_LONG_4623bb10\n4880|4880 OC_DEVIN_LONG_4623bb10\n4881|4881 OC_DEVIN_LONG_4623bb10\n4882|4882 OC_DEVIN_LONG_4623bb10\n4883|4883 OC_DEVIN_LONG_4623bb10\n4884|4884 OC_DEVIN_LONG_4623bb10\n4885|4885 OC_DEVIN_LONG_4623bb10\n4886|4886 OC_DEVIN_LONG_4623bb10\n4887|4887 OC_DEVIN_LONG_4623bb10\n4888|4888 OC_DEVIN_LONG_4623bb10\n4889|4889 OC_DEVIN_LONG_4623bb10\n4890|4890 OC_DEVIN_LONG_4623bb10\n4891|4891 OC_DEVIN_LONG_4623bb10\n4892|4892 OC_DEVIN_LONG_4623bb10\n4893|4893 OC_DEVIN_LONG_4623bb10\n4894|4894 OC_DEVIN_LONG_4623bb10\n4895|4895 OC_DEVIN_LONG_4623bb10\n4896|4896 OC_DEVIN_LONG_4623bb10\n4897|4897 OC_DEVIN_LONG_4623bb10\n4898|4898 OC_DEVIN_LONG_4623bb10\n4899|4899 OC_DEVIN_LONG_4623bb10\n4900|4900 OC_DEVIN_LONG_4623bb10\n4901|4901 OC_DEVIN_LONG_4623bb10\n4902|4902 OC_DEVIN_LONG_4623bb10\n4903|4903 OC_DEVIN_LONG_4623bb10\n4904|4904 OC_DEVIN_LONG_4623bb10\n4905|4905 OC_DEVIN_LONG_4623bb10\n4906|4906 OC_DEVIN_LONG_4623bb10\n4907|4907 OC_DEVIN_LONG_4623bb10\n4908|4908 OC_DEVIN_LONG_4623bb10\n4909|4909 OC_DEVIN_LONG_4623bb10\n4910|4910 OC_DEVIN_LONG_4623bb10\n4911|4911 OC_DEVIN_LONG_4623bb10\n4912|4912 OC_DEVIN_LONG_4623bb10\n4913|4913 OC_DEVIN_LONG_4623bb10\n4914|4914 OC_DEVIN_LONG_4623bb10\n4915|4915 OC_DEVIN_LONG_4623bb10\n4916|4916 OC_DEVIN_LONG_4623bb10\n4917|4917 OC_DEVIN_LONG_4623bb10\n4918|4918 OC_DEVIN_LONG_4623bb10\n4919|4919 OC_DEVIN_LONG_4623bb10\n4920|4920 OC_DEVIN_LONG_4623bb10\n4921|4921 OC_DEVIN_LONG_4623bb10\n4922|4922 OC_DEVIN_LONG_4623bb10\n4923|4923 OC_DEVIN_LONG_4623bb10\n4924|4924 OC_DEVIN_LONG_4623bb10\n4925|4925 OC_DEVIN_LONG_4623bb10\n4926|4926 OC_DEVIN_LONG_4623bb10\n4927|4927 OC_DEVIN_LONG_4623bb10\n4928|4928 OC_DEVIN_LONG_4623bb10\n4929|4929 OC_DEVIN_LONG_4623bb10\n4930|4930 OC_DEVIN_LONG_4623bb10\n4931|4931 OC_DEVIN_LONG_4623bb10\n4932|4932 OC_DEVIN_LONG_4623bb10\n4933|4933 OC_DEVIN_LONG_4623bb10\n4934|4934 OC_DEVIN_LONG_4623bb10\n4935|4935 OC_DEVIN_LONG_4623bb10\n4936|4936 OC_DEVIN_LONG_4623bb10\n4937|4937 OC_DEVIN_LONG_4623bb10\n4938|4938 OC_DEVIN_LONG_4623bb10\n4939|4939 OC_DEVIN_LONG_4623bb10\n4940|4940 OC_DEVIN_LONG_4623bb10\n4941|4941 OC_DEVIN_LONG_4623bb10\n4942|4942 OC_DEVIN_LONG_4623bb10\n4943|4943 OC_DEVIN_LONG_4623bb10\n4944|4944 OC_DEVIN_LONG_4623bb10\n4945|4945 OC_DEVIN_LONG_4623bb10\n4946|4946 OC_DEVIN_LONG_4623bb10\n4947|4947 OC_DEVIN_LONG_4623bb10\n4948|4948 OC_DEVIN_LONG_4623bb10\n4949|4949 OC_DEVIN_LONG_4623bb10\n4950|4950 OC_DEVIN_LONG_4623bb10\n4951|4951 OC_DEVIN_LONG_4623bb10\n4952|4952 OC_DEVIN_LONG_4623bb10\n4953|4953 OC_DEVIN_LONG_4623bb10\n4954|4954 OC_DEVIN_LONG_4623bb10\n4955|4955 OC_DEVIN_LONG_4623bb10\n4956|4956 OC_DEVIN_LONG_4623bb10\n4957|4957 OC_DEVIN_LONG_4623bb10\n4958|4958 OC_DEVIN_LONG_4623bb10\n4959|4959 OC_DEVIN_LONG_4623bb10\n4960|4960 OC_DEVIN_LONG_4623bb10\n4961|4961 OC_DEVIN_LONG_4623bb10\n4962|4962 OC_DEVIN_LONG_4623bb10\n4963|4963 OC_DEVIN_LONG_4623bb10\n4964|4964 OC_DEVIN_LONG_4623bb10\n4965|4965 OC_DEVIN_LONG_4623bb10\n4966|4966 OC_DEVIN_LONG_4623bb10\n4967|4967 OC_DEVIN_LONG_4623bb10\n4968|4968 OC_DEVIN_LONG_4623bb10\n4969|4969 OC_DEVIN_LONG_4623bb10\n4970|4970 OC_DEVIN_LONG_4623bb10\n4971|4971 OC_DEVIN_LONG_4623bb10\n4972|4972 OC_DEVIN_LONG_4623bb10\n4973|4973 OC_DEVIN_LONG_4623bb10\n4974|4974 OC_DEVIN_LONG_4623bb10\n4975|4975 OC_DEVIN_LONG_4623bb10\n4976|4976 OC_DEVIN_LONG_4623bb10\n4977|4977 OC_DEVIN_LONG_4623bb10\n4978|4978 OC_DEVIN_LONG_4623bb10\n4979|4979 OC_DEVIN_LONG_4623bb10\n4980|4980 OC_DEVIN_LONG_4623bb10\n4981|4981 OC_DEVIN_LONG_4623bb10\n4982|4982 OC_DEVIN_LONG_4623bb10\n4983|4983 OC_DEVIN_LONG_4623bb10\n4984|4984 OC_DEVIN_LONG_4623bb10\n4985|4985 OC_DEVIN_LONG_4623bb10\n4986|4986 OC_DEVIN_LONG_4623bb10\n4987|4987 OC_DEVIN_LONG_4623bb10\n4988|4988 OC_DEVIN_LONG_4623bb10\n4989|4989 OC_DEVIN_LONG_4623bb10\n4990|4990 OC_DEVIN_LONG_4623bb10\n4991|4991 OC_DEVIN_LONG_4623bb10\n4992|4992 OC_DEVIN_LONG_4623bb10\n4993|4993 OC_DEVIN_LONG_4623bb10\n4994|4994 OC_DEVIN_LONG_4623bb10\n4995|4995 OC_DEVIN_LONG_4623bb10\n4996|4996 OC_DEVIN_LONG_4623bb10\n4997|4997 OC_DEVIN_LONG_4623bb10\n4998|4998 OC_DEVIN_LONG_4623bb10\n4999|4999 OC_DEVIN_LONG_4623bb10\n5000|5000 OC_DEVIN_LONG_4623bb10\n5001|OC_DEVIN_LONG_END_b4cc78fd\n</file-view>\n\nExit code: 0",
+          "error": null,
+          "overflow_path": "/home/ubuntu/.devin-files/devin-remote-overflows-1000/shell-c2ead3-ed305e8a7a5fc2ae/content.txt"
+        },
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PostToolUse.jGbtbJJO",
+      "event": {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "message_user",
+        "tool_input": {
+          "message": "Skill marker: OC_DEVIN_SKILL_7cbe68f1\n\nI ran the synthetic command `echo OC_DEVIN_TOOL_d04c7f26` from /tmp/opencrawl-devin-probe-v1, and it printed OC_DEVIN_TOOL_d04c7f26 (exit code 0). I didn't touch any repos, credentials, environment variables, external services or hook record files.\n\nOC_DEVIN_REPLY_543d890a",
+          "block_on_user": true,
+          "attachments": [],
+          "user_action_required": "None"
+        },
+        "tool_use_id": "toolu_01RfTeJ5R8QQAxv76ZZwnDou",
+        "tool_response": {
+          "success": true,
+          "output": "Message sent to user.\nWork stopped and awaiting user response.",
+          "error": null
+        },
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "a5aeae6e-685d-48bd-9e3d-7fe6698d4a49"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PreToolUse.9JkUgsDM",
+      "event": {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "exec",
+        "tool_input": {
+          "command": "for i in $(seq 1 5000); do echo \"$i OC_DEVIN_LONG_4623bb10\"; done; echo OC_DEVIN_LONG_END_b4cc78fd",
+          "workdir": "/tmp/opencrawl-devin-probe-v1"
+        },
+        "tool_use_id": "toolu_017BygWZWW3p3RdkJg9J7KqD",
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PreToolUse.BKrj4ExA",
+      "event": {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "exec",
+        "tool_input": {
+          "command": "echo OC_DEVIN_REPEAT_c3d59f21",
+          "workdir": "/tmp/opencrawl-devin-probe-v1"
+        },
+        "tool_use_id": "toolu_01YDvvXEMSeuQhDsrezxrYMv",
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PreToolUse.POzt7PzP",
+      "event": {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "exec",
+        "tool_input": {
+          "command": "echo OC_DEVIN_REPEAT_c3d59f21",
+          "workdir": "/tmp/opencrawl-devin-probe-v1"
+        },
+        "tool_use_id": "toolu_01RfgbMxthD6YxCL3n88Lx1A",
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PreToolUse.QoyqfMrd",
+      "event": {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "message_user",
+        "tool_input": {
+          "message": "Skill marker: OC_DEVIN_SKILL_7cbe68f1\n\nI ran the synthetic command `echo OC_DEVIN_TOOL_d04c7f26` from /tmp/opencrawl-devin-probe-v1, and it printed OC_DEVIN_TOOL_d04c7f26 (exit code 0). I didn't touch any repos, credentials, environment variables, external services or hook record files.\n\nOC_DEVIN_REPLY_543d890a",
+          "block_on_user": true,
+          "attachments": [],
+          "user_action_required": "None"
+        },
+        "tool_use_id": "toolu_01RfTeJ5R8QQAxv76ZZwnDou",
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "a5aeae6e-685d-48bd-9e3d-7fe6698d4a49"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PreToolUse.Tq78vas7",
+      "event": {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "message_user",
+        "tool_input": {
+          "message": "All four steps ran in /tmp/opencrawl-devin-probe-v1, each as a separate shell call:\n1. `echo OC_DEVIN_REPEAT_c3d59f21` printed the marker (exit 0).\n2. The same command again printed the marker again (exit 0).\n3. `sh -c 'printf OC_DEVIN_FAIL_81ecdd39 >&2; exit 7'` wrote OC_DEVIN_FAIL_81ecdd39 to stderr and exited with code 7, as intended.\n4. The long-output command printed 5,000 numbered OC_DEVIN_LONG_4623bb10 lines, then OC_DEVIN_LONG_END_b4cc78fd (5,001 lines, exit 0).\n\nI sent all four calls in one batch, so they may have run at the same time rather than strictly one after another. If your hook records need exact ordering, check the timestamps.\n\nI didn't touch any hook files, repos, credentials or external services.\n\nOC_DEVIN_REPLY_2_c1500bf8",
+          "block_on_user": true,
+          "attachments": [],
+          "user_action_required": "None"
+        },
+        "tool_use_id": "toolu_0199erHWp11WWW2fEFY9wskD",
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PreToolUse.Y2M1FuMN",
+      "event": {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "message_user",
+        "tool_input": {
+          "message": "OC_DEVIN_INTERIM_0a4f7b82: running the four shell steps in /tmp/opencrawl-devin-probe-v1 now.",
+          "block_on_user": false,
+          "attachments": []
+        },
+        "tool_use_id": "toolu_01XkZ1EzMXSQwbdt5gp9sMLv",
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "PreToolUse.dWR5KLVr",
+      "event": {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "exec",
+        "tool_input": {
+          "command": "sh -c 'printf OC_DEVIN_FAIL_81ecdd39 >&2; exit 7'",
+          "workdir": "/tmp/opencrawl-devin-probe-v1"
+        },
+        "tool_use_id": "toolu_01SAqCt4MfbsKDDTncoL6qcA",
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "SessionStart.hnTHYtKb",
+      "event": {
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "a5aeae6e-685d-48bd-9e3d-7fe6698d4a49"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "Stop.T3uBhTbo",
+      "event": {
+        "hook_event_name": "Stop",
+        "stop_hook_active": false,
+        "last_assistant_message": "",
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "Stop.jazVkEzb",
+      "event": {
+        "hook_event_name": "Stop",
+        "stop_hook_active": false,
+        "last_assistant_message": "",
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "a5aeae6e-685d-48bd-9e3d-7fe6698d4a49"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    },
+    {
+      "file": "UserPromptSubmit.0VfH2Oa8",
+      "event": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "<received_chat_message from=\"Synthetic User\" git_username=\"synthetic-user\" git_author_email=\"synthetic@example.invalid\" source=\"web\" message_id=\"event-01a1e2540e517f5a957e4dfa489d939f\" sent_at=\"Sunday, 2026-11-15 19:08 PST (America/Los_Angeles)\">Second synthetic turn OC_DEVIN_USER_2_3b6e2b92. Stay only in /tmp/opencrawl-devin-probe-v1 and do not inspect hook files, repositories, credentials or external services. First send a short progress message containing OC_DEVIN_INTERIM_0a4f7b82. Then use separate shell tool calls to (1) print OC_DEVIN_REPEAT_c3d59f21, (2) run exactly the same command again, (3) run sh -c 'printf OC_DEVIN_FAIL_81ecdd39 >&2; exit 7', and (4) run a command that prints 5000 numbered lines of the fixed marker OC_DEVIN_LONG_4623bb10 followed by OC_DEVIN_LONG_END_b4cc78fd. Do not echo the large output into chat. Finish with OC_DEVIN_REPLY_2_c1500bf8.</received_chat_message>",
+        "source": "user",
+        "session_id": "devin-live-probe-20261115",
+        "prompt_id": "65bdd7be-7b79-4426-9e63-0b608aa7d3d7"
+      },
+      "cwd": "/home/ubuntu/repos\n"
+    }
+  ]
+}

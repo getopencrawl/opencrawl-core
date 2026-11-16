@@ -4,10 +4,13 @@ import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {build} from 'esbuild';
 import {deriveOnboarding} from '../src/onboarding/model.ts';
+import type {SetupStatus} from '../../src/application/types.mjs';
 import type {OnboardingSource, OnboardingStatus} from '../src/onboarding/types.ts';
 
 interface FixtureState {
   status: OnboardingStatus;
+  setup: SetupStatus;
+  setupError?: boolean;
   sources: OnboardingSource[];
   invitations: {email: string;inviteUrl?:string}[];
   delayStatus: number;
@@ -18,7 +21,7 @@ interface FixtureState {
   acceptedCredential?: string;
   requests: {status: number; finish: number; invite: number; connect: number; aborted: number; credential: number};
 }
-const fresh = (): FixtureState => ({status: {}, sources: [{id: 'slack', name: 'Slack', icon: '/assets/connectors/slack.svg', state: 'disconnected', auth: 'oauth'}, {id: 'granola', name: 'Granola', icon: '/assets/connectors/granola.svg', state: 'disconnected', auth: 'api-key'}], invitations: [], delayStatus: 0, finishError: false, requests: {status: 0, finish: 0, invite: 0, connect: 0, aborted: 0, credential: 0}});
+const fresh = (): FixtureState => ({status: {}, setup:{schemaVersion:1,scope:{tenantId:'fixture',userId:'alex'},firstWin:null,installations:[]}, sources: [{id: 'slack', name: 'Slack', icon: '/assets/connectors/slack.svg', state: 'disconnected', auth: 'oauth'}, {id: 'granola', name: 'Granola', icon: '/assets/connectors/granola.svg', state: 'disconnected', auth: 'api-key'}], invitations: [], delayStatus: 0, finishError: false, requests: {status: 0, finish: 0, invite: 0, connect: 0, aborted: 0, credential: 0}});
 let state = fresh();
 const output = await build({entryPoints: [fileURLToPath(new URL('./fixtures/onboarding-app.tsx', import.meta.url))], bundle: true, write: false, outdir: 'test-memory', format: 'esm', platform: 'browser', target: 'es2022', sourcemap: false, external: ['/assets/*']});
 const javascript = output.outputFiles.find(file => file.path.endsWith('.js'))?.contents;
@@ -40,6 +43,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     return json(res, state);
   }
   if (url.pathname === '/__test/reset') {state = {...fresh(), ...await body(req)} as FixtureState; return json(res, {ok: true});}
+  if (url.pathname === '/api/console/bootstrap') return json(res,{cacheScope:'setup-fixture',workspace:{name:'Example workspace',userName:'Alex',email:'alex@example.test',role:'admin'},mcpUrl:'https://app.getopencrawl.com/mcp',setupPrompt:'Legacy setup prompt',canInvite:true,onboarding:{completed:false,next:'/onboarding'}});
+  if (url.pathname === '/api/setup') return state.setupError?json(res,{error:'Setup status is temporarily unavailable.'},503):json(res,{schemaVersion:1,data:state.setup});
   if (url.pathname === '/api/onboarding') {
     state.requests.status++;
     const snapshot = state.status;

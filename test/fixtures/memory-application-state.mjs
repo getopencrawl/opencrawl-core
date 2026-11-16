@@ -1,5 +1,6 @@
+import {memorySetupState} from './memory-setup-state.mjs';
 import {memoryAccountState,memoryConnectorSecrets,memoryValueReports} from './memory-account-state.mjs';
-import {memoryReplicasState} from './memory-replicas.mjs';
+import {memoryReplicasState,memoryDevinState} from './memory-replicas.mjs';
 import {randomUUID} from 'node:crypto';
 import {memorySlackCaptureState} from './memory-slack-capture.mjs';
 import {resourceControlIdentity} from '../../dist/src/state/resource-controls.mjs';
@@ -33,7 +34,7 @@ export function memoryApplicationState(){
     if(conflicts.size)eventIdentityConflict(conflicts);
     for(const [id,hash]of incoming)existing.set(id,hash);eventSessions.set(where.source,existing);return {reservedEvents:existing.size};
   },async purgeSession(options){const where=eventIdentityLocation({...options,installationId:'purge'}),scope=resource(where.source);deletedEvents.add(scope);for(const key of eventSessions.keys())if(resource(key)===scope)eventSessions.delete(key);}};
-  return {namespace,eventIdentities,accounts:memoryAccountState(),connectorSecrets:memoryConnectorSecrets(),replicas:memoryReplicasState(),valueReports:memoryValueReports(),controls,slackCapture:memorySlackCaptureState(),receiptValues:receipts,deletionRecords:deletions,
+  return {namespace,eventIdentities,setup:memorySetupState(),accounts:memoryAccountState(),connectorSecrets:memoryConnectorSecrets(),replicas:memoryReplicasState(),devin:memoryDevinState(),valueReports:memoryValueReports(),controls,slackCapture:memorySlackCaptureState(),receiptValues:receipts,deletionRecords:deletions,
     indexingReceipts:{async read(key){return copy(receipts.get(key));},async put(key,value){if(!receipts.has(key))receipts.set(key,copy(value));}},
     writeBarrier({namespace:scope='selfhost',tenantId,connectionId,controlPrefix='control/connectors/write-barriers/v1/',now=Date.now}){
       if(![scope,tenantId,connectionId].every(v=>typeof v==='string'&&/^[A-Za-z0-9_:-]{1,200}$/.test(v)))throw new Error('Explicit write-fence scope is required');

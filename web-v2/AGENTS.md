@@ -14,9 +14,9 @@ DTOs and runtime adapters; WorkOS, billing and managed connector code stay outsi
   at `/settings/team` and is the default for `/settings`; hosted Billing extends
   the frame at `/settings/billing`.
   Embed their content and pending states without another Page or H1. Legacy
-  `/team` and hosted `/billing` redirects preserve query and hash. Agent setup
-  remains a sidebar destination at `/agent-setup`. Settings uses the gear,
-  Agent setup the terminal, and Message board the speech bubble; keep them distinct.
+  `/team` and hosted `/billing` redirects preserve query and hash. Setup is the first sidebar destination at `/setup`; legacy `/agent-setup`
+  redirects there. Settings uses the gear, Setup the terminal, and Message board
+  the speech bubble; keep them distinct.
 - Brand is the only mark/wordmark component. Use the static mark and lowercase
   opencrawl wordmark; never restore animated logo assets or hide the desktop
   wordmark. Workspace navigation lives in the persistent left sidebar with a lavender
@@ -36,7 +36,7 @@ DTOs and runtime adapters; WorkOS, billing and managed connector code stay outsi
 - Every sidebar destination uses Page with one shared PageHeader. Keep the 32px
   desktop / 28px mobile title, 8px description gap and 32px header-to-body gap.
   Every workspace page uses the default full-width body, including Integrations,
-  Agent setup and Settings with its Team and hosted Billing sections. Bound
+  Setup and Settings with its Team and hosted Billing sections. Bound
   individual form rows with oc-form-measure and prose with its shared measure;
   never narrow or recenter the whole page,
   or add local title, width or top-inset rules.

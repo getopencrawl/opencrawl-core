@@ -10,7 +10,7 @@ import type {OnlineCoveragePolicy} from './online-coverage.mjs';
 
 type ProjectionOptions=Omit<Parameters<typeof createOnlineProjection>[0],'epoch'|'sourceId'|'journalBinding'>;
 export type OnlineTypedDisposition=OnlineShadowSelection|{kind:'blocked';domain:string;maxBytes:number};
-const typed=new Set(['resource-controls','capture-credentials','credential-generations','onboarding','role-writes','connector-grants','connector-settings','replicas-connections','replicas-index','replicas-setup','value-reports','board','session-write-fences','connector-write-fences','deletion-requests','slack-capture']);
+const typed=new Set(['resource-controls','capture-credentials','credential-generations','onboarding','setup-status','role-writes','connector-grants','connector-settings','replicas-connections','replicas-index','replicas-setup','value-reports','board','session-write-fences','connector-write-fences','deletion-requests','slack-capture']);
 function fail(code:string):never{throw Object.assign(new Error('Online typed shadow: '+code),{code:'ONLINE_TYPED_SHADOW_'+code});}
 const compare=(a:string,b:string)=>Buffer.compare(Buffer.from(a),Buffer.from(b));
 /** Background migration only. The physical listing MUST include retained

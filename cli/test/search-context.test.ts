@@ -1,6 +1,6 @@
 import {test, expect} from 'bun:test';
 import {PassThrough, Readable} from 'node:stream';
-import {searchContext, searchContextCommand, readSearchContextEvent, searchContextMatcher, cursorSearchContextMatcher, antigravitySearchContextMatcher} from '../src/search-context.ts';
+import {searchContext, searchContextCommand, readSearchContextEvent, searchContextMatcher, cursorSearchContextMatcher, antigravitySearchContextMatcher, pluginSearchContextMatcher} from '../src/search-context.ts';
 
 const input = {query:'release failure', filters:{roles:['assistant']}, includeCurrentSession:true, includeToolOutputs:true,
   currentSession:{harness:'codex',sessionId:'stale'}, cursor:'keep-cursor'};
@@ -134,4 +134,31 @@ test('command decodes the native GUI wrapper without parsing string Arguments or
     expect(await searchContextCommand(['--harness','antigravity'],Readable.from([JSON.stringify(foreign)]),sink)).toBe(0);
     expect(output).toBe('');
   }
+});
+
+
+test('deployment plugins rewrite only their exact native MCP namespace and preserve native identity',()=>{
+  const plugin='opencrawl-123456abcdef',foreign='opencrawl-fedcba654321';
+  for(const harness of ['codex','claude-code']) {
+    const prefix=(name:string)=>harness==='codex'?`mcp__${name}__`:`mcp__plugin_${name}_opencrawl__`;
+    const matcher=new RegExp(pluginSearchContextMatcher(harness,plugin));
+    for(const name of [plugin,plugin.replaceAll('-','_')])for(const alias of ['opencrawl_search','opencrawl_search_v1']) {
+      const tool_name=prefix(name)+alias;
+      expect(matcher.test(tool_name)).toBe(true);
+      expect((searchContext(harness,{...event,tool_name},plugin) as any).hookSpecificOutput.updatedInput.currentSession).toEqual({harness,sessionId:'parent'});
+    }
+    for(const tool_name of [prefix(foreign)+'opencrawl_search_v1',prefix(plugin)+'search','mcp__opencrawl__opencrawl_search_v1',prefix(plugin)+'opencrawl_search_v10']) {
+      expect(matcher.test(tool_name)).toBe(false);expect(searchContext(harness,{...event,tool_name},plugin)).toBeUndefined();
+    }
+    expect(searchContext(harness,{...event,tool_name:prefix(plugin)+'opencrawl_search_v1',cursor_version:'imported-plugin'},plugin)).toBeUndefined();
+  }
+  const agy=(ServerName:string)=>({hookEventName:'PreToolUse',conversationId:'actual-chat',toolCall:{name:'call_mcp_tool',args:{ServerName,ToolName:'opencrawl_search_v1',Arguments:input}}});
+  expect(searchContext('antigravity',agy(plugin+'_opencrawl'),plugin)).toEqual({decision:'allow',overwrite:{Arguments:{...input,currentSession:{harness:'antigravity',sessionId:'actual-chat'}}}});
+  for(const server of ['opencrawl','opencrawl_opencrawl',foreign+'_opencrawl'])expect(searchContext('antigravity',agy(server),plugin)).toBeUndefined();
+  const name='mcp_'+plugin+'_opencrawl_opencrawl_search_v1';
+  expect(new RegExp(pluginSearchContextMatcher('antigravity',plugin)).test(name)).toBe(true);
+  expect(searchContext('antigravity',{...agy('unused'),toolCall:{name,args:input}},plugin)).toEqual({decision:'allow',overwrite:{currentSession:{harness:'antigravity',sessionId:'actual-chat'}}});
+  // Cursor supplies only its native alias: its plugin binding is validated by
+  // the command, while its current conversation remains independent of scope.
+  expect(searchContext('cursor',{hook_event_name:'preToolUse',conversation_id:'actual-chat',tool_name:'MCP:opencrawl_search_v1',tool_input:input},plugin)).toEqual({updated_input:{...input,currentSession:{harness:'cursor',sessionId:'actual-chat'}}});
 });

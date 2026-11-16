@@ -118,6 +118,15 @@ async function verify(){try{
   // Invoke the actual old npm command, including its active Windows .cmd shim.
   // It still needs Node for this invocation; subsequent calls must not need it.
   await run(command(['board','instructions']),{...environment,PATH:environment.PATH+delimiter+dirname(node)});
+  // The new CLI must schedule daemon migration after the real published old
+  // updater selects it. This fixture deliberately has no service-manager tools
+  // on PATH: bootstrap must fail back to the old collector, preserving data.
+  if(process.platform==='darwin'||process.platform==='linux'){
+    const resultFile=join(capture,'daemon','upgrade-result.json'),until=Date.now()+20_000;
+    while(!existsSync(resultFile)){if(Date.now()>until)throw Error('Updated CLI did not attempt automatic daemon migration');await Bun.sleep(50);}
+    assert.equal(JSON.parse(readFileSync(resultFile,'utf8')).state,'fallback');
+    assert.equal(JSON.parse(readFileSync(join(capture,'config.json'),'utf8')).captureWorker,undefined);
+  }
   const noRuntime={...environment,OPENCRAWL_NO_UPDATE:'1',PATH:join(scratch,'no-runtimes')};
   assert.equal(sync(command(['--version']),noRuntime),expected,'Original npm command still requires Node');
   if(process.platform==='win32'){
@@ -149,7 +158,7 @@ async function verify(){try{
     assert(requests.some(request=>request.path.endsWith('/candidate.tgz')));
     assert(requests.every(request=>!request.npm),'Automatic update unexpectedly invoked npm');
   }
-  console.log(JSON.stringify({bootstrapVersion,oldVersion,version:expected,platform,published,unmodifiedPublishedUpdater:true,originalCommandAndStartupHooksNodeFree:true,credentialsQueueAndCursorPreserved:true,legacyBridgePreserved:true,captureCommand:realpathSync(migrated.command[0])}));
+  console.log(JSON.stringify({bootstrapVersion,oldVersion,version:expected,platform,published,unmodifiedPublishedUpdater:true,originalCommandAndStartupHooksNodeFree:true,credentialsQueueAndCursorPreserved:true,legacyBridgePreserved:true,automaticDaemonFallbackVerified:process.platform==='darwin'||process.platform==='linux',captureCommand:realpathSync(migrated.command[0])}));
 }catch(error){
   for(const file of [join(environment.XDG_CACHE_HOME!,'opencrawl/update.json'),join(scratch,'proxy-receipt.json')])if(existsSync(file))console.error(readFileSync(file,'utf8'));
   throw error;

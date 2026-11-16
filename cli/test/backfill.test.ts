@@ -8,6 +8,7 @@ import {standaloneCapture} from '../../dist/tools/test-fixtures/capture.mjs';
 import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 import {createSessionIngest} from '../../dist/src/sessions/ingest.mjs';
 import {installCapture} from '../src/capture/install.ts';
+import {atomicJson} from '../src/session.ts';
 import {captureDir,captureStatus,readCaptureConfig,syncCaptures,captureTranscript,type CaptureConfig} from '../src/capture/runtime.ts';
 import {backfillPreview,backfill,chooseBackfill,setupBackfill} from '../src/capture/backfill.ts';
 import {collectCommand} from '../src/capture/command.ts';
@@ -140,6 +141,7 @@ test('Codex fork history preserves the leading session identity and origin acros
  process.env.OPENCRAWL_CONFIG_HOME=join(dir,'config');
  try {
   const config:CaptureConfig={schemaVersion:1,api:'http://127.0.0.1:1',installationId:'test',owner:{tenantId:'test',userId:'test'},installedAt:new Date().toISOString(),roots:{codex:join(dir,'codex'),'claude-code':join(dir,'claude')},command:[]};
+  atomicJson(join(captureDir(),'config.json'),config);
   const path=join(config.roots.codex,'sessions','fork.jsonl');mkdirSync(join(path,'..'),{recursive:true});
   const records=[
    {type:'session_meta',payload:{id:'fork',source:'vscode',originator:'Codex Desktop',forked_from_id:'parent'}},
@@ -167,6 +169,7 @@ test('only approved history reconciliation upgrades old parser cursors, includin
  process.env.OPENCRAWL_CONFIG_HOME=join(dir,'config');
  try {
   const config:CaptureConfig={schemaVersion:1,api:'http://127.0.0.1:1',installationId:'test',owner:{tenantId:'test',userId:'test'},installedAt:new Date().toISOString(),roots:{codex:join(dir,'codex'),'claude-code':join(dir,'claude')},command:[]};
+  atomicJson(join(captureDir(),'config.json'),config);
   const records=[{type:'session_meta',payload:{id:'session',source:'cli'}},{type:'response_item',payload:{type:'agent_message',author:'/root/child',recipient:'/root',content:[{type:'input_text',text:'historical agent result'}]}}];
   const raw=records.map(r=>JSON.stringify(r)+'\n').join('');
   for(const suffix of ['.jsonl','.jsonl.zst']) {

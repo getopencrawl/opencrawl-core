@@ -28,7 +28,7 @@ jobs:
       - name: Verify CLI consumers of core under Bun
         run: |
           bun install --cwd cli --frozen-lockfile --ignore-scripts
-          bun test cli
+          bun run --cwd cli test
       - name: Verify the standalone GitHub connector
         run: python3 -m unittest discover -s connectors/github/tests
       - run: npm ci --prefix web-v2 --ignore-scripts --no-audit --no-fund

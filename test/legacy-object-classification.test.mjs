@@ -34,3 +34,12 @@ test('legacy classifier rejects malformed paths before raw passthrough', () => {
   for (const key of ['', 'raw/../state', 'raw//key', 'raw/\0key', '/raw/key']) assert.throws(() => classify(key), /Invalid/);
   for (const value of ['', 'prefix/', 'prefix/../state', 'prefix\0']) assert.throws(() => createLegacyObjectClassifier({prefix: value}), /Invalid/);
 });
+
+
+test('shared Setup grammar retains upstream legacy migration and the exact bounded owner key', () => {
+  const key = prefix + '/' + owner + '/setup/status-v1.json';
+  const capture = createLegacyObjectClassifier({prefix});
+  assert.deepEqual(capture.classify(key), {domain: 'setup-status', maxBytes: 256 * 1024, parts: [digest('org_new'), digest('user_new')]});
+  for (const changed of [key.replace('status-v1', 'status-v2'), key.replace('/setup/', '/setup/extra/')]) assert.throws(() => capture.classify(changed), /Unrecognized/);
+  assert.throws(() => createLegacyObjectClassifier({prefix, credentialPurpose: 'agent'}).classify(key), /unrelated application state/);
+});

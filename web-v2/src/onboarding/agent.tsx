@@ -9,11 +9,11 @@ import {OnboardingShell} from './shell.tsx';
 import type {OnboardingAdapter, OnboardingStatus} from './types.ts';
 
 const titles = {
-  connect: 'Connect your primary coding agent',
+  connect: 'Install OpenCrawl',
   session: 'Start a new coding session',
 };
 const descriptions = {
-  connect: 'Install the OpenCrawl CLI to start recording your coding agent sessions. Your agent will guide you through sign-in, then test the connection.',
+  connect: 'Run this command in your terminal. The CLI signs you in and installs your selected plugins, then your agent guides the remaining trust and verification steps.',
   session: 'Open a new session in your coding agent, then paste this small task. We’ll continue when its recording arrives.',
 };
 
@@ -53,22 +53,17 @@ export interface AgentOnboardingProps {
   presentation?: 'focused' | 'workspace';
 }
 
-export function AgentOnboarding({adapter, mcpUrl, setupPrompt, canInstallReplicas = false, initialStatus, canInviteBeforeSetup = false, presentation = 'focused'}: AgentOnboardingProps) {
+export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus, canInviteBeforeSetup = false, presentation = 'focused'}: AgentOnboardingProps) {
   const progress = useOnboardingResource(signal => adapter.status(signal), {key:consoleResourceKey(adapter,'onboarding-status'), interval: 5000, initial: initialStatus});
   const status = progress.data ?? {};
   const [personalSetup,setPersonalSetup] = useState(false);
   const derived = deriveOnboarding(personalSetup ? {...status,shared:undefined} : status);
-  const [replicasPending,setReplicasPending] = useState(false);
-  const [replicasError,setReplicasError] = useState('');
-  const replicasAbort = useRef<AbortController | null>(null);
-  useEffect(() => () => replicasAbort.current?.abort(), []);
   const showComplete = derived.complete && presentation === 'focused';
   const {commands, prompts} = promptModel({mcpUrl, setupPrompt});
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [manual, setManual] = useState<{text: string; step: string} | null>(null);
   const copyButton = useRef<HTMLButtonElement>(null);
-  const replicasButton = useRef<HTMLButtonElement>(null);
   const fallback = useRef<HTMLTextAreaElement>(null);
   const copyScope = JSON.stringify([mcpUrl, setupPrompt, derived.complete]);
   const currentCopyScope = useRef(copyScope);
@@ -118,39 +113,23 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, canInstallReplica
               </Signal>
             </ul>;
 
-  async function installReplicas() {
-    if (replicasPending) return;
-    setReplicasPending(true);setReplicasError('');
-    const request = new AbortController();replicasAbort.current = request;
-    try {
-      if (!adapter.replicasSetup || !canInstallReplicas) throw new Error('Replicas setup is unavailable.');
-      const result = await adapter.replicasSetup(request.signal);
-      if (mounted.current && !request.signal.aborted) await copy(result.prompt,'replicas');
-    } catch (error) {
-      if (mounted.current && !request.signal.aborted) setReplicasError(error instanceof Error ? error.message : 'Could not prepare Replicas setup. Try again.');
-    } finally {if (mounted.current && !request.signal.aborted) setReplicasPending(false);}
-  }
-
-  const replicasAction = presentation === 'workspace' && !progress.loading && !progress.error && !manual && canInstallReplicas && adapter.replicasSetup && <section aria-label="Replicas installation"><div className="focus-action"><Button ref={replicasButton} variant="primary" disabled={replicasPending} onClick={() => void installReplicas()}>{replicasPending ? 'Preparing setup…' : copied === 'replicas' ? 'Copied' : 'Install on Replicas'}</Button></div><p className="focus-reassurance">Copy a setup prompt to paste into a Replicas chat. Connect your Replicas organization once for your whole team. The setup prompt expires in 30 minutes.</p>{replicasError && <p role="alert">{replicasError}</p>}</section>;
-
   const Heading = presentation === 'workspace' ? 'h2' : 'h1';
   const content = <>
     {personalSetup && hasReceipt(status.shared) && <div className="focus-action"><Button variant="quiet" onClick={() => setPersonalSetup(false)}>Back to shared setup</Button></div>}
     {progress.loading ? <section className="focus-loading" role="status"><span className="waiting-dot" aria-hidden="true" />Checking your connection…</section>
       : progress.error ? <section aria-labelledby="error-title"><Heading id="error-title" tabIndex={-1}>Let’s reconnect</Heading><p className="focus-description">We couldn’t check your progress. Try again to pick up where you left off.</p><div className="focus-action"><Button variant="primary" onClick={progress.reload}>Try again<Icon name="arrow-right" /></Button></div><p className="focus-reassurance">You don’t need to repeat your setup.</p></section>
-        : hasReceipt(status.shared) && !personalSetup && !manual ? <section aria-labelledby="shared-title"><Heading id="shared-title">Your team’s Replicas setup is ready</Heading><p className="focus-description">Your administrator connected the shared installation. Conversations and memories from that installation are shared with your OpenCrawl workspace. Replicas needs no separate sign-in for each developer. You can also connect a personal computer to this same OpenCrawl workspace.</p><div className="focus-action"><LinkButton to="/" variant="primary">Open workspace</LinkButton></div><div className="focus-action"><Button variant="quiet" onClick={() => setPersonalSetup(true)}>Set up a personal computer</Button></div>{replicasAction}</section>
-        : manual ? <section aria-labelledby="manual-title"><Heading id="manual-title" tabIndex={-1}>Copy this prompt</Heading><p className="focus-description">Automatic copying isn’t available. Copy the selected text, then paste it into your coding agent.</p><label className="sr-only" htmlFor="copy-fallback">Prompt to copy</label><Textarea ref={fallback} id="copy-fallback" readOnly rows={6} value={manual.text} /><div className="focus-action"><Button variant="primary" onClick={() => {showCopied(manual.step); setManual(null); requestAnimationFrame(() => (manual.step === 'replicas' ? replicasButton.current : manual.step === 'connect' ? copyButton.current : document.querySelector<HTMLButtonElement>(`[data-prompt="${manual.step}"]`))?.focus());}}>I’ve copied it<Icon name="arrow-right" /></Button></div></section>
+        : hasReceipt(status.shared) && !personalSetup && !manual ? <section aria-labelledby="shared-title"><Heading id="shared-title">Your team’s Replicas setup is ready</Heading><p className="focus-description">Your administrator connected the shared installation. Conversations and memories from that installation are shared with your OpenCrawl workspace. Replicas needs no separate sign-in for each developer. You can also connect a personal computer to this same OpenCrawl workspace.</p><div className="focus-action"><LinkButton to="/" variant="primary">Open workspace</LinkButton></div><div className="focus-action"><Button variant="quiet" onClick={() => setPersonalSetup(true)}>Set up a personal computer</Button></div></section>
+        : manual ? <section aria-labelledby="manual-title"><Heading id="manual-title" tabIndex={-1}>{manual.step === 'connect' ? 'Copy this install command' : 'Copy this prompt'}</Heading><p className="focus-description">{manual.step === 'connect' ? 'Automatic copying isn’t available. Copy the selected command, then run it in your terminal.' : 'Automatic copying isn’t available. Copy the selected text, then paste it into your coding agent.'}</p><label className="sr-only" htmlFor="copy-fallback">{manual.step === 'connect' ? 'Install command to copy' : 'Prompt to copy'}</label><Textarea ref={fallback} id="copy-fallback" readOnly rows={6} value={manual.text} /><div className="focus-action"><Button variant="primary" onClick={() => {showCopied(manual.step); setManual(null); requestAnimationFrame(() => (manual.step === 'connect' ? copyButton.current : document.querySelector<HTMLButtonElement>(`[data-prompt="${manual.step}"]`))?.focus());}}>I’ve copied it<Icon name="arrow-right" /></Button></div></section>
           : <section aria-labelledby="connect-title">
             <Heading id="connect-title" tabIndex={-1}>{showComplete ? 'Your coding agent is ready' : titles.connect}</Heading>
             <p className="focus-description">{showComplete ? 'CLI sign-in, the MCP connection test, and session recording are complete. Continue to connect your data sources.' : descriptions.connect}</p>
             {!showComplete && <>
-              <div className="focus-action"><div className="prompt-actions"><Button ref={copyButton} variant="primary" className="copy-prompt" data-label={prompts.connect.label} onClick={() => void copy(prompts.connect.text, 'connect')}><span>{copied === 'connect' ? 'Copied' : prompts.connect.label}</span></Button><Button variant="primary" className="prompt-toggle" aria-label={`${expanded ? 'Hide' : 'Show'} setup prompt`} aria-expanded={expanded} aria-controls="connect-preview" onClick={() => setExpanded(value => !value)}><Icon name="chevron-down" /></Button></div></div>
-              <div className="prompt-preview" id="connect-preview" hidden={!expanded}><p>{prompts.connect.text}</p></div>
-              {replicasAction}
+              <div className="focus-action"><div className="prompt-actions"><Button ref={copyButton} variant="primary" className="copy-prompt" data-label={prompts.connect.label} onClick={() => void copy(prompts.connect.text, 'connect')}><span>{copied === 'connect' ? 'Copied' : prompts.connect.label}</span></Button><Button variant="primary" className="prompt-toggle" aria-label={`${expanded ? 'Hide' : 'Show'} install command`} aria-expanded={expanded} aria-controls="connect-preview" onClick={() => setExpanded(value => !value)}><Icon name="chevron-down" /></Button></div></div>
+              <div className="prompt-preview" id="connect-preview" hidden={!expanded}><pre>{prompts.connect.text}</pre></div>
               {needsCli && <p className="focus-reassurance">MCP is connected. Complete CLI sign-in to enable session recording.</p>}
             </>}
             {showComplete ? <details className="completed-setup signal-disclosure"><summary>View setup details<Icon name="chevron-down" className="signal-chevron" /></summary>{checklist}</details> : checklist}
-            {presentation === 'focused' && !derived.complete && <p className="focus-reassurance">CLI sign-in, a successful MCP connection test, and a new session recording are required to open your workspace.</p>}
+            {presentation === 'focused' && !derived.complete && <p className="focus-reassurance">You can use your workspace while your agent completes setup.</p>}
             {presentation === 'focused' && canInviteBeforeSetup && <div className="focus-action"><LinkButton to="/onboarding/invite" variant="quiet">Invite teammates now</LinkButton></div>}
           </section>}
     <p className="sr-only" role="status" aria-live="polite">{copied ? 'Copied' : derived.complete ? `All required checks passed.${presentation === 'focused' ? ' Next is available.' : ''}` : progress.error ? 'We couldn’t check your progress. Try again.' : ''}</p>

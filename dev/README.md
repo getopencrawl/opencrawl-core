@@ -56,8 +56,9 @@ After startup succeeds, the command prints the application URL, email, and
 password directly in the terminal. It also saves them in a private login file.
 By default the application is at `http://localhost:8092` and Airbyte is at
 `http://localhost:8000`. A generated local Better Auth account is ready to use.
-Your first sign-in opens the normal onboarding flow. Startup does not connect an
-agent, invent capture receipts, complete onboarding, or import demo records.
+Use **Setup** at the top of the sidebar to connect your agents. Setup does not
+block the rest of the workspace. Startup does not connect an agent, invent
+capture receipts, complete onboarding, or import demo records.
 To find the credentials later, read `.opencrawl-dev/login.txt` (use
 `sudo cat .opencrawl-dev/login.txt` if sudo created the installation).
 
@@ -114,8 +115,8 @@ See [source setup](../docs/self-host.md#connect-sources) for credential ownershi
 and callback requirements. No provider credential is required to start the app.
 
 An existing installation keeps its accounts, data, and onboarding state. The
-installer never resets a completed user's setup. Use **Agent setup** in the
-sidebar to revisit onboarding.
+installer never resets a completed user's setup. Use **Setup** in the sidebar
+to check progress or add another machine or client.
 
 ## Development boundaries
 

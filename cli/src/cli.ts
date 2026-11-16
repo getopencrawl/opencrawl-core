@@ -3,6 +3,7 @@ import {boardCommand, boardInput, writeBoardOutput} from './board.ts';
 import {fetchMany} from './fetch-many.ts';
 import {commandHelp} from './help.ts';
 import {upgradeCaptureHooks} from './capture/install.ts';
+import {scheduleDaemonUpgrade} from './capture/daemon-upgrade-launch.ts';
 import {collectCommand} from './capture/command.ts';
 import {readCaptureConfig} from './capture/runtime.ts';
 import {scheduleMemoryRefresh} from './capture/memory.ts';
@@ -22,17 +23,26 @@ import {migrateLegacyLauncher,findLegacyLaunchers} from './legacy-migration.ts';
 import {join} from 'node:path';
 import {atomicJson} from './session.ts';
 import {sessionStartCommand} from './session-start.ts';
+import {applyDaemonEnvironment} from './capture/daemon-environment.ts';
+import {hasPluginContext} from './setup/plugin-context.ts';
+import {setupCommand,localSetupStatus,setupHookStatus,formatSetupOutput} from './setup/command.ts';
+import {wakeApprovedHistory} from './setup/history-worker.ts';
+import {verifyInstallation,formatInstallationVerification} from './verify-installation.ts';
 import {searchContextCommand} from './search-context.ts';
 
 const help = `opencrawl — OpenCrawl CLI
 
 Usage: opencrawl <command> [--json] [--api <https-origin>]
 
+  setup       Sign in, choose plugins and recording, and import history in the background
+  verify-installation  Prove a selected client's fresh session is searchable
   login       Sign in with a browser approval and device code
   logout      Remove this deployment's credentials from this machine
   whoami      Verify your saved session or environment token with the service
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
+  mcp         Serve the configured OpenCrawl MCP over stdio
+  workload    Connect a cloud organization with one-time admin approval
   fetch       Read the indexed passage behind a search result
   collect     Install and manage Claude Code, Codex, Cursor, Antigravity and Grok Bot session capture
   board       Register, subscribe, publish and receive board deliveries
@@ -203,55 +213,117 @@ export async function identity(api: string, fetcher = fetch, initialToken?: stri
   return {user};
 }
 
+export async function loginIdentity(api:string,options:{organizationId?:string;noBrowser?:boolean}={}) {
+  const organizationId=options.organizationId;
+  if(organizationId&&readSession(api))return selectOrganization(api,organizationId,token=>identity(api,fetch,token));
+      const auth = await discover(api);
+      const device = await startDevice(auth);
+      const url = device.verification_uri_complete ?? device.verification_uri;
+      process.stderr.write(`Open ${url}\nConfirm code: ${device.user_code}\nWaiting for browser approval (expires in ${device.expires_in} seconds)…\n`);
+      if (!options.noBrowser && process.stdin.isTTY && !process.env.SSH_CONNECTION && !process.env.SSH_TTY) openBrowser(url);
+      const tokens = await pollDevice(auth, device);
+      let verified: Awaited<ReturnType<typeof identity>> | undefined;
+      try { verified = await identity(api, fetch, tokens.accessToken); }
+      catch (error) {
+        // The service verifies the account and session before returning this
+        // specific setup requirement. Retain that sign-in without claiming
+        // workspace access or repeating device approval after browser setup.
+        if (error instanceof CliError && error.code === 'ORGANIZATION_REQUIRED') {
+          if (!organizationId) {
+            await saveSession(api, {auth, ...tokens});
+            error.message = `Your sign-in is saved on this machine; workspace setup is still required. ${error.message}`;
+            throw error;
+          }
+        } else throw error;
+      }
+      if (organizationId) verified = await selectOrganization(api, organizationId, token => identity(api, fetch, token), {auth, ...tokens});
+      if (!verified) throw new CliError('INVALID_RESPONSE', 'Could not verify the selected workspace.');
+      if (!organizationId) await saveSession(api, {auth, ...tokens});
+  return verified;
+}
+
+const hasLocalFlag=(args:string[])=>args.some(arg=>arg==='--local'||arg.startsWith('--local='));
+
 export async function main(args = process.argv.slice(2)) {
-  if(args[0]==='search-context')return searchContextCommand(args.slice(1));
-  if (args[0] === 'session' && args[1] === 'start') {
-    await automaticNativeMigration();
+  if(args[0]==='workload'){applyDaemonEnvironment(args);return (await import('./workload-enrollment.ts')).workloadCommand(args.slice(1));}
+  if(args[0]==='mcp'){applyDaemonEnvironment(args);return (await import('./mcp.ts')).mcpCommand(args.slice(1));}
+  if(args[0]==='search-context'){applyDaemonEnvironment(args);return searchContextCommand(args.slice(1));}
+  if (args[0] === 'session' && args[1] === 'start' && !hasLocalFlag(args)) {
+    applyDaemonEnvironment(args);
+    if(!hasPluginContext()&&readCaptureConfig()?.hookOwnership!=='plugin'){
+      await automaticNativeMigration();
+      try{scheduleDaemonUpgrade();}catch{}
+      try{wakeApprovedHistory();}catch{}
+    }
     return sessionStartCommand(args.slice(2));
   }
   // Process-owned work overlaps commands and async hooks. It is cancelled when
   // the command ends, so quick commands never wait and no orphan worker exists.
   const memoryJob:{current?:ReturnType<typeof scheduleMemoryRefresh>}={};
   let updateJob:ReturnType<typeof scheduleCliUpdate>|undefined;
-  let informational=false;
+  let installingBinary=false;
+  let informational=hasLocalFlag(args);
   let json = args.includes('--json');
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
+    applyDaemonEnvironment(args);
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {'current-session':{type:'string'},'include-current-session':{type:'boolean'},'include-tool-outputs':{type:'boolean'},organization:{type:'string'},'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},'retry-rejected':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, event: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {'current-session':{type:'string'},'include-current-session':{type:'boolean'},'include-tool-outputs':{type:'boolean'},'worker-environment':{type:'string'},local:{type:'boolean'},plugins:{type:'string'},forward:{type:'string'},history:{type:'string'},'plan-id':{type:'string'},'scope-key':{type:'string'},'installation-id':{type:'string'},organization:{type:'string'},'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},'retry-rejected':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, event: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, daemon:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
+    installingBinary=command==='install';
+    if(parsed.values.local&&!(command==='setup'&&parsed.positionals[1]==='status'))throw new CliError('INVALID_USAGE','Use --local only with setup status.',64);
     const localHook=command==='collect'&&parsed.positionals[1]==='hook'&&!parsed.values.managed;
     // Metadata-only recovery and a history preview must not start an unrelated
     // memory upload while the foreground operation is inspecting local state.
     const localCollect=command==='collect'&&(['uninstall','titles'].includes(parsed.positionals[1]??'')||parsed.positionals[1]==='backfill'&&!parsed.values.yes);
     const manyFetch=command==='fetch'||command==='board'&&parsed.positionals[1]==='fetch';
-    if (parsed.positionals.length > (manyFetch ? command==='board'?42:41 : command === 'token' ? 3 : ['collect','search','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
-    informational=Boolean(parsed.values.help||parsed.values.version||command==='help'||command==='board'&&!parsed.positionals[1]);
+    if (parsed.positionals.length > (manyFetch ? command==='board'?42:41 : command === 'token' ? 3 : ['collect','search','board','skills','setup'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    informational=hasLocalFlag(args)||Boolean(parsed.values.help||parsed.values.version||command==='help'||command==='board'&&!parsed.positionals[1]);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help' || command==='board'&&!parsed.positionals[1]) { const text=commandHelp(command,parsed.positionals[1])??help;emit({help:text}, text.trimEnd()); return 0; }
-    if (!['login', 'logout', 'whoami', 'status', 'install', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['login', 'logout', 'whoami', 'status', 'setup', 'verify-installation', 'install', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (['login','token'].includes(command) && workspaceIdentityEnabled()) throw new CliError('WORKLOAD_ACCOUNT_ACTION', 'Workspace identity cannot manage human sign-ins or credentials. Use your personal machine for account setup.', 2);
     const organizationId = parsed.values.organization as string | undefined;
     if (organizationId !== undefined && (command !== 'login' || !/^org_[A-Za-z0-9]+$/.test(organizationId))) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
     if (organizationId && process.env.OPENCRAWL_TOKEN?.trim()) throw new CliError('ENVIRONMENT_TOKEN_ACTIVE', 'Unset OPENCRAWL_TOKEN before selecting a workspace with your saved sign-in. Environment tokens remain bound to the workspace that issued them.', 2);
-    if (parsed.values.client && command !== 'skills') throw new CliError('INVALID_USAGE', 'Use --client with skills install or skills status.', 64);
-    if(command!=='install')await automaticNativeMigration();
-    if(command==='install'){if(!compiled())throw new CliError('INSTALL_UNAVAILABLE','Run install from a released executable.');const data=await installBinary();await agentSkills('refresh',apiOrigin((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL??readCaptureConfig()?.api??DEFAULT_API_ORIGIN),{});emit(data,`Installed opencrawl ${data.version} at ${data.path}. Add its directory to PATH if needed.`);return 0;}
+    if (parsed.values.client && !['skills','setup','verify-installation'].includes(command)) throw new CliError('INVALID_USAGE', 'Use --client with skills or installation verification.', 64);
+    if(parsed.values.local){const data=localSetupStatus((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);emit(data,formatSetupOutput(data));return 0;}
+    if(command==='setup'&&parsed.positionals[1]==='hooks'){const data=await setupHookStatus((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);emit(data,formatSetupOutput(data));return 0;}
+    if(command==='setup'||command==='verify-installation'){
+      const api=apiOrigin((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL??readCaptureConfig()?.api??DEFAULT_API_ORIGIN);
+      return await withEnvironmentTokenOrigin((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL,async()=>{
+        if(command==='verify-installation'){
+          const client=parsed.values.client as string[]|undefined,installationId=parsed.values['installation-id'] as string|undefined;
+          if(client?.length!==1)throw new CliError('INVALID_USAGE','Use verify-installation --client CLIENT [--installation-id ID].',64);
+          const data=installationId?await verifyInstallation(api,{installationId,client:client[0]}):await setupCommand('verify',api,parsed.values);
+          if(data!==null)emit(data,'proof' in data?formatInstallationVerification(data):formatSetupOutput(data));return 0;
+        }
+        const data=await setupCommand(parsed.positionals[1]??'run',api,parsed.values,{login:()=>loginIdentity(api,{noBrowser:parsed.values['no-browser']===true})});
+        if(data!==null)emit(data,formatSetupOutput(data));return 0;
+      });
+    }
+    const captureHandoff=command==='collect'&&['hook','daemon','upgrade-daemon'].includes(parsed.positionals[1]??'');
+    if(command!=='install'&&!captureHandoff)await automaticNativeMigration();
+    // Installing the executable does not enroll or refresh native integrations.
+    if(command==='install'){if(!compiled())throw new CliError('INSTALL_UNAVAILABLE','Run install from a released executable.');const data=await installBinary();emit(data,`Installed opencrawl ${data.version} at ${data.path}. Add its directory to PATH if needed.`);return 0;}
     if(command==='update'){const data=await updateCli();emit(data,data.updated?`Installed opencrawl ${data.version}. Your next invocation will use it.`:`opencrawl ${data.version} is current.`);return 0;}
-    updateJob=scheduleCliUpdate();
+    if(!['setup','logout','install','skills','verify-installation'].includes(command)&&!(command==='collect'&&parsed.positionals[1]!=='hook'))try{scheduleDaemonUpgrade();}catch{}
+    const pluginHookInvocation=captureHandoff||hasPluginContext();
+    if(!pluginHookInvocation)updateJob=scheduleCliUpdate();
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL
       ?? readCaptureConfig()?.api
       ?? DEFAULT_API_ORIGIN);
-    if(command!=='collect'&&command!=='skills'&&process.env.OPENCRAWL_NO_UPDATE!=='1')await refreshManagedSkills(api);
+    if(!['login','logout','status','whoami','skills','collect'].includes(command))try{wakeApprovedHistory();}catch{}
+    if(command!=='collect'&&command!=='skills'&&process.env.OPENCRAWL_NO_UPDATE!=='1'&&!hasPluginContext()&&readCaptureConfig()?.hookOwnership!=='plugin')await refreshManagedSkills(api);
     if (command === 'skills') {
       const data = await agentSkills(parsed.positionals[1] ?? 'status', api, {clients: parsed.values.client as string[] | undefined});
       emit(data, JSON.stringify(data, null, 2));
       return data.results.some(result => ['conflict', 'error'].includes(result.status)) ? 1 : 0;
     }
     return await withEnvironmentTokenOrigin((parsed.values.api as string|undefined) ?? process.env.OPENCRAWL_API_URL, async () => {
-    if(!organizationId&&command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob.current=scheduleMemoryRefresh();
+    if(!pluginHookInvocation&&!organizationId&&command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob.current=scheduleMemoryRefresh();
     if (command === 'board') {
       if(parsed.positionals[1]==='fetch'&&parsed.positionals.length>2){
         if(parsed.values.id)throw new CliError('INVALID_USAGE','Use positional references or --id, not both. See opencrawl board fetch --help.',64);
@@ -296,38 +368,8 @@ export async function main(args = process.argv.slice(2)) {
     }
     if (command === 'logout') { await logout(api); emit({api, authenticated: false, localCredentialsRemoved: true}, 'Removed saved credentials from this machine.'); return 0; }
     if (command === 'login') {
-      const signedIn = (verified: Awaited<ReturnType<typeof identity>>) => {
-        const {user} = verified;
-        emit({api, authenticated: true, ...verified}, `Signed in${user.email ? ` as ${user.email}` : ''}${organizationId ? ` to workspace ${organizationId}` : ''}. Use opencrawl search to query indexed workspace knowledge.`);
-      };
-      if (organizationId && readSession(api)) {
-        signedIn(await selectOrganization(api, organizationId, token => identity(api, fetch, token)));
-        return 0;
-      }
-      const auth = await discover(api);
-      const device = await startDevice(auth);
-      const url = device.verification_uri_complete ?? device.verification_uri;
-      process.stderr.write(`Open ${url}\nConfirm code: ${device.user_code}\nWaiting for browser approval (expires in ${device.expires_in} seconds)…\n`);
-      if (!parsed.values['no-browser'] && process.stdin.isTTY && !process.env.SSH_CONNECTION && !process.env.SSH_TTY) openBrowser(url);
-      const tokens = await pollDevice(auth, device);
-      let verified: Awaited<ReturnType<typeof identity>> | undefined;
-      try { verified = await identity(api, fetch, tokens.accessToken); }
-      catch (error) {
-        // The service verifies the account and session before returning this
-        // specific setup requirement. Retain that sign-in without claiming
-        // workspace access or repeating device approval after browser setup.
-        if (error instanceof CliError && error.code === 'ORGANIZATION_REQUIRED') {
-          if (!organizationId) {
-            await saveSession(api, {auth, ...tokens});
-            error.message = `Your sign-in is saved on this machine; workspace setup is still required. ${error.message}`;
-            throw error;
-          }
-        } else throw error;
-      }
-      if (organizationId) verified = await selectOrganization(api, organizationId, token => identity(api, fetch, token), {auth, ...tokens});
-      if (!verified) throw new CliError('INVALID_RESPONSE', 'Could not verify the selected workspace.');
-      if (!organizationId) await saveSession(api, {auth, ...tokens});
-      signedIn(verified);
+      const verified=await loginIdentity(api,{organizationId,noBrowser:parsed.values['no-browser']===true});
+      emit({api,authenticated:true,...verified},`Signed in${verified.user.email?` as ${verified.user.email}`:''}${organizationId?` to workspace ${organizationId}`:''}. Use opencrawl search to query indexed workspace knowledge.`);
       return 0;
     }
     // A machine created for one task has no saved sign-in, only the token its platform injected.
@@ -341,7 +383,7 @@ export async function main(args = process.argv.slice(2)) {
       if (verified) {
         const {user} = verified;
         emit({api, version, authenticated: true, credential: workspaceIdentityEnabled() ? 'workspace-identity' : 'environment-token', ...verified, ...(command === 'status' ? {index: {available: null}} : {})},
-          command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''} with ${workspaceIdentityEnabled() ? "Replicas workspace identity" : "OPENCRAWL_TOKEN"}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
+          command === 'status' ? `opencrawl ${version}\nSigned in${user.email ? ` as ${user.email}` : ''} with ${workspaceIdentityEnabled() ? "workspace identity" : "OPENCRAWL_TOKEN"}.\nUse opencrawl search to check indexed workspace knowledge.` : user.email ?? user.id);
         return 0;
       }
     }
@@ -369,15 +411,16 @@ export async function main(args = process.argv.slice(2)) {
     memoryJob.current?.stop();
     await updateJob?.stop();
     // Upgrade only our hook settings locally; never launch an unowned process.
-    if(!informational && args[0]!=='collect' && args[0]!=='logout' && args[0]!=='skills')try{await upgradeCaptureHooks();}catch{}
+    if(!informational && !installingBinary && args[0]!=='collect' && args[0]!=='logout' && args[0]!=='skills' && args[0]!=='setup' && args[0]!=='verify-installation')try{if(!hasPluginContext()&&readCaptureConfig()?.hookOwnership!=='plugin')await upgradeCaptureHooks();}catch{}
   }
 }
 
 async function automaticNativeMigration(){
-  if(!compiled()||process.env.OPENCRAWL_NO_UPDATE==='1')return;
+  if(!compiled()||process.env.OPENCRAWL_NO_UPDATE==='1'||hasPluginContext())return;
   let attention=false;
   try{
     const config=readCaptureConfig();
+    if(config?.hookOwnership==='plugin')return;
     const launchers=findLegacyLaunchers([process.env.OPENCRAWL_LAUNCHER,config?.command.find(part=>part.endsWith('/opencrawl.cjs')||part.endsWith('\\opencrawl.cjs'))]);
     if(!launchers.length)return;
     let changed=false;
@@ -403,7 +446,10 @@ async function automaticNativeMigration(){
 }
 
 if (import.meta.main) {
-  const delegated=delegateToNewest(process.argv.slice(2));
+  // Supervisor profile selection must precede native version delegation.
+  try{applyDaemonEnvironment(process.argv.slice(2));}catch(error){process.stderr.write((error instanceof Error?error.message:'Invalid worker environment')+'\n');process.exit(64);}
+  // Local inspection cannot delegate to a native child or run an update.
+  const delegated=hasLocalFlag(process.argv.slice(2))||process.argv[2]==='search-context'?undefined:delegateToNewest(process.argv.slice(2));
   if(delegated!==undefined)process.exit(delegated);
   // Once a one-use refresh has left, save its response before honoring a
   // cooperative shutdown. The request itself has a bounded deadline.

@@ -205,7 +205,7 @@ test('async hook retains its harness-owned PID on Unix; legacy upgrade preserves
  expect(captureStatus().pendingHooks).toBe(1);
  expect(readCaptureConfig()!.installationId).toBe(config.installationId);
  expect(readCaptureConfig()!.owner).toEqual(config.owner);
- expect(readCaptureConfig()!.hookMode).toBe('native-v4');
+ expect(readCaptureConfig()!.hookMode).toBe('native-v5');
  expect(JSON.parse(readFileSync(hooksFile,'utf8')).hooks.Stop[0].hooks[0].async).toBe(true);
  const upgraded=readFileSync(hooksFile,'utf8');await upgradeCaptureHooks();expect(readFileSync(hooksFile,'utf8')).toBe(upgraded);
  // Installs from the first managed hook layout are rewritten once by the next hook.
@@ -214,7 +214,7 @@ test('async hook retains its harness-owned PID on Unix; legacy upgrade preserves
  firstLayout.hooks.SessionEnd[0].hooks[0]={...firstLayout.hooks.Stop[0].hooks[0]};
  writeFileSync(join(config.roots.codex,'hooks.json'),JSON.stringify(firstLayout));
  await upgradeCaptureHooks();
- expect(readCaptureConfig()!.hookMode).toBe('native-v4');
+ expect(readCaptureConfig()!.hookMode).toBe('native-v5');
  expect(JSON.parse(readFileSync(join(config.roots.codex,'hooks.json'),'utf8')).hooks.SessionEnd[0].hooks[0]).toMatchObject({timeout:3});
  // Installing one harness also upgrades the dispatcher for already enrolled ones.
  const codexFile=join(config.roots.codex,'hooks.json');
@@ -250,7 +250,12 @@ test('owned worker deadline interrupts a lost acknowledgement and retries the ex
  try{
   await until(()=>f.payloads.length>0);
   expect(await child.exited).toBe(0);
-  for(const [name,bytes] of before)expect(readFileSync(join(captureDir(),'queue',name),'utf8')).toBe(bytes);
+  // Never-attempted live records may coalesce before sending. Once sent, the
+  // exact payload must survive the lost acknowledgement with every input event.
+  const retained=new Map(readdirSync(join(captureDir(),'queue')).map(n=>[n,readFileSync(join(captureDir(),'queue',n),'utf8')]));
+  for(const bytes of f.payloads)expect(retained.get(hash(bytes)+'.json')).toBe(bytes+'\n');
+  const events=(batches:Iterable<string>)=>[...batches].flatMap(bytes=>JSON.parse(bytes).events).sort((a,b)=>a.id.localeCompare(b.id));
+  expect(events(retained.values())).toEqual(events(before.values()));
   f.holdAck=false;
   appendFileSync(f.path,f.record('new-during-retry'));
   await captureWorker({flushMs:0,idleMs:20,pollMs:5});
@@ -299,9 +304,10 @@ test('the default ten-second window records independently and combines a live bu
   await until(()=>f.payloads.length>0,12_000);
   expect(Date.now()).toBeGreaterThanOrEqual(deadline);
   await worker;
-  expect(f.batches).toHaveLength(2);
-  expect(f.batches.find((b:any)=>b.events.some((e:any)=>e.nativeId))?.events).toHaveLength(13);
-  expect(f.batches.find((b:any)=>b.events.every((e:any)=>e.kind==='hook'))?.events).toHaveLength(7);
+  expect(f.batches).toHaveLength(1);
+  expect(f.batches[0].captureMode).toBe('live');
+  expect(f.batches[0].events.filter((e:any)=>e.nativeId)).toHaveLength(13);
+  expect(f.batches[0].events.filter((e:any)=>e.kind==='hook')).toHaveLength(7);
   expect(captureStatus().pendingHooks).toBe(0);expect(captureStatus().queued).toBe(0);
  }finally{await worker;}
 }),15000);

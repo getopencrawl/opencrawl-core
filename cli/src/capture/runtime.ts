@@ -1,4 +1,5 @@
-import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream} from 'node:fs';
+import {transcriptCheckpoint,transcriptIdentity,transcriptIdentityMatches} from './transcript-checkpoint.ts';
+import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, fstatSync, lstatSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream} from 'node:fs';
 import {gzip} from 'node:zlib';
 import {promisify} from 'node:util';
 import {join, dirname, resolve, relative, sep, basename} from 'node:path';
@@ -13,12 +14,15 @@ import {CliError} from '../oauth.ts';
 import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
 import {workspaceIdentityEnabled, workspaceToken} from '../workspace-identity.ts';
-import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
+import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, HARNESSES, type Harness, type TranscriptHarness} from './parse.ts';
 import {cursorSession,cursorTranscript,cursorMessage,cursorThoughtDuplicate,cursorThoughtState} from './cursor.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
+import {devinEvents,devinOverflow,devinSession,devinUnsupported,DEVIN_MAX_HOOK_BYTES} from './devin.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
 import {captureExcluded, type CaptureExclusions} from './policy.ts';
+import {localCodexHookReview,codexHookReviewMessage,type CodexHookReview} from './codex-hooks.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
+import {codexNativeSession} from './codex-session.ts';
 import {redactValue,redactAttachment,MAX_REDACTION_DEPTH} from './redact.ts';
 import {replicasAttribution,replicasEventAttribution,replicasTitle,type ReplicasTitle} from './replicas.ts';
 import {enqueueLiveBatch,pendingLiveSince,isPendingLive,recoverLiveSeals,sealLiveBatches} from './live-batches.ts';
@@ -29,9 +33,13 @@ const compressBatch=promisify(gzip);
 export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
 /** Bump when installed hook entries change so the next hook rewrites existing installs. */
-export const HOOK_MODE='native-v4';
-export type CaptureConfig = {disabled?:boolean,authPending?:boolean,exclusions?:CaptureExclusions,schemaVersion:1,hookMode?:typeof HOOK_MODE|'managed-v3'|'managed-v2'|'managed',harnesses?:Harness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:{'claude-code':string,codex:string,'grok-bot'?:string,cursor?:string,antigravity?:string},claudeDesktopSessionsRoot?:string,command:string[]};
+export const HOOK_MODE='native-v5';
+export type CaptureConfig = {disabled?:boolean,authPending?:boolean,captureWorker?:'daemon-v1',daemonRequested?:{backgroundStartup:boolean},backgroundStartup?:boolean,claudeCapture?:'daemon-v1',exclusions?:CaptureExclusions,schemaVersion:1,hookOwnership?:'global'|'plugin',hookMode?:typeof HOOK_MODE|'native-v4'|'managed-v3'|'managed-v2'|'managed',harnesses?:Harness[],historyHarnesses?:TranscriptHarness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:{'claude-code':string,codex:string,'grok-bot'?:string,cursor?:string,antigravity?:string,devin?:string},claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
+/** claudeCapture is accepted only for the first opt-in daemon pilot. */
+export const captureDaemonEnabled=(config:CaptureConfig|null=readCaptureConfig())=>config?.captureWorker==='daemon-v1'||config?.claudeCapture==='daemon-v1';
+/** Every selected harness below has a native event inbox adapter. */
+export const captureDaemonHarnesses=(config:CaptureConfig|null=readCaptureConfig())=>(config?.harnesses??[]).filter(harness=>HARNESSES.includes(harness));
 /** Installations made before a harness existed have no directory for it. */
 export function harnessRoot(config:CaptureConfig,harness:Harness) {
   const root=config.roots[harness];
@@ -40,7 +48,10 @@ export function harnessRoot(config:CaptureConfig,harness:Harness) {
 }
 // Enrollment and every queued payload remain bound to their original destination.
 async function captureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
-  const {principal,capabilities}=await request(config.api,'/api/sessions/identity',{signal},token);
+  // Keep a refreshed workload token paired with the owner verified by identity.
+  let verifiedToken=token;
+  const renew=token&&workspaceIdentityEnabled()?async(rejected:string)=>verifiedToken=await workspaceToken(config.api,rejected,signal):undefined;
+  const {principal,capabilities}=await request(config.api,'/api/sessions/identity',{signal},token,renew);
   signal?.throwIfAborted();
   if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   // Authentication may finish after uninstall or another worker initializes a
@@ -57,7 +68,7 @@ async function captureIdentity(config:CaptureConfig,token?:string,signal?:AbortS
     }
     atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
   },20_000,signal);
-  return {principal,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip'),cursor:capabilities?.harnesses?.includes('cursor')===true,antigravity:capabilities?.harnesses?.includes('antigravity')===true};
+  return {principal,token:verifiedToken,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip'),cursor:capabilities?.harnesses?.includes('cursor')===true,antigravity:capabilities?.harnesses?.includes('antigravity')===true};
 }
 export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
   return (await captureIdentity(config,token,signal)).principal;
@@ -91,7 +102,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
     }
   };
   let res=await send();
-  if(res.status===401 && (renew || !staticToken)){token=renew?await renew(token):workspaceIdentityEnabled()?await workspaceToken(api,token):await accessToken(api,token,fetch,signal);res=await send();}
+  if(res.status===401 && (renew || !staticToken)){await res.body?.cancel();token=renew?await renew(token):workspaceIdentityEnabled()?await workspaceToken(api,token,signal):await accessToken(api,token,fetch,signal);res=await send();}
   if(res.status===413){await res.body?.cancel();throw Object.assign(new CliError('CAPTURE_UPLOAD_FAILED','Capture request failed (413): payload or session capacity exceeded'),{httpStatus:413});}
   const body=await res.json().catch(()=>{throw res.status>=500||res.status===429
     ?new CliError('CAPTURE_RETRY_EXHAUSTED',`Capture endpoint ${new URL(api).hostname} is temporarily unavailable (HTTP ${res.status}). Queued data is retained; retry the approved import.`)
@@ -110,7 +121,7 @@ export function recordError(error:any) {
 function ensureDirectories() {for(const dir of ['queue','state','blobs','notices','sources','rejected','uploads'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});}
 /** Only the fixed notice header is needed for ordering. Filesystem timestamps
  * can tie on Linux; reading whole payloads here would unbound backlog memory. */
-function orderedNoticeNames() {
+export function orderedNoticeNames() {
   return readdirSync(join(captureDir(),'notices')).filter(name=>name.endsWith('.json')).map(name=>{
     const path=join(captureDir(),'notices',name),fd=openSync(path,'r'),buffer=Buffer.alloc(256);
     try {
@@ -191,6 +202,44 @@ function transcriptAllowed(file:string, config:CaptureConfig, harness:Transcript
   if(!allowed.some(dir=>under(path,dir)) || !(path.endsWith('.jsonl') || harness==='codex' && path.endsWith('.jsonl.zst')))throw new CliError('CAPTURE_PATH_REJECTED','Transcript outside configured harness session directories');
   return path;
 }
+/** A daemon enrollment names one native session, not every transcript under a
+ * harness root. Resolve before reading and reject redirects even within that root. */
+export function assertSessionTranscriptPath(config:CaptureConfig,harness:TranscriptHarness,sessionId:string,file:string,registeredPath=file) {
+  const reject=()=>{throw new CliError('CAPTURE_SESSION_PATH_REJECTED','Transcript does not belong to the registered native session');};
+  if(!/^[\w.:-]{1,200}$/.test(sessionId))return reject();
+  const root=resolve(harnessRoot(config,harness)),canonicalRoot=realpathSync(root);
+  const exact=(input:string)=>{
+    const path=resolve(input),parts=relative(root,path).split(sep);
+    if(parts[0]==='..'||!under(path,root))return reject();
+    const actual=realpathSync(path);
+    if(actual!==resolve(canonicalRoot,...parts)||!lstatSync(path).isFile())return reject();
+    return actual;
+  };
+  const parent=resolve(registeredPath),parts=relative(root,parent).split(sep);
+  let agentId:string|undefined;
+  if(harness==='claude-code'){
+    if(parts.length!==3||parts[0]!=='projects'||basename(parent)!==sessionId+'.jsonl')return reject();
+    exact(parent);
+    if(resolve(file)!==parent){
+      const children=join(dirname(parent),basename(parent,'.jsonl'),'subagents');
+      if(!under(resolve(file),children))return reject();
+      const match=/^agent-([\w.:-]{1,200})\.jsonl$/.exec(basename(file));
+      if(!match)return reject();agentId=match[1]!;
+    }
+  }else if(harness==='codex'){
+    if(!['sessions','archived_sessions'].includes(parts[0]??'')||!basename(parent).endsWith('-'+sessionId+'.jsonl')||resolve(file)!==parent)return reject();
+  }else{
+    const valid=(path:string)=>antigravityBrainDirs(root).some(({dir})=>{
+      const p=relative(dir,path).split(sep);return p.length===4&&p[0]===sessionId&&p[1]==='.system_generated'&&p[2]==='logs'&&['transcript.jsonl','transcript_full.jsonl'].includes(p[3]!);
+    });
+    if(!valid(parent)||!valid(resolve(file))||dirname(resolve(file))!==dirname(parent))return reject();
+    // Native hooks may name compact JSONL before it exists while the full
+    // transcript is already available. Existing nominal paths must still match.
+    let present=false;try{lstatSync(parent);present=true;}catch(error:any){if(error.code!=='ENOENT')throw error;}
+    if(present)exact(parent);
+  }
+  return {path:exact(file),sessionId,agentId};
+}
 export function* walk(dir:string):Generator<string> {
   let entries;try{entries=readdirSync(dir,{withFileTypes:true});}catch{return;}
   for(const e of entries){const p=join(dir,e.name);if(e.isDirectory())yield*walk(p);else if(e.isFile()&&p.endsWith('.jsonl'))yield p;}
@@ -242,9 +291,10 @@ function attachmentTransform(value:any, attachments:any[], cwd:string, localFile
 function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   if(!events.length)return;
   const current=readCaptureConfig();
-  if(current && (current.api!==config.api || current.installationId!==config.installationId || current.owner.tenantId!==config.owner.tenantId || current.owner.userId!==config.owner.userId))throw new CliError('CAPTURE_CONFIG_CHANGED','Capture enrollment changed; retry with its current configuration.');
-  if(captureExcluded(current??config,meta))return;
-  if(config.authPending)throw new CliError('CAPTURE_AUTH_PENDING','Capture identity has not been authenticated yet');
+  if(!current || current.api!==config.api || current.installationId!==config.installationId || current.owner.tenantId!==config.owner.tenantId || current.owner.userId!==config.owner.userId)throw new CliError('CAPTURE_CONFIG_CHANGED','Capture enrollment changed; retry with its current configuration.');
+  if(current.disabled||meta.captureMode!=='history'&&current.harnesses&&!current.harnesses.includes(meta.harness))throw new CliError('CAPTURE_CONSENT_CHANGED','Forward recording is no longer enabled for this client; new bytes were not queued.');
+  if(captureExcluded(current,meta))return;
+  if(current.authPending||config.authPending)throw new CliError('CAPTURE_AUTH_PENDING','Capture identity has not been authenticated yet');
   if(!meta.sessionId)throw new CliError('CAPTURE_SESSION_UNKNOWN','Transcript has no session identity');
   const batch=redactValue({schemaVersion:1,owner:config.owner,installationId:config.installationId,host:hostname(),...meta,events,attachments});
   // Keep the original local scope for exclusions added after enqueue. Masking a
@@ -302,7 +352,7 @@ function readCaptureAttachment(sha256:string) {
   return bytes;
 }
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
-export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false,onEnqueued?:()=>Promise<void>) {
+export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false,onEnqueued?:()=>Promise<void>,approvedFile?:{bytes:number;ino:number;mtimeMs:number},{sessionScoped=false,sessionPath}:{sessionScoped?:boolean,sessionPath?:string}={}) {
   return withSessionLock('capture:spool',async()=>{
   if(readCaptureConfig()?.disabled)throw new CliError('CAPTURE_DISABLED','Capture is uninstalled. Reinstall before importing transcripts.');
   ensureDirectories();
@@ -314,22 +364,42 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
   const desktopAudit=harness==='claude-code'&&basename(path)==='audit.jsonl'&&isClaudeDesktopTranscript(path,config);
   const stateFile=join(captureDir(),'state',hash(harness+path)+'.json');
   return withSessionLock('capture:'+stateFile,async()=>{
+    const scoped=sessionScoped?assertSessionTranscriptPath(config,harness,hook.session_id,harness==='antigravity'?resolveAntigravityTranscript(file):file,sessionPath??file):null;
+    if(scoped&&scoped.path!==path)throw new CliError('CAPTURE_SESSION_PATH_REJECTED','Native transcript changed before reading');
     const source=statSync(path),old=read(stateFile,{offset:0});
+    if(approvedFile&&(source.ino!==approvedFile.ino||source.size<approvedFile.bytes||path.endsWith('.zst')&&(source.size!==approvedFile.bytes||source.mtimeMs!==approvedFile.mtimeMs)))throw new CliError('BACKFILL_SOURCE_CHANGED','An approved history file was replaced or changed. Review a new import plan.');
     const compressed=path.endsWith('.jsonl.zst');
     let archiveComplete=false;
     if(compressed) {
       if(old.archiveSize===source.size && old.archiveMtime===source.mtimeMs && old.ino===source.ino && (!reconcileHistory || old.parserVersion===2)) {
         const platform=await platformTitle(config,old.meta);
-        if(platform)capturePlatformTitle(config,old.meta,platform);else captureCodexTitle(config,old.meta);
+        if(platform)capturePlatformTitle(config,old.meta,platform,reconcileHistory?'history':'live');else captureCodexTitle(config,old.meta,sessionScoped,reconcileHistory?'history':'live');
         atomicJson(stateFile, old);
         return old.meta;
       }
       // Retire only the previous implementation's owned, disposable expansion.
       try{unlinkSync(stateFile+'.expanded.tmp');}catch(e:any){if(e.code!=='ENOENT')throw e;}
     }
-    const st=source;
+    const st={size:approvedFile&&!compressed?Math.min(source.size,approvedFile.bytes):source.size};
     let offset=old.offset;
-    if(st.size<offset || (old.ino && old.ino!==source.ino) || compressed)offset=0;
+    if(old.forwardBoundary&&compressed&&!reconcileHistory)return old.meta;
+    const reset=st.size<offset || Boolean(old.ino && old.ino!==source.ino);
+    let boundaryIdentity:string|undefined;
+    if(old.forwardBoundary&&!reconcileHistory){
+      // A rewritten source has an unknown pre-consent prefix. Preserve the
+      // future-only boundary at its current end; only later appends may enter.
+      const boundaryFd=openSync(path,'r'),last=Buffer.alloc(1);
+      try{
+        const current=fstatSync(boundaryFd);boundaryIdentity=transcriptIdentity(boundaryFd);
+        if(current.ino!==source.ino||current.size!==source.size)throw new CliError('CAPTURE_SOURCE_CHANGED','Transcript changed while preserving its consent boundary; retry capture.');
+        if(!transcriptIdentityMatches(old.identity,boundaryIdentity)||reset||typeof old.checkpoint!=='string'||old.checkpoint!==transcriptCheckpoint(boundaryFd,offset)){
+          if(current.size)readSync(boundaryFd,last,0,1,current.size-1);
+          atomicJson(stateFile,{offset:current.size,ino:current.ino,identity:boundaryIdentity,parserVersion:old.parserVersion??1,forwardBoundary:true,checkpoint:transcriptCheckpoint(boundaryFd,current.size),skipPartial:Boolean(current.size&&last[0]!==10)});
+          return;
+        }
+      }finally{closeSync(boundaryFd);}
+    }
+    if(reset || compressed)offset=0;
     // Parser upgrades must not silently start a historical import in hooks/sync.
     // An explicitly approved backfill may reread older cursors to recover newly
     // supported native records; unchanged event IDs remain idempotent downstream.
@@ -337,6 +407,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
     const parserVersion=offset===0?2:old.parserVersion??1;
     const nativeIds=desktopAudit&&offset<st.size?desktopNativeMessageIds(path):new Set<string>();
     const fd=compressed?undefined:openSync(path,'r');
+    if(approvedFile&&fd!==undefined&&fstatSync(fd).ino!==approvedFile.ino){closeSync(fd);throw new CliError('BACKFILL_SOURCE_CHANGED','An approved history file changed before reading.');}
     const agyPath=harness==='antigravity'?antigravityPathMeta(path):null;
     const agyHook=harness==='antigravity'?antigravityHookFields(hook):null;
     let meta:any=(offset>0?old.meta:null)??(agyPath
@@ -344,6 +415,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
       : {harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path});
     if(agyHook?.cwd&&!meta.cwd)meta={...meta,cwd:agyHook.cwd};
     if(agyPath&&(!meta.origin||meta.origin==='unknown'))meta={...meta,origin:agyPath.origin,originEvidence:agyPath.originEvidence};
+    const expectedSession=scoped?(scoped.agentId?scoped.sessionId+':'+scoped.agentId:scoped.sessionId):null;
     let codexIdentityRead=Boolean(offset>0&&old.meta?.sessionId);
     function metadata(r:any) {
         if(harness==='antigravity')return;
@@ -356,6 +428,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
           // Forks include copied parent headers after their own leading header.
           // Those records are history, not a change to this transcript's owner.
           if(codexIdentityRead)return;
+          if(scoped&&p.id!==scoped.sessionId)throw new CliError('CAPTURE_SESSION_MISMATCH','Native header differs from the registered session');
           codexIdentityRead=true;
           meta.sessionId=p.id;meta.parentSessionId=p.forked_from_id??p.source?.subagent?.thread_spawn?.parent_thread_id??null;
           const origin=detectOrigin(harness,r);
@@ -366,6 +439,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
           if(r.type==='turn_context' && p.cwd)meta.cwd=p.cwd;
           return;
         } else if(harness==='claude-code' && r.sessionId) {
+          if(scoped&&(r.sessionId!==scoped.sessionId||(r.agentId??undefined)!==scoped.agentId))throw new CliError('CAPTURE_SESSION_MISMATCH','Native message differs from the registered parent or child session');
           meta.sessionId=r.agentId ? r.sessionId+':'+r.agentId : r.sessionId;
           if(r.agentId)meta.parentSessionId=r.sessionId;
         }
@@ -398,6 +472,32 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
       }
     };
     try {
+      // The source can be replaced between the boundary check and this open.
+      // Validate the descriptor that will actually supply parser bytes too.
+      if(old.forwardBoundary&&!reconcileHistory&&fd!==undefined){
+        const current=fstatSync(fd);
+        if(transcriptIdentity(fd)!==boundaryIdentity||current.size!==source.size||old.checkpoint!==transcriptCheckpoint(fd,offset))
+          throw new CliError('CAPTURE_SOURCE_CHANGED','Transcript changed before reading its consent boundary; retry capture.');
+      }
+    if(scoped&&meta.sessionId&&meta.sessionId!==expectedSession&&!(scoped.agentId&&meta.sessionId===scoped.sessionId))throw new CliError('CAPTURE_SESSION_MISMATCH','Saved transcript identity differs from the registered native session');
+      if(scoped&&fd!==undefined){
+        if(fstatSync(fd).ino!==source.ino||assertSessionTranscriptPath(config,harness,scoped.sessionId,harness==='antigravity'?resolveAntigravityTranscript(file):file,sessionPath??file).path!==path)throw new CliError('CAPTURE_SESSION_PATH_REJECTED','Native transcript changed before reading');
+        if(harness==='codex'){
+          const limit=Math.min(st.size,1024*1024);let header=Buffer.alloc(Math.min(limit,4096));readSync(fd,header,0,header.length,0);let end=header.indexOf(10);
+          while(end<0&&header.length<limit){const before=header.length,larger=Buffer.alloc(Math.min(limit,before*2));header.copy(larger);readSync(fd,larger,before,larger.length-before,before);header=larger;end=header.indexOf(10);}
+          if(end<0)throw new CliError('CAPTURE_SESSION_UNKNOWN','The native session header is incomplete');
+          const native=JSON.parse(header.subarray(0,end).toString('utf8'));
+          if(native.type!=='session_meta'||native.payload?.id!==scoped.sessionId)throw new CliError('CAPTURE_SESSION_MISMATCH','Native header differs from the registered session');
+        }
+      }
+      // A future-only enrollment starts at its saved byte boundary. Read only
+      // the native header to recover identity, never enqueue earlier messages.
+      if(old.forwardBoundary&&!reconcileHistory&&offset>0&&harness==='codex'&&!meta.sessionId&&fd!==undefined){
+        const header=Buffer.alloc(Math.min(st.size,1024*1024));readSync(fd,header,0,header.length,0);const end=header.indexOf(10);
+        if(end<0)throw new CliError('CAPTURE_SESSION_UNKNOWN','The native session header is incomplete. Start a new session.');
+        metadata(JSON.parse(header.subarray(0,end).toString('utf8')));
+      }
+      let skipPartial=old.forwardBoundary&&!reconcileHistory&&old.skipPartial;
       // Apply metadata in record order. Looking ahead at a later working
       // directory could incorrectly allow earlier records from an excluded project.
       for await(const bytes of chunks()) {
@@ -405,6 +505,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
         const events:any[]=[],attachments:any[]=[];
         let position=offset,linesSinceYield=0,eventBytes=0;
         for(const line of bytes.toString('utf8').split('\n').slice(0,-1)){
+          if(skipPartial){skipPartial=false;position+=Buffer.byteLength(line)+1;continue;}
           if(line.trim()){
             let record;try{record=JSON.parse(line);}catch{throw new CliError('CAPTURE_INVALID_RECORD','Invalid transcript record; cursor retained');}
             const auditMessage=!desktopAudit||['user','assistant'].includes(record.type)&&!nativeIds.has(record.uuid);
@@ -464,7 +565,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
           if(events.length>=(reconcileHistory?1000:200)){await spool({...meta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
         }
         await spool({...meta,captureMode:reconcileHistory?'history':'live'},events,attachments);
-        offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta});
+        offset+=bytes.length;atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,...(old.forwardBoundary&&!reconcileHistory?{forwardBoundary:true,identity:boundaryIdentity,checkpoint:transcriptCheckpoint(fd!,offset),skipPartial}: {})});
       }
       if(compressed){
         if(!archiveComplete)throw new CliError('CAPTURE_ARCHIVE_INVALID','Compressed transcript ended with an unfinished JSONL record; repair the archive and rerun the approved import.');
@@ -474,7 +575,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
       }
     } finally{if(fd!==undefined)closeSync(fd);}
     const platform=await platformTitle(config,meta);
-    if(platform?capturePlatformTitle(config,meta,platform):harness==='codex'&&captureCodexTitle(config,meta))atomicJson(stateFile,{...read(stateFile,old),meta});
+    if(platform?capturePlatformTitle(config,meta,platform,reconcileHistory?'history':'live'):harness==='codex'&&captureCodexTitle(config,meta,sessionScoped,reconcileHistory?'history':'live'))atomicJson(stateFile,{...read(stateFile,old),meta});
     return meta;
   });
   },Infinity);
@@ -484,18 +585,18 @@ async function platformTitle(config:CaptureConfig,meta:any,force=false) {
   if(!process.env.REPLICAS_WORKSPACE_ID||!workspaceIdentityEnabled()||meta?.parentSessionId||meta?.origin==='subagent'||!['claude-code','codex'].includes(meta?.harness)||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(meta?.sessionId??'')||captureExcluded(readCaptureConfig()??config,meta))return undefined;
   return replicasTitle(process.env.REPLICAS_WORKSPACE_ID,meta.sessionId,meta.harness,force);
 }
-function capturePlatformTitle(config:CaptureConfig,meta:any,{title,timestamp}:ReplicasTitle) {
+function capturePlatformTitle(config:CaptureConfig,meta:any,{title,timestamp}:ReplicasTitle,captureMode:'history'|'live'='history') {
   if(meta.capturedTitle===title)return false;
-  enqueue(config,{...meta,captureMode:'history'},[{id:hash('replicas-title:'+meta.sessionId+':'+timestamp+':'+title),kind:'session_title',sequence:0,timestamp,data:{title,titleType:'custom'}}],[]);
+  enqueue(config,{...meta,captureMode},[{id:hash('replicas-title:'+meta.sessionId+':'+timestamp+':'+title),kind:'session_title',sequence:0,timestamp,data:{title,titleType:'custom'}}],[]);
   meta.capturedTitle=title;meta.customTitle=title;
   return true;
 }
 
-function captureCodexTitle(config:CaptureConfig,meta:any) {
+function captureCodexTitle(config:CaptureConfig,meta:any,sessionScoped=false,captureMode:'history'|'live'='history') {
   if(!meta?.sessionId || meta.harness!=='codex' || captureExcluded(readCaptureConfig()??config,meta))return false;
-  const native=codexTitle(config.roots.codex,meta.sessionId);
+  const native=sessionScoped?codexNativeSession(config.roots.codex,meta.sessionId)?.title:codexTitle(config.roots.codex,meta.sessionId);
   if(!native || meta.capturedTitle===native.title)return false;
-  enqueue(config,{...meta,captureMode:'history'},[{id:hash('codex-title:'+meta.sessionId+':'+native.timestamp+':'+native.title),kind:'session_title',sequence:0,timestamp:native.timestamp,data:{title:native.title}}],[]);
+  enqueue(config,{...meta,captureMode},[{id:hash('codex-title:'+meta.sessionId+':'+native.timestamp+':'+native.title),kind:'session_title',sequence:0,timestamp:native.timestamp,data:{title:native.title}}],[]);
   meta.capturedTitle=native.title;
   return true;
 }
@@ -556,22 +657,26 @@ export async function refreshCapturedTitles() {
 export async function captureHook(harness:Harness,event:any) {
   return withSessionLock('capture:configuration',async()=>{
   const config=readCaptureConfig();if(!config||config.disabled)return;
+  if(config.harnesses&&!config.harnesses.includes(harness))return;
   ensureDirectories();
   const id=randomUUID(),at=new Date().toISOString();
-  if(harness==='grok-bot'||harness==='cursor') {
+  if(harness==='grok-bot'||harness==='cursor'||harness==='devin') {
     if(!event||typeof event!=='object'||Array.isArray(event))throw new CliError('CAPTURE_EVENT_INVALID','Hook payload is not an object');
     // Prepared with --defer-auth and nobody has signed in: a computer whose
     // owner never opts in must not accumulate what their Bots do.
     if(config.authPending)return;
     if(!config.harnesses?.includes(harness))return;
-    const session=harness==='cursor'?cursorSession(event):grokBotSession(event,at);
+    const session=harness==='devin'?devinSession(event):harness==='cursor'?cursorSession(event):grokBotSession(event,at);
     if(captureExcluded(config,{sessionId:session.sessionId,cwd:session.cwd??undefined}))return;
     // Hook payloads carry no time or order. Microseconds since the epoch keep
     // events from separate hook processes in the order they were recorded.
     let sequence=Math.round((performance.timeOrigin+performance.now())*1000);
-    if(harness==='cursor'){const clock=join(captureDir(),'cursor-sequence.json');sequence=Math.max(sequence,Number(read(clock,0))+2);atomicJson(clock,sequence);}
+    if(harness==='cursor'||harness==='devin'){const clock=join(captureDir(),harness+'-sequence.json');sequence=Math.max(sequence,Number(read(clock,0))+(harness==='devin'?3:2));if(!Number.isSafeInteger(sequence+2))throw new CliError('CAPTURE_EVENT_INVALID','Native hook sequence exceeds the supported range');atomicJson(clock,sequence);}
     const bytes=Buffer.byteLength(JSON.stringify(event));
-    atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,sequence,harness,event:bytes>GROK_BOT_MAX_HOOK_BYTES?grokBotUnsupported(event,'too_large',bytes):event});
+    const maxBytes=harness==='devin'?DEVIN_MAX_HOOK_BYTES:GROK_BOT_MAX_HOOK_BYTES,unsupported=harness==='devin'?devinUnsupported:grokBotUnsupported;
+    const payload=bytes>maxBytes?unsupported(event,'too_large',bytes):event;
+    if(Buffer.byteLength(JSON.stringify(payload))>maxBytes)throw new CliError('CAPTURE_HOOK_TOO_LARGE','Native hook metadata exceeds the local handoff limit');
+    atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,sequence,harness,event:payload});
     return;
   }
   if(harness==='antigravity') {
@@ -587,7 +692,125 @@ export async function captureHook(harness:Harness,event:any) {
   if(captureExcluded(config,{sessionId,cwd:event.cwd}))return;
   atomicJson(join(captureDir(),'notices',id+'.json'),{id,at,harness,event});
   // Synchronous hooks (Grok Bot, Cursor, Antigravity) give up on a held lock rather than queue behind it.
-  },harness==='grok-bot'||harness==='cursor'||harness==='antigravity'?2000:Infinity);
+  },harness==='grok-bot'||harness==='cursor'||harness==='antigravity'||harness==='devin'?2000:Infinity);
+}
+
+export type CaptureHookNotice={id:string,at:string,sequence?:number,harness:Harness,event:any};
+
+/** Shared Cursor conversion and occurrence deduplication. The daemon calls this
+ * only with the exact session and transcript supplied by a native hook. */
+export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHookNotice,transcriptOnly=false) {
+  ensureDirectories();
+  const session=cursorSession(notice.event);
+  return withSessionLock('capture:cursor:'+session.sessionId,async()=>{
+  const session=cursorSession(notice.event),stateFile=join(captureDir(),'state','cursor-'+hash(session.sessionId)+'.json');
+  const state=read(stateFile,{offset:0,hooks:{},transcript:{},emitted:{}});
+  if(!transcriptOnly&&state.lastNotice===notice.id)return;
+  if(!transcriptOnly&&notice.event.hook_event_name==='sessionStart'){state.startSequence=notice.sequence;state.startAt=notice.at;}
+  if(!transcriptOnly)state.thoughtHooks=cursorThoughtState(state.thoughtHooks,notice.event);
+  if(session.origin!=='unknown')state.origin=session.origin;
+  const meta={harness:'cursor',sessionId:session.sessionId,cwd:session.cwd,origin:state.origin??session.origin,originEvidence:session.originEvidence,parentSessionId:session.parentSessionId,captureMode:'live',harnessVersion:session.version};
+  if(captureExcluded(readCaptureConfig()??config,meta))return;
+  const messages=(event:any,source:'hooks'|'transcript')=>{
+    let signature;
+    if(event.kind==='message') {
+      event.data=cursorMessage(event.data);signature=[event.data.role,event.data.content];
+      // sessionStart may run only once for a conversation. Its time belongs
+      // to the first prompt, never to a later resumed turn.
+      if(event.data.role==='user'){delete state.startSequence;delete state.startAt;}
+    } else if(event.kind==='reasoning_summary'&&Array.isArray(event.data?.summary)) {
+      // Cursor also writes thought text as an ordinary assistant transcript
+      // message. Keep its explicit thought hook, not a second visible reply.
+      const text=event.data.summary.map((block:any)=>block.text??'').join('');
+      signature=['assistant',[{type:'text',text}]];
+    } else return event;
+    const key=hash(JSON.stringify(signature));
+    const count=(state[source][key]??0)+1;state[source][key]=count;
+    if(count<=(state.emitted[key]??0))return null;
+    state.emitted[key]=count;
+    if(source==='transcript'){event.sequence=Math.max(event.sequence,(state.lastTranscriptSequence??0)+1);state.lastTranscriptSequence=event.sequence;}
+    return event;
+  };
+  let events:any[]=[],attachments:any[]=[],eventBytes=0;
+  const commit=()=>{
+    if(events.length)enqueue(config,meta,events,attachments);
+    atomicJson(stateFile,state);events=[];attachments=[];eventBytes=0;
+  };
+  const file=notice.event.transcript_path;
+  // Text transcript metadata is not the native JSONL fallback. Keep the
+  // authoritative content hooks working without opening referenced text.
+  if(typeof file==='string'&&file.endsWith('.jsonl')&&existsSync(file)) {
+    const transcriptState={offset:state.offset,ino:state.ino,checkpoint:state.checkpoint,identity:state.identity};
+    for(const record of cursorTranscript(harnessRoot(config,'cursor'),session.sessionId,file,transcriptState.offset,transcriptState.ino,transcriptState.checkpoint,{forwardBoundary:state.forwardBoundary===true,skipPartial:state.skipPartial===true,identity:transcriptState.identity})) {
+      if(record.forwardRebased){
+        state.hooks={};state.transcript={};state.emitted={};delete state.thoughtHooks;delete state.startSequence;delete state.startAt;
+        recordError(new CliError('CAPTURE_CURSOR_BOUNDARY_CHANGED','Cursor rewrote a pre-consent transcript boundary; earlier bytes remain excluded. New appended records and native content hooks continue.'));
+      }
+      if(record.start===0&&state.offset>0){state.transcript={};state.offset=0;}
+      if(record.data) {
+        const event=messages({id:hash('cursor-transcript:'+session.sessionId+':'+record.start),kind:'message',sequence:record.data.role==='user'?(state.startSequence??notice.sequence):notice.sequence,
+          timestamp:record.data.role==='user'?(state.startAt??notice.at):notice.at,nativeId:null,parentId:null,turnId:notice.event.generation_id??null,agentId:null,data:record.data},'transcript');
+        if(event){const transformed=attachmentTransform(event,attachments,session.cwd??homedir());events.push(transformed);eventBytes+=Buffer.byteLength(JSON.stringify(transformed));}
+      }
+      state.offset=record.offset;state.ino=record.ino;state.identity=record.identity;state.checkpoint=record.checkpoint;state.skipPartial=record.skipPartial;
+      if(events.length>=100||attachments.length>=8||eventBytes>=1024*1024){await yieldToOwner();commit();}
+    }
+  }
+  for(const event of transcriptOnly?[]:grokBotEvents(notice)) {
+    if(cursorThoughtDuplicate(state.thoughtHooks,notice.event))continue;
+    const next=messages(event,'hooks');if(next)events.push(attachmentTransform(next,attachments,session.cwd??homedir()));
+  }
+  if(!transcriptOnly)state.lastNotice=notice.id;commit();
+  },Infinity);
+}
+
+/** Worker-side event conversion shares the existing redaction, attachment,
+ * identity and durable spool boundaries. There is no network or source scan. */
+export async function spoolDaemonEvent(config:CaptureConfig,notice:CaptureHookNotice) {
+  ensureDirectories();
+  if(notice.harness==='cursor')return captureCursorNotice(config,notice);
+  const attachments:any[]=[];
+  if(notice.harness==='devin') {
+    const session=devinSession(notice.event);
+    const meta={harness:notice.harness,sessionId:session.sessionId,cwd:session.cwd??undefined,origin:'cloud',
+      originEvidence:'Devin Cloud native session hook',parentSessionId:null,captureMode:'live'};
+    const assertCurrent=()=>{
+      const current=readCaptureConfig();
+      if(!current||current.authPending||current.api!==config.api||current.installationId!==config.installationId||current.owner.tenantId!==config.owner.tenantId||current.owner.userId!==config.owner.userId)
+        throw new CliError('CAPTURE_CONFIG_CHANGED','Capture enrollment changed; the original Devin notice is retained.');
+      if(current.disabled||!current.harnesses?.includes('devin')||captureExcluded(current,meta))
+        throw new CliError('CAPTURE_CONSENT_CHANGED','Forward Devin recording is no longer enabled; the original notice is retained.');
+    };
+    assertCurrent();
+    const overflow=await devinOverflow(notice.event);
+    // Overflow recovery yields to config changes. Recheck before reading any
+    // attachment or writing a batch; never bind the old notice to a new owner.
+    assertCurrent();
+    let events;
+    try {
+      events=devinEvents(notice,overflow).map(event=>attachmentTransform(event,attachments,session.cwd??homedir()));
+      events.forEach(finalizeEventIdentity);
+      if(attachments.length>500||Buffer.byteLength(JSON.stringify(events))>12*1024*1024)
+        throw new CliError('CAPTURE_EVENT_INVALID','Devin hook payload exceeds what one batch can carry');
+    } catch(error:any) {
+      if(!['CAPTURE_EVENT_TOO_DEEP','CAPTURE_EVENT_INVALID'].includes(error?.code))throw error;
+      attachments.length=0;
+      events=devinEvents({...notice,event:devinUnsupported(notice.event,'unsupported',Buffer.byteLength(JSON.stringify(notice.event)))});
+    }
+    enqueue(config,meta,events,attachments);return;
+  }
+  if(notice.harness==='grok-bot') {
+    const session=grokBotSession(notice.event,notice.at);
+    const meta={harness:notice.harness,sessionId:session.sessionId,conversationId:session.conversationId,cwd:session.cwd,origin:'cloud',
+      originEvidence:session.identified?'Grok Bot cloud computer hook':'Grok Bot hook without a conversation ID; grouped by workspace and UTC day',parentSessionId:null,harnessVersion:session.version,captureMode:'live'};
+    const events=grokBotEvents(notice).map(event=>attachmentTransform(event,attachments,session.cwd??homedir()));
+    if(session.title)events.unshift(grokBotTitleEvent(session.sessionId,session.title,session.day));
+    enqueue(config,meta,events,attachments);return;
+  }
+  const fields=notice.harness==='antigravity'?antigravityHookFields(notice.event):{sessionId:notice.event.session_id,cwd:notice.event.cwd};
+  const meta={harness:notice.harness,sessionId:fields.sessionId,cwd:fields.cwd,origin:'unknown',originEvidence:null,parentSessionId:null,captureMode:'live'};
+  const data=attachmentTransform(notice.event,attachments,fields.cwd??homedir());
+  enqueue(config,meta,[{id:notice.id,kind:'hook',timestamp:notice.at,data}],attachments);
 }
 
 // The original event is kept only until its immutable batch is spooled. Its ID
@@ -655,64 +878,17 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
       const native=notice.event?.conversation_id||notice.event?.session_id;
       if(blockedCursorSessions.has(native))continue;
       try {
-        const session=cursorSession(notice.event),stateFile=join(captureDir(),'state','cursor-'+hash(session.sessionId)+'.json');
-        const state=read(stateFile,{offset:0,hooks:{},transcript:{},emitted:{}});
-        if(state.lastNotice===notice.id){unlinkSync(path);syncDirectory(dirname(path));processed++;continue;}
-        if(notice.event.hook_event_name==='sessionStart'){state.startSequence=notice.sequence;state.startAt=notice.at;}
-        state.thoughtHooks=cursorThoughtState(state.thoughtHooks,notice.event);
-        if(session.origin!=='unknown')state.origin=session.origin;
-        const meta={harness:'cursor',sessionId:session.sessionId,cwd:session.cwd,origin:state.origin??session.origin,originEvidence:session.originEvidence,parentSessionId:session.parentSessionId,captureMode:'live',harnessVersion:session.version};
-        if(captureExcluded(readCaptureConfig()??config,meta)){unlinkSync(path);continue;}
-        const messages=(event:any,source:'hooks'|'transcript')=>{
-          let signature;
-          if(event.kind==='message') {
-            event.data=cursorMessage(event.data);signature=[event.data.role,event.data.content];
-            // sessionStart may run only once for a conversation. Its time belongs
-            // to the first prompt, never to a later resumed turn.
-            if(event.data.role==='user'){delete state.startSequence;delete state.startAt;}
-          } else if(event.kind==='reasoning_summary'&&Array.isArray(event.data?.summary)) {
-            // Cursor also writes thought text as an ordinary assistant transcript
-            // message. Keep its explicit thought hook, not a second visible reply.
-            const text=event.data.summary.map((block:any)=>block.text??'').join('');
-            signature=['assistant',[{type:'text',text}]];
-          } else return event;
-          const key=hash(JSON.stringify(signature));
-          const count=(state[source][key]??0)+1;state[source][key]=count;
-          if(count<=(state.emitted[key]??0))return null;
-          state.emitted[key]=count;
-          if(source==='transcript'){event.sequence=Math.max(event.sequence,(state.lastTranscriptSequence??0)+1);state.lastTranscriptSequence=event.sequence;}
-          return event;
-        };
-        let events:any[]=[],attachments:any[]=[],eventBytes=0;
-        const commit=()=>{
-          if(events.length)enqueue(config,meta,events,attachments);
-          atomicJson(stateFile,state);events=[];attachments=[];eventBytes=0;
-        };
-        const file=notice.event.transcript_path;
-        // Text transcript metadata is not the native JSONL fallback. Keep the
-        // authoritative content hooks working without opening referenced text.
-        if(typeof file==='string'&&file.endsWith('.jsonl')&&existsSync(file)) {
-          const transcriptState={offset:state.offset,ino:state.ino,checkpoint:state.checkpoint};
-          for(const record of cursorTranscript(harnessRoot(config,'cursor'),session.sessionId,file,transcriptState.offset,transcriptState.ino,transcriptState.checkpoint)) {
-            if(record.start===0&&state.offset>0){state.transcript={};state.offset=0;}
-            if(record.data) {
-              const event=messages({id:hash('cursor-transcript:'+session.sessionId+':'+record.start),kind:'message',sequence:record.data.role==='user'?(state.startSequence??notice.sequence):notice.sequence,
-                timestamp:record.data.role==='user'?(state.startAt??notice.at):notice.at,nativeId:null,parentId:null,turnId:notice.event.generation_id??null,agentId:null,data:record.data},'transcript');
-              if(event){const transformed=attachmentTransform(event,attachments,session.cwd??homedir());events.push(transformed);eventBytes+=Buffer.byteLength(JSON.stringify(transformed));}
-            }
-            state.offset=record.offset;state.ino=record.ino;state.checkpoint=record.checkpoint;
-            if(events.length>=100||attachments.length>=8||eventBytes>=1024*1024){await yieldToOwner();commit();}
-          }
-        }
-        for(const event of grokBotEvents(notice)) {
-          if(cursorThoughtDuplicate(state.thoughtHooks,notice.event))continue;
-          const next=messages(event,'hooks');if(next)events.push(attachmentTransform(next,attachments,session.cwd??homedir()));
-        }
-        state.lastNotice=notice.id;commit();unlinkSync(path);syncDirectory(dirname(path));processed++;
+        await captureCursorNotice(config,notice);
+        unlinkSync(path);syncDirectory(dirname(path));processed++;
       }catch(error){firstError??=error;blockedCursorSessions.add(native);}
       continue;
     }
-    if(notice.harness==='grok-bot') {
+    if(notice.harness==='devin'){
+      try{await spoolDaemonEvent(config,notice);unlinkSync(path);syncDirectory(dirname(path));processed++;}
+      catch(error){firstError??=error;}
+      continue;
+    }
+      if(notice.harness==='grok-bot') {
       round.push({path,notice});roundBytes+=statSync(path).size;
       if(round.length>=200||roundBytes>=16*1024*1024)await spoolRound();
       continue;
@@ -737,7 +913,7 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
     if(!captureExcluded(readCaptureConfig()??config,{...meta,cwd:meta?.cwd??hookFields.cwd})) {
       const attachments:any[]=[];
       const data=attachmentTransform(event,attachments,hookFields.cwd??homedir());
-      enqueue(config,{...meta,cwd:meta?.cwd??hookFields.cwd},[{id,kind:'hook',timestamp:at,data}],attachments);
+      enqueue(config,{...meta,cwd:meta?.cwd??hookFields.cwd,captureMode:'live'},[{id,kind:'hook',timestamp:at,data}],attachments);
     }
     unlinkSync(path);syncDirectory(dirname(path));processed++;
     }catch(error){firstError??=error;}
@@ -875,9 +1051,26 @@ export async function captureWorker({idleMs=30_000,pollMs=1000,flushMs=LIVE_FLUS
   // Reacquire in this same owned process; never spawn a replacement.
   }
 }
+/** Metadata only: capture ingress is distinct from startup tasks and held work. */
+export function daemonIngressStatus(){
+  const names=(part:string)=>{const directory=join(captureDir(),'daemon',part);try{return readdirSync(directory);}catch(error:any){if(error.code==='ENOENT')return [];throw error;}};
+  const inbox=names('inbox'),sessions=names('sessions');
+  return {capture:inbox.filter(name=>name.endsWith('.json')&&!name.startsWith('startup-')).length,
+    startup:inbox.filter(name=>name.endsWith('.json')&&name.startsWith('startup-')).length,
+    heldCapture:inbox.filter(name=>name.endsWith('.held')&&!name.startsWith('startup-')).length,
+    heldStartup:inbox.filter(name=>name.endsWith('.held')&&name.startsWith('startup-')).length,
+    sessions:sessions.filter(name=>name.endsWith('.json')).length,heldSessions:sessions.filter(name=>name.endsWith('.held')).length};
+}
+async function flushDaemonQueue({retryRejected=false,paused=false}:{retryRejected?:boolean;paused?:boolean}={}){
+  const result=paused||!existsSync(join(captureDir(),'queue'))||!queuedNames(true).length?{uploaded:0}:await flushCaptures({retryRejected});
+  const daemonIngress=daemonIngressStatus(),pendingLegacyHooks=existsSync(join(captureDir(),'notices'))?noticeNames().length:0;
+  return {...result,mode:'daemon-queue-only',daemonIngress,pendingHooks:pendingLegacyHooks+daemonIngress.capture,pendingLegacyHooks,
+    ...(daemonIngress.capture||daemonIngress.startup?{nextStep:'Background ingress remains with the supervised worker. This command flushed only existing batches; it did not parse sessions or complete pending startup tasks.'}:{})};
+}
 /** Explicit flush waits for capture and upload ownership, then fences current sources. */
 export async function flushCaptureWork({retryRejected=false}: {retryRejected?:boolean}={}) {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
+  if(captureDaemonEnabled(config))return flushDaemonQueue({retryRejected});
   if(!config.disabled){if(config.authPending)await refreshCaptureIdentity(config);await drainCaptureNotices(config);await reconcileSources(config,new Map());}
   return flushCaptures({retryRejected});
 }
@@ -933,6 +1126,7 @@ export const hookFlush=(event:any,{now=Date.now,reconcileTranscripts=true}={})=>
 
 export async function syncCaptures() {
   const config=readCaptureConfig();if(!config)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install');
+  if(captureDaemonEnabled(config))return flushDaemonQueue({paused:config.disabled});
   if(config.disabled)return {uploaded:0};
   if(config.authPending)await refreshCaptureIdentity(config);
   const errors:any[]=[];
@@ -968,6 +1162,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     const staticToken=staticCaptureToken(config.api);
     let token=staticToken||(workspaceIdentityEnabled()?await workspaceToken(config.api):await accessToken(config.api));
     const identity=await captureIdentity(config,token),principal=identity.principal;
+    token=identity.token??token;
     let useGzip=identity.gzip,cursorSupported=identity.cursor,antigravitySupported=identity.antigravity;
     // A long flush outlives a short-lived sign-in token. Renew before each request
     // and after a rejection, re-verifying identity whenever the token changes.
@@ -977,7 +1172,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
       useGzip=refreshed.gzip;cursorSupported=refreshed.cursor;antigravitySupported=refreshed.antigravity;
       if(current.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Signed-in user changed during upload. Sign back in as the queued author; queued data is retained.');
       if(current.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Signed-in team changed during upload. Sign back into the original destination; queued data is retained.');
-      return token=next;
+      return token=refreshed.token??next;
     };
     const current=async()=>staticToken||await adopt(workspaceIdentityEnabled()?await workspaceToken(config.api):await accessToken(config.api));
     const renew=staticToken?undefined:async(rejected:string)=>adopt(workspaceIdentityEnabled()?await workspaceToken(config.api,rejected):await accessToken(config.api,rejected));
@@ -1120,35 +1315,17 @@ export function captureAttentionNotice(now=Date.now()):string|null {
   atomicJson(marker,{at:new Date(now).toISOString()});
   return message;
 }
-/** OpenCrawl hooks Codex will not run until the person trusts them in /hooks.
- * Codex records trust per hook as `[hooks.state."<hooks.json>:<event>:<group>:<hook>"]`
- * with a trusted_hash; a missing entry means "new hook - review required".
- * We only read that state: trust is the person's decision, never written here. */
-export function codexHooksAwaitingReview(config:CaptureConfig|null=readCaptureConfig()):number {
-  if(!config||config.disabled||!(config.harnesses??['claude-code','codex']).includes('codex')||!config.roots.codex)return 0;
-  const file=join(config.roots.codex,'hooks.json');
-  let hooks:any,state:any;
-  try{hooks=JSON.parse(readFileSync(file,'utf8')).hooks??{};}catch{return 0;}
-  try{state=(Bun.TOML.parse(readFileSync(join(config.roots.codex,'config.toml'),'utf8')) as any)?.hooks?.state??{};}catch{state={};}
-  const snake=(event:string)=>event.replace(/([a-z0-9])([A-Z])/g,'$1_$2').toLowerCase();
-  let pending=0;
-  for(const [event,groups] of Object.entries(hooks))if(Array.isArray(groups))groups.forEach((group:any,g:number)=>{
-    if(Array.isArray(group?.hooks))group.hooks.forEach((hook:any,h:number)=>{
-      if(hook?.statusMessage==='OpenCrawl session capture'&&!state[`${file}:${snake(event)}:${g}:${h}`]?.trusted_hash)pending++;
-    });
-  });
-  return pending;
-}
-export function captureStatus() {
-  const config=readCaptureConfig();
-  const codexReview=codexHooksAwaitingReview(config);
-  const review=codexReview?`Codex will not run ${codexReview} OpenCrawl capture hook${codexReview===1?'':'s'} until you trust them: open Codex, run /hooks (or desktop Settings > Hooks) and trust "OpenCrawl session capture", then start a new session.`:null;
+export function captureStatus(nativeReview?:CodexHookReview) {
+  const config=readCaptureConfig(),daemonIngress=daemonIngressStatus(),pendingLegacyHooks=existsSync(join(captureDir(),'notices'))?noticeNames().length:0;
+  const codexReview=nativeReview??(config?localCodexHookReview(config.roots.codex):{state:'not_applicable' as const,total:0,pending:0,disabled:0});
+  const review=codexHookReviewMessage(codexReview);
   return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.authPending?null:config?.owner,authenticationPending:Boolean(config?.authPending),installationId:config?.installationId,
+    worker:captureDaemonEnabled(config)?{supervision:read(join(captureDir(),'daemon/service.json')),lastObserved:read(join(captureDir(),'daemon/status.json')),uploadRetry:read(join(captureDir(),'daemon/retry.json')),startupRetry:read(join(captureDir(),'daemon/startup-retry.json'))}:null,
     exclusions:config?.exclusions??{projects:[],sessions:[]},
     queued:existsSync(join(captureDir(),'queue'))?readdirSync(join(captureDir(),'queue')).filter(n=>n.endsWith('.json')).length:0,
     rejected:rejectedNames().length,
-    pendingHooks:existsSync(join(captureDir(),'notices'))?noticeNames().length:0,
+    pendingHooks:pendingLegacyHooks+daemonIngress.capture,pendingLegacyHooks,daemonIngress,
     backfill:read(join(captureDir(),'backfill-progress.json')),
     lastUpload:read(join(captureDir(),'last-upload.json')),lastError:read(join(captureDir(),'last-error.json')),
-    codexHooksAwaitingReview:codexReview,attention:captureAttention()??review};
+    codexHooksAwaitingReview:codexReview.pending,codexHookReview:codexReview,attention:captureAttention()??review};
 }

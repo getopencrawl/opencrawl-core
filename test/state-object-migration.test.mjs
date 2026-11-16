@@ -1,3 +1,4 @@
+import {legacySetupState} from './fixtures/setup-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes,randomUUID} from 'node:crypto';
@@ -40,6 +41,7 @@ function sources({record,connectorKey}){
  add(prefix+'/_credentials/'+digest('revoked-token')+'.json',{schemaVersion:1,id:digest('revoked-token'),principal:owner,expiresAt:'2099-01-01T00:00:00.000Z',revoked:true,generation:digest('generation')});
  add(prefix+'/_credential-generations/'+ownerScope+'.json',{generation:digest('generation')});
  add(prefix+'/'+ownerScope+'/onboarding/mcp.json',{observedAt:date,client:'fixture'});
+ add(prefix+'/'+ownerScope+'/setup/status-v1.json',legacySetupState(owner));
  add(prefix+'/organization-role-writes/'+organizationId+'.json',{schemaVersion:1,state:'held',operationId:randomUUID(),organizationId,actorId:owner.userId,userId:owner.userId,role:'member',startedAt:date});
  const replica='12345678-1234-4234-9234-123456789abc';
  add(prefix+'/identity/replicas-v1/organizations/'+replica+'.json',{schemaVersion:1,organizationId:replica,tenantId:organizationId,approvedBy:owner.userId,approvedAt:date,revokedAt:date,installations:[{id:'fixture',tenantId:organizationId,userId:'workload_replicas_'+digest('fixture'),name:'Replicas'}]});
@@ -256,4 +258,31 @@ test('retained Slack catalogs require the original registry workspace even for d
  const state=await createApplicationState({database:f.database});
  const binding={tenantId:f.record.tenantId,connectionId:f.record.integrationId,workspaceId:workspace,provider:'slack',access:'team-public',rawPrefix:f.record.s3Prefix+'/'};
  assert.deepEqual(await state.slackCapture.readCatalog(binding,'messages-v1'),JSON.parse(entry[1]));
+});
+
+
+test('Setup legacy import binds exact owner hashes, preserves expired private evidence and refuses stale recopy',{skip:!postgresUrl},async t=>{
+ const f=await setup(t),key=prefix+'/'+ownerScope+'/setup/status-v1.json',record=legacySetupState(owner),bytes=encode(record);
+ f.objects.set(key,bytes);
+ assert.equal(f.migration.classify(key).domain,'setup-status');
+ assert.equal((await f.migration.process(key,bytes,{write:false})).target,null);
+ const result=await f.migration.process(key,bytes,{write:true});assert.deepEqual(result.target,record);assert.deepEqual(result.source,record);
+ const restarted=createObjectMigration(f.options);assert.deepEqual((await restarted.process(key,bytes,{write:true})).target,record);assert.deepEqual(f.objects.get(key),bytes);
+ const state=await createApplicationState({database:f.database});
+ const {createSetupStatus}=await import('../dist/src/setup/status.mjs');
+ const setupStatus=createSetupStatus({state,search:{search:async()=>({results:[]}),fetch:async()=>null},now:()=>new Date('2026-11-15T00:00:00Z')});
+ const view=await setupStatus.read(owner);assert.equal(view.installations[0].clients[0].proof.state,'expired');
+ assert.equal(JSON.stringify(view).includes(record.installations[0].clients[0].evidence.mcpCall.receipt),false);
+ assert.equal(view.installations[0].clients[0].installed,false);assert.equal(view.firstWin,null);
+ for(const bad of [key.replace(digest(owner.userId),digest('wrong-user')),key.replace(tenantHash,digest('org_other'))])await assert.rejects(restarted.process(bad,bytes,{write:false}),/differs from its owner/);
+ await assert.rejects(restarted.process(key,encode({...record,scope:{...owner,tenantId:'org_other'}}),{write:false}),/another installation organization/);
+ await assert.rejects(restarted.process(key,encode({...record,unexpected:true}),{write:false}));
+ await assert.rejects(restarted.process(key,Buffer.alloc(256*1024+1),{write:false}),/exceeds/);
+ assert.throws(()=>restarted.classify(key.replace('status-v1','status-v2')),/Unrecognized/);
+ const agent=createTenantObjectMigration({...f.options,tenantId:owner.tenantId,prefix:prefix+'/_agent-access',credentialPurpose:'agent'});
+ assert.throws(()=>agent.classify(prefix+'/_agent-access/'+ownerScope+'/setup/status-v1.json'),/unrelated application state/);
+ const original=await state.setup.read(owner),changed=structuredClone(original.record);changed.installations[0].clients[0].historyProgress.completed=4;
+ assert.equal(await state.setup.save(owner,original.version,changed),true);
+ await assert.rejects(restarted.process(key,bytes,{write:true}),/differs from legacy state/);
+ assert.equal((await state.setup.read(owner)).record.installations[0].clients[0].historyProgress.completed,4);assert.deepEqual(f.objects.get(key),bytes);
 });

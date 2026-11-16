@@ -1,6 +1,6 @@
 /** Frozen pre-PostgreSQL ledger implementation for offline upgrade fixtures only.
  * Production never imports this adapter. Source: pre-app-state migration HEAD. */
-                                                                                                                                                                      
+
 import {parseJson, isSessionHarness, SESSION_HARNESSES} from '../../dist/src/sessions/types.mjs';
 import {createHash} from 'node:crypto';
 import {gunzipSync} from 'node:zlib';

@@ -1,3 +1,4 @@
+import {legacySetupState} from './setup-state-fixture.mjs';
 // Synthetic private fixture for the published v0.4.1 installation. This file is
 // mounted into its old image, the candidate and the exact restored old image.
 // Never run against an operator installation. Tokens stay in /dev-state only.
@@ -28,7 +29,7 @@ import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-r
 import {digest,receiptKey,pipelineVersion} from '../dist/src/connectors/scope.mjs';
 
 const phase=process.env.UPGRADE_APP_STATE_PHASE;
-assert.ok(['seed','retained','verify','restored'].includes(phase));
+assert.ok(['seed','retained','verify','restored','new-writes','verify-new'].includes(phase));
 assert.equal(process.env.OPENCRAWL_UPGRADE_FIXTURE,'true');
 const input=JSON.parse(readFileSync('/dev-state/seed-input.json','utf8'));
 const seed=JSON.parse(readFileSync('/dev-state/seed.json','utf8'));
@@ -97,6 +98,10 @@ if(phase==='seed'){
  domain='onboarding';
  const onboarding=createOnboardingStatus(scope);await onboarding.cli(expected.revokedOwner);await onboarding.mcp(expected.revokedOwner,{name:'Synthetic migration client'});await onboarding.mcpTest(expected.revokedOwner);
  expected.onboarding=await onboarding.read(expected.revokedOwner);
+ domain='setup-status';
+ expected.setup=legacySetupState(owner);
+ expected.setupKey=prefix+'/tenants/'+sha(owner.tenantId)+'/users/'+sha(owner.userId)+'/setup/status-v1.json';
+ await store.put(expected.setupKey,Buffer.from(JSON.stringify(expected.setup)),'application/json');
  domain='connector-grants';
  expected.grant={version:1,id:'grant_'+randomBytes(24).toString('hex'),organizationId:owner.tenantId,userId:owner.userId,integrationId:expected.integrationId,provider:'slack',status:'REFRESHING',state:randomBytes(24).toString('hex'),callbackUrl:'https://fixture.invalid/callback',flowExpiresAt:Date.now()+3600000,proxyToken:randomBytes(24).toString('hex'),accessToken:randomBytes(24).toString('hex'),refreshToken:randomBytes(24).toString('hex')};
  await credentialVault({store,prefix:'connector-credentials/v1',organizationId:owner.tenantId,key:encryptionKey}).write(expected.grant,null);
@@ -156,7 +161,16 @@ if(phase==='seed'){
  writeFileSync(path,JSON.stringify(manifest),{mode:0o600});const {uid,gid}=statSync('/dev-state');chownSync(path,uid,gid);
 } else {
  for(const object of manifest.objects){const bytes=await raw.get(object.key);assert.ok(bytes,'Retained source missing: '+object.unit);assert.equal(sha(bytes),object.sha256,'Retained source changed: '+object.unit);}
- if(phase==='verify'){
+ // After startup, normal workers may advance the intentionally pending legacy
+ // operations. Only Setup is the subject of these later-write assertions; the
+ // full stopped-writer snapshot is checked by the pre-start verification below.
+ if(['new-writes','verify-new'].includes(phase)){
+  const {applicationDatabase}=await import('../dist/src/state/settings.mjs');const database=applicationDatabase();
+  try{
+   const {createApplicationState}=await import('../dist/src/state/application.mjs');
+   await verifySetupState(await createApplicationState({database}));
+  }finally{await database.close();}
+ }else if(phase==='verify'){
   const {applicationDatabase}=await import('../dist/src/state/settings.mjs');const database=applicationDatabase();
   try{
    const {rows}=await database.pool.query('SELECT source_key,source_hash FROM opencrawl_application_migrations WHERE namespace=$1',[database.namespace]);
@@ -177,6 +191,7 @@ if(phase==='seed'){
    assert.deepEqual(await registry.get(owner.tenantId,owner.userId,expected.integrationId),{...expected.integration,status:'disconnecting',lifecycleOperation:'disconnect',lifecycleCommandId:resumed.commandId});
    const {createApplicationState}=await import('../dist/src/state/application.mjs');
    const state=await createApplicationState({database});
+   await verifySetupState(state);
    const {createSchedulerRetirements}=await import('../dist/src/state/scheduler-retirements.mjs');
    const retirements=createSchedulerRetirements(database);
    for(const item of expected.scheduler){
@@ -207,6 +222,7 @@ if(phase==='seed'){
    for(const object of manifest.objects)assert.equal(sha(await raw.get(object.key)),object.sha256);
   }finally{await database.close();}
  }else if(phase==='restored'){
+  assert.deepEqual(JSON.parse((await raw.get(expected.setupKey)).toString()),expected.setup,'Matched old image retains exact pre-cutover Setup evidence');
   await verifyControls(createControls(scope));
   await verifyFences(createConnectorWriteBarrier({store,tenantId:owner.tenantId,connectionId:expected.integrationId}),sessionWriteBarrier(store,prefix,owner,'codex','upgrade-deleted'));
   const identity=await createLocalIdentity({databasePath:required('OPENCRAWL_IDENTITY_PATH'),url:required('OPENCRAWL_URL'),secret:required('OPENCRAWL_AUTH_SECRET'),organizationId:owner.tenantId});
@@ -214,7 +230,28 @@ if(phase==='seed'){
   await verifyRepositories(scope);
  }
 }
-console.log(JSON.stringify({applicationStateFixture:phase,sourceObjects:manifest.objects.length,sourceDomains:[...new Set(manifest.objects.map(item=>item.unit))].sort(),retainedSources:true}));
+console.log(JSON.stringify({applicationStateFixture:phase,sourceObjects:manifest.objects.length,sourceDomains:[...new Set(manifest.objects.map(item=>item.unit))].sort(),retainedSources:true,setupState:{scopeIsolated:['verify','new-writes','verify-new'].includes(phase),originalEvidenceRetained:true,newWritePreserved:phase==='verify-new'}}));
+
+async function verifySetupState(state){
+ if(phase==='new-writes'){
+  assert.deepEqual((await state.setup.read(owner)).record,expected.setup);
+  const {createSetupStatus}=await import('../dist/src/setup/status.mjs');
+  const status=createSetupStatus({state,search:{search:async()=>({results:[]}),fetch:async()=>null}});
+  const installation=expected.setup.installations[0];
+  await status.installation(owner,{installationId:installation.installationId,machine:installation.machine,clients:[{client:'codex',installed:true,pluginState:'installed',forward:true,history:'import',historyProgress:{state:'complete',completed:4,total:4},hookTrust:'trusted'}]});
+  expected.setupAfter=(await state.setup.read(owner)).record;
+  assert.equal(expected.setupAfter.installations[0].clients[0].historyProgress.completed,4);
+  assert.deepEqual(expected.setupAfter.installations[0].clients[0].evidence,expected.setup.installations[0].clients[0].evidence);
+  writeFileSync(path,JSON.stringify(manifest),{mode:0o600});const {uid,gid}=statSync('/dev-state');chownSync(path,uid,gid);
+ }
+ if(phase==='verify-new')assert.ok(expected.setupAfter,'No new Setup write was recorded');
+ assert.deepEqual((await state.setup.read(owner)).record,phase==='verify'?expected.setup:expected.setupAfter);
+ for(const foreign of [{...owner,userId:'user_foreign'},{...owner,tenantId:'org_foreign'}])assert.equal((await state.setup.read(foreign)).record,null);
+ const {createSetupStatus}=await import('../dist/src/setup/status.mjs');
+ const setupView=await createSetupStatus({state,search:{search:async()=>({results:[]}),fetch:async()=>null},now:()=>new Date('2026-11-16T00:00:00Z')}).read(owner);
+ assert.equal(setupView.installations[0].clients[0].proof.state,'expired');assert.equal(setupView.firstWin,null);
+ assert.equal(JSON.stringify(setupView).includes(expected.setup.installations[0].clients[0].evidence.mcpCall.receipt),false);
+}
 
 async function verifyControls(controls){
  assert.deepEqual(await controls.read(owner,'sessions','codex','upgrade-private'),expected.controls.private);

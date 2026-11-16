@@ -11,6 +11,7 @@ import {claudeDesktopHistories,defaultClaudeDesktopSessionsRoot} from './desktop
 
 export const backfillNotice = 'Import local Claude Code, Codex and Antigravity history, including desktop coding sessions and host-mirrored Claude Desktop transcripts. Messages, tool arguments/results and available attachments will be shared with your signed-in OpenCrawl team and attributed to you. Cloud-only chats and VM-only records are not included.';
 type Selection = 'all'|TranscriptHarness;
+export type HistoryFile={harness:TranscriptHarness;path:string;bytes:number;ino:number;mtimeMs:number};
 export function selection(value = 'all'): Selection {
   const normalized = normalizeHarness(value);
   if (!['all','claude-code','codex','antigravity'].includes(normalized)) throw new CliError('INVALID_USAGE','Choose all, claude-code, codex, or antigravity.',64);
@@ -24,7 +25,7 @@ function configFor(api:string) {
 }
 /** File metadata only: preview never reads transcript contents, spools data, or contacts the server. */
 export function inventory(config:Pick<CaptureConfig,'roots'|'claudeDesktopSessionsRoot'>, selected:Selection) {
-  const files:{harness:TranscriptHarness,path:string,bytes:number}[]=[];
+  const files:HistoryFile[]=[];
   const sources:{harness:TranscriptHarness,files:number,bytes:number}[]=[];
   for(const harness of ['claude-code','codex','antigravity'] as TranscriptHarness[]) {
     if(selected!=='all' && selected!==harness)continue;
@@ -37,8 +38,8 @@ export function inventory(config:Pick<CaptureConfig,'roots'|'claudeDesktopSessio
       if(root)for(const real of walkAntigravityTranscripts(root)) {
         if(!real.startsWith(root+sep))throw new CliError('CAPTURE_PATH_REJECTED','Session path changed during discovery. Retry the preview.');
         if(seen.has(real))continue;seen.add(real);
-        const bytes=statSync(real).size;
-        files.push({harness,path:real,bytes});source.files++;source.bytes+=bytes;
+        const metadata=statSync(real),bytes=metadata.size;
+        files.push({harness,path:real,bytes,ino:metadata.ino,mtimeMs:metadata.mtimeMs});source.files++;source.bytes+=bytes;
       }
       if(selected==='antigravity' || source.files>0)sources.push(source);
       continue;
@@ -56,8 +57,8 @@ export function inventory(config:Pick<CaptureConfig,'roots'|'claudeDesktopSessio
           const real=realpathSync(path);
           if(!real.startsWith(allowedRoot+sep))throw new CliError('CAPTURE_PATH_REJECTED','Session path changed during discovery. Retry the preview.');
           if(seen.has(real))continue;seen.add(real);
-          const bytes=statSync(real).size;
-          files.push({harness,path:real,bytes});source.files++;source.bytes+=bytes;
+          const metadata=statSync(real),bytes=metadata.size;
+          files.push({harness,path:real,bytes,ino:metadata.ino,mtimeMs:metadata.mtimeMs});source.files++;source.bytes+=bytes;
         }
       }
     }
@@ -67,7 +68,7 @@ export function inventory(config:Pick<CaptureConfig,'roots'|'claudeDesktopSessio
       for(const projects of desktop.projects)visit(projects,realpathSync(projects));
       for(const path of desktop.audits) {
         const real=realpathSync(path);if(seen.has(real))continue;seen.add(real);
-        const bytes=statSync(real).size;files.push({harness,path:real,bytes});source.files++;source.bytes+=bytes;
+        const metadata=statSync(real),bytes=metadata.size;files.push({harness,path:real,bytes,ino:metadata.ino,mtimeMs:metadata.mtimeMs});source.files++;source.bytes+=bytes;
       }
     }
   }
@@ -94,12 +95,15 @@ export type BackfillProgress={status:'importing'|'retrying'|'complete'|'failed';
 export const reportBackfillProgress=(json=false)=>(progress:BackfillProgress)=>process.stderr.write(json
   ?JSON.stringify({schemaVersion:1,type:'backfill.progress',...progress})+'\n'
   :`History ${progress.status}: ${progress.processed}/${progress.totalFiles} files, ${progress.processedBytes}/${progress.totalBytes} source bytes, ${progress.uploaded} batches uploaded${progress.retryInMs===undefined?'':`; retry in ${Math.ceil(progress.retryInMs/1000)}s`}.\n`);
-export async function backfill(api:string, selected:Selection, approved:boolean, options:{retryDelays?:number[];concurrency?:number;batchDelayMs?:number;onProgress?:(progress:BackfillProgress)=>void}={}) {
+export async function backfill(api:string, selected:Selection, approved:boolean, options:{retryDelays?:number[];concurrency?:number;batchDelayMs?:number;onProgress?:(progress:BackfillProgress)=>void;files?:HistoryFile[];beforeFile?:()=>void|Promise<void>}={}) {
   const concurrency=options.concurrency??4,batchDelayMs=options.batchDelayMs??0;
   if(!Number.isInteger(concurrency)||concurrency<1||concurrency>4||!Number.isInteger(batchDelayMs)||batchDelayMs<0||batchDelayMs>60000)throw new CliError('INVALID_USAGE','Use --concurrency 1..4 and --batch-delay-ms 0..60000.',64);
   const delays=options.retryDelays??[2000,5000,15000,30000,60000];
   if(!approved)throw new CliError('BACKFILL_CONSENT_REQUIRED','Preview with collect backfill --dry-run. Ask the user to choose Claude, Codex, both, or skip; pass --yes only after approval.',64);
-  const config=configFor(api),{files,sources}=inventory(config,selected);
+  const config=configFor(api),discovered=options.files?null:inventory(config,selected);
+  const files=options.files??discovered!.files;
+  if(files.some(file=>!['claude-code','codex','antigravity'].includes(file.harness)||selected!=='all'&&file.harness!==selected||!Number.isSafeInteger(file.bytes)||file.bytes<0))throw new CliError('BACKFILL_MANIFEST_INVALID','The approved history manifest is invalid.');
+  const sources=discovered?.sources??[...new Set(files.map(f=>f.harness))].map(harness=>({harness,files:files.filter(f=>f.harness===harness).length,bytes:files.filter(f=>f.harness===harness).reduce((n,f)=>n+f.bytes,0)}));
   let processed=0,processedBytes=0,uploaded=0,lastProgress=0;
   const totalBytes=sources.reduce((sum,source)=>sum+source.bytes,0);
   const progress=(status:BackfillProgress['status']='importing',force=false,retryInMs?:number)=>{
@@ -119,7 +123,7 @@ export async function backfill(api:string, selected:Selection, approved:boolean,
       }
     }
   };
-  const flush=()=>retry(()=>flushCaptures({concurrency,batchDelayMs,onUploaded:()=>{uploaded++;progress();}}));
+  const flush=()=>retry(async()=>{await options.beforeFile?.();return flushCaptures({concurrency,batchDelayMs,onUploaded:()=>{uploaded++;progress();}});});
   const pending=()=>{
     try{return readdirSync(join(captureDir(),'queue')).filter(name=>name.endsWith('.json')).length;}
     catch(error:any){if(error.code==='ENOENT')return 0;throw error;}
@@ -143,8 +147,9 @@ export async function backfill(api:string, selected:Selection, approved:boolean,
     await retry(()=>refreshCaptureIdentity(config));
     await pump();
     for(const file of files) {
+      await options.beforeFile?.();
       if(drainFailure)throw drainFailure;
-      try{await captureTranscript(config,file.harness,file.path,{},true,pump);processed++;processedBytes+=file.bytes;}
+      try{await captureTranscript(config,file.harness,file.path,{},true,pump,options.files?file:undefined);processed++;processedBytes+=file.bytes;}
       catch(e){if(drainFailure)throw drainFailure;failures.push({code:e instanceof CliError?e.code:'CAPTURE_FAILED'});recordError(e);}
       await pump();progress();
     }

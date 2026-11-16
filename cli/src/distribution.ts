@@ -36,9 +36,9 @@ export function selectedBinary(current=version):{version:string;file:string}{
 // Source and replaceable-runtime development runs must never install the Bun
 // interpreter as if it were the compiled application.
 export const compiled=()=>stable(version)&&!/\.[cm]?[jt]s$/.test(process.argv[1]||'')&&!/^bun(?:\.exe)?$/.test(basename(process.execPath));
-export function commandForBinary(){
+export function commandForBinary(fallback=process.execPath){
   const receipt=read(join(nativeRoot(),'installation.json'));
-  return receipt?.managed&&stable(receipt.version)&&compare(receipt.version,version)>=0&&receipt.entry===nativeBin()&&existsSync(receipt.entry)?receipt.entry:process.execPath;
+  return receipt?.managed&&stable(receipt.version)&&compare(receipt.version,version)>=0&&receipt.entry===nativeBin()&&existsSync(receipt.entry)?receipt.entry:fallback;
 }
 export function delegateToNewest(args:string[]):number|undefined{
   if(!compiled())return;const selected=selectedBinary();if(selected.version===version)return;

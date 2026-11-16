@@ -53,3 +53,54 @@ test('invalid or failed workspace credentials never become fallback human creden
   expect(workspaceIdentityEnabled()).toBe(true);process.env.OPENCRAWL_TOKEN='shared-human';expect(()=>workspaceIdentityEnabled()).toThrow('Remove shared human tokens');
  }finally{for(const key of Object.keys(process.env))if(!(key in before))delete process.env[key];Object.assign(process.env,before);}
 });
+
+test('Devin credentials refresh once after staggered failures and reject another issuer',async()=>{
+ let calls=0;
+ const make=(issuer='https://app.devin.ai')=>'header.'+Buffer.from(JSON.stringify({iss:issuer,aud:api,exp:Date.now()/1000+900,nonce:++calls})).toString('base64url')+'.signature';
+ const provider=createWorkspaceTokenProvider({provider:'devin',mint:async()=>make()});
+ await withEnvironmentTokenOrigin(api,async()=>{
+  const first=await provider(api);
+  const refreshed=await provider(api,first);
+  expect(refreshed).not.toBe(first);
+  // A delayed 401 for the old credential reuses the current token.
+  expect(await provider(api,first)).toBe(refreshed);expect(calls).toBe(2);
+  for(const issuer of ['https://api.replicas.dev','https://untrusted.example']){
+   await expect(createWorkspaceTokenProvider({provider:'devin',mint:async()=>make(issuer)})(api)).rejects.toMatchObject({code:'WORKSPACE_IDENTITY_INVALID'});
+  }
+ });
+});
+
+test('60-second Cloud credentials coalesce concurrent calls, refresh early and reuse the latest token after delayed 401s',async()=>{
+ let time=1000000,calls=0;
+ const provider=createWorkspaceTokenProvider({provider:'devin',now:()=>time,mint:async()=>{
+  await Bun.sleep(5);
+  return 'header.'+Buffer.from(JSON.stringify({iss:'https://app.devin.ai',aud:api,exp:time/1000+60,nonce:++calls})).toString('base64url')+'.signature';
+ }});
+ await withEnvironmentTokenOrigin(api,async()=>{
+  const tokens=await Promise.all(Array.from({length:12},()=>provider(api)));
+  const first=tokens[0]!;expect(new Set(tokens).size).toBe(1);expect(calls).toBe(1);
+  time+=44000;expect(await provider(api)).toBe(first);expect(calls).toBe(1);
+  time+=1000;
+  const refreshed=await Promise.all(Array.from({length:12},()=>provider(api)));
+  expect(new Set(refreshed).size).toBe(1);expect(refreshed[0]).not.toBe(first);expect(calls).toBe(2);
+  expect(await provider(api,first)).toBe(refreshed[0]);expect(calls).toBe(2);
+  const rejected=refreshed[0]!;
+  const retried=await Promise.all(Array.from({length:12},()=>provider(api,rejected)));
+  expect(new Set(retried).size).toBe(1);expect(retried[0]).not.toBe(rejected);expect(calls).toBe(3);
+  expect(await provider(api,rejected)).toBe(retried[0]);expect(calls).toBe(3);
+ });
+});
+
+test('Devin mode rejects shared human tokens and retains account-action protections',async()=>{
+ const before={...process.env};
+ try{
+  process.env.OPENCRAWL_AUTH='devin-cloud';delete process.env.OPENCRAWL_TOKEN;delete process.env.OPENCRAWL_SESSIONS_TOKEN;
+  expect(workspaceIdentityEnabled()).toBe(true);
+  process.env.OPENCRAWL_SESSIONS_TOKEN='synthetic-human-token';expect(()=>workspaceIdentityEnabled()).toThrow('Remove shared human tokens');
+ }finally{for(const key of Object.keys(process.env))if(!(key in before))delete process.env[key];Object.assign(process.env,before);}
+ const env:NodeJS.ProcessEnv={...process.env,OPENCRAWL_AUTH:'devin-cloud',OPENCRAWL_NO_UPDATE:'1'};
+ delete env.OPENCRAWL_TOKEN;delete env.OPENCRAWL_SESSIONS_TOKEN;
+ const child=Bun.spawn([process.execPath,join(import.meta.dir,'../src/cli.ts'),'login','--json'],{env,stdout:'pipe',stderr:'pipe'});
+ const [output,errors,status]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
+ expect(status).toBe(2);expect(JSON.parse(output).error.code).toBe('WORKLOAD_ACCOUNT_ACTION');expect(errors).not.toContain('Open https://');
+});

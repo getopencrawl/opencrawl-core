@@ -51,6 +51,7 @@ test('agent discovery controls survive the CLI with strict field validation',()=
 
 test('search exclusion overrides and native identity survive CLI validation without granting scope',()=>{
   const currentSession={harness:'claude-code',sessionId:'parent:worker'};
+  expect(searchInput('evidence',{'current-session':JSON.stringify({harness:'devin',sessionId:'devin-native-session'})})).toMatchObject({currentSession:{harness:'devin',sessionId:'devin-native-session'}});
   expect(searchInput('failure',{'current-session':JSON.stringify(currentSession),'include-current-session':true,'include-tool-outputs':true})).toMatchObject({currentSession,includeCurrentSession:true,includeToolOutputs:true});
   for(const current of [{...currentSession,userId:'other'}, {...currentSession,tenantId:'other'}, {harness:'other',sessionId:'x'}, {harness:'codex',sessionId:'../guess'}, null, [], 'not-object'])expect(()=>searchInput('x',{'current-session':JSON.stringify(current)})).toThrow();
   expect(()=>searchInput('x',{'include-tool-outputs':'false'})).toThrow();

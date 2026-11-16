@@ -95,4 +95,3 @@ test('real MCP tools omit workspace, isolate identical references and reject rev
   assert.equal(mismatch.isError,true);assert.ok(!JSON.stringify(mismatch).includes('Tenant 1 evidence'));
   revoked=true;await assert.rejects(call(clients[0],'board_fetch',{id:'message:1'}));
 });
-

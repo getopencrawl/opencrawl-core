@@ -2,6 +2,9 @@ import type {ReplicasIdentityKey} from '../identity/replicas.mjs';
 import type {ApplicationState} from '../state/types.mjs';
 import {createReplicasConnections} from '../identity/replicas-connections.mjs';
 import {replicasConnectionHandler} from '../identity/replicas-http.mjs';
+import {createDevinWorkloads, createDevinVerifier, isDevinToken} from '../identity/devin.mjs';
+import {createDevinConnections} from '../identity/devin-connections.mjs';
+import {devinConnectionHandler} from '../identity/devin-http.mjs';
 import type {EventIdentityStore} from '../sessions/types.mjs';
 import {createReplicasWorkloads, createReplicasVerifier, isReplicasToken, isWorkloadPrincipal} from '../identity/replicas.mjs';
 import type {createSlackOAuth} from '../integrations/slack-oauth.mjs';
@@ -24,7 +27,8 @@ import {mcpMetadata} from '../identity/mcp.mjs';
 import {teamService,isAdmin} from '../identity/team.mjs';
 import {roleWriteGuard} from '../identity/role-write.mjs';
 import {createOnboardingStatus} from '../onboarding-status.mjs';
-import {deriveOnboarding,hasCompletedOnboarding} from '../onboarding-state.mjs';
+import {createSetupStatus} from '../setup/status.mjs';
+import {createSetupHandler} from '../setup/http.mjs';
 import {createOnboardingObserver} from '../application/onboarding-observer.mjs';
 import {createGuidedOnboarding} from '../application/onboarding.mjs';
 import {smallJson} from '../application/http.mjs';
@@ -63,40 +67,48 @@ export interface SelfhostApplicationOptions {
   scheduleSessionDeletion?:(key:string)=>Promise<unknown>;
   workloadIdentity?:ReturnType<typeof createReplicasWorkloads>;
   workloadIdentityKey?:ReplicasIdentityKey;
+  devinIdentity?:ReturnType<typeof createDevinWorkloads>;
+  devinIdentityKey?:ReplicasIdentityKey;
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({state,settings,store,eventIdentities,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
+export function selfhostApplication({state,settings,store,eventIdentities,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,devinIdentity,devinIdentityKey,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
 }:SelfhostApplicationOptions) {
   const directory=identity.directory;
-  const replicas = createReplicasConnections({state,tenantId:settings.organizationId,
-    verify:workloadIdentity?.verify ?? createReplicasVerifier({audience:settings.url,key:workloadIdentityKey}),
-    isAdmin:async principal=>{
+  const canManageWorkloads=async(principal:Principal)=>{
       if(principal.tenantId!==settings.organizationId)return false;
       const current=await currentVerifiedUser(directory,principal.userId);
       if(current.status!==200)return false;
       const result=await directory.userManagement.listOrganizationMemberships({userId:principal.userId,organizationId:principal.tenantId,statuses:['active'],limit:100});
       const rows=result.autoPagination?await result.autoPagination():result.data;
       return rows.some(row=>row.userId===principal.userId&&row.organizationId===principal.tenantId&&row.status==='active'&&isAdmin(row));
-    }});
+    };
+  const replicas = createReplicasConnections({state,tenantId:settings.organizationId,
+    verify:workloadIdentity?.verify ?? createReplicasVerifier({audience:settings.url,key:workloadIdentityKey}),isAdmin:canManageWorkloads});
+  const devin = createDevinConnections({state,tenantId:settings.organizationId,
+    verify:devinIdentity?.verify ?? createDevinVerifier({audience:settings.url,key:devinIdentityKey}),isAdmin:canManageWorkloads});
   const replicasConnect=replicasConnectionHandler(replicas);
+  const devinConnect=devinConnectionHandler(devin);
   const workloads=workloadIdentity??createReplicasWorkloads({audience:settings.url,key:workloadIdentityKey,bindings:()=>settings.replicasBindings??[],resolveOrganization:async org=>{
     const record=await replicas.lookupOrganization(org);
     return record ? replicas.resolveOrganization(org) : undefined;
   }});
+  const devinWorkloads=devinIdentity??createDevinWorkloads({audience:settings.url,key:devinIdentityKey,tenantId:settings.organizationId,resolveOrganization:devin.resolveOrganization});
   const credentialProxy=sourceCredentials?connectorProxyHandler(sourceCredentials):null;
   const admit=singleOrganizationIdentity(directory,settings.organizationId),resolve=singleOrganizationPrincipal(directory,settings.organizationId);
   const accounts=localAuth({identity,url:settings.url,organizationId:settings.organizationId,setupToken:settings.setupToken,member:async browser=>(await admit(browser)).status===200});
   const credentials=createCaptureCredentials({state});
   const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(state),credentials.revokeAll);
-  const onboarding=createOnboardingStatus({state,onSharedReady:principal=>replicas.confirmInstallation(principal),sharedInstallations:principal=>replicas.sharedInstallations(principal,settings.replicasBindings??[])}),observe=createOnboardingObserver(onboarding);
+  const onboarding=createOnboardingStatus({state,
+    onSharedReady:principal=>principal.owner?.provider==='devin'?devin.confirmInstallation(principal):replicas.confirmInstallation(principal),
+    sharedInstallations:async principal=>(await Promise.all([replicas.sharedInstallations(principal,settings.replicasBindings??[]),devin.sharedInstallations(principal)])).flat()});
   const values=valueReports({state});
   const search=createSessionSearch({...settings.search,state,store,prefix});
   async function authorize(principal:Principal,requested?:unknown) {
     if(principal?.tenantId!==settings.organizationId || principal.captureAccess!==undefined || requested!=null&&requested!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
-    if(isWorkloadPrincipal(principal))return workloads.revalidate(principal,requested);
+    if(isWorkloadPrincipal(principal))return principal.owner?.provider==='devin'?devinWorkloads.revalidate(principal,requested):workloads.revalidate(principal,requested);
     const current=await currentVerifiedUser(directory,principal.userId);
     if(current.status!==200)throw Object.assign(new Error('Account unavailable'),{status:current.status});
     const result=await resolve(current.user,settings.organizationId);
@@ -108,21 +120,24 @@ export function selfhostApplication({state,settings,store,eventIdentities,prefix
     async search(p:Principal,input:unknown){await authorize(p);const result=await workspace.search(p,input);await authorize(p);return result;},
     async fetch(p:Principal,input:unknown){await authorize(p);const result=await workspace.fetch(p,input);await authorize(p);return result;},
   };
+  const setup=createSetupStatus({state,search:authorizedSearch});
+  const observe=createOnboardingObserver({cli:onboarding.cli,session:async(p,b)=>{await Promise.all([onboarding.session(p,b),setup.session(p,b)]);}});
   const board=authorizedBoard({state,authorize,recentSessions:createRecentSessions({state,store,prefix,...settings.search})});
-  const identifyAgent=async(req:IncomingMessage)=>{const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];return isReplicasToken(token)?workloads.identify(token):identifyCli(req.headers.authorization,{capture:true});};
+  const identifyAgent=async(req:IncomingMessage)=>{const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];return isReplicasToken(token)?workloads.identify(token):isDevinToken(token)?devinWorkloads.identify(token):identifyCli(req.headers.authorization,{capture:true});};
   const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});return identity.principal;};
+  const setupHandler=createSetupHandler({setup,authenticate});
   const query=createWorkspaceSearchHandler({search:authorizedSearch,authenticate});
   const fetchPassage=createWorkspaceSearchHandler({search:authorizedSearch,authenticate,operation:'fetch'});
   const boardHandler=createBoardHandler({board,authenticate});
-  const mcp=createOpenCrawlMcp({origin:settings.url,revision:settings.revision,search:authorizedSearch,board,authenticate:async(req,res)=>{
+  const mcp=createOpenCrawlMcp({origin:settings.url,revision:settings.revision,search:authorizedSearch,board,setup,authenticate:async(req,res)=>{
     const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];
-    if(!isReplicasToken(token))return accounts.mcpIdentity(req,res);
-    const result=await workloads.identify(token);if(result.status===200)return result.principal;
+    if(!isReplicasToken(token)&&!isDevinToken(token))return accounts.mcpIdentity(req,res);
+    const result=await (isDevinToken(token)?devinWorkloads:workloads).identify(token!);if(result.status===200)return result.principal;
     res.writeHead(result.status,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'invalid_workload'}));return null;
   },onConnectionTest:async p=>{await onboarding.mcpTest(p);},onAuthenticated:async(p,info)=>{await onboarding.mcp(p,info);}});
   const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({state,store,eventIdentities,prefix,scheduleIndexing:scheduleSessionIndexing,onStored:observe.session}),authenticate:async req=>{
     const token=/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1];
-    if(isReplicasToken(token)){const result=await workloads.identify(token);if(result.status!==200)throw Object.assign(new Error('Workload authentication required'),{status:result.status});return {...result.principal,captureAccess:'write'};}
+    if(isReplicasToken(token)||isDevinToken(token)){const result=await (isDevinToken(token)?devinWorkloads:workloads).identify(token);if(result.status!==200)throw Object.assign(new Error('Workload authentication required'),{status:result.status});return {...result.principal,captureAccess:'write'};}
     if(isCaptureCredential(token)) {
       const delegated=await credentials.authenticate(token);
       if(!delegated)throw Object.assign(new Error('Capture credential expired or revoked'),{status:401});
@@ -161,10 +176,12 @@ export function selfhostApplication({state,settings,store,eventIdentities,prefix
       if(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'].includes(url.pathname)){res.setHeader('Access-Control-Allow-Origin','*');return req.method==='GET'?json(200,mcpMetadata(settings)):respond(405,'Method not allowed');}
       if(url.pathname==='/api/connector-proxy')return credentialProxy?await credentialProxy(req,res):respond(503,'Connector proxy unavailable');
       if(url.pathname==='/api/replicas/connect')return await replicasConnect(req,res);
+      if(url.pathname==='/api/devin/connect')return await devinConnect(req,res);
       if(url.pathname==='/mcp')return await mcp(req,res);
       if(url.pathname.startsWith('/api/sessions/'))return await capture(req,res);
       if(url.pathname==='/api/search')return await query(req,res);
       if(url.pathname==='/api/search/fetch')return await fetchPassage(req,res);
+      if(url.pathname.startsWith('/api/setup/')||url.pathname==='/api/setup'&&req.headers.authorization)return await setupHandler(req,res);
       if(url.pathname.startsWith('/api/board/')){if(req.headers.origin)return respond(403,'Browser request denied');return await boardHandler(req,res);}
       if(url.pathname==='/api/cli/me'){
         if(req.method!=='GET')return respond(405,'Method not allowed');
@@ -194,19 +211,20 @@ export function selfhostApplication({state,settings,store,eventIdentities,prefix
       if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
       const sources=(p:Principal)=>integrations?integrations.list(p):Promise.resolve([]);
-      const consoleApi=createConsoleApi({log,replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
+      const consoleApi=createConsoleApi({log,replicas,devin,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),setupStartCommand:settings.setupStartCommand,setupCliCommand:settings.setupCliCommand,organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),removeMember:(u,id,target)=>organizations.removeMember(u,id,target),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
         usage:p=>usageReport({principal:p,directory,integrations,search,connectors,onboarding,values,log}),progress:guided.progress,next:guided.next,library,libraryFailure});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{
+        if(selected.name==='/api/setup') {
+          if(target.search)return reply(400,JSON.stringify({error:'Setup status does not accept scope parameters.'}),'application/json');
+          const data=await setup.read(principal);
+          if(!rpc&&!await revalidate())return reply(403,JSON.stringify({error:'Workspace access changed.'}),'application/json');
+          return reply(200,JSON.stringify({schemaVersion:1,data}),'application/json');
+        }
         if(selected.name.startsWith('/api/console/')){
-          if(!['/api/console/bootstrap','/api/console/replicas/setup'].includes(selected.name)&&!hasCompletedOnboarding(await guided.progress(principal)))return reply(409,JSON.stringify({error:'Complete onboarding before opening the workspace.',onboardingUrl:await guided.next(principal)}),'application/json');
           const result=await consoleApi(request,selected.name,{principal,user,member,cacheScope,admitted:true,revalidate:rpc?async()=>true:revalidate});return reply(result.status,JSON.stringify(result.body),'application/json');
         }
         if(request.method==='GET'&&consolePages.has(target.pathname)){
-          const progress=await guided.progress(principal);
-          if(!target.pathname.startsWith('/onboarding')&&!hasCompletedOnboarding(progress))return redirect(await guided.next(principal));
-          // An admin can invite teammates while connecting their own agent. Other setup and workspace gates remain receipt-based.
-          if(target.pathname.startsWith('/onboarding/')&&!(target.pathname==='/onboarding/invite'&&isAdmin(member))&&!hasCompletedOnboarding(progress)&&!(progress&&deriveOnboarding(progress).complete))return redirect('/onboarding');
           return reply(200,consoleDocument(),'text/html; charset=utf-8');
         }
         if(guided.handles(selected.name))return guided.handle(request,{route:selected,principal,identity:{user},member,respond:reply});

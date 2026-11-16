@@ -1,8 +1,8 @@
-import type {Bootstrap, SourceCard, TeamReport, WorkspaceRole} from '../../../src/application/types.mjs';
+import type {Bootstrap, SourceCard, TeamReport, WorkspaceRole, SetupStatus} from '../../../src/application/types.mjs';
 import type {ConsoleDataAdapter} from '../pages/types.ts';
 import type {LibraryAdapter} from '../pages/library-types.ts';
 import type {OnboardingAdapter, OnboardingStatus} from '../onboarding/types.ts';
-export type {Bootstrap, SourceCard, TeamReport, WorkspaceRole} from '../../../src/application/types.mjs';
+export type {Bootstrap, SourceCard, TeamReport, WorkspaceRole, SetupStatus} from '../../../src/application/types.mjs';
 
 export interface SourcesAdapter {
   sources(signal?: AbortSignal): Promise<{items: SourceCard[]}>;
@@ -22,6 +22,7 @@ export interface TeamAdapter {
 /** The application depends on product operations; runtimes supply authorized transports. */
 export interface ProductApi<B extends Bootstrap = Bootstrap> extends SourcesAdapter, TeamAdapter, ConsoleDataAdapter {
   bootstrap(signal?: AbortSignal): Promise<B>;
+  setupStatus(signal?: AbortSignal): Promise<SetupStatus>;
   library: LibraryAdapter;
   replicasSetup?: OnboardingAdapter['replicasSetup'];
   onboardingStatus(signal?: AbortSignal): Promise<{data: OnboardingStatus}>;

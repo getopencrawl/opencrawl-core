@@ -1,5 +1,5 @@
 import {test, expect} from 'bun:test';
-import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, statSync, chmodSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync, rmSync, statSync, chmodSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {PassThrough} from 'node:stream';
@@ -15,6 +15,45 @@ async function fixture(run: (home: string) => Promise<void> | void) {
 }
 const event={hook_event_name:'SessionStart',session_id:'native-123',source:'startup'};
 const registration={workspace:'test',agent:'a'.repeat(64),session:'native-123',name:null,task:null};
+
+test('Cursor supplies native identity after a tool once per turn, including resumed turns',()=>fixture(async home=>{
+  let calls=0;
+  const request:typeof boardRequest=async(_api,operation,input)=>{
+    calls++;expect(operation).toBe('bootstrap');expect(input.session).toBe('native-123');
+    return registration;
+  };
+  const hook={hook_event_name:'postToolUse',conversation_id:'native-123',generation_id:'turn-one',tool_output:'not persisted'};
+  const first=await cursorToolContext('https://cursor-test.example',hook,request);
+  expect(first.additional_context).toContain('Session handle: native-123');
+  expect(await cursorToolContext('https://cursor-test.example',hook,request)).toEqual({});
+  expect((await cursorToolContext('https://cursor-test.example',{...hook,generation_id:'turn-two'},request)).additional_context).toContain('registered with');
+  expect(calls).toBe(2);
+  for(const invalid of [{...hook,conversation_id:'invalid\nsecret'},{...hook,hook_event_name:'preToolUse'},{...hook,generation_id:'bad/id'}])
+    expect(await cursorToolContext('https://cursor-test.example',invalid,request)).toEqual({});
+  expect(calls).toBe(2);
+  const state=join(home,'config/opencrawl/startup/cursor-context');
+  expect(readdirSync(state).map(name=>JSON.parse(readFileSync(join(state,name),'utf8')))).toEqual([{generation:'turn-two'}]);
+  expect((await cursorToolContext('https://other-cursor.example',hook,request)).additional_context).toContain('https://other-cursor.example');
+  expect(calls).toBe(3);
+}));
+
+test('Cursor retries a failed first-tool registration in the same native turn',()=>fixture(async home=>{
+  let calls=0;
+  const request:typeof boardRequest=async()=>{if(++calls===1)throw new Error('temporary outage');return registration;};
+  const hook={hook_event_name:'postToolUse',session_id:'native-123',generation_id:'same-turn'};
+  expect((await cursorToolContext('https://cursor-test.example',hook,request)).additional_context).toContain('unavailable');
+  expect(existsSync(join(home,'config/opencrawl/startup/cursor-context'))).toBe(false);
+  expect((await cursorToolContext('https://cursor-test.example',hook,request)).additional_context).toContain('registered with');
+  expect(await cursorToolContext('https://cursor-test.example',hook,request)).toEqual({});expect(calls).toBe(2);
+}));
+
+test('Cursor concurrent first tools emit only one startup receipt',()=>fixture(async()=>{
+  let calls=0;
+  const request:typeof boardRequest=async()=>{calls++;await new Promise(resolve=>setTimeout(resolve,20));return registration;};
+  const hook={hook_event_name:'postToolUse',session_id:'native-123',generation_id:'turn-one'};
+  const outputs=await Promise.all([cursorToolContext('https://cursor-test.example',hook,request),cursorToolContext('https://cursor-test.example',hook,request)]);
+  expect(outputs.filter(output=>output.additional_context)).toHaveLength(1);expect(calls).toBe(1);
+}));
 
 test('native startup context delivers retrieval guidance across harnesses and resumed sessions',()=>fixture(async()=>{
   const api='http://127.0.0.1:8093';
@@ -48,37 +87,16 @@ test('older Antigravity hook input gives an actionable minimum version without r
  expect(calls).toBe(0);
 }));
 
-test('Cursor supplies native identity after a tool once per turn, including resumed turns',()=>fixture(async()=>{
-  let calls=0;
-  const request:typeof boardRequest=async(_api,operation,input)=>{
-    calls++;expect(operation).toBe('bootstrap');expect(input.session).toBe('native-123');
-    return registration;
-  };
-  const hook={hook_event_name:'postToolUse',conversation_id:'native-123',generation_id:'turn-one',tool_output:'not persisted'};
-  const first=await cursorToolContext('https://cursor-test.example',hook,request);
-  expect(first.additional_context).toContain('Session handle: native-123');
-  expect(await cursorToolContext('https://cursor-test.example',hook,request)).toEqual({});
-  expect((await cursorToolContext('https://cursor-test.example',{...hook,generation_id:'turn-two'},request)).additional_context).toContain('registered with');
-  expect(calls).toBe(2);
-  for(const invalid of [{...hook,conversation_id:'invalid\nsecret'},{...hook,hook_event_name:'preToolUse'},{...hook,generation_id:'bad/id'}])
-    expect(await cursorToolContext('https://cursor-test.example',invalid,request)).toEqual({});
-  expect(calls).toBe(2);
-}));
-
-test('Cursor concurrent first tools emit only one startup receipt',()=>fixture(async()=>{
-  let calls=0;
-  const request:typeof boardRequest=async()=>{calls++;await new Promise(resolve=>setTimeout(resolve,20));return registration;};
-  const hook={hook_event_name:'postToolUse',session_id:'native-123',generation_id:'turn-one'};
-  const outputs=await Promise.all([cursorToolContext('https://cursor-test.example',hook,request),cursorToolContext('https://cursor-test.example',hook,request)]);
-  expect(outputs.filter(output=>output.additional_context)).toHaveLength(1);expect(calls).toBe(1);
-}));
-
 test('native input is bounded and completes without waiting for stdin to close',async()=>{
   const input=new PassThrough(), result=readStartEvent(input,100);
   input.write(JSON.stringify(event)); expect(await result).toEqual(event);
   const large=new PassThrough(), rejected=expect(readStartEvent(large,100)).rejects.toThrow();
   large.end('x'.repeat(16_385));await rejected;
   await expect(readStartEvent(new PassThrough(),10)).rejects.toThrow();
+  const tool=new PassThrough(),payload={hook_event_name:'postToolUse',tool_output:'x'.repeat(16_385)},accepted=readStartEvent(tool,100,8*1024*1024);
+  tool.end(JSON.stringify(payload));expect(await accepted).toEqual(payload);
+  const oversizedTool=new PassThrough(),toolRejected=expect(readStartEvent(oversizedTool,100,8*1024*1024)).rejects.toThrow();
+  oversizedTool.end('x'.repeat(8*1024*1024+1));await toolRejected;
 });
 
 test('bootstrap exposes only confirmed metadata, preserves checkpoints, and does not read transcripts',()=>fixture(async()=>{
@@ -169,6 +187,9 @@ test('real startup CLI and board server preserve the agent-chosen profile across
     for(const source of ['resume','compact'])expect((await start(source)).hookSpecificOutput.additionalContext).toContain('codex:agent-choice');
     expect((await start('fork','native-fork')).hookSpecificOutput.additionalContext).toContain('Display name/task: unset');
     expect((await start('startup','claude-native','claude-code')).hookSpecificOutput.additionalContext).toContain('registered with');
+    expect((await start('startup','devin-native','devin')).hookSpecificOutput.additionalContext).toContain('Session handle: devin-native');
+    await run(['board','profile','--session','devin-native','--name','devin:agent-choice','--task','Test Cloud lifecycle','--json']);
+    expect((await start('resume','devin-native','devin')).hookSpecificOutput.additionalContext).toContain('devin:agent-choice');
     const agyStart=await run(['session','start','--harness','agy'],{hookEventName:'SessionStart',conversationId:'agy-conv-123',workspacePaths:[home]});
     expect(agyStart.injectSteps[0].systemMessage.systemMessage).toContain('registered with');
     expect(agyStart.injectSteps[0].systemMessage.systemMessage).toContain('Session handle: agy-conv-123');
@@ -186,3 +207,29 @@ test('real startup CLI and board server preserve the agent-chosen profile across
     expect(JSON.stringify(invalid)).not.toContain('secret');
   } finally {server.kill();await server.exited;}
 }),20_000);
+
+test('Devin startup and resume keep native identity and only announce confirmed registration',()=>fixture(async()=>{
+  const api='https://devin-selfhost.example',native='devin-18f8ab3b919a4d5bb280886808da08a4';let calls=0;
+  const request:typeof boardRequest=async(_api,operation,input)=>{
+    calls++;expect(operation).toBe('bootstrap');expect(input.session).toBe(native);expect(input.harness).toBe('devin');
+    return {...registration,session:native};
+  };
+  for(const source of ['startup','resume']){
+    const output=await sessionStart(api,'devin',{...event,session_id:native,source,prompt_id:'already-running-turn',requester:{email:'not-an-authority@example.test'},transcript_path:'/must-not-open'},request);
+    expect(output.hookSpecificOutput.hookEventName).toBe('SessionStart');
+    expect(output.hookSpecificOutput.additionalContext).toContain('Session handle: '+native);
+    expect(output.hookSpecificOutput.additionalContext).toContain('does not prove first-turn capture');
+    expect(output.hookSpecificOutput.additionalContext).not.toContain('not-an-authority');
+  }
+  for(const changed of [{source:'compact'},{source:'fork'},{hook_event_name:'Stop'},{session_id:'invalid/session'}]){
+    const output=await sessionStart(api,'devin',{...event,session_id:native,...changed},request);
+    expect(output.hookSpecificOutput.additionalContext).not.toContain('OpenCrawl: registered');
+  }
+  expect(calls).toBe(2);
+  const saved=readFileSync(boardStateFile(api,native),'utf8');
+  const mismatch=await sessionStart(api,'devin',{...event,session_id:native},async()=>registration);
+  expect(mismatch.hookSpecificOutput.additionalContext).not.toContain('OpenCrawl: registered');
+  expect(mismatch.hookSpecificOutput.additionalContext).toContain('do not copy a human token');
+  expect(readFileSync(boardStateFile(api,native),'utf8')).toBe(saved);
+  expect(JSON.parse(saved).workspace).toBe(registration.workspace);
+}));

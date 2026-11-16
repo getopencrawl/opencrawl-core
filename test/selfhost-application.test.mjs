@@ -18,7 +18,7 @@ const test=(name,run)=>nodeTest(name,{skip:!postgresUrl},run);
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 const org='org_selfhost',setup='setup-token-for-tests';
 async function fixture(t,options={}){
-  const {search:searchOptions,replicasBindings,...appOptions}=options;
+  const {search:searchOptions,replicasBindings,setupStartCommand,setupCliCommand,...appOptions}=options;
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-selfhost-app-'));
   t.after(()=>rm(dir,{recursive:true,force:true}));
   const store=createLocalSessionStore(dir),prefix='sessions/selfhost/v1';
@@ -33,7 +33,7 @@ async function fixture(t,options={}){
   t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));identity?.close();});
   identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),database,organizationId:org});
   await identity.ready();
-  const settings={replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
+  const settings={replicasBindings,setupStartCommand,setupCliCommand,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
   app=selfhostApplication({settings,state,eventIdentities,store,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
   const jars=new Map();
   const request=async(path,who=null,options={})=>{
@@ -71,7 +71,7 @@ test('OSS first run creates one admin from the setup link; nobody else can sign 
   await adapter.update({model:'user',where:[{field:'id',value:adminMembership.userId}],update:{image:'/avatars/ada.png'}});
   assert.equal((await (await f.request('/api/console/bootstrap','admin')).json()).workspace.avatarUrl,'/avatars/ada.png');
   assert.deepEqual(boot.invitationPolicy,{delivery:'link',beforeAgentSetup:true});
-  assert.deepEqual(boot.onboarding,{completed:false,next:'/onboarding'});
+  assert.deepEqual(boot.onboarding,{completed:false,next:'/setup'});
   // Setup is single-use and Better Auth's own sign-up endpoint is not reachable.
   assert.equal((await f.post('/auth/signup','mallory',{setup,workspace:'x',name:'M',email:'m@example.com',password:'long enough password'})).status,403);
   assert.equal((await f.request('/api/auth/sign-up/email',null,{method:'POST',headers:{'content-type':'application/json',origin:f.origin},body:JSON.stringify({email:'m@example.com',password:'long enough password',name:'M'})})).status,404);
@@ -111,22 +111,25 @@ test('OSS invitations admit distinct members once; removing a membership denies 
   assert.equal((await f.request('/api/console/bootstrap','bob')).status,403);
   assert.equal((await f.request('/api/console/team/invite','admin',{method:'POST',headers:{origin:'https://foreign.example'}})).status,403);
 });
-test('OSS onboarding requires agent setup only; the Sources step can be skipped',async t=>{
+test('OSS setup is optional status; unverified users can use sources, team and workspace',async t=>{
   const f=await fixture(t);await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
   const onboarding=createOnboardingStatus({state:f.state}),principal={tenantId:org,userId:member.userId};
   const finish=()=>f.request('/api/onboarding/finish','admin',{method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'});
-  // Skipping sources never skips agent setup.
-  assert.equal((await finish()).status,409);
-  assert.equal((await f.request('/onboarding/sources','admin')).headers.get('location'),'/onboarding');
+  assert.equal((await finish()).status,200);
+  assert.equal((await f.request('/onboarding/sources','admin')).status,200);
+  for(const path of ['/','/setup','/sources','/team'])assert.equal((await f.request(path,'admin')).status,200);
+  const emptySetup=await(await f.request('/api/setup','admin')).json();
+  assert.equal(emptySetup.data.scope.userId,principal.userId);assert.equal(emptySetup.data.firstWin,null);assert.deepEqual(emptySetup.data.installations,[]);
+  assert.equal((await f.request('/api/setup?tenantId=forged','admin')).status,400);
+  assert.equal((await f.request('/api/setup')).status,401);
   assert.equal((await f.request('/onboarding/invite','admin')).status,200);
   assert.equal((await f.request('/api/onboarding/invites','admin')).status,200);
   await onboarding.cli(principal);await onboarding.mcpTest(principal);await onboarding.session(principal,{harness:'codex',events:[{kind:'message'}]});
-  // With nothing connected, setup resumes at Sources, yet Invite opens and finishing needs no source.
-  assert.deepEqual((await (await f.request('/api/console/bootstrap','admin')).json()).onboarding,{completed:false,next:'/onboarding/sources'});
+  assert.deepEqual((await (await f.request('/api/console/bootstrap','admin')).json()).onboarding,{completed:false,next:'/setup'});
   for(const path of ['/onboarding/sources','/onboarding/invite'])assert.equal((await f.request(path,'admin')).status,200);
   assert.equal((await f.request('/api/onboarding/invites','admin')).status,200);
-  assert.equal((await f.request('/api/console/team','admin')).status,409);
+  assert.equal((await f.request('/api/console/team','admin')).status,200);
   const done=await finish();assert.equal(done.status,200);assert.deepEqual(await done.json(),{workspaceUrl:'/'});
   assert.ok((await onboarding.read(principal)).completed.observedAt);
   assert.equal((await f.request('/api/console/team','admin')).status,200);
@@ -429,7 +432,7 @@ test('admin removal immediately denies existing browser, CLI, MCP and capture cr
  assert.equal((await f.request('/api/sessions/identity',null,{headers:captureAuth})).status,401);
 });
 
-test('self-host admin can invite a teammate before agent verification without opening the workspace',async t=>{
+test('self-host admin can invite before verification while authorization still protects team changes',async t=>{
   const f=await fixture(t);await f.admin();
   const invite=(who,email,origin=f.origin)=>f.request('/api/onboarding/invites',who,{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({email})});
   assert.equal((await invite(null,'bob@example.com')).status,401);
@@ -443,9 +446,9 @@ test('self-host admin can invite a teammate before agent verification without op
   assert.equal((await f.request('/api/console/bootstrap','bob')).status,200);
   assert.equal((await invite('bob','mallory@example.com')).status,403);
   assert.equal((await f.request('/api/onboarding/invites','bob')).status,403);
-  assert.equal((await f.request('/api/console/team','admin')).status,409);
-  assert.equal((await f.request('/onboarding/sources','admin')).headers.get('location'),'/onboarding');
-  assert.equal((await f.request('/api/onboarding/finish','admin',{method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'})).status,409);
+  assert.equal((await f.request('/api/console/team','admin')).status,200);
+  assert.equal((await f.request('/onboarding/sources','admin')).status,200);
+  assert.equal((await f.request('/api/onboarding/finish','admin',{method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'})).status,200);
 });
 
 test('MCP registration rejects executable and local-file callback schemes',async t=>{
@@ -460,7 +463,7 @@ test('shared installation admits real local members without personal setup or ho
  const binding={organizationId:'11111111-1111-4111-8111-111111111111',environmentId:'22222222-2222-4222-8222-222222222222',onboardingWorkspaceId:'33333333-3333-4333-8333-333333333333',tenantId:org};
  const {replicasSharedInstallations}=await import('../dist/src/identity/replicas.mjs');
  const f=await fixture(t,{replicasBindings:[binding]});await f.admin();await f.join('member','member@example.com');
- assert.equal((await f.request('/','member')).headers.get('location'),'/onboarding');
+ assert.equal((await f.request('/','member')).status,200);
  const owner=replicasSharedInstallations([binding])[0],status=createOnboardingStatus({state:f.state});
  await status.cli(owner);await status.mcpTest(owner);await status.session(owner,{harness:'codex',events:[{kind:'message'}]});
  const boot=await(await f.request('/api/console/bootstrap','member')).json();
@@ -514,6 +517,14 @@ test('admin connects Replicas through the product before onboarding; native fork
  assert.equal((await f.request('/api/onboarding','admin')).status,200,'personal browser onboarding remains usable');
  const progress=(await (await f.request('/api/onboarding','admin')).json()).data;
  assert.equal(progress.shared,undefined,'enrollment without actual MCP/capture receipts is not completed setup');
+});
+
+
+test('operator-pinned setup commands reach authenticated bootstrap unchanged',async t=>{
+ const setupStartCommand='sh /private/candidate/install.sh && /private/candidate/opencrawl setup',setupCliCommand='/private/candidate/opencrawl';
+ const f=await fixture(t,{setupStartCommand,setupCliCommand});await f.admin();
+ const boot=await(await f.request('/api/console/bootstrap','admin')).json();
+ assert.equal(boot.setupStartCommand,setupStartCommand);assert.equal(boot.setupCliCommand,setupCliCommand);
 });
 
 test('ordinary login reuses only a current member session and keeps redirects local',async t=>{

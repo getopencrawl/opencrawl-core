@@ -5,8 +5,9 @@ import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {saveSession,readSession,accessToken,withSessionLock} from '../src/session.ts';
 import {installCapture,uninstallCapture} from '../src/capture/install.ts';
-import {captureDir,captureHook,drainCaptureNotices,flushCaptures} from '../src/capture/runtime.ts';
+import {captureDir,captureHook,drainCaptureNotices,flushCaptures,readCaptureConfig} from '../src/capture/runtime.ts';
 import {hash} from '../src/capture/parse.ts';
+import {sealLiveBatches} from '../src/capture/live-batches.ts';
 
 const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(condition:()=>boolean){const end=Date.now()+5000;while(!condition()){if(Date.now()>end)throw new Error('Credential lifecycle probe timed out');await sleep(10);}}
@@ -104,8 +105,16 @@ for(const termination of ['deadline','owner-exit'] as const)test(`capture ${term
  const transcript=join(f.directory,'claude','projects','fixture','session.jsonl');mkdirSync(join(transcript,'..'),{recursive:true});
  writeFileSync(transcript,JSON.stringify({type:'user',uuid:'one',sessionId:'session',message:{role:'user',content:'Retained credential rotation fixture'}})+'\n');
  await captureHook('claude-code',{session_id:'session',transcript_path:transcript,prompt:'fixture'});await drainCaptureNotices();
- const queue=join(captureDir(),'queue'),before=new Map(readdirSync(queue).map(name=>[name,readFileSync(join(queue,name),'utf8')]));
+ const queue=join(captureDir(),'queue'),original=readdirSync(queue).map(name=>JSON.parse(readFileSync(join(queue,name),'utf8'))),config=readCaptureConfig()!;
+ const originalIds=original.flatMap(batch=>batch.events.map((event:any)=>event.id)).sort();expect(originalIds.length).toBeGreaterThan(0);
+ // This case tests immutable retry bytes after the normal pre-HTTP live seal.
+ // Sealing may combine the newly live hook and transcript but must lose nothing.
+ await withSessionLock('capture:flush',async()=>sealLiveBatches(captureDir()));
+ const before=new Map(readdirSync(queue).map(name=>[name,readFileSync(join(queue,name),'utf8')])),sealed=[...before.values()].map(bytes=>JSON.parse(bytes));
  expect(before.size).toBeGreaterThan(0);
+ const sealedIds=sealed.flatMap(batch=>batch.events.map((event:any)=>event.id)).sort();
+ expect(sealedIds).toHaveLength(originalIds.length);expect(sealedIds).toEqual(originalIds);
+ for(const batch of [...original,...sealed]){expect(batch.owner).toEqual(config.owner);expect(batch.installationId).toBe(config.installationId);}
  await saveSession(f.api,f.session);f.delay=700;
  let releaseRefresh=()=>{};
  if(termination==='owner-exit')f.refreshGate=new Promise<void>(resolve=>{releaseRefresh=resolve;});

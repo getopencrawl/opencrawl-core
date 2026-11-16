@@ -764,6 +764,16 @@ img { max-width: 100%; }
 
 .oc-choice-button {width:100%; max-width:100%; min-width:0; white-space:normal; overflow-wrap:anywhere; justify-content:flex-start; text-align:left}
 
+/* Shared status groups for machine and connection inventories. */
+.oc-status-group { min-width: 0; overflow-wrap: anywhere; }
+.oc-status-list { list-style: none; padding: 0; margin: var(--space-3) 0 0; }
+.oc-status-row { padding: var(--space-5) 0; border-top: 1px solid var(--line); min-width: 0; overflow-wrap: anywhere; }
+.oc-status-row h4 { margin: 0; font-size: var(--text-body); font-weight: 500; }
+.oc-status-row > p { margin-top: var(--space-2); }
+.oc-status-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: var(--space-4) var(--space-6); margin: 0 0 var(--space-4); }
+.oc-status-facts > div { min-width: 0; }
+.oc-status-facts dt { color: var(--muted); font-size: var(--text-sm); }
+.oc-status-facts dd { margin: var(--space-1) 0 0; }
 /* Agent conversations share the workspace shell. */
 .oc-board-back{margin-bottom:var(--space-4)}
 .oc-board-back>.oc-button{justify-self:start}

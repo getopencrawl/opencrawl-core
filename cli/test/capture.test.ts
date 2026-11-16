@@ -113,16 +113,17 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
     expect(codexInstalled.SessionEnd[0].hooks[0].command).not.toContain('--managed');
     expect(codexInstalled.Stop[0].hooks[0]).toMatchObject({async:true,timeout:120});
     expect(codexInstalled.Stop[0].hooks[0].command).toContain('--managed');
-    // New Codex hooks need the person's review; status reports it until Codex records trust.
+    // Local state alone cannot establish trust in the current Codex definition.
     const codexEvents=Object.entries(codexInstalled) as [string,any[]][];
     const ours=codexEvents.reduce((n,[,groups])=>n+groups.length,0);
-    expect(captureStatus().codexHooksAwaitingReview).toBe(ours);
+    expect(captureStatus().codexHooksAwaitingReview).toBeNull();
+    expect(captureStatus().codexHookReview).toMatchObject({state:'unknown',total:ours});
     expect(captureStatus().attention).toContain('/hooks');
     const codexHome=process.env.CODEX_HOME!,codexToml=join(codexHome,'config.toml'),tomlBefore=readFileSync(codexToml,'utf8');
     const snake=(e:string)=>e.replace(/([a-z0-9])([A-Z])/g,'$1_$2').toLowerCase();
     writeFileSync(codexToml,tomlBefore+codexEvents.map(([e])=>`\n[hooks.state.${JSON.stringify(`${join(codexHome,'hooks.json')}:${snake(e)}:0:0`)}]\ntrusted_hash = "sha256:test"\n`).join(''));
-    expect(captureStatus().codexHooksAwaitingReview).toBe(0);
-    expect(captureStatus().attention).toBeNull();
+    expect(captureStatus().codexHooksAwaitingReview).toBeNull();
+    expect(captureStatus().attention).toContain('could not be verified');
     writeFileSync(codexToml,tomlBefore);
     const beforeClaude=readFileSync(join(process.env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8');
     const codexHooks=join(process.env.CODEX_HOME,'hooks.json'),goodHooks=readFileSync(codexHooks,'utf8');

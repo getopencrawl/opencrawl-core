@@ -35,6 +35,7 @@ export function createLegacyObjectClassifier({prefix,credentialPurpose='capture'
         ??match(new RegExp(`^identity/replicas-v1/organizations/(${U})\\.json$`),'replicas-connections')
         ??match(new RegExp(`^identity/replicas-v1/tenants/(${H})/(${U})\\.json$`),'replicas-index')
         ??match(new RegExp(`^identity/replicas-v1/setup/(${H})\\.json$`),'replicas-setup')
+        ??match(new RegExp(`^tenants/(${H})/users/(${H})/setup/status-v1\\.json$`),'setup-status',256*1024)
         ??match(new RegExp(`^(tenants/(${H})/users/${H})/onboarding/(cli|mcp|mcpTest|session|history|completed)\\.json$`),'onboarding')
         ??match(new RegExp(`^value/tenants/(${H})\\.json$`),'value-reports')
         ??match(new RegExp(`^index-pending/tenants/(${H})/users/(${H})/(${H})\\.json$`),'session-scheduler-retirement',32768)

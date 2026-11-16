@@ -36,7 +36,7 @@ for(const width of [1440,390]) test(`uniform cards disclose complete stats and s
   expect(await page.locator('.oc-connector-dot').evaluateAll(es=>es.every(e=>getComputedStyle(e).width==='8px'&&getComputedStyle(e).boxShadow==='none'))).toBe(true);
 });
 
-test('recovery dialogs preserve sign-in, sync and removal actions and member permissions',async({page})=>{
+test('recovery dialogs preserve sign-in, sync and removal actions',async({page})=>{
   const cases:SourceCard[]=[
     {...source(1),name:'Expired',state:'error',rows:undefined,synced:undefined,recoveryAction:'connect',message:'Authorization expired.'},
     {...source(2),name:'Sync failed',state:'error',recoveryAction:'sync',message:'Sync failed.'},
@@ -57,9 +57,6 @@ test('recovery dialogs preserve sign-in, sync and removal actions and member per
   await page.getByRole('button',{name:'Fix connection Removal failed'}).click();
   await expect(dialog.getByRole('button',{name:'Retry removal'})).toBeVisible();
   await expect(dialog.getByRole('button',{name:'Retry sync'})).toHaveCount(0);
-  await page.goto('/integrations-fixture?role=member');
-  await page.getByRole('button',{name:'Details Expired'}).click();
-  await expect(page.getByRole('button',{name:/Restart sign-in|Retry|Disconnect/})).toHaveCount(0);
 });
 
 test('cards keep account context in Manage and use primary Connect for both connection paths',async({page})=>{

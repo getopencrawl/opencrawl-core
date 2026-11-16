@@ -20,7 +20,7 @@ const card=state=>({provider:'slack',name:'Slack',auth:'oauth',state});
 
 test('finishing onboarding needs agent setup only and records how many sources were connected',async()=>{
   const skipped=await guidedFixture({cards:[card('disconnected'),card('connecting')]});
-  assert.equal(await skipped.guided.next(principal),'/onboarding/sources','an unfinished setup with nothing connected resumes at Sources');
+  assert.equal(await skipped.guided.next(principal),'/setup','setup remains an optional status page');
   assert.deepEqual(await skipped.finish(),{status:200,body:{workspaceUrl:'/'}});
   assert.ok((await skipped.onboarding.read(principal)).completed.observedAt);
   assert.deepEqual(skipped.events,[{name:'onboarding_completed',who:principal,properties:{sources_connected:0}}],'a skipped Sources step is recorded as zero connected sources');
@@ -28,7 +28,7 @@ test('finishing onboarding needs agent setup only and records how many sources w
   assert.equal(skipped.events.length,1,'a repeated finish records no second completion');
 
   const connected=await guidedFixture({cards:[card('syncing'),card('synced'),card('error')]});
-  assert.equal(await connected.guided.next(principal),'/onboarding/invite');
+  assert.equal(await connected.guided.next(principal),'/setup');
   assert.equal((await connected.finish()).status,200);
   assert.deepEqual(connected.events.map(event=>event.properties),[{sources_connected:2}]);
 
@@ -37,11 +37,11 @@ test('finishing onboarding needs agent setup only and records how many sources w
   assert.deepEqual(outage.events.map(event=>event.properties),[{sources_connected:null}]);
 });
 
-test('skipping sources never skips agent setup',async()=>{
+test('leaving legacy onboarding opens the workspace without fabricating completion evidence',async()=>{
   const f=await guidedFixture({agentSetup:false,cards:[card('synced')]});
-  assert.deepEqual(await f.finish(),{status:409,body:{error:'Complete agent setup first.',onboardingUrl:'/onboarding'}});
+  assert.deepEqual(await f.finish(),{status:200,body:{workspaceUrl:'/'}});
   assert.equal((await f.onboarding.read(principal)).completed,null);assert.deepEqual(f.events,[]);
-  assert.equal(await f.guided.next(principal),'/onboarding');
+  assert.equal(await f.guided.next(principal),'/setup');
 });
 
 test('a connect refused for our own stated reason keeps that reason; only a live connection is already connected',async()=>{

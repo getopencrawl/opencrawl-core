@@ -72,6 +72,7 @@ test('core runtime imports stay inside src, Node builtins, or reviewed portable 
 
 test('boundary lint rejects common reverse dependencies and permits internal nesting', () => {
   const nested = new URL('feature/run.mjs', sourceRoot);
+  assert.doesNotThrow(()=>checkImports("const history=['skip','import']; const fields=['from','to'];",nested));
   for (const source of [
     `import '@workos-inc/node';`,
     `import sdk from '@workos-inc/node';`,

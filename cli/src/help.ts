@@ -1,5 +1,37 @@
 const common='\nOptions: --json (versioned JSON), --api https://host (deployment), --help.\n';
 export function commandHelp(command:string, operation?:string):string|undefined {
+  if(command==='setup')return `Usage: opencrawl setup [--api URL]
+       opencrawl setup --json
+       opencrawl setup hooks --json
+       opencrawl setup apply --plugins IDS --forward IDS --history IDS --plan-id ID --yes
+
+New setup supports Claude Code, Codex, and Cursor on macOS.
+Review independent plugin, future-recording and history choices.
+Existing installations retain setup resume, status, and collect uninstall.
+setup hooks inspects this installation's Codex hook trust locally without changing it.
+Detected supported clients and available histories start selected; saved off choices stay off.
+Import past sessions so your agents can find previous decisions, fixes, and context.
+
+  --plugins IDS   Plugin clients: comma-separated IDs, all, or none
+  --forward IDS   Record new sessions from these clients, all, or none
+  --history IDS   Import available past sessions from these clients, all, or none
+  --plan-id ID    Bind consent to the exact scope, choices and history preview
+  --yes          Apply only after the user confirms the displayed choices
+  setup status   Read saved choices, human tasks and background import progress
+  setup status --local --json  Read only the exact saved installation and effective choices; no network or server verification
+  setup resume   Resume a previously approved, interrupted history job
+  setup verify --client ID  Prove a fresh native session is searchable
+
+Noninteractive setup returns a plan and exact applyCommand without changing clients.
+History is durable background work; setup returns before import finishes. A stopped
+job resumes on setup resume or a later enrolled CLI/session startup. Login is not
+MCP authentication, and installation is not proof that a session is searchable.
+`+common;
+  if(command==='verify-installation')return `Usage: opencrawl verify-installation --client CLIENT [--installation-id ID]
+
+Issue or check a client-bound proof. The installation defaults to this machine's
+saved setup in the authenticated workspace. Follow returned human tasks in that client.
+`+common;
   if(command==='search')return `Usage: opencrawl search "keywords" [options]
 
 On supporting servers, defaults exclude session tool/command output and the

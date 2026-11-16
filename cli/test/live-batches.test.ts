@@ -5,10 +5,10 @@ import {join} from 'node:path';
 import {enqueueLiveBatch,sealLiveBatches,recoverLiveSeals,isPendingLive} from '../src/capture/live-batches.ts';
 import {hash,finalizeEventIdentity} from '../src/capture/parse.ts';
 
-function fixture(run:(directory:string)=>void){
+function fixture(run:(directory:string)=>void,cleanupObserved?:(milliseconds:number)=>void){
  const directory=mkdtempSync(join(tmpdir(),'capture-live-seals-'));
  for(const name of ['queue','live','seals'])mkdirSync(join(directory,name));
- try{run(directory);}finally{rmSync(directory,{recursive:true,force:true});}
+ try{run(directory);}finally{const cleanupStarted=performance.now();try{rmSync(directory,{recursive:true,force:true});}finally{cleanupObserved?.(performance.now()-cleanupStarted);}}
 }
 function batch(id:string,sessionId='session'){
  return {schemaVersion:1,owner:{tenantId:'team',userId:'owner'},installationId:'device',harness:'codex',sessionId,origin:'cli',captureMode:'live',
@@ -49,10 +49,21 @@ test('a partially completed seal recovers exact output after losing source fragm
  unlinkSync(join(directory,'queue',name));recoverLiveSeals(directory);expect(queued(directory)).toEqual([]);
 }));
 
-test('live sealing respects the event bound without dropping a burst',()=>fixture(directory=>{
- for(let i=0;i<205;i++)queue(directory,batch(String(i)));
- sealLiveBatches(directory);
- const output=queued(directory).map(item=>JSON.parse(item.raw));
- expect(output).toHaveLength(2);expect(output.every(b=>b.events.length<=200)).toBe(true);
- expect(new Set(output.flatMap(b=>b.events).map((e:any)=>e.id)).size).toBe(205);
-}));
+// Windows needs headroom for 205 durable seed writes before sealing assertions.
+const burstDeadlineMs=process.platform==='win32'?15_000:5_000;
+test('live sealing respects the event bound without dropping a burst',()=>{
+ const timings:{seedMs?:number,sealMs?:number,cleanupMs?:number,seeded:number,outputBatches?:number,uniqueEvents?:number,assertionsComplete:boolean}={seeded:0,assertionsComplete:false};
+ const started=performance.now();
+ try{fixture(directory=>{
+  const seedStarted=performance.now();
+  try{for(let i=0;i<205;i++){queue(directory,batch(String(i)));timings.seeded++;}}finally{timings.seedMs=performance.now()-seedStarted;}
+  const sealStarted=performance.now();
+  try{sealLiveBatches(directory);}finally{timings.sealMs=performance.now()-sealStarted;}
+  const output=queued(directory).map(item=>JSON.parse(item.raw));
+  timings.outputBatches=output.length;timings.uniqueEvents=new Set(output.flatMap(b=>b.events).map((e:any)=>e.id)).size;
+  expect(output).toHaveLength(2);expect(output.every(b=>b.events.length<=200)).toBe(true);
+  expect(new Set(output.flatMap(b=>b.events).map((e:any)=>e.id)).size).toBe(205);
+  timings.assertionsComplete=true;
+ },milliseconds=>{timings.cleanupMs=milliseconds;});}
+ finally{if(process.platform==='win32')console.log('OPENCrawlLiveBatchPhase '+JSON.stringify({...timings,totalMs:performance.now()-started,platform:process.platform,defaultDeadlineMs:5000,configuredDeadlineMs:burstDeadlineMs}));}
+},burstDeadlineMs);

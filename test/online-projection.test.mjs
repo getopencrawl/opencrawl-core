@@ -5,6 +5,9 @@ import {Pool} from 'pg';
 import {createApplicationDatabase} from '../dist/src/state/postgres.mjs';
 import {createOnlineJournal} from '../dist/src/state/online-journal.mjs';
 import {createOnlineProjection} from '../dist/src/state/online-projection.mjs';
+import {createBoundObjectMigration} from '../dist/src/state/object-migration.mjs';
+import {createSetupState} from '../dist/src/state/setup.mjs';
+import {legacySetupState} from './fixtures/setup-state.mjs';
 import {createAccountState} from '../dist/src/state/account-state.mjs';
 import {createPostgresControls} from '../dist/src/state/resource-controls.mjs';
 import {createReplicasState} from '../dist/src/state/replicas.mjs';
@@ -173,4 +176,47 @@ live('one bucket and journal project capture and nested agent credentials withou
  const heads=(await f.database.pool.query("SELECT target_key FROM opencrawl_online_projection_heads WHERE namespace=$1 AND domain='capture-credentials' ORDER BY target_key",[f.database.namespace])).rows;assert.deepEqual(heads.map(x=>JSON.parse(x.target_key)[1]),['agent','capture']);
  const wrong=createOnlineProjection({...f.options,agentPrefix:undefined});await assert.rejects(wrong.ready(),/source binding changed/);
  await assert.rejects(f.baseline(prefix+'/_agent-access/board/tenants/'+digest(owner.tenantId)+'.json',{}),/unrelated application state/);
+});
+
+
+test('Setup online decoder uses exact upstream validation and enrolled hashed owner without reading targets', () => {
+ const object=createBoundObjectMigration({database:{namespace:'pure',pool:{query:async()=>assert.fail('No SQL during decode')}},prefix,tenantIds:[owner.tenantId],store:{bucket:'fixture'},registryRecords:[],eventIdentities:{}});
+ const key=prefix+'/'+ownerScope+'/setup/status-v1.json',record=legacySetupState(owner),decoded=object.decodeOnline(key,encode(record));
+ assert.equal(decoded.kind,'setup-status');assert.deepEqual(decoded.value,record);assert.deepEqual(decoded.scope,{tenantId:owner.tenantId,userHash:digest(owner.userId)});
+ assert.equal(object.decodeOnline(key,null).value,null);
+ assert.throws(()=>object.decodeOnline(key.replace(digest(owner.userId),digest('other-user')),encode(record)),/differs from its owner/);
+ assert.throws(()=>object.decodeOnline(key,encode({...record,scope:{...owner,tenantId:'org_foreign'}})),/another installation organization/);
+ assert.throws(()=>object.decodeOnline(key,Buffer.alloc(256*1024+1)),/exceeds/);
+ assert.throws(()=>object.decodeOnline(key,encode({...record,unexpected:true})));
+});
+
+test('Setup transaction seam refuses hash ambiguity and foreign owner before a write', async () => {
+ const state=createSetupState({namespace:'fixture'}),record=legacySetupState(owner),scope={tenantId:owner.tenantId,userHash:digest(owner.userId)};let writes=0;
+ const client={query:async()=>{writes++;return {rows:[]};}};
+ await assert.rejects(state.projectIn(client,{...scope,userHash:digest('another')},record),/owner differs/);
+ await assert.rejects(state.projectIn(client,{...scope,tenantId:'org_other'},record),/owner differs/);assert.equal(writes,0);
+ await assert.rejects(state.readProjectionIn({query:async()=>({rows:[{},{}]})},scope),/Ambiguous/);
+ await assert.rejects(state.readProjectionIn({query:async()=>({rows:[{record,revision:randomUUID(),user_id:'user_other'}]})},scope),/owner differs/);
+});
+
+live('Setup typed projection preserves upstream evidence, rolls back update/deletion and detects independent target drift',async t=>{
+ const f=await fixture(t),state=createSetupState(f.database),key=prefix+'/'+ownerScope+'/setup/status-v1.json',record=legacySetupState(owner);
+ const otherUser={...owner,userId:'user_other'},otherTenant={...owner,tenantId:'org_other'};
+ await state.save(otherUser,null,legacySetupState(otherUser));await state.save(otherTenant,null,legacySetupState(otherTenant));
+ await f.baseline(key,record);assert.deepEqual((await state.read(owner)).record,record);
+ const updated=structuredClone(record);updated.installations[0].clients[0].historyProgress.completed=4;updated.installations[0].clients[0].historyProgress.total=4;
+ await f.put(key,updated);
+ await assert.rejects(f.journal.replayPage({consumer:'typed',apply:async(c,i)=>{await f.projection.apply(c,i);throw Error('setup-update-rollback');}}),/setup-update-rollback/);
+ assert.deepEqual((await state.read(owner)).record,record);assert.equal(await f.journal.replayCheckpoint('typed'),null);
+ await f.replay();assert.deepEqual((await state.read(owner)).record,updated);
+ const snapshot=await f.store.read(key),inspect=()=>f.database.transaction(c=>f.projection.inspectIn(c,{key,bytes:encode(updated),revision:'1',operationId:snapshot.operationId,version:snapshot.version}));
+ assert.equal(await inspect(),true);const row=await state.read(owner),drift=structuredClone(updated);drift.firstWin={installationId:'setup-installation',client:'codex',verifiedAt:date};
+ await state.save(owner,row.version,drift);assert.equal(await inspect(),false);
+ await state.save(owner,(await state.read(owner)).version,updated);assert.equal(await inspect(),true);
+ await f.del(key);
+ await assert.rejects(f.journal.replayPage({consumer:'typed',apply:async(c,i)=>{await f.projection.apply(c,i);throw Error('setup-delete-rollback');}}),/setup-delete-rollback/);
+ assert.deepEqual((await state.read(owner)).record,updated);assert.equal(await f.journal.replayCheckpoint('typed'),'1');
+ await f.replay();assert.equal((await state.read(owner)).record,null);assert.equal(await f.journal.replayCheckpoint('typed'),'2');
+ assert.deepEqual((await state.read(otherUser)).record,legacySetupState(otherUser));assert.deepEqual((await state.read(otherTenant)).record,legacySetupState(otherTenant));
+ const deleted=await f.store.read(key);assert.equal(await f.database.transaction(c=>f.projection.inspectIn(c,{key,bytes:null,revision:'2',operationId:deleted.operationId,version:deleted.version})),true);
 });

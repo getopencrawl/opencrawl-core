@@ -8,6 +8,9 @@ import type {ResourceControl} from '../sessions/controls.mjs';
 import type {ConnectorSecretScope} from './connector-secrets.mjs';
 import type {ReplicasConnection,ReplicasChallenge} from '../identity/replicas-connections.mjs';
 import {createLegacyObjectClassifier} from './legacy-object-classification.mjs';
+import {createSetupState} from './setup.mjs';
+import {validateSetupState,type SetupStateRecord} from '../setup/state.mjs';
+import {sessionScope} from '../sessions/event-identity.mjs';
 import {gunzipSync} from 'node:zlib';
 import {isDeepStrictEqual} from 'node:util';
 import {z} from 'zod';
@@ -62,6 +65,7 @@ const normalizeCounts=(value:z.infer<typeof countSchema>)=>({version:1 as const,
   ids:Object.fromEntries(Object.entries(value.ids).map(([stream,ids])=>[stream,[...new Set(ids)].sort()])),full:value.full??{}});
 export type OnlineObjectProjection=
  |OnlineSlackCaptureProjection
+ |{kind:'setup-status';domain:'setup-status';identity:string[];scope:{tenantId:string;userHash:string};value:SetupStateRecord|null}
  |{kind:'fence';domain:'session-write-fences'|'connector-write-fences';identity:string[];controlPrefix:string;value:LegacyWriteFence}
  |{kind:'deletion';domain:'deletion-requests';identity:string[];key:string;value:SessionDeletionRequest|null}
  |{kind:'control';domain:'resource-controls';identity:string[];scope:ResourceControlIdentity;value:ResourceControl|null}
@@ -109,7 +113,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
     if(!retiredHashes.has(scope.tenantHash)||retiredSessions.has(key))fail('Retired session proof is unknown, active or duplicated');retiredSessions.set(key,proof);
   }
   const controls=createPostgresControls(database),deletions=createPostgresDeletionRequests(database,prefix),accounts=createAccountState(database),secrets=createConnectorSecrets(database),
-    replicas=createReplicasState(database),reports=createValueReports(database),receipts=createPostgresIndexingReceipts(database),slack=createPostgresSlackCapture(database),counts=createConnectorCounts({database,legacyBucket:store.bucket}),board=createPostgresBoardState(database),retirements=createSchedulerRetirements(database),connectorRetirements=createConnectorCacheRetirements(database),retiredReceipts=createRetiredSessionReceipts(database);
+    setup=createSetupState(database),replicas=createReplicasState(database),reports=createValueReports(database),receipts=createPostgresIndexingReceipts(database),slack=createPostgresSlackCapture(database),counts=createConnectorCounts({database,legacyBucket:store.bucket}),board=createPostgresBoardState(database),retirements=createSchedulerRetirements(database),connectorRetirements=createConnectorCacheRetirements(database),retiredReceipts=createRetiredSessionReceipts(database);
   const preparations=new Map<string,Promise<void>>();
   async function prepare(name:string,run:()=>Promise<void>){let pending=preparations.get(name);if(!pending){pending=run();preparations.set(name,pending);}await pending;}
   // Missing domain tables mean an uninitialized target. Every other SQL error
@@ -175,6 +179,12 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
     if(bytes!==null&&bytes.length>found.maxBytes)fail('Legacy state object exceeds its supported migration limit');
     const {domain,parts}=found;
     switch(domain){
+      case 'setup-status':{
+        tenantDigest(parts[0]);const tenantId=enrolled.find(id=>digest(id)===parts[0])!;
+        const value=bytes===null?null:validateSetupState(json(bytes));
+        if(value){tenant(value.scope.tenantId);if(prefix+'/'+sessionScope(value.scope)+'/setup/status-v1.json'!==key)fail('Setup state key differs from its owner');}
+        return {kind:'setup-status',domain,identity:[parts[0],parts[1]],scope:{tenantId,userHash:parts[1]},value};
+      }
       case 'slack-capture':return decodeOnlineSlackCapture({key,bytes,bucket:store.bucket!,registryRecords,tenantIds:enrolled});
       case 'resource-controls':{
         const [tenantHash,userHash,kind,harness,resourceHash]=parts;if(!retiredHashes.has(tenantHash))tenantDigest(tenantHash);if(!isSessionHarness(harness))fail('Unknown control harness');
@@ -255,6 +265,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
       case 'control':return controls.readIn(client,value.scope);
       case 'account':return accounts.readIn(client,value.record);
       case 'secret':return (await secrets.readIn(client,value.scope,value.aad)).data;
+      case 'setup-status':return (await setup.readProjectionIn(client,value.scope)).record;
       case 'slack':return slack.readProjectedLegacyIn(client,value.key,connectorBindingHash(value.binding));
       case 'replicas-reference':fail('Replicas references require the migration projection coordinator');
       case 'value-report':return reports.readIn(client,value.tenantHash);
@@ -270,6 +281,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
       case 'control':return controls.projectIn(client,value.scope,value.value);
       case 'account':return accounts.projectIn(client,value.record);
       case 'secret':return secrets.projectIn(client,value.scope,value.aad,value.value);
+      case 'setup-status':return setup.projectIn(client,value.scope,value.value);
       case 'slack':return slack.projectLegacyIn(client,value.key,value.value,value.binding);
       case 'replicas-reference':fail('Replicas references cannot publish canonical connections');
       case 'value-report':return reports.projectIn(client,value.tenantHash,value.value);
@@ -278,7 +290,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
       case 'board':return board.projectIn(client,value.tenantHash,value.value);
     }
   }
-  async function prepareOnline(){for(const run of [controls.ready,accounts.ready,secrets.ready,replicas.ready,reports.ready,slack.ready,board.ready,()=>ensureWriteBarrierSchema(database),()=>ensureDeletionRequestSchema(database)])await run();}
+  async function prepareOnline(){for(const run of [controls.ready,accounts.ready,secrets.ready,setup.ready,replicas.ready,reports.ready,slack.ready,board.ready,()=>ensureWriteBarrierSchema(database),()=>ensureDeletionRequestSchema(database)])await run();}
   async function process(key:string,bytes:Buffer,{write}:{write:boolean}):Promise<{source:unknown|Buffer;target:unknown|Buffer|null;rows:number}>{
     const found=classify(key);if(!found)fail('Immutable source objects do not use application-state import');
     if(bytes.length>found.maxBytes)fail('Legacy state object exceeds its supported migration limit');
@@ -305,6 +317,11 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
       case 'credential-generations':{
         const decoded=decodeOnline(key,bytes);if(decoded.kind!=='account'||decoded.record.kind!=='generation')fail('Invalid generation projection');source=decoded.record.value;
         if(write){await prepare('accounts',accounts.ready);await accounts.importGeneration(parts[0],source,credentialPurpose);}target=await read(()=>accounts.exportGeneration(parts[0],credentialPurpose));break;
+      }
+      case 'setup-status':{
+        const value=validateSetupState(json(bytes));tenant(value.scope.tenantId);
+        if(prefix+'/'+sessionScope(value.scope)+'/setup/status-v1.json'!==key)fail('Setup state key differs from its owner');
+        source=value;if(write){await prepare('setup',setup.ready);await setup.importStatus(value);}target=(await read(()=>setup.read(value.scope)))?.record??null;break;
       }
       case 'onboarding':{
         const decoded=decodeOnline(key,bytes);if(decoded.kind!=='account'||decoded.record.kind!=='onboarding')fail('Invalid onboarding projection');source=decoded.record.value;const kind=decoded.record.receiptKind;

@@ -38,7 +38,7 @@ async function signup(page:Page){
   await page.goto(origin+'/auth/signup?setup='+setup);
   await page.getByLabel('Workspace name').fill('Browser test');await page.getByLabel('Your name').fill('Browser Admin');
   await page.getByLabel('Email',{exact:true}).fill(email);await page.getByLabel('Password (10+ characters)').fill(password);
-  await page.getByRole('button',{name:'Create workspace'}).click();await page.waitForURL('**/onboarding');
+  await page.getByRole('button',{name:'Create workspace'}).click();await page.waitForURL(origin+'/');
 }
 const form=(path:string,fields:Record<string,string>)=>fetch(origin+path,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(fields)});
 async function authorization(prompt?:string){
@@ -52,7 +52,7 @@ async function authorization(prompt?:string){
   return {url:origin+'/api/auth/oauth2/authorize?'+query,callback,verifier,clientId:client.client_id};
 }
 
-test('first-user session persists through CLI approval, return to onboarding, MCP consent and logout',async({page,context},testInfo)=>{
+test('first-user session persists through CLI approval, return to the workspace, MCP consent and logout',async({page,context},testInfo)=>{
   await signup(page);
   const session=async()=>(await context.cookies()).find(cookie=>cookie.name.endsWith('.session_token'))?.value;
   const originalSession=await session();expect(originalSession).toBeTruthy();
@@ -63,13 +63,13 @@ test('first-user session persists through CLI approval, return to onboarding, MC
   await expect(approval.getByRole('heading',{name:'CLI connected'})).toBeVisible();
   await expect(approval.getByRole('link',{name:'Sign in',exact:true})).toHaveCount(0);
   await approval.screenshot({path:testInfo.outputPath('cli-connected.png')});
-  await approval.getByRole('link',{name:'Return to OpenCrawl'}).click();await approval.waitForURL('**/onboarding');
+  await approval.getByRole('link',{name:'Return to OpenCrawl'}).click();await approval.waitForURL(origin+'/');
   expect(await session()).toBe(originalSession);
   const cli=await(await form('/api/cli/token',{client_id:'opencrawl-cli',grant_type:'urn:ietf:params:oauth:grant-type:device_code',device_code:device.device_code})).json() as {access_token:string};
   expect((await fetch(origin+'/api/cli/me',{headers:{authorization:'Bearer '+cli.access_token}})).status).toBe(200);
   // An old login tab or bookmarked sign-in link must also preserve this session.
-  await approval.goto(origin+'/auth/login?next='+encodeURIComponent('/onboarding'));
-  await expect(approval).toHaveURL(origin+'/onboarding');
+  await approval.goto(origin+'/auth/login?next='+encodeURIComponent('/setup'));
+  await expect(approval).toHaveURL(origin+'/setup');
   await expect(approval.getByLabel('Password',{exact:true})).toHaveCount(0);
   const oauth=await authorization();await approval.route(oauth.callback+'**',route=>route.fulfill({contentType:'text/plain',body:'Client callback'}));
   await approval.goto(oauth.url);
@@ -90,7 +90,7 @@ test('first-user session persists through CLI approval, return to onboarding, MC
   expect((await context.request.get(origin+'/api/console/bootstrap')).status()).toBe(401);
   await page.goto(origin+'/auth/login');await expect(page.getByLabel('Password',{exact:true})).toBeVisible();
   await page.getByLabel('Email',{exact:true}).fill(email);await page.getByLabel('Password',{exact:true}).fill(password);
-  await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.waitForURL('**/onboarding');
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.waitForURL(origin+'/');
   expect((await context.request.get(origin+'/api/console/bootstrap')).status()).toBe(200);
 });
 

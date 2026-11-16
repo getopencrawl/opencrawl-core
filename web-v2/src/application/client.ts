@@ -18,6 +18,7 @@ const library: LibraryAdapter = (operation,input,signal) => libraryOperations[op
 return {
   library,
   bootstrap:(signal?:AbortSignal)=>read(()=>webRpc.console.bootstrap.query(undefined,{signal}),signal),
+  setupStatus:(signal?:AbortSignal)=>read(()=>webRpc.setup.status.query(undefined,{signal}),signal),
   usage:(signal?:AbortSignal)=>read(()=>webRpc.console.usage.query(undefined,{signal}),signal),
   sources:(signal?:AbortSignal)=>read(()=>webRpc.console.sources.query(undefined,{signal}),signal),
   team:(signal?:AbortSignal)=>read(()=>webRpc.console.team.query(undefined,{signal}),signal),

@@ -1,14 +1,26 @@
+import {homedir} from 'node:os';
+import {join} from 'node:path';
+import {inspectCodexHooks} from './codex-hooks.ts';
 import {CliError} from '../oauth.ts';
 import {installCapture,uninstallCapture,upgradeCaptureHooks} from './install.ts';
-import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush,bindHookIdentity} from './runtime.ts';
-import {exitAfterCredentialRotation} from '../session.ts';
+import {captureHook,captureAttentionNotice,captureDir,ownedCaptureWorker,captureStatus,readCaptureConfig,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush,bindHookIdentity,captureDaemonEnabled} from './runtime.ts';
+import {processSessionStartTask} from '../session-start-task.ts';
+import {awaitDaemonActivation} from './daemon-bootstrap.ts';
+import {compiled,version} from '../distribution.ts';
+import {ownedNativeCaptureCommand} from './daemon-upgrade-launch.ts';
+import {upgradeCaptureDaemon} from './daemon-upgrade.ts';
+import {runCaptureDaemon} from './daemon.ts';
+import {ensureCaptureDaemon} from './daemon-service.ts';
+import {recordNativeDaemonHook} from './daemon-handoff.ts';
+import {atomicJson,exitAfterCredentialRotation} from '../session.ts';
 import {grokBotResponse} from './grok-bot.ts';
-import {normalizeHarness} from './parse.ts';
+import {normalizeHarness,HARNESSES,type Harness} from './parse.ts';
 import {backfill,backfillPreview,selection,setupBackfill,reportBackfillProgress} from './backfill.ts';
 import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
 import {captureNoticeFor} from './policy.ts';
 import {agentSkills} from '../skills.ts';
 import {refreshManagedSkills} from '../skill-activation.ts';
+import {hasPluginContext, pluginHookContext, pluginRecordingEnabled, recordPluginActivation, type PluginHookContext} from '../setup/plugin-context.ts';
 /** With eager set, return as soon as a whole document has arrived: a runtime
  * may keep the pipe open after writing the payload. */
 async function hookInput(eager=false) {
@@ -26,7 +38,7 @@ async function hookInput(eager=false) {
  * request in flight, so the process ends at five seconds, well inside the
  * installed hook timeout. The one thing it waits for is a sign-in renewal
  * already in flight: abandoning that would lose the sign-in. */
-async function cursorFormatHook(harness:'cursor'|'grok-bot',api:string) {
+async function cursorFormatHook(harness:'cursor'|'grok-bot',plugin:PluginHookContext|null,api:string) {
   let answered=false;
   const answer=(event:any)=>{if(!answered){answered=true;process.stdout.write(JSON.stringify(grokBotResponse(event))+'\n');}};
   const finish=()=>exitAfterCredentialRotation(0);
@@ -38,11 +50,14 @@ async function cursorFormatHook(harness:'cursor'|'grok-bot',api:string) {
   try {
     const event=await hookInput(true);
     answer(event);
-    await refreshManagedSkills(api,{hook:true});
-    await bindHookIdentity(event);
-    await captureHook(harness,event);
-    await upgradeCaptureHooks();
-    await hookFlush(event,{reconcileTranscripts:false});
+    recordPluginActivation(plugin,event);
+    if(!plugin)await refreshManagedSkills(api,{hook:true});
+    if(!plugin||pluginRecordingEnabled(plugin)){
+      await bindHookIdentity(event);
+      await captureHook(harness,event);
+      await upgradeCaptureHooks();
+      await hookFlush(event,{reconcileTranscripts:false});
+    }
   }catch(e){answer(null);try{recordError(e);}catch{}}
   clearTimeout(deadline);
   // The pipe may still be open, which would keep this process alive.
@@ -56,7 +71,7 @@ export function antigravityResponse(event:any,eventFlag?:string,notice?:string|n
   if(name==='SessionStart'&&notice)return {injectSteps:[{systemMessage:{systemMessage:notice,metadata:{user_markdown:notice}}}]};
   return {};
 }
-async function antigravityHook(api:string,eventFlag?:string) {
+async function antigravityHook(api:string,eventFlag?:string,plugin:PluginHookContext|null=null) {
   let answered=false;
   const answer=(event:any,notice?:string|null)=>{if(!answered){answered=true;process.stdout.write(JSON.stringify(antigravityResponse(event,eventFlag,notice))+'\n');}};
   const finish=()=>exitAfterCredentialRotation(0);
@@ -67,14 +82,18 @@ async function antigravityHook(api:string,eventFlag?:string) {
   },5000);
   try {
     const event=await hookInput(true);
+    recordPluginActivation(plugin,event);
     const eventName=typeof event?.hookEventName==='string'?event.hookEventName:eventFlag;
-    const notice=eventName==='SessionStart'?captureAttentionNotice():null;
+    const recording=!plugin||pluginRecordingEnabled(plugin);
+    const notice=recording&&eventName==='SessionStart'?captureAttentionNotice():null;
     answer(event,notice);
-    await refreshManagedSkills(api,{hook:true});
-    await bindHookIdentity(event);
-    await captureHook('antigravity',event);
-    await upgradeCaptureHooks();
-    await hookFlush(event);
+    if(!plugin)await refreshManagedSkills(api,{hook:true});
+    if(recording){
+      await bindHookIdentity(event);
+      await captureHook('antigravity',event);
+      await upgradeCaptureHooks();
+      await hookFlush(event);
+    }
   }catch(e){answer(null);try{recordError(e);}catch{}}
   clearTimeout(deadline);
   await new Promise<void>(resolve=>process.stdout.write('',()=>resolve()));
@@ -96,7 +115,7 @@ export async function collectCommand(action:string,api:string,values:any) {
       if(!['ask','skip','all','claude-code','codex','antigravity'].includes(mode))throw new CliError('INVALID_USAGE','Use --backfill ask, skip, all, claude-code, codex, or antigravity.',64);
       const notice=captureNoticeFor(api,harness);
       if(!await approveCapture(values.yes===true,values.json,notice))return {status:'consent_required',notice,nextStep:'Confirm the destination and recording scope with the user, then run collect install --yes. This does not approve history import.'};
-      const installed=await installCapture(api,{deferAuth:values['defer-auth']===true,...(harness?{harnesses:[harness as any]}:{})});
+      const installed=await installCapture(api,{deferAuth:values['defer-auth']===true,daemon:values.daemon===true,...(harness?{harnesses:[harness as any]}:{})});
       // Detection is not consent to configure other clients. Grok Bot has no
       // supported skill directory; do not install another client's integration.
       const clients=(harness?[harness]:installed.harnesses??[]).filter(client=>client!=='grok-bot');
@@ -118,14 +137,44 @@ export async function collectCommand(action:string,api:string,values:any) {
     case 'exclude': return excludeCapture(values.project,values['session-id']);
     case 'purge': return purgeLocalCapture(values.yes===true);
     case 'uninstall': return uninstallCapture();
-    case 'status': return captureStatus();
+    case 'status': return captureStatus(await inspectCodexHooks(readCaptureConfig()?.roots.codex||process.env.CODEX_HOME||join(homedir(),'.codex')));
     case 'sync': try{return await syncCaptures();}catch(e){recordError(e);throw e;}
     case 'titles': try{return await refreshCapturedTitles();}catch(e){recordError(e);throw e;}
     case 'flush': try{return await flushCaptureWork({retryRejected:values['retry-rejected']===true});}catch(e){recordError(e);throw e;}
+    case 'upgrade-daemon': {const config=readCaptureConfig();if(!compiled()||!config||!ownedNativeCaptureCommand(config))return {state:'not-selected'};const result=await upgradeCaptureDaemon({command:[process.execPath]});atomicJson(join(captureDir(),'daemon','upgrade-result.json'),{...result,at:new Date().toISOString()});atomicJson(join(captureDir(),'daemon','upgrade-attempt.json'),{version,nextAttemptAt:Date.now()+(result.state==='busy'?60_000:15*60_000)});return result;}
+    case 'daemon': {if(!await awaitDaemonActivation())return null;await runCaptureDaemon({processStartupTask:processSessionStartTask});return null;}
     case 'worker': {try{await ownedCaptureWorker();}catch(e){try{recordError(e);}catch{}}return null;}
     case 'hook': {
-      if(harness==='grok-bot'||harness==='cursor')return cursorFormatHook(harness,api);
-      if(harness==='antigravity')return antigravityHook(api,values.event);
+      if(!hasPluginContext()&&readCaptureConfig()?.hookOwnership==='plugin')return null;
+      const plugin=pluginHookContext(api,harness??'');
+      if(captureDaemonEnabled()&&HARNESSES.includes(harness as Harness)){
+        let event:any;
+        try{
+          event=await hookInput(true);
+          if(harness==='antigravity'&&!event.hookEventName&&values.event)event.hookEventName=values.event;
+          if(!((harness==='claude-code'||harness==='codex')&&event?.cursor_version)){
+            recordPluginActivation(plugin,event);
+            if(!plugin||pluginRecordingEnabled(plugin)){
+              const recorded=recordNativeDaemonHook(harness as Harness,event);
+              // Only a verified, still-selected Devin plugin may request its
+              // existing transient host worker after resume. Other hooks stay local.
+              if(recorded&&harness==='devin'&&plugin){
+                const validateBinding=()=>{const current=pluginHookContext(api,harness);if(!current||JSON.stringify(current)!==JSON.stringify(plugin)||!pluginRecordingEnabled(current))throw new CliError('PLUGIN_CONTEXT_INVALID','The selected Devin plugin changed before worker recovery.');};
+                await ensureCaptureDaemon(readCaptureConfig(),{validateBinding});
+              }
+            }
+          }
+        }catch(error){try{recordError(error);}catch{}}
+        if(harness==='cursor'||harness==='grok-bot')process.stdout.write(JSON.stringify(grokBotResponse(event))+'\n');
+        if(harness==='antigravity')process.stdout.write(JSON.stringify(antigravityResponse(event,values.event))+'\n');
+        if(['cursor','grok-bot','antigravity','devin'].includes(harness!)){
+          await new Promise<void>(resolve=>process.stdout.write('',()=>resolve()));
+          exitAfterCredentialRotation(0);
+        }
+        return null;
+      }
+      if(harness==='grok-bot'||harness==='cursor')return cursorFormatHook(harness,plugin,api);
+      if(harness==='antigravity')return antigravityHook(api,values.event,plugin);
       // Only harness-managed async hooks may upload. Legacy sync hooks stay local.
       try {
         if(!['claude-code','codex'].includes(harness??''))throw new Error('Invalid harness');
@@ -134,14 +183,16 @@ export async function collectCommand(action:string,api:string,values:any) {
         // files and wait on every hook. That is not a Claude Code or Codex
         // session: record nothing and never start the uploader there.
         if(typeof event?.cursor_version==='string')return null;
-        await refreshManagedSkills(api,{hook:true});
+        recordPluginActivation(plugin,event);
+        if(plugin&&!pluginRecordingEnabled(plugin))return null;
+        if(!plugin)await refreshManagedSkills(api,{hook:true});
         await captureHook(harness as any,event);
         // Async Claude Code hooks deliver this JSON on the next turn, so a
         // paused capture is visible to the person instead of failing silently.
         const notice=harness==='claude-code'&&['SessionStart','UserPromptSubmit'].includes(event?.hook_event_name)?captureAttentionNotice():null;
         if(notice)process.stdout.write(JSON.stringify({systemMessage:notice,hookSpecificOutput:{hookEventName:event.hook_event_name,additionalContext:notice}})+'\n');
         await upgradeCaptureHooks();
-        if(values.managed)await ownedCaptureWorker();
+        if(values.managed||plugin&&(harness==='claude-code'||harness==='codex'&&event.hook_event_name!=='SessionEnd'))await ownedCaptureWorker();
       }catch(e){try{recordError(e);}catch{}}
       return null;
     }

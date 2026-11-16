@@ -40,7 +40,7 @@ do not enter Temporal history.
 The byte mirror is temporary migration evidence, not an implementation of
 `ApplicationState`. The typed projector currently covers account credentials and
 revocations, onboarding, role operations, privacy controls, connector secrets,
-Replicas records and alias references, Slack capture state and pacing, bounded
+Replicas records and alias references, Setup status, Slack capture state and pacing, bounded
 value reports, board state, write fences and deletion requests. It binds one
 epoch to a target namespace and checks source ownership, revisions and independent
 typed readback in the replay transaction. New tenant enrollment requires an
@@ -58,6 +58,12 @@ evidence commits with backfill or replay, including journal-only keys that were
 created behind the listing cursor. Deferred keys whose write was not applied
 must receive a real baseline read. Complete traversal and unresolved work remain
 separate from final parity and runtime admission.
+
+`createOnlineObjectParticipant` exposes the same typed operations for composition
+with additional source owners under one shadow coordinator. It does not create
+another journal, mirror or coverage tracker. The host must retain its native
+metadata check at activity boundaries. Physical policy identity binds the
+classifier grammar and supported session harnesses as well as source routing.
 
 An explicit derived-state retirement policy records old session scheduling,
 indexing, cutover markers, connector indexing and count-cache obligations without
@@ -78,6 +84,14 @@ event rows. Coverage records the native binding separately from copied target
 rows and rebuild obligations. Compatibility readers retain those markers in
 listings but reject direct body access and mutation. A native preservation
 certificate does not grant runtime admission.
+
+When the owning native PostgreSQL repository has permanently deleted a session,
+an explicit versioned deletion proof can explain removal of its historical
+marker during later parity passes. The proof binds the same database UUID,
+namespace and canonical session resource, confirms the permanent tombstone and
+absence of session metadata, and reads no historical event rows. Missing markers
+without that proof remain mismatches. A compatibility deletion adapter must
+commit the native tombstone before erasing the exact historical marker versions.
 
 Replicas aliases never publish or delete canonical connections. Their separate
 bounded reference inspection must run during final typed parity after replay

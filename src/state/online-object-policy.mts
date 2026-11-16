@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {SESSION_HARNESSES} from '../sessions/types.mjs';
 import {eventIdentityResource,type EventIdentityDeletionProof} from '../sessions/postgres-identities.mjs';
 import {createLegacyObjectClassifier,type LegacyObjectClassification} from './legacy-object-classification.mjs';
 
@@ -37,7 +38,7 @@ export function createOnlineObjectPolicy({prefix,credentialPurpose='capture',age
  const agent=agentPrefix===undefined?undefined:Object.freeze({prefix:agentPrefix,credentialPurpose:'agent' as const});
  const agentClassifier=agent?createLegacyObjectClassifier(agent):undefined;
  const routes=Object.freeze([primary,...(agent?[agent]:[])]),roots=Object.freeze([...capture.roots]);
- const policyHash=digest({format:1,routes,...(native?{preservedEventIdentities:native}: {})});
+ const policyHash=digest({format:2,grammar:'legacy-object-classification-v2',sessionHarnesses:[...SESSION_HARNESSES],routes,...(native?{preservedEventIdentities:native}: {})});
  function route(key:string):Readonly<OnlineObjectRoute>{return agent&&typeof key==='string'&&key.startsWith(agent.prefix+'/')?agent:primary;}
  function classify(key:string):OnlineObjectClassification|null{
   const value=route(key)===agent?agentClassifier!.classify(key):capture.classify(key);

@@ -21,26 +21,46 @@ export const cursorSearchContextMatcher = '^(?:' + cursorSearchTools.join('|') +
 // unexposed on the server to prevent that collision recurring for v1.
 const antigravitySearchTools = ['mcp_opencrawl_opencrawl_search_v1', 'mcp_opencrawl_opencrawl_opencrawl_search_v1'];
 export const antigravitySearchContextMatcher = '^(?:' + [...antigravitySearchTools, 'call_mcp_tool'].join('|') + ')$';
+const aliases = ['opencrawl_search','opencrawl_search_v1'];
+/** Match only this installed deployment, including the native identifier's
+ * underscore spelling. Cursor's documented payload omits the server name. */
+function selectedTools(harness:string,pluginName?:string) {
+  if(pluginName===undefined)return {standard:[...searchTools] as string[],agy:[...antigravitySearchTools],servers:['opencrawl','opencrawl_opencrawl']};
+  if(!/^opencrawl-[a-f0-9]{12}$/.test(pluginName))throw Error('Invalid plugin namespace');
+  const names=[pluginName,pluginName.replaceAll('-','_')];
+  return {
+    standard:names.flatMap(name=>aliases.map(alias=>harness==='codex'?`mcp__${name}__${alias}`:`mcp__plugin_${name}_opencrawl__${alias}`)),
+    agy:names.map(name=>`mcp_${name}_opencrawl_opencrawl_search_v1`),
+    servers:names.map(name=>name+'_opencrawl'),
+  };
+}
+export function pluginSearchContextMatcher(harness:string,pluginName:string):string {
+  const tools=selectedTools(harness,pluginName);
+  const names=harness==='cursor'?cursorSearchTools:harness==='antigravity'?[...tools.agy,'call_mcp_tool']:tools.standard;
+  return '^(?:'+names.join('|')+')$';
+}
 const sessionPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/;
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const sessionId = (value: unknown): value is string => typeof value === 'string' && sessionPattern.test(value);
 
 /** Native hook identity is independent of credentials, board presence and the
  * model's arguments. Never consult a latest-session file or read a transcript. */
-export function searchContext(harness: string, event: unknown): Record<string, unknown> | undefined {
+export function searchContext(harness: string, event: unknown, pluginName?:string): Record<string, unknown> | undefined {
+  const tools=selectedTools(harness,pluginName);
+  if(object(event)&&harness!=='cursor'&&typeof event.cursor_version==='string')return;
   if (object(event) && harness === 'antigravity') {
     if (event.hookEventName !== 'PreToolUse' || !object(event.toolCall)
         || !object(event.toolCall.args) || !sessionId(event.conversationId)) return;
     const currentSession = {harness, sessionId:event.conversationId};
     if (event.toolCall.name === 'call_mcp_tool') {
       const args = event.toolCall.args;
-      if (!['opencrawl', 'opencrawl_opencrawl'].includes(args.ServerName as string)
+      if (!tools.servers.includes(args.ServerName as string)
           || args.ToolName !== 'opencrawl_search_v1' || !object(args.Arguments)) return;
       // GUI dispatch carries an object, not a JSON string. Native overwrite
       // replaces nested objects wholesale, so preserve every search argument.
       return {decision:'allow', overwrite:{Arguments:{...args.Arguments, currentSession}}};
     }
-    if (!antigravitySearchTools.includes(event.toolCall.name as string)) return;
+    if (!tools.agy.includes(event.toolCall.name as string)) return;
     // overwrite is a shallow argument merge; allow continues the ordinary
     // policy checks (auto_approve and permissionOverrides are never emitted).
     return {decision:'allow', overwrite:{currentSession}};
@@ -54,7 +74,7 @@ export function searchContext(harness: string, event: unknown): Record<string, u
     return {updated_input: {...event.tool_input, currentSession: {harness, sessionId: nativeId}}};
   }
   if (!object(event) || !['codex', 'claude-code'].includes(harness) || event.hook_event_name !== 'PreToolUse'
-      || !searchTools.includes(event.tool_name as typeof searchTools[number]) || !object(event.tool_input)) return;
+      || !tools.standard.includes(event.tool_name as string) || !object(event.tool_input)) return;
   if (!sessionId(event.session_id)) return;
   let nativeId = event.session_id;
   if (event.agent_id !== undefined && event.agent_id !== null) {
@@ -94,11 +114,24 @@ export function readSearchContextEvent(input: Readable, timeoutMs = 1000, maxByt
   });
 }
 
-/** Early CLI dispatch: no login, update, migration, capture or state access. */
+/** Early CLI dispatch: no login, update, migration or capture. Installed plugin
+ * calls validate only their selected public bundle and saved profile binding. */
 export async function searchContextCommand(args: string[], input: Readable = process.stdin, output: Pick<NodeJS.WriteStream, 'write'> = process.stdout) {
   try {
-    const parsed = parseArgs({args, options: {harness: {type: 'string'}}});
-    const result = searchContext(parsed.values.harness ?? '', await readSearchContextEvent(input));
+    const parsed = parseArgs({args, options: {harness: {type: 'string'},api:{type:'string'}}});
+    const harness=parsed.values.harness??'';
+    const pluginKeys=['OPENCRAWL_PLUGIN_API','OPENCRAWL_PLUGIN_NAME','OPENCRAWL_PLUGIN_CLIENT','OPENCRAWL_PLUGIN_ROOT'];
+    let pluginName:string|undefined,check:(()=>void)|undefined;
+    if(pluginKeys.some(key=>process.env[key]!==undefined)){
+      const {pluginHookContext}=await import('./setup/plugin-context.ts');
+      const api=parsed.values.api??process.env.OPENCRAWL_PLUGIN_API??'';
+      // Reject invalid profile/client/API before consuming native tool input.
+      const context=pluginHookContext(api,harness);if(!context)return 0;
+      const binding=JSON.stringify(context);pluginName=context.pluginName;
+      check=()=>{if(JSON.stringify(pluginHookContext(api,harness))!==binding)throw Error('Plugin binding changed');};
+    }
+    const event=await readSearchContextEvent(input);check?.();
+    const result = searchContext(harness,event,pluginName);
     if (result) output.write(JSON.stringify(result) + '\n');
   } catch { /* Unknown identity or malformed native input must never guess. */ }
   return 0;

@@ -267,13 +267,14 @@ presentation. The frontmatter records their approved values; update the owning
 CSS and this document together. Color aliases are resolved here without changing
 the source color format. The sidecar carries motion, depth and component previews.
 
-Authentication outcomes, organization selection, provider handoffs and capture
-setup use React's shared focused frame, Page and controls. Servers send inert
+Authentication outcomes, organization selection and provider handoffs use React's
+shared focused frame and controls; workspace destinations use Page. Servers send inert
 page data into the same application bundle; they never render feature HTML.
-React onboarding preserves its approved presentation in `web-v2/src/onboarding/onboarding.css`.
-After onboarding, Agent setup reuses its prompt and live checklist inside the
-shared workspace Page. The sidebar remains available, and setup does not restart
-the initial onboarding flow.
+Setup is the permanent first sidebar destination at `/setup`, using the same
+workspace Page and controls as other product screens. It tracks CLI installation,
+native client verification and optional history without blocking navigation.
+The older focused onboarding components and their stylesheet remain for
+compatibility; they do not define the current entry flow.
 Use the existing self-hosted fonts, OC marks, provider logos and shared SVG icons.
 The font license remains at `web/assets/Geist-OFL.txt`.
 
@@ -282,7 +283,7 @@ The font license remains at `web/assets/Geist-OFL.txt`.
 - Dark-only Night palette and inherited brand assets.
 - One React workspace shell with a persistent left sidebar on every workspace route.
 - Quiet default controls, visible keyboard focus and explicit operational states.
-- A separate focused onboarding composition within the same design system.
+- Permanent nonblocking Setup inside the workspace shell; focused authentication uses the same design system.
 
 ## Colors
 
@@ -298,7 +299,7 @@ to the existing OC mark and the primary button's narrow hover layers.
 
 ### Neutral
 
-`bg` is the canvas. `surface` supports the navigation drawer, fields and onboarding panel;
+`bg` is the canvas. `surface` supports the navigation drawer, fields and legacy onboarding panel;
 `surface-subtle` separates insets, quiet hover states and secondary controls;
 `surface-raised` supports dialogs and neutral badges. `strong` is heading text,
 `text` is primary content, `muted` is supporting copy and `quiet` is metadata.
@@ -340,16 +341,17 @@ uses `metadata`. Technical text uses `mono`. Metrics and tables use tabular nume
 metric values use the `metric` role. Prose is bounded to 75 characters where possible.
 
 The earlier large display role remains available to its established surfaces.
-Onboarding retains its existing heading scale and responsive adjustments in its
-bounded presentation stylesheet; do not restyle it with the console page heading.
+Legacy focused onboarding retains its heading scale and responsive stylesheet
+for compatibility. The current Setup sidebar page uses the console page heading.
 
 ## Layout
 
 `AppShell` is the only workspace shell. One route registry drives the left sidebar
-and page routing through the shared router. Its navigation render slot supports the
-board takeover without duplicating shell chrome. The hosted workspace destinations are Usage, Sessions,
-Memories, Integrations, Message board, Search playground, Agent setup and Settings.
-Team and hosted Billing live inside Settings, reached through the bottom account menu.
+and page routing through the shared router. Setup appears first, followed by
+Usage, Sessions, Memories, Integrations, Message board and Search playground.
+Its navigation render slot supports the board takeover without duplicating shell
+chrome. Team and hosted Billing live inside Settings, reached through the bottom
+account menu.
 Deployment adapters supply only their supported routes; the shared shell does not imply hosted capabilities in the
 single-tenant adapter.
 
@@ -388,7 +390,7 @@ Use `Page` for every sidebar destination. `AppShell` owns the centered 1200px
 content frame, 32px horizontal insets, 48px top inset and 64px bottom inset.
 At 800px and below these insets become 16px horizontally, 32px above and 40px below.
 The workspace document reserves its scrollbar gutter so short and long pages do
-not shift; focused onboarding retains its original geometry.
+not shift; retained legacy focused surfaces keep their original geometry.
 Feature wrappers add no width, centering, top padding or page-title typography.
 
 `Page` owns one `PageHeader` followed by its body. Every H1 starts on the same
@@ -402,8 +404,8 @@ Use H2 for sections and H3 within them; use the shared 24px section padding and
 48px report-section separation. Tabs and filters start the body, before results.
 
 All workspace destinations use the same full-width page grid, bounded to 1200px.
-This includes Usage, Sessions, Memories, Integrations, Message board, Search playground,
-Agent setup and Settings. Team and hosted Billing share the Settings frame.
+This includes Setup, Usage, Sessions, Memories, Integrations, Message board,
+Search playground and Settings. Team and hosted Billing share the Settings frame.
 The page header, section frames, tables and lists share both edges.
 A route change must not create a narrower content column.
 
@@ -422,16 +424,15 @@ but feature-page architecture checks reject it. New sidebar pages use one grid.
 Loading, empty, failed and current states retain this same frame. Keep the page
 heading focus target for SPA navigation and exactly one H1 per destination.
 Library detail views may use compact document titles beneath their back link;
-focused onboarding retains its approved independent presentation. The legacy
+legacy focused onboarding retains its compatibility presentation. The legacy
 `PageHeader` report prop is accepted for compatibility but no longer changes
 its appearance. Raw feature-page H1s are rejected by the architecture guard;
 browser regressions measure every sidebar destination across the responsive range.
 
-Guided onboarding stays outside `AppShell`, inside the same router. `FocusedFrame`
-provides the bounded header and `OnboardingShell` provides the centered flow.
-Its boxed panel is 640px wide with left-aligned content, a 960px bounded header,
-and back/next navigation outside the panel. Preserve the existing mobile and
-short-viewport rules in the onboarding stylesheet.
+Current Setup belongs inside `AppShell`; it is not a focused wizard or a gate
+before the workspace. The retained `FocusedFrame`/`OnboardingShell` composition
+is compatibility UI, with its existing 640px panel and mobile rules. Do not reuse
+its back/next gates for the permanent Setup page.
 
 **The One Shell Rule.** Pages own their content; core owns workspace navigation,
 responsive chrome and shared layout. Internal links use the router and preserve
@@ -441,7 +442,7 @@ authentication and deployment boundaries.
 ## Elevation & Depth
 
 Tonal surfaces and hairline borders provide most depth. The existing paper shadow
-adds a restrained inset highlight to the onboarding panel. The floating and dialog
+adds a restrained inset highlight to the legacy onboarding panel. The floating and dialog
 shadows are inherited tokens for elevated surfaces; the React dialog uses the
 dialog shadow with the shared dark backdrop. Their exact values are recorded in
 `.impeccable/design.json`, alongside breakpoint metadata and component focus states.
@@ -450,12 +451,12 @@ Primary actions have no layers at rest. Hover brightens the face and reveals the
 coral/cobalt layers at either side; pointer exit and press remove those layers.
 Shared state transitions use `--motion-fast` (160ms ease-out). Pending indicators
 use the existing rotation; reduced-motion rules suppress nonessential movement.
-Onboarding copy/reveal disclosures keep their established immediate transitions.
+Legacy onboarding copy/reveal disclosures keep their immediate transitions; Setup uses the shared copy and disclosure controls.
 
 ## Shapes
 
 Use the shared badge, control and panel radii. Controls and compact insets have
-small corners; onboarding panels and dialogs use the larger panel radius. Source
+small corners; retained legacy panels and dialogs use the larger panel radius. Source
 logos retain their original assets: compact slots in Usage and 44px icons in
 Integrations. Identity initials
 use compact square workspace avatars and circular user avatars. Dividers and
@@ -474,8 +475,9 @@ provider integration, membership and billing behavior remain in deployment adapt
 
 Strict TypeScript, shared native controls, a single router, token usage and the
 absence of feature stylesheets or inline styles are enforced by architecture
-checks. See `web-v2/AGENTS.md` for the implementation and release rules. Onboarding's
-single presentation stylesheet is the bounded exception for its preserved layout.
+checks. See `web-v2/AGENTS.md` for implementation and release rules. The retained
+legacy onboarding stylesheet is a bounded compatibility exception; current Setup
+uses shared console presentation.
 
 ### Buttons
 
@@ -500,8 +502,9 @@ Inputs use the surface, control border and control radius; invalid state uses
 the danger border and an adjacent error. Disabled fields remain legible and
 unavailable. Mobile text fields use 16px text. Textareas resize vertically.
 CopyField keeps the value selectable and offers explicit clipboard feedback;
-when copying fails, it selects the text for manual copying. The onboarding split
-copy/reveal control retains its separate feedback timing and unchanged dimensions.
+when copying fails, it selects the text for manual copying. Setup's installer
+and agent handoff remain readable at narrow widths. The legacy split copy/reveal
+control keeps its established timing only on retained compatibility surfaces.
 
 ### Navigation and tabs
 
@@ -557,41 +560,49 @@ client visibility never establishes authorization. Dialog uses the native modal
 with an accessible title, optional description, close control and shared action
 area. Preserve native focus behavior and Escape dismissal.
 
-### Guided onboarding
+### Setup and the agent handoff
 
-Three focused React steps share `OnboardingShell` within `FocusedFrame`: agent
-setup, Sources, and optional teammate invitations. Keep a 640px boxed panel,
-left-aligned headings and content, the bounded 960px top bar and outside-panel
-navigation. Use existing circled checks, spinners and chevrons. No decorative
-rules, auto-advancement or reveal/hide animation. Headings omit terminal periods.
+The CLI is the onboarding bootloader. It signs in before client changes, installs
+selected native plugins, saves future-recording choices, and separately asks which
+available histories to import. Detected supported choices start selected; saved
+off choices remain off. Recording needs its plugin, but plugins may stay
+search-only and history remains independent. The one-line history benefit is:
+“Import past sessions so your agents can find previous decisions, fixes, and context.”
+Approved import work runs in the background.
 
-Show the instruction for the next missing receipt. The first screen retains the
-full grouped checklist, setup action and description after all gates turn green;
-Next appears at the right below the panel. CLI and MCP sign-in are human steps;
-the MCP test is an agent step. Recording contains first-session and optional
-history subitems. Historical imports cannot prove live recording.
+Setup is the first permanent sidebar item inside `AppShell`. Use the shared
+`Page`, `Section`, `CopyField`, status rows and disclosures. Present the guarded
+installer/setup command before the agent handoff. Group progress by machine and
+client, with separate facts for native activation, hook trust, MCP, recording
+proof and historical import. Preserve ordinary workspace navigation while any
+of these are pending and keep the page available for later machines and clients.
+Integrations and Team remain optional workspace destinations.
 
-Prompt copy and reveal are independent split-button controls. Copy feedback
-changes only the label for 1.5 seconds. The divider remains stable on either
-segment's hover. Disclosures brighten their text and adjacent chevron on hover;
-copy bars span their instruction width with a fixed right-hand feedback area.
+The agent guides human-required native trust, reload and MCP authentication one
+step at a time in the current conversation where the harness permits it. Keep
+one stable handoff rather than switching to a separate “test MCP” prompt. Use
+`setup status --local --json` for saved installation identity and effective
+choices; it must state that the server and current authentication were not
+checked. Native MCP `installation_status` and `verify_installation` provide
+current server evidence without requiring shell network access. Never require a
+sandbox-policy change, credential copy or repeated questionnaire.
 
-Sources uses compact horizontal tiles with rounded-square provider logos on the
-left, labels in the middle and plus/check marks at the right. Hide catalog search
-below fifteen providers. API-key entry uses a named, focused dialog; OAuth returns
-to the same Sources screen. Sources are optional: a quiet Skip for now continues
-to teammates until a connection is confirmed, then Next takes its place.
+For recording clients, completion needs both a captured/searchable new-session
+proof and native MCP call/result correlation (`verified` plus `authenticated`).
+For search-only clients, preserve recording off and show `not_selected` with
+observed authenticated transport instead of requesting capture. A local/server
+choice mismatch stays pending until normally authorized resume reconciles it.
+A `prepared` bundle is not native activation; a first searchable session does not
+mean every client or history import has finished. Keep genuine server evidence
+visible even if the CLI has not reported its latest activation observation.
 
-Teammates appear in simple rows above one email field and Invite button. Enter
-adds one teammate, clears the field and returns focus for another. Keep errors
-beside the field. No redundant Ready labels. Skip for now and Open workspace
-finish onboarding; invitations never become a gate.
-
-Back and forward arrows have matching 21px outer insets. Preserve the primary
-button's plain lavender rest state with coral/cobalt peeking out only on hover.
-All receipts, connections and search results come from the runtime adapter;
-there are no prototype variants, demo data or state controls in the product.
-See [the behavior contract](docs/onboarding.md) and [QA](docs/onboarding-qa.md).
+Use labeled loading, empty, error and pending states with specific recovery.
+Keep copy fallbacks selectable, keyboard focus visible and long commands bounded
+on mobile. The Setup page has no Replicas enrollment action. Existing focused
+onboarding components and receipt endpoints remain compatibility surfaces, not
+current three-step admission gates. No fixture data or state controls ship in
+the product. See [the behavior contract](docs/onboarding.md) and
+[QA](docs/onboarding-qa.md).
 
 ### Captured session conversations
 
@@ -639,15 +650,15 @@ The Info icon license is retained at
 - **Do** reuse the Night tokens, existing brand assets and self-hosted Geist fonts.
 - **Do** compose each workspace page from the shared shell, layout and controls.
 - **Do** show labeled loading, empty, error, busy and current states with recovery.
-- **Do** preserve the approved onboarding composition, receipts and optional invitations.
-- **Do** verify keyboard focus, narrow layouts, internal history and onboarding appearance.
+- **Do** keep Setup permanent and nonblocking, and preserve saved choices and compatibility receipts.
+- **Do** verify keyboard focus, narrow layouts, internal navigation and Setup states.
 
 ### Don't:
 
 - **Don't** create another workspace navigation, page-local palette or feature stylesheet.
 - **Don't** substitute new illustrations, fonts or provider marks for the inherited assets.
 - **Don't** use status color without explanatory text or make client visibility an authority check.
-- **Don't** replace onboarding's focused panel with workspace navigation or change its gates for styling.
+- **Don't** make setup, integrations or invitations a gate to the admitted workspace, or hide pending client evidence.
 
 ## Approved Usage organization
 

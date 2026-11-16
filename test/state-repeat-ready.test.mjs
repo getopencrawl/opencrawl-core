@@ -7,6 +7,7 @@ import {ensureRegistrySchema} from '../dist/src/integrations/local-registry.mjs'
 import {createIntegrationCommands} from '../dist/src/state/integration-commands.mjs';
 import {createPostgresBoardState} from '../dist/src/state/board.mjs';
 import {createReplicasState} from '../dist/src/state/replicas.mjs';
+import {createDevinState} from '../dist/src/state/devin.mjs';
 import {ensureWriteBarrierSchema} from '../dist/src/state/write-barriers.mjs';
 import {createSearchContextJobs} from '../dist/src/state/search-context-jobs.mjs';
 import {createSearchContextContinuations} from '../dist/src/state/search-context-continuations.mjs';
@@ -16,7 +17,7 @@ import {postgresUrl,dropTestSchemas} from './fixtures/application-database.mjs';
 const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 const source={version:1,bucket:'ready-fixture',prefix:'sessions/production/v1',organizationId:null};
 const binding={environment:'production',bucket:source.bucket,prefix:source.prefix,endpoint:'https://search.fixture.invalid',generation:'v1'};
-const indexed=['opencrawl_integrations_owner','opencrawl_integration_commands_pending','opencrawl_board_messages_topic','opencrawl_board_messages_publication','opencrawl_board_messages_mentions','opencrawl_board_search_words','opencrawl_board_participants_name','opencrawl_board_participants_seen','opencrawl_board_search_snapshots_expiry','opencrawl_replicas_connections_tenant','opencrawl_resource_writers_pending','opencrawl_search_context_pending','opencrawl_search_context_continuation_pending','opencrawl_event_identity_resource'];
+const indexed=['opencrawl_integrations_owner','opencrawl_integration_commands_pending','opencrawl_board_messages_topic','opencrawl_board_messages_publication','opencrawl_board_messages_mentions','opencrawl_board_search_words','opencrawl_board_participants_name','opencrawl_board_participants_seen','opencrawl_board_search_snapshots_expiry','opencrawl_replicas_connections_tenant','opencrawl_devin_connections_tenant','opencrawl_resource_writers_pending','opencrawl_search_context_pending','opencrawl_search_context_continuation_pending','opencrawl_event_identity_resource'];
 async function fixture(t){
  const admin=new Pool({connectionString:postgresUrl,max:1}),schema='oc_ready_'+randomUUID().replaceAll('-',''),namespace='ready-'+randomUUID();
  await admin.query(`CREATE SCHEMA ${schema}`);
@@ -29,7 +30,7 @@ async function fixture(t){
 async function allReady(database,config){
  await database.ready();await ensureRegistrySchema(database);
  await createIntegrationCommands({database,environment:'production',encryptionKey:Buffer.alloc(32,1)}).ready();
- await createPostgresBoardState(database).ready();await createReplicasState(database).ready();await ensureWriteBarrierSchema(database);
+ await createPostgresBoardState(database).ready();await createReplicasState(database).ready();await createDevinState(database).ready();await ensureWriteBarrierSchema(database);
  await createSearchContextJobs({database,binding}).ready();await createSearchContextContinuations({database,binding}).ready();
  const identities=createPostgresEventIdentities(config);try{await identities.ready();}finally{await identities.close();}
 }
@@ -60,7 +61,7 @@ live('known legacy columns, operation check and missing indexes upgrade once wit
  assert.deepEqual((await database.pool.query('SELECT * FROM opencrawl_integration_commands')).rows,original);
  assert.deepEqual((await database.pool.query('SELECT organization_id,binding_id FROM opencrawl_integration_bindings')).rows,[{organization_id:'org_fixture',binding_id:null}]);
  assert.equal((await database.pool.query('SELECT inventory_complete FROM opencrawl_application_installations')).rows[0].inventory_complete,false);
- assert.equal((await database.pool.query('SELECT count(*)::int n FROM pg_indexes WHERE schemaname=current_schema() AND indexname=ANY($1)',[indexed])).rows[0].n,14);
+ assert.equal((await database.pool.query('SELECT count(*)::int n FROM pg_indexes WHERE schemaname=current_schema() AND indexname=ANY($1)',[indexed])).rows[0].n,indexed.length);
  await database.pool.query("UPDATE opencrawl_integration_commands SET operation='consent'");
  await assert.rejects(database.pool.query("UPDATE opencrawl_integration_commands SET operation='unrecognized'"),{code:'23514'});
 });

@@ -1,6 +1,6 @@
 import {test,expect} from 'bun:test';
 import {beforeEach, afterEach} from 'bun:test';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,symlinkSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
@@ -76,7 +76,8 @@ test('memory waits asynchronously for a session upload and cancellation leaves t
     if(req.method==='POST'){let body='';for await(const part of req)body+=part;const s=JSON.parse(body);uploads.push(s);data={stored:true,snapshotId:createHash('sha256').update(body).digest('hex'),generation:s.generation};}
     res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({data}));
   });await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
-  let release:()=>void=()=>{};let owner:Promise<unknown>|undefined;
+  let release:()=>void=()=>{};let owner:Promise<unknown>|undefined,cancelling:Promise<void>|undefined;
+  const controller=new AbortController();
   try{
     f.config.api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=f.config.api;f.put(join(captureDir(),'config.json'),JSON.stringify(f.config));
     f.put(join(f.config.roots.codex,'memories/MEMORY.md'),'codex');f.put(join(f.config.roots['claude-code'],'projects/repo/memory/MEMORY.md'),'Claude');
@@ -85,11 +86,18 @@ test('memory waits asynchronously for a session upload and cancellation leaves t
     release();await owner;await pending;expect(uploads).toHaveLength(2);
     rmSync(join(captureDir(),'memories'),{recursive:true});
     owner=withSessionLock('capture:flush',()=>new Promise<void>(r=>{release=r;}));
-    const controller=new AbortController(),start=Date.now();setTimeout(()=>controller.abort(),120);
-    await refreshMemories({signal:controller.signal});expect(Date.now()-start).toBeLessThan(1000);expect(uploads).toHaveLength(2);
-    const states=readdirSync(join(captureDir(),'memories')).map(p=>JSON.parse(readFileSync(join(captureDir(),'memories',p),'utf8')));
-    expect(states.length).toBeGreaterThan(0);expect(states.every(s=>memoryDue(s)&&!s.retryAt&&!s.successAt)).toBe(true);
-  }finally{release();await owner;server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));if(oldToken===undefined)delete process.env.OPENCRAWL_SESSIONS_TOKEN;else process.env.OPENCRAWL_SESSIONS_TOKEN=oldToken;f.close();}
+    cancelling=refreshMemories({signal:controller.signal});
+    const stateDirectory=join(captureDir(),'memories');
+    const states=()=>existsSync(stateDirectory)?readdirSync(stateDirectory).map(p=>JSON.parse(readFileSync(join(stateDirectory,p),'utf8'))):[];
+    // Reach the pending generation behind the held upload lock before cancelling;
+    // an elapsed timer can instead cancel identity/discovery before any state exists.
+    const deadline=Date.now()+3000;
+    while(states().length===0&&Date.now()<deadline)await new Promise(r=>setTimeout(r,10));
+    expect(states().length).toBeGreaterThan(0);expect(states().every(s=>s.generation&&!s.retryAt&&!s.successAt)).toBe(true);
+    const start=Date.now();controller.abort();await cancelling;
+    expect(Date.now()-start).toBeLessThan(1000);expect(uploads).toHaveLength(2);
+    expect(states().every(s=>memoryDue(s)&&!s.retryAt&&!s.successAt)).toBe(true);
+  }finally{controller.abort();await cancelling;release();await owner;server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));if(oldToken===undefined)delete process.env.OPENCRAWL_SESSIONS_TOKEN;else process.env.OPENCRAWL_SESSIONS_TOKEN=oldToken;f.close();}
 });
 test('project or session exclusions pause consolidated memory before network or file reads',async()=>{
   const f=fixture();try {

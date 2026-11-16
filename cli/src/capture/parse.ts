@@ -1,11 +1,11 @@
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {CliError} from '../oauth.ts';
-export type Harness = 'claude-code'|'codex'|'cursor'|'grok-bot'|'antigravity';
+export type Harness = 'claude-code'|'codex'|'cursor'|'grok-bot'|'antigravity'|'devin';
 /** Harnesses that persist a native transcript this collector reads. Cursor and Grok Bot
  * sessions are assembled from hook payloads instead; see cursor.ts and grok-bot.ts. */
-export type TranscriptHarness = Exclude<Harness,'grok-bot'|'cursor'>;
-export const HARNESSES:Harness[] = ['claude-code','codex','cursor','grok-bot','antigravity'];
+export type TranscriptHarness = Exclude<Harness,'grok-bot'|'cursor'|'devin'>;
+export const HARNESSES:Harness[] = ['claude-code','codex','cursor','grok-bot','antigravity','devin'];
 export const readsTranscript = (harness:Harness): harness is TranscriptHarness => harness==='claude-code'||harness==='codex'||harness==='antigravity';
 /** Normalize CLI flag aliases ('agy' -> 'antigravity') before validation. */
 export const normalizeHarness = <T extends string|undefined>(value:T): T|('antigravity' extends T ? 'antigravity' : string) => (value==='agy'?'antigravity':value) as any;
@@ -186,6 +186,9 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
     } else if (record.type === 'turn_context') {kind='turn_metadata';data={turn_id:r.turn_id,model:r.model,model_provider:r.model_provider,effort:r.effort,cwd:r.cwd};}
     else if (record.type === 'compacted') {kind='compaction';data=r;}
     // Raw tool execution evidence, attachments and subagent relationships not always represented as response items.
+    // Code-mode MCP calls retain their real invocation and result in native
+    // item completion metadata; the outer exec call is not the MCP call.
+    else if (record.type === 'event_msg' && r.type === 'item_completed' && r.item?.type === 'McpToolCall') {kind='mcp_tool_call_end';data=r;}
     else if (record.type === 'event_msg' && /exec_command_end|mcp_tool_call_end|collab_|view_image|user_message|token_count/.test(r.type ?? '')) {kind=r.type;data=r;}
     else if (record.type === 'session_meta') {kind='session_metadata';data={id:r.id,source:r.source,originator:r.originator,cli_version:r.cli_version,cwd:r.cwd,git:r.git,forked_from_id:r.forked_from_id,...(typeof r.title==='string'?{title:r.title}:{})};}
   }

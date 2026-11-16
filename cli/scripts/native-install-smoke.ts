@@ -1,25 +1,71 @@
 // Run the published installer shape and generated hooks with no Node/npm/Bun
 // command available. The parent test harness serves only these built artifacts.
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync,existsSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync,existsSync,readdirSync,lstatSync,chmodSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {join,resolve,dirname} from 'node:path';
+import {skillFiles,skillRevision} from '../src/skills.ts';
 import {tmpdir} from 'node:os';
 const root=resolve(import.meta.dir,'..'),pkg=JSON.parse(readFileSync(join(root,'dist/cli/package.json'),'utf8'));
 const scratch=mkdtempSync(join(tmpdir(),'opencrawl-native-smoke-'));
 const systemBin=join(scratch,'system-bin');mkdirSync(systemBin);
 const env={...process.env,HOME:scratch,USERPROFILE:scratch,OPENCRAWL_CONFIG_HOME:join(scratch,'config'),XDG_CONFIG_HOME:join(scratch,'config'),XDG_CACHE_HOME:join(scratch,'cache'),XDG_DATA_HOME:join(scratch,'data'),OPENCRAWL_INSTALL_DIR:join(scratch,'bin'),CLAUDE_CONFIG_DIR:join(scratch,'claude'),CODEX_HOME:join(scratch,'codex'),CURSOR_CONFIG_DIR:join(scratch,'.cursor'),ANTIGRAVITY_HOME:join(scratch,'.gemini'),OPENCRAWL_NO_UPDATE:'1',PATH:systemBin};
+for(const key of Object.keys(env))if(key.startsWith('OPENCRAWL_PLUGIN_')||['OPENCRAWL_TOKEN','OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_AUTH','OPENCRAWL_LAUNCHER','OPENCRAWL_NODE'].includes(key))delete (env as NodeJS.ProcessEnv)[key];
 if(process.platform==='win32')env.PATH=join(process.env.SystemRoot||'C:\\Windows','System32');
 else for(const name of ['sh','curl','uname','sed','grep','awk','sha256sum','shasum','mktemp','rm','tar','gzip','chmod','sysctl','ldd']){const file=Bun.which(name);if(file)symlinkSync(file,join(systemBin,name));}
-async function run(command:string[],extra:Record<string,string>={}){const child=Bun.spawn(command,{env:{...env,...extra},stdout:'pipe',stderr:'pipe'});const [out,err,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);if(code)throw new Error('Native smoke failed: '+err+out);return out.trim();}
+async function run(command:string[],extra:Record<string,string|undefined>={}){const child=Bun.spawn(command,{env:{...env,...extra},stdout:'pipe',stderr:'pipe'});const [out,err,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);if(code)throw new Error('Native smoke failed: '+err+out);return out.trim();}
+function snapshot(paths:string[]) {
+  const rows:unknown[]=[];
+  const visit=(file:string)=>{if(!existsSync(file)){rows.push({file,absent:true});return;}const stat=lstatSync(file);
+    if(stat.isSymbolicLink())throw new Error('Unexpected fixture symlink: '+file);
+    rows.push({file,mode:stat.mode&0o777,directory:stat.isDirectory(),...(stat.isFile()?{sha256:createHash('sha256').update(readFileSync(file)).digest('hex')}:{})});
+    if(stat.isDirectory())for(const name of readdirSync(file).sort())visit(join(file,name));};
+  for(const file of paths)visit(file);return JSON.stringify(rows);
+}
 let corrupt=false,apiRequests=0;
 const server=Bun.serve({hostname:'127.0.0.1',port:0,fetch(request){const name=new URL(request.url).pathname.slice(1);if(!/^(SHA256SUMS|opencrawl-(darwin|linux|win32)-(arm64|x64)\.tgz)$/.test(name)){apiRequests++;return new Response('',{status:404});}if(corrupt&&name.endsWith('.tgz'))return new Response('corrupted download');return new Response(Bun.file(join(root,'native',name)));}});
 try{
   const windows=process.platform==='win32',powershell=windows?join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'):'';
   const installer=windows?[powershell,'-NoProfile','-File',join(root,'install.ps1'),pkg.version]:['/bin/sh',join(root,'install.sh'),pkg.version];
-  const installed=await run(installer,{OPENCRAWL_DOWNLOAD_BASE:server.url.origin});
+  // Both profiles use the same fixture HOME/native roots. Only OpenCrawl's
+  // profile differs; a binary install must not refresh the older global tree.
+  const otherProfile=join(scratch,'other-profile','opencrawl'),otherRunner=join(otherProfile,'startup',windows?'runner.cmd':'runner.sh');
+  mkdirSync(dirname(otherRunner),{recursive:true});writeFileSync(otherRunner,'other profile startup runner\n');
+  const roots=[env.CODEX_HOME,env.CLAUDE_CONFIG_DIR,env.CURSOR_CONFIG_DIR,join(env.ANTIGRAVITY_HOME,'config')];
+  const skills=[join(scratch,'.agents','skills','opencrawl'),...roots.slice(1).map(root=>join(root,'skills','opencrawl'))];
+  const clients=['codex','claude-code','cursor','antigravity'];
+  mkdirSync(join(env.ANTIGRAVITY_HOME,'antigravity-cli'),{recursive:true});
+  for(const [index,directory] of skills.entries()) {
+    mkdirSync(join(directory,'references'),{recursive:true});
+    for(const [name,text] of Object.entries({'SKILL.md':'Previous profile guidance\n','references/setup.md':'Previous profile setup guide\n','.opencrawl-skill.json':JSON.stringify({schemaVersion:2,revision:10,files:{'SKILL.md':'previous'}})})) {
+      const file=join(directory,name);writeFileSync(file,text);chmodSync(file,name==='SKILL.md'?0o640:0o600);
+    }
+    mkdirSync(roots[index]!,{recursive:true});
+    const command='"'+otherRunner+'" session start --harness '+clients[index];
+    const hook={type:'command',command,statusMessage:'OpenCrawl session startup'};
+    const settings=index===2?{version:1,hooks:{sessionStart:[{command}]}}:index===3?{'opencrawl-startup':{SessionStart:[hook]}}:{hooks:{SessionStart:[{hooks:[hook]}]}};
+    writeFileSync(join(roots[index]!,index===1?'settings.json':'hooks.json'),JSON.stringify(settings)+'\n',{mode:0o600});
+  }
+  const sharedPaths=[...roots,skills[0]!,otherProfile],beforeInstall=snapshot(sharedPaths);
+  const installed=await run(installer,{OPENCRAWL_DOWNLOAD_BASE:server.url.origin,OPENCRAWL_NO_UPDATE:undefined});
+  if(snapshot(sharedPaths)!==beforeInstall)throw new Error('Binary installation changed another profile\'s native skills/hooks or file modes');
+  if(existsSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl','startup'))||existsSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl','capture','config.json')))throw new Error('Binary installation enrolled native integrations');
   const entry=join(env.OPENCRAWL_INSTALL_DIR,windows?'opencrawl.cmd':'opencrawl');
   if(!existsSync(entry))throw new Error('Installer did not create its command: '+installed);
   const command=(args:string[])=>windows?[powershell,'-NoProfile','-Command',`& '${entry.replace(/'/g,"''")}' ${args.map(v=>"'"+v.replace(/'/g,"''")+"'").join(' ')}`]:[entry,...args];
   if(await run(command(['--version']))!==pkg.version)throw new Error('Native install version mismatch');
+  // A rejected launcher replacement must not run the finally-path legacy hook
+  // upgrade. This config is synthetic and removed before explicit enrollment.
+  const captureDirectory=join(env.OPENCRAWL_CONFIG_HOME,'opencrawl','capture'),captureFile=join(captureDirectory,'config.json');
+  mkdirSync(captureDirectory,{recursive:true});
+  writeFileSync(captureFile,JSON.stringify({schemaVersion:1,hookMode:'managed',hookOwnership:'global',api:server.url.origin,installationId:'native-install-preservation',owner:{tenantId:'fixture',userId:'fixture'},installedAt:new Date().toISOString(),harnesses:['claude-code'],historyHarnesses:[],roots:{'claude-code':env.CLAUDE_CONFIG_DIR,codex:env.CODEX_HOME},command:[entry]})+'\n',{mode:0o600});
+  const conflictDirectory=join(scratch,'custom-bin'),conflictEntry=join(conflictDirectory,windows?'opencrawl.cmd':'opencrawl');
+  mkdirSync(conflictDirectory);writeFileSync(conflictEntry,'custom command\n',{mode:0o700});
+  const preservedPaths=[...sharedPaths,captureDirectory,conflictEntry],beforeFailure=snapshot(preservedPaths);
+  let conflictRejected=false;
+  try{await run(command(['--json','install']),{OPENCRAWL_INSTALL_DIR:conflictDirectory,OPENCRAWL_NO_UPDATE:undefined});}
+  catch(error){if(!String(error).includes('INSTALL_CONFLICT'))throw error;conflictRejected=true;}
+  if(!conflictRejected||snapshot(preservedPaths)!==beforeFailure)throw new Error('Failed binary installation changed existing capture/native configuration');
+  rmSync(captureFile);
   await run(command(['skills','install','--client','claude-code','--client','codex','--client','cursor','--client','antigravity','--json']));
   const settings=JSON.parse(readFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
   const startup=settings.hooks.SessionStart.flatMap((g:any)=>g.hooks).find((h:any)=>h.statusMessage==='OpenCrawl session startup');
@@ -68,8 +114,10 @@ try{
   // lifecycle too. SessionStart does not schedule update checks, so leave the
   // update opt-out unset without introducing a network/update test bypass.
   const skill=join(env.CLAUDE_CONFIG_DIR,'skills','opencrawl'),manifest=join(skill,'.opencrawl-skill.json');
-  const previous=JSON.parse(readFileSync(manifest,'utf8'));previous.revision=10;
-  writeFileSync(manifest,JSON.stringify(previous));writeFileSync(join(skill,'SKILL.md'),'Previous revision 10 guidance.\n');
+  const previous=JSON.parse(readFileSync(manifest,'utf8'));previous.revision=11;
+  writeFileSync(manifest,JSON.stringify(previous));writeFileSync(join(skill,'SKILL.md'),'Previous revision 11 guidance.\n');
+  mkdirSync(join(skill,'references'),{recursive:true});
+  for(const name of ['search.md','participation.md','codex-listener.md']) writeFileSync(join(skill,'references',name),'old guidance');
   const oldSettings=JSON.parse(readFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
   for(const group of oldSettings.hooks.PreToolUse)if(group.hooks.some((entry:any)=>entry.statusMessage==='OpenCrawl search context'))
     group.matcher='^(?:mcp__opencrawl__opencrawl_search|mcp__plugin_opencrawl_opencrawl__opencrawl_search|mcp__codex_apps__opencrawl_opencrawl_search)$';
@@ -86,10 +134,10 @@ try{
   const refreshed=JSON.parse(readFileSync(join(env.CLAUDE_CONFIG_DIR,'settings.json'),'utf8'));
   const restored=refreshed.hooks.PreToolUse.flatMap((group:any)=>group.hooks).find((entry:any)=>entry.statusMessage==='OpenCrawl search context');
   const restoredMatcher=refreshed.hooks.PreToolUse.find((group:any)=>group.hooks.includes(restored))?.matcher;
-  if(JSON.parse(readFileSync(manifest,'utf8')).revision!==11||!readFileSync(join(skill,'SKILL.md'),'utf8').includes('Prefer opencrawl_search_v1 when advertised, then opencrawl_search, then search.')||
+  if(JSON.parse(readFileSync(manifest,'utf8')).revision!==skillRevision||readFileSync(join(skill,'SKILL.md'),'utf8')!==skillFiles()['SKILL.md']||existsSync(join(skill,'references'))||
     restored?.command!==searchHooks[0]!.entry.command||typeof restoredMatcher!=='string'||!new RegExp(restoredMatcher).test('mcp__opencrawl__opencrawl_search_v1')||
     JSON.parse(activationOut).hookSpecificOutput?.reloadSkills!==true)
-    throw new Error('Native SessionStart did not activate revision 11 guidance and search hooks');
+    throw new Error('Native SessionStart did not activate current guidance and search hooks');
   await run(command(['collect','install','--yes','--defer-auth','--backfill','skip','--harness','claude-code','--json']));
   const capture=JSON.parse(readFileSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl/capture/config.json'),'utf8'));
   if(capture.command.length!==1||capture.command[0]!==entry)throw new Error('Capture did not use the durable native command');
@@ -104,5 +152,5 @@ try{
   corrupt=true;
   let rejected=false;try{await run(installer,{OPENCRAWL_DOWNLOAD_BASE:server.url.origin});}catch(error){if(!String(error).includes('checksum mismatch'))throw error;rejected=true;}
   if(!rejected||await run(command(['--version']))!==pkg.version)throw new Error('Corrupted download was accepted or damaged the active version');
-  console.log('Native installer, versioned launcher, revision 10 to 11 skill/hook activation and capture setup run without Node/npm/Bun on PATH.');
+  console.log('Native installer preserves other-profile skills/hooks and failed-install capture state; explicit skill activation and capture setup run without Node/npm/Bun on PATH.');
 }finally{server.stop(true);rmSync(scratch,{recursive:true,force:true});}

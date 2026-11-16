@@ -1,8 +1,9 @@
 import {CliError} from '../oauth.ts';
+import {transcriptCheckpoint,transcriptIdentity,transcriptIdentityMatches} from './transcript-checkpoint.ts';
 import {createHash} from 'node:crypto';
 import {grokBotEvents, GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
-import {realpathSync, openSync, closeSync, readSync, fstatSync} from 'node:fs';
-import {join, relative, sep, basename} from 'node:path';
+import {realpathSync, openSync, closeSync, readSync, fstatSync, lstatSync} from 'node:fs';
+import {join, relative, resolve, isAbsolute, sep, basename} from 'node:path';
 
 // Cursor and Grok Bot implement the same published hook payload format. Keep
 // its content conversion shared, but their session namespaces are independent.
@@ -12,7 +13,7 @@ export type CursorThoughtHooks = {generation: string; turn: Record<string,number
 /** Native notification turns have no beforeSubmitPrompt. Recognize only the
  * UUID / UUID-modelIndex-suffix pair observed in desktop hooks, so their first
  * thought can establish the turn without guessing at arbitrary generation IDs. */
-export function cursorThoughtState(state: CursorThoughtHooks | undefined, event: any): CursorThoughtHooks | undefined {
+export function cursorThoughtState(state: CursorThoughtHooks | undefined, event: {generation_id?:unknown;hook_event_name?:unknown}): CursorThoughtHooks | undefined {
   const id=event.generation_id;
   if(typeof id!=='string'||!id)return state;
   const generation=event.hook_event_name==='beforeSubmitPrompt'?id:
@@ -34,22 +35,40 @@ export function cursorThoughtDuplicate(state: CursorThoughtHooks | undefined, ev
 /** Cursor CLI omits some content hooks. Reconcile only the active native JSONL
  * named by a hook, inside Cursor's own project transcript directory. Never read
  * a referenced project file or follow a link outside that directory. */
-export function* cursorTranscript(root: string, sessionId: string, file: string, offset=0, ino?: number, checkpoint?: string) {
-  const base=realpathSync(root),path=realpathSync(file),parts=relative(base,path).split(sep);
+function openCursorTranscript(root:string,sessionId:string,file:string) {
+  const supplied=resolve(file),base=realpathSync(root),path=realpathSync(file),parts=relative(base,path).split(sep);
+  const inside=(value:string)=>!isAbsolute(value)&&value.split(sep)[0]!=='..';
+  const spelling=relative(resolve(root),supplied),lexical=inside(spelling)?spelling:relative(base,supplied);
+  if(!inside(lexical)||lstatSync(supplied).isSymbolicLink()||path!==resolve(base,lexical))throw new CliError('CAPTURE_PATH_REJECTED','Cursor transcript redirects outside its supplied native path');
   if(parts.length!==5||parts[0]!=='projects'||parts[2]!=='agent-transcripts'||parts[3]!==sessionId||basename(path)!==sessionId+'.jsonl')
     throw new CliError('CAPTURE_PATH_REJECTED','Cursor transcript outside its native conversation directory');
   const fd=openSync(path,'r');
+  if(!fstatSync(fd).isFile()){closeSync(fd);throw new CliError('CAPTURE_PATH_REJECTED','Cursor transcript is not a regular file');}
+  return fd;
+}
+/** Enrollment reads only a bounded fingerprint and the final newline, never old messages. */
+export function cursorTranscriptBoundary(root:string,sessionId:string,file:string) {
+  const fd=openCursorTranscript(root,sessionId,file);
+  try{
+    const stat=fstatSync(fd),identity=transcriptIdentity(fd),last=Buffer.alloc(1);if(stat.size)readSync(fd,last,0,1,stat.size-1);
+    return {offset:stat.size,ino:stat.ino,identity,checkpoint:transcriptCheckpoint(fd,stat.size),skipPartial:Boolean(stat.size&&last[0]!==10)};
+  }finally{closeSync(fd);}
+}
+export function* cursorTranscript(root: string, sessionId: string, file: string, offset=0, ino?: number, checkpoint?: string,{forwardBoundary=false,skipPartial=false,identity:savedIdentity}:{forwardBoundary?:boolean;skipPartial?:boolean;identity?:string}={}) {
+  const fd=openCursorTranscript(root,sessionId,file);
   try {
-    const stat=fstatSync(fd);if(!stat.isFile())throw new CliError('CAPTURE_PATH_REJECTED','Cursor transcript is not a regular file');
-    // Cursor rewrites earlier records on resume without replacing the inode,
-    // and the rewritten file may already be larger. Verify the saved boundary
-    // before seeking; replay uses the existing content occurrence deduplication.
-    const fingerprint=(end:number)=>{
-      const bytes=Buffer.alloc(Math.min(end,1024));
-      const count=readSync(fd,bytes,0,bytes.length,end-bytes.length);
-      return createHash('sha256').update(bytes.subarray(0,count)).digest('hex');
-    };
-    if(offset>stat.size||ino!==undefined&&ino!==stat.ino||offset>0&&(!checkpoint||checkpoint!==fingerprint(offset)))offset=0;
+    const stat=fstatSync(fd),identity=transcriptIdentity(fd);
+    const fingerprint=(end:number)=>transcriptCheckpoint(fd,end);
+    // Replaying a rewritten prefix is safe only when its original messages were
+    // already observed. A consent boundary has deliberately never parsed them.
+    const identityChanged=forwardBoundary?!transcriptIdentityMatches(savedIdentity,identity):savedIdentity!==undefined?savedIdentity!==identity:ino!==undefined&&ino!==stat.ino;
+    const changed=identityChanged||offset>stat.size||offset>0&&(!checkpoint||checkpoint!==fingerprint(offset));
+    if(changed&&forwardBoundary){
+      const last=Buffer.alloc(1);if(stat.size)readSync(fd,last,0,1,stat.size-1);
+      yield {start:stat.size,offset:stat.size,ino:stat.ino,identity,checkpoint:fingerprint(stat.size),data:null,forwardRebased:true,skipPartial:Boolean(stat.size&&last[0]!==10)};
+      return;
+    }
+    if(changed)offset=0;
     let position=offset,pending=Buffer.alloc(0);
     const buffer=Buffer.alloc(64*1024);
     while(position<stat.size) {
@@ -59,6 +78,7 @@ export function* cursorTranscript(root: string, sessionId: string, file: string,
       while((end=pending.indexOf(10))>=0) {
         const bytes=pending.subarray(0,end),start=offset;offset+=end+1;pending=pending.subarray(end+1);
         if(bytes.length>8*1024*1024)throw new CliError('CAPTURE_LINE_TOO_LARGE','Cursor transcript record exceeds 8 MiB; cursor retained');
+        if(skipPartial){skipPartial=false;yield {start,offset,ino:stat.ino,identity,checkpoint:fingerprint(offset),data:null,forwardRebased:false,skipPartial:false};continue;}
         let record;try{record=JSON.parse(bytes.toString('utf8'));}catch{throw new CliError('CAPTURE_INVALID_RECORD','Invalid Cursor transcript record; cursor retained');}
         // Tool records have no IDs/results in this transcript; hooks retain them.
         let data=null;
@@ -66,7 +86,7 @@ export function* cursorTranscript(root: string, sessionId: string, file: string,
           const content=record.message.content.filter((b:any)=>b&&['text','image','image_url','input_image'].includes(b.type));
           if(content.length)data={role:record.role,content};
         }
-        yield {start,offset,ino:stat.ino,checkpoint:fingerprint(offset),data};
+        yield {start,offset,ino:stat.ino,identity,checkpoint:fingerprint(offset),data,forwardRebased:false,skipPartial:false};
       }
       if(pending.length>8*1024*1024)throw new CliError('CAPTURE_LINE_TOO_LARGE','Cursor transcript record exceeds 8 MiB; cursor retained');
     }

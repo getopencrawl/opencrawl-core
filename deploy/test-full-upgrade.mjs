@@ -21,6 +21,7 @@ const seedDir=join(scratch,'seed'),fixtureDir=join(scratch,'fixture');mkdirSync(
 copyFileSync(join(root,'dev/seed.mts'),join(fixtureDir,'seed.mts'));
 copyFileSync(join(root,'deploy/test-full-large-session.mjs'),join(fixtureDir,'large-upgrade.mjs'));
 copyFileSync(join(root,'deploy/test-full-app-state.mjs'),join(fixtureDir,'state-upgrade.mjs'));
+copyFileSync(join(root,'test/fixtures/setup-state.mjs'),join(fixtureDir,'setup-state-fixture.mjs'));
 run('git',['fetch','--depth','1','origin',old]);run('git',['checkout','--detach',old]);
 let project='ocdev-0123456789ab',envFile=join(root,'deploy/.env'),override;
 if(kind==='deploy'){
@@ -145,15 +146,16 @@ run(kind==='dev'?'bash':'sh',[kind==='dev'?'dev/up':'deploy/up.sh',...(!airbyte?
 assert.ok(readFileSync(join(backup,'manifest.json')).equals(manifest));
 journal=JSON.parse(readFileSync(journalFile,'utf8'));assert.equal(journal.phase,'complete');
 assert.ok(readFileSync(join(seedDir,'seed-input.json')).equals(originalInput));verify(true);checkIdentities();largeSession('after');
+applicationState('new-writes');
 assert.equal(compose(['ps','--status','running','-q','temporal-db'],{capture:true}).split('\n').filter(Boolean).length,1);
 const legacy=docker(['ps','-q','--filter',`label=com.docker.compose.project=${project}`,'--filter','label=com.docker.compose.service=app-db'],{capture:true});assert.equal(legacy,'');
 const after=JSON.parse(run(process.execPath,['deploy/upgrade.mjs','--installation',kind,'--check'],{capture:true}).split('\n').at(-1));assert.equal(after.needed,false);
-compose(['restart','app','worker']);compose(['up','-d','--wait','--wait-timeout','600','app','worker']);verify(true);largeSession('verify');
+compose(['restart','app','worker']);compose(['up','-d','--wait','--wait-timeout','600','app','worker']);verify(true);largeSession('verify');applicationState('verify-new');
 // A subsequent release must retain newly accepted events, not recopy a stopped
 // pre-migration app-db. The disposable commit has exactly the same source tree.
 run('git',['-c','user.name=Upgrade acceptance','-c','user.email=upgrade@example.com','commit','--allow-empty','-m','Disposable next-release upgrade acceptance']);
 run(kind==='dev'?'bash':'sh',[kind==='dev'?'dev/up':'deploy/up.sh',...(!airbyte?['--no-airbyte']:[])]);
-const nextJournal=JSON.parse(readFileSync(journalFile,'utf8'));assert.equal(nextJournal.phase,'complete');assert.notEqual(nextJournal.target,target);assert.equal(nextJournal.legacyDatabase,null);verify(true);checkIdentities();largeSession('verify');
+const nextJournal=JSON.parse(readFileSync(journalFile,'utf8'));assert.equal(nextJournal.phase,'complete');assert.notEqual(nextJournal.target,target);assert.equal(nextJournal.legacyDatabase,null);verify(true);checkIdentities();largeSession('verify');applicationState('verify-new');
 // Restore the pre-upgrade matched data AND immutable old runtime images.
 if(airbyte)docker(['stop',project+'-control-plane']);
 compose(['down','--volumes','--remove-orphans']);
@@ -199,7 +201,7 @@ applicationState('restored',recoveryChecks);
 if(stateFixture)docker([...recovery,'up','-d','--wait','--wait-timeout','600','worker']);
 docker([...recoveryChecks,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(airbyte?['-e','OPENCRAWL_UPGRADE_FRESH_SYNC=true']:['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
 largeSession('restored',recoveryChecks);
-const report={ok:true,imageRecovery,historicalDeploySingleImagePrebuild:kind==='deploy',largeSessionCeilingReproducedAndRemoved:large&&legacyCeiling,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,freshAirbyteSyncAfterUpgradeAndRestore:airbyte,applicationStateFixture:stateFixture?{sourceObjects:JSON.parse(readFileSync(join(seedDir,'app-state-fixture.json'))).objects.length,sourceReceipts:true,retainedSources:true,privacyAndFences:true,pendingInvitation:true,matchedRestore:true}:null,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
+const report={ok:true,imageRecovery,historicalDeploySingleImagePrebuild:kind==='deploy',largeSessionCeilingReproducedAndRemoved:large&&legacyCeiling,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,freshAirbyteSyncAfterUpgradeAndRestore:airbyte,applicationStateFixture:stateFixture?{sourceObjects:JSON.parse(readFileSync(join(seedDir,'app-state-fixture.json'))).objects.length,sourceReceipts:true,retainedSources:true,privacyAndFences:true,pendingInvitation:true,matchedRestore:true,setupEvidenceRetained:true,setupScopeIsolated:true,setupNewWriteSurvivesUpgrade:true}:null,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
 writeFileSync(join(process.env.RUNNER_TEMP,'full-upgrade-receipt.json'),JSON.stringify(report,null,2));
 docker([...recovery,'down','--volumes','--remove-orphans']);
 if(airbyte)run('bash',['dev/up','reset','--yes']);

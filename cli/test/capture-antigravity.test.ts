@@ -10,7 +10,7 @@ import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 import {createSessionIngest,digest} from '../../dist/src/sessions/ingest.mjs';
 import {batchDocuments} from '../../dist/src/sessions/indexer.mjs';
 import {installCapture,uninstallCapture,upgradeCaptureHooks} from '../src/capture/install.ts';
-import {captureDir,captureStatus,readCaptureConfig,captureTranscript,flushCaptures} from '../src/capture/runtime.ts';
+import {captureDir,captureStatus,readCaptureConfig,captureTranscript,captureHook,drainCaptureNotices,flushCaptures} from '../src/capture/runtime.ts';
 import {backfill,backfillPreview,chooseBackfill} from '../src/capture/backfill.ts';
 import {excludeCapture} from '../src/capture/controls.ts';
 import {parseRecord,normalizeHarness,finalizeEventIdentity} from '../src/capture/parse.ts';
@@ -289,6 +289,40 @@ test('auto-detection, agy alias, hooks.json coexistence, rollback and uninstall 
  expect(afterUninstall['opencrawl-startup']).toEqual(userHooks['opencrawl-startup']);
 }));
 
+for(const withTranscript of [false,true])test(`Antigravity completion notice uploads a live hook batch ${withTranscript?'with':'without'} a transcript`,async()=>fixture(async f=>{
+ await installCapture(f.api,{home:f.dir,command:[process.execPath,'-e',''],harnesses:['antigravity']});
+ const config=readCaptureConfig()!,sessionId='conv-native-verification';
+ const logs=join(f.dir,'gemini','antigravity-cli','brain',sessionId,'.system_generated','logs');
+ const transcriptPath=join(logs,'transcript_full.jsonl');
+ if(withTranscript){
+  mkdirSync(logs,{recursive:true});
+  writeFileSync(transcriptPath,JSON.stringify({step_index:95,type:'GENERIC',status:'DONE',created_at:new Date().toISOString(),content:'Native verification result'})+'\n');
+ }
+ const payload={hookEventName:'PostToolUse',conversationId:sessionId,stepIdx:95,
+  ...(withTranscript?{transcriptPath}:{}),
+  toolCall:{name:'call_mcp_tool',args:{ServerName:'opencrawl-012345abcdef_opencrawl',ToolName:'verify_installation',Arguments:{client:'antigravity',installationId:config.installationId,proofId:'fixture-proof'}}}};
+ await captureHook('antigravity',payload);
+ expect(f.batches).toHaveLength(0); // The native callback only hands off a durable notice.
+ expect(captureStatus().pendingHooks).toBe(1);
+ await drainCaptureNotices();
+ await flushCaptures();
+ const hooks=f.batches.filter(batch=>batch.events.some((event:any)=>event.kind==='hook'));
+ expect(hooks).toHaveLength(1);
+ expect(hooks[0]).toMatchObject({owner:f.principal,installationId:config.installationId,harness:'antigravity',sessionId,captureMode:'live'});
+ const hookEvents=hooks[0].events.filter((event:any)=>event.kind==='hook');
+ expect(hookEvents).toHaveLength(1);
+ expect(hookEvents[0]).toMatchObject({kind:'hook',data:payload});
+ const transcripts=f.batches.filter(batch=>batch.events.some((event:any)=>event.kind==='tool_result'));
+ expect(transcripts).toHaveLength(withTranscript?1:0);
+ expect(f.batches.every(batch=>batch.captureMode==='live')).toBe(true);
+ expect(captureStatus().pendingHooks).toBe(0);
+ expect(captureStatus().queued).toBe(0);
+ // Explicitly marking live work must not enroll a paused installation.
+ writeFileSync(join(captureDir(),'config.json'),JSON.stringify({...config,disabled:true}));
+ await captureHook('antigravity',payload);
+ expect(captureStatus().pendingHooks).toBe(0);
+}));
+
 test('synchronous Antigravity hooks prefer transcript_full.jsonl, capture media, ignore scratch jsonl, honor exclusions and never block',async()=>fixture(async f=>{
  const cli=resolve(import.meta.dir,'../src/cli.ts');
  await installCapture(f.api,{home:f.dir,command:[process.execPath,cli],harnesses:['antigravity']});
@@ -394,6 +428,7 @@ test('backfill discovers CLI, desktop and IDE Antigravity surfaces, prefers tran
 
  const imported=await backfill(f.api,'antigravity',true);
  expect(imported.processed).toBe(3);
+ expect(f.batches.every(batch=>batch.captureMode==='history')).toBe(true);
  expect(f.batches.map(b=>[b.sessionId,b.origin]).sort()).toEqual([
   ['hist-antigravity','desktop'],
   ['hist-antigravity-cli','cli'],

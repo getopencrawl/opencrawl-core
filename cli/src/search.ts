@@ -47,7 +47,7 @@ export function searchInput(query: string | undefined, values: Record<string, un
     try{current=JSON.parse(String(values['current-session']));}catch{throw new CliError('INVALID_USAGE','--current-session requires {"harness":"codex","sessionId":"native-chat-id"}.',64);}
     if(!current||typeof current!=='object'||Array.isArray(current))throw new CliError('INVALID_USAGE','Invalid --current-session.',64);
     const identity=current as Record<string,unknown>;
-    if(Object.keys(identity).some(key=>!['harness','sessionId'].includes(key))||!['codex','claude-code','cursor','antigravity'].includes(String(identity.harness))||typeof identity.sessionId!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/.test(identity.sessionId))throw new CliError('INVALID_USAGE','Use the exact native chat ID and harness in --current-session; no user or workspace fields.',64);
+    if(Object.keys(identity).some(key=>!['harness','sessionId'].includes(key))||!['codex','claude-code','cursor','antigravity','devin'].includes(String(identity.harness))||typeof identity.sessionId!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/.test(identity.sessionId))throw new CliError('INVALID_USAGE','Use the exact native chat ID and harness in --current-session; no user or workspace fields.',64);
     extra.currentSession=identity;
   }
   for(const [flag,key] of [['include-current-session','includeCurrentSession'],['include-tool-outputs','includeToolOutputs']] as const){
