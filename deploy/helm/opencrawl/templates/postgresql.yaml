@@ -1,0 +1,74 @@
+{{- if .Values.postgresql.enabled }}
+{{- $name := include "opencrawl.name" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-postgres-init
+  labels: {{ include "opencrawl.labels" . | nindent 4 }}
+data:
+  init.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    # Values are constrained to SQL identifiers by values.schema.json.
+    {{- range $i, $db := .Values.postgresql.databases }}
+    psql --username "$POSTGRES_USER" --dbname postgres --set ON_ERROR_STOP=1 --set password="$DB_PASSWORD_{{ $i }}" <<'SQL'
+    SELECT format('CREATE ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD %L', '{{ $db.user }}', :'password') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='{{ $db.user }}') \gexec
+    CREATE DATABASE {{ $db.name | quote }} OWNER {{ $db.user | quote }};
+    REVOKE ALL ON DATABASE {{ $db.name | quote }} FROM PUBLIC;
+    SQL
+    {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-postgresql
+  labels: {{ include "opencrawl.labels" . | nindent 4 }}
+spec:
+  ports: [{name: postgres, port: 5432}]
+  selector: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: postgresql}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}-postgresql
+  labels: {{ include "opencrawl.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $name }}-postgresql
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: postgresql}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: opencrawl, app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: postgresql}
+    spec:
+      {{- include "opencrawl.scheduling" . | nindent 6 }}
+      automountServiceAccountToken: false
+      securityContext: {fsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: postgres
+          image: {{ .Values.postgresql.image | quote }}
+          args: ["-c", {{ printf "max_connections=%v" .Values.postgresql.maxConnections | quote }}]
+          securityContext: {runAsUser: 999, runAsGroup: 999, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          env:
+            - {name: POSTGRES_USER, value: postgres}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ required "postgresql.existingSecret required" .Values.postgresql.existingSecret }}, key: POSTGRES_PASSWORD}}
+            {{- range $i, $db := .Values.postgresql.databases }}
+            - name: DB_PASSWORD_{{ $i }}
+              valueFrom: {secretKeyRef: {name: {{ $.Values.postgresql.existingSecret }}, key: {{ $db.passwordKey }}}}
+            {{- end }}
+          ports: [{name: postgres, containerPort: 5432}]
+          readinessProbe: {exec: {command: [pg_isready, -U, postgres]}, periodSeconds: 5}
+          livenessProbe: {exec: {command: [pg_isready, -U, postgres]}, initialDelaySeconds: 30, periodSeconds: 10}
+          resources: {{ toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+      volumes:
+        - name: init
+          configMap: {name: {{ $name }}-postgres-init, defaultMode: 0555}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {{ include "opencrawl.storage" (dict "root" . "size" .Values.postgresql.size) | nindent 8 }}
+{{- end }}

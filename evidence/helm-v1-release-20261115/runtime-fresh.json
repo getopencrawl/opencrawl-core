@@ -1,0 +1,138 @@
+{
+  "installations": [
+    {
+      "namespace": "oc-bundled",
+      "release": "oc",
+      "pods": [
+        {
+          "name": "oc-app-6b85d6bd87-w7xps",
+          "uid": "5fcbc85f-206e-42d6-9c08-e84f8d40c0a9",
+          "component": "app",
+          "images": [
+            {
+              "ready": true,
+              "statusImage": "sha256:0ac906a74733fb5d793ec9bf0dae8b15f6097dfc598f1489d5c49bd1704e2c20",
+              "imageID": "ghcr.io/getopencrawl/opencrawl-core@sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+            }
+          ],
+          "imagePullSecrets": []
+        },
+        {
+          "name": "oc-worker-6bc469999b-tksg9",
+          "uid": "94615966-e564-4580-8a57-67914e00a498",
+          "component": "worker",
+          "images": [
+            {
+              "ready": true,
+              "statusImage": "sha256:0ac906a74733fb5d793ec9bf0dae8b15f6097dfc598f1489d5c49bd1704e2c20",
+              "imageID": "ghcr.io/getopencrawl/opencrawl-core@sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+            }
+          ],
+          "imagePullSecrets": []
+        }
+      ],
+      "activation": {
+        "connectorCatchup": {
+          "required": false,
+          "completed": true,
+          "connections": 0
+        }
+      }
+    },
+    {
+      "namespace": "oc-external-pg",
+      "release": "lego",
+      "pods": [
+        {
+          "name": "lego-app-8dfbbfdd8-kjfcm",
+          "uid": "e90e3073-4971-4b02-81f1-69f8c826cc1f",
+          "component": "app",
+          "images": [
+            {
+              "ready": true,
+              "statusImage": "sha256:0ac906a74733fb5d793ec9bf0dae8b15f6097dfc598f1489d5c49bd1704e2c20",
+              "imageID": "ghcr.io/getopencrawl/opencrawl-core@sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+            }
+          ],
+          "imagePullSecrets": []
+        },
+        {
+          "name": "lego-worker-85cf4d567f-rqpj2",
+          "uid": "23330e5d-920d-4cdc-9af3-0d00155f25c6",
+          "component": "worker",
+          "images": [
+            {
+              "ready": true,
+              "statusImage": "sha256:0ac906a74733fb5d793ec9bf0dae8b15f6097dfc598f1489d5c49bd1704e2c20",
+              "imageID": "ghcr.io/getopencrawl/opencrawl-core@sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+            }
+          ],
+          "imagePullSecrets": []
+        }
+      ],
+      "activation": {
+        "connectorCatchup": {
+          "required": false,
+          "completed": true,
+          "connections": 0
+        }
+      }
+    },
+    {
+      "namespace": "oc-external",
+      "release": "external",
+      "pods": [
+        {
+          "name": "external-app-76bfc8f564-f9dhl",
+          "uid": "41d562c2-3064-4228-8aac-35bffb541f04",
+          "component": "app",
+          "images": [
+            {
+              "ready": true,
+              "statusImage": "sha256:0ac906a74733fb5d793ec9bf0dae8b15f6097dfc598f1489d5c49bd1704e2c20",
+              "imageID": "ghcr.io/getopencrawl/opencrawl-core@sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+            }
+          ],
+          "imagePullSecrets": []
+        },
+        {
+          "name": "external-worker-587769b795-dff7k",
+          "uid": "f1b27f18-759d-4ce8-8f48-7ceed8334767",
+          "component": "worker",
+          "images": [
+            {
+              "ready": true,
+              "statusImage": "sha256:0ac906a74733fb5d793ec9bf0dae8b15f6097dfc598f1489d5c49bd1704e2c20",
+              "imageID": "ghcr.io/getopencrawl/opencrawl-core@sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+            }
+          ],
+          "imagePullSecrets": []
+        }
+      ],
+      "activation": {
+        "connectorCatchup": {
+          "required": false,
+          "completed": true,
+          "connections": 0
+        }
+      }
+    }
+  ],
+  "kit": {
+    "schemaVersion": 1,
+    "version": "0.1.0",
+    "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+    "image": {
+      "repository": "ghcr.io/getopencrawl/opencrawl-core",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+    },
+    "githubConnector": {
+      "repository": "ghcr.io/getopencrawl/source-github",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:3dea55464e16fec0b6cf949c48ad2757310c14d6816c8cdbdd7b4bd7623397d5"
+    },
+    "checkedAt": "2026-11-16T03:22:23.123Z"
+  },
+  "checkedAt": "2026-11-16T03:44:41.191726+00:00"
+}

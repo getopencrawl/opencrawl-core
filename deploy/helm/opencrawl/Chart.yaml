@@ -1,0 +1,9 @@
+apiVersion: v2
+name: opencrawl
+description: Single-instance OpenCrawl with independently replaceable infrastructure
+version: 0.1.0
+appVersion: "0.4.1"
+type: application
+kubeVersion: ">=1.30.0-0"
+annotations:
+  artifacthub.io/license: Apache-2.0

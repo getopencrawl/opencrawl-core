@@ -1,0 +1,318 @@
+{
+  "round": "fresh",
+  "release": {
+    "schemaVersion": 1,
+    "version": "0.1.0",
+    "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+    "image": {
+      "repository": "ghcr.io/getopencrawl/opencrawl-core",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+    },
+    "githubConnector": {
+      "repository": "ghcr.io/getopencrawl/source-github",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:3dea55464e16fec0b6cf949c48ad2757310c14d6816c8cdbdd7b4bd7623397d5"
+    },
+    "checkedAt": "2026-11-16T03:22:23.123Z"
+  },
+  "installations": [
+    {
+      "configuration": "bundled",
+      "result": {
+        "schemaVersion": 1,
+        "status": "passed",
+        "exercise": true,
+        "existing": false,
+        "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+        "organization": "org_676234570fb060ae4675d549",
+        "checkedAt": "2026-11-16T03:42:46.325Z",
+        "results": [
+          {
+            "name": "postgresql",
+            "status": "passed",
+            "elapsedMs": 1092
+          },
+          {
+            "name": "object-storage",
+            "status": "passed",
+            "elapsedMs": 27
+          },
+          {
+            "name": "temporal-namespace",
+            "status": "passed",
+            "elapsedMs": 69
+          },
+          {
+            "name": "worker-poller",
+            "status": "passed",
+            "elapsedMs": 17
+          },
+          {
+            "name": "opensearch-access",
+            "status": "passed",
+            "elapsedMs": 38,
+            "detail": "Index is not initialized yet; exercise mode verifies its creation and tenant binding."
+          },
+          {
+            "name": "application-health",
+            "status": "passed",
+            "elapsedMs": 5
+          },
+          {
+            "name": "anonymous-denied",
+            "status": "passed",
+            "elapsedMs": 4
+          },
+          {
+            "name": "airbyte-workspace",
+            "status": "passed",
+            "elapsedMs": 45
+          },
+          {
+            "name": "login-and-device-grant",
+            "status": "passed",
+            "elapsedMs": 5635
+          },
+          {
+            "name": "capture-idempotency-and-conflict",
+            "status": "passed",
+            "elapsedMs": 386
+          },
+          {
+            "name": "temporal-indexing",
+            "status": "passed",
+            "elapsedMs": 561
+          },
+          {
+            "name": "opensearch-index-binding",
+            "status": "passed",
+            "elapsedMs": 7
+          },
+          {
+            "name": "mcp-search",
+            "status": "passed",
+            "elapsedMs": 2191
+          },
+          {
+            "name": "browser-scope-and-origin",
+            "status": "passed",
+            "elapsedMs": 10
+          },
+          {
+            "name": "refresh-grant",
+            "status": "passed",
+            "elapsedMs": 21
+          }
+        ]
+      },
+      "command": [
+        "node",
+        "verify.mts",
+        "--config",
+        "bundled.json",
+        "--exercise"
+      ]
+    },
+    {
+      "configuration": "mixed",
+      "result": {
+        "schemaVersion": 1,
+        "status": "passed",
+        "exercise": true,
+        "existing": false,
+        "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+        "organization": "org_3162e65ee807874174db6bb8",
+        "checkedAt": "2026-11-16T03:44:01.341Z",
+        "results": [
+          {
+            "name": "postgresql",
+            "status": "passed",
+            "elapsedMs": 2121
+          },
+          {
+            "name": "object-storage",
+            "status": "passed",
+            "elapsedMs": 31
+          },
+          {
+            "name": "temporal-namespace",
+            "status": "passed",
+            "elapsedMs": 62
+          },
+          {
+            "name": "worker-poller",
+            "status": "passed",
+            "elapsedMs": 24
+          },
+          {
+            "name": "opensearch-access",
+            "status": "passed",
+            "elapsedMs": 13,
+            "detail": "Index is not initialized yet; exercise mode verifies its creation and tenant binding."
+          },
+          {
+            "name": "application-health",
+            "status": "passed",
+            "elapsedMs": 4
+          },
+          {
+            "name": "anonymous-denied",
+            "status": "passed",
+            "elapsedMs": 3
+          },
+          {
+            "name": "airbyte-workspace",
+            "status": "passed",
+            "elapsedMs": 44
+          },
+          {
+            "name": "login-and-device-grant",
+            "status": "passed",
+            "elapsedMs": 5568
+          },
+          {
+            "name": "capture-idempotency-and-conflict",
+            "status": "passed",
+            "elapsedMs": 211
+          },
+          {
+            "name": "temporal-indexing",
+            "status": "passed",
+            "elapsedMs": 255
+          },
+          {
+            "name": "opensearch-index-binding",
+            "status": "passed",
+            "elapsedMs": 9
+          },
+          {
+            "name": "mcp-search",
+            "status": "passed",
+            "elapsedMs": 2103
+          },
+          {
+            "name": "browser-scope-and-origin",
+            "status": "passed",
+            "elapsedMs": 7
+          },
+          {
+            "name": "refresh-grant",
+            "status": "passed",
+            "elapsedMs": 21
+          }
+        ]
+      },
+      "command": [
+        "node",
+        "verify.mts",
+        "--config",
+        "mixed.json",
+        "--exercise"
+      ]
+    },
+    {
+      "configuration": "external",
+      "result": {
+        "schemaVersion": 1,
+        "status": "passed",
+        "exercise": true,
+        "existing": false,
+        "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+        "organization": "org_9b42b20d3ad83fbe8ff8cb53",
+        "checkedAt": "2026-11-16T03:44:28.119Z",
+        "results": [
+          {
+            "name": "postgresql",
+            "status": "passed",
+            "elapsedMs": 2105
+          },
+          {
+            "name": "object-storage",
+            "status": "passed",
+            "elapsedMs": 31
+          },
+          {
+            "name": "temporal-namespace",
+            "status": "passed",
+            "elapsedMs": 75
+          },
+          {
+            "name": "worker-poller",
+            "status": "passed",
+            "elapsedMs": 18
+          },
+          {
+            "name": "opensearch-access",
+            "status": "passed",
+            "elapsedMs": 16,
+            "detail": "Index is not initialized yet; exercise mode verifies its creation and tenant binding."
+          },
+          {
+            "name": "application-health",
+            "status": "passed",
+            "elapsedMs": 4
+          },
+          {
+            "name": "anonymous-denied",
+            "status": "passed",
+            "elapsedMs": 4
+          },
+          {
+            "name": "airbyte-workspace",
+            "status": "passed",
+            "elapsedMs": 47
+          },
+          {
+            "name": "login-and-device-grant",
+            "status": "passed",
+            "elapsedMs": 5533
+          },
+          {
+            "name": "capture-idempotency-and-conflict",
+            "status": "passed",
+            "elapsedMs": 198
+          },
+          {
+            "name": "temporal-indexing",
+            "status": "passed",
+            "elapsedMs": 256
+          },
+          {
+            "name": "opensearch-index-binding",
+            "status": "passed",
+            "elapsedMs": 9
+          },
+          {
+            "name": "mcp-search",
+            "status": "passed",
+            "elapsedMs": 2104
+          },
+          {
+            "name": "browser-scope-and-origin",
+            "status": "passed",
+            "elapsedMs": 10
+          },
+          {
+            "name": "refresh-grant",
+            "status": "passed",
+            "elapsedMs": 21
+          }
+        ]
+      },
+      "command": [
+        "node",
+        "verify.mts",
+        "--config",
+        "external.json",
+        "--exercise"
+      ]
+    }
+  ],
+  "nativeHelmTests": {
+    "bundled": true,
+    "mixed": true,
+    "external": true
+  },
+  "checkedAt": "2026-11-16T03:44:36.636677+00:00"
+}

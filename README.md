@@ -47,7 +47,9 @@ cd opencrawl-core
 Open **http://localhost:8092**, sign in with the login printed in your terminal,
 and paste the onboarding setup prompt into your coding agent.
 
-For a shared deployment, see [self-hosting](docs/self-host.md).
+For Kubernetes, use the [Helm self-host kit](deploy/helm/README.md) with published
+images and bundled or existing services. For a single Docker host, see
+[self-hosting](docs/self-host.md).
 Prefer a managed workspace? Try [OpenCrawl Cloud](https://getopencrawl.com).
 
 Capture is opt-in. Sessions and memories are team-visible by default and can

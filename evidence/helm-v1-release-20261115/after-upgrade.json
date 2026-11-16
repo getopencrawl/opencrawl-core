@@ -1,0 +1,297 @@
+{
+  "round": "after-upgrade",
+  "release": {
+    "schemaVersion": 1,
+    "version": "0.1.0",
+    "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+    "image": {
+      "repository": "ghcr.io/getopencrawl/opencrawl-core",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+    },
+    "githubConnector": {
+      "repository": "ghcr.io/getopencrawl/source-github",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:3dea55464e16fec0b6cf949c48ad2757310c14d6816c8cdbdd7b4bd7623397d5"
+    },
+    "checkedAt": "2026-11-16T03:22:23.123Z"
+  },
+  "installations": [
+    {
+      "configuration": "bundled",
+      "result": {
+        "schemaVersion": 1,
+        "status": "passed",
+        "exercise": true,
+        "existing": true,
+        "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+        "organization": "org_676234570fb060ae4675d549",
+        "checkedAt": "2026-11-16T03:47:28.865Z",
+        "results": [
+          {
+            "name": "postgresql",
+            "status": "passed",
+            "elapsedMs": 2092
+          },
+          {
+            "name": "object-storage",
+            "status": "passed",
+            "elapsedMs": 29
+          },
+          {
+            "name": "temporal-namespace",
+            "status": "passed",
+            "elapsedMs": 67
+          },
+          {
+            "name": "worker-poller",
+            "status": "passed",
+            "elapsedMs": 16
+          },
+          {
+            "name": "opensearch-access",
+            "status": "passed",
+            "elapsedMs": 11
+          },
+          {
+            "name": "application-health",
+            "status": "passed",
+            "elapsedMs": 4
+          },
+          {
+            "name": "anonymous-denied",
+            "status": "passed",
+            "elapsedMs": 3
+          },
+          {
+            "name": "airbyte-workspace",
+            "status": "passed",
+            "elapsedMs": 37
+          },
+          {
+            "name": "login-and-device-grant",
+            "status": "passed",
+            "elapsedMs": 5193
+          },
+          {
+            "name": "opensearch-index-binding",
+            "status": "passed",
+            "elapsedMs": 6
+          },
+          {
+            "name": "mcp-search",
+            "status": "passed",
+            "elapsedMs": 74
+          },
+          {
+            "name": "browser-scope-and-origin",
+            "status": "passed",
+            "elapsedMs": 9
+          },
+          {
+            "name": "refresh-grant",
+            "status": "passed",
+            "elapsedMs": 22
+          }
+        ]
+      },
+      "command": [
+        "node",
+        "verify.mts",
+        "--config",
+        "bundled.json",
+        "--exercise",
+        "--existing",
+        "--deny-marker",
+        "helmcheck87d052a3f7c9cc1a25cdeb2d"
+      ],
+      "deniedInstallation": "mixed"
+    },
+    {
+      "configuration": "mixed",
+      "result": {
+        "schemaVersion": 1,
+        "status": "passed",
+        "exercise": true,
+        "existing": true,
+        "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+        "organization": "org_3162e65ee807874174db6bb8",
+        "checkedAt": "2026-11-16T03:47:53.166Z",
+        "results": [
+          {
+            "name": "postgresql",
+            "status": "passed",
+            "elapsedMs": 2106
+          },
+          {
+            "name": "object-storage",
+            "status": "passed",
+            "elapsedMs": 36
+          },
+          {
+            "name": "temporal-namespace",
+            "status": "passed",
+            "elapsedMs": 62
+          },
+          {
+            "name": "worker-poller",
+            "status": "passed",
+            "elapsedMs": 21
+          },
+          {
+            "name": "opensearch-access",
+            "status": "passed",
+            "elapsedMs": 17
+          },
+          {
+            "name": "application-health",
+            "status": "passed",
+            "elapsedMs": 4
+          },
+          {
+            "name": "anonymous-denied",
+            "status": "passed",
+            "elapsedMs": 3
+          },
+          {
+            "name": "airbyte-workspace",
+            "status": "passed",
+            "elapsedMs": 43
+          },
+          {
+            "name": "login-and-device-grant",
+            "status": "passed",
+            "elapsedMs": 5181
+          },
+          {
+            "name": "opensearch-index-binding",
+            "status": "passed",
+            "elapsedMs": 9
+          },
+          {
+            "name": "mcp-search",
+            "status": "passed",
+            "elapsedMs": 66
+          },
+          {
+            "name": "browser-scope-and-origin",
+            "status": "passed",
+            "elapsedMs": 6
+          },
+          {
+            "name": "refresh-grant",
+            "status": "passed",
+            "elapsedMs": 16
+          }
+        ]
+      },
+      "command": [
+        "node",
+        "verify.mts",
+        "--config",
+        "mixed.json",
+        "--exercise",
+        "--existing",
+        "--deny-marker",
+        "helmcheck70a7b4cf32f69cf9b0494278"
+      ],
+      "deniedInstallation": "external"
+    },
+    {
+      "configuration": "external",
+      "result": {
+        "schemaVersion": 1,
+        "status": "passed",
+        "exercise": true,
+        "existing": true,
+        "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+        "organization": "org_9b42b20d3ad83fbe8ff8cb53",
+        "checkedAt": "2026-11-16T03:48:18.222Z",
+        "results": [
+          {
+            "name": "postgresql",
+            "status": "passed",
+            "elapsedMs": 2127
+          },
+          {
+            "name": "object-storage",
+            "status": "passed",
+            "elapsedMs": 32
+          },
+          {
+            "name": "temporal-namespace",
+            "status": "passed",
+            "elapsedMs": 68
+          },
+          {
+            "name": "worker-poller",
+            "status": "passed",
+            "elapsedMs": 20
+          },
+          {
+            "name": "opensearch-access",
+            "status": "passed",
+            "elapsedMs": 13
+          },
+          {
+            "name": "application-health",
+            "status": "passed",
+            "elapsedMs": 4
+          },
+          {
+            "name": "anonymous-denied",
+            "status": "passed",
+            "elapsedMs": 4
+          },
+          {
+            "name": "airbyte-workspace",
+            "status": "passed",
+            "elapsedMs": 34
+          },
+          {
+            "name": "login-and-device-grant",
+            "status": "passed",
+            "elapsedMs": 5192
+          },
+          {
+            "name": "opensearch-index-binding",
+            "status": "passed",
+            "elapsedMs": 10
+          },
+          {
+            "name": "mcp-search",
+            "status": "passed",
+            "elapsedMs": 76
+          },
+          {
+            "name": "browser-scope-and-origin",
+            "status": "passed",
+            "elapsedMs": 8
+          },
+          {
+            "name": "refresh-grant",
+            "status": "passed",
+            "elapsedMs": 20
+          }
+        ]
+      },
+      "command": [
+        "node",
+        "verify.mts",
+        "--config",
+        "external.json",
+        "--exercise",
+        "--existing",
+        "--deny-marker",
+        "helmcheckc9bf13ac8c2ea4b1a9f8b70b"
+      ],
+      "deniedInstallation": "bundled"
+    }
+  ],
+  "nativeHelmTests": {
+    "bundled": true,
+    "mixed": true,
+    "external": true
+  },
+  "checkedAt": "2026-11-16T03:48:27.588860+00:00"
+}

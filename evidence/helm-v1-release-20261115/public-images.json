@@ -1,0 +1,439 @@
+{
+  "checkedAt": "2026-11-16T03:46:01.223Z",
+  "anonymous": true,
+  "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+  "images": [
+    {
+      "repository": "ghcr.io/getopencrawl/opencrawl-core",
+      "digest": "sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "manifest": "sha256:4920453e19d7339c9942d18284938e4ba762d4830080cb1ebbf9b241a47c470c",
+          "config": "sha256:0ac906a74733fb5d793ec9bf0dae8b15f6097dfc598f1489d5c49bd1704e2c20",
+          "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+          "layers": [
+            {
+              "digest": "sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3",
+              "status": 200
+            },
+            {
+              "digest": "sha256:67dd44e03538482c8d0ffbd8e50ba292c566a215d908905b94069c2cc0583590",
+              "status": 200
+            },
+            {
+              "digest": "sha256:0485e61ce4657409e991d0f4164383df7d64c2b6b074b45324c8dae73935ba38",
+              "status": 200
+            },
+            {
+              "digest": "sha256:ed61b9f2bb56ed1684866e971964fa114c1fcab4b4c671795f9eb91183282bb8",
+              "status": 200
+            },
+            {
+              "digest": "sha256:f3db01672604e7946d0e84f5d03bcff2478a5aaff2852a87241a2a3fd9ddd13f",
+              "status": 200
+            },
+            {
+              "digest": "sha256:d47fa7b047477e2dca9e7fd241145604cc178c9141c463a2a5878f8af76a083f",
+              "status": 200
+            },
+            {
+              "digest": "sha256:ce1d332311337ceb0aeace6e106d6059e3b689154b93366265127e67fb010e34",
+              "status": 200
+            },
+            {
+              "digest": "sha256:d70a76dc34eb93c80502bed976863764ace5ccffaf0a86d531bee061900a51db",
+              "status": 200
+            },
+            {
+              "digest": "sha256:7a9780447d6457d9b0412067f25c3486447e606c45376e757201012c61b83fa2",
+              "status": 200
+            },
+            {
+              "digest": "sha256:91412ee4669409136b819110e642da8a0124ca75433de5ebf574eb104032959f",
+              "status": 200
+            },
+            {
+              "digest": "sha256:72b34fd84cb620273cd35b5f299f9cd778c27dd8bddf93fcf366132dfe3297d0",
+              "status": 200
+            },
+            {
+              "digest": "sha256:8e334aa9ac2006f18dfbad7624ac181ba54f7f5ca76ff11945fd3125b129acdb",
+              "status": 200
+            },
+            {
+              "digest": "sha256:45e256caec23159e6cc6849705aa3b868b5e713f9bd4f68cccaa8a452f763e78",
+              "status": 200
+            },
+            {
+              "digest": "sha256:cb28ab990298ac8d25f482f4235399ca7d2217ff3ac06191b6289974bf5030b4",
+              "status": 200
+            },
+            {
+              "digest": "sha256:d2a87241d11e99bf80e599ce1c1d9363af41b56cef4331ec0ff273a4daa18ea8",
+              "status": 200
+            },
+            {
+              "digest": "sha256:f054a58996563b118e70cc2388f40c0df30a00d922f311ea8f76f03c7404ec06",
+              "status": 200
+            },
+            {
+              "digest": "sha256:042c96a96262670c258b559bd1b11982f17d18c99799ed5692bbf822860a5478",
+              "status": 200
+            },
+            {
+              "digest": "sha256:0684f7c8b4aeb82170ba84c9460910a8be437c961f4789e2315fc85e5ebed040",
+              "status": 200
+            },
+            {
+              "digest": "sha256:d4e8bbf76c86e8aa7a7f9ef26a00830bed409a0ed7240b6d9b8bcc6651e390ff",
+              "status": 200
+            },
+            {
+              "digest": "sha256:2d233bf783b8523eb66361c9fceea9a28efd7f9b62ae1f929a53862761557cb6",
+              "status": 200
+            },
+            {
+              "digest": "sha256:4a1d26a076aa41e70df8554da4210808ff6f2dcd265f9d7c2430dfc94f74e80b",
+              "status": 200
+            },
+            {
+              "digest": "sha256:df8ed037242bbc8a693ffbc475d56f34e03af413a3684ea069b4d63dd24f9a2f",
+              "status": 200
+            },
+            {
+              "digest": "sha256:fb262e8a461f26d1bfde44437893e2532b47135a226902f21f45138eb544f566",
+              "status": 200
+            }
+          ]
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "manifest": "sha256:4b2f939e09366a9761953f6678b8f93c411bbc55422a7b2a9e49e5ff4cce8b1e",
+          "config": "sha256:3cac5cfd70aeab8635ad3a82121b10897ec746273789fa9976e57a7dfa891905",
+          "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+          "layers": [
+            {
+              "digest": "sha256:2d66c782e4847b8495b17a4b86be1159aa13d140fe4fd17cb1d536953d5114c6",
+              "status": 200
+            },
+            {
+              "digest": "sha256:891b01f4d38d5d51b734957fead21c4a8d0001dfa727f282166e61a00537604e",
+              "status": 200
+            },
+            {
+              "digest": "sha256:4b1ade61cb9e68a92f17aace310efe7d7a9647a0a704731527eeb8ed24753775",
+              "status": 200
+            },
+            {
+              "digest": "sha256:003215fd1f749b0479cdcf46cf3c2b171b0c335db827b4ff2fc8a1c9fbd0265a",
+              "status": 200
+            },
+            {
+              "digest": "sha256:ce5cbce5255db3441c4f9e8f2a4538f695aed3d0faa90e8c7784b66779d32703",
+              "status": 200
+            },
+            {
+              "digest": "sha256:852605987f0dd37fa02fa7fcc7d415a86dc540e995e69c18296de7b49918cf46",
+              "status": 200
+            },
+            {
+              "digest": "sha256:9950c8777ca024f894b9741ba2183e819af9951ce536243594e95eecf2627837",
+              "status": 200
+            },
+            {
+              "digest": "sha256:1005dc1ea397030dc0c95636c93414267d2bde222274d2f7bf4d66bfaaa89df7",
+              "status": 200
+            },
+            {
+              "digest": "sha256:1fbe161388258896f59900bfce16390ccace71811da74a06ccd81845956d1243",
+              "status": 200
+            },
+            {
+              "digest": "sha256:22edda2476c702732280ed4bf9786d752227c9dee0218e4fdccb06b3c3ab0c15",
+              "status": 200
+            },
+            {
+              "digest": "sha256:d0ccc4cc3ef37b42398a5f92343afb3a36cca51de3d79866c477c850a6076035",
+              "status": 200
+            },
+            {
+              "digest": "sha256:4ba80daba78be9f0c1399329d2a0b5d6e1e5fc364f845edfadbe34862548743b",
+              "status": 200
+            },
+            {
+              "digest": "sha256:69e380fabc1298f9f0c451d5640bfeb65e4661fd8b96de20a0a1f555bedd0a9f",
+              "status": 200
+            },
+            {
+              "digest": "sha256:3e8193b541a79c2014fa27a54ed5c107fe43c490c76e9ac90e5ce0e7130c4f72",
+              "status": 200
+            },
+            {
+              "digest": "sha256:b55268f391a7c9818c60f2ec2f8a8dabefa84968518c67c7a3258b29bba0deee",
+              "status": 200
+            },
+            {
+              "digest": "sha256:5f59938c0b6b6222488afa8efd0c9d1092a335bdb25c3471eea0a4c1dee61f56",
+              "status": 200
+            },
+            {
+              "digest": "sha256:2677d0d7dd3e52343697fae5deb4fa4d36593db6c3b1fdf726811723a3426a26",
+              "status": 200
+            },
+            {
+              "digest": "sha256:32848c8459ad3a02787353dcebbe57899299807bf72ca13772b5686b2b089d0d",
+              "status": 200
+            },
+            {
+              "digest": "sha256:668879125f82a6b4dab4fe1d1e33616e2dc10a096abab68731a12a460d3a11bb",
+              "status": 200
+            },
+            {
+              "digest": "sha256:3029a49948ab3e619c369ea43f8bc21ae28b1ec9f4ba4af64859c9c2dbac1c64",
+              "status": 200
+            },
+            {
+              "digest": "sha256:39ac7d38167f6c6b578a7aab8a87e326a547553ca94e432d51d01c070c8ec0ee",
+              "status": 200
+            },
+            {
+              "digest": "sha256:f9d1179da69be02be7c71ad4e27624a827732ae3012a0b0c5836a376a94f705e",
+              "status": 200
+            },
+            {
+              "digest": "sha256:f1562069ee93a35ea1cdc343655c73ca590c7b9f941dc08006d4e37505a31f52",
+              "status": 200
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "repository": "ghcr.io/getopencrawl/source-github",
+      "digest": "sha256:3dea55464e16fec0b6cf949c48ad2757310c14d6816c8cdbdd7b4bd7623397d5",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "manifest": "sha256:898d2d36c578ea855b90583e016c417aa6c7f5b3a37ff4df370050a99430f08f",
+          "config": "sha256:e847a0520c7b474aa8e32a99208b833efe1de9c278a3e4a789648958c4e2ce4b",
+          "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+          "layers": [
+            {
+              "digest": "sha256:b9136609bef0128191aa157637b98dd7b98e52154ca60c18258d65957a01c6d0",
+              "status": 200
+            },
+            {
+              "digest": "sha256:9e2a6d943a0968fa429b1be281d9915c779f40adc6662d00496a6c23574b1282",
+              "status": 200
+            },
+            {
+              "digest": "sha256:384b885eaabed1fb93a8fc5e7713644826d03548bf1da46f3a17a85dcd43facc",
+              "status": 200
+            },
+            {
+              "digest": "sha256:18ce949311220f721229fcbac944df3cab44b1ae4bdd5c11cea3a5a478cc338d",
+              "status": 200
+            },
+            {
+              "digest": "sha256:b2f89d99e7c8cbaab317ef8f6fc3359f0ff4760fe8532cab90c2115d57e99cd1",
+              "status": 200
+            },
+            {
+              "digest": "sha256:572ce37454a83add116db87a3f5d74ca905fd4a8398235cf62358e484eba0325",
+              "status": 200
+            },
+            {
+              "digest": "sha256:47cc17a82b2915e64cefc18b25e4c9993567044e1dc6563f0d03bce8a8f28d39",
+              "status": 200
+            },
+            {
+              "digest": "sha256:906be4106a420db454357257bcf765f80276e8c7505dd578e39a35ca9bfafb06",
+              "status": 200
+            },
+            {
+              "digest": "sha256:15e95068091dd6b8e4dc2fd2f021731f6676791cfc648a7584b1edefbad6193a",
+              "status": 200
+            },
+            {
+              "digest": "sha256:ec619fb33b4815388627dfcddba64139065220e2802e226206a3152554976837",
+              "status": 200
+            },
+            {
+              "digest": "sha256:c86f68e3d1887c8094e9532d9031c09421f7006db6947f6842a858e41aeddfde",
+              "status": 200
+            },
+            {
+              "digest": "sha256:1199a07189cd6d99a776a418ba3dde6d6098195b0a6dfdc02fee3abc5a7ddfaa",
+              "status": 200
+            },
+            {
+              "digest": "sha256:048dfe2da8039719ea924900d9821ba5a1bbe02099e065212afe7bed27966c53",
+              "status": 200
+            },
+            {
+              "digest": "sha256:b9de0b801d14ca674868e67140794d442cf8efed1e68792abc1a4869579fdf53",
+              "status": 200
+            },
+            {
+              "digest": "sha256:6ad4f98016682616604fd5077a550cb9dcde84f29a50076a8834fe0567834fc1",
+              "status": 200
+            },
+            {
+              "digest": "sha256:4ba98f143bf4c15b252946141c35481ffba8a647d4c91e5853605f4a08198ce0",
+              "status": 200
+            },
+            {
+              "digest": "sha256:8a851192e3ae4bec5b99c09dc0f3a521a8eea52651700c232e7ce05e56564fcf",
+              "status": 200
+            },
+            {
+              "digest": "sha256:fabaf06e1849960d14f663850c411dd58062ecef384ecffc130ec1fc3c50da69",
+              "status": 200
+            },
+            {
+              "digest": "sha256:a5dd7e876d5a70f9fa1314682e2c3910fce6cb8dc963c5e4dfdc4a2128d2b077",
+              "status": 200
+            },
+            {
+              "digest": "sha256:8a4079645ca4119b2ab3359c9a8006d9a9ca1587421cd7a288b4f31126bf3271",
+              "status": 200
+            },
+            {
+              "digest": "sha256:75cbf3c2d36b45d8658c67d97705975c5609c389612979a14ad34fe9f519cf45",
+              "status": 200
+            },
+            {
+              "digest": "sha256:2874700c23486b314fe7ac71abd70aede775de844ed15873060061f05650b3eb",
+              "status": 200
+            },
+            {
+              "digest": "sha256:caef4169b14ca3dcf7e5f199e3224db7275e4926ce9c47a797f05ee5403cf65c",
+              "status": 200
+            },
+            {
+              "digest": "sha256:68a76d1bca043a7d60eeb4278d79ee86861d427aca1f8e4e74e5b1b8286d647e",
+              "status": 200
+            },
+            {
+              "digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+              "status": 200
+            }
+          ]
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "manifest": "sha256:35c511624d80527334e7f9f546b4da8ba169a6627294f5dbc2d51d7d70700ff9",
+          "config": "sha256:9c2aaa2b9f025e97cc373f4abfcfbff7098866e6515f0dc417d12c9776b7959e",
+          "revision": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+          "layers": [
+            {
+              "digest": "sha256:402614bd39aaec1e4bdcf25aa67f88588fc8d93997a2551c4e130e6ed2b06c7a",
+              "status": 200
+            },
+            {
+              "digest": "sha256:1945b66f414c34ae55840e9bcf418e5c9c8b6c6a344c2409c928b6bc21a55d72",
+              "status": 200
+            },
+            {
+              "digest": "sha256:7970cf9a0e1431bdecc6cd7bb2562face5607e05a13800476ac1a924ea40f54f",
+              "status": 200
+            },
+            {
+              "digest": "sha256:b8f9a391d8e16dfd50a30a5c4dbbaae6c17e4a6d3496cea74644b59970aa9582",
+              "status": 200
+            },
+            {
+              "digest": "sha256:780b1dc62e068ebeb9babc27175b67a8bac4a6d196ca6196b6396a899c724085",
+              "status": 200
+            },
+            {
+              "digest": "sha256:94d2a3707244306fbe678a05ce1314ac85c74eaa7e37b66f5f24d5682b78d388",
+              "status": 200
+            },
+            {
+              "digest": "sha256:f63b8c15616e50d7b6096ccd564cb9fe536194cfe473000aa3bf758dfb79385f",
+              "status": 200
+            },
+            {
+              "digest": "sha256:59f98b658faa50bc16d7a48f0989b662691e93f3cc832eafbd0a93ba13235cf2",
+              "status": 200
+            },
+            {
+              "digest": "sha256:a795c00b3fd92377a14c971acbb074b98564e9c66e2973b5283d6d4ea2d613d5",
+              "status": 200
+            },
+            {
+              "digest": "sha256:67edcb1f187ba109984fd7af95216fd32c92b5f60964f46ec8d91e824cb470d1",
+              "status": 200
+            },
+            {
+              "digest": "sha256:9c7ffc8332cf5072ca55fc406c077cfb77efe5074ebd4bfd32b190bf72c129be",
+              "status": 200
+            },
+            {
+              "digest": "sha256:6d9f7e37e0c180c7d007559c51b02ba307fe37caeb6b9ee3d23725b5f1625883",
+              "status": 200
+            },
+            {
+              "digest": "sha256:d453a6075ceb3505a2e03e0cd8b82e913937ea6d091026207422d19c9a75d161",
+              "status": 200
+            },
+            {
+              "digest": "sha256:183ae2d0b3a0b803c6322c20d05fab7f17f90d6bf99aae338af923ce22eb4f8c",
+              "status": 200
+            },
+            {
+              "digest": "sha256:02b487c1a1a8a1e5c178a7bf7433a43ba0f631942d2491bacf7c31ff1b4133ea",
+              "status": 200
+            },
+            {
+              "digest": "sha256:1230a66e77d94e8a01656aea6a014ff04bdee5aa72cd642533a2f3687b4d84db",
+              "status": 200
+            },
+            {
+              "digest": "sha256:4c7e24d5aa8d0aeeca4b4d66528e788a2455b3326165ffed4585f540e69e8636",
+              "status": 200
+            },
+            {
+              "digest": "sha256:84e918e40a036686ad1b817aa522b5f05853ffdf323c253ee0c797f6221199a4",
+              "status": 200
+            },
+            {
+              "digest": "sha256:d0bf7233a394b8059feb6be718d162892722988c572bbc74011e71c6fc258217",
+              "status": 200
+            },
+            {
+              "digest": "sha256:80ec5317272aa162765bbab82af36606d34cbeffa18ff1d3c9e895bb16e8080f",
+              "status": 200
+            },
+            {
+              "digest": "sha256:1084f0b4b37d291e0453b70520f4fe19d70a0ba2002556fed5d420ee15e8b107",
+              "status": 200
+            },
+            {
+              "digest": "sha256:6ed385c9344bbf358767316b33026ec759c65864551b1a9c8da2b9f2abcd245b",
+              "status": 200
+            },
+            {
+              "digest": "sha256:3f05775a3ba647bb31cdfece036265d225c7c90077c6b790b5d53f14fb8b6be9",
+              "status": 200
+            },
+            {
+              "digest": "sha256:b14a9e14cf61512f0806fb571cffc69f64247d29fbf33f3dad80fd8d9754308a",
+              "status": 200
+            },
+            {
+              "digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+              "status": 200
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

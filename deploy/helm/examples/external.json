@@ -1,0 +1,43 @@
+{
+  "context": "YOUR_KUBERNETES_CONTEXT",
+  "url": "https://opencrawl.example.com",
+  "image": {
+    "tag": "REPLACE_WITH_PUBLISHED_SHA_TAG"
+  },
+  "postgresql": {
+    "enabled": false
+  },
+  "databases": {
+    "app": {
+      "mode": "external",
+      "existingSecret": "opencrawl-app-database"
+    }
+  },
+  "temporal": {
+    "mode": "external",
+    "address": "temporal.example.com:7233",
+    "namespace": "opencrawl",
+    "tls": {
+      "enabled": true
+    },
+    "existingSecret": "opencrawl-temporal-api-key"
+  },
+  "opensearch": {
+    "mode": "external",
+    "url": "https://opensearch.example.com:9200",
+    "existingSecret": "opencrawl-search",
+    "index": "opencrawl-example-v1"
+  },
+  "objectStorage": {
+    "mode": "external",
+    "endpoint": "https://s3.us-east-1.amazonaws.com",
+    "bucket": "company-opencrawl",
+    "existingSecret": "opencrawl-s3"
+  },
+  "airbyte": {
+    "mode": "external",
+    "url": "https://airbyte.example.com",
+    "workspaceId": "REPLACE_WITH_WORKSPACE_UUID",
+    "existingSecret": "opencrawl-airbyte"
+  }
+}

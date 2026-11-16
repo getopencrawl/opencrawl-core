@@ -1,0 +1,175 @@
+{
+  "checkedAt": "2026-11-16T03:45:37.317604+00:00",
+  "runs": [
+    {
+      "conclusion": "success",
+      "databaseId": 43797443075,
+      "headSha": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "jobs": [
+        {
+          "name": "test",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797443075/job/133069356997"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797443075",
+      "workflowName": "Core CI"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 43797442988,
+      "headSha": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "jobs": [
+        {
+          "name": "Full application upgrade with retained Airbyte connector",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069356741"
+        },
+        {
+          "name": "Application without Airbyte (ARM64)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069356876"
+        },
+        {
+          "name": "Application with SQLite FTS5",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069356976"
+        },
+        {
+          "name": "Full application upgrade (dev, v0.4.1-sqlite)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069356979"
+        },
+        {
+          "name": "Development with SQLite FTS5",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069356982"
+        },
+        {
+          "name": "Application without Airbyte",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069356985"
+        },
+        {
+          "name": "Full application upgrade (dev, legacy-json)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069357020"
+        },
+        {
+          "name": "Full application upgrade (deploy, v0.4.1-sqlite)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069357029"
+        },
+        {
+          "name": "macOS bootstrap (macos-15)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069357070"
+        },
+        {
+          "name": "Full application upgrade (deploy, legacy-json)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069357079"
+        },
+        {
+          "name": "Full application upgrade (deploy, v0.4.1-opensearch)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069357101"
+        },
+        {
+          "name": "macOS bootstrap (macos-15-intel)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069357104"
+        },
+        {
+          "name": "Full application upgrade (deploy, dedicated-postgres)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069357127"
+        },
+        {
+          "name": "Full application upgrade (deploy, containerd-postgres)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069357131"
+        },
+        {
+          "name": "Full application upgrade (dev, dedicated-postgres)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069357139"
+        },
+        {
+          "name": "Full application upgrade (dev, v0.4.1-opensearch)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069357145"
+        },
+        {
+          "name": "Full Airbyte and mode switching (${{ matrix.arch }})",
+          "conclusion": "skipped",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133069358509"
+        },
+        {
+          "name": "Self-host smoke",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988/job/133074426262"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442988",
+      "workflowName": "Self-host preview"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 43797442973,
+      "headSha": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "jobs": [
+        {
+          "name": "build (arm64, blacksmith-4vcpu-ubuntu-2404-arm)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442973/job/133069356921"
+        },
+        {
+          "name": "build (amd64, blacksmith-4vcpu-ubuntu-2404)",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442973/job/133069357130"
+        },
+        {
+          "name": "manifest",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442973/job/133070245985"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797442973",
+      "workflowName": "Self-host images"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 43797443040,
+      "headSha": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "jobs": [
+        {
+          "name": "chart",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797443040/job/133069356877"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797443040",
+      "workflowName": "Helm"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 43797443179,
+      "headSha": "b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "jobs": [
+        {
+          "name": "Secret scan",
+          "conclusion": "success",
+          "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797443179/job/133069357338"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43797443179",
+      "workflowName": "Repository security"
+    }
+  ]
+}

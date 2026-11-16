@@ -1,0 +1,43 @@
+name: Helm
+on:
+  pull_request:
+    paths: ['deploy/helm/**', '.github/workflows/helm.yml']
+  push:
+    branches: [main, codex/helm-v1]
+    paths: ['deploy/helm/**', '.github/workflows/helm.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  chart:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - name: Install verified Helm
+        run: |
+          curl -fsSLo /tmp/helm.tgz https://get.helm.sh/helm-v3.22.1-linux-amd64.tar.gz
+          echo '896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea  /tmp/helm.tgz' | sha256sum -c -
+          tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm
+          echo /tmp/linux-amd64 >> "$GITHUB_PATH"
+      - name: Validate configuration and every backend combination
+        env:
+          AIRBYTE_CHART: /tmp/airbyte.tgz
+        run: |
+          curl -fsSLo "$AIRBYTE_CHART" https://airbytehq.github.io/charts/airbyte-2.4.0.tgz
+          echo 'ec25fcddc952dbef05183f426149553f78db0f7e61642c9d13c77e32c93433a3  /tmp/airbyte.tgz' | sha256sum -c -
+          node --test deploy/helm/test.mts
+      - name: Package the chart and agent installer
+        run: |
+          mkdir -p artifacts
+          helm package deploy/helm/opencrawl --destination artifacts
+          tar -czf artifacts/opencrawl-selfhost-kit.tgz -C deploy/helm install.mts verify.mts runtime opencrawl airbyte-wrapper examples README.md
+          cd artifacts
+          sha256sum *.tgz > SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: opencrawl-helm
+          path: artifacts/
+          retention-days: 30

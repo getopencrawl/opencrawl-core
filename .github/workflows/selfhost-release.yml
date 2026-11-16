@@ -1,0 +1,76 @@
+name: Release self-host kit
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Tested full mainline SHA to release'
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.revision }}
+          fetch-depth: 0
+      - name: Require the tested immutable mainline source
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          [[ "$REVISION" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$REVISION"
+          git merge-base --is-ancestor "$REVISION" origin/main
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - name: Install verified Helm
+        run: |
+          curl -fsSLo /tmp/helm.tgz https://get.helm.sh/helm-v3.22.1-linux-amd64.tar.gz
+          echo '896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea  /tmp/helm.tgz' | sha256sum -c -
+          tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm
+          echo /tmp/linux-amd64 >> "$GITHUB_PATH"
+      - name: Verify chart contracts
+        env:
+          AIRBYTE_CHART: /tmp/airbyte.tgz
+        run: |
+          curl -fsSLo "$AIRBYTE_CHART" https://airbytehq.github.io/charts/airbyte-2.4.0.tgz
+          echo 'ec25fcddc952dbef05183f426149553f78db0f7e61642c9d13c77e32c93433a3  /tmp/airbyte.tgz' | sha256sum -c -
+          node --test deploy/helm/test.mts
+      - name: Require successful runtime CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ inputs.revision }}
+        run: |
+          gh run list --commit "$REVISION" --workflow ci.yml --json conclusion,status --jq 'any(.[]; .status == "completed" and .conclusion == "success")' | grep -qx true
+      - name: Pin public image digests and package
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: node deploy/helm/release-kit.mts --revision "$REVISION" --out artifacts
+      - name: Verify anonymous image pulls on both architectures
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$(mktemp -d)"
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          runtime=$(node -p 'const r=require("./artifacts/release.json"); r.image.repository+"@"+r.image.digest')
+          connector=$(node -p 'const r=require("./artifacts/release.json"); r.githubConnector.repository+"@"+r.githubConnector.digest')
+          for platform in linux/amd64 linux/arm64; do
+            docker pull --platform "$platform" "$runtime"
+            docker pull --platform "$platform" "$connector"
+          done
+      - name: Publish versioned release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ inputs.revision }}
+        run: |
+          version=$(node -p 'JSON.parse(require("fs").readFileSync("artifacts/release.json")).version')
+          cat > artifacts/release-notes.md <<'EOF'
+          OpenCrawl Helm v1: single-instance installation with bundled or externally supplied dependencies.
+
+          Download the self-host kit and SHA256SUMS, verify the archive checksum, extract it, and follow README.md. The kit pins the amd64/arm64 application runtime by digest and selects a matching revision-tagged GitHub connector. Both images must be anonymously pullable. No application build is required.
+          EOF
+          gh release create "helm-v$version" artifacts/*.tgz artifacts/SHA256SUMS artifacts/release.json --target "$REVISION" --title "OpenCrawl Helm $version" --notes-file artifacts/release-notes.md

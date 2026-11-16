@@ -1,0 +1,124 @@
+{
+  "bundled": {
+    "context": "opencrawl-helm-release-1115",
+    "url": "http://localhost:8092",
+    "storageClass": "gp3",
+    "image": {
+      "repository": "ghcr.io/getopencrawl/opencrawl-core",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+    },
+    "githubConnector": {
+      "repository": "ghcr.io/getopencrawl/source-github",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:3dea55464e16fec0b6cf949c48ad2757310c14d6816c8cdbdd7b4bd7623397d5"
+    },
+    "release": "oc",
+    "namespace": "oc-bundled"
+  },
+  "mixed": {
+    "context": "opencrawl-helm-release-1115",
+    "url": "http://localhost:8092",
+    "storageClass": "gp3",
+    "image": {
+      "repository": "ghcr.io/getopencrawl/opencrawl-core",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+    },
+    "githubConnector": {
+      "repository": "ghcr.io/getopencrawl/source-github",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:3dea55464e16fec0b6cf949c48ad2757310c14d6816c8cdbdd7b4bd7623397d5"
+    },
+    "opensearch": {
+      "mode": "external",
+      "url": "http://oc-infra-opensearch.oc-bundled.svc.cluster.local:9200",
+      "index": "lego-external-v1"
+    },
+    "objectStorage": {
+      "mode": "external",
+      "endpoint": "http://oc-infra-s3.oc-bundled.svc.cluster.local:8333",
+      "bucket": "opencrawl",
+      "existingSecret": "external-storage"
+    },
+    "release": "lego",
+    "namespace": "oc-external-pg",
+    "postgresql": {
+      "enabled": false
+    },
+    "databases": {
+      "app": {
+        "mode": "external",
+        "existingSecret": "external-app"
+      },
+      "temporal": {
+        "mode": "external",
+        "host": "provided-postgresql.oc-providers.svc.cluster.local",
+        "user": "external_temporal",
+        "name": "external_temporal",
+        "visibilityName": "external_visibility",
+        "existingSecret": "external-temporal"
+      },
+      "airbyte": {
+        "mode": "external",
+        "host": "provided-postgresql.oc-providers.svc.cluster.local",
+        "user": "external_airbyte",
+        "name": "external_airbyte",
+        "temporalName": "external_ab_temporal",
+        "visibilityName": "external_ab_visibility",
+        "existingSecret": "external-airbyte-db"
+      }
+    },
+    "temporal": {
+      "namespace": "lego"
+    }
+  },
+  "external": {
+    "context": "opencrawl-helm-release-1115",
+    "url": "http://localhost:8092",
+    "storageClass": "gp3",
+    "image": {
+      "repository": "ghcr.io/getopencrawl/opencrawl-core",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:9d915042997692d7f534986f4b6cebcd2e4b5b9e00d40f72d6c9c55cb3e5cd00"
+    },
+    "githubConnector": {
+      "repository": "ghcr.io/getopencrawl/source-github",
+      "tag": "sha-b9e4ccea6985643fde94b71955dcb50f47b93236",
+      "digest": "sha256:3dea55464e16fec0b6cf949c48ad2757310c14d6816c8cdbdd7b4bd7623397d5"
+    },
+    "opensearch": {
+      "mode": "external",
+      "url": "http://oc-infra-opensearch.oc-bundled.svc.cluster.local:9200",
+      "index": "external-all-v1"
+    },
+    "objectStorage": {
+      "mode": "external",
+      "endpoint": "http://oc-infra-s3.oc-bundled.svc.cluster.local:8333",
+      "bucket": "opencrawl",
+      "existingSecret": "external-storage"
+    },
+    "release": "external",
+    "namespace": "oc-external",
+    "postgresql": {
+      "enabled": false
+    },
+    "databases": {
+      "app": {
+        "mode": "external",
+        "existingSecret": "external-app"
+      }
+    },
+    "temporal": {
+      "mode": "external",
+      "address": "oc-infra-temporal.oc-bundled.svc.cluster.local:7233",
+      "namespace": "external-all"
+    },
+    "airbyte": {
+      "mode": "external",
+      "url": "http://oc-airbyte-airbyte-server-svc.oc-bundled.svc.cluster.local:8001",
+      "workspaceId": "4840e085-ad16-4200-936e-102c75a10616",
+      "existingSecret": "external-airbyte"
+    }
+  }
+}

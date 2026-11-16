@@ -14,6 +14,7 @@ connectors/github/**/__pycache__/
 
 # Private, disposable development installation state and downloaded tools.
 .opencrawl-dev/
+.opencrawl-helm/
 
 # Private upgrade journals and matched recovery archives.
 deploy/.upgrade/

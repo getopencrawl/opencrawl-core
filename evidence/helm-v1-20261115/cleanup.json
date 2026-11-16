@@ -1,0 +1,89 @@
+{
+  "checkedAt": "2026-11-16T01:58:07.937678+00:00",
+  "status": "passed",
+  "account": "017535066453",
+  "region": "us-east-1",
+  "clusterDeleted": "opencrawl-helm-v1-20261115",
+  "ownershipVerifiedBeforeDeletion": {
+    "aws:cloudformation:stack-name": "eksctl-opencrawl-helm-v1-20261115-cluster",
+    "alpha.eksctl.io/cluster-name": "opencrawl-helm-v1-20261115",
+    "aws:cloudformation:stack-id": "arn:aws:cloudformation:us-east-1:017535066453:stack/eksctl-opencrawl-helm-v1-20261115-cluster/37779df0-e152-11f1-9795-0ec669663bd7",
+    "eksctl.cluster.k8s.io/v1alpha1/cluster-name": "opencrawl-helm-v1-20261115",
+    "alpha.eksctl.io/cluster-oidc-enabled": "true",
+    "aws:cloudformation:logical-id": "ControlPlane",
+    "project": "opencrawl-helm-validation",
+    "onepatch:env": "staging",
+    "owner-session": "01a1e18a-7a5e-7291-9a0e-11c2a3a5a196",
+    "alpha.eksctl.io/eksctl-version": "0.231.0",
+    "disposable": "true",
+    "Name": "eksctl-opencrawl-helm-v1-20261115-cluster/ControlPlane"
+  },
+  "deletedSyntheticNamespaces": [
+    "oc-bundled",
+    "oc-external",
+    "oc-external-pg",
+    "oc-network-probe",
+    "oc-providers"
+  ],
+  "deletedCloudFormationStacks": [
+    "eksctl-opencrawl-helm-v1-20261115-addon-aws-ebs-csi-driver",
+    "eksctl-opencrawl-helm-v1-20261115-nodegroup-validation",
+    "eksctl-opencrawl-helm-v1-20261115-addon-vpc-cni",
+    "eksctl-opencrawl-helm-v1-20261115-cluster"
+  ],
+  "deletedAutoScalingGroup": "eks-validation-f8d0f0df-b81e-902b-d504-746ea21015b1",
+  "remainingClusterTaggedSecurityGroups": 0,
+  "remainingClusterLogGroups": 0,
+  "terminatedOrAbsentInstances": [
+    "i-056af77de231a3066",
+    "i-03cc0d97e32dba28e",
+    "i-08efccbbad1cb3ada",
+    "i-059455ece4154bf5e"
+  ],
+  "deletedEbsVolumes": [
+    "vol-00b16b90cc72f8c4d",
+    "vol-012edc942cd8f0f86",
+    "vol-025e844e2101ea67c",
+    "vol-03c35dbc103082b73",
+    "vol-06198569b9adae368",
+    "vol-091bbda8f12b198d8",
+    "vol-0bbe4c6d77ddec14b",
+    "vol-0c620f5493b8e5a2b",
+    "vol-0fe632f5ea4205699"
+  ],
+  "deletedImageRepositories": [
+    "opencrawl-helm-validation/runtime",
+    "opencrawl-helm-validation/github"
+  ],
+  "deletedImageRole": "opencrawl-helm-validation-images-20261115",
+  "deletedImagePolicy": "task-repositories-only",
+  "deletedNodeRole": "eksctl-opencrawl-helm-v1-20261115--NodeInstanceRole-cyLlg5YRbKJn",
+  "deletedClusterOidcProvider": "arn:aws:iam::017535066453:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/794397404B2DAB12C5AF020D3E4B2FD6",
+  "taskNodeLifecycleWaitReleased": {
+    "checkedAt": "2026-11-16T01:48:15.199898+00:00",
+    "autoScalingGroup": "eks-validation-f8d0f0df-b81e-902b-d504-746ea21015b1",
+    "hook": "Terminate-LC-Hook",
+    "result": "CONTINUE",
+    "instances": [
+      "i-03cc0d97e32dba28e",
+      "i-059455ece4154bf5e"
+    ],
+    "preconditions": [
+      "Node group DELETING",
+      "Desired capacity zero",
+      "All task namespaces absent",
+      "No persistent volumes",
+      "Only inventory-matched task nodes"
+    ]
+  },
+  "sharedResourcesVerifiedPresent": {
+    "vpc": "vpc-0a5fae5a4ceafb5e8",
+    "subnets": [
+      "subnet-01b6582fe4797384a",
+      "subnet-014ed885c0e4a0826"
+    ],
+    "nat": "nat-0cc8347bf7d19e80d",
+    "githubOidcProvider": "arn:aws:iam::017535066453:oidc-provider/token.actions.githubusercontent.com"
+  },
+  "retainedArtifacts": "Source branches, PR #311, sanitized acceptance receipts and requested GHCR packages. Temporary private ECR images were staging-only."
+}

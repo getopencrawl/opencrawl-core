@@ -1,0 +1,36 @@
+{
+  "scope": "Real Airbyte source and destination containers on staging EKS; mounted existing synthetic fixture from bdd9e2c:dev/seed.mts",
+  "runtimeRevision": "5a883323cf88851afc5d3187469650094a36914e",
+  "result": {
+    "ok": true,
+    "checkedAt": "2026-11-16T01:30:42.022Z",
+    "project": "ocdev-e5f03dbfa246",
+    "organization": "org_ac43b4d651446ed1e2443b75",
+    "syntheticFixture": true,
+    "verifyOnly": false,
+    "identity": "better-auth-local",
+    "airbyte": {
+      "workspaceId": "a15e4f7d-d237-4c87-b7ec-eaa70da364fe",
+      "connectionId": "2bcb52af-8865-4763-9793-1cf42cbf2197",
+      "jobId": 1,
+      "status": "succeeded",
+      "rows": 2
+    },
+    "temporal": {
+      "workflowId": "dev-verify-ocdev-e5f03dbfa246-1794792641321"
+    },
+    "retrieval": {
+      "query": "lunar otter",
+      "authenticated": true,
+      "found": true,
+      "mcp": true
+    },
+    "board": true,
+    "onboardingCompleted": true,
+    "deviceGrant": true,
+    "refreshGrant": true,
+    "anonymousDenied": true,
+    "forgedScopeDenied": true,
+    "foreignOriginDenied": true
+  }
+}

@@ -1,0 +1,49 @@
+{{- if .Values.runtime.enabled }}
+{{- $name := include "opencrawl.name" . }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-activate
+  labels: {{ include "opencrawl.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: {{ .Values.runtime.activationTimeoutSeconds }}
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: activation}
+    spec:
+      {{- include "opencrawl.scheduling" . | nindent 6 }}
+      serviceAccountName: {{ default $name .Values.serviceAccount.name }}
+      restartPolicy: Never
+      securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: activate
+          image: {{ include "opencrawl.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - node
+            - --input-type=module
+            - -e
+            - |
+              import assert from 'node:assert/strict';
+              import {activateSelfhostConnectors} from './dist/src/selfhost/activate.mjs';
+              const result=await activateSelfhostConnectors();
+              assert.equal(result.completed,true,'Connector activation must finish');
+              assert.equal(typeof result.required,'boolean');
+              assert.ok(Number.isSafeInteger(result.connections)&&result.connections>=0);
+              if(result.required){
+                assert.match(result.activationId,/^[a-f0-9]{64}$/);
+                assert.match(result.manifest,/^[a-f0-9]{64}$/);
+                assert.match(result.migrationId,/^[-a-f0-9]{36}$/);
+              }else assert.equal(result.connections,0);
+              console.log(JSON.stringify({connectorCatchup:result}));
+          {{- include "opencrawl.runtimeEnv" . | nindent 10 }}
+          {{- include "opencrawl.runtimeMounts" . | nindent 10 }}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          resources: {{ toYaml .Values.runtime.appResources | nindent 12 }}
+      {{- include "opencrawl.runtimeVolumes" . | nindent 6 }}
+{{- end }}

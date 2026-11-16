@@ -1,0 +1,27 @@
+{
+  "checkedAt": "2026-11-16T00:54:32.384665+00:00",
+  "cluster": "opencrawl-helm-v1-20261115",
+  "namespace": "oc-bundled",
+  "postgresqlRestart": "chart upgrade applied max_connections=200",
+  "temporalNamespaceIdRetained": "24d89fd7-02fe-4bb0-a058-daa7644fe85b",
+  "opensearchRetained": true,
+  "s3Retained": true,
+  "replacedPods": [
+    {
+      "name": "oc-infra-opensearch-0",
+      "uid": "b860c4db-e71f-44a4-918d-6efbcba615a6",
+      "createdAt": "2026-11-16T00:50:51Z"
+    },
+    {
+      "name": "oc-infra-postgresql-0",
+      "uid": "af1c9025-5fb7-47a8-b893-2fef40ade14e",
+      "createdAt": "2026-11-16T00:49:52Z"
+    },
+    {
+      "name": "oc-infra-s3-0",
+      "uid": "1557baff-d71c-497e-8aef-aa409e8c22b8",
+      "createdAt": "2026-11-16T00:50:53Z"
+    }
+  ],
+  "fixtureWasRecreatedAfterRestart": false
+}

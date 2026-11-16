@@ -1,0 +1,57 @@
+{
+  "checkedAt": "2026-11-16T00:37:55.527005+00:00",
+  "awsAccount": "017535066453",
+  "region": "us-east-1",
+  "cluster": "opencrawl-helm-v1-20261115",
+  "scope": "disposable staging; synthetic data only",
+  "kubernetes": "1.34",
+  "backends": [
+    {
+      "name": "oc-infra-opensearch-0",
+      "ready": true,
+      "images": [
+        {
+          "image": "sha256:f546dde21473d6d15f4fe4e76e10a5da3fc09f6a0799721642344f9abab0737d",
+          "digest": "docker.io/opensearchproject/opensearch@sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e"
+        }
+      ]
+    },
+    {
+      "name": "oc-infra-postgresql-0",
+      "ready": true,
+      "images": [
+        {
+          "image": "docker.io/library/postgres:16.6-bookworm",
+          "digest": "docker.io/library/postgres@sha256:557fea37a744d5f4c8faab304b0a90858b53ab119735a88c131fd19dab802f36"
+        }
+      ]
+    },
+    {
+      "name": "oc-infra-s3-0",
+      "ready": true,
+      "images": [
+        {
+          "image": "docker.io/chrislusf/seaweedfs:4.52",
+          "digest": "docker.io/chrislusf/seaweedfs@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59"
+        }
+      ]
+    },
+    {
+      "name": "oc-infra-temporal-6946b64846-8bhg7",
+      "ready": true,
+      "images": [
+        {
+          "image": "docker.io/temporalio/auto-setup:1.29.1",
+          "digest": "docker.io/temporalio/auto-setup@sha256:5b3502a3b685f9eff1b925af90c57c9e3dbeccbef367cc28a2a9712c63379312"
+        }
+      ]
+    }
+  ],
+  "networkPolicy": {
+    "sameNamespaceHTTP": 200,
+    "crossNamespaceJob": "deny-cross-namespace",
+    "expectedConnectTimeout": true,
+    "passed": true
+  },
+  "unsignedObjectStorageHTTP": 403
+}

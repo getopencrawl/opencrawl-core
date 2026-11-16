@@ -1,0 +1,19 @@
+{
+  "context": "YOUR_KUBERNETES_CONTEXT",
+  "url": "https://opencrawl.example.com",
+  "image": {
+    "tag": "REPLACE_WITH_PUBLISHED_SHA_TAG"
+  },
+  "databases": {
+    "app": {
+      "mode": "external",
+      "existingSecret": "opencrawl-app-database"
+    }
+  },
+  "opensearch": {
+    "mode": "external",
+    "url": "https://opensearch.example.com:9200",
+    "existingSecret": "opencrawl-search",
+    "index": "opencrawl-example-v1"
+  }
+}

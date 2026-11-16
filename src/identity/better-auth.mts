@@ -13,7 +13,7 @@ export const CLI_CLIENT_ID='opencrawl-cli';
 const INVITATION_TTL=7*86400_000;
 const PREFIX:Record<string,string>={user:'user_',organization:'org_',member:'om_',invitation:'invitation_'};
 const fail=(status:number,message:string):never=>{throw Object.assign(new Error(message),{status,expose:true});};
-interface UserRow {id:string;email:string;name:string;emailVerified:boolean}
+interface UserRow {id:string;email:string;name:string;emailVerified:boolean;image?:string|null}
 interface MemberRow {id:string;organizationId:string;userId:string;role:string}
 interface InvitationRow {id:string;organizationId:string;email:string;role:string;status:string;expiresAt:Date|string}
 interface SessionRow {id:string;userId:string;expiresAt:Date|string}
@@ -79,7 +79,7 @@ export async function createLocalIdentity(input:LocalIdentityOptions){
     finally {client.release(broken);}
   }
   const adapter=async()=>(await auth.$context).adapter;
-  const user=(row:UserRow):HostedUser=>{const [firstName,...rest]=row.name.trim().split(/\s+/);return {id:row.id,email:row.email,emailVerified:row.emailVerified===true,firstName:firstName||null,lastName:rest.join(' ')||null};};
+  const user=(row:UserRow):HostedUser=>{const [firstName,...rest]=row.name.trim().split(/\s+/);return {id:row.id,email:row.email,emailVerified:row.emailVerified===true,firstName:firstName||null,lastName:rest.join(' ')||null,...(row.image?{avatarUrl:row.image}:{})};};
   // Better Auth's owner role is this product's admin role; members never hold more.
   const membership=(row:MemberRow):DirectoryMembership=>{const slug=row.role==='owner'||row.role==='admin'?'admin':'member';return {id:row.id,userId:row.userId,organizationId:row.organizationId,status:'active',role:{slug},roles:[{slug}]};};
   const live=(row:InvitationRow)=>row.status==='pending'&&new Date(row.expiresAt).getTime()>Date.now();

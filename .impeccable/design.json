@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-14T22:26:10.699631+00:00",
+  "generatedAt": "2026-11-15T23:25:57.478066+00:00",
   "title": "Design System: OpenCrawl Night",
   "extensions": {
     "typographyMeta": {
@@ -92,11 +92,12 @@
         "measure": "75ch"
       },
       "headerGap": "32px",
+      "accountAvatar": "Shared 32px circular Avatar uses the personal identity image, with initials during loading or failure and no-referrer requests. Account name remains the accessible identity.",
       "widths": {
         "page": "1200px",
         "form": "640px"
       },
-      "alignment": "All sidebar destinations share one full-width page grid. Prose and individual form rows carry their own readable measure.",
+      "alignment": "All workspace destinations share one full-width page grid. Team and hosted Billing embed inside AppShell's shared Settings Page, below its text-only route navigation, without another page heading. The admin Organization name panel sits above the existing Members card with the same management-panel padding. Prose and individual form rows carry their own readable measure.",
       "insets": {
         "desktop": "48px 32px 64px",
         "compact": "32px 16px 40px"
@@ -108,10 +109,26 @@
         "Integrations",
         "Message board",
         "Search playground",
-        "Team",
-        "Billing",
-        "Self-hosted Settings"
-      ]
+        "Agent setup",
+        "Settings / Team",
+        "Settings / Billing (hosted)"
+      ],
+      "teamAlignment": {
+        "memberColumns": [
+          "40px avatar",
+          "flexible identity",
+          "{components.member-role.width}",
+          "{components.member-action.width}"
+        ],
+        "reservedActionColumn": "Every row, including read-only and Pending rows, reserves the action column.",
+        "roleAlignment": "Read-only role text aligns with native select text; the Pending badge starts in the same role column.",
+        "compactRows": "At management-container widths of 600px and below, every role and action moves beneath its identity, with 12px row padding, a 4px identity-to-role gap and 44px interactive targets.",
+        "contentMeasure": "Roster and row separators fill the card; organization and invitation form rows use the existing 640px form measure.",
+        "identityAndLabels": "Show plain You text beside the current member name; invitations use the shared Field with a visible Email address label.",
+        "forms": "Organization-name and invitation forms share oc-management-form and the existing form measure so input and button boundaries align.",
+        "formActionWidth": "{components.management-form-action.width}",
+        "compactForms": "At container widths of 400px and below, both forms stack identically."
+      }
     }
   },
   "components": [
@@ -162,6 +179,14 @@
       "description": "Visible label, adjacent guidance and invalid/disabled treatments.",
       "html": "<div class=\"ds-field\"><label for=\"ds-source-name\">Source name</label><input id=\"ds-source-name\" class=\"ds-input\" placeholder=\"Enter a name\" aria-describedby=\"ds-source-hint\"><span id=\"ds-source-hint\">Use a name your workspace recognizes.</span></div>",
       "css": ".ds-field{display:grid;gap:var(--space-2);font-family:var(--font-sans);color:var(--text);}.ds-field>label{font-size:var(--text-sm);font-weight:500;}.ds-field>span{font-size:var(--text-sm);color:var(--muted);}.ds-input{width:100%;min-width:0;min-height:var(--control-height);padding:var(--space-2) var(--space-3);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface);color:var(--text);font-family:var(--font-sans);font-size:var(--text-ui);line-height:var(--leading-ui);caret-color:var(--accent);}.ds-input::placeholder{color:var(--quiet);opacity:1;}.ds-input:focus-visible { outline: var(--console-focus-ring); outline-offset: var(--console-focus-offset); }.ds-input[aria-invalid=\"true\"]{border-color:var(--danger);}.ds-input:disabled{background:var(--surface-subtle);color:var(--quiet);cursor:not-allowed;}@media(max-width:800px){.ds-input{min-height:44px;font-size:16px;}}@media(pointer:coarse){.ds-input{min-height:44px;}}"
+    },
+    {
+      "name": "Settings Navigation",
+      "kind": "nav",
+      "refersTo": "settings-navigation-link",
+      "description": "Text-only Team and hosted Billing route links; Team is the default section.",
+      "html": "<nav class=\"ds-settings-nav\" aria-label=\"Settings\"><a class=\"ds-settings-link\" href=\"/settings/team\" aria-current=\"page\">Team</a><a class=\"ds-settings-link\" href=\"/settings/billing\">Billing</a></nav>",
+      "css": ".ds-settings-nav{display:flex;gap:var(--space-6);border-bottom:1px solid var(--line);margin-bottom:var(--space-8);overflow-x:auto;font-family:var(--font-sans);}.ds-settings-link{display:inline-flex;flex-shrink:0;align-items:center;min-height:var(--control-height);padding:var(--space-3) var(--space-1);border-bottom:2px solid transparent;color:var(--muted);text-decoration:none;font-size:var(--text-ui);font-weight:500;}.ds-settings-link:hover{color:var(--text);}.ds-settings-link[aria-current=\"page\"]{color:var(--accent);border-bottom-color:var(--accent);}.ds-settings-link:focus-visible{outline:var(--console-focus-ring);outline-offset:calc(-1 * var(--console-focus-offset));}"
     },
     {
       "name": "Board Sidebar Navigation",

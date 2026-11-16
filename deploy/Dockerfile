@@ -1,5 +1,7 @@
 # Runtime image for the self-hosted stack in compose.yaml. Build context is the repository root.
 FROM node:24.22.2-bookworm-slim
+ARG REVISION=development
+ENV REVISION=$REVISION
 WORKDIR /opencrawl
 COPY --chown=node:node package.json package-lock.json ./
 # Full install: the Temporal worker uses the pinned optional peers from devDependencies.

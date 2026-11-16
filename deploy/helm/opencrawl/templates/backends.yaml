@@ -1,0 +1,169 @@
+{{- $name := include "opencrawl.name" . }}
+{{- if .Values.opensearch.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-opensearch
+  labels: {{ include "opencrawl.labels" . | nindent 4 }}
+spec:
+  ports: [{name: http, port: 9200}]
+  selector: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: opensearch}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}-opensearch
+  labels: {{ include "opencrawl.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $name }}-opensearch
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: opensearch}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: opencrawl, app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: opensearch}
+    spec:
+      {{- include "opencrawl.scheduling" . | nindent 6 }}
+      automountServiceAccountToken: false
+      securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: opensearch
+          image: {{ .Values.opensearch.image | quote }}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          env:
+            - {name: discovery.type, value: single-node}
+            - {name: DISABLE_SECURITY_PLUGIN, value: "true"}
+            - {name: DISABLE_INSTALL_DEMO_CONFIG, value: "true"}
+            - {name: node.store.allow_mmap, value: "false"}
+            - {name: OPENSEARCH_JAVA_OPTS, value: {{ .Values.opensearch.javaOpts | quote }}}
+          ports: [{name: http, containerPort: 9200}]
+          startupProbe: {httpGet: {path: /_cluster/health, port: http}, periodSeconds: 5, failureThreshold: 60}
+          readinessProbe: {httpGet: {path: /_cluster/health, port: http}, periodSeconds: 10}
+          resources: {{ toYaml .Values.opensearch.resources | nindent 12 }}
+          volumeMounts: [{name: data, mountPath: /usr/share/opensearch/data}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {{ include "opencrawl.storage" (dict "root" . "size" .Values.opensearch.size) | nindent 8 }}
+---
+{{- end }}
+{{- if .Values.objectStorage.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-s3
+  labels: {{ include "opencrawl.labels" . | nindent 4 }}
+spec:
+  ports: [{name: s3, port: 8333}]
+  selector: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: s3}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}-s3
+  labels: {{ include "opencrawl.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $name }}-s3
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: s3}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: opencrawl, app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: s3}
+    spec:
+      {{- include "opencrawl.scheduling" . | nindent 6 }}
+      automountServiceAccountToken: false
+      securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: s3
+          image: {{ .Values.objectStorage.image | quote }}
+          args: [mini, -dir=/data, {{ printf "-bucket=%s" .Values.objectStorage.bucket | quote }}, "-admin.password=$(AWS_SECRET_ACCESS_KEY)", -webdav=false, -s3.port.iceberg=0, -s3.port.lance=0]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: {{ required "objectStorage.existingSecret required" .Values.objectStorage.existingSecret }}, key: AWS_ACCESS_KEY_ID}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: {{ .Values.objectStorage.existingSecret }}, key: AWS_SECRET_ACCESS_KEY}}
+          ports: [{name: s3, containerPort: 8333}]
+          readinessProbe: {tcpSocket: {port: s3}, periodSeconds: 5}
+          resources: {{ toYaml .Values.objectStorage.resources | nindent 12 }}
+          volumeMounts: [{name: data, mountPath: /data}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {{ include "opencrawl.storage" (dict "root" . "size" .Values.objectStorage.size) | nindent 8 }}
+---
+{{- end }}
+{{- if .Values.temporal.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-temporal
+  labels: {{ include "opencrawl.labels" . | nindent 4 }}
+spec:
+  ports: [{name: grpc, port: 7233}]
+  selector: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: temporal}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-temporal
+  labels: {{ include "opencrawl.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: temporal}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: opencrawl, app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: temporal}
+    spec:
+      {{- include "opencrawl.scheduling" . | nindent 6 }}
+      automountServiceAccountToken: false
+      securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: temporal
+          image: {{ .Values.temporal.image | quote }}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          env:
+            - {name: DB, value: postgres12}
+            - {name: BIND_ON_IP, value: "0.0.0.0"}
+            - {name: DB_PORT, value: {{ .Values.temporal.database.port | quote }}}
+            - {name: POSTGRES_SEEDS, value: {{ default (printf "%s-postgresql" $name) .Values.temporal.database.host | quote }}}
+            - {name: POSTGRES_USER, value: {{ .Values.temporal.database.user | quote }}}
+            - name: POSTGRES_PWD
+              valueFrom: {secretKeyRef: {name: {{ required "temporal.existingSecret required" .Values.temporal.existingSecret }}, key: TEMPORAL_DATABASE_PASSWORD}}
+            - {name: DBNAME, value: {{ .Values.temporal.database.name | quote }}}
+            - {name: VISIBILITY_DBNAME, value: {{ .Values.temporal.database.visibilityName | quote }}}
+            - {name: SKIP_DB_CREATE, value: "true"}
+            - {name: DEFAULT_NAMESPACE, value: {{ .Values.temporal.namespace | quote }}}
+            - {name: TEMPORAL_ADDRESS, value: "127.0.0.1:7233"}
+            - {name: TEMPORAL_CLI_ADDRESS, value: "127.0.0.1:7233"}
+            {{- if .Values.temporal.database.tls }}
+            - {name: POSTGRES_TLS_ENABLED, value: "true"}
+            - {name: POSTGRES_TLS_DISABLE_HOST_VERIFICATION, value: "false"}
+            - {name: SQL_TLS_ENABLED, value: "true"}
+            - {name: SQL_HOST_VERIFICATION, value: "true"}
+            - {name: SQL_HOST_NAME, value: {{ .Values.temporal.database.host | quote }}}
+            {{- if .Values.temporal.database.caPath }}
+            - {name: POSTGRES_TLS_CA_FILE, value: {{ .Values.temporal.database.caPath | quote }}}
+            - {name: SQL_CA, value: {{ .Values.temporal.database.caPath | quote }}}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.temporal.extraEnv }}
+            {{ toYaml . | nindent 12 }}
+            {{- end }}
+          ports: [{name: grpc, containerPort: 7233}]
+          startupProbe:
+            exec: {command: [temporal, operator, cluster, health, --address, "127.0.0.1:7233"]}
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            exec: {command: [temporal, operator, cluster, health, --address, "127.0.0.1:7233"]}
+            periodSeconds: 10
+          resources: {{ toYaml .Values.temporal.resources | nindent 12 }}
+          {{- with .Values.temporal.extraVolumeMounts }}
+          volumeMounts: {{ toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.temporal.extraVolumes }}
+      volumes: {{ toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,95 @@
+# The installer creates an infrastructure release, optional upstream Airbyte release,
+# then an application release. Each release is ordinary Helm and can be managed directly.
+nameOverride: ""
+image:
+  repository: ghcr.io/getopencrawl/opencrawl-core
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nodeSelector: {}
+tolerations: []
+serviceAccount:
+  name: ""
+  annotations: {}
+runtime:
+  enabled: true
+  existingSecret: ""
+  env: {}
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  # PostgreSQL migration is coordinated by the released runtime before writers start.
+  migrationCommand: [node, dist/src/state/migrate.mjs, migrate]
+  readinessCommand: [node, dist/src/state/migrate.mjs, verify]
+  # After app/worker readiness, await the runtime's migration-bound connector catch-up.
+  activationTimeoutSeconds: 900
+  appResources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 2Gi}
+  workerResources:
+    requests: {cpu: 500m, memory: 1Gi}
+    limits: {memory: 3Gi}
+  terminationGracePeriodSeconds: 60
+service:
+  type: ClusterIP
+  port: 8092
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls: []
+storageClass: ""
+postgresql:
+  enabled: true
+  image: postgres:16.6-bookworm
+  # One server hosts the app, Airbyte and two independent Temporal servers.
+  maxConnections: 200
+  existingSecret: ""
+  size: 20Gi
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 2Gi}
+  # Each entry needs name, user and passwordKey in the referenced Secret.
+  databases: []
+opensearch:
+  enabled: true
+  image: opensearchproject/opensearch:3.9.0@sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e
+  size: 20Gi
+  javaOpts: -Xms512m -Xmx512m
+  resources:
+    requests: {cpu: 500m, memory: 1Gi}
+    limits: {memory: 2Gi}
+objectStorage:
+  enabled: true
+  image: chrislusf/seaweedfs:4.52
+  existingSecret: ""
+  bucket: opencrawl
+  size: 20Gi
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+temporal:
+  enabled: true
+  image: temporalio/auto-setup:1.29.1
+  existingSecret: ""
+  database:
+    host: ""
+    port: 5432
+    user: temporal
+    name: temporal
+    visibilityName: temporal_visibility
+    tls: false
+    caPath: ""
+  namespace: opencrawl
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 2Gi}
+# Bundled backends are private, namespace-scoped services. Use separate Kubernetes
+# namespaces per installation; external services require their own access controls.
+networkPolicy:
+  enabled: true

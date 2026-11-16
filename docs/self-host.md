@@ -1,5 +1,12 @@
 # Self-host OpenCrawl
 
+For Kubernetes, use the [Helm installation guide](../deploy/helm/README.md).
+The versioned self-host kit includes the charts, agent installer, conformance tools
+and pinned public images. It bundles PostgreSQL, OpenSearch, Temporal, object storage
+and Airbyte by default; each can independently connect to existing infrastructure.
+The instructions below cover the single-host Docker Compose path. Both paths run
+one application instance and do not provide high availability.
+
 For an opt-in SQLite FTS5 search index on a single host, see [search backends](search-backends.md). OpenSearch remains the default.
 
 For a disposable development preview with all services installed automatically,
