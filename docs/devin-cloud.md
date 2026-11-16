@@ -250,8 +250,8 @@ The combined Ubuntu snapshot subsequently built successfully and became active.
 A fresh Cloud session inherited CLI 0.4.91 at
 `/home/ubuntu/.local/bin/opencrawl`; version and workload help both exited zero
 with `PATH=/nonexistent`. No per-session install was required. This release
-predates the admin approval command described above: use a release containing
-that command for the administrator step. Snapshot inheritance does not establish
+predates the admin approval command described above: use native CLI 0.4.93 or
+newer for the administrator step. Snapshot inheritance does not establish
 OpenCrawl enrollment, native MCP, board access, capture or recovery.
 
 Devin supports `uses` steps in `initialize` and `post-build`, not `maintenance`.
@@ -419,6 +419,13 @@ test content. These results do not establish hosted production behavior.
 - At 22:17:53.510 UTC, a bounded current-index query for the final session's user
   messages returned zero candidates without truncation or partial results. This
   corroborates the original raw-hook first-turn gap; later proof does not repair it.
+- The isolated server was subsequently upgraded to merged revision
+  `89ac8265cff3b591d0591dd8ff95ac450fe45d68`, whose tree exactly matches the
+  tested PR. Public health and the image revision agreed, and the saved admin
+  sign-in survived. Published native CLI 0.4.93 then passed `workload approve`
+  without Node or a new login at 23:06:58 UTC. The code was saved in a mode-600
+  file without being printed; the unused code file and temporary binary were
+  removed. This check did not reactivate recording.
 
 After acceptance, both temporary personal plugins were deactivated and capture
 was stopped in all four verification VMs without purging pending data. Uploaded
@@ -442,8 +449,9 @@ plugin hooks feeding the shared worker, with explicit startup coverage limits.
 Before claiming parity, prove a fresh session's first prompt and tool trace
 through a supported provider mechanism, idle board delivery and any promised
 cold-boot or replacement-VM durability. Before hosted release, verify the
-published administrator approval command and the exact production runtime and
-plugin bundle. The isolated preview results above are bounded acceptance;
+exact production runtime and plugin bundle. Large-output recovery and exact
+queued-event survival across a forced crash have regression coverage; equivalent
+end-to-end Cloud receipts remain outstanding. The isolated preview results above are bounded acceptance;
 local fixtures and self-host tests remain separate regression evidence.
 
 Primary references, initially checked 2026-11-15; hooks and session APIs rechecked 2026-11-16:
