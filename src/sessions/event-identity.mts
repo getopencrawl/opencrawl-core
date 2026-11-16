@@ -58,7 +58,7 @@ export function eventFingerprints(events: SessionEvent[],conflicts=new Set<strin
  return result;
 }
 export function eventIdentityConflict(conflicts: Set<string>) {fail(409,'Event ID already reserved for different content',{code:'SESSION_EVENT_ID_CONFLICT',conflictCount:conflicts.size,conflictIds:[...conflicts].sort().slice(0,100)});}
-const location=eventIdentityLocation,fingerprints=eventFingerprints,conflict=eventIdentityConflict;
+const location=eventIdentityLocation,fingerprints=eventFingerprints;
 function merge(target: Map<string, string>,incoming: Map<string, string>,conflicts: Set<string>) {
  for(const [key,hash] of incoming){if(target.has(key)&&target.get(key)!==hash)conflicts.add(key);else target.set(key,hash);}
 }

@@ -83,7 +83,7 @@ export async function migrateSessionPassages({realm,principal,state,store,prefix
         }
       }
       const changed=previous.filter(x=>needed.has(x.document.eventId!)),replacementIds=replacements.map(x=>x.id),replacementSet=new Set(replacementIds),retired=changed.map(x=>x.id).filter(id=>!replacementSet.has(id));
-      if(!dryRun)await withSessionDocumentWrites({state,store,prefix,tenantId:principal.tenantId,documents:changed},async()=>{
+      if(!dryRun)await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:changed},async()=>{
         const current=await controls.read(owner,'sessions',sample.harness!,sample.sessionId!);
         if(current?.deletedAt)throw Object.assign(new Error('Deleted session cannot be reindexed'),{status:403,writeOutcome:'not-applied'});
         await backup({previous:changed,replacementIds});
@@ -120,7 +120,7 @@ export async function restoreSessionPassages({realm,principal,state,store,prefix
   const collection=realm.collection('session'),controls=createControls({state});let restored=0;
   for(const step of [...steps].reverse()){
     if(!step.previous.length)throw new Error('Missing rollback ownership evidence');
-    await withSessionDocumentWrites({state,store,prefix,tenantId:principal.tenantId,documents:step.previous},async()=>{
+    await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:step.previous},async()=>{
       for(const item of step.previous){
         const d=item.document,control=await controls.read({tenantId:principal.tenantId,userId:d.userId!},'sessions',d.harness!,d.sessionId!);
         await collection.bulk(principal,[{id:item.id,document:{...d,private:control?.visibility==='private'}}]);restored++;

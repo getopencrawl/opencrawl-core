@@ -65,7 +65,7 @@ export async function purgeSessionArchives({state,store,prefix,roots,principal,h
           const sanitized=await redact(original);
           if(!sanitized)throw new Error('Archive changed during erasure');
           const replacement=root+'redacted/'+digest(key)+'/'+digest(sanitized.bytes)+'.json.gz';
-          try{await withSessionDocumentWrites({state,store,prefix,tenantId:principal.tenantId,documents:sanitized.documents},()=>store.put(replacement,sanitized.bytes,'application/gzip'));}
+          try{await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:sanitized.documents},()=>store.put(replacement,sanitized.bytes,'application/gzip'));}
           catch(error){if(attempt<3&&(error as {status?:number}).status===403)continue;throw error;}
           if(!Buffer.from(await store.get(replacement,{maxBytes:256*1024*1024})??[]).equals(sanitized.bytes))throw new Error('Sanitized archive did not persist');
           break;

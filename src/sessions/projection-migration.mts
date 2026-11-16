@@ -80,7 +80,7 @@ export async function migrateSessionProjection({realm, principal, state, store, 
     const cursor=hits.at(-1)?.sort;
     if(!cursor||JSON.stringify(cursor)===JSON.stringify(report.after))throw new Error('Session projection scan returned no advancing cursor');
     if(!dryRun&&previous.length) {
-      await withSessionDocumentWrites({state,store,prefix,tenantId:principal.tenantId,documents:previous},async()=>{
+      await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:previous},async()=>{
       await backup({previous});
       // Each replacement is at most one 16k text chunk; cap bulk size separately.
       for(const item of writes)await sessions.bulk(principal,[{...item,policy:'session-projection'}]);
@@ -97,7 +97,7 @@ export async function restoreSessionProjection({realm,principal,state,store,pref
   let restored=0;
   for(const step of [...steps].reverse())for(const item of step.previous) {
     if(item.document.tenantId!==principal.tenantId)throw new Error('Backup scope denied');
-    await withSessionDocumentWrites({state,store,prefix,tenantId:principal.tenantId,documents:[item]},()=>realm.collection('session').bulk(principal,[item]));restored++;
+    await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:[item]},()=>realm.collection('session').bulk(principal,[item]));restored++;
   }
   return {restored};
 }

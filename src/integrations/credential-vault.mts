@@ -11,6 +11,10 @@ const schema=z.object({
   provider:z.literal('slack'),status:z.enum(['INITIATED','EXCHANGING','ACTIVE','REFRESHING','FAILED','REVOKED']),
   state:token,callbackUrl:z.string().url().max(4096),flowExpiresAt:z.number().finite(),proxyToken:token,
   accessToken:token.optional(),refreshToken:token.optional(),accessExpiresAt:z.number().finite().optional(),
+  tokenIntent:z.object({attemptId:z.string().regex(/^[a-f0-9]{32}$/),kind:z.enum(['exchange','refresh']),requestedAt:z.number().finite()}).strict().optional(),
+  retirementTokens:z.array(token).max(4).optional(),
+  // Legacy active grants may have overwritten older live tokens before this protocol.
+  tokenProtocol:z.literal(1).optional(),legacyTokenUncertainty:z.boolean().optional(),
   remoteRevoked:z.boolean().optional(),version:z.literal(1),
 }).strict();
 export type ConnectorGrant=z.infer<typeof schema>;

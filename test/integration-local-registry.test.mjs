@@ -131,3 +131,9 @@ live('hosted registry uses one fixed installation with independent tenant slots 
  await assert.rejects(createSingleOrganizationRegistry({database,organizationId:'org_team',environment:'production'}).ready(),/another organization/);
  const restarted=createPostgresIntegrationRegistry(options);assert.equal((await restarted.exportRecord(b.tenantId,b.userId,b.integrationId)).lifecycleCommandId,results[1].commandId);
 });
+live('offline registry export leaves an unbound target namespace unchanged',async t=>{
+ const database=await applicationDatabaseFixture(t),registry=createPostgresIntegrationRegistry({database,environment:'production',bindingId:'hosted:production',authorizeTenant:id=>id==='org_team'});
+ assert.equal(await registry.exportRecord(record.tenantId,record.userId,record.integrationId),null);
+ const {rows}=await database.pool.query('SELECT namespace FROM opencrawl_integration_bindings WHERE namespace=$1',[database.namespace]);assert.deepEqual(rows,[]);
+ await assert.rejects(registry.exportRecord('org_other',record.userId,record.integrationId),{status:403});
+});

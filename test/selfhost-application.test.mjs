@@ -197,6 +197,21 @@ test('OSS withholds a completed tRPC response if membership or admin role change
   assert.equal(result.status,403);assert.doesNotMatch(await result.text(),/Self-hosted team/);
 });
 
+for(const change of ['demotion','removal'])
+test(`direct consent response is withheld after concurrent ${change}`,async t=>{
+  let during=async()=>{};
+  const redirectUrl='https://provider.example/authorize?fixture=private-consent';
+  const integrations={list:async()=>[],connect:async()=>{await during();return {redirectUrl};}};
+  const f=await fixture(t,{integrations,providers:{notion:{id:'notion',name:'Notion',scope:'team',auth:'oauth'}}});
+  await f.admin();
+  const {adapter}=await f.identity.auth.$context;
+  const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
+  const where=[{field:'id',value:member.id}];
+  during=()=>change==='demotion'?adapter.update({model:'member',where,update:{role:'member'}}):adapter.delete({model:'member',where});
+  const response=await f.request('/api/integrations/notion/connect','admin',{method:'POST',headers:{origin:f.origin}});
+  assert.equal(response.status,403);assert.doesNotMatch(await response.text(),/provider\.example|private-consent/);
+});
+
 test('CLI device sign-in requires a member’s approval and yields refreshable tokens for this deployment',async t=>{
   const f=await fixture(t);await f.admin();
   const config=await (await f.request('/.well-known/opencrawl-cli')).json();

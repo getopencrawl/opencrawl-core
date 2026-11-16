@@ -80,7 +80,7 @@ export async function migrateSessionTokens({realm, principal, state, store, pref
       for (const result of results) if (result.status === 'rejected') throw result.reason;
     }
     if (!dryRun && updates.length) {
-        await withSessionDocumentWrites({state,store, prefix, tenantId: principal.tenantId, documents: updates}, async () => {
+        await withSessionDocumentWrites({state, prefix, tenantId: principal.tenantId, documents: updates}, async () => {
           await collection.bulk(principal, updates);
           const actual = await collection.mget(principal, updates.map(item => item.id));
           const byId = new Map(actual.docs.map(hit => [hit._id, hit]));

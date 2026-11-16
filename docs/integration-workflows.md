@@ -74,6 +74,37 @@ create requests. An ambiguous POST is reconciled against exact scoped resources;
 an empty listing never authorizes repeating that POST. Late successful creates
 are recorded even if disconnect has superseded the command, allowing cleanup.
 
+## Shared provider resources
+
+Declarative Airbyte definitions, active manifest versions and shared OAuth auth
+configurations use a PostgreSQL intent keyed to the exact installation, environment,
+provider scope and name. Independent integration commands share this claim. A lost
+create or manifest-publication response can only be reconciled by an exact identity
+and fingerprint; malformed, incomplete or ambiguous listings never authorize another
+POST. Definition/configuration identities cannot silently change. Manifest revisions
+serialize through their existing definition and retain unresolved prior requests.
+Legacy interrupted setup may adopt existing definitions but cannot issue an
+untracked create/update; operators must reconcile that prior outcome first.
+
+## Slack token settlement
+
+Direct Slack grants persist a token-exchange intent before sending a one-shot code
+or refresh token. Revocation prevents access immediately but preserves that intent.
+A late response is saved as encrypted retirement work and never reactivates the
+grant. The disconnect workflow retries retirement of every known access and refresh
+token. Normal refresh also retires the prior tokens before allowing another refresh;
+the bounded retirement queue must settle before a new provider POST is admitted.
+Slack [documents single-token revocation](https://docs.slack.dev/authentication/using-token-rotation/),
+so revoking only the access token is insufficient.
+
+A lost exchange response remains unresolved; a process restart or token age cannot
+establish its outcome. Legacy active/refreshing/exchanging grants can also have older
+tokens that the previous implementation discarded. They retain explicit legacy
+uncertainty after known tokens are revoked. Operators must independently establish
+provider-side revocation; this implementation does not claim those unknown tokens
+were revoked or silently clear the marker. The encrypted retirement record stays
+bounded, and provider token values never enter Temporal payloads or failures.
+
 ## Disconnect
 
 The workflow closes writer admission, stops provider/scheduled writers, reconciles

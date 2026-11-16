@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-registry.mjs';
+import {createIntegrationResources} from '../dist/src/state/integration-resources.mjs';
 import {createIntegrationCommands} from '../dist/src/state/integration-commands.mjs';
 import {createIntegrations} from '../dist/src/integrations/service.mjs';
 import {integrationSteps} from '../dist/src/integrations/temporal/contracts.mjs';
@@ -9,10 +10,10 @@ import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-dat
 const principal={tenantId:'org_team',userId:'user_a'};
 const base={...principal,integrationId:'int_'+'a'.repeat(26),environment:'selfhost',provider:'github',scope:'team',status:'active',createdAt:'2026-01-01',installationId:'42',s3Bucket:'owned',s3Prefix:'raw/v1/source=github/workspace=42/connection=int_'+'a'.repeat(26),resourceVersion:'first',airbyte:{connectionId:'connection',sourceId:'source',destinationId:'destination'}};
 async function fixture(t,record=base){
- const database=await applicationDatabaseFixture(t), commands=createIntegrationCommands({database,environment:'selfhost',encryptionKey:Buffer.alloc(32,7)});await commands.ready();
+ const database=await applicationDatabaseFixture(t), commands=createIntegrationCommands({database,environment:'selfhost',encryptionKey:Buffer.alloc(32,7)});await commands.ready();const resources=createIntegrationResources({database,environment:'selfhost'});await resources.ready();
  const registry=createSingleOrganizationRegistry({database,organizationId:'org_team',commands:commands.transactional});await registry.create(record);
  const removed=[],submitted=[];let held=false;
- const lifecycle={commands,runProviderWrite:async(_record,_operation,write)=>write(),schedule:async ref=>{submitted.push(ref);throw Error('PRIVATE_DISPATCH_BODY');},cleanup:{
+ const lifecycle={commands,resources,runProviderWrite:async(_record,_operation,write)=>write(),schedule:async ref=>{submitted.push(ref);throw Error('PRIVATE_DISPATCH_BODY');},cleanup:{
   closeWriters:async()=>{removed.push('close');},stopWriters:async()=>{removed.push('stop');},
   drainWriters:async()=>{if(held)throw Object.assign(Error('uncertain'),{code:'CONNECTOR_WRITE_PENDING'});removed.push('drain');},
   deleteDocuments:async()=>{removed.push('documents');return 2;}}};
@@ -97,4 +98,13 @@ test('migration with a lost API key asks for reconnect before allocating new res
  await assert.rejects(service.lifecycleStep({...ref,step:'prepare'}),{code:'ProvisioningKeyRequired'});assert.equal(prepared,0);
  await f.registry.update(record,{airbyte:{...record.airbyte,sourceId:'adopted-source'}});
  assert.deepEqual(await service.lifecycleStep({...ref,step:'prepare'}),{status:'done'});assert.equal(prepared,1);
+});
+
+test('Airbyte definition creation and manifest publication retain a shared intent before source creation',{skip:!postgresUrl},async t=>{
+ const record={...base,provider:'granola',status:'provisioning',provisionProtocol:1,sharedResourceProtocol:1,s3Prefix:'raw/v1/source=granola/workspace=org_team/connection='+base.integrationId,airbyte:{destinationId:'destination'},airbyteWorkspaceId:'workspace',startDate:'2026-01-01'};
+ const f=await fixture(t,record),ref=await f.registry.requestLifecycle(record,'provision',{apiKey:'PRIVATE_KEY'},principal.userId);let creates=0,sources=0,visible=false;
+ const provider={id:'granola',auth:'api-key',scope:'team',owner:()=> 'workspace=org_team',connector:{name:'OpenCrawl definition',manifest:{}},sourceConfiguration:()=>({})};
+ const service=createIntegrations({...f.options,providers:{granola:provider},airbyte:{declarativeSources:async()=>visible?[{id:'definition',name:provider.connector.name,manifest:{}}]:[],createDeclarativeSource:async()=>{creates++;throw Error('provider committed definition');},createSource:async()=>{sources++;return {sourceId:'source'};}}});
+ await service.lifecycleStep({...ref,step:'prepare'});await assert.rejects(service.lifecycleStep({...ref,step:'source'}),/committed/);await assert.rejects(service.lifecycleStep({...ref,step:'source'}),{code:'ProvisioningRecoveryPending'});assert.deepEqual([creates,sources],[1,0]);
+ visible=true;await service.lifecycleStep({...ref,step:'source'});assert.deepEqual([creates,sources],[1,1]);assert.equal((await f.registry.get(record.tenantId,record.userId,record.integrationId)).airbyte.sourceId,'source');
 });
