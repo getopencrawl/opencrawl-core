@@ -16,7 +16,7 @@ unauthenticated access.
 
 ## Launch availability
 
-New setup currently offers Claude Code and Codex on macOS. Other clients and
+New setup currently offers Claude Code, Codex, and Cursor on macOS. Other clients and
 client operating systems are deferred; their adapters and existing installations
 remain supported. Saved deferred selections may continue or be turned off, but
 cannot be newly enabled. A legacy installation containing deferred clients stops
@@ -50,8 +50,8 @@ remains an alternative. Installation failure must stop before setup executes.
 1. **Authenticate the CLI.** Reuse a valid saved sign-in. Complete the normal
    browser handoff when required, then establish the current API, owner and
    installation binding before changing clients.
-2. **Choose plugins and future recording.** The first release offers native
-   Claude Code and Codex plugins on macOS. Detected offered clients
+2. **Choose plugins and future recording.** Setup offers native
+   Claude Code, Codex, and Cursor plugins on macOS. Detected offered clients
    start selected; saved off choices remain off. Recording requires that client's
    plugin: turning its plugin off also turns recording off, and turning recording
    on selects the plugin. A plugin may remain installed for search with recording
@@ -73,13 +73,18 @@ remains an alternative. Installation failure must stop before setup executes.
    verification requirement. One primary agent may coordinate these steps but
    cannot supply another client's native tool evidence.
 
-Native plugin bundles contain both startup and capture hooks. The first release
-offers the Claude Code and Codex bundles through setup. The CLI owns collector
+Native plugin bundles contain both startup and capture hooks. Setup
+offers the Claude Code, Codex, and Cursor bundles. The CLI owns collector
 configuration, queues and history workers;
 it does not install global client hook or startup-skill files for this flow.
 Capture still requires the saved recording choice. Plugin identities are scoped
 to the deployment and their installation receipts bind the CLI profile, preserving
 another profile's or destination's plugin.
+
+Cursor's local plugin includes MCP, startup and capture hooks. Setup preserves
+manually configured MCP connections and installs the deployment-specific plugin
+alongside them. Cursor historical imports are not offered; new-session recording
+starts at the saved consent boundary.
 
 A bundle marked `prepared` has not yet demonstrated native hook activation.
 Native loading, policy or trust can still require attention. In particular,

@@ -15,6 +15,7 @@ import {atomicJson,withSessionLock} from '../src/session.ts';
 import {hash} from '../src/capture/parse.ts';
 import {validTranscriptIdentity} from '../src/capture/transcript-checkpoint.ts';
 import {applySelectionKey,type SelectionCursor} from '../src/setup/select.ts';
+import {installSetupPlugins,setupPluginIdentity} from '../src/setup/plugins.ts';
 import type {SelectionScreen} from '../src/setup/select.ts';
 const setupCommand=(action:string,api:string,values:Parameters<typeof realSetupCommand>[2],dependencies:NonNullable<Parameters<typeof realSetupCommand>[3]>={})=>realSetupCommand(action,api,values,{platform:'darwin',daemonReady:async()=>true,installDaemon:async()=>({kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'}),...dependencies});
 type ClientStatus=SetupServerStatus['installations'][number]['clients'][number];
@@ -74,7 +75,7 @@ test('resume retries pending selected plugins without another selection screen o
  const resumed=await setupCommand('resume',api,{json:true},{choose:async()=>{throw new Error('Unexpected questionnaire');},installPlugins:async(_api,selected)=>{installs++;expect(selected).toEqual(['codex']);return {results:[{client:'codex',status:'installed'}],humanTasks:[]};},launchHistory:()=>({state:'not_started'})});
  expect(installs).toBe(1);expect(resumed).toMatchObject({status:'configured'});expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.selections.history).toEqual(before?.selections.history);expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.historyJob).toBeUndefined();
 }));
-test('an existing deferred client retains native reload tasks on resume',async()=>fixture(async api=>{
+test('an existing client retains native reload tasks on resume',async()=>fixture(async api=>{
  await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'none',history:'none'},{installPlugins:async()=>({results:[{client:'codex',status:'installed'}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})});
  await updateSetupState({api,tenantId:'tenant',userId:'user'},state=>({...state!,selections:{plugins:{cursor:true},forward:{cursor:false},history:{cursor:false}}}));
  const result=await setupCommand('resume',api,{json:true},{installPlugins:async()=>({results:[{client:'cursor',status:'installed'}],humanTasks:[{id:'cursor-reload',kind:'restart',client:'cursor',title:'Reload Cursor',instruction:'Reload Cursor to load the installed local plugin.'}]}),launchHistory:()=>({state:'not_started'})});
@@ -352,36 +353,54 @@ test('supervised and not-required workers allow configured setup without invente
 }));
 
 
-test('new setup offers only Mac Claude and Codex and rejects deferred selections before authentication',async()=>fixture(async(api,dir,_observations,_set,calls)=>{
+test('new setup offers Mac Claude, Codex and Cursor and rejects deferred selections before authentication',async()=>fixture(async(api,dir,_observations,_set,calls)=>{
  mkdirSync(join(dir,'claude'));mkdirSync(join(dir,'cursor'));mkdirSync(join(dir,'agy'));
  const plan=await setupCommand('plan',api,{plugins:'all',forward:'all',history:'all'}) as {clients:{id:string}[];selections:SetupState['selections']};
- expect(plan.clients.map(row=>row.id).sort()).toEqual(['claude-code','codex']);
- expect(plan.selections.plugins).toEqual({'claude-code':true,codex:true});
- expect(plan.selections.forward).toEqual({'claude-code':true,codex:true});
- expect(plan.selections.history).toEqual({'claude-code':false,codex:true});
+ expect(plan.clients.map(row=>row.id).sort()).toEqual(['claude-code','codex','cursor']);
+ expect(plan.selections.plugins).toEqual({'claude-code':true,codex:true,cursor:true});
+ expect(plan.selections.forward).toEqual({'claude-code':true,codex:true,cursor:true});
+ expect(plan.selections.history).toEqual({'claude-code':false,codex:true,cursor:false});
  delete process.env.OPENCRAWL_TOKEN;calls.length=0;let login=0;
- for(const values of [{plugins:'cursor'},{forward:'antigravity'},{history:'antigravity'},{plugins:'devin'}])await expect(setupCommand('run',api,values,{interactive:true,login:async()=>{login++;}})).rejects.toMatchObject({code:'SETUP_CLIENT_NOT_AVAILABLE'});
+ for(const values of [{plugins:'antigravity'},{forward:'antigravity'},{history:'antigravity'},{plugins:'devin'}])await expect(setupCommand('run',api,values,{interactive:true,login:async()=>{login++;}})).rejects.toMatchObject({code:'SETUP_CLIENT_NOT_AVAILABLE'});
  for(const platform of ['linux','win32'] as const)await expect(setupCommand('run',api,{}, {platform,interactive:true,login:async()=>{login++;}})).rejects.toMatchObject({code:'SETUP_NOT_AVAILABLE'});
  expect(login).toBe(0);expect(calls).toEqual([]);expect(readCaptureConfig()).toBeNull();expect(existsSync(join(dir,'config','opencrawl','setup'))).toBe(false);
+}));
+
+test('manual Cursor MCP can enroll through normal setup without replacing connections or claiming native activation',async()=>fixture(async(api,dir,observations)=>{
+ const cursorRoot=join(dir,'cursor'),mcpFile=join(cursorRoot,'mcp.json');mkdirSync(cursorRoot);
+ const manual=JSON.stringify({mcpServers:{opencrawl:{url:api+'/mcp'},other:{url:'https://other.example/mcp'}}},null,2)+'\n';writeFileSync(mcpFile,manual);
+ const choices={plugins:'cursor',forward:'cursor',history:'none'},command=[join(dir,'opencrawl')];
+ const dependencies={command,installPlugins:((target,clients,options)=>installSetupPlugins(target,clients,{...options,home:dir,which:()=>null})) as typeof installSetupPlugins};
+ const plan=await setupCommand('plan',api,choices) as {planId:string};
+ expect(readSetupState({api,tenantId:'tenant',userId:'user'})).toBeNull();expect(readCaptureConfig()).toBeNull();expect(observations).toHaveLength(0);
+ const result=await setupCommand('apply',api,{...choices,'plan-id':plan.planId,yes:true},dependencies);
+ const state=readSetupState({api,tenantId:'tenant',userId:'user'})!,plugin=join(cursorRoot,'plugins','local',setupPluginIdentity(api).name);
+ expect(state.selections).toMatchObject({plugins:{cursor:true,codex:false,'claude-code':false},forward:{cursor:true,codex:false,'claude-code':false},history:{cursor:false,codex:false,'claude-code':false}});
+ expect(state.historyJob).toBeUndefined();expect(readCaptureConfig()).toMatchObject({api,hookOwnership:'plugin',captureWorker:'daemon-v1',harnesses:['cursor'],command});
+ expect(JSON.parse(readFileSync(join(plugin,'mcp.json'),'utf8'))).toEqual({mcpServers:{opencrawl:{url:api+'/mcp'}}});
+ expect(existsSync(join(plugin,'hooks','hooks.json'))).toBe(true);expect(existsSync(join(cursorRoot,'hooks.json'))).toBe(false);
+ expect(result).toMatchObject({status:'needs_attention'});expect(state.pluginResults).toEqual([expect.objectContaining({client:'cursor',status:'prepared'})]);expect(readFileSync(mcpFile,'utf8')).toBe(manual);
+ await setupCommand('resume',api,{json:true},dependencies);
+ expect(readSetupState(state.scope)?.installationId).toBe(state.installationId);expect(readSetupState(state.scope)?.selections).toEqual(state.selections);expect(readFileSync(mcpFile,'utf8')).toBe(manual);
 }));
 
 test('existing deferred choices and bounded completed history survive new Mac offers and off remains off',async()=>fixture(async(api,dir,_observations,_set,calls)=>{
  await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'none',history:'none'},setupCodex);
  const scope={api,tenantId:'tenant',userId:'user'},now=new Date().toISOString();
  const oldFile={harness:'antigravity' as const,path:join(dir,'old-approved.json'),bytes:8,ino:1,mtimeMs:1};
- await updateSetupState(scope,state=>({...state!,selections:{plugins:{'claude-code':false,codex:true,cursor:true,antigravity:false},forward:{'claude-code':false,codex:false,cursor:false,antigravity:false},history:{'claude-code':false,codex:false,antigravity:true}},historyJob:{id:'approved-old-job',clients:['antigravity'],files:[oldFile],state:'complete',completedClients:['antigravity'],createdAt:now,updatedAt:now}}));
+ await updateSetupState(scope,state=>({...state!,selections:{plugins:{'claude-code':false,codex:true,cursor:false,antigravity:true},forward:{'claude-code':false,codex:false,cursor:false,antigravity:false},history:{'claude-code':false,codex:false,cursor:false,antigravity:true}},historyJob:{id:'approved-old-job',clients:['antigravity'],files:[oldFile],state:'complete',completedClients:['antigravity'],createdAt:now,updatedAt:now}}));
  const before=readSetupState(scope)!;calls.length=0;
- await expect(setupCommand('apply',api,{yes:true,plugins:'antigravity',forward:'none',history:'none'},setupCodex)).rejects.toMatchObject({code:'SETUP_CLIENT_NOT_AVAILABLE'});
- await expect(setupCommand('apply',api,{yes:true,plugins:'cursor',forward:'cursor',history:'none'},setupCodex)).rejects.toMatchObject({code:'SETUP_CLIENT_NOT_AVAILABLE'});
+ await expect(setupCommand('apply',api,{yes:true,plugins:'devin',forward:'none',history:'none'},setupCodex)).rejects.toMatchObject({code:'SETUP_CLIENT_NOT_AVAILABLE'});
+ await expect(setupCommand('apply',api,{yes:true,plugins:'antigravity',forward:'antigravity',history:'none'},setupCodex)).rejects.toMatchObject({code:'SETUP_CLIENT_NOT_AVAILABLE'});
  expect(calls).toEqual([]);expect(readSetupState(scope)).toEqual(before);
  let screens=0;
- await setupCommand('run',api,{}, {...setupCodex,interactive:true,choose:async screen=>{screens++;expect(screen.items.every(row=>['claude-code','codex'].includes(row.id))).toBe(true);return screen.items;},installPlugins:async(_api,ids)=>{expect(ids).toEqual(['codex','cursor']);return {results:[{client:'codex',status:'installed' as const},{client:'cursor',status:'installed' as const}],humanTasks:[]};}});
+ await setupCommand('run',api,{}, {...setupCodex,interactive:true,choose:async screen=>{screens++;expect(screen.items.every(row=>['claude-code','codex','cursor'].includes(row.id))).toBe(true);return screen.items;},installPlugins:async(_api,ids)=>{expect(ids).toEqual(['antigravity','codex']);return {results:[{client:'codex',status:'installed' as const},{client:'antigravity',status:'installed' as const}],humanTasks:[]};}});
  expect(screens).toBe(2);expect(readSetupState(scope)?.historyJob).toEqual(before.historyJob);expect(readSetupState(scope)?.selections).toEqual({...before.selections,plugins:{...before.selections.plugins,'claude-code':false},forward:{...before.selections.forward,'claude-code':false},history:{...before.selections.history,'claude-code':false}});
- await setupCommand('resume',api,{json:true},{...setupCodex,platform:'linux',installPlugins:async(_api,ids)=>({results:[{client:'codex',status:'installed' as const},{client:'cursor',status:'installed' as const}],humanTasks:[]})});
+ await setupCommand('resume',api,{json:true},{...setupCodex,platform:'linux',installPlugins:async(_api,ids)=>({results:[{client:'codex',status:'installed' as const},{client:'antigravity',status:'installed' as const}],humanTasks:[]})});
  expect(readSetupState(scope)?.historyJob).toEqual(before.historyJob);
  await updateSetupState(scope,state=>({...state!,historyJob:{...state!.historyJob!,state:'paused'}}));
  const paused=readSetupState(scope)!.historyJob;
- await setupCommand('apply',api,{yes:true,plugins:'all',forward:'none',history:'all'},{...setupCodex,platform:'linux',installPlugins:async()=>({results:[{client:'codex',status:'installed'},{client:'cursor',status:'installed'}],humanTasks:[]})});
+ await setupCommand('apply',api,{yes:true,plugins:'all',forward:'none',history:'all'},{...setupCodex,platform:'linux',installPlugins:async()=>({results:[{client:'codex',status:'installed'},{client:'antigravity',status:'installed'}],humanTasks:[]})});
  expect(readSetupState(scope)?.historyJob).toEqual(paused);
  const off=await setupCommand('plan',api,{plugins:'none',forward:'none',history:'none'},{platform:'linux'}) as {selections:SetupState['selections']};
  expect(Object.values(off.selections.plugins).every(v=>!v)).toBe(true);expect(Object.values(off.selections.history).every(v=>!v)).toBe(true);
@@ -413,8 +432,8 @@ test('unbound saved deferred choices cannot enter run, plan, or apply implicitly
  const scope={api,tenantId:'tenant',userId:'user'},acceptedAt='2026-01-01T00:00:00.000Z';let installs=0,launches=0,choices=0;
  const dependencies={interactive:true,choose:async()=>{choices++;throw new Error('Unbound choices reached the selector');},installPlugins:async()=>{installs++;throw new Error('Unbound choices reached installation');},launchHistory:()=>{launches++;throw new Error('Unbound choices launched history');}};
  const savedChoices:SetupState['selections'][]=[
-  {plugins:{codex:true,cursor:true},forward:{codex:false,cursor:false},history:{codex:false}},
-  {plugins:{codex:true,cursor:false},forward:{codex:false,cursor:true},history:{codex:false}},
+  {plugins:{codex:true,antigravity:true},forward:{codex:false,antigravity:false},history:{codex:false}},
+  {plugins:{codex:true,antigravity:false},forward:{codex:false,antigravity:true},history:{codex:false}},
   {plugins:{codex:true},forward:{codex:false},history:{codex:false,antigravity:true}},
  ];
  for(const selections of savedChoices){
