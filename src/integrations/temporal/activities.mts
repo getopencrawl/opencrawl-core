@@ -1,4 +1,4 @@
-import type {IntegrationActivities, IntegrationActivityOptions, IntegrationCommand, IntegrationCommandFailure, IntegrationCommandReference, IntegrationStepInput, ResolvedIntegrationLifecycle} from './types.mjs';
+import type {IntegrationActivities, IntegrationActivityOptions, IntegrationCommand, IntegrationCommandFailure, IntegrationCommandReference, ResolvedIntegrationLifecycle} from './types.mjs';
 import {Context, heartbeat} from '@temporalio/activity';
 import {ApplicationFailure} from '@temporalio/common';
 import {integrationSteps, validateIntegrationCommand} from './contracts.mjs';

@@ -111,6 +111,7 @@
     "./state/postgres": "./dist/src/state/postgres.mjs",
     "./state/settings": "./dist/src/state/settings.mjs",
     "./state/migration": "./dist/src/state/migrate.mjs",
+    "./state/migration-engine": "./dist/src/state/migration-engine.mjs",
     "./state/integration-drain-cli": "./dist/src/state/integration-drain-cli.mjs",
     "./state/integration-commands": "./dist/src/state/integration-commands.mjs",
     "./state/integration-resources": "./dist/src/state/integration-resources.mjs",

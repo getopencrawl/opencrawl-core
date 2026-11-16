@@ -15,6 +15,7 @@ const schema=z.object({
   retirementTokens:z.array(token).max(4).optional(),
   // Legacy active grants may have overwritten older live tokens before this protocol.
   tokenProtocol:z.literal(1).optional(),legacyTokenUncertainty:z.boolean().optional(),
+  settlementProof:z.object({version:z.literal(1),fingerprint:z.string().regex(/^[a-f0-9]{64}$/),verifiedBy:z.string().min(1).max(200),verifiedAt:z.string().datetime(),exchangeDisposition:z.string().min(1).max(3000),providerRevocation:z.string().min(1).max(3000)}).strict().optional(),
   remoteRevoked:z.boolean().optional(),version:z.literal(1),
 }).strict();
 export type ConnectorGrant=z.infer<typeof schema>;

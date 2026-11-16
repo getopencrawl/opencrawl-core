@@ -2,10 +2,11 @@ import {existsSync,readFileSync,openSync,closeSync} from 'node:fs';
 import {join,resolve,relative} from 'node:path';
 import {docker,privateFile,root,lock,shellQuote} from './installation.mjs';
 import {verifyRecovery} from './recovery.mjs';
+import {recoveryCompose} from './recovery-network.mjs';
 
 const args=process.argv.slice(2);
 if(args.length!==2||args[0]!=='--backup')throw new Error('Usage: node deploy/restore.mjs --backup /private/recovery-directory. Requires empty destination volumes and the saved configuration.');
-const directory=resolve(args[1]),snapshot=await verifyRecovery(directory);
+const directory=resolve(args[1]),snapshot=await verifyRecovery(directory),compose=recoveryCompose(snapshot);
 const release=lock(join(root,snapshot.kind==='dev'?'.opencrawl-dev/upgrade.lock':'deploy/.upgrade/upgrade.lock'));
 try {
  if(docker(['ps','-q','--filter',`label=com.docker.compose.project=${snapshot.project}`]))throw new Error('Stop this installation before restoring; no running installation is overwritten');
@@ -54,7 +55,7 @@ try {
  const archive=openSync(join(directory,'stores.tgz'),'r');
  try{docker(['run','--rm','-i','--network','none','--user','0:0',...mounts,'--entrypoint','tar',snapshot.compose.services.app.image,'-xzf','-','-C','/stores'],{stdio:[archive,'inherit','inherit']});}finally{closeSync(archive);}
  for(const saved of snapshot.configurations)privateFile(resolve(root,saved.path),saved.content);
- privateFile(join(directory,'restore-compose.json'),snapshot.compose);
+ privateFile(join(directory,'restore-compose.json'),compose);
  privateFile(join(root,snapshot.kind==='dev'?'.opencrawl-dev/upgrade.json':'deploy/.upgrade/upgrade.json'),{format:1,project:snapshot.project,target:'restored:'+snapshot.compose.services.app.image,phase:'complete'});
  console.log(JSON.stringify({restore:'complete',project:snapshot.project,
   start:`docker compose --project-name ${snapshot.project} -f ${shellQuote(join(directory,'restore-compose.json'))} up -d --wait --wait-timeout 600${snapshot.airbyte?' && '+shellQuote(process.execPath)+' '+shellQuote(join(root,'deploy/resume-airbyte.mjs'))+' --backup '+shellQuote(directory):''}`,

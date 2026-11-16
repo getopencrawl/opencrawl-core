@@ -23,7 +23,7 @@ function operation(record:IntegrationRecord):IntegrationCommandOperation|null {
  return null;
 }
 export function migratedIntegrationCommand(namespace:string,record:IntegrationRecord,op:IntegrationCommandOperation):IntegrationCommandReference {
- if(!namespace||!['production','staging','selfhost'].includes(record.environment)||!/^org_[A-Za-z0-9]+$/.test(record.tenantId)||!/^user_[A-Za-z0-9]+$/.test(record.userId)||!/^int_[a-f0-9]{26}$/.test(record.integrationId))throw new Error('Invalid legacy lifecycle scope');
+ if(!namespace||!['production','staging','selfhost'].includes(record.environment)||!/^(org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(record.tenantId)||!/^user_[A-Za-z0-9]+$/.test(record.userId)||!/^int_[a-f0-9]{26}$/.test(record.integrationId))throw new Error('Invalid legacy lifecycle scope');
  const commandId='migration_'+createHash('sha256').update(JSON.stringify(['integration-lifecycle-migration-v1',namespace,record.environment,record.tenantId,record.userId,record.integrationId,op])).digest('hex');
  return {environment:record.environment,tenantId:record.tenantId,userId:record.userId,integrationId:record.integrationId,commandId};
 }

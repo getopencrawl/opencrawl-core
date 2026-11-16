@@ -1,5 +1,5 @@
 import type {ConnectorActivityOptions, ConnectorWorkerOptions, ConnectorActivityInput} from './types.mjs';
-import type {ConnectorSegmentInput, SourcePage} from '../workflow.mjs';
+import type {SourcePage} from '../workflow.mjs';
 import {errorMetadata} from '../types.mjs';
 import {Worker, NativeConnection, bundleWorkflowCode} from '@temporalio/worker';
 import {Context, heartbeat} from '@temporalio/activity';

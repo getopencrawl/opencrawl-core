@@ -162,6 +162,13 @@ for(const store of saved.stores){const names=docker(['volume','ls','--format','{
 for(const config of saved.configurations)rmSync(resolve(root,config.path),{force:true});
 run(process.execPath,['deploy/restore.mjs','--backup',backup]);
 const recovery=['compose','--project-name',project,'-f',join(backup,'restore-compose.json')];
+const restoredCompose=JSON.parse(readFileSync(join(backup,'restore-compose.json'),'utf8'));
+if(restoredCompose.networks?.default){
+ const addresses=Object.values(restoredCompose.services).map(service=>service.networks?.default?.ipv4_address);
+ assert.ok(addresses.every(Boolean),'Every restored service, including init jobs, must reserve its address');
+ if(saved.airbyte)addresses.push(saved.airbyte.address);
+ assert.equal(new Set(addresses).size,addresses.length,'Saved app and Airbyte addresses must not collide with init jobs');
+}
 // Verify the matched stopped source snapshot before allowing recovered jobs
 // to retry it. Live restore acceptance resumes every worker immediately after.
 docker([...recovery,'up','-d','--wait','--wait-timeout','600',...Object.keys(saved.compose.services).filter(name=>!stateFixture||name!=='worker')]);

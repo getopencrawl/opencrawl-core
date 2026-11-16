@@ -3,7 +3,7 @@ import {isDeepStrictEqual} from 'node:util';
 import type {Client, ConnectionOptions} from '@temporalio/client';
 import {ActivityExecutionAlreadyStartedError, ScheduleNotFoundError, WorkflowExecutionAlreadyStartedError, WorkflowIdReusePolicy} from '@temporalio/client';
 import {connectorClient} from '../../connectors/temporal/client.mjs';
-import {serviceError,parseJson,type ObjectStore} from '../types.mjs';
+import {serviceError,type ObjectStore} from '../types.mjs';
 import {ScheduleAlreadyRunning,ScheduleOverlapPolicy} from '@temporalio/client';
 import {digest} from '../ingest.mjs';
 import {indexingBinding,sessionCatchupMarker,type SessionIndexingBinding} from './handoff.mjs';
@@ -119,7 +119,7 @@ export function sessionIndexingScheduler(config:SessionIndexingBinding & {addres
  * Its final Activity stores the completion marker durably, beyond retention. */
 export async function activateSessionIndexing(client:Client,input:SessionIndexingBinding & {state:ApplicationState;store:ObjectStore;prefix:string}) {
   indexingBinding(input);
-  const {sourceId,taskQueue,generation,state,prefix}=input;
+  const {sourceId,taskQueue,generation,state}=input;
   const {workflowId,markerKey,marker:expected}=sessionCatchupMarker(input);
   const scheduleId='sessions-'+digest(sourceId),schedule=client.schedule.getHandle(scheduleId);
   try {

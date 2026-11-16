@@ -3,7 +3,7 @@ import type {RealmOptions, OpenSearchResponse, IndexHit, QueryBody, SearchInput,
 import {searchFilters,searchSort} from '../search/controls.mjs';
 import type {ConnectorBinding, ConnectorPrincipal, ConnectorDocument, DocumentItem, SuppressionIdentity} from './types.mjs';
 import {createRealm} from '../search/realm.mjs';
-import {authorize, digest, documentId, validateBinding} from './scope.mjs';
+import {authorize, documentId} from './scope.mjs';
 
 import {connectorMapping} from '../search/mapping.mjs';
 export {connectorMapping};

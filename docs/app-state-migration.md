@@ -162,3 +162,9 @@ import. Matched restore verifies the old bytes and typed readbacks before
 restarting the old worker; normal live acceptance then runs with workers active.
 This ordering prevents a legitimate old deletion retry from changing the test
 snapshot before migration and does not weaken source-preservation checks.
+
+Actual Docker upgrade evidence is indexed in
+[app-state-docker-upgrade.json](evidence/app-state-docker-upgrade.json). Each result
+is bound to an exact candidate revision and artifact. Earlier success does not
+validate later importer changes; retained-Airbyte acceptance remains incomplete
+until its complete upgrade and matched-restore gate passes.

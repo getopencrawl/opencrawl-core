@@ -92,7 +92,7 @@ export async function migrateSessionProjection({realm, principal, state, store, 
 }
 
 /** Restore saved pages in reverse, using only the tenant they were saved for. */
-export async function restoreSessionProjection({realm,principal,state,store,prefix,steps}: {realm: Realm; principal: TenantPrincipal; state:ApplicationState;store:ObjectStore; prefix:string; steps: SessionProjectionBackup[]}) {
+export async function restoreSessionProjection({realm,principal,state,prefix,steps}: {realm: Realm; principal: TenantPrincipal; state:ApplicationState;store:ObjectStore; prefix:string; steps: SessionProjectionBackup[]}) {
   if(!principal?.tenantId||principal.tenantId!==realm.tenantId||principal.captureAccess!==undefined)throw Object.assign(new Error('Realm scope denied'),{status:403});
   let restored=0;
   for(const step of [...steps].reverse())for(const item of step.previous) {

@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
-import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-registry.mjs';
+import {createSingleOrganizationRegistry,createPostgresIntegrationRegistry} from '../dist/src/integrations/local-registry.mjs';
 import {createIntegrationCommands} from '../dist/src/state/integration-commands.mjs';
 import {ensureWriteBarrierSchema,createPostgresWriteBarrier} from '../dist/src/state/write-barriers.mjs';
 import {finalizeIntegrationLifecycles,verifyIntegrationLifecycles,migratedIntegrationCommand} from '../dist/src/state/lifecycle-migration.mjs';
@@ -54,4 +54,13 @@ test('legacy abandoned grants and uncertain consent requests become cleanup comm
  const f=await fixture(t,[{status:'abandoned',provider:'notion',connectedAccountId:'grant'},{status:'abandoned',provider:'notion',oauthIntent:intent},{status:'abandoned'}]);
  const result=await f.database.transaction(client=>finalizeIntegrationLifecycles({...f.options,client}));assert.equal(result.disconnect,2);assert.equal(result.preserved,1);
  const current=await f.read();assert.equal(current[0].status,'abandoned');assert.equal(current[0].connectedAccountId,'grant');assert.deepEqual(current[1].oauthIntent,intent);assert.deepEqual(current[2],f.records[2]);assert.equal((await f.commands.listPending({})).commands.length,2);
+});
+
+test('hosted personal tenant finalization retains exact scope and deterministic cleanup',{skip:!postgresUrl},async t=>{
+ const database=await applicationDatabaseFixture(t),commands=createIntegrationCommands({database,environment:'production'});await commands.ready();await ensureWriteBarrierSchema(database);
+ const record={...base,environment:'production',tenantId:'personal:user_owner',integrationId:'int_'+'b'.repeat(26),status:'disconnected'};
+ const registry=createPostgresIntegrationRegistry({database,environment:'production',bindingId:'fixture-hosted',authorizeTenant:tenant=>tenant===record.tenantId,commands:commands.transactional});await registry.create(record);
+ const options={namespace:database.namespace,environment:'production',organizationId:record.tenantId,records:[record],commands:commands.transactional};
+ const report=await database.transaction(client=>finalizeIntegrationLifecycles({...options,client}));assert.equal(report.disconnect,1);assert.equal(report.commands[0].tenantId,record.tenantId);
+ await assert.rejects(database.transaction(client=>verifyIntegrationLifecycles({...options,organizationId:'personal:user_other',client})),/another installation/);
 });

@@ -1,4 +1,4 @@
-import type {ObjectStore, ReadOptions, ListOptions} from './types.mjs';
+import type {ObjectStore} from './types.mjs';
 import {serviceError} from './types.mjs';
 import {mkdir, readFile, writeFile, rename, readdir, rmdir, unlink} from 'node:fs/promises';
 import {resolve, dirname, sep} from 'node:path';

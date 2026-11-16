@@ -66,7 +66,7 @@ async function write(sessions: ReturnType<Realm['collection']>, principal: Tenan
  * `restoreSessionDocumentIds` can undo it; the index is also rebuildable from
  * stored capture batches.
  */
-export async function migrateSessionDocumentIds({realm, principal, state, store, prefix, backup, dryRun = false, pageSize = 500, after = null, onPage = async () => {}}: {
+export async function migrateSessionDocumentIds({realm, principal, state, prefix, backup, dryRun = false, pageSize = 500, after = null, onPage = async () => {}}: {
   realm: Realm; principal: TenantPrincipal; state:ApplicationState;store:ObjectStore; prefix:string; backup(step: SessionIdentityBackup): Promise<unknown>; dryRun?: boolean; pageSize?: number;
   after?: JsonValue[] | null; onPage?(report: SessionIdentityReport): Promise<unknown>;
 }): Promise<SessionIdentityReport> {
@@ -147,7 +147,7 @@ export async function migrateSessionDocumentIds({realm, principal, state, store,
 }
 
 /** Undoes migration steps, newest first: puts removed documents back, then drops IDs the step created. */
-export async function restoreSessionDocumentIds({realm, principal, state, store, prefix, steps}: {realm: Realm; principal: TenantPrincipal; state:ApplicationState;store:ObjectStore; prefix:string; steps: SessionIdentityBackup[]}) {
+export async function restoreSessionDocumentIds({realm, principal, state, prefix, steps}: {realm: Realm; principal: TenantPrincipal; state:ApplicationState;store:ObjectStore; prefix:string; steps: SessionIdentityBackup[]}) {
   if (principal?.tenantId !== realm.tenantId || principal.captureAccess !== undefined) throw Object.assign(new Error('Realm scope denied'), {status: 403});
   const sessions = realm.collection('session');
   let restored = 0, removed = 0;

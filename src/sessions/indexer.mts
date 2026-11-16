@@ -1,4 +1,3 @@
-import type {ApplicationState} from '../state/types.mjs';
 import type {Principal, SourceOptions, SessionBatch, Attachment, SessionEvent} from './types.mjs';
 import {parseJson} from './types.mjs';
 import type {DocumentItem} from '../search/types.mjs';

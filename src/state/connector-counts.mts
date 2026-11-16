@@ -1,7 +1,7 @@
 import type {PoolClient} from 'pg';
 import type {ApplicationDatabase} from './postgres.mjs';
 import type {IntegrationRecord} from '../integrations/types.mjs';
-import type {CountObject, LegacyCountState, RecordCountRepository} from '../integrations/counts.mjs';
+import type {LegacyCountState, RecordCountRepository} from '../integrations/counts.mjs';
 import {createHash} from 'node:crypto';
 
 const where = 'namespace=$1 AND environment=$2 AND tenant_id=$3 AND user_id=$4 AND integration_id=$5';

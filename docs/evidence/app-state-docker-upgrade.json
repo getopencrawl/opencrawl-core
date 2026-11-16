@@ -1,0 +1,104 @@
+{
+  "format": 1,
+  "sourceRelease": "v0.4.1",
+  "sourceRevision": "fc748cbcba9da2c9830d842b38a2fcc19c340bd7",
+  "verifiedCandidate": "bdd9e2cadf7d8fe32cb5740593cb48edccef9b21",
+  "run": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503",
+  "event": "push",
+  "status": "published-version matrix passed; full release gate failed",
+  "scope": "Actual Docker upgrades from the unchanged published source. This evidence applies only to the exact candidate above, not later migration-engine or recovery changes. Every later candidate must repeat the gate.",
+  "publishedVersionMatrix": [
+    {
+      "installation": "deploy",
+      "search": "opensearch",
+      "conclusion": "success",
+      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/job/133031269016",
+      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/artifacts/14190635674",
+      "artifactSha256": "be8ef8ac316bf02e84ddafa858294025b7848f5020d2e2ea6ad6c4384e8315fe",
+      "receiptSha256": "20fff3637d1b6824a59557181ee4e33c091ce880451a89a4755585af9a435e23",
+      "retainedMutableObjects": 35,
+      "checks": [
+        "interrupted migration resumed",
+        "original source bytes and receipts retained",
+        "private resources and uncertain fences preserved",
+        "pending invitation and old grant preserved",
+        "new writes and restart verified",
+        "subsequent upgrade preserves new writes",
+        "matched old-version restoration verified"
+      ],
+      "backupManifestSha256": "3c9b7aae97610e6a01fb47b57dd106ac11f4a4c833450145c318e0472c545b27"
+    },
+    {
+      "installation": "deploy",
+      "search": "sqlite",
+      "conclusion": "success",
+      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/job/133031268982",
+      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/artifacts/14190316457",
+      "artifactSha256": "b8a3b04858ef12cfd1c243aefa936cbd97e8acd305023528cb5ad92a21cfa226",
+      "receiptSha256": "11f306bd622d92b8e3ebcb240b17ec9c783570398d62144c0e46a686e1e0613a",
+      "retainedMutableObjects": 35,
+      "checks": [
+        "interrupted migration resumed",
+        "original source bytes and receipts retained",
+        "private resources and uncertain fences preserved",
+        "pending invitation and old grant preserved",
+        "new writes and restart verified",
+        "subsequent upgrade preserves new writes",
+        "matched old-version restoration verified"
+      ],
+      "backupManifestSha256": "065c089f78390671229163aeb6e7858ac3c2b022d6b80f28b9dd907a4f190762"
+    },
+    {
+      "installation": "dev",
+      "search": "opensearch",
+      "conclusion": "success",
+      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/job/133031269145",
+      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/artifacts/14190034247",
+      "artifactSha256": "cededef98e80c34785cd11fd122c89d23ee2c25e2711ca4eea3639a8305fb9ca",
+      "receiptSha256": "5054858cd560181d93dd5d1448148b994a223b11c440c340d699543195e0910e",
+      "retainedMutableObjects": 35,
+      "checks": [
+        "interrupted migration resumed",
+        "original source bytes and receipts retained",
+        "private resources and uncertain fences preserved",
+        "pending invitation and old grant preserved",
+        "new writes and restart verified",
+        "subsequent upgrade preserves new writes",
+        "matched old-version restoration verified"
+      ],
+      "backupManifestSha256": "6a87173a5792b6372e3f1352ef20df1223b24e83b3c29eddea7a1e4a6818e0e9"
+    },
+    {
+      "installation": "dev",
+      "search": "sqlite",
+      "conclusion": "success",
+      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/job/133031269066",
+      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/artifacts/14190470495",
+      "artifactSha256": "c4f6ec67b1d50ce5af13ddc1abb4dc41631d1fbad7fcc4f129f9b2af4ed997a3",
+      "receiptSha256": "62d5d70665219cbd42cb10f4712f2c0616dba3929f4b0b8a528f01a30520e63e",
+      "retainedMutableObjects": 35,
+      "checks": [
+        "interrupted migration resumed",
+        "original source bytes and receipts retained",
+        "private resources and uncertain fences preserved",
+        "pending invitation and old grant preserved",
+        "new writes and restart verified",
+        "subsequent upgrade preserves new writes",
+        "matched old-version restoration verified"
+      ],
+      "backupManifestSha256": "6172de9491a974bedbd9f3c92b476b29f2e9c9343e0ed4deea785009887f4b17"
+    }
+  ],
+  "retainedAirbyte": {
+    "conclusion": "failure",
+    "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/job/133031268761",
+    "stage": "matched old-version restore",
+    "reason": "Docker networking failed with Address already in use while starting restored Temporal; completed initialization jobs had no reserved address.",
+    "observedBeforeFailure": [
+      "app-state migration and independent verification",
+      "new application writes",
+      "subsequent upgrade"
+    ],
+    "correctedGate": "pending; no successful retained-Airbyte restore receipt yet"
+  }
+}

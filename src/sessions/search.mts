@@ -2,7 +2,6 @@ import type {ApplicationState} from '../state/types.mjs';
 import {lexicalQuery} from '../search/lexical.mjs';
 import {sessionSearchExclusions} from '../search/context.mjs';
 import type {Principal, ObjectStore} from './types.mjs';
-import {serviceError} from './types.mjs';
 import type {RealmOptions, DocumentItem, SearchInput, SearchResult, OpenSearchResponse, Passage} from '../search/types.mjs';
 interface TermsAggregation {buckets: Array<{key: string; doc_count: number}>}
 interface SessionCount {count: {value: number}}

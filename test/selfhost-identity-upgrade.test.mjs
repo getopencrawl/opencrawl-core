@@ -241,7 +241,7 @@ test('restore refuses a same-named empty volume owned by another project',async(
  const root=mkdtempSync(join(tmpdir(),'opencrawl-restore-owner-')),deploy=join(root,'deploy'),bin=join(root,'bin'),backup=join(root,'backup');
  for(const path of [deploy,bin,backup])mkdirSync(path);
  try{
-  for(const file of ['restore.mjs','installation.mjs','recovery.mjs'])copyFileSync(new URL('../deploy/'+file,import.meta.url),join(deploy,file));
+  for(const file of ['restore.mjs','installation.mjs','recovery.mjs','recovery-network.mjs'])copyFileSync(new URL('../deploy/'+file,import.meta.url),join(deploy,file));
   writeFileSync(join(backup,'snapshot.json'),JSON.stringify({format:2,project:'original',kind:'deploy',configurations:[],stores:[{name:'original_data',key:'store0'}],compose:{services:{app:{image:'sha256:fixture'}}}}));
   for(const name of ['stores.tgz','images.tar'])writeFileSync(join(backup,name),'synthetic');
   const files={};for(const name of ['snapshot.json','stores.tgz','images.tar'])files[name]=await digest(join(backup,name));

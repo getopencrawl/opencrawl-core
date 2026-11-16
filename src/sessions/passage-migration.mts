@@ -113,7 +113,7 @@ export async function migrateSessionPassages({realm,principal,state,store,prefix
 
 /** Drain indexing/visibility writes before rollback. Current privacy wins over
  * the backup; deletion fences prevent restoration of a deleted session. */
-export async function restoreSessionPassages({realm,principal,state,store,prefix,steps}: {
+export async function restoreSessionPassages({realm,principal,state,prefix,steps}: {
   realm:Realm;principal:TenantPrincipal;state:ApplicationState;store:ObjectStore;prefix:string;steps:PassageMigrationStep[];
 }){
   if(principal?.tenantId!==realm.tenantId||principal.captureAccess!==undefined)throw Object.assign(new Error('Realm scope denied'),{status:403});

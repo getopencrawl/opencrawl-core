@@ -229,3 +229,50 @@ after exact source readback verification. An interrupted transaction rolls back 
 commands and record transitions. Consent-pending and explicit reconnect-required
 records remain unchanged. Existing resource versions, create intents, raw deletion
 receipts and unresolved native writers are preserved.
+
+
+## Operator Slack grant settlement
+
+For direct Slack OAuth, inspect an unresolved revoked grant using the same ready
+installation settings and `OPENCRAWL_CONNECTOR_KEY` as its worker:
+
+```sh
+node dist/src/state/slack-grant-settlement-cli.mjs inspect --integration int_REPLACE_WITH_26_HEX_DIGITS --owner user_OWNER
+```
+
+This reads the exact encrypted grant revision and prints only scoped IDs,
+uncertainty flags and a fingerprint. Before recording proof, independently verify
+that no earlier code exchange or refresh request can issue a usable token, and
+that the issuer has revoked all tokens for this exact grant, including tokens the
+old installation may have discarded. A verified issuer-side app/grant revocation
+and positive disposition of every in-flight exchange are examples of the evidence
+required. Consider other connections before performing issuer-side administrative
+actions; this command does not uninstall a Slack app or contact Slack itself.
+A timeout, local process death, expired browser flow or successful revocation of
+only the currently known access token is insufficient.
+
+Save a private JSON file containing concrete evidence references, without tokens:
+
+```json
+{
+  "version": 1,
+  "fingerprint": "COPY_THE_CURRENT_INSPECTED_FINGERPRINT",
+  "verifiedBy": "operator identity",
+  "exchangeDisposition": "Evidence that all earlier code/refresh requests are terminal and cannot produce usable tokens",
+  "providerRevocation": "Issuer evidence covering every token of this exact grant, including previously discarded tokens"
+}
+```
+
+```sh
+node dist/src/state/slack-grant-settlement-cli.mjs record --integration int_REPLACE_WITH_26_HEX_DIGITS --owner user_OWNER --evidence /private/path/slack-proof.json
+```
+
+Recording locks the integration and grant, rechecks revoked state and the closed,
+fully settled native fence, and rejects a changed fingerprint. The encrypted proof
+and any needed cleanup outbox command commit together. Known tokens remain queued
+for normal revocation; the command never declares those tokens remotely revoked.
+Temporal resumes cleanup without asking an operator to edit SQL. This is a restricted
+operator attestation of independently established evidence, not automated verification
+of Slack's internal token state. `SLACK_SETTLEMENT_TARGET_CHANGED` requires a fresh
+inspection and verification; `SLACK_SETTLEMENT_NOT_READY` means admission, active
+requests or grant state are not ready for settlement.
