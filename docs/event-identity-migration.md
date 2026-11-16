@@ -26,10 +26,13 @@ resumes its journal and retains the original recovery point. Installations that
 already created a dedicated `app-db` are copied transactionally with their exact
 database UUID, reservations and deletion records, then that old server stops.
 
-For separately operated services, stop all receivers/workers, back up raw objects
-and the application database together, supply their normal storage and database
-environment, and run `node dist/src/sessions/identity-migration.mjs migrate`
-before starting the new receivers and workers. No hosted control plane is needed.
+For separately operated services, follow the complete
+[application-state migration](app-state-migration.md), including stopped writers,
+a matched recovery point, import and independent verification before restarting.
+The event-identity importer is one component of that migration; running
+`node dist/src/sessions/identity-migration.mjs migrate` alone does not establish
+application readiness or authorize receiver/worker startup. No hosted control
+plane is needed.
 
 ## Migration and interruption behavior
 
