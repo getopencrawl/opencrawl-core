@@ -4,7 +4,9 @@ import {createHash,randomUUID} from 'node:crypto';
 import {createOnlineCoverage} from '../dist/src/state/online-coverage.mjs';
 import {createOnlineJournal} from '../dist/src/state/online-journal.mjs';
 import {createOnlineTypedShadow} from '../dist/src/state/online-typed-shadow.mjs';
-import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
+import {Pool} from 'pg';
+import {createApplicationDatabase} from '../dist/src/state/postgres.mjs';
+import {applicationDatabaseFixture,postgresUrl,dropTestSchemas} from './fixtures/application-database.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex'),encode=x=>Buffer.from(JSON.stringify(x)),signal=()=>new AbortController().signal;
 const ordered=(a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b)),prefix='sessions';
 const tenants=Array.from({length:6},(_,i)=>'org_coverage'+i),keys=tenants.map(tenant=>prefix+'/value/tenants/'+hash(tenant)+'.json').sort(ordered);
@@ -105,4 +107,23 @@ live('a registered source attaches read-only and cannot restart by dropping or c
  await assert.rejects(createOnlineTypedShadow({...f.config,sourceRegistration:undefined}).ready(),{code:'ONLINE_MIGRATION_BOUND_SOURCE_REQUIRES_ATTACHMENT'});
  await assert.rejects(createOnlineTypedShadow({...f.config,sourceRegistration:{...f.config.sourceRegistration,bindingHash:hash('foreign')}}).ready());
  assert.deepEqual(await f.shadow.coverage.status(),before);
+});
+
+test('native certificates contain only verified binding metadata, never invented body or typed target evidence',async()=>{
+ const {coverage}=pure(),client={query:()=>assert.fail('must reject before SQL')},base={key:'root/native',kind:'preserved-native',domain:'event-identities',scopeHash:null,nativeBindingHash:hash('verified native binding'),revision:'0',sequence:'0',operationId:null,sourceVersion:null,sourceHash:null,sourceBytes:null,deleted:false,targetKey:null,targetHash:null,absent:false};
+ for(const delta of [{targetHash:hash('fake target')},{targetKey:'fake target'},{sourceHash:hash('fake body')},{sourceBytes:0},{sourceVersion:'invented'},{deleted:true},{absent:true},{revision:'1',sequence:'1',operationId:randomUUID(),sourceVersion:'mutation'}])await assert.rejects(coverage.recordIn(client,{...base,...delta}),/INVENTED_NATIVE_EVIDENCE/);
+ await assert.rejects(coverage.recordIn(client,{...base,nativeBindingHash:undefined}),/INVALID_NATIVE_BINDING/);
+ await assert.rejects(coverage.recordIn(client,{...base,kind:'retained'}),/UNEXPECTED_NATIVE_BINDING/);
+});
+
+live('native coverage schema upgrades only the exact prior owned kind constraints and preserves old certificates',async t=>{
+ const admin=new Pool({connectionString:postgresUrl,max:2}),schema='oc_shadow_'+randomUUID().replaceAll('-','');await admin.query('CREATE SCHEMA '+schema);
+ const database=createApplicationDatabase({connectionString:postgresUrl,namespace:'coverage-upgrade-'+randomUUID(),max:2,options:'-c search_path='+schema});t.after(async()=>{await database.close();try{await dropTestSchemas(admin,[schema]);}finally{await admin.end();}});
+ const epoch=randomUUID(),sourceId=hash('source'),journal=createOnlineJournal({database,epoch,sourceId});await journal.ready();
+ const config={database,epoch,sourceId,targetId:hash('target'),shards:1,roots:['root/'],participantIdentity:hash('participant'),policy:policy(database.namespace,epoch)},coverage=createOnlineCoverage(config);await coverage.ready();
+ const value={key:'root/key',kind:'retired',domain:'session-indexing',scopeHash:hash('scope'),revision:'0',sequence:'0',operationId:null,sourceVersion:null,sourceHash:null,sourceBytes:null,deleted:false,targetKey:'audit',targetHash:hash('audit'),absent:false};await database.transaction(c=>coverage.recordIn(c,value));
+ for(const [table,kinds] of [['opencrawl_online_coverage_encounters',"'retained','retired','immutable'"],['opencrawl_online_coverage_certificates',"'retained','retired'"]])await database.pool.query(`ALTER TABLE ${table} DROP COLUMN native_binding_hash,DROP CONSTRAINT ${table}_kind_check,ADD CONSTRAINT ${table}_kind_check CHECK(kind IN(${kinds}))`);
+ const restarted=createOnlineCoverage(config);await restarted.ready();assert.deepEqual(await database.transaction(c=>restarted.readIn(c,value.key)),value);
+ const table='opencrawl_online_coverage_certificates';await database.pool.query(`ALTER TABLE ${table} DROP CONSTRAINT ${table}_kind_check,ADD CONSTRAINT ${table}_kind_check CHECK(kind <> 'foreign')`);
+ await assert.rejects(createOnlineCoverage(config).ready(),/NATIVE_SCHEMA_CONSTRAINT/);
 });

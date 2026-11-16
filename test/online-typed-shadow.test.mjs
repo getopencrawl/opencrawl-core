@@ -42,8 +42,9 @@ test('typed replay refuses unexpected raw journal entries before source or typed
  assert.equal(committed,false);assert.equal(f.source.reads.length,0);
 });
 const live=(name,run)=>test(name,{skip:!postgresUrl},run);
-async function fixture(t,{retireDerived=false,shards=1}={}){
+async function fixture(t,{retireDerived=false,shards=1,preserveNative=false}={}){
  const database=await applicationDatabaseFixture(t,{max:8}),b={...binding(),shards},source=external(),journal=createOnlineJournal({database,epoch:b.epoch,sourceId:b.sourceId}),config={...options(database,b,journal,source),...(retireDerived?{retireDerived:true}:{})};
+ if(preserveNative){const nativeBinding={applicationNamespace:database.namespace,databaseId:randomUUID(),namespace:'synthetic',bucket:'synthetic',sourceContractHash:hash('native source contract'),verifierId:'native-metadata-fixture'};config.preservedEventIdentities={binding:nativeBinding,verify:async()=>({binding:{...nativeBinding},metadataOnly:true,historicalBodiesRead:false,eventRowsCounted:false,rowsWritten:false})};config.coverage={authority:{namespace:database.namespace,epoch:b.epoch,protocol:'envelope-v1',enrollmentReceiptHash:hash('source enrollment')},policyHash:hash('explicit native policy')};}
  const shadow=createOnlineTypedShadow(config);await shadow.ready();
  const put=(key,value)=>journal.mutate({operationId:randomUUID(),key,mutation:{kind:'put',bytes:Buffer.isBuffer(value)?value:encode(value),contentType:'application/json'}},source.store),del=key=>journal.mutate({operationId:randomUUID(),key,mutation:{kind:'delete'}},source.store);
  const replay=async(through)=>{through??=await journal.closedFrontier();for(let shard=0;shard<b.shards;shard++)for(let n=0;n<100;n++){const page=await shadow.adapter.replayPage({consumer:shadow.bindingId+'-'+shard,shard,shards:b.shards,through,limit:64,signal:signal()});if(page.checkpoint===through)break;if(n===99)assert.fail('replay did not finish');}return through;};
@@ -95,4 +96,36 @@ live('unexpected raw journal records roll back typed replay and preserve its dur
  const f=await fixture(t);await f.replay('0');await f.put(raw,Buffer.from('raw publication must use the raw adapter'));
  const through=await f.journal.closedFrontier();await assert.rejects(f.replay(through),{code:'ONLINE_MIGRATION_UNSAFE'});
  assert.equal(await f.journal.replayCheckpoint(f.shadow.bindingId+'-0'),'0');assert.equal(await f.mirror(raw),null);
+});
+
+const nativeMarker=owner=>prefix+'/tenants/'+hash(owner)+'/users/'+hash('user')+'/codex/'+hash('session')+'/'+hash('directory')+'/event-identities-v1.json';
+function nativeConfig(f){const binding={applicationNamespace:f.config.database.namespace,databaseId:randomUUID(),namespace:'synthetic',bucket:'synthetic',sourceContractHash:hash('native contract'),verifierId:'native-fixture'};return {...f.config,preservedEventIdentities:{binding,verify:async()=>({binding:{...binding},metadataOnly:true,historicalBodiesRead:false,eventRowsCounted:false,rowsWritten:false})},coverage:{authority:{namespace:f.config.database.namespace,epoch:f.b.epoch,protocol:'envelope-v1',enrollmentReceiptHash:hash('enrollment')},policyHash:hash('policy')}};}
+test('native adoption is explicit and exact metadata proof mismatches fail before body, key gate or SQL',async()=>{
+ const f=pure(),config=nativeConfig(f),shadow=createOnlineTypedShadow(config),selected=shadow.disposition(nativeMarker(tenant));
+ assert.equal(selected.kind,'preserved-native');assert.equal(selected.nativeBindingHash.length,64);assert.equal(createOnlineTypedShadow(f.config).disposition(nativeMarker(tenant)).kind,'blocked');
+ assert.throws(()=>createOnlineTypedShadow({...config,coverage:undefined}),/INVALID_NATIVE_BINDING/);
+ assert.throws(()=>createOnlineTypedShadow({...config,preservedEventIdentities:{...config.preservedEventIdentities,binding:{...config.preservedEventIdentities.binding,bucket:'foreign'}}}),/INVALID_NATIVE_BINDING/);
+ for(const change of [{eventRowsCounted:true},{historicalBodiesRead:true},{rowsWritten:true},{binding:{...config.preservedEventIdentities.binding,databaseId:randomUUID()}},{extra:true}]){
+  const original=await config.preservedEventIdentities.verify(),bad=createOnlineTypedShadow({...config,preservedEventIdentities:{...config.preservedEventIdentities,verify:async()=>({...original,...change})}});await assert.rejects(bad.backfill(nativeMarker(tenant)),/NATIVE_METADATA_MISMATCH/);
+ }
+ assert.deepEqual(f.source.reads,[]);
+});
+live('native marker baseline and parity preserve existing ledger metadata with zero body reads, mirrors or rebuild obligations',async t=>{
+ const f=await fixture(t,{preserveNative:true}),marker=nativeMarker(tenant);f.source.seed(marker,Buffer.from('not parsed historical bytes'));await backfillAll(f);await f.replay('0');assert.deepEqual(await parityAll(f,'0'),{mismatches:0,drift:false});assert.equal(f.source.reads.includes(marker),false);assert.equal(await f.mirror(marker),null);
+ const row=(await f.database.pool.query('SELECT kind,native_binding_hash,source_hash,source_bytes,source_version,target_hash,target_key,revision::text FROM opencrawl_online_coverage_certificates WHERE namespace=$1 AND source_key=$2',[f.database.namespace,marker])).rows[0];
+ assert.deepEqual(row,{kind:'preserved-native',native_binding_hash:f.shadow.objectPolicy.nativeBindingHash,source_hash:null,source_bytes:null,source_version:null,target_hash:null,target_key:null,revision:'0'});
+ assert.equal((await f.database.pool.query("SELECT 1 FROM opencrawl_online_projection_heads WHERE namespace=$1 AND source_key=$2",[f.database.namespace,marker])).rows.length,0);
+ const restarted=createOnlineTypedShadow(f.config);await restarted.ready();await restarted.adapter.backfillPage({shard:0,shards:1,cursor:null,limit:2,signal:signal()});assert.equal(f.source.reads.length,0);
+ await f.database.pool.query('UPDATE opencrawl_online_coverage_certificates SET native_binding_hash=$3 WHERE namespace=$1 AND source_key=$2',[f.database.namespace,marker,hash('forged binding')]);await assert.rejects(parityAll(f,'0'),/CERTIFICATE_CHANGED/);await f.database.pool.query('UPDATE opencrawl_online_coverage_certificates SET native_binding_hash=$3 WHERE namespace=$1 AND source_key=$2',[f.database.namespace,marker,f.shadow.objectPolicy.nativeBindingHash]);
+ f.source.objects.delete(marker);assert.ok((await parityAll(f,'0')).mismatches>0,'complete native key coverage cannot ignore a later missing physical marker');
+ const changed=createOnlineTypedShadow({...f.config,preservedEventIdentities:{...f.config.preservedEventIdentities,binding:{...f.config.preservedEventIdentities.binding,verifierId:'different verifier'},verify:async()=>({...await f.config.preservedEventIdentities.verify(),binding:{...f.config.preservedEventIdentities.binding,verifierId:'different verifier'}})}});await assert.rejects(changed.ready());
+});
+live('native owner mismatch cannot become covered',async t=>{
+ const f=await fixture(t,{preserveNative:true}),foreign=nativeMarker('org_foreign');f.source.seed(foreign,{});await assert.rejects(backfillAll(f),/NATIVE_OWNER_MISMATCH/);assert.equal(f.source.reads.length,0);assert.equal((await f.shadow.coverage.status()).traversalComplete,false);
+});
+live('unexpected native marker mutation is rejected by typed replay and pending reconciliation without further external dispatch',async t=>{
+ const f=await fixture(t,{preserveNative:true}),marker=nativeMarker(tenant);f.source.seed(marker,{});await backfillAll(f);await f.replay('0');await f.put(marker,{unexpected:'legacy writer'});f.source.reads.length=0;
+ await assert.rejects(f.replay(),{code:'ONLINE_MIGRATION_UNSAFE'});assert.equal(await f.journal.replayCheckpoint(f.shadow.bindingId+'-0'),'0');assert.equal(f.source.reads.length,0);
+ const other=marker.replace(hash('session'),hash('pending-session')),original=f.source.store.putIfVersion;f.source.store.putIfVersion=async()=>{throw Error('uncertain provider response');};await assert.rejects(f.put(other,{}));f.source.store.putIfVersion=original;f.source.reads.length=0;
+ await assert.rejects(f.shadow.adapter.reconcilePending({cursor:null,limit:1,signal:signal()}),{code:'ONLINE_MIGRATION_UNSAFE'});assert.equal(f.source.reads.length,0);
 });

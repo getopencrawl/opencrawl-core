@@ -20,12 +20,12 @@ const identity={tenantHash:digest(owner.tenantId),userHash:digest(owner.userId),
 const keyControl=prefix+'/'+ownerScope+'/controls/sessions/codex/'+identity.resourceHash+'.json';
 const control={schemaVersion:1,visibility:'private',deletedAt:null,updatedAt:date};
 function external(){const values=new Map();return {values,read:async key=>values.get(key)??{version:null,operationId:null,revision:null,deleted:true,bytes:null,contentType:null},putIfVersion:async(key,version,m)=>{if((values.get(key)?.version??null)!==version)return false;values.set(key,{version:m.operationId,operationId:m.operationId,revision:m.revision,deleted:false,bytes:Buffer.from(m.bytes),contentType:m.contentType});return true;},deleteIfVersion:async(key,version,m)=>{if((values.get(key)?.version??null)!==version)return false;values.set(key,{version:m.operationId,operationId:m.operationId,revision:m.revision,deleted:true,bytes:null,contentType:null});return true;}};}
-async function fixture(t){
+async function fixture(t,{agentPrefix}={}){
  const admin=new Pool({connectionString:url,max:2}),schema='oc_projection_'+randomUUID().replaceAll('-','');await admin.query('CREATE SCHEMA '+schema);
  const database=createApplicationDatabase({connectionString:url,namespace:'projection-'+randomUUID(),max:6,options:'-c search_path='+schema}),epoch=randomUUID(),sourceId='source',store=external(),connectorKey=Buffer.alloc(32,17);
  t.after(async()=>{await database.close();const c=await admin.connect();try{await c.query('BEGIN');await c.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:identity-schema:maintenance',0))");await c.query('DROP SCHEMA '+schema+' CASCADE');await c.query('COMMIT');}finally{c.release();await admin.end();}});
  const journal=createOnlineJournal({database,epoch,sourceId});await journal.ready();
- const options={database,epoch,sourceId,journalBinding:journal.binding,prefix,tenantIds:[owner.tenantId],store:{bucket:'synthetic',get:async()=>assert.fail('Projection must not read legacy dependencies')},registryRecords:[],eventIdentities:{},connectorKey,enrollment:{verifierId:'synthetic-authoritative-directory-v1',initialReceiptHash:digest('reviewed-inventory'),verify:async request=>{if(request.evidence!=='verified-test-origin')throw Error('untrusted enrollment origin');return {tenantId:request.tenantId,receiptHash:digest('verified-'+request.tenantId)};}}};
+ const options={database,epoch,sourceId,journalBinding:journal.binding,prefix,...(agentPrefix?{agentPrefix}:{}),tenantIds:[owner.tenantId],store:{bucket:'synthetic',get:async()=>assert.fail('Projection must not read legacy dependencies')},registryRecords:[],eventIdentities:{},connectorKey,enrollment:{verifierId:'synthetic-authoritative-directory-v1',initialReceiptHash:digest('reviewed-inventory'),verify:async request=>{if(request.evidence!=='verified-test-origin')throw Error('untrusted enrollment origin');return {tenantId:request.tenantId,receiptHash:digest('verified-'+request.tenantId)};}}};
  const projection=createOnlineProjection(options);await projection.ready();
  const put=async(key,value)=>journal.mutate({operationId:randomUUID(),key,mutation:{kind:'put',bytes:Buffer.isBuffer(value)?value:encode(value),contentType:'application/json'}},store);
  const del=async key=>journal.mutate({operationId:randomUUID(),key,mutation:{kind:'delete'}},store);
@@ -162,4 +162,15 @@ live('value report and reference projection isolate identical local keys by name
  await f.database.transaction(async c=>{await projection.backfill(c,{key,bytes:encode({scope:'other'}),version:'legacy'});await projection.backfill(c,{key:aliasKey(org),bytes:encode({organizationId:org}),version:'legacy'});});
  await f.baseline(key,{scope:'primary'});await f.del(key);await f.replay();assert.equal((await f.database.pool.query('SELECT report FROM opencrawl_value_reports WHERE namespace=$1',[otherDb.namespace])).rows[0].report.scope,'other');assert.deepEqual(await references(f),{processed:0,mismatches:0,pages:1});
  await assert.rejects(f.database.transaction(c=>f.projection.backfill(c,{key:key.replace(digest(owner.tenantId),digest('org_unenrolled')),bytes:encode({}),version:'x'})),/owner hash/);
+});
+
+live('one bucket and journal project capture and nested agent credentials without purpose collision',async t=>{
+ const f=await fixture(t,{agentPrefix:prefix+'/_agent-access'}),agentKey=keyCred.replace(prefix+'/',prefix+'/_agent-access/'),agentGen=keyGen.replace(prefix+'/',prefix+'/_agent-access/');
+ await f.baseline(keyCred,credential);await f.baseline(agentKey,credential);await f.baseline(keyGen,{generation:credential.generation});await f.baseline(agentGen,{generation:credential.generation});
+ await f.put(agentGen,{generation:digest('agent-revoked')});await f.replay();
+ const agentAccounts=createAccountState(f.database);assert.equal(await agentAccounts.credentials.authenticate(credential.id,'agent'),null);assert.ok(await f.accounts.credentials.authenticate(credential.id));
+ await f.del(agentKey);await f.replay();assert.equal(await agentAccounts.exportCredential(credential.id,'agent'),null);assert.deepEqual(await f.accounts.exportCredential(credential.id),credential);
+ const heads=(await f.database.pool.query("SELECT target_key FROM opencrawl_online_projection_heads WHERE namespace=$1 AND domain='capture-credentials' ORDER BY target_key",[f.database.namespace])).rows;assert.deepEqual(heads.map(x=>JSON.parse(x.target_key)[1]),['agent','capture']);
+ const wrong=createOnlineProjection({...f.options,agentPrefix:undefined});await assert.rejects(wrong.ready(),/source binding changed/);
+ await assert.rejects(f.baseline(prefix+'/_agent-access/board/tenants/'+digest(owner.tenantId)+'.json',{}),/unrelated application state/);
 });

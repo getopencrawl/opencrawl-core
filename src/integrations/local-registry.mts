@@ -178,7 +178,34 @@ function createRegistry({database,environment,commands,organizationId,bindingId,
       await checked.commands.enqueue(client,ref,'disconnect',{},checked.requestedBy);return ref;
     });
   }
-  return {...registry,requestLifecycle,createWithLifecycle,abandonWithLifecycle,ready,validateImportRecord,close:()=>{},
+  // Migration participants own the transaction/checkpoint. These seams never
+  // initialize schema, change timestamps or enqueue product lifecycle work.
+  async function readRecordIn(client:PoolClient,input:Pick<IntegrationRecord,'tenantId'|'userId'|'integrationId'>){
+    const identity={tenantId:input.tenantId,userId:input.userId,integrationId:input.integrationId};
+    scope(identity.tenantId,identity.userId);if(!/^int_[a-f0-9]{26}$/.test(identity.integrationId))throw denied();
+    const bound=(await client.query('SELECT organization_id,environment,binding_id FROM opencrawl_integration_bindings WHERE namespace=$1',[database.namespace])).rows[0];
+    if(!bound||bound.organization_id!==(organizationId??null)||bound.environment!==environment||bound.binding_id!==(bindingId??null))throw new Error('Registry projection binding changed');
+    const row=(await client.query('SELECT record FROM opencrawl_integrations WHERE namespace=$1 AND environment=$2 AND tenant_id=$3 AND user_id=$4 AND integration_id=$5',key(identity))).rows[0];
+    return row?validateImportRecord(row.record):null;
+  }
+  async function projectRecordIn(client:PoolClient,input:Pick<IntegrationRecord,'tenantId'|'userId'|'integrationId'>,value:unknown|null,expected:IntegrationRecord|null){
+    const identity={tenantId:input.tenantId,userId:input.userId,integrationId:input.integrationId};
+    const snapshot=(record:unknown)=>{const encoded=JSON.stringify(validateImportRecord(record));if(Buffer.byteLength(encoded)>4*1024*1024)throw new Error('Registry projection record exceeds its bound');return validateImportRecord(JSON.parse(encoded));};
+    const next=value===null?null:snapshot(value),prior=expected===null?null:snapshot(expected);
+    if(next&&(next.tenantId!==identity.tenantId||next.userId!==identity.userId||next.integrationId!==identity.integrationId))throw denied();
+    await readRecordIn(client,identity);
+    // Lock the canonical PK even if an unexpected user owns this integration ID.
+    const row=(await client.query('SELECT user_id,record FROM opencrawl_integrations WHERE namespace=$1 AND environment=$2 AND tenant_id=$3 AND integration_id=$4 FOR UPDATE',[database.namespace,environment,identity.tenantId,identity.integrationId])).rows[0];
+    if(row&&row.user_id!==identity.userId)throw conflict();
+    const current=row?validateImportRecord(row.record):null;
+    if(!isDeepStrictEqual(current,prior))throw new Error('Integration projection target changed');
+    if(isDeepStrictEqual(current,next))return current;
+    if(next===null){await client.query('DELETE FROM opencrawl_integrations WHERE namespace=$1 AND environment=$2 AND tenant_id=$3 AND user_id=$4 AND integration_id=$5',key(identity));return null;}
+    if(row)await client.query('UPDATE opencrawl_integrations SET provider=$6,status=$7,record=$8::jsonb,revision=revision+1 WHERE namespace=$1 AND environment=$2 AND tenant_id=$3 AND user_id=$4 AND integration_id=$5',[...key(identity),next.provider,next.status,JSON.stringify(next)]);
+    else await client.query('INSERT INTO opencrawl_integrations(namespace,environment,tenant_id,user_id,integration_id,provider,status,record) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT DO NOTHING',[...key(identity),next.provider,next.status,JSON.stringify(next)]);
+    const after=await readRecordIn(client,identity);if(!isDeepStrictEqual(after,next))throw conflict();return after;
+  }
+  return {...registry,requestLifecycle,createWithLifecycle,abandonWithLifecycle,ready,validateImportRecord,readRecordIn,projectRecordIn,close:()=>{},
     async exportRecord(tenantId:string,userId:string,integrationId:string){
       scope(tenantId,userId);
       if(!/^int_[a-f0-9]{26}$/.test(integrationId))throw denied();

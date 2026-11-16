@@ -6,7 +6,7 @@ import {onlineMigrationBindingId} from './online-temporal/binding.mjs';
 import type {OnlineMigrationAdapter,OnlineMigrationBinding} from './online-temporal/types.mjs';
 type Journal=ReturnType<typeof createOnlineJournal>;
 export interface OnlineShadowListing {listPage(input:{prefix:string;cursor:string|null;limit:number;signal:AbortSignal}):Promise<{keys:string[];cursor:string|null}>}
-export type OnlineShadowSelection={kind:'retained';domain:string;maxBytes:number}|{kind:'retired';domain:string;maxBytes:number;scopeHash:string}|{kind:'immutable'};
+export type OnlineShadowSelection={kind:'retained';domain:string;maxBytes:number}|{kind:'retired';domain:string;maxBytes:number;scopeHash:string}|{kind:'preserved-native';domain:'event-identities';maxBytes:number;nativeBindingHash:string}|{kind:'immutable'};
 /** Implemented by the typed coordinator. It is a transaction participant, not
  * a runtime store or an admission callback. */
 export interface OnlineShadowParticipant {
@@ -15,12 +15,13 @@ export interface OnlineShadowParticipant {
  ready():Promise<void>;
  backfillIn(client:PoolClient,key:string,snapshot:OnlineExternalSnapshot):Promise<OnlineCoverageTarget>;
  backfillRetiredIn(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'retired'}>):Promise<OnlineCoverageTarget>;
- applyIn(client:PoolClient,intent:OnlineIntent,selection:Exclude<OnlineShadowSelection,{kind:'immutable'}>):Promise<OnlineCoverageTarget>;
+ applyIn(client:PoolClient,intent:OnlineIntent,selection:Exclude<OnlineShadowSelection,{kind:'immutable'|'preserved-native'}>):Promise<OnlineCoverageTarget>;
  inspectIn(client:PoolClient,key:string,snapshot:OnlineExternalSnapshot):Promise<boolean>;
  inspectRetiredIn(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'retired'}>):Promise<boolean>;
+ inspectNativeIn?(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'preserved-native'}>):Promise<{nativeBindingHash:string}>;
  keysPageIn(client:PoolClient,input:{after:string;limit:number}):Promise<string[]>;
 }
-export type OnlineShadowClassifier=(key:string)=>{maxBytes:number}|null;
+export type OnlineShadowClassifier=(key:string)=>{maxBytes:number;preservedNative?:true}|null;
 type SourceCursor={stage:'source';root:number;token:string|null;last:string|null};
 type Cursor=SourceCursor|{stage:'shadow';after:string};
 interface Mirror {deleted:boolean;bytes:Buffer|null;contentType:string|null;hash:string|null;revision:string;operationId:string|null;sequence:string;sourceVersion:string|null}
@@ -45,12 +46,12 @@ export function createOnlineShadow({database,binding:input,journal,external,list
  const coverage=coveragePolicy?createOnlineCoverage({database,epoch:binding.epoch,sourceId:binding.sourceId,targetId:binding.targetId,shards:binding.shards,roots,participantIdentity:baseIdentity,policy:coveragePolicy}):undefined;
  const participantIdentity=coverage?hash(JSON.stringify([baseIdentity,coverage.identity])):baseIdentity;
  let preparing:Promise<void>|undefined;
- function bound(key:string){if(!text(key,8192)||!roots.some(root=>key.startsWith(root)))unsafe();const value=classify(key);if(value===null)return null;if(!value||!Number.isSafeInteger(value.maxBytes)||value.maxBytes<1||value.maxBytes>ONLINE_MAX_PAYLOAD_BYTES)unsafe();return value;}
+ function bound(key:string){if(!text(key,8192)||!roots.some(root=>key.startsWith(root)))unsafe();const value=classify(key);if(value===null)return null;if(!value||!Number.isSafeInteger(value.maxBytes)||value.maxBytes<1||value.maxBytes>ONLINE_MAX_PAYLOAD_BYTES||value.preservedNative!==undefined&&value.preservedNative!==true)unsafe();return value;}
  function selected(key:string):OnlineShadowSelection{
-  const cap=bound(key);if(!participant)return cap?{kind:'retained',domain:'byte-mirror',maxBytes:cap.maxBytes}:{kind:'immutable'};
-  const choice=participant.select(key);if(!choice||!['retained','retired','immutable'].includes(choice.kind))unsafe();
+  const cap=bound(key);if(!participant){if(cap?.preservedNative)unsafe();return cap?{kind:'retained',domain:'byte-mirror',maxBytes:cap.maxBytes}:{kind:'immutable'};}
+  const choice=participant.select(key);if(!choice||!['retained','retired','immutable','preserved-native'].includes(choice.kind))unsafe();
   if(choice.kind==='immutable'){if(cap!==null)unsafe();return choice;}
-  if(!cap||!text(choice.domain,200)||choice.maxBytes!==cap.maxBytes||choice.kind==='retired'&&!/^[a-f0-9]{64}$/.test(choice.scopeHash))unsafe();return {...choice};
+  if(!cap||!text(choice.domain,200)||choice.maxBytes!==cap.maxBytes||choice.kind==='retired'&&!/^[a-f0-9]{64}$/.test(choice.scopeHash))unsafe();if((choice.kind==='preserved-native')!==(cap.preservedNative===true))unsafe();if(choice.kind==='preserved-native'&&(!coverage||!participant.inspectNativeIn||choice.domain!=='event-identities'||!/^[a-f0-9]{64}$/.test(choice.nativeBindingHash)))unsafe();return {...choice};
  }
  function shard(key:string){return createHash('sha256').update(key).digest().readUInt32BE(0)%binding.shards;}
  function pageInput(input:{shard:number;shards:number;limit:number;signal:AbortSignal}){if(input.shards!==binding.shards||!Number.isSafeInteger(input.shard)||input.shard<0||input.shard>=binding.shards||!Number.isSafeInteger(input.limit)||input.limit<1||input.limit>64)unsafe();input.signal.throwIfAborted();}
@@ -98,11 +99,12 @@ export function createOnlineShadow({database,binding:input,journal,external,list
  const equal=(a:Mirror,b:Mirror)=>a.deleted===b.deleted&&a.hash===b.hash&&a.contentType===b.contentType&&a.revision===b.revision&&a.operationId===b.operationId&&a.sequence===b.sequence&&a.sourceVersion===b.sourceVersion&&(a.bytes===null?b.bytes===null:b.bytes!==null&&a.bytes.equals(b.bytes));
  const values=(key:string,value:Mirror)=>[...scope,key,binding.targetId,value.deleted,value.bytes,value.hash,value.contentType,value.revision,value.operationId,value.sequence,value.sourceVersion];
  async function insert(client:PoolClient,key:string,value:Mirror){await client.query('INSERT INTO opencrawl_online_shadow_objects(namespace,epoch,source_id,source_key,target_id,logical_deleted,payload,payload_hash,content_type,revision,operation_id,source_sequence,source_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING',values(key,value));}
- function coverageEntry(key:string,choice:OnlineShadowSelection):OnlineCoverageEntry{return {key,kind:choice.kind,domain:choice.kind==='immutable'?null:choice.domain,scopeHash:choice.kind==='retired'?choice.scopeHash:null};}
+ function coverageEntry(key:string,choice:OnlineShadowSelection):OnlineCoverageEntry{return {key,kind:choice.kind,domain:choice.kind==='immutable'?null:choice.domain,scopeHash:choice.kind==='retired'?choice.scopeHash:null,...(choice.kind==='preserved-native'?{nativeBindingHash:choice.nativeBindingHash}:{})};}
  async function certifyIn(client:PoolClient,key:string,choice:Exclude<OnlineShadowSelection,{kind:'immutable'}>,source:Pick<OnlineCoverageEvidence,'revision'|'sequence'|'operationId'|'sourceVersion'|'sourceHash'|'sourceBytes'|'deleted'|'absent'>,target?:OnlineCoverageTarget){
   if(!coverage)return;await coverage.recordIn(client,{...coverageEntry(key,choice),...source,targetKey:target?.targetKey??null,targetHash:target?.targetHash??null});
  }
- async function backfill(key:string){const choice=selected(key);if(choice.kind==='immutable')return {applied:false};return journal.backfillIfUnchanged({key,apply:async client=>{
+ async function backfill(key:string){const choice=selected(key);if(choice.kind==='immutable')return {applied:false};const result=await journal.backfillIfUnchanged({key,apply:async client=>{
+  if(choice.kind==='preserved-native'){const proof=await participant!.inspectNativeIn!(client,key,choice);if(proof.nativeBindingHash!==choice.nativeBindingHash)unsafe();await certifyIn(client,key,choice,{revision:'0',sequence:'0',operationId:null,sourceVersion:null,sourceHash:null,sourceBytes:null,deleted:false,absent:false});return;}
   if(choice.kind==='retired'){const target=await participant!.backfillRetiredIn(client,key,choice);await certifyIn(client,key,choice,{revision:'0',sequence:'0',operationId:null,sourceVersion:null,sourceHash:null,sourceBytes:null,deleted:false,absent:false},target);return;}
   const observed=snapshot(await external.read(key,{maxBytes:choice.maxBytes}),choice.maxBytes);
   if(observed.operationId!==null||observed.revision!==null)unsafe();
@@ -112,10 +114,10 @@ export function createOnlineShadow({database,binding:input,journal,external,list
   const expected:Mirror={deleted:observed.deleted,bytes:observed.bytes,contentType:observed.contentType,hash:observed.bytes===null?null:hash(observed.bytes),revision:'0',operationId:null,sequence:'0',sourceVersion:observed.version};
   await insert(client,key,expected);const actual=await read(client,key);if(!actual||!equal(actual,expected))unsafe();
   const target=await participant?.backfillIn(client,key,observed);await certifyIn(client,key,choice,{revision:'0',sequence:'0',operationId:null,sourceVersion:observed.version,sourceHash:expected.hash,sourceBytes:observed.bytes?.length??null,deleted:observed.deleted,absent:false},target);
- }});}
+ }});if(choice.kind==='preserved-native'&&!result.applied)unsafe();return result;}
  async function applyJournal(client:PoolClient,intent:OnlineIntent){
   if(!intent||intent.namespace!==namespace||intent.epoch!==binding.epoch||intent.sourceId!==binding.sourceId||intent.state!=='applied'||!uuid(intent.operationId)||!decimal(intent.revision)||intent.revision==='0'||!decimal(intent.sequence)||intent.sequence==='0'||!text(intent.resultVersion,2048))unsafe();
-  const choice=selected(intent.key);if(choice.kind==='immutable'){if(participant)unsafe();return false;}const cap=choice;
+  const choice=selected(intent.key);if(choice.kind==='preserved-native')unsafe();if(choice.kind==='immutable'){if(participant)unsafe();return false;}const cap=choice;
   const mutation=intent.mutation;if(mutation.kind!=='put'&&mutation.kind!=='delete')unsafe();
   if(mutation.kind==='put'&&(!Buffer.isBuffer(mutation.bytes)||mutation.bytes.length>cap.maxBytes||!text(mutation.contentType,256)||/[\r\n]/.test(mutation.contentType)))unsafe();
   intent={...intent,mutation:mutation.kind==='put'?{...mutation,bytes:Buffer.from(mutation.bytes)}:{kind:'delete'}};
@@ -155,16 +157,19 @@ export function createOnlineShadow({database,binding:input,journal,external,list
   const client=await database.pool.connect();let failed=false;try{
    const mirror=(await client.query('SELECT source_key FROM opencrawl_online_shadow_objects WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key>$4 COLLATE "C" ORDER BY source_key COLLATE "C" LIMIT $5',[...scope,after,limit])).rows.map(row=>row.source_key as string);
    const additional=participant?await participant.keysPageIn(client,{after,limit}):[];
+   const native=coverage?await coverage.nativeKeysPageIn(client,{after,limit}):[];
    const seen=participant?(await client.query('SELECT source_key FROM opencrawl_online_shadow_seen_retirements WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key>$4 COLLATE "C" ORDER BY source_key COLLATE "C" LIMIT $5',[...scope,after,limit])).rows.map(row=>row.source_key as string):[];
-   for(const keys of [mirror,additional,seen])if(keys.length>limit||keys.some((key,i)=>!text(key,8192)||ordered(key,i?keys[i-1]!:after)<=0))unsafe();
-   return [...new Set([...mirror,...additional,...seen])].sort(ordered).slice(0,limit);
+   for(const keys of [mirror,additional,seen,native])if(keys.length>limit||keys.some((key,i)=>!text(key,8192)||ordered(key,i?keys[i-1]!:after)<=0))unsafe();
+   return [...new Set([...mirror,...additional,...seen,...native])].sort(ordered).slice(0,limit);
   }catch(error){failed=true;throw error;}finally{client.release(failed);}
  }
  async function compare(key:string,through:string,passId:string|null,fromSource:boolean){
   const choice=selected(key);if(choice.kind==='immutable')return {drift:false,mismatch:false};
   const observation=await journal.observeKey({key,through,read:async client=>{
-   if(choice.kind==='retired'){
-    if(!passId||!await participant!.inspectRetiredIn(client,key,choice))return false;
+   if(choice.kind==='retired'||choice.kind==='preserved-native'){
+    if(!passId)return false;
+    if(choice.kind==='retired'){if(!await participant!.inspectRetiredIn(client,key,choice))return false;}
+    else{const proof=await participant!.inspectNativeIn!(client,key,choice),certificate=await coverage!.readIn(client,key);if(proof.nativeBindingHash!==choice.nativeBindingHash||certificate?.kind!=='preserved-native'||certificate.nativeBindingHash!==choice.nativeBindingHash)return false;}
     if((await client.query('SELECT 1 FROM opencrawl_online_shadow_objects WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4',[...scope,key])).rows.length)unsafe();
     if(fromSource)await client.query(`INSERT INTO opencrawl_online_shadow_seen_retirements VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(namespace,epoch,source_id,source_key) DO UPDATE SET participant_identity=EXCLUDED.participant_identity,pass_id=EXCLUDED.pass_id,through_sequence=EXCLUDED.through_sequence`,[...scope,key,participantIdentity,passId,through]);
     const seen=(await client.query('SELECT participant_identity,pass_id,through_sequence::text FROM opencrawl_online_shadow_seen_retirements WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4',[...scope,key])).rows[0];
@@ -185,6 +190,7 @@ export function createOnlineShadow({database,binding:input,journal,external,list
    let processed=0,pending=0,settled=0,after=input.cursor,exhausted=false;
    for(const entry of page.entries){
     if(processed&&performance.now()-started>=30000){exhausted=true;break;}input.signal.throwIfAborted();
+    if(selected(entry.key).kind==='preserved-native')unsafe();
     try{await journal.reconcile(entry.key,external);settled++;}
     catch(error){if(error&&typeof error==='object'&&'code' in error&&['ONLINE_MIGRATION_EXTERNAL_OUTCOME_UNCERTAIN','ONLINE_MIGRATION_UNRESOLVED_INTENT'].includes(String(error.code)))pending++;else throw error;}
     processed++;after=entry.sequence;
@@ -201,7 +207,7 @@ export function createOnlineShadow({database,binding:input,journal,external,list
    }
    const page=await sourcePage(position,input.limit,input.signal);for(const key of page.keys){input.signal.throwIfAborted();if(selected(key).kind!=='immutable'&&shard(key)===input.shard)await backfill(key);}return {cursor:encodeCursor(page.next),processed:page.keys.length};},
   closedFrontier:()=>journal.closedFrontier(),
-  async replayPage(input){pageInput(input);if(input.consumer!==bindingId+'-'+input.shard)unsafe();const result=await journal.replayPage({consumer:input.consumer,through:input.through,limit:input.limit,apply:async(client,intent)=>{input.signal.throwIfAborted();const choice=selected(intent.key);if(participant&&choice.kind==='immutable')unsafe();if(choice.kind!=='immutable'&&shard(intent.key)===input.shard)await applyJournal(client,intent);}});return {checkpoint:result.checkpoint,processed:result.applied+result.notApplied,blocked:result.pending};},
+  async replayPage(input){pageInput(input);if(input.consumer!==bindingId+'-'+input.shard)unsafe();const result=await journal.replayPage({consumer:input.consumer,through:input.through,limit:input.limit,apply:async(client,intent)=>{input.signal.throwIfAborted();const choice=selected(intent.key);if(choice.kind==='preserved-native'||participant&&choice.kind==='immutable')unsafe();if(choice.kind!=='immutable'&&shard(intent.key)===input.shard)await applyJournal(client,intent);}});return {checkpoint:result.checkpoint,processed:result.applied+result.notApplied,blocked:result.pending};},
   async parityPage(input){pageInput(input);if(!decimal(input.through))unsafe();const checkpoint=await journal.replayCheckpoint(bindingId+'-'+input.shard);if(checkpoint===null||BigInt(checkpoint)<BigInt(input.through))unsafe();if(BigInt(checkpoint)>BigInt(input.through))return {cursor:null,processed:0,mismatches:0,drift:true};if(await drift(input.through))return {cursor:null,processed:0,mismatches:0,drift:true};const parsed=parityPosition(input.cursor,input.through,input.shard);let position=parsed.position,keys:string[],next:Cursor|null;const fromSource=position.stage==='source';
    if(position.stage==='source'){
     const page=await sourcePage(position,input.limit,input.signal);keys=page.keys;next=page.next??{stage:'shadow',after:''};

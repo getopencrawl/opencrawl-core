@@ -3,6 +3,7 @@ import type {PoolClient} from 'pg';
 import {createBoundObjectMigration,onlineProjectionValue,type BoundObjectMigrationOptions,type OnlineObjectProjection} from './object-migration.mjs';
 import type {OnlineIntent} from './online-journal.mjs';
 import type {OnlineCoverageTarget} from './online-coverage.mjs';
+import {createOnlineObjectPolicy} from './online-object-policy.mjs';
 
 /** Typed shadow projection only. This module never makes an installation ready.
  * Its caller supplies the journal/backfill transaction's real PoolClient. */
@@ -20,15 +21,18 @@ export const onlineProjectionHash=(value:unknown)=>hash(JSON.stringify(canonical
 function revision(value:string){if(!/^(0|[1-9][0-9]*)$/.test(value)||BigInt(value)>9223372036854775807n)fail('invalid source revision');}
 function bounded(value:string,max:number){if(typeof value!=='string'||!value||value.includes('\0')||Buffer.byteLength(value)>max)fail('invalid source binding');}
 export interface OnlineTenantEnrollmentRequest {tenantId:string;evidence:unknown}
-export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment,...options}:BoundObjectMigrationOptions&{
- epoch:string;sourceId:string;enrollment:{verifierId:string;initialReceiptHash:string;verify(request:OnlineTenantEnrollmentRequest):Promise<{tenantId:string;receiptHash:string}>};journalBinding:Readonly<{namespace:string;epoch:string;sourceId:string}>;
+export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment,agentPrefix,...options}:BoundObjectMigrationOptions&{
+ epoch:string;sourceId:string;agentPrefix?:string;enrollment:{verifierId:string;initialReceiptHash:string;verify(request:OnlineTenantEnrollmentRequest):Promise<{tenantId:string;receiptHash:string}>};journalBinding:Readonly<{namespace:string;epoch:string;sourceId:string}>;
 }){
  const {database}=options,namespace=database.namespace;bounded(sourceId,2048);bounded(enrollment.verifierId,512);if(!/^[a-f0-9]{64}$/.test(enrollment.initialReceiptHash)||typeof enrollment.verify!=='function')fail('invalid tenant enrollment verifier');
  const verifyEnrollment=enrollment.verify,verifierId=enrollment.verifierId,initialReceiptHash=enrollment.initialReceiptHash;if(!uuid.test(epoch))fail('invalid epoch');
  if(journalBinding.namespace!==namespace||journalBinding.epoch!==epoch||journalBinding.sourceId!==sourceId)fail('journal binding differs from projection');
  const initialTenants=Object.freeze([...options.tenantIds]),retiredTenantHashes=Object.freeze([...(options.retiredTenantHashes??[])]);
  const object=createBoundObjectMigration({...options,tenantIds:initialTenants,retiredTenantHashes}),scope=[namespace,epoch,sourceId];
- const bindingHash=onlineProjectionHash({bucket:options.store.bucket,prefix:options.prefix,purpose:options.credentialPurpose??'capture',tenantIds:[...initialTenants].sort(),retiredTenantHashes:[...retiredTenantHashes].sort(),verifierId,initialReceiptHash});
+ const policy=createOnlineObjectPolicy({prefix:options.prefix,credentialPurpose:options.credentialPurpose,agentPrefix});
+ const agentObject=agentPrefix?createBoundObjectMigration({...options,prefix:agentPrefix,credentialPurpose:'agent',tenantIds:initialTenants,retiredTenantHashes}):undefined;
+ const decoder=(key:string)=>agentObject&&policy.route(key).credentialPurpose==='agent'?agentObject:object;
+ const bindingHash=onlineProjectionHash({bucket:options.store.bucket,prefix:options.prefix,purpose:options.credentialPurpose??'capture',tenantIds:[...initialTenants].sort(),retiredTenantHashes:[...retiredTenantHashes].sort(),verifierId,initialReceiptHash,...(agentPrefix?{agentPrefix,routePolicyHash:policy.policyHash}:{})});
  let preparing:Promise<void>|undefined,enrollmentRevision:string|undefined,enrolledTenants:readonly string[]=[];
  async function ready(){
   preparing??=(async()=>{
@@ -129,7 +133,7 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   if(input.revision==='0'?input.operationId!==null:input.operationId===null||!uuid.test(input.operationId))fail('invalid source operation');
   // Freeze decode input before the first SQL await; callbacks cannot redirect it.
   const key=input.key,version=input.version,rev=input.revision,operationId=input.operationId,bytes=input.bytes===null?null:Buffer.from(input.bytes);
-  const decoded=object.decodeOnline(key,bytes,await enrolled(client)),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);bounded(targetKey,8192);
+  const decoded=decoder(key).decodeOnline(key,bytes,await enrolled(client)),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);bounded(targetKey,8192);
   const value=onlineProjectionValue(decoded),contentHash=bytes===null?hash('deleted'):hash(bytes),targetHash=onlineProjectionHash(value);
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify(['online-projection',namespace,targetKey])]);
   const prior=(await client.query('SELECT source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=$3 FOR UPDATE',[namespace,epoch,targetKey])).rows[0];
@@ -154,12 +158,18 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   bounded(input.key,8192);bounded(input.version,2048);revision(input.revision);
   if(input.revision==='0'?input.operationId!==null:input.operationId===null||!uuid.test(input.operationId))fail('invalid inspected source operation');
   const key=input.key,version=input.version,rev=input.revision,operationId=input.operationId,bytes=input.bytes===null?null:Buffer.from(input.bytes);
-  const decoded=object.decodeOnline(key,bytes,await enrolled(client,true)),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);
+  const decoded=decoder(key).decodeOnline(key,bytes,await enrolled(client,true)),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);
   const targetHash=onlineProjectionHash(onlineProjectionValue(decoded)),contentHash=bytes===null?hash('deleted'):hash(bytes);
   const head=(await client.query('SELECT source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,targetKey])).rows[0];
   if(!head||head.source_id!==sourceId||head.source_key!==key||head.domain!==decoded.domain||head.revision!==rev||head.operation_id!==operationId||head.source_version!==version||head.content_hash!==contentHash||head.target_hash!==targetHash||head.deleted!==(bytes===null))return false;
   if(onlineProjectionHash(await readTargetIn(client,decoded,targetKey,key))!==targetHash)return false;
   return decoded.kind!=='replicas-reference'||decoded.value===null||await referenceMatchesIn(client,decoded.tenantHash,decoded.organizationId);
+ }
+ /** Exact enrolled owner check for metadata-only native ledger coverage. */
+ async function hasEnrolledTenantHashIn(client:PoolClient,tenantHash:string){
+  if(!/^[a-f0-9]{64}$/.test(tenantHash))fail('invalid tenant hash');
+  const row=(await client.query('SELECT t.tenant_id,t.tenant_hash,t.receipt_hash,b.binding_hash,n.epoch FROM opencrawl_online_projection_tenants t JOIN opencrawl_online_projection_bindings b USING(namespace,epoch,source_id) JOIN opencrawl_online_projection_namespaces n USING(namespace) WHERE t.namespace=$1 AND t.epoch=$2 AND t.source_id=$3 AND t.tenant_hash=$4',[...scope,tenantHash])).rows[0];
+  return Boolean(row&&row.epoch===epoch&&row.binding_hash===bindingHash&&row.tenant_hash===tenantHash&&hash(row.tenant_id)===tenantHash&&/^[a-f0-9]{64}$/.test(row.receipt_hash));
  }
  async function keysPageIn(client:PoolClient,{after='',limit=64}:{after?:string;limit?:number}={}){
   if(after)bounded(after,8192);if(!Number.isSafeInteger(limit)||limit<1||limit>64)fail('invalid projection key page bound');await enrolled(client,true);
@@ -175,5 +185,5 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   return project(client,{key:intent.key,bytes:intent.mutation.kind==='put'?intent.mutation.bytes:null,revision:intent.revision,operationId:intent.operationId,version:intent.resultVersion});
  }
  async function backfill(client:PoolClient,input:{key:string;bytes:Buffer;version:string}){return project(client,{...input,revision:'0',operationId:null});}
- return {binding:Object.freeze({namespace,epoch,sourceId,bindingHash}),ready,apply,backfill,enrollTenant,inspectReplicasReferencesPageIn,inspectIn,keysPageIn};
+ return {binding:Object.freeze({namespace,epoch,sourceId,bindingHash}),ready,apply,backfill,enrollTenant,inspectReplicasReferencesPageIn,inspectIn,keysPageIn,hasEnrolledTenantHashIn};
 }

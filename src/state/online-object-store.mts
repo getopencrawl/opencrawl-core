@@ -4,7 +4,7 @@ import {ONLINE_MAX_PAYLOAD_BYTES, type createOnlineJournal, type OnlineExternalS
 import type {OnlineWriteAuthority} from './online-authority.mjs';
 
 type Journal = Pick<ReturnType<typeof createOnlineJournal>, 'mutate' | 'reconcile'>;
-export interface OnlineObjectClassification {maxBytes: number}
+export interface OnlineObjectClassification {maxBytes: number; preservedNative?: true}
 /** Known concrete S3 capabilities used by legacy connector consumers. Unknown
  * adapter methods are deliberately not copied: they could bypass journaling. */
 export interface LegacyOnlineObjectStore extends ObjectStore {
@@ -35,10 +35,14 @@ export function createOnlineMigrationObjectStore({raw, external, journal, classi
     const value = classify(key);
     if (value === null) return null;
     if (!value || !Number.isSafeInteger(value.maxBytes) || value.maxBytes < 1 || value.maxBytes > ONLINE_MAX_PAYLOAD_BYTES) fail('INVALID_CLASSIFICATION');
-    return {maxBytes: value.maxBytes};
+    if (value.preservedNative !== undefined && value.preservedNative !== true) fail('INVALID_CLASSIFICATION');
+    return {maxBytes: value.maxBytes, ...(value.preservedNative ? {preservedNative: true as const} : {})};
   }
+  function readable(bound: OnlineObjectClassification) {if (bound.preservedNative) fail('PRESERVED_NATIVE_BODY_DENIED');}
+  function mutable(bound: OnlineObjectClassification) {if (bound.preservedNative) fail('PRESERVED_NATIVE_MUTATION_DENIED');}
   function limit(bound: OnlineObjectClassification, options?: ReadOptions) {
     if (options?.maxBytes !== undefined && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 1)) fail('INVALID_READ_LIMIT');
+    readable(bound);
     return Math.min(bound.maxBytes, options?.maxBytes ?? bound.maxBytes);
   }
   async function read(key: string, maxBytes: number): Promise<OnlineExternalSnapshot> {
@@ -50,6 +54,7 @@ export function createOnlineMigrationObjectStore({raw, external, journal, classi
     return value;
   }
   function payload(bytes: Uint8Array, contentType: string, bound: OnlineObjectClassification): OnlineMutation {
+    mutable(bound);
     if (!(bytes instanceof Uint8Array) || bytes.byteLength > bound.maxBytes) fail('PAYLOAD_LIMIT');
     if (typeof contentType !== 'string' || !/^[\x20-\x7e]{1,256}$/.test(contentType)) fail('INVALID_CONTENT_TYPE');
     // Copy before reconcile awaits so callers cannot change the journaled value.
@@ -147,10 +152,12 @@ export function createOnlineMigrationObjectStore({raw, external, journal, classi
       return route(key, {legacy: () => raw.compareAndSet(key, version, frozen.bytes), journal: () => mutate(key, frozen, expected)});
     },
     async delete(key) {
-      if (!classification(key)) {
+      const bound = classification(key);
+      if (!bound) {
         if (!raw.delete) fail('RAW_DELETE_UNSUPPORTED');
         return raw.delete(key);
       }
+      mutable(bound);
       return route(key, {
         legacy: async () => {if (!raw.delete) fail('RAW_DELETE_UNSUPPORTED'); await raw.delete(key);},
         journal: async () => {applied(await mutate(key, {kind: 'delete'}));},
@@ -170,7 +177,7 @@ export function createOnlineMigrationObjectStore({raw, external, journal, classi
           const index = next++, key = page.keys[index];
           try {
             const bound = classification(key);
-            visible[index] = !bound || !(await read(key, bound.maxBytes)).deleted;
+            visible[index] = !bound || bound.preservedNative === true || !(await read(key, bound.maxBytes)).deleted;
           } catch (error) {failure ??= {error};}
         }
       }));

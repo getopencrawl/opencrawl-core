@@ -69,6 +69,16 @@ workflow results. Session producers and workers derive a fresh generation from
 that same handoff. Historical generations can finish only their own markers.
 The hosted handoff provider and runtime admission still require integration.
 
+One physical bucket has one source and journal, including an explicitly routed
+nested agent-credential namespace. The source policy hash binds those routes and
+any native-state preservation decision. Agent and capture credentials retain
+separate target identities. A reviewed native PostgreSQL event-identity binding
+can preserve historical ledger markers without fetching their bodies or counting
+event rows. Coverage records the native binding separately from copied target
+rows and rebuild obligations. Compatibility readers retain those markers in
+listings but reject direct body access and mutation. A native preservation
+certificate does not grant runtime admission.
+
 Replicas aliases never publish or delete canonical connections. Their separate
 bounded reference inspection must run during final typed parity after replay
 reaches the fixed frontier. A missing, deleted or differently owned canonical
