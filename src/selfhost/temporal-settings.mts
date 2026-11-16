@@ -1,0 +1,27 @@
+import {readFileSync} from 'node:fs';
+import type {ConnectionOptions} from '@temporalio/client';
+import type {NativeConnectionOptions} from '@temporalio/worker';
+
+/** One operator-owned connection contract for API schedulers and native workers. */
+export function selfhostTemporalSettings(env:NodeJS.ProcessEnv=process.env):{
+  address:string; namespace:string; connectionOptions:ConnectionOptions & NativeConnectionOptions;
+} {
+  const address=env.TEMPORAL_ADDRESS?.trim(),namespace=env.TEMPORAL_NAMESPACE?.trim();
+  if(!address||!namespace)throw new Error('Configure TEMPORAL_ADDRESS and TEMPORAL_NAMESPACE');
+  const mode=env.TEMPORAL_TLS_ENABLED??'false';
+  if(!['true','false'].includes(mode))throw new Error('TEMPORAL_TLS_ENABLED must be true or false');
+  const ca=env.TEMPORAL_TLS_CA_PATH,cert=env.TEMPORAL_TLS_CERT_PATH,key=env.TEMPORAL_TLS_KEY_PATH;
+  if(Boolean(cert)!==Boolean(key))throw new Error('Set both TEMPORAL_TLS_CERT_PATH and TEMPORAL_TLS_KEY_PATH');
+  if(env.TEMPORAL_API_KEY&&env.TEMPORAL_API_KEY_PATH)throw new Error('Set only one Temporal API key source');
+  const apiKey=env.TEMPORAL_API_KEY_PATH?readFileSync(env.TEMPORAL_API_KEY_PATH,'utf8').trim():env.TEMPORAL_API_KEY?.trim();
+  if((ca||cert||key||env.TEMPORAL_TLS_SERVER_NAME||apiKey)&&mode!=='true')throw new Error('Temporal credentials and certificates require TEMPORAL_TLS_ENABLED=true');
+  if((env.TEMPORAL_API_KEY_PATH||env.TEMPORAL_API_KEY)&&!apiKey)throw new Error('Temporal API key is empty');
+  const connectionOptions:ConnectionOptions & NativeConnectionOptions={};
+  if(mode==='true')connectionOptions.tls={
+    ...(ca?{serverRootCACertificate:readFileSync(ca)}:{}),
+    ...(cert&&key?{clientCertPair:{crt:readFileSync(cert),key:readFileSync(key)}}:{}),
+    ...(env.TEMPORAL_TLS_SERVER_NAME?{serverNameOverride:env.TEMPORAL_TLS_SERVER_NAME}:{}),
+  };
+  if(apiKey){connectionOptions.apiKey=apiKey;connectionOptions.metadata={'temporal-namespace':namespace};}
+  return {address,namespace,connectionOptions};
+}
