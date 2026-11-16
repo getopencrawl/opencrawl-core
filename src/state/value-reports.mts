@@ -1,3 +1,4 @@
+import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {isDeepStrictEqual} from 'node:util';
@@ -25,4 +26,12 @@ export function createValueReports(database:ApplicationDatabase):ValueReportStat
     async write(tenant,value){const bytes=encode(value);if(!parseValueReport(bytes))throw new Error('Unsupported value report');await database.pool.query('INSERT INTO opencrawl_value_reports(namespace,tenant_hash,report) VALUES($1,$2,$3::jsonb) ON CONFLICT(namespace,tenant_hash) DO UPDATE SET report=EXCLUDED.report',[ns,tenantHash(tenant),bytes]);},
     async importReport(hash,input){checkHash(hash);const bytes=encode(input);await database.pool.query('INSERT INTO opencrawl_value_reports(namespace,tenant_hash,report) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING',[ns,hash,bytes]);const {rows}=await database.pool.query('SELECT report FROM opencrawl_value_reports WHERE namespace=$1 AND tenant_hash=$2',[ns,hash]);if(!isDeepStrictEqual(input,rows[0].report))throw new Error('Value report import conflicts with existing data');return rows[0].report;},
   };
+}
+
+export async function* inventoryValueReportTargetsIn(database:ApplicationDatabase,client:PoolClient):AsyncGenerator<OnlineOwnedInventoryItem>{
+ const repo=createValueReports(database);
+ for await(const row of scanTargetInventoryIn(client,'SELECT tenant_hash,octet_length(report::text) bytes FROM opencrawl_value_reports WHERE namespace=$1 ORDER BY tenant_hash COLLATE "C"',[database.namespace])){
+  if(!Number.isSafeInteger(row.bytes)||Number(row.bytes)>131072)targetInventoryFailure('oversized value report');
+  const tenant=String(row.tenant_hash),value=await repo.readIn(client,tenant);if(value===null)targetInventoryFailure('value report disappeared');encodeSavedValueReport(value);yield {kind:'target',domains:['value-reports'],identity:[tenant],value,maxBytes:65536};
+ }
 }

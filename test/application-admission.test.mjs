@@ -15,7 +15,7 @@ test('online admission receipt hashes normalized exact fields and refuses invent
 async function fixture(t){
  const schema='oc_admission_'+randomUUID().replaceAll('-',''),admin=new Pool({connectionString:pg,max:1});await admin.query('CREATE SCHEMA '+schema);
  const database=createApplicationDatabase({connectionString:pg,namespace:'admission-'+randomUUID(),sourceIdentity:source,onlineTargetId:'a'.repeat(64),options:'-c search_path='+schema,max:4});
- t.after(async()=>{await database.close();try{await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.query('DROP SCHEMA IF EXISTS '+database.identitySchema+' CASCADE');}finally{await admin.end();}});
+ t.after(async()=>{await database.close();const client=await admin.connect();try{await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:identity-schema:maintenance',0))");await client.query('DROP SCHEMA '+schema+' CASCADE');await client.query('DROP SCHEMA IF EXISTS '+database.identitySchema+' CASCADE');await client.query('COMMIT');}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();await admin.end();}});
  await database.ready();const upgrade=()=>database.transaction(async c=>{await c.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:application:schema',0))");await prepareOnlineAdmissionSchemaIn(c);});return {database,upgrade};
 }
 test('actual PG explicit schema upgrade preserves existing offline identity and does not invent readiness',{skip:!pg},async t=>{

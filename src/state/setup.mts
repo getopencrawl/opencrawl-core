@@ -1,3 +1,4 @@
+import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import {randomUUID,createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {isDeepStrictEqual} from 'node:util';
@@ -70,4 +71,13 @@ export function createSetupState(database:ApplicationDatabase) {
     async importStatus(input:unknown){const record=validateSetupState(input);await save(record.scope,null,record);const target=(await read(record.scope)).record;
       if(!isDeepStrictEqual(target,record))throw new Error('Setup target differs from legacy state');return target!;},
   };
+}
+
+export async function* inventorySetupTargetsIn(database:ApplicationDatabase,client:PoolClient):AsyncGenerator<OnlineOwnedInventoryItem>{
+ const repo=createSetupState(database);let previous='';
+ for await(const row of scanTargetInventoryIn(client,`SELECT tenant_id,user_id,octet_length(record::text) bytes FROM opencrawl_setup_status WHERE namespace=$1 ORDER BY sha256(convert_to(tenant_id,'UTF8')),sha256(convert_to(user_id,'UTF8')),tenant_id COLLATE "C",user_id COLLATE "C"`,[database.namespace])){
+  if(!Number.isSafeInteger(row.bytes)||Number(row.bytes)>524288)targetInventoryFailure('oversized Setup record');
+  const scope={tenantId:String(row.tenant_id),userId:String(row.user_id)},identity=[hash(scope.tenantId),hash(scope.userId)],key=JSON.stringify(identity);if(key===previous)targetInventoryFailure('ambiguous Setup canonical identity');previous=key;
+  const value=(await repo.readIn(client,scope)).record;if(!value)targetInventoryFailure('Setup owner disappeared');yield {kind:'target',domains:['setup-status'],identity,value,maxBytes:262144};
+ }
 }

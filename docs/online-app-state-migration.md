@@ -37,6 +37,13 @@ bounded passes and continues replaying after observing parity. Worker restart
 and continue-as-new retain progress in PostgreSQL; source payloads and credentials
 do not enter Temporal history.
 
+A host can route these references through one explicitly bound shared task queue
+for its namespace, epoch and target. The worker resolves each reference through
+the host's durable source catalog and bounded controller cache. A newly enrolled
+source therefore uses the running worker; it does not need a new process or a
+task queue per bucket. The workflow and its durable PostgreSQL progress remain
+the same. This option does not enroll sources or activate journal authority.
+
 The byte mirror is temporary migration evidence, not an implementation of
 `ApplicationState`. The typed projector currently covers account credentials and
 revocations, onboarding, role operations, privacy controls, connector secrets,
@@ -65,6 +72,21 @@ evidence commits with backfill or replay, including journal-only keys that were
 created behind the listing cursor. Deferred keys whose write was not applied
 must receive a real baseline read. Complete traversal and unresolved work remain
 separate from final parity and runtime admission.
+
+The final source reader verifies journal continuity, stored physical page chains,
+certificates, mirrors and actual typed readback through one caller-owned
+repeatable-read or serializable transaction. It performs no external source I/O.
+An independent installation-wide inventory enumerates the actual owning tables,
+including child rows and materialized lookup fields, to detect targets without
+projection heads. Slack pacing retains transactional maximum-contribution
+provenance because its historical maximum cannot be inferred from current
+checkpoint values alone. Missing provenance remains unproved. These readers
+produce observations; the final sealer must retain writer exclusion and complete
+all of them in the same snapshot before admitting the runtime.
+Native entries certify preservation of the owning PostgreSQL namespace, not
+continued existence of an old object-store marker. They are not copied target
+rows. Final composition must verify the current native database binding; privacy
+deletions retain their native owner's permanent tombstone protocol.
 
 `createOnlineObjectParticipant` exposes the same typed operations for composition
 with additional source owners under one shadow coordinator. It does not create
@@ -149,6 +171,12 @@ refuses both legacy and journal callbacks and cannot be reactivated. The final
 sealer that verifies parity and commits the receipt with that transition is
 still required.
 
+After an uncertain final commit reply, recovery must reacquire the same exclusive
+authority gate before checking the exact admission receipt. An absent receipt
+read while the original transaction may still be running is not an abort proof.
+A confirmed abort retains journal mode; a committed admission requires forward
+recovery and cannot reopen legacy writers.
+
 A legacy operation records its dispatch before external I/O. If its outcome or
 gate connection becomes uncertain, that durable record blocks later same-key
 writes and activation even after a process restart. Only a definitive adapter
@@ -166,8 +194,8 @@ before its durable write or claim an unmeasured zero-error switch. A live parity
 observation alone is not a cutover receipt. Cancel the
 migration worker only after the completed authority switch or an explicit abort.
 
-The current components do not implement fleet enrollment, the final complete
-typed parity proof, the final request-routing fence, the complete workflow
+The current components do not implement fleet enrollment, composition of the final
+complete parity proof, the final request-routing fence, the complete workflow
 handoff, a final readiness receipt producer, or a
 one-command online upgrade. Those remain release gates. Existing-installation
 traffic, signup, capture, restart, deletion and rollback rehearsals must verify

@@ -168,5 +168,17 @@ export function createOnlineWriteAuthority({database, epoch, protocol}: {
       return runFinal(client,alive);
     },true);
   }
-  return {binding, prepare, run, status, pending, activate,prepareFinalization,withFinalization};
+  /** Reacquire the exact exclusive gate before resolving a lost commit reply.
+   * A plain read of an absent receipt could race the original COMMIT. This gate
+   * refuses while that transaction may still own authority; it changes no mode. */
+  async function withFinalizationRecovery<T>(expected:{preparationReceiptHash:string;enrollmentReceiptHash:string},recover:(client:PoolClient,state:Readonly<OnlineAuthorityStatus>,alive:()=>void)=>Promise<T>){
+    if(!sha.test(expected.preparationReceiptHash)||!sha.test(expected.enrollmentReceiptHash)||typeof recover!=='function')fail('INVALID_FINALIZATION');
+    const frozen={...expected};
+    return locked(true,null,async(client,alive)=>{
+      const state=await readIn(client);
+      if(state.mode==='legacy'||state.preparationReceiptHash!==frozen.preparationReceiptHash||state.enrollmentReceiptHash!==frozen.enrollmentReceiptHash)fail('FINALIZATION_BINDING');
+      return recover(client,Object.freeze(state),alive);
+    },true);
+  }
+  return {binding, prepare, run, status, pending, activate,prepareFinalization,withFinalization,withFinalizationRecovery};
 }

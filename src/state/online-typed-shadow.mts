@@ -62,6 +62,11 @@ export function createOnlineObjectParticipant({binding:inputBinding,journal,reti
   async backfillRetiredIn(client:PoolClient,key:string,selected){if(!retirements)fail('RETIREMENT_POLICY_REQUIRED');const scope={key,domain:selected.domain,scopeHash:selected.scopeHash};await retirements.backfillIn(client,scope);const value=await retirements.readIn(client,scope);if(!value)fail('MISSING_RETIREMENT_READBACK');return {targetKey:JSON.stringify(['retirement',selected.domain,key]),targetHash:onlineProjectionHash(value)};},
   async applyIn(client:PoolClient,intent,selected){if(selected.kind==='retained')return projection.apply(client,intent);if(!retirements)fail('RETIREMENT_POLICY_REQUIRED');const scope={key:intent.key,domain:selected.domain,scopeHash:selected.scopeHash};await retirements.applyIn(client,intent,scope);const value=await retirements.readIn(client,scope);if(!value)fail('MISSING_RETIREMENT_READBACK');return {targetKey:JSON.stringify(['retirement',selected.domain,intent.key]),targetHash:onlineProjectionHash(value)};},
   async inspectIn(client:PoolClient,key:string,value){if(value.version===null)return false;return projection.inspectIn(client,{key,bytes:value.bytes,version:value.version,operationId:value.operationId,revision:value.revision??'0'});},
+  async inspectCoverageIn(client:PoolClient,key:string,selected,value){
+   if(selected.kind==='retained'){if(!value||value.version===null)fail('SOURCE_SNAPSHOT_REQUIRED');return projection.inspectEvidenceIn(client,{key,bytes:value.bytes,version:value.version,operationId:value.operationId,revision:value.revision??'0'});}
+   if(!retirements)fail('RETIREMENT_POLICY_REQUIRED');const scope={key,domain:selected.domain,scopeHash:selected.scopeHash};
+   if(!await retirements.inspectIn(client,scope))return null;const row=await retirements.readIn(client,scope);return row?{targetKey:JSON.stringify(['retirement',selected.domain,key]),targetHash:onlineProjectionHash(row)}:null;
+  },
   async inspectRetiredIn(client:PoolClient,key:string,selected){if(!retirements)fail('RETIREMENT_POLICY_REQUIRED');return retirements.inspectIn(client,{key,domain:selected.domain,scopeHash:selected.scopeHash});},
   async inspectNativeIn(client:PoolClient,key:string,selected){
    if(!nativeVerified||selected.nativeBindingHash!==classifier.nativeBindingHash)fail('NATIVE_METADATA_REQUIRED');
@@ -82,13 +87,13 @@ export function createOnlineObjectParticipant({binding:inputBinding,journal,reti
    return [...new Set([...a,...b])].sort(compare).slice(0,input.limit);
   },
  });
- return {binding,source:Object.freeze({bucket:options.store.bucket!,prefix:options.prefix,credentialPurpose:options.credentialPurpose??'capture'}),participant,objectPolicy:classifier,disposition,verifyNative,enrollTenant:projection.enrollTenant,inspectReplicasReferencesPageIn:projection.inspectReplicasReferencesPageIn};
+ return {binding,targetInventory:projection,source:Object.freeze({bucket:options.store.bucket!,prefix:options.prefix,credentialPurpose:options.credentialPurpose??'capture'}),participant,objectPolicy:classifier,disposition,verifyNative,enrollTenant:projection.enrollTenant,inspectReplicasReferencesPageIn:projection.inspectReplicasReferencesPageIn};
 }
 /** Backward-compatible single-participant convenience factory. */
 export function createOnlineTypedShadow({external,physicalListing,assertCurrent,sourceRegistration,...options}:OnlineObjectParticipantOptions&{
  external:OnlineExternalStore;physicalListing:OnlineShadowListing;assertCurrent:(signal:AbortSignal)=>Promise<void>;sourceRegistration?:OnlineSourceRegistration;
 }){
- const {binding,participant,objectPolicy:classifier,disposition,verifyNative,enrollTenant,inspectReplicasReferencesPageIn}=createOnlineObjectParticipant(options),journal=options.journal,coveragePolicy=options.coverage;
+ const {binding,participant,targetInventory,objectPolicy:classifier,disposition,verifyNative,enrollTenant,inspectReplicasReferencesPageIn}=createOnlineObjectParticipant(options),journal=options.journal,coveragePolicy=options.coverage;
  const shadow=createOnlineShadow({database:options.database,binding,journal,external,listing:physicalListing,roots:classifier.roots,classify:classifier.classify,assertCurrent:async signal=>{await assertCurrent(signal);await verifyNative();},participant,coveragePolicy,sourceRegistration});
  const adapter={...shadow.adapter,
   async backfillPage(request:Parameters<typeof shadow.adapter.backfillPage>[0]){await verifyNative();return shadow.adapter.backfillPage(request);},
@@ -99,5 +104,5 @@ export function createOnlineTypedShadow({external,physicalListing,assertCurrent,
   if(request.cursor===null)for(let shard=0;shard<binding.shards;shard++){request.signal.throwIfAborted();const checkpoint=await journal.replayCheckpoint(shadow.bindingId+'-'+shard);if(checkpoint===null||BigInt(checkpoint)<BigInt(request.through))return {cursor:null,processed:0,mismatches:0,drift:true};}
   return shadow.adapter.parityPage(request);
  }};
- return {...shadow,adapter,async backfill(key:string){await verifyNative();return shadow.backfill(key);},objectPolicy:classifier,mode:'background-observation-only' as const,disposition,enrollTenant,inspectReplicasReferencesPageIn};
+ return {...shadow,adapter,targetInventory,async backfill(key:string){await verifyNative();return shadow.backfill(key);},objectPolicy:classifier,mode:'background-observation-only' as const,disposition,enrollTenant,inspectReplicasReferencesPageIn};
 }

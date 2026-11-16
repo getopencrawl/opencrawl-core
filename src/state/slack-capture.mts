@@ -1,3 +1,5 @@
+import {createHash} from 'node:crypto';
+import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import {isDeepStrictEqual} from 'node:util';
 import {z} from 'zod';
 import type {PoolClient} from 'pg';
@@ -308,4 +310,74 @@ export function createPostgresSlackCapture(database:ApplicationDatabase):SlackCa
   },
  };
  return api;
+}
+
+export interface OnlineSlackPacingProof {epoch:string;sourceId:string;bindingHash:string;sourceKey:string;revision:string;operationId:string|null;sourceVersion:string;sourceHash:string;targetHash:string;sequence:string;}
+const pacingProofHash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+export async function prepareOnlineSlackPacingSchemaIn(client:PoolClient){
+ await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:online-slack-pacing:schema',0))");
+ await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_online_slack_pacing_proofs(namespace text NOT NULL,epoch uuid NOT NULL,raw_prefix text NOT NULL,scope_hash text NOT NULL,method text NOT NULL,next_due bigint NOT NULL CHECK(next_due>=0),source_id text NOT NULL,binding_hash text NOT NULL,source_key text NOT NULL,revision bigint NOT NULL CHECK(revision>=0),operation_id uuid,source_version text NOT NULL,source_hash text NOT NULL,target_hash text NOT NULL,sequence bigint NOT NULL CHECK(sequence>=0),proof_hash text NOT NULL,PRIMARY KEY(namespace,epoch,raw_prefix,scope_hash,method),CHECK((revision=0 AND sequence=0 AND operation_id IS NULL) OR (revision>0 AND sequence>0 AND operation_id IS NOT NULL)))`);
+}
+function pacingContributions(key:string,value:SlackLegacyValue){
+ const identity=slackCaptureLegacyIdentity(key);if(identity.catalog)return [];
+ const checkpoint=value as FileCheckpoint|MessageCheckpoint|ReferenceCheckpoint;
+ return typeof checkpoint.nextDue==='number'?['conversations.list','files.list','files.info'].map(method=>[method,checkpoint.nextDue] as const):Object.entries(checkpoint.nextDue);
+}
+function pacingProof(namespace:string,prefix:string,scope:string,method:string,nextDue:number,proof:OnlineSlackPacingProof){return {namespace,epoch:proof.epoch,prefix,scope,method,nextDue,sourceId:proof.sourceId,bindingHash:proof.bindingHash,sourceKey:proof.sourceKey,revision:proof.revision,operationId:proof.operationId,sourceVersion:proof.sourceVersion,sourceHash:proof.sourceHash,targetHash:proof.targetHash,sequence:proof.sequence};}
+/** No adoption of an unexplained existing maximum. A later genuine contribution
+ * can establish a new maximum; until then final inventory reports unproved. */
+export async function recordOnlineSlackPacingIn(database:ApplicationDatabase,client:PoolClient,key:string,value:SlackLegacyValue,proof:OnlineSlackPacingProof){
+ const source=slackCaptureLegacyIdentity(key);if(proof.sourceKey!==key)targetInventoryFailure('pacing source differs');
+ for(const [method,due] of pacingContributions(key,value)){
+  const nextDue=integer.parse(due),params=[database.namespace,proof.epoch,source.prefix,value.scope,method];
+  const actual=(await client.query('SELECT next_due::text FROM opencrawl_slack_pacing WHERE namespace=$1 AND raw_prefix=$2 AND scope_hash=$3 AND method=$4',[database.namespace,source.prefix,value.scope,method])).rows[0];
+  if(!actual||BigInt(actual.next_due)<BigInt(nextDue))targetInventoryFailure('pacing contribution missing');
+  const old=(await client.query('SELECT next_due::text FROM opencrawl_online_slack_pacing_proofs WHERE namespace=$1 AND epoch=$2 AND raw_prefix=$3 AND scope_hash=$4 AND method=$5',params)).rows[0];
+  if(old&&BigInt(old.next_due)>BigInt(actual.next_due))targetInventoryFailure('certified pacing decreased');
+  if(BigInt(actual.next_due)!==BigInt(nextDue))continue;
+  const hash=pacingProofHash(pacingProof(database.namespace,source.prefix,value.scope,method,nextDue,proof));
+  await client.query(`INSERT INTO opencrawl_online_slack_pacing_proofs VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+   ON CONFLICT(namespace,epoch,raw_prefix,scope_hash,method) DO UPDATE SET next_due=EXCLUDED.next_due,source_id=EXCLUDED.source_id,binding_hash=EXCLUDED.binding_hash,source_key=EXCLUDED.source_key,revision=EXCLUDED.revision,operation_id=EXCLUDED.operation_id,source_version=EXCLUDED.source_version,source_hash=EXCLUDED.source_hash,target_hash=EXCLUDED.target_hash,sequence=EXCLUDED.sequence,proof_hash=EXCLUDED.proof_hash WHERE opencrawl_online_slack_pacing_proofs.next_due<EXCLUDED.next_due`,[...params,nextDue,proof.sourceId,proof.bindingHash,key,proof.revision,proof.operationId,proof.sourceVersion,proof.sourceHash,proof.targetHash,proof.sequence,hash]);
+ }
+}
+export async function* inventorySlackTargetsIn(database:ApplicationDatabase,client:PoolClient,epoch:string):AsyncGenerator<OnlineOwnedInventoryItem>{
+ const ns=database.namespace,repo=createPostgresSlackCapture(database),tables=['scopes','catalogs','catalog_items','runs','run_items','pacing'] as const;
+ const owners=tables.map(name=>`SELECT raw_prefix,scope_hash FROM opencrawl_slack_${name} WHERE namespace=$1`).join(' UNION ');
+ for await(const row of scanTargetInventoryIn(client,`SELECT raw_prefix,scope_hash FROM (${owners}) owners ORDER BY raw_prefix COLLATE "C",scope_hash COLLATE "C"`,[ns])){
+  const prefix=String(row.raw_prefix),scope=hash.parse(row.scope_hash),params=[ns,prefix,scope];
+  if(!(await client.query('SELECT 1 FROM opencrawl_slack_scopes WHERE namespace=$1 AND raw_prefix=$2 AND scope_hash=$3',params)).rows.length)targetInventoryFailure('Slack child has no scope');
+  let records=0;
+  const keys=`SELECT kind,true is_catalog,'catalog'::text run_id FROM opencrawl_slack_catalogs WHERE namespace=$1 AND raw_prefix=$2 AND scope_hash=$3 UNION SELECT kind,true is_catalog,'catalog'::text run_id FROM opencrawl_slack_catalog_items WHERE namespace=$1 AND raw_prefix=$2 AND scope_hash=$3 UNION SELECT kind,false is_catalog,run_id FROM opencrawl_slack_runs WHERE namespace=$1 AND raw_prefix=$2 AND scope_hash=$3 UNION SELECT kind,false is_catalog,run_id FROM opencrawl_slack_run_items WHERE namespace=$1 AND raw_prefix=$2 AND scope_hash=$3`;
+  for await(const identity of scanTargetInventoryIn(client,`SELECT kind,is_catalog,run_id FROM (${keys}) owners ORDER BY kind COLLATE "C",is_catalog,run_id COLLATE "C"`,params)){
+   const catalog=identity.is_catalog===true,key=prefix+'capture/'+String(identity.kind)+'/'+(catalog?'catalog.json':String(identity.run_id)+'/state.json');
+   slackCaptureLegacyIdentity(key);
+   const parent=catalog?'catalogs':'runs',children=catalog?'catalog_items':'run_items',filter='namespace=$1 AND raw_prefix=$2 AND scope_hash=$3 AND kind=$4'+(catalog?'':' AND run_id=$5'),args=[...params,identity.kind,...(catalog?[]:[identity.run_id])];
+   await assertTargetInventoryBoundIn(client,`SELECT coalesce(sum(bytes),0)::text bytes,count(*)::text rows FROM (SELECT octet_length(to_jsonb(p)::text) bytes FROM opencrawl_slack_${parent} p WHERE ${filter} UNION ALL SELECT octet_length(to_jsonb(c)::text) FROM opencrawl_slack_${children} c WHERE ${filter}) bounded`,args);
+   const value=await repo.readProjectedLegacyIn(client,key,scope);if(value===null)targetInventoryFailure('Slack child has no catalog/run');targetInventoryValueBytes(value,16*1024*1024);
+   // Exact split/join roundtrip catches normalized keys/ordinals that the logical
+   // decoder can otherwise ignore or collapse.
+   if(!catalog){const expected=splitCheckpoint(value as FileCheckpoint|MessageCheckpoint|ReferenceCheckpoint),actual=(await client.query(`SELECT metadata FROM opencrawl_slack_runs WHERE ${filter}`,args)).rows[0];if(!isDeepStrictEqual(actual.metadata,expected.metadata))targetInventoryFailure('Slack scalar metadata differs');
+    const items=new Map(expected.items.map(item=>[JSON.stringify([item.kind,item.key]),item]));for await(const child of scanTargetInventoryIn(client,`SELECT item_kind,item_key,ordinal,value FROM opencrawl_slack_run_items WHERE ${filter} ORDER BY item_kind COLLATE "C",item_key COLLATE "C"`,args)){const id=JSON.stringify([child.item_kind,child.item_key]),item=items.get(id);if(!item||child.ordinal!==item.ordinal||!isDeepStrictEqual(child.value,item.value))targetInventoryFailure('Slack normalized run item differs');items.delete(id);}if(items.size)targetInventoryFailure('Slack run item missing');
+   }
+   records++;yield {kind:'target',domains:['slack-capture'],identity:[prefix,scope,String(identity.kind),String(identity.run_id)],sourceKey:key,value,maxBytes:16*1024*1024};
+  }
+  if(!records)targetInventoryFailure('Slack scope has no retained target');
+  for await(const pace of scanTargetInventoryIn(client,'SELECT method,next_due::text FROM opencrawl_slack_pacing WHERE namespace=$1 AND raw_prefix=$2 AND scope_hash=$3 ORDER BY method COLLATE "C"',params)){
+   const method=String(pace.method),due=Number(pace.next_due);if(!/^(conversations\.(list|history|replies|info)|files\.(list|info))$/.test(method)||!Number.isSafeInteger(due)||due<0)targetInventoryFailure('invalid Slack pacing row');
+   const receipt=(await client.query('SELECT *,revision::text,sequence::text,next_due::text FROM opencrawl_online_slack_pacing_proofs WHERE namespace=$1 AND epoch=$2 AND raw_prefix=$3 AND scope_hash=$4 AND method=$5',[ns,epoch,prefix,scope,method])).rows[0];let proved=false;
+   if(receipt){const proof:OnlineSlackPacingProof={epoch,sourceId:receipt.source_id,bindingHash:receipt.binding_hash,sourceKey:receipt.source_key,revision:receipt.revision,operationId:receipt.operation_id,sourceVersion:receipt.source_version,sourceHash:receipt.source_hash,targetHash:receipt.target_hash,sequence:receipt.sequence};
+    if(receipt.next_due!==pace.next_due||receipt.proof_hash!==pacingProofHash(pacingProof(ns,prefix,scope,method,due,proof)))targetInventoryFailure('Slack pacing proof changed');
+    const bound=(await client.query('SELECT binding_hash FROM opencrawl_online_projection_bindings WHERE namespace=$1 AND epoch=$2 AND source_id=$3',[ns,epoch,proof.sourceId])).rows[0];
+    const head=(await client.query('SELECT domain,revision::text,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4',[ns,epoch,proof.sourceId,proof.sourceKey])).rows[0];
+    if(bound?.binding_hash!==proof.bindingHash||!head||head.domain!=='slack-capture'||head.deleted||BigInt(head.revision)<BigInt(proof.revision))targetInventoryFailure('Slack pacing publisher changed');
+    const identity=slackCaptureLegacyIdentity(proof.sourceKey);if(identity.prefix!==prefix||identity.catalog)targetInventoryFailure('Slack pacing owner changed');
+    if(proof.revision==='0'){if(proof.sequence!=='0'||proof.operationId!==null)targetInventoryFailure('invalid baseline pacing provenance');}
+    else{const j=(await client.query('SELECT source_key,revision::text,sequence::text,kind,state,payload_hash,result_version FROM opencrawl_online_migration_journal WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND operation_id=$4',[ns,epoch,proof.sourceId,proof.operationId])).rows[0];if(!j||j.source_key!==proof.sourceKey||j.revision!==proof.revision||j.sequence!==proof.sequence||j.kind!=='put'||j.state!=='applied'||j.payload_hash!==proof.sourceHash||j.result_version!==proof.sourceVersion)targetInventoryFailure('Slack pacing journal provenance differs');}
+    proved=true;
+   }
+   yield {kind:'auxiliary',owner:'slack-pacing',identity:[prefix,scope,method],proved};
+  }
+ }
+ // A receipt without its runtime maximum cannot be hidden by the runtime scan.
+ if((await client.query('SELECT 1 FROM opencrawl_online_slack_pacing_proofs p LEFT JOIN opencrawl_slack_pacing v USING(namespace,raw_prefix,scope_hash,method) WHERE p.namespace=$1 AND p.epoch=$2 AND v.method IS NULL LIMIT 1',[ns,epoch])).rows.length)targetInventoryFailure('orphan Slack pacing proof');
 }

@@ -2,7 +2,7 @@ import {Context,heartbeat} from '@temporalio/activity';
 import {ApplicationFailure,CancelledFailure} from '@temporalio/common';
 import type {OnlineMigrationController} from './controller.mjs';
 import type {OnlineMigrationReference} from './types.mjs';
-export function onlineMigrationActivities(controller:OnlineMigrationController){
+export function onlineMigrationActivities(controller:Pick<OnlineMigrationController,'advance'>){
  return {async advanceOnlineMigrationV1(reference:OnlineMigrationReference){
   const pulse=setInterval(()=>heartbeat(),10000);
   try{heartbeat();return await controller.advance(reference,Context.current().cancellationSignal);}

@@ -12,3 +12,11 @@ export function onlineMigrationWorkflowId(reference:OnlineMigrationReference){
  if(!reference||Object.keys(reference).sort().join(',')!=='bindingId,shard'||!/^[a-f0-9]{64}$/.test(reference.bindingId)||!Number.isSafeInteger(reference.shard)||reference.shard<0||reference.shard>255)throw Error('Invalid online migration reference');
  return 'application-state-shadow-v1-'+reference.bindingId+'-'+reference.shard;
 }
+
+/** One explicitly isolated migration worker queue for a whole reviewed target.
+ * Individual workflow references still retain their exact source binding. */
+export interface OnlineMigrationQueueBinding {namespace:string;epoch:string;targetId:string}
+export function onlineMigrationSharedTaskQueue(input:OnlineMigrationQueueBinding){
+ if(!input||Object.keys(input).sort().join(',')!=='epoch,namespace,targetId'||typeof input.namespace!=='string'||!input.namespace||Buffer.byteLength(input.namespace)>2048||/[\u0000-\u001f\u007f]/.test(input.namespace)||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(input.epoch)||!/^[a-f0-9]{64}$/.test(input.targetId))throw Error('Invalid shared online migration queue binding');
+ return 'application-state-shadow-router-v1-'+createHash('sha256').update(JSON.stringify(['online-shadow-router-v1',input.namespace,input.epoch,input.targetId])).digest('hex');
+}

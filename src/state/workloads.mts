@@ -1,3 +1,4 @@
+import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import type {PoolClient} from 'pg';
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
@@ -72,4 +73,23 @@ export function createWorkloadState<Challenge extends WorkloadChallenge>(databas
     async importConnection(input){const value=connectionSchema.parse(input);await saveConnection(value.organizationId,null,value);const actual=(await readConnection(value.organizationId)).record;if(!isDeepStrictEqual(value,actual))throw new Error(label+' connection import conflicts with existing data');return actual!;},
     async importSetup(codeHash,input){const value=challengeSchema.parse(input);await saveSetup(codeHash,null,value);const actual=(await readSetup(codeHash)).record;if(!isDeepStrictEqual(value,actual))throw new Error(label+' setup import conflicts with existing data');return actual!;},
   };
+}
+
+/** Provider is the owning finite table selector, never an arbitrary SQL name. */
+export async function* inventoryWorkloadTargetsIn<Challenge extends WorkloadChallenge>(database:ApplicationDatabase,client:PoolClient,provider:WorkloadProvider,challengeSchema:z.ZodType<Challenge>):AsyncGenerator<OnlineOwnedInventoryItem>{
+ if(provider!=='replicas')targetInventoryFailure('no retained online workload owner for provider');
+ const repo=createWorkloadState(database,provider,challengeSchema),ns=database.namespace;
+ for await(const row of scanTargetInventoryIn(client,`SELECT organization_id FROM (SELECT organization_id FROM opencrawl_replicas_connections WHERE namespace=$1 UNION SELECT organization_id FROM opencrawl_replicas_installations WHERE namespace=$1) owners ORDER BY organization_id COLLATE "C"`,[ns])){
+  const org=String(row.organization_id);
+  await assertTargetInventoryBoundIn(client,`SELECT coalesce(sum(bytes),0)::text bytes,count(*)::text rows FROM (SELECT octet_length(record::text) bytes FROM opencrawl_replicas_connections WHERE namespace=$1 AND organization_id=$2 UNION ALL SELECT octet_length(record::text) FROM opencrawl_replicas_installations WHERE namespace=$1 AND organization_id=$2) bounded`,[ns,org]);
+  const value=(await repo.readConnectionIn(client,org)).record;if(!value||value.organizationId!==org)targetInventoryFailure('workload child has no canonical owner');targetInventoryValueBytes(value,65536);
+  const parent=(await client.query('SELECT tenant_id FROM opencrawl_replicas_connections WHERE namespace=$1 AND organization_id=$2',[ns,org])).rows[0];if(parent?.tenant_id!==value.tenantId)targetInventoryFailure('workload normalized tenant differs');
+  let ordinal=0;for await(const child of scanTargetInventoryIn(client,'SELECT user_id,ordinal,record FROM opencrawl_replicas_installations WHERE namespace=$1 AND organization_id=$2 ORDER BY ordinal',[ns,org])){
+   const item=value.installations[ordinal];if(!item||child.ordinal!==ordinal||child.user_id!==item.userId||item.tenantId!==value.tenantId||!isDeepStrictEqual(child.record,item))targetInventoryFailure('workload normalized installation differs');ordinal++;
+  }
+  if(ordinal!==value.installations.length)targetInventoryFailure('workload installation coverage differs');yield {kind:'target',domains:['replicas-connections'],identity:[org],value,maxBytes:65536};
+ }
+ for await(const row of scanTargetInventoryIn(client,'SELECT code_hash,octet_length(record::text) bytes FROM opencrawl_replicas_setup WHERE namespace=$1 ORDER BY code_hash COLLATE "C"',[ns])){
+  if(!Number.isSafeInteger(row.bytes)||Number(row.bytes)>131072)targetInventoryFailure('oversized workload challenge');const key=String(row.code_hash),value=(await repo.readSetupIn(client,key)).record;if(!value)targetInventoryFailure('workload challenge disappeared');yield {kind:'target',domains:['replicas-setup'],identity:[key],value,maxBytes:65536};
+ }
 }

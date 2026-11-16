@@ -36,7 +36,7 @@ import {createReplicasState} from './replicas.mjs';
 import {replicasConnectionSchema,replicasChallengeSchema} from '../identity/replicas-connections.mjs';
 import {createValueReports,encodeSavedValueReport} from './value-reports.mjs';
 import {createPostgresIndexingReceipts,sessionIndexingReceiptSchema,type SessionReceiptImport} from './indexing-receipts.mjs';
-import {createPostgresSlackCapture} from './slack-capture.mjs';
+import {createPostgresSlackCapture,prepareOnlineSlackPacingSchemaIn,recordOnlineSlackPacingIn,type OnlineSlackPacingProof} from './slack-capture.mjs';
 import {digest as connectorBindingHash,validateBinding} from '../connectors/scope.mjs';
 import {createConnectorCounts} from './connector-counts.mjs';
 import {createPostgresBoardState,validateLegacyBoard} from './board.mjs';
@@ -275,7 +275,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
       case 'board':return board.readIn(client,value.tenantHash);
     }
   }
-  async function projectOnlineIn(client:PoolClient,value:OnlineObjectProjection){
+  async function projectOnlineIn(client:PoolClient,value:OnlineObjectProjection,proof?:OnlineSlackPacingProof){
     switch(value.kind){
       case 'fence':return createPostgresWriteBarrier({database,namespace:value.value.namespace,tenantId:value.value.tenantId,connectionId:value.value.connectionId,controlPrefix:value.controlPrefix}).projectFenceIn(client,value.value);
       case 'deletion':return deletions.projectIn(client,value.key,value.value);
@@ -283,7 +283,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
       case 'account':return accounts.projectIn(client,value.record);
       case 'secret':return secrets.projectIn(client,value.scope,value.aad,value.value);
       case 'setup-status':return setup.projectIn(client,value.scope,value.value);
-      case 'slack':return slack.projectLegacyIn(client,value.key,value.value,value.binding);
+      case 'slack':await slack.projectLegacyIn(client,value.key,value.value,value.binding);if(proof)await recordOnlineSlackPacingIn(database,client,value.key,value.value,proof);return;
       case 'replicas-reference':fail('Replicas references cannot publish canonical connections');
       case 'value-report':return reports.projectIn(client,value.tenantHash,value.value);
       case 'replicas-connection':return replicas.projectConnectionIn(client,value.organizationId,value.value);
@@ -291,7 +291,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
       case 'board':return board.projectIn(client,value.tenantHash,value.value);
     }
   }
-  async function prepareOnline(){for(const run of [controls.ready,accounts.ready,secrets.ready,setup.ready,replicas.ready,reports.ready,slack.ready,board.ready,()=>ensureWriteBarrierSchema(database),()=>ensureDeletionRequestSchema(database)])await run();}
+  async function prepareOnline(){for(const run of [controls.ready,accounts.ready,secrets.ready,setup.ready,replicas.ready,reports.ready,slack.ready,board.ready,()=>ensureWriteBarrierSchema(database),()=>ensureDeletionRequestSchema(database)])await run();await database.transaction(prepareOnlineSlackPacingSchemaIn);}
   async function process(key:string,bytes:Buffer,{write}:{write:boolean}):Promise<{source:unknown|Buffer;target:unknown|Buffer|null;rows:number}>{
     const found=classify(key);if(!found)fail('Immutable source objects do not use application-state import');
     if(bytes.length>found.maxBytes)fail('Legacy state object exceeds its supported migration limit');

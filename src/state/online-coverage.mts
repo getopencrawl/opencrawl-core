@@ -157,6 +157,60 @@ export function createOnlineCoverage({database,epoch,sourceId,targetId,shards,ro
   }
   return [...new Set(keys)].sort(ordered).slice(0,limit);
  }
+ /** Read-only source-local traversal verification. The outer snapshot reader
+  * owns transaction identity and invalidation; no completion flag is trusted. */
+ async function beginTraversalSnapshotIn(client:PoolClient){
+  await boundIn(client);
+  const walks=(await client.query('SELECT shard,next_page::text,cursor,complete,page_chain,encountered::text FROM opencrawl_online_coverage_traversals WHERE namespace=$1 AND epoch=$2 AND source_id=$3 ORDER BY shard LIMIT 257',scope)).rows;
+  if(walks.length!==shards)fail('INCOMPLETE_TRAVERSAL');
+  for(const [i,row] of walks.entries()){sequence(row.next_page);sequence(row.encountered);if(row.shard!==i||row.next_page==='0'||row.cursor!==null||row.complete!==true||!sha.test(row.page_chain))fail('INCOMPLETE_TRAVERSAL');}
+  for(const outcome of ['pending','deferred'])if((await client.query('SELECT 1 FROM opencrawl_online_coverage_encounters WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND outcome=$4 LIMIT 1',[...scope,outcome])).rows.length)fail('UNRESOLVED_ENCOUNTER');
+  let current=0,number=0n,request:string|null=null,chain=digest([identity,0]),encountered=0n,pages=0n,total=0n,summary=digest([identity,'verified-traversal-v1']);
+  let pendingPage:OnlineCoveragePage|null=null,entryOffset=0;
+  return {async next(limit=64){
+   if(!Number.isInteger(limit)||limit<1||limit>64)fail('INVALID_PAGE_REQUEST');
+   if(current===shards)return {complete:true as const,entries:[] as OnlineCoverageEntry[],hash:summary,pages:pages.toString(),encountered:total.toString()};
+   const walk=walks[current]!;
+   if(!pendingPage){const row=(await client.query(`SELECT ${pageColumns} FROM opencrawl_online_coverage_pages WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND shard=$4 AND page_number=$5`,[...scope,current,number.toString()])).rows[0];
+    if(!row)fail('MISSING_PAGE');pendingPage=decodePage(row);
+    if(!pendingPage.complete||pendingPage.cursor!==request||pendingPage.number!==number.toString()||pendingPage.entries.some((v,i)=>i>0&&ordered(pendingPage!.entries[i-1]!.key,v.key)>=0)||Buffer.byteLength(JSON.stringify(pendingPage.entries))>1048576||pendingPage.next!==null&&pendingPage.next===request)fail('PAGE_CHAIN_CHANGED');
+   }
+   const page=pendingPage,entries=page.entries.slice(entryOffset,entryOffset+limit);
+   for(const v of entries)if(owner(v.key)===current){
+    const actual=await encounterIn(client,v.key);if(!actual||actual.shard!==current||actual.page!==page.number||!isDeepStrictEqual(actual.entry,v))fail('ENCOUNTER_CHANGED');
+    if(v.kind!=='immutable'){const certificate=await readIn(client,v.key);if(!certificate||!isDeepStrictEqual(entry(certificate),v))fail('CERTIFICATE_SCOPE_CHANGED');}
+    encountered++;
+   }
+   entryOffset+=entries.length;
+   if(entryOffset<page.entries.length)return {complete:false,entries,hash:summary,pages:pages.toString(),encountered:total.toString()};
+   pendingPage=null;entryOffset=0;
+   chain=digest([chain,page.number,page.hash]);number++;pages++;request=page.next;
+   if(page.next===null){
+    if(number.toString()!==walk.next_page||chain!==walk.page_chain||encountered.toString()!==walk.encountered)fail('TRAVERSAL_CHAIN_CHANGED');
+    if((await client.query('SELECT 1 FROM opencrawl_online_coverage_pages WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND shard=$4 AND page_number>=$5 LIMIT 1',[...scope,current,number.toString()])).rows.length)fail('EXTRA_PAGE');
+    summary=digest([summary,current,number.toString(),chain,encountered.toString()]);total+=encountered;current++;number=0n;request=null;encountered=0n;chain=digest([identity,current]);
+   }else if(number>=BigInt(walk.next_page))fail('MISSING_FINAL_PAGE');
+   return {complete:current===shards,entries,hash:summary,pages:pages.toString(),encountered:total.toString()};
+  }};
+ }
+ async function encounterIn(client:PoolClient,key:string){
+  text(key,8192);inScope(key);await boundIn(client);
+  const row=(await client.query('SELECT shard,page_number::text,kind,domain,scope_hash,native_binding_hash,outcome,deferred_operation FROM opencrawl_online_coverage_encounters WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4',[...scope,key])).rows[0];
+  if(!row)return null;sequence(row.page_number);
+  const value=entry({key,kind:row.kind,domain:row.domain,scopeHash:row.scope_hash,...(row.native_binding_hash===null?{}:{nativeBindingHash:row.native_binding_hash})});
+  if(row.shard!==owner(key)||row.outcome!==(value.kind==='immutable'?'immutable':'certified')||row.deferred_operation!==null)fail('ENCOUNTER_NOT_CERTIFIED');
+  const pageRow=(await client.query(`SELECT ${pageColumns} FROM opencrawl_online_coverage_pages WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND shard=$4 AND page_number=$5`,[...scope,row.shard,row.page_number])).rows[0];
+  if(!pageRow)fail('ENCOUNTER_PAGE_MISSING');const page=decodePage(pageRow);
+  if(!page.complete||page.entries.filter(v=>v.key===key&&isDeepStrictEqual(v,value)).length!==1)fail('ENCOUNTER_PAGE_CHANGED');
+  return {entry:value,shard:row.shard as number,page:row.page_number as string};
+ }
+ async function keysPageIn(client:PoolClient,{after,limit}:{after:string;limit:number}){
+  if(after)text(after,8192);if(!Number.isInteger(limit)||limit<1||limit>64)fail('INVALID_PAGE_REQUEST');await boundIn(client);const all:string[]=[];
+  for(const table of ['opencrawl_online_coverage_encounters','opencrawl_online_coverage_certificates']){
+   const rows=(await client.query(`SELECT source_key FROM ${table} WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key>$4 COLLATE "C" ORDER BY source_key COLLATE "C" LIMIT $5`,[...scope,after,limit])).rows;
+   if(rows.length>limit)fail('INVALID_PAGE');for(const row of rows){text(row.source_key,8192);inScope(row.source_key);all.push(row.source_key);}
+  }return [...new Set(all)].sort(ordered).slice(0,limit);
+ }
  async function nextDeferred(){return transaction(async client=>{
   await boundIn(client);const ticket=(await client.query('UPDATE opencrawl_online_coverage_bindings SET repair_counter=repair_counter+1 WHERE namespace=$1 AND epoch=$2 AND source_id=$3 RETURNING repair_counter::text',scope)).rows[0];sequence(ticket.repair_counter);
   const row=(await client.query("SELECT source_key FROM opencrawl_online_coverage_encounters WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND outcome='deferred' ORDER BY attempt,source_key COLLATE \"C\" LIMIT 1 FOR UPDATE SKIP LOCKED",scope)).rows[0];if(!row)return null;
@@ -168,5 +222,5 @@ export function createOnlineCoverage({database,epoch,sourceId,targetId,shards,ro
   const unresolved=(await client.query("SELECT 1 FROM opencrawl_online_coverage_encounters WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND outcome='pending' LIMIT 1",scope)).rows.length>0||(await client.query("SELECT 1 FROM opencrawl_online_coverage_encounters WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND outcome='deferred' LIMIT 1",scope)).rows.length>0;
   return {identity,traversalComplete:rows.length===shards&&rows.every((row,i)=>row.shard===i&&row.complete),unresolvedEncounter:unresolved,shards:rows.map(row=>({shard:row.shard,pages:row.next_page,encountered:row.encountered,chain:row.page_chain,complete:row.complete,cursor:row.cursor})),runtimeAdmission:false as const};
  });}
- return {binding,identity,ready,getPage,stagePage,completePage,recordIn,readIn,defer,nextDeferred,status,nativeKeysPageIn};
+ return {binding,identity,ready,getPage,stagePage,completePage,recordIn,readIn,defer,nextDeferred,status,nativeKeysPageIn,beginTraversalSnapshotIn,encounterIn,keysPageIn};
 }

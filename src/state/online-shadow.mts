@@ -1,4 +1,5 @@
 import {createHash,randomUUID} from 'node:crypto';
+import {isDeepStrictEqual} from 'node:util';
 import type {Pool,PoolClient} from 'pg';
 import {createOnlineCoverage,type OnlineCoveragePolicy,type OnlineCoverageTarget,type OnlineCoverageEntry,type OnlineCoverageEvidence} from './online-coverage.mjs';
 import {ONLINE_MAX_PAYLOAD_BYTES,type OnlineExternalSnapshot,type OnlineExternalStore,type OnlineIntent,type OnlineSourceRegistration,type createOnlineJournal} from './online-journal.mjs';
@@ -17,6 +18,8 @@ export interface OnlineShadowParticipant {
  backfillRetiredIn(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'retired'}>):Promise<OnlineCoverageTarget>;
  applyIn(client:PoolClient,intent:OnlineIntent,selection:Exclude<OnlineShadowSelection,{kind:'immutable'|'preserved-native'}>):Promise<OnlineCoverageTarget>;
  inspectIn(client:PoolClient,key:string,snapshot:OnlineExternalSnapshot):Promise<boolean>;
+ /** Actual owning readback, never evidence supplied by a certificate. Required only for final snapshot observation. */
+ inspectCoverageIn?(client:PoolClient,key:string,selection:Exclude<OnlineShadowSelection,{kind:'immutable'|'preserved-native'}>,snapshot?:OnlineExternalSnapshot):Promise<OnlineCoverageTarget|null>;
  inspectRetiredIn(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'retired'}>):Promise<boolean>;
  inspectNativeIn?(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'preserved-native'}>):Promise<{nativeBindingHash:string}>;
  inspectNativeAbsenceIn?(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'preserved-native'}>,signal:AbortSignal):Promise<boolean>;
@@ -186,6 +189,101 @@ export function createOnlineShadow({database,binding:input,journal,external,list
    return same&&(!participant||await participant.inspectIn(client,key,observed));
   }});return observation.observed?{drift:false,mismatch:!observation.value}:{drift:true,mismatch:false};
  }
+ /** Observation only: caller owns the live writer locks and this transaction.
+  * This never reads an external source, changes authority, or admits a runtime.
+  * A complete global owning-table inventory is independently required. */
+ async function beginFinalSnapshotIn(client:PoolClient,{through}:{through:string}){
+  if(!decimal(through)||!participant||!coverage||!sourceRegistration||!participant.inspectCoverageIn)unsafe();
+  const typed=participant,proofs=coverage;
+  async function stamp(){
+   const rows=(await client.query("SELECT pg_backend_pid() AS pid,transaction_timestamp()::text AS started,pg_current_snapshot()::text AS snapshot,current_setting('transaction_isolation') AS isolation,current_setting('transaction_read_only') AS read_only")).rows;
+   const value=rows[0];if(rows.length!==1||!Number.isInteger(value.pid)||!text(value.started,128)||!text(value.snapshot,131072)||!['repeatable read','serializable'].includes(value.isolation)||!['on','off'].includes(value.read_only))unsafe();
+   return Object.freeze({backendPid:value.pid as number,transactionStartedAt:value.started as string,snapshot:value.snapshot as string,isolation:value.isolation as 'repeatable read'|'serializable',readOnly:value.read_only==='on'});
+  }
+  const snapshotIdentity=await stamp();
+  async function unchanged(){if(!isDeepStrictEqual(snapshotIdentity,await stamp()))unsafe();}
+  await journal.attachSourceIn(client,sourceRegistration);
+  const authority=(await client.query("SELECT epoch::text,protocol,mode,enrollment_receipt_hash,to_jsonb(w)->>'target_receipt_hash' AS target_receipt_hash FROM opencrawl_online_write_authorities w WHERE namespace=$1",[namespace])).rows[0],expected=proofs.binding.policy.authority;
+  if(!authority||authority.epoch!==binding.epoch||authority.protocol!==expected.protocol||authority.mode!=='journal'||authority.enrollment_receipt_hash!==expected.enrollmentReceiptHash||authority.target_receipt_hash!==null)unsafe();
+  const source=(await client.query('SELECT sequence::text FROM opencrawl_online_migration_sources WHERE namespace=$1 AND epoch=$2 AND source_id=$3',scope)).rows[0];if(source?.sequence!==through)unsafe();
+  if((await client.query("SELECT 1 FROM opencrawl_online_migration_journal WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND state='pending' LIMIT 1",scope)).rows.length||(await client.query('SELECT 1 FROM opencrawl_online_migration_heads WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND pending_operation IS NOT NULL LIMIT 1',scope)).rows.length)unsafe();
+  for(let i=0;i<binding.shards;i++){
+   const row=(await client.query('SELECT sequence::text FROM opencrawl_online_migration_checkpoints WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND consumer=$4',[...scope,bindingId+'-'+i])).rows[0];if(row?.sequence!==through)unsafe();
+  }
+  const shadow=(await client.query('SELECT target_id,participant_identity FROM opencrawl_online_shadow_bindings WHERE namespace=$1 AND epoch=$2 AND source_id=$3',scope)).rows[0];if(shadow?.target_id!==binding.targetId||shadow.participant_identity!==participantIdentity)unsafe();
+  const traversal=await proofs.beginTraversalSnapshotIn(client);await unchanged();
+  const observationBinding=Object.freeze({namespace,...binding,bindingId,participantIdentity,coverageIdentity:proofs.identity,sourceRegistration,policyHash:proofs.binding.policy.policyHash,authority:expected,through});
+  let phase:'journal'|'traversal'|'keys'|'complete'='journal',lastSequence=0n,lastKey='',busy=false,invalid=false,journalRows=0n,keyRows=0n,retained=0n,retired=0n,native=0n,immutable=0n,absent=0n,payloadBytes=0n;
+  let targetKeysInPage=new Set<string>();
+  let chain=hash(JSON.stringify(['online-final-source-snapshot-v1',observationBinding,snapshotIdentity])),traversalHash:string|null=null,traversalPages='0',traversalEncounters='0';
+  const journalColumns='sequence::text,operation_id::text,source_key,revision::text,expected_version,kind,content_type,payload_hash,octet_length(payload) AS payload_bytes,state,dispatched,result_version,request_hash';
+  function intent(row:Record<string,any>){
+   if(!decimal(row.sequence)||row.sequence==='0'||!decimal(row.revision)||row.revision==='0'||!uuid(row.operation_id)||!text(row.source_key,8192)||!['applied','notApplied'].includes(row.state)||typeof row.dispatched!=='boolean'||!/^[a-f0-9]{64}$/.test(row.request_hash)||row.expected_version!==null&&!text(row.expected_version,2048))unsafe();
+   const choice=selected(row.source_key);if(choice.kind==='immutable'||choice.kind==='preserved-native')unsafe();
+   if(row.state==='applied'?!text(row.result_version,2048):row.result_version!==null)unsafe();
+   if(row.kind==='put'){if(!Number.isSafeInteger(row.payload_bytes)||row.payload_bytes<0||row.payload_bytes>choice.maxBytes||!/^[a-f0-9]{64}$/.test(row.payload_hash)||!text(row.content_type,256)||/[\r\n]/.test(row.content_type))unsafe();}
+   else if(row.kind!=='delete'||row.payload_bytes!==null||row.payload_hash!==null||row.content_type!==null)unsafe();
+   return row;
+  }
+  async function keyPage(limit:number){
+   const additional=await typed.keysPageIn(client,{after:lastKey,limit});targetKeysInPage=new Set(additional);if(additional.some(key=>selected(key).kind==='immutable'))unsafe();
+   const sets:string[][]=[await proofs.keysPageIn(client,{after:lastKey,limit}),additional];
+   for(const table of ['opencrawl_online_shadow_objects','opencrawl_online_migration_journal']){
+    const sql=table==='opencrawl_online_migration_journal'?" AND state='applied'":"";
+    sets.push((await client.query(`SELECT DISTINCT source_key COLLATE "C" AS source_key FROM ${table} WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key>$4 COLLATE "C"${sql} ORDER BY source_key COLLATE "C" LIMIT $5`,[...scope,lastKey,limit])).rows.map(row=>row.source_key as string));
+   }
+   for(const keys of sets)if(keys.length>limit||keys.some((key,i)=>!text(key,8192)||ordered(key,i?keys[i-1]!:lastKey)<=0))unsafe();
+   return [...new Set(sets.flat())].sort(ordered).slice(0,limit);
+  }
+  async function inspectKey(key:string){
+   const choice=selected(key),encounter=await proofs.encounterIn(client,key),certificate=await proofs.readIn(client,key);
+   if(encounter&&!isDeepStrictEqual(encounter.entry,coverageEntry(key,choice)))unsafe();
+   const latestRow=(await client.query(`SELECT ${journalColumns} FROM opencrawl_online_migration_journal WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4 AND state='applied' ORDER BY revision DESC LIMIT 1`,[...scope,key])).rows[0],latest=latestRow?intent(latestRow):null;
+   const mirrorMeta=(await client.query('SELECT octet_length(payload) AS bytes FROM opencrawl_online_shadow_objects WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4',[...scope,key])).rows[0];
+   if(choice.kind==='immutable'){if(!encounter||certificate||latest||mirrorMeta)unsafe();immutable++;return {evidence:[key,choice.kind],bytes:0};}
+   if(!certificate||!isDeepStrictEqual(coverageEntry(key,choice),{key:certificate.key,kind:certificate.kind,domain:certificate.domain,scopeHash:certificate.scopeHash,...(certificate.nativeBindingHash?{nativeBindingHash:certificate.nativeBindingHash}:{})}))unsafe();
+   if(latest){if(certificate.revision!==latest.revision||certificate.sequence!==latest.sequence||certificate.operationId!==latest.operation_id||certificate.sourceVersion!==latest.result_version||certificate.deleted!==(latest.kind==='delete')||certificate.sourceHash!==latest.payload_hash||certificate.sourceBytes!==latest.payload_bytes||certificate.absent)unsafe();}
+   else if(!encounter||certificate.revision!=='0'||certificate.sequence!=='0'||certificate.operationId!==null)unsafe();
+   if(choice.kind==='preserved-native'){
+    if(latest||mirrorMeta||!typed.inspectNativeIn||(await client.query('SELECT 1 FROM opencrawl_online_migration_journal WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4 LIMIT 1',[...scope,key])).rows.length)unsafe();
+    if((await typed.inspectNativeIn(client,key,choice)).nativeBindingHash!==choice.nativeBindingHash)unsafe();native++;
+   }else if(choice.kind==='retired'){
+    if(mirrorMeta||!await typed.inspectRetiredIn(client,key,choice))unsafe();const actual=await typed.inspectCoverageIn!(client,key,choice);
+    if(!actual||actual.targetKey!==certificate.targetKey||actual.targetHash!==certificate.targetHash)unsafe();retired++;
+   }else if(certificate.absent){
+    if(mirrorMeta||latest||targetKeysInPage.has(key))unsafe();absent++;
+   }else{
+    const mirror=await read(client,key);if(!mirror||mirror.revision!==certificate.revision||mirror.sequence!==certificate.sequence||mirror.operationId!==certificate.operationId||mirror.sourceVersion!==certificate.sourceVersion||mirror.hash!==certificate.sourceHash||mirror.deleted!==certificate.deleted||(mirror.bytes?.length??null)!==certificate.sourceBytes||latest&&mirror.contentType!==latest.content_type)unsafe();
+    const value=snapshot({version:mirror.sourceVersion,operationId:mirror.operationId,revision:mirror.revision==='0'?null:mirror.revision,deleted:mirror.deleted,bytes:mirror.bytes,contentType:mirror.contentType},choice.maxBytes);
+    if(!await typed.inspectIn(client,key,value))unsafe();const actual=await typed.inspectCoverageIn!(client,key,choice,value);
+    if(!actual||actual.targetKey!==certificate.targetKey||actual.targetHash!==certificate.targetHash)unsafe();retained++;
+   }
+   return {evidence:[key,certificate],bytes:choice.kind==='retained'?(mirrorMeta?.bytes??0):0};
+  }
+  function result(processed:number,bytes:number){return Object.freeze({format:1 as const,binding:observationBinding,snapshotIdentity,phase,complete:phase==='complete',processed,bytes,counts:Object.freeze({journalRows:journalRows.toString(),keys:keyRows.toString(),retained:retained.toString(),retired:retired.toString(),preservedNative:native.toString(),immutable:immutable.toString(),absent:absent.toString(),payloadBytes:payloadBytes.toString(),traversalPages,traversalEncounters}),digest:chain,traversalHash,sourceLocalObservation:true as const,globalTypedInventoryRequired:true as const,runtimeAdmission:false as const});}
+  return Object.freeze({async next({limit=64,maxBytes=ONLINE_MAX_PAYLOAD_BYTES,signal}:{limit?:number;maxBytes?:number;signal:AbortSignal}){
+   if(invalid)unsafe();if(busy){invalid=true;unsafe();}busy=true;
+   try{
+    if(!Number.isInteger(limit)||limit<1||limit>64||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>ONLINE_MAX_PAYLOAD_BYTES)unsafe();signal.throwIfAborted();await unchanged();let processed=0,bytes=0;
+    if(phase==='journal'){
+     const rows=(await client.query(`SELECT ${journalColumns} FROM opencrawl_online_migration_journal WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND sequence>$4 ORDER BY sequence LIMIT $5`,[...scope,lastSequence.toString(),limit])).rows;
+     for(const row of rows){signal.throwIfAborted();intent(row);if(BigInt(row.sequence)!==lastSequence+1n||BigInt(row.sequence)>BigInt(through))unsafe();lastSequence++;journalRows++;processed++;chain=hash(JSON.stringify([chain,'journal',row]));}
+     if(rows.length<limit){if(lastSequence!==BigInt(through))unsafe();phase='traversal';}
+    }else if(phase==='traversal'){
+     const page=await traversal.next(limit);for(const item of page.entries){signal.throwIfAborted();if(!isDeepStrictEqual(item,coverageEntry(item.key,selected(item.key))))unsafe();}processed=page.entries.length;traversalPages=page.pages;traversalEncounters=page.encountered;
+     if(page.complete){traversalHash=page.hash;chain=hash(JSON.stringify([chain,'traversal',page.hash,page.pages,page.encountered]));phase='keys';}
+    }else if(phase==='keys'){
+     const keys=await keyPage(limit);
+     for(const key of keys){signal.throwIfAborted();const size=(await client.query('SELECT octet_length(payload) AS bytes FROM opencrawl_online_shadow_objects WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4',[...scope,key])).rows[0]?.bytes??0;
+      if(!Number.isSafeInteger(size)||size<0||size>ONLINE_MAX_PAYLOAD_BYTES)unsafe();if(size>maxBytes-bytes){if(processed===0)unsafe();break;}
+      const value=await inspectKey(key);if(value.bytes!==size)unsafe();chain=hash(JSON.stringify([chain,'key',value.evidence]));bytes+=size;payloadBytes+=BigInt(size);processed++;keyRows++;lastKey=key;
+     }
+     if(keys.length<limit&&processed===keys.length)phase='complete';
+    }
+    signal.throwIfAborted();await unchanged();if(invalid)unsafe();return result(processed,bytes);
+   }catch(error){invalid=true;throw error;}finally{busy=false;}
+  }});
+ }
  const adapter:OnlineMigrationAdapter={
   async assertCurrent(signal){await ready();signal.throwIfAborted();await assertCurrent(signal);},
   frontierState:()=>journal.frontierState(),
@@ -226,5 +324,5 @@ export function createOnlineShadow({database,binding:input,journal,external,list
    changed ||= await drift(input.through);return {cursor:parityCursor(next!,input.through,input.shard,parsed.passId),processed:keys!.length,mismatches,drift:changed};
   },
  };
- return {bindingId,participantIdentity,ready,backfill,applyJournal,adapter,coverage:coverage?Object.freeze({identity:coverage.identity,status:coverage.status}):undefined};
+ return {bindingId,participantIdentity,ready,backfill,applyJournal,adapter,beginFinalSnapshotIn,coverage:coverage?Object.freeze({identity:coverage.identity,status:coverage.status}):undefined};
 }

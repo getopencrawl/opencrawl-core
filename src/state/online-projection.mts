@@ -1,3 +1,4 @@
+import type {OnlineOwnedTarget} from './online-target-inventory-support.mjs';
 import {createOnlineConnectionScopePins,type OnlineConnectionScopeReader} from './online-connection-scopes.mjs';
 import {slackCaptureLegacyIdentity} from './slack-capture.mjs';
 import {createHash} from 'node:crypto';
@@ -90,8 +91,8 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   if(row.source_id!==sourceId||row.source_key!==key||row.tenant_hash!==value.tenantHash||row.organization_id!==value.organizationId)fail('Replicas reference scope changed');
   return {organizationId:row.organization_id};
  }
- async function writeTargetIn(client:PoolClient,value:OnlineObjectProjection,targetKey:string,key:string){
-  if(value.kind!=='replicas-reference')return object.projectOnlineIn(client,value);
+ async function writeTargetIn(client:PoolClient,value:OnlineObjectProjection,targetKey:string,key:string,proof?:import('./slack-capture.mjs').OnlineSlackPacingProof){
+  if(value.kind!=='replicas-reference')return object.projectOnlineIn(client,value,proof);
   if(value.value===null){await client.query('DELETE FROM opencrawl_online_projection_replicas_references WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,targetKey]);return;}
   await client.query('INSERT INTO opencrawl_online_projection_replicas_references(namespace,epoch,target_key,source_id,source_key,tenant_hash,organization_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(namespace,epoch,target_key) DO NOTHING',[namespace,epoch,targetKey,sourceId,key,value.tenantHash,value.organizationId]);
  }
@@ -140,11 +141,11 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   return {decoded:owner.decodeOnline(key,bytes,tenants,routing.scope),connectionScopeHash:routing.scopeHash};
  }
  const targetValueHash=(value:unknown,connectionScopeHash:string|null)=>onlineProjectionHash(connectionScopeHash===null?value:{value,connectionScopeHash});
- async function project(client:PoolClient,input:{key:string;bytes:Buffer|null;revision:string;operationId:string|null;version:string}):Promise<OnlineCoverageTarget>{
+ async function project(client:PoolClient,input:{key:string;bytes:Buffer|null;revision:string;operationId:string|null;version:string;sequence:string}):Promise<OnlineCoverageTarget>{
   bounded(input.key,8192);bounded(input.version,2048);revision(input.revision);
   if(input.revision==='0'?input.operationId!==null:input.operationId===null||!uuid.test(input.operationId))fail('invalid source operation');
   // Freeze decode input before the first SQL await; callbacks cannot redirect it.
-  const key=input.key,version=input.version,rev=input.revision,operationId=input.operationId,bytes=input.bytes===null?null:Buffer.from(input.bytes);
+  const key=input.key,version=input.version,rev=input.revision,operationId=input.operationId,sequence=input.sequence,bytes=input.bytes===null?null:Buffer.from(input.bytes);revision(sequence);if((rev==='0')!==(sequence==='0'))fail('invalid source sequence');
   const {decoded,connectionScopeHash}=await decodeIn(client,key,bytes),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);bounded(targetKey,8192);
   const value=onlineProjectionValue(decoded),contentHash=bytes===null?hash('deleted'):hash(bytes),targetHash=targetValueHash(value,connectionScopeHash);
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify(['online-projection',namespace,targetKey])]);
@@ -159,23 +160,38 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   }else if(current!==null&&currentHash!==targetHash)fail('initial typed target conflicts with source');
   // Domain owners retain privacy/revocation/held-operation invariants even when
   // the current target is absent. Unsupported deletions never silently pass.
-  await writeTargetIn(client,decoded,targetKey,key);
+  await writeTargetIn(client,decoded,targetKey,key,{epoch,sourceId,bindingHash,sourceKey:key,revision:rev,operationId,sourceVersion:version,sourceHash:contentHash,targetHash,sequence});
   if(targetValueHash(await readTargetIn(client,decoded,targetKey,key),connectionScopeHash)!==targetHash)fail('typed readback differs from source');
   await client.query(`INSERT INTO opencrawl_online_projection_heads(namespace,epoch,target_key,source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     ON CONFLICT(namespace,epoch,target_key) DO UPDATE SET revision=EXCLUDED.revision,operation_id=EXCLUDED.operation_id,source_version=EXCLUDED.source_version,content_hash=EXCLUDED.content_hash,target_hash=EXCLUDED.target_hash,deleted=EXCLUDED.deleted`,[namespace,epoch,targetKey,sourceId,key,decoded.domain,rev,operationId,version,contentHash,targetHash,bytes===null]);  return {targetKey,targetHash};
  }
  /** Independent target inspection on the caller's key-gated snapshot. No
   * source I/O, repair, row locks or transaction boundaries are introduced. */
- async function inspectIn(client:PoolClient,input:{key:string;bytes:Buffer|null;revision:string;operationId:string|null;version:string}){
+ async function inspectEvidenceIn(client:PoolClient,input:{key:string;bytes:Buffer|null;revision:string;operationId:string|null;version:string}){
   bounded(input.key,8192);bounded(input.version,2048);revision(input.revision);
   if(input.revision==='0'?input.operationId!==null:input.operationId===null||!uuid.test(input.operationId))fail('invalid inspected source operation');
   const key=input.key,version=input.version,rev=input.revision,operationId=input.operationId,bytes=input.bytes===null?null:Buffer.from(input.bytes);
   const {decoded,connectionScopeHash}=await decodeIn(client,key,bytes,true),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);
   const targetHash=targetValueHash(onlineProjectionValue(decoded),connectionScopeHash),contentHash=bytes===null?hash('deleted'):hash(bytes);
   const head=(await client.query('SELECT source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,targetKey])).rows[0];
-  if(!head||head.source_id!==sourceId||head.source_key!==key||head.domain!==decoded.domain||head.revision!==rev||head.operation_id!==operationId||head.source_version!==version||head.content_hash!==contentHash||head.target_hash!==targetHash||head.deleted!==(bytes===null))return false;
-  if(targetValueHash(await readTargetIn(client,decoded,targetKey,key),connectionScopeHash)!==targetHash)return false;
-  return decoded.kind!=='replicas-reference'||decoded.value===null||await referenceMatchesIn(client,decoded.tenantHash,decoded.organizationId);
+  if(!head||head.source_id!==sourceId||head.source_key!==key||head.domain!==decoded.domain||head.revision!==rev||head.operation_id!==operationId||head.source_version!==version||head.content_hash!==contentHash||head.target_hash!==targetHash||head.deleted!==(bytes===null))return null;
+  if(targetValueHash(await readTargetIn(client,decoded,targetKey,key),connectionScopeHash)!==targetHash)return null;
+  if(decoded.kind==='replicas-reference'&&decoded.value!==null&&!await referenceMatchesIn(client,decoded.tenantHash,decoded.organizationId))return null;
+  return {targetKey,targetHash};
+ }
+ async function inspectIn(client:PoolClient,input:Parameters<typeof inspectEvidenceIn>[1]){return (await inspectEvidenceIn(client,input))!==null;}
+ /** Called only after an independent owner inventory found a physical target.
+  * It reuses the captured source decoder/enrollment; owner paths are not grants. */
+ async function inspectOwnedTargetIn(client:PoolClient,input:OnlineOwnedTarget){
+  const keys=input.domains.map(domain=>JSON.stringify([domain,...input.identity]));
+  const rows=(await client.query('SELECT target_key,source_id,source_key,domain,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=ANY($3::text[]) LIMIT 2',[namespace,epoch,keys])).rows;
+  if(rows.length!==1||rows[0].source_id!==sourceId||rows[0].deleted)return null;const head=rows[0];if(input.sourceKey!==undefined&&head.source_key!==input.sourceKey)return null;
+  const bytes=Buffer.isBuffer(input.value)?Buffer.from(input.value):Buffer.from(JSON.stringify(input.value));
+  const {decoded,connectionScopeHash}=await decodeIn(client,head.source_key,bytes,true),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);
+  if(head.target_key!==targetKey||head.domain!==decoded.domain||!keys.includes(targetKey)||onlineProjectionHash(onlineProjectionValue(decoded))!==onlineProjectionHash(input.value))return null;
+  const targetHash=targetValueHash(await readTargetIn(client,decoded,targetKey,head.source_key),connectionScopeHash);if(targetHash!==head.target_hash||targetHash!==targetValueHash(input.value,connectionScopeHash))return null;
+  if(decoded.kind==='replicas-reference'&&!await referenceMatchesIn(client,decoded.tenantHash,decoded.organizationId))return null;
+  return {targetKey,targetHash};
  }
  /** Exact enrolled owner check for metadata-only native ledger coverage. */
  async function hasEnrolledTenantHashIn(client:PoolClient,tenantHash:string){
@@ -194,8 +210,8 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
  async function apply(client:PoolClient,intent:OnlineIntent){
   if(intent.namespace!==namespace||intent.epoch!==epoch||intent.sourceId!==sourceId||intent.state!=='applied'||!intent.resultVersion)fail('journal intent is not applied in this source binding');
   if(intent.revision==='0')fail('journal revision cannot be baseline');
-  return project(client,{key:intent.key,bytes:intent.mutation.kind==='put'?intent.mutation.bytes:null,revision:intent.revision,operationId:intent.operationId,version:intent.resultVersion});
+  return project(client,{key:intent.key,bytes:intent.mutation.kind==='put'?intent.mutation.bytes:null,revision:intent.revision,operationId:intent.operationId,version:intent.resultVersion,sequence:intent.sequence});
  }
- async function backfill(client:PoolClient,input:{key:string;bytes:Buffer;version:string}){return project(client,{...input,revision:'0',operationId:null});}
- return {binding:Object.freeze({namespace,epoch,sourceId,bindingHash}),ready,apply,backfill,enrollTenant,inspectReplicasReferencesPageIn,inspectIn,keysPageIn,hasEnrolledTenantHashIn};
+ async function backfill(client:PoolClient,input:{key:string;bytes:Buffer;version:string}){return project(client,{...input,revision:'0',operationId:null,sequence:'0'});}
+ return {binding:Object.freeze({namespace,epoch,sourceId,bindingHash}),ready,apply,backfill,enrollTenant,inspectReplicasReferencesPageIn,inspectIn,inspectEvidenceIn,inspectOwnedTargetIn,keysPageIn,hasEnrolledTenantHashIn};
 }

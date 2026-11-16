@@ -1,3 +1,4 @@
+import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import type {PoolClient} from 'pg';
@@ -153,4 +154,17 @@ export function createPostgresWriteBarrier({database,namespace='selfhost',tenant
       });
     },
   };
+}
+
+export async function* inventoryWriteFenceTargetsIn(database:ApplicationDatabase,client:PoolClient):AsyncGenerator<OnlineOwnedInventoryItem>{
+ const ns=database.namespace;
+ for await(const row of scanTargetInventoryIn(client,'SELECT fence_key FROM (SELECT fence_key FROM opencrawl_write_fences WHERE namespace=$1 UNION SELECT fence_key FROM opencrawl_resource_writers WHERE namespace=$1) owners ORDER BY fence_key COLLATE "C"',[ns])){
+  const key=String(row.fence_key),parent=(await client.query('SELECT barrier_namespace,tenant_id,resource_id FROM opencrawl_write_fences WHERE namespace=$1 AND fence_key=$2',[ns,key])).rows[0];if(!parent)targetInventoryFailure('writer has no fence');
+  await assertTargetInventoryBoundIn(client,'SELECT coalesce(sum(octet_length(to_jsonb(w)::text)),0)::text bytes,count(*)::text rows FROM opencrawl_resource_writers w WHERE namespace=$1 AND fence_key=$2',[ns,key]);
+  const repo=createPostgresWriteBarrier({database,namespace:parent.barrier_namespace,tenantId:parent.tenant_id,connectionId:parent.resource_id,controlPrefix:key.slice(0,key.lastIndexOf('/')+1)});if(repo.key!==key)targetInventoryFailure('fence identity differs');
+  const value=await repo.exportFenceIn(client);if(!value)targetInventoryFailure('fence disappeared');
+  if(value.closedAt!==null&&(!Number.isSafeInteger(value.closedAt)||value.closedAt<0))targetInventoryFailure('invalid fence clock');
+  for(const w of value.writers)if(!/^[A-Za-z0-9_-]{1,100}$/.test(w.id)||!['object-put','search-write'].includes(w.operation)||!['writing','settled'].includes(w.phase)||!Number.isSafeInteger(w.startedAt)||w.startedAt<0||typeof w.instance!=='string'||w.instance.length>100||typeof w.target!=='string'||w.target.length>8192||w.phase==='settled'&&(!Number.isSafeInteger(w.settledAt)||w.settledAt!<0))targetInventoryFailure('invalid normalized writer');
+  yield {kind:'target',domains:['session-write-fences','connector-write-fences'],identity:[key],sourceKey:key,value,maxBytes:16*1024*1024};
+ }
 }

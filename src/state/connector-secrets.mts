@@ -1,3 +1,4 @@
+import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import type {PoolClient} from 'pg';
 import {randomUUID} from 'node:crypto';
 import type {ApplicationDatabase} from './postgres.mjs';
@@ -35,4 +36,14 @@ export function createConnectorSecrets(database:ApplicationDatabase):ConnectorSe
     },
     async importSecret(scope,aad,bytes){const params=values(scope,aad);validate(bytes);await database.pool.query('INSERT INTO opencrawl_connector_secrets(namespace,kind,organization_id,secret_id,aad,ciphertext,revision) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',[...params,bytes,randomUUID()]);const actual=(await read(scope,aad)).data;if(!actual?.equals(bytes))throw new Error('Connector secret import conflicts with existing data');return actual;},
   };
+}
+
+export async function* inventoryConnectorSecretTargetsIn(database:ApplicationDatabase,client:PoolClient):AsyncGenerator<OnlineOwnedInventoryItem>{
+ const repo=createConnectorSecrets(database);
+ for await(const row of scanTargetInventoryIn(client,'SELECT kind,organization_id,secret_id,aad,octet_length(ciphertext) bytes FROM opencrawl_connector_secrets WHERE namespace=$1 ORDER BY kind COLLATE "C",organization_id COLLATE "C",secret_id COLLATE "C"',[database.namespace])){
+  const scope:ConnectorSecretScope={kind:row.kind as 'grant'|'settings',organizationId:String(row.organization_id),id:String(row.secret_id)},aad=String(row.aad);
+  if(!Number.isSafeInteger(row.bytes)||Number(row.bytes)<30||Number(row.bytes)>262144)targetInventoryFailure('invalid secret size');
+  const value=(await repo.readIn(client,scope,aad)).data;if(!value||value[0]!==1)targetInventoryFailure('invalid secret envelope');
+  yield {kind:'target',domains:[scope.kind==='grant'?'connector-grants':'connector-settings'],identity:[scope.kind,scope.organizationId,scope.id],value,maxBytes:262144,sourceKey:aad};
+ }
 }

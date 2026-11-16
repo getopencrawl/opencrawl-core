@@ -1,3 +1,4 @@
+import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import type {PoolClient} from 'pg';
 import {isDeepStrictEqual} from 'node:util';
 import type {ApplicationDatabase} from './postgres.mjs';
@@ -119,4 +120,13 @@ export function createPostgresControls(database:ApplicationDatabase):ResourceCon
       });
     },
   };
+}
+
+export async function* inventoryControlTargetsIn(database:ApplicationDatabase,client:PoolClient):AsyncGenerator<OnlineOwnedInventoryItem>{
+ const repo=createPostgresControls(database);
+ for await(const row of scanTargetInventoryIn(client,'SELECT tenant_hash,owner_hash,kind,harness,resource_hash FROM opencrawl_resource_controls WHERE namespace=$1 ORDER BY tenant_hash COLLATE "C",owner_hash COLLATE "C",kind COLLATE "C",harness COLLATE "C",resource_hash COLLATE "C"',[database.namespace])){
+  const identity:ResourceControlIdentity={tenantHash:String(row.tenant_hash),userHash:String(row.owner_hash),kind:row.kind as ControlKind,harness:String(row.harness),resourceHash:String(row.resource_hash)},value=await repo.readIn(client,identity);if(!value)targetInventoryFailure('control owner disappeared');
+  if(value.deletion&&(identity.kind!=='sessions'||digest(value.deletion.sessionId)!==identity.resourceHash))targetInventoryFailure('control deletion identity differs');
+  yield {kind:'target',domains:['resource-controls'],identity:[identity.tenantHash,identity.userHash,identity.kind,identity.harness,identity.resourceHash],value,maxBytes:65536};
+ }
 }

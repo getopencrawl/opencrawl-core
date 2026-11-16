@@ -1,3 +1,4 @@
+import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {z} from 'zod';
@@ -173,4 +174,24 @@ export function createAccountState(database:ApplicationDatabase):AccountState&{
     async importReceipt(owner,kind,input){scope.parse(owner);receiptKind.parse(kind);const value=receiptSchema.parse(input);await database.pool.query('INSERT INTO opencrawl_onboarding_receipts(namespace,owner_scope,kind,receipt) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT DO NOTHING',[ns,owner,kind,JSON.stringify(value)]);const actual=await onboarding.read(owner,kind);if(!isDeepStrictEqual(value,actual))throw conflict();return actual!;},
     async importRole(organizationId,input){org.parse(organizationId);const value=roleSchema.parse(input);if(value.state==='held'&&value.organizationId!==organizationId)throw conflict();await database.pool.query('INSERT INTO opencrawl_role_writes(namespace,organization_id,record) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING',[ns,organizationId,JSON.stringify(value)]);const {rows}=await database.pool.query('SELECT record FROM opencrawl_role_writes WHERE namespace=$1 AND organization_id=$2',[ns,organizationId]);if(!isDeepStrictEqual(rows[0].record,value))throw conflict();return value;},
   };
+}
+
+/** Read every actual account owner independently of migration heads. */
+export async function* inventoryAccountTargetsIn(database:ApplicationDatabase,client:PoolClient):AsyncGenerator<OnlineOwnedInventoryItem>{
+ const ns=database.namespace,repo=createAccountState(database);
+ for(const table of ['credentials','generations','onboarding','roles'] as const){
+  const query=table==='credentials'?"SELECT purpose,credential_id,owner_scope,octet_length(record::text) bytes FROM opencrawl_capture_credentials WHERE namespace=$1 ORDER BY purpose COLLATE \"C\",credential_id COLLATE \"C\"":table==='generations'?"SELECT purpose,owner_scope FROM opencrawl_capture_generations WHERE namespace=$1 ORDER BY purpose COLLATE \"C\",owner_scope COLLATE \"C\"":table==='onboarding'?"SELECT owner_scope,kind,octet_length(receipt::text) bytes FROM opencrawl_onboarding_receipts WHERE namespace=$1 ORDER BY owner_scope COLLATE \"C\",kind COLLATE \"C\"":"SELECT organization_id,octet_length(record::text) bytes FROM opencrawl_role_writes WHERE namespace=$1 ORDER BY organization_id COLLATE \"C\"";
+  for await(const row of scanTargetInventoryIn(client,query,[ns])){
+   if(row.bytes!==undefined&&(!Number.isSafeInteger(row.bytes)||Number(row.bytes)>131072))targetInventoryFailure('oversized account row');
+   let record:OnlineAccountProjection,domain:string,identity:string[];
+   if(table==='credentials'){const purpose=purposeSchema.parse(row.purpose),id=hash.parse(row.credential_id);record={kind:'credential',purpose,id,value:null};domain='capture-credentials';identity=[purpose,id];}
+   else if(table==='generations'){const purpose=purposeSchema.parse(row.purpose),owner=scope.parse(row.owner_scope);record={kind:'generation',purpose,owner,value:null};domain='credential-generations';identity=[purpose,owner];}
+   else if(table==='onboarding'){const owner=scope.parse(row.owner_scope),kind=receiptKind.parse(row.kind);record={kind:'onboarding',owner,receiptKind:kind,value:null};domain='onboarding';identity=[owner,kind];}
+   else{const organizationId=org.parse(row.organization_id);record={kind:'role',organizationId,value:null};domain='role-writes';identity=[organizationId];}
+   const value=await repo.readIn(client,record);if(value===null)targetInventoryFailure('account owner disappeared');
+   if(record.kind==='credential'){const parsed=captureCredentialSchema.parse(value);if(parsed.id!==record.id||sessionScope(parsed.principal)!==row.owner_scope)targetInventoryFailure('credential normalized owner differs');}
+   if(record.kind==='role'){const parsed=roleSchema.parse(value);if(parsed.state==='held'&&parsed.organizationId!==record.organizationId)targetInventoryFailure('role owner differs');}
+   yield {kind:'target',domains:[domain],identity,value,maxBytes:65536};
+  }
+ }
 }

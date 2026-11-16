@@ -1,3 +1,4 @@
+import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import type {PoolClient} from 'pg';
 import type {Principal} from '../sessions/types.mjs';
 import {isSessionHarness} from '../sessions/types.mjs';
@@ -41,4 +42,11 @@ export function createPostgresDeletionRequests(database:ApplicationDatabase,pref
     async remove(key){checkKey(key);await database.pool.query('DELETE FROM opencrawl_session_deletions WHERE namespace=$1 AND source_prefix=$2 AND request_key=$3',[database.namespace,prefix,key]);},
     importRequest:insert,
   };
+}
+
+export async function* inventoryDeletionTargetsIn(database:ApplicationDatabase,client:PoolClient):AsyncGenerator<OnlineOwnedInventoryItem>{
+ for await(const row of scanTargetInventoryIn(client,'SELECT source_prefix,request_key FROM opencrawl_session_deletions WHERE namespace=$1 ORDER BY source_prefix COLLATE "C",request_key COLLATE "C"',[database.namespace])){
+  const prefix=String(row.source_prefix),key=String(row.request_key),value=await createPostgresDeletionRequests(database,prefix).readIn(client,key);if(!value)targetInventoryFailure('deletion owner disappeared');
+  yield {kind:'target',domains:['deletion-requests'],identity:[prefix,key],sourceKey:key,value,maxBytes:65536};
+ }
 }
