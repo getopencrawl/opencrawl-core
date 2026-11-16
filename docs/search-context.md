@@ -99,17 +99,23 @@ This count describes the bounded query window, not the entire corpus.
 
 Deploy updated indexing workers first, then call `migrateSessionSearchContext`
 from `@getopencrawl/opencrawl-core/sessions/search-context-migration` with the
-canonical tenant realm, object store and capture prefix. Dry-run is the default.
+canonical tenant realm, authoritative `ApplicationState`, raw object store and
+capture prefix. Supply the state from the same configured installation and source
+binding: its resource controls and write fences govern the migration. Dry-run is
+the default.
 Use bounded `maxPassages` and persist the `after` cursor via `onPage`; resume
 until `complete`. The migration validates each original capture's scope and
 patches only missing classification metadata, preserving text, IDs, visibility
 and immutable source captures. Deletion fences prevent resurrection. Errors stop
 the page instead of guessing from unavailable source data.
 
-The metadata is additive: older readers ignore it. Runtime rollback therefore
-uses the previous tested release without deleting or restoring captures. Inspect
-all migration receipts and remaining unclassified counts before claiming that
-historical tool output is fully filtered.
+The classification metadata is additive: older search readers ignore it, so
+rolling back this search feature requires no capture deletion or restoration.
+If the deployment also changed the authoritative application-state backend,
+follow that cutover’s rollback procedure and use a runtime compatible with the
+current state backend. Do not restart legacy S3 control or fence writers after
+PostgreSQL becomes authoritative. Inspect all migration receipts and remaining
+unclassified counts before claiming that historical tool output is fully filtered.
 
 Administrator-managed Codex SessionStart configuration does not imply a managed
 search-context hook. If policy allows only managed hooks, the administrator must

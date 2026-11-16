@@ -1,3 +1,5 @@
+import type {ApplicationState} from '../../src/state/types.mjs';
+import {openApplicationState} from '../../src/state/runtime.mjs';
 import {standaloneEventIdentities} from '../../src/sessions/postgres-identities.mjs';
 import type {Principal, ObjectStore, EventIdentityStore, Authenticate, HttpHandler} from '../../src/sessions/types.mjs';
 import type {SearchAdapter} from '../../src/search/types.mjs';
@@ -10,11 +12,11 @@ import {sessionStorage as standaloneStorage} from '../../src/sessions/storage.mj
 import {createSessionSearch,searchSettings} from '../../src/sessions/search.mjs';
 
 /** Single-tenant adapter: the operator sets identity; requests cannot select an owner. */
-export function standaloneCapture({token,principal,store,eventIdentities,prefix='capture-v1',search=undefined}: {token?: string; principal: Principal; store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; search?: SearchAdapter | null}): HttpHandler {
+export function standaloneCapture({token,principal,state,store,eventIdentities,prefix='capture-v1',search=undefined}: {token?: string; principal: Principal; state:ApplicationState;store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; search?: SearchAdapter | null}): HttpHandler {
   if(typeof token!=='string'||token.length<32)throw new Error('Use a capture token with at least 32 characters');
   const expected=Buffer.from('Bearer '+token);
-  const credentials=createCaptureCredentials({store,prefix});
-  const onboarding = createOnboardingStatus({store,prefix});
+  const credentials=createCaptureCredentials({state});
+  const onboarding = createOnboardingStatus({state});
   const authenticate: Authenticate = async req=>{
     const bearer=(req.headers.authorization??'').replace(/^Bearer /,'');
     if(isCaptureCredential(bearer)) {
@@ -26,7 +28,7 @@ export function standaloneCapture({token,principal,store,eventIdentities,prefix=
     if(actual.length!==expected.length||!timingSafeEqual(actual,expected))return null;
     return principal;
   };
-  const capture = createCaptureHandler({ingest:createSessionIngest({store,eventIdentities,prefix,onStored:onboarding.session}),search,authenticate,credentials});
+  const capture = createCaptureHandler({ingest:createSessionIngest({state,store,eventIdentities,prefix,onStored:onboarding.session}),search,authenticate,credentials});
   return async (req,res) => {
     try {
     if (req.headers.origin) {res.writeHead(403);res.end();return;}
@@ -51,16 +53,20 @@ export async function startStandaloneCapture(env=process.env) {
   const principal={tenantId:env.OPENCRAWL_TENANT_ID||'self-hosted',userId:env.OPENCRAWL_USER_ID||'owner',
     name:env.OPENCRAWL_USER_NAME||null,email:env.OPENCRAWL_USER_EMAIL||null};
   const {store,prefix}=standaloneStorage(env);
-  const settings=searchSettings(env),search=settings?createSessionSearch({...settings,store,prefix}):null;
-  const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
-  const handler=standaloneCapture({token:env.OPENCRAWL_SESSIONS_TOKEN,principal,store,eventIdentities,prefix,search});
   await store.checkAccess();
+  const application=await openApplicationState(env),{state}=application;
+  let eventIdentities:ReturnType<typeof standaloneEventIdentities>|undefined;
+  try {
+  const settings=searchSettings(env),search=settings?createSessionSearch({...settings,state,store,prefix}):null;
+  eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
+  const handler=standaloneCapture({token:env.OPENCRAWL_SESSIONS_TOKEN,principal,state,store,eventIdentities,prefix,search});
   const server=createServer(handler);
-  server.once('close',()=>{void eventIdentities.close();});
+  server.once('close',()=>{void Promise.all([eventIdentities!.close(),application.close()]);});
   server.requestTimeout=60000;
   await new Promise<void>((resolve,reject)=>{
     server.once('error',reject);
     server.listen(Number(env.PORT||8093),env.HOST||'127.0.0.1',()=>{server.removeListener('error',reject);resolve();});
   });
   return server;
+  }catch(error){await Promise.allSettled([eventIdentities?.close(),application.close()]);throw error;}
 }

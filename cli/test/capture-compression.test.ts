@@ -1,3 +1,4 @@
+import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readdirSync,readFileSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
@@ -10,7 +11,7 @@ import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 
 test('negotiated gzip preserves privacy, lost receipts, legacy servers and rolling replicas',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'capture-compression-')),saved={...process.env},owner={tenantId:'team',userId:'author'};
- const ingest=createSessionIngest({store:createLocalSessionStore(join(dir,'objects'))});
+ const ingest=createSessionIngest(withTestState({store:createLocalSessionStore(join(dir,'objects'))}));
  let phase='gzip',lostAck=true,badReceipt=false;
  const writes:{phase:string,encoding:string,wire:Buffer,plain:string}[]=[];
  const server=createServer(async(req,res)=>{

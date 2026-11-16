@@ -1,3 +1,4 @@
+import {activateConnectors,verifyStartup} from './activation.mjs';
 import {existsSync,readFileSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {join,resolve} from 'node:path';
@@ -30,9 +31,26 @@ if(kind==='dev'&&existsSync(join(current.stateDir,'installer.lock'))) {
  let alive=true;try{process.kill(owner,0);}catch(e){if(e.code==='ESRCH')alive=false;}
  if(alive&&!(installerPid===owner&&process.ppid===owner))throw new Error('The development installer is already running');
 }
+function currentStartup(expected){
+ const inventory=containers(current.project),ids=[...new Set(inventory.filter(c=>['app','worker'].includes(c.Config.Labels['com.docker.compose.service'])).map(c=>c.Image))];
+ // Inspect immutable image IDs, never a mutable tag or overridable container label.
+ const images=ids.length?JSON.parse(docker(['image','inspect',...ids])):[];
+ return verifyStartup(inventory,{project:current.project,target,images,expected});
+}
 if(record) {
- if(journal&&journal.phase!=='complete'&&!(journal.target===target&&journal.phase==='healthy'))throw new Error('Finish the pending upgrade before recording startup');
- privateFile(journalFile,{...journal,format:1,project:current.project,target,phase:'complete',image:app?.Image});
+ const release=lock(join(current.stateDir,'upgrade.lock'));let validated=false;
+ try{
+  current=installation(kind);journal=existsSync(journalFile)?JSON.parse(readFileSync(journalFile,'utf8')):null;
+  inventory=containers(current.project);app=inventory.find(c=>c.Config.Labels['com.docker.compose.service']==='app');
+  if(run('git',['rev-parse','HEAD'])!==target||journal&&(journal.format!==1||journal.project!==current.project||journal.target!==target||!['healthy','complete'].includes(journal.phase)))throw new Error('Finish the pending upgrade at its recorded target before recording startup');
+  const startup=currentStartup();validated=true;
+  // A failed revalidation must not leave a prior completion report authoritative.
+  if(journal){journal={...journal,phase:'healthy'};privateFile(journalFile,journal);}
+  const connectorCatchup=activateConnectors(current);
+  currentStartup(startup);
+  privateFile(journalFile,{...journal,format:1,project:current.project,target,phase:'complete',image:startup.find(writer=>writer.service==='app').image,connectorCatchup});
+ }catch(error){if(validated){const writers=containers(current.project).filter(c=>['app','worker'].includes(c.Config.Labels['com.docker.compose.service']));if(writers.length)docker(['stop',...writers.map(c=>c.Id)]);}throw error;}
+ finally{release();}
  console.log(JSON.stringify({upgrade:'startup-recorded',target}));process.exit(0);
 }
 const completed=journal?.phase==='complete'&&journal.target===target&&journal.image===app?.Image;
@@ -49,7 +67,7 @@ try {
  journal=existsSync(journalFile)?JSON.parse(readFileSync(journalFile,'utf8')):null;
  inventory=containers(current.project);app=inventory.find(c=>c.Config.Labels['com.docker.compose.service']==='app');
  if(journal?.phase==='complete'&&journal.target===target&&journal.image===app?.Image)process.exit(0);
- if(journal&&(journal.format!==1||!['prepared','images-preserved','built','stopped','backed-up','configured','database-ready','database-transferred','migrated','healthy','complete'].includes(journal.phase)))throw new Error('Unsupported upgrade journal; preserve recovery files for review');
+ if(journal&&(journal.format!==1||!['prepared','images-preserved','built','stopped','backed-up','configured','database-ready','database-transferred','migrated','app-state-checked','app-state-migrated','app-state-verified','healthy','complete'].includes(journal.phase)))throw new Error('Unsupported upgrade journal; preserve recovery files for review');
  if(journal&&journal.phase!=='complete'&&journal.target!==target)throw new Error('An upgrade is incomplete. Return to its recorded target revision and resume before upgrading again');
  // A refused journal must not trigger cleanup against the running installation.
  validatedJournal=true;
@@ -83,14 +101,14 @@ try {
    legacyDatabase:databaseHost==='app-db'?(inventory.find(c=>c.Config.Labels['com.docker.compose.service']==='app-db')?.Id||null):null};
   privateFile(journalFile,journal);
  }
- const phases=['prepared','images-preserved','built','stopped','backed-up','configured','database-ready','database-transferred','migrated','healthy','complete'];
+ const phases=['prepared','images-preserved','built','stopped','backed-up','configured','database-ready','database-transferred','migrated','app-state-checked','app-state-migrated','app-state-verified','healthy','complete'];
  const done=phase=>phases.indexOf(journal.phase)>=phases.indexOf(phase);
- const mark=phase=>{journal.phase=phase;if(phase==='complete')journal.image=containers(current.project).find(c=>c.Config.Labels['com.docker.compose.service']==='app')?.Image;privateFile(journalFile,journal);console.log(JSON.stringify({upgrade:'progress',phase,backup:journal.backup}));};
+ const mark=(phase,image)=>{journal.phase=phase;if(phase==='complete')journal.image=image||containers(current.project).find(c=>c.Config.Labels['com.docker.compose.service']==='app')?.Image;privateFile(journalFile,journal);console.log(JSON.stringify({upgrade:'progress',phase,backup:journal.backup}));};
  // A mutable image tag can discard the old image from a containerd store as
  // soon as the build completes. Preserve its bytes before building or stopping
  // anything. Older incomplete journals need this stage too, if still possible.
  if(!done('backed-up')){await saveRecoveryImages(journal.backup,journal.snapshot);if(!done('images-preserved'))mark('images-preserved');}
- if(!done('built')){current.compose(['build','app'],{capture:false,env:{OPENCRAWL_DATABASE_PASSWORD:journal.databasePassword}});mark('built');}
+ if(!done('built')){current.compose(['build','--build-arg','OPENCRAWL_SOURCE_REVISION='+target,'app'],{capture:false,env:{OPENCRAWL_DATABASE_PASSWORD:journal.databasePassword}});mark('built');}
  if(!done('stopped')){
   await ensureRecoveryImages(journal.backup,journal.snapshot);
   if(journal.airbyte?.running)docker(['stop',journal.airbyte.id]);
@@ -128,6 +146,19 @@ try {
  if(!done('migrated')){
   current.compose(['run','--rm','--no-deps','app','node','dist/src/sessions/identity-migration.mjs','migrate'],{capture:false});mark('migrated');
  }
+ // Every source writer remains stopped until both imports and their independent
+ // verification succeed. Each command is resumable; completed migration receipts
+ // prevent a later release from copying stale legacy objects over live SQL rows.
+ if(!done('app-state-checked')){
+  current.compose(['run','--rm','--no-deps','app','node','dist/src/state/migrate.mjs','check','--writers-stopped','--expect-existing'],{capture:false});mark('app-state-checked');
+ }
+ if(!done('app-state-migrated')){
+  current.compose(['run','--rm','--no-deps','app','node','dist/src/state/migrate.mjs','migrate','--writers-stopped','--expect-existing'],{capture:false});mark('app-state-migrated');
+ }
+ // Reverify on every resumed attempt before starting writers, including after a
+ // health-check failure. A stale journal is not proof the database still matches.
+ current.compose(['run','--rm','--no-deps','app','node','dist/src/state/migrate.mjs','verify','--writers-stopped','--expect-existing'],{capture:false});
+ if(!done('app-state-verified'))mark('app-state-verified');
  {
   current.compose(['up','-d','--wait','--wait-timeout','600','app','worker'],{capture:false});mark('healthy');
  }
@@ -137,10 +168,14 @@ try {
    release();
    run(process.execPath,[join(root,'dev/installer.mts'),'up',...(current.state.airbyteEnabled===false?['--no-airbyte']:[])],{capture:false});
   }
- } else mark('complete');
+ } else {
+  const startup=currentStartup();
+  journal.connectorCatchup=activateConnectors(current);
+  currentStartup(startup);mark('complete',startup.find(writer=>writer.service==='app').image);
+ }
  if(!automatic||current.kind==='deploy')console.log(JSON.stringify({upgrade:'complete',project:current.project,target,backup:journal.backup}));
 } catch(error) {
- if(validatedJournal&&journal&&['stopped','backed-up','configured','database-ready','database-transferred','migrated','healthy'].includes(journal.phase)) {
+ if(validatedJournal&&journal&&['stopped','backed-up','configured','database-ready','database-transferred','migrated','app-state-checked','app-state-migrated','app-state-verified','healthy'].includes(journal.phase)) {
   try {
    const writers=containers(current.project).filter(c=>['app','worker'].includes(c.Config.Labels['com.docker.compose.service']));
    if(writers.length)docker(['stop',...writers.map(c=>c.Id)]);

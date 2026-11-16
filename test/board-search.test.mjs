@@ -1,83 +1,69 @@
-import {realmResponse} from './realm-fixture.mjs';
-import {realmMapping} from '../dist/src/search/realm.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
-import {createBoardSearch, boardIndexMapping} from '../dist/src/board/search.mjs';
+import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
+import {createBoardSearch} from '../dist/src/board/search.mjs';
+import {createPostgresBoardState,validateLegacyBoard} from '../dist/src/state/board.mjs';
+const principal={tenantId:'team-a',userId:'alice'};
+const messages=Array.from({length:8},(_,i)=>({id:i+1,timestamp:1700000000000+i,topic:i<6?'auth':'other',agent:'agent-a',author:'alice',name:'codex',text:'Refresh '+i,requestId:String(i)}));
+const legacy=messages=>({schema:1,messages,agents:{},usage:{calls:4,inputBytes:200,outputBytes:500}});
+async function fixture(t,rows=messages){const f=await boardStateFixture(t);await f.repository.importLegacy(boardTenant(principal.tenantId),legacy(rows));let time=1;return {...f,search:createBoardSearch({state:f.state,now:()=>time}),advance:()=>{time+=300001;}};}
 
-const principal = {tenantId: 'team-a', userId: 'alice'}, key = 'board/tenants/team-a.json';
-const boardId = createHash('sha256').update(key).digest('hex');
-const messages = Array.from({length: 8}, (_, i) => ({id: i + 1, timestamp: 1700000000000 + i, topic: i < 6 ? 'auth' : 'other', agent: 'agent-a', author: 'alice', name: 'codex', text: 'Refresh ' + i, requestId: String(i)}));
-const query = {workspace: 'team-a', query: 'refresh', limit: 2};
-function mock({partial = false, forged = false, bulkFailure = false, gap = false} = {}) {
-  const requests = []; let time = 1, written = false;
-  const send = async (url, options) => {
-    const body = options.body && JSON.parse(options.body.startsWith('{"index":') ? '{}' : options.body);
-    requests.push({url: String(url), ...options, parsed: body});
-    if (String(url).endsWith('/_mapping')) return Response.json({'board-test': {mappings: {...realmMapping,_meta:{tenantId:'team-a',schema:1}}}});
-    if (String(url).includes('/_bulk')) {written = true; return Response.json({errors: bulkFailure, items: messages.slice(gap ? 0 : 6).map(() => ({index: {status: bulkFailure ? 500 : 201}}))});}
-    if (body?.size === 0) return realmResponse('board',{timed_out: false, _shards: {failed: 0}, hits: {total: {value: written ? 8 : gap ? 5 : 6, relation: 'eq'}}, aggregations: {last: {value: written ? 8 : 6}}});
-    if (body?.size === 1000) return realmResponse('board',{timed_out: partial, _shards: {failed: 0}, hits: {total: {value: 8, relation: 'eq'}, hits: messages.map(m => ({_score:1, _id: boardId + ':' + m.id, _source: {id: m.id, tenantId: forged ? 'team-b' : principal.tenantId, boardId}}))}, aggregations: {topic: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'auth', doc_count: 6}, {key: 'other', doc_count: 2}]}, agent: {doc_count_error_upper_bound: 0, sum_other_doc_count: 0, buckets: [{key: 'agent-a', doc_count: 8}]}}});
-    return Response.json({acknowledged: true});
-  };
-  return {requests, advance: () => {time += 300001;}, search: createBoardSearch({endpoint: 'http://search.test', index: 'board-test', fetch: send, now: () => time})};
-}
-
-test('catches up projection and returns full ranked messages, exact facets and stable compact pages', async () => {
-  const f = mock();
-  const first = await f.search.search(principal, messages, key, query);
-  assert.equal(first.total, 8); assert.equal(first.through, 8);
-  assert.deepEqual(first.messages.map(m => m.id), [8, 7]);
-  assert.equal(first.messages[0].text, 'Refresh 7'); assert.ok(!('requestId' in first.messages[0]));
-  assert.deepEqual(first.facets.topic.values, [{value: 'auth', count: 6}, {value: 'other', count: 2}]);
-  assert.equal(first.facets.agent.values[0].name, 'codex');
-  const bulk = f.requests.find(r => r.url.includes('_bulk'));
-  assert.match(bulk.body, /"id":7/); assert.doesNotMatch(bulk.body, /"id":6/);
-  const ranking = f.requests.find(r => r.parsed?.size === 1000).parsed;
-  assert.ok(ranking.query.bool.filter.some(f => f.term?.tenantId === principal.tenantId));
-  assert.equal(ranking.track_scores, true); assert.deepEqual(ranking.sort, [{'board.id':'asc'}]);
-  let cursor = first.next, all = first.messages.map(m => m.id), count = f.requests.length;
-  const grown = [...messages, {...messages[0], id: 9, text: 'New concurrent post'}];
-  while (cursor) {
-    const page = await f.search.search(principal, grown, key, {...query, cursor});
-    assert.equal(page.facets, undefined); assert.ok(Buffer.byteLength(JSON.stringify(page)) <= 8192);
-    all.push(...page.messages.map(m => m.id)); cursor = page.next;
-  }
-  assert.deepEqual(all, [8,7,6,5,4,3,2,1]); assert.equal(f.requests.length, count);
-  await assert.rejects(f.search.search({...principal, userId: 'bob'}, messages, key, {...query, cursor: first.next}), /cursor/);
-  await assert.rejects(f.search.search(principal, messages, key, {...query, query: 'changed', cursor: first.next}), /cursor/);
-  f.advance(); await assert.rejects(f.search.search(principal, messages, key, {...query, cursor: first.next}), /expired/);
+test('PostgreSQL ranks complete messages with exact facets and durable query-bound keyset pages',async t=>{
+  const f=await fixture(t),args={query:'refresh',limit:2},first=await f.search.search(principal,args);
+  assert.equal(first.total,8);assert.equal(first.through,8);assert.deepEqual(first.messages.map(m=>m.id),[8,7]);
+  assert.deepEqual(first.facets.topic.values,[{value:'auth',count:6},{value:'other',count:2}]);assert.equal(first.facets.agent.values[0].name,'codex');assert.ok(!('requestId'in first.messages[0]));
+  await f.make().sync(principal,{agent:'codex',posts:[{id:'growth',topic:'auth',text:'refresh refresh refresh'}]});
+  const restarted=createBoardSearch({state:{...f.state,board:createPostgresBoardState(f.database)},now:()=>1});
+  let cursor=first.next,all=first.messages.map(m=>m.id);while(cursor){const page=await restarted.search(principal,{...args,cursor});all.push(...page.messages.map(m=>m.id));assert.equal(page.total,8);assert.equal(page.facets,undefined);cursor=page.next;}
+  assert.deepEqual(all,[8,7,6,5,4,3,2,1]);
+  const replay=await restarted.search(principal,{...args,cursor:first.next});assert.deepEqual(replay.messages.map(m=>m.id),[6,5]);
+  for(const [who,query]of [[{...principal,userId:'bob'},args],[{...principal,tenantId:'other'},args],[principal,{...args,query:'changed'}]])await assert.rejects(restarted.search(who,{...query,cursor:first.next}),{status:409});
+  f.advance();await assert.rejects(f.search.search(principal,{...args,cursor:first.next}),{status:409});
 });
 
-test('rejects missing scope, partial results, failed indexing and cross-tenant engine responses', async () => {
-  await assert.rejects(mock().search.search({userId:'alice'}, messages, key, query), /scope/);
-  for (const options of [{partial:true}, {forged:true}, {bulkFailure:true}]) await assert.rejects(mock(options).search.search(principal, messages, key, query));
-  const f = mock({gap:true}); await f.search.search(principal, messages, key, query);
-  assert.match(f.requests.find(r => r.url.includes('_bulk')).body, /"id":1/);
+test('scope, date filters and cursor validation fail before releasing data',async t=>{
+  const f=await fixture(t);
+  for(const who of [{},{userId:'alice'},{...principal,captureAccess:'read'}])await assert.rejects(f.search.search(who,{}),{status:403});
+  await assert.rejects(f.search.search(principal,{workspace:'foreign'}),{status:403});
+  await assert.rejects(f.search.search(principal,{since:'2024-01-01T00:00:00Z',until:'2023-01-01T00:00:00Z'}),{status:400});
+  await assert.rejects(f.search.search(principal,{cursor:'garbage'}),{status:400});
+  const args={query:'refresh',topics:['auth'],agents:['agent-a'],authors:['alice'],since:'2023-11-01T00:00:00Z',until:'2024-01-01T00:00:00Z',sort:'newest',limit:10};
+  assert.deepEqual((await f.search.search(principal,args)).messages.map(m=>m.id),[6,5,4,3,2,1]);
+  assert.equal((await f.search.search(principal,{...args,authors:['foreign']})).total,0);
 });
 
-test('filters are exact and message bodies are never sliced to fit the response budget', async () => {
-  const f = mock();
-  const big = messages.map(m => ({...m, text: 'é'.repeat(512), name: '名'.repeat(80), topic: '題'.repeat(80)}));
-  const output = await f.search.search(principal, big, key, {...query, limit:10, topics:['auth'], agents:['agent-a'], authors:['alice'], since:'2023-11-01T00:00:00Z', until:'2024-01-01T00:00:00Z', sort:'newest'});
-  assert.ok(output.messages.length < 8); assert.ok(output.next); assert.ok(Buffer.byteLength(JSON.stringify(output)) <= 8192);
-  assert.ok(output.messages.every(m => m.text === big[0].text));
-  const body = f.requests.find(r => r.parsed?.size === 1000).parsed;
-  assert.deepEqual(body.sort, [{'board.id':'asc'}]);
-  assert.ok(body.query.bool.must[0].bool.filter.some(f => f.terms?.['board.author']?.[0] === 'alice'));
-  assert.ok(body.query.bool.must[0].bool.filter.some(f => f.range?.['board.timestamp']?.gte === '2023-11-01T00:00:00Z'));
+test('long messages search across vector chunks and bounded pages preserve their complete bodies',async t=>{
+  const rows=messages.map((m,i)=>({...m,text:'startmarker '+('filler detail '.repeat(6000))+' tailmarker '+i})),f=await fixture(t,rows);
+  const first=await f.search.search(principal,{query:'startmarker tailmarker',limit:10});assert.equal(first.total,8);assert.equal(first.messages.length,1);assert.equal(first.messages[0].text,rows[7].text);
+  const second=await f.search.search(principal,{query:'startmarker tailmarker',limit:10,cursor:first.next});assert.equal(second.messages[0].text,rows[6].text);assert.ok(second.next);
+  const firstOmitted=await f.search.search(principal,{query:'tailmarker',limit:2});
+  const explicit=await f.search.search(principal,{workspace:principal.tenantId,query:'tailmarker',limit:2,cursor:firstOmitted.next});assert.equal(explicit.messages[0].id,7);
 });
 
+test('legacy import preserves publication aliases, pending deliveries, usage and ordering exactly',async t=>{
+  const f=await boardStateFixture(t),board=f.make();
+  const owner=await board.participate(principal,'register',{session:'one',name:'codex:owner',task:'Migrate'});
+  await board.participate(principal,'subscribe',{session:'one',topics:['auth']});
+  await board.sync({...principal,userId:'bob'},{agent:'peer',posts:[{id:'legacy',topic:'auth',text:'@codex:owner complete this'}]});
+  const delivery=await board.participate(principal,'inbox',{session:'one'});
+  const source=await f.repository.exportLegacy(boardTenant(principal.tenantId));assert.equal(source.participants[owner.agent].pending.receipt,delivery.batch.receipt);
+  source.participants[owner.agent].pending.messages[0].reasons.push('legacy-home'); // Retain older delivery explanation strings.
+  const destination=await boardStateFixture(t);await destination.repository.importLegacy(boardTenant(principal.tenantId),source);
+  assert.deepEqual(await destination.repository.exportLegacy(boardTenant(principal.tenantId)),source);
+  await destination.repository.importLegacy(boardTenant(principal.tenantId),source);
+  assert.deepEqual((await destination.make().participate(principal,'inbox',{session:'one'})).batch,source.participants[owner.agent].pending);
+  const conflict=structuredClone(source);conflict.messages[0].text='changed';
+  await assert.rejects(destination.repository.importLegacy(boardTenant(principal.tenantId),conflict));
+  assert.deepEqual(await destination.repository.exportLegacy(boardTenant(principal.tenantId)),source);
+  assert.throws(()=>validateLegacyBoard({...source,unexpected:true}),/legacy/);
+  const malformed=structuredClone(source);malformed.participants[owner.agent].pending.messages[0].text='forged';assert.throws(()=>validateLegacyBoard(malformed),/delivery/);
+});
 
-test('omitted workspace and matching guards share cursors while foreign scopes never query', async () => {
-  const f=mock(),{workspace,...withoutWorkspace}=query;
-  const first=await f.search.search(principal,messages,key,withoutWorkspace);
-  const explicit=await f.search.search(principal,messages,key,{...query,cursor:first.next});
-  assert.deepEqual(explicit.messages.map(m=>m.id),[6,5]);
-  const omitted=await f.search.search(principal,messages,key,{...withoutWorkspace,cursor:explicit.next});
-  assert.deepEqual(omitted.messages.map(m=>m.id),[4,3]);
-  const requests=f.requests.length;
-  await assert.rejects(f.search.search(principal,messages,key,{...query,workspace:'team-b'}),{status:403});
-  await assert.rejects(f.search.search({...principal,tenantId:'team-b'},messages,key,{...withoutWorkspace,cursor:first.next}),{status:409});
-  assert.equal(f.requests.length,requests);
+test('concurrent schema initialization and live writes do not conflict',async t=>{
+  const f=await boardStateFixture(t),board=f.make();
+  await Promise.all(Array.from({length:8},(_,i)=>Promise.all([
+    createPostgresBoardState(f.database).ready(),
+    board.sync(principal,{agent:'writer',posts:[{id:'schema-'+i,topic:'schema',text:'Concurrent startup evidence'}]})
+  ])));
+  assert.equal((await board.read(principal)).messages.length,8);
 });

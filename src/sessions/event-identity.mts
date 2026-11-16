@@ -1,4 +1,4 @@
-import type {Principal, SessionIdentity, SessionBatch, SessionEvent, EventReservationOptions, SourceOptions, ObjectStore, StorePage, StoreVersion} from './types.mjs';
+import type {Principal, SessionIdentity, SessionBatch, SessionEvent, EventReservationOptions, SourceOptions, ObjectStore, StorePage} from './types.mjs';
 import {parseJson, isSessionHarness, SESSION_HARNESSES} from './types.mjs';
 import {createHash} from 'node:crypto';
 import {gunzipSync} from 'node:zlib';
@@ -58,7 +58,7 @@ export function eventFingerprints(events: SessionEvent[],conflicts=new Set<strin
  return result;
 }
 export function eventIdentityConflict(conflicts: Set<string>) {fail(409,'Event ID already reserved for different content',{code:'SESSION_EVENT_ID_CONFLICT',conflictCount:conflicts.size,conflictIds:[...conflicts].sort().slice(0,100)});}
-const location=eventIdentityLocation,fingerprints=eventFingerprints,conflict=eventIdentityConflict;
+const location=eventIdentityLocation,fingerprints=eventFingerprints;
 function merge(target: Map<string, string>,incoming: Map<string, string>,conflicts: Set<string>) {
  for(const [key,hash] of incoming){if(target.has(key)&&target.get(key)!==hash)conflicts.add(key);else target.set(key,hash);}
 }
@@ -66,15 +66,11 @@ function capacity(identity: string,count: number) {
  const size=Buffer.byteLength(JSON.stringify({schemaVersion:1,identity,events:{}}))+count*134-(count?1:0);
  if(size>MAX_EVENT_LEDGER_BYTES)fail(413,'Session event identity capacity exceeded; start a new session');
 }
-function encode(identity: string,events: Map<string, string>) {
- capacity(identity,events.size);
- return Buffer.from(JSON.stringify({schemaVersion:1,identity,events:Object.fromEntries(events)}));
-}
 function parse<T>(bytes: Uint8Array,label: string): T {
  try{return parseJson<T>(bytes);}catch{fail(409,'Invalid '+label);}
 }
 async function readLedger(store: ObjectStore,where: ReturnType<typeof location>) {
- if(typeof store.readVersion!=='function'||typeof store.compareAndSet!=='function')fail(503,'Session capture requires conditional object storage');
+ if(typeof store.readVersion!=='function')fail(503,'Legacy identity audit requires versioned object reads');
  const value=await store.readVersion(where.key,{maxBytes:MAX_EVENT_LEDGER_BYTES});
  if(!value.data){if(value.version!==null)fail(503,'Invalid event identity storage version');return {version:null,events:null};}
  if(value.data.length>MAX_EVENT_LEDGER_BYTES)fail(413,'Session event identity capacity exceeded');
@@ -130,45 +126,28 @@ async function historical(options: SessionIdentity & {store: ObjectStore},where:
  * Old writers must be drained before the first historical bootstrap.
  */
 export async function reserveSessionEvents(options: EventReservationOptions) {
- if(options.eventIdentities)return options.eventIdentities.reserve(options);
- const where=location(options),inputConflicts=new Set<string>(),incoming=fingerprints(options.events,inputConflicts);
- if(inputConflicts.size)conflict(inputConflicts);
- let initial: Awaited<ReturnType<typeof historical>> | undefined;
- for(let attempt=0;attempt<8;attempt++) {
-  const ledger=await readLedger(options.store,where);
-  if(!ledger.events){initial??=await historical(options,where);if(initial.conflicts.size)conflict(initial.conflicts);}
-  const events=new Map(ledger.events||initial!.events),conflicts=new Set<string>();
-  merge(events,incoming,conflicts);if(conflicts.size)conflict(conflicts);
-  if(ledger.events&&events.size===ledger.events.size)return {reservedEvents:events.size};
-  const bytes=encode(where.identity,events);
-  if(await options.store.compareAndSet(where.key,ledger.version,bytes))return {reservedEvents:events.size};
- }
- fail(503,'Session event identity ledger busy; retry the same batch');
+ if(!options.eventIdentities)fail(503,'A PostgreSQL event identity repository is required; complete the application-state migration before capture');
+ return options.eventIdentities.reserve(options);
 }
 
 /** Audits every accepted batch in one trusted session, including already-indexed
- * historical batches. initialize=true reserves the audited IDs without deleting
- * raw data or changing search documents. Results contain counts and hashes only.
+ * historical batches. This legacy-source audit is read-only. Import reservations
+ * through identity-migration.mjs; results contain counts and hashes only.
  */
 export async function auditSessionEventIdentities(options: SessionIdentity & {store: ObjectStore; initialize?: boolean}) {
+ if(options.initialize)fail(400,'Legacy identity initialization was retired; use the PostgreSQL migration');
  sessionScope(options.principal);
  if(options.principal.captureAccess==='write')fail(403,'Capture credentials cannot audit sessions');
  const where=location(options),source=await historical(options,where);
- for(let attempt=0;attempt<8;attempt++) {
-  const ledger=await readLedger(options.store,where),events=new Map(ledger.events||[]),conflicts=new Set(source.conflicts);
-  merge(events,source.events,conflicts);
-  const report={sessionIdentity:where.identity,batches:source.batches,events:source.events.size,reservedEvents:events.size,conflicts:conflicts.size,conflictIds:[...conflicts].sort().slice(0,100),initialized:false};
-  if(conflicts.size||!options.initialize)return report;
-  const bytes=encode(where.identity,events);
-  if(ledger.events&&events.size===ledger.events.size||await options.store.compareAndSet(where.key,ledger.version,bytes))return {...report,initialized:true};
- }
- fail(503,'Session event identity audit busy; retry');
+ const ledger=await readLedger(options.store,where),events=new Map(ledger.events||[]),conflicts=new Set(source.conflicts);
+ merge(events,source.events,conflicts);
+ return {sessionIdentity:where.identity,batches:source.batches,events:source.events.size,reservedEvents:events.size,conflicts:conflicts.size,conflictIds:[...conflicts].sort().slice(0,100),initialized:false};
 }
 
 /** Portable whole-source audit. The adapter supplies one fixed principal or a
  * trusted stored-owner resolver, exactly as the indexing pipeline does.
  */
-export async function auditSessionEventSource({store,prefix,principal,resolvePrincipal,initialize=false}: SourceOptions) {
+export async function auditSessionEventSource({store,prefix,principal,resolvePrincipal,initialize=false}: Omit<SourceOptions,'state'>) {
  if(Boolean(principal)===Boolean(resolvePrincipal))fail(400,'Supply a fixed principal or trusted scope resolver');
  if(principal){sessionScope(principal);if(principal.captureAccess==='write')fail(403,'Capture credentials cannot audit sessions');}
  if(typeof prefix!=='string'||!prefix||prefix.split('/').some(part=>!part||part==='.'||part==='..'))fail(400,'Invalid session prefix');

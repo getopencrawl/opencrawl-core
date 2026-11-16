@@ -26,10 +26,13 @@ resumes its journal and retains the original recovery point. Installations that
 already created a dedicated `app-db` are copied transactionally with their exact
 database UUID, reservations and deletion records, then that old server stops.
 
-For separately operated services, stop all receivers/workers, back up raw objects
-and the application database together, supply their normal storage and database
-environment, and run `node dist/src/sessions/identity-migration.mjs migrate`
-before starting the new receivers and workers. No hosted control plane is needed.
+For separately operated services, follow the complete
+[application-state migration](app-state-migration.md), including stopped writers,
+a matched recovery point, import and independent verification before restarting.
+The event-identity importer is one component of that migration; running
+`node dist/src/sessions/identity-migration.mjs migrate` alone does not establish
+application readiness or authorize receiver/worker startup. No hosted control
+plane is needed.
 
 ## Migration and interruption behavior
 
@@ -42,22 +45,20 @@ record each session's progress in PostgreSQL. Re-running scans is safe; complete
 sessions are skipped. Inventory is paginated and historical batches are read
 one at a time. There is no total inventory/session/event quota.
 
-Before accepting new IDs, the adapter replaces the old ledger using its object
-version with a small version-2 marker identifying the PostgreSQL database.
-Concurrent version-1 writers must win that compare-and-set first or fail after
-the marker appears. If one wins, its additional reservations are imported before
-retrying the fence. All imported fingerprints commit before the marker is written;
-a crash before or after the fence resumes safely. The marker contains no event
-map and never grows with the session. Old software cannot overwrite it.
+The offline importer never rewrites raw objects or legacy ledgers. It re-reads
+the ledger before marking a session ready, and fails if an old writer changes
+that source during import. Imported fingerprints remain durable for a safe retry.
+Existing version-2 markers from older PostgreSQL releases still require their
+matching database UUID, namespace and reservation rows; restore that matched
+database if they are absent.
 
-Startup scripts coordinate the upgrade before replacing old writers or
-changing the installation configuration. After upgrading, individual sessions can also migrate lazily
-before their first new reservation. Separately operated services must stop old
-writers before switching, especially versions from before immutable event ledgers.
-Deploy the receiver and index worker together. A migrated
-source presented to a different/empty database fails closed, rather than silently
-falling back to an old ledger. Resolve an actual content conflict explicitly; do
-not pick an arbitrary winner or remove a failed-upload reservation.
+Runtime reservation uses PostgreSQL only. There is no object-store fallback,
+lazy historical bootstrap or marker write. Application readiness requires the
+whole-source offline import and verification before starting any new receiver
+or worker. A session whose import is incomplete rejects new reservations.
+Resolve content conflicts explicitly; never choose an arbitrary winner or remove
+a failed-upload reservation. The legacy audit command is read-only and requires
+an explicit organization and user; its old `--initialize` action is retired.
 
 ## Backup, deletion and rollback
 
@@ -70,8 +71,8 @@ Permanent session deletion removes fingerprint rows from all installations and
 retains a scoped deletion marker to reject late writes.
 
 After cutover, rolling back to a binary that writes JSON ledgers is not supported:
-it deliberately rejects the migration marker, and cannot represent sessions that
-have grown beyond its old ceiling. Roll back application code only to a version
+its old ledgers no longer receive new reservations and cannot represent sessions
+that have grown beyond its old ceiling. Roll back application code only to a version
 that understands the PostgreSQL adapter, keeping the database. If restoring a
 pre-upgrade recovery point is necessary, stop every writer and restore its entire
 matched backup; account for any data accepted after that backup first. Never

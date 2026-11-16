@@ -1,4 +1,6 @@
 import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
+import {applicationDatabase} from '../state/settings.mjs';
+import {requireApplicationStateReady} from '../state/postgres.mjs';
 import {mkdir,writeFile,unlink} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -9,10 +11,12 @@ import {sessionStorage} from '../sessions/storage.mjs';
 import {createSessionWorker,buildSessionWorkflows} from '../sessions/temporal/worker.mjs';
 import {ensureSessionSchedule,ensureSessionDeletionSchedule,activateSessionIndexing} from '../sessions/temporal/client.mjs';
 import {createConnectorWorker,buildConnectorWorkflows} from '../connectors/temporal/worker.mjs';
-import {connectorClient,ensureConnectorSchedule} from '../connectors/temporal/client.mjs';
-import {createConnectionPurger} from '../integrations/purge.mjs';
-import {eligible} from '../integrations/resolver.mjs';
-import {createRealm} from '../search/realm.mjs';
+import {connectorClient} from '../connectors/temporal/client.mjs';
+import {createApplicationState} from '../state/application.mjs';
+import {createLocalIdentity} from '../identity/better-auth.mjs';
+import {selfhostTemporalSettings} from './temporal-settings.mjs';
+import {buildIntegrationWorkflows,createIntegrationWorker} from '../integrations/temporal/worker.mjs';
+import {ensureIntegrationRecoverySchedule,ensureIntegrationDiscoverySchedule} from '../integrations/temporal/client.mjs';
 /** A restarted Temporal frontend can be healthy before history hosts own the
  * existing schedules. Retry only transient gRPC failures during startup. */
 export async function withTemporalStartupRetry<T>(run:()=>Promise<T>,{timeoutMs=60000,delayMs=1000}={}):Promise<T>{
@@ -32,51 +36,74 @@ export async function withTemporalStartupRetry<T>(run:()=>Promise<T>,{timeoutMs=
   }
 }
 export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
-  const settings=selfhostSettings(env),{store,prefix}=sessionStorage(env),services=selfhostServices(settings,store,env);
-  const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
-  const address=env.TEMPORAL_ADDRESS,namespace=env.TEMPORAL_NAMESPACE;
-  if(!address||!namespace)throw new Error('Configure Temporal address and namespace');
-  const config={address,namespace},taskQueue=env.TEMPORAL_CONNECTOR_TASK_QUEUE||'connector-indexing-v1',sessionQueue=env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',deletionQueue=env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1';
-  const bundleRoot=env.OPENCRAWL_WORKFLOW_DIRECTORY||'/tmp/opencrawl-workflows';await mkdir(bundleRoot,{recursive:true});
-  if(services.connectors)await buildConnectorWorkflows(bundleRoot+'/connectors.cjs');
-  await buildSessionWorkflows(bundleRoot+'/sessions.cjs');
-  const scheduling=await connectorClient(config),source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
-  const connectors=services.connectors?await createConnectorWorker({...config,taskQueue,bundlePath:bundleRoot+'/connectors.cjs',resolve:services.connectors.resolve}):undefined;
-  const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve});
-  const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:source.resolveDeletion,maxConcurrentActivityTaskExecutions:1});
-  const workers=connectors?[sessions,deletions,connectors]:[sessions,deletions];
-  // An operator sets this only after the receiver and worker rollout is complete.
-  // Starting the worker first must not remove recovery for old API producers.
-  const captureCutover=env.OPENCRAWL_SESSION_INDEXING_CUTOVER==='1'
-    ?await withTemporalStartupRetry(()=>activateSessionIndexing(scheduling.client,{sourceId:source.sourceId,generation:source.generation,taskQueue:sessionQueue,store,prefix}))
-    :undefined;
-  if(!captureCutover)await withTemporalStartupRetry(()=>ensureSessionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:sessionQueue}));
-  const deletionSchedule=await withTemporalStartupRetry(()=>ensureSessionDeletionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:deletionQueue}));
-  const realm=createRealm(settings.search),purge=createConnectionPurger({environment:'selfhost',generation:'v1',
-    deleteSchedule:id=>scheduling.client.schedule.getHandle(id).delete(),
-    async deleteDocuments(record){
-      if(record.tenantId!==settings.organizationId)throw new Error('Purge scope denied');
-      const result=await realm.collection('connector').byQuery({tenantId:settings.organizationId},'delete',{term:{'connector.connectionId':record.integrationId}});return result.changed;
-    }});
-  const readiness=env.OPENCRAWL_WORKER_READY_PATH||'/tmp/opencrawl-worker-ready.json';let stopping=false,inFlight:Promise<void>|undefined;
-  const tick=()=>{
-    if(inFlight||stopping)return;
-    inFlight=(async()=>{
-      if(services.connectors){
-        const records=await services.registry.listTenant(settings.organizationId);
-        for(const record of records.filter(r=>r.status==='active'&&eligible(r))){
-          const reference={tenantId:record.tenantId,userId:record.userId,connectionId:record.integrationId,generation:'v1'};
-          await services.connectors.resolve(reference);await ensureConnectorSchedule(scheduling.client,{reference,taskQueue,generation:'v1'});
-        }
-        await purge(records.filter(r=>r.status==='disconnected'));
+  const settings=selfhostSettings(env),{store,prefix}=sessionStorage(env),database=applicationDatabase(env);
+  const releases:Array<()=>unknown|Promise<unknown>>=[()=>database.close()];
+  let failure:unknown;
+  try {
+    await database.ready();await requireApplicationStateReady(database);
+    const state=await createApplicationState({database});
+    const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,database,organizationId:settings.organizationId});releases.push(()=>identity.close());await identity.ready();
+    const services=selfhostServices(settings,store,env,database,state,identity.directory);releases.push(()=>services.close());await services.ready();
+    const eventIdentities=standaloneEventIdentities(store,env);releases.push(()=>eventIdentities.close());await eventIdentities.ready();
+    const config=selfhostTemporalSettings(env),{namespace}=config;
+    const taskQueue=env.TEMPORAL_CONNECTOR_TASK_QUEUE||'connector-indexing-v1',sessionQueue=env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',deletionQueue=env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1',integrationQueue=env.TEMPORAL_INTEGRATION_TASK_QUEUE||'integration-lifecycle-v1';
+    const bundleRoot=env.OPENCRAWL_WORKFLOW_DIRECTORY||'/tmp/opencrawl-workflows';await mkdir(bundleRoot,{recursive:true});
+    if(services.connectors)await buildConnectorWorkflows(bundleRoot+'/connectors.cjs');
+    if(services.lifecycleActivities)await buildIntegrationWorkflows(bundleRoot+'/integrations.cjs');
+    await buildSessionWorkflows(bundleRoot+'/sessions.cjs');
+    const scheduling=await connectorClient(config);
+    releases.push(()=>scheduling.connection.close());
+    const source=singleOrganizationSessionSource(settings,store,prefix,state,eventIdentities);
+    const workers:Awaited<ReturnType<typeof createSessionWorker>>[]=[];
+    const runs:Promise<void>[]=[];
+    const readiness=env.OPENCRAWL_WORKER_READY_PATH||'/tmp/opencrawl-worker-ready.json';
+    let timer:ReturnType<typeof setInterval>|undefined,inFlight:Promise<void>|undefined,stopping=false;
+    const stop=()=>{stopping=true;clearInterval(timer);for(const runtime of workers)if(runtime.worker.getState()==='RUNNING')runtime.worker.shutdown();};
+    const start=(runtime:Awaited<ReturnType<typeof createSessionWorker>>)=>{
+      workers.push(runtime);
+      const run=runtime.worker.run();runs.push(run);
+      // Register rejection handling immediately, including while later workers
+      // initialize. Every native worker gets a run/drain lifecycle.
+      void run.catch(stop);
+    };
+    try {
+      // This cutover remains operator controlled until every producer is upgraded.
+      const captureCutover=env.OPENCRAWL_SESSION_INDEXING_CUTOVER==='1'
+        ?await withTemporalStartupRetry(()=>activateSessionIndexing(scheduling.client,{sourceId:source.sourceId,generation:source.generation,taskQueue:sessionQueue,state,store,prefix}))
+        :undefined;
+      if(!captureCutover)await withTemporalStartupRetry(()=>ensureSessionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:sessionQueue}));
+      const deletionSchedule=await withTemporalStartupRetry(()=>ensureSessionDeletionSchedule(scheduling.client,{sourceId:source.sourceId,taskQueue:deletionQueue}));
+      if(services.lifecycleActivities){
+        const binding={sourceId:services.integrationSourceId,taskQueue:integrationQueue};
+        await withTemporalStartupRetry(()=>ensureIntegrationRecoverySchedule(scheduling.client,binding));
+        await withTemporalStartupRetry(()=>ensureIntegrationDiscoverySchedule(scheduling.client,binding));
       }
-      if(workers.every(x=>x.worker.getState()==='RUNNING'))await writeFile(readiness,JSON.stringify({checkedAt:new Date().toISOString(),namespace,deletionSchedule,captureCatchup:captureCutover?.workflowId,airbyteEnabled:!!connectors,taskQueue:connectors?taskQueue:undefined,sessionQueue}));
-    })().catch(async()=>{await unlink(readiness).catch(()=>{});console.error(JSON.stringify({event:'selfhost.indexing.discovery_failed'}));}).finally(()=>{inFlight=undefined;});
-  };
-  await unlink(readiness).catch(()=>{});const timer=setInterval(tick,30000);
-  const stop=()=>{stopping=true;clearInterval(timer);for(const x of workers)if(x.worker.getState()==='RUNNING')x.worker.shutdown();};
-  process.once('SIGTERM',stop);process.once('SIGINT',stop);
-  const runs=workers.map(x=>x.worker.run());tick();
-  try{await Promise.all(runs);}finally{stop();await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();await eventIdentities.close();}
+      if(services.connectors)start(await createConnectorWorker({...config,taskQueue,bundlePath:bundleRoot+'/connectors.cjs',resolve:services.connectors.resolve}));
+      start(await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve}));
+      start(await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:source.resolveDeletion,maxConcurrentActivityTaskExecutions:1}));
+      if(services.lifecycleActivities)start(await createIntegrationWorker({...config,taskQueue:integrationQueue,bundlePath:bundleRoot+'/integrations.cjs',...services.lifecycleActivities}));
+      // The only local timer reports readiness; durable discovery and cleanup run
+      // on separate Temporal schedules and survive worker replacement.
+      const tick=()=>{
+        if(inFlight||stopping)return;
+        inFlight=(async()=>{
+          if(workers.every(runtime=>runtime.worker.getState()==='RUNNING'))await writeFile(readiness,JSON.stringify({checkedAt:new Date().toISOString(),namespace,deletionSchedule,captureCatchup:captureCutover?.workflowId,airbyteEnabled:!!services.connectors,taskQueue:services.connectors?taskQueue:undefined,sessionQueue}));
+          else await unlink(readiness).catch(()=>{});
+        })().catch(()=>{}).finally(()=>{inFlight=undefined;});
+      };
+      await unlink(readiness).catch(()=>{});timer=setInterval(tick,30000);
+      process.once('SIGTERM',stop);process.once('SIGINT',stop);
+      tick();await Promise.all(runs);
+    } finally {
+      stop();process.removeListener('SIGTERM',stop);process.removeListener('SIGINT',stop);
+      await Promise.allSettled(runs);
+      await inFlight;await unlink(readiness).catch(()=>{});
+      await Promise.all(workers.map(runtime=>runtime.connection.close()));
+    }
+  } catch(error) {failure=error;throw error;}
+  finally {
+    const results=await Promise.allSettled(releases.reverse().map(release=>Promise.resolve().then(release)));
+    const failed=results.find(result=>result.status==='rejected');if(!failure&&failed?.status==='rejected')throw failed.reason;
+  }
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await runSelfhostWorker();

@@ -100,7 +100,13 @@ export function createAirbyte(options: AirbyteOptions) {
   }
 
   return {
-    declarativeSources: (workspaceId: string) => request<Page<AirbyteResource>>('GET', `/workspaces/${workspaceId}/definitions/declarative_sources`).then(r => r?.data || []),
+    async declarativeSources(workspaceId:string){
+      if(!/^[A-Za-z0-9_-]{1,200}$/.test(workspaceId))throw new Error('Invalid Airbyte workspace');
+      const page=await request<Page<AirbyteResource>>('GET',`/workspaces/${encodeURIComponent(workspaceId)}/definitions/declarative_sources`);
+      if(!Array.isArray(page?.data)||page.data.length>10000||page.next)throw new Error('Incomplete Airbyte definition listing');
+      const seen=new Set<string>();for(const item of page.data){if(!item||typeof item.id!=='string'||!item.id||typeof item.name!=='string'||!item.manifest||seen.has(item.id))throw new Error('Invalid Airbyte definition listing');seen.add(item.id);}
+      return page.data;
+    },
     createDeclarativeSource: (workspaceId: string, name: string, manifest: ConnectorManifest) => request<AirbyteResource>('POST', `/workspaces/${workspaceId}/definitions/declarative_sources`, {name, manifest}),
     // The public PUT edits the definition's Builder project, which API-created definitions don't
     // have (404). Publish a new active manifest version instead, as the Builder's Publish does.

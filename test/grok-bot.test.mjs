@@ -1,3 +1,4 @@
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createSessionIngest,digest} from '../dist/src/sessions/ingest.mjs';
@@ -28,7 +29,7 @@ test('Grok Bot is a session harness everywhere a session is addressed, and unkno
  assert.deepEqual([...SESSION_HARNESSES],['claude-code','codex','cursor','grok-bot','antigravity']);
  assert.equal(isSessionHarness('grok-bot'),true);
  for(const value of ['unsupported-client','grok','GROK-BOT','',null,undefined,['grok-bot']])assert.equal(isSessionHarness(value),false);
- const store=memorySessionStore(),ingest=createSessionIngest({store});
+ const store=memorySessionStore(),ingest=createSessionIngest(withTestState({store}));
  const receipt=await ingest.putBatch(principal,batch);
  assert.equal(receipt.stored,true);
  const stored=await ingest.getBatch(principal,{...batch,batchId:receipt.batchId});
@@ -40,10 +41,10 @@ test('Grok Bot is a session harness everywhere a session is addressed, and unkno
  assert.equal(sourceBatchIdentity('capture-v1',key).harness,'grok-bot');
  assert.equal(sourceBatchIdentity('capture-v1',key.replace('/grok-bot/','/unsupported-client/')),null);
  // Owner controls address the session by the same harness.
- const controls=createControls({store,prefix:'capture-v1'});
+ const controls=createControls(withTestState({store,prefix:'capture-v1'}));
  await controls.update(principal,'sessions','grok-bot',batch.sessionId,()=>({visibility:'private',deletedAt:null}));
  assert.equal((await controls.read(principal,'sessions','grok-bot',batch.sessionId)).visibility,'private');
- await assert.rejects(controls.read(principal,'sessions','unsupported-client',batch.sessionId),/Invalid control identity/);
+ await assert.rejects(controls.read(principal,'sessions','unsupported-client',batch.sessionId),{status:400});
  // A deleted session swallows later uploads from the Bot's computer.
  await controls.update(principal,'sessions','grok-bot',batch.sessionId,current=>({visibility:current.visibility,deletedAt:new Date().toISOString()}));
  assert.equal((await ingest.putBatch(principal,{...batch,events:[{...events[0],id:'later'}]})).discarded,'session_deleted');
@@ -91,14 +92,14 @@ test('a recorded Grok Bot tool call completes the recording step; other harnesse
   [toolOnly,'grok-bot'],
   [batch,'grok-bot'],
  ]) {
-  const status=createOnboardingStatus({store:memorySessionStore()});
+  const status=createOnboardingStatus(withTestState({store:memorySessionStore()}));
   await status.session(principal,input);
   assert.equal((await status.read(principal)).session?.harness??null,expected);
  }
- const history=createOnboardingStatus({store:memorySessionStore()});
+ const history=createOnboardingStatus(withTestState({store:memorySessionStore()}));
  await history.session(principal,{...toolOnly,captureMode:'history'});
  assert.equal((await history.read(principal)).history.harness,'grok-bot');
- await assert.rejects(async()=>createOnboardingStatus({store:memorySessionStore()}).session(principal,{...batch,harness:'unsupported-client'}),/Unknown session harness/);
+ await assert.rejects(async()=>createOnboardingStatus(withTestState({store:memorySessionStore()})).session(principal,{...batch,harness:'unsupported-client'}),/Unknown session harness/);
 });
 
 test('setup guidance sends Grok Bot to its own cloud computer with the explicit harness',()=>{

@@ -193,7 +193,7 @@ async function up(){
   writeCompose();
   console.log('Starting the normal storage and workflow dependencies...');
   compose(['up','-d','--wait','--wait-timeout','600','s3',...(sqlite?[]:['opensearch']),'temporal',...(airbyteEnabled?['fixture']:[])]);
-  console.log('Building the shared product runtime and React console...');compose(['build','app']);
+  console.log('Building the shared product runtime and React console...');compose(['build','--build-arg','OPENCRAWL_SOURCE_REVISION='+run('git',['rev-parse','HEAD'],{capture:true}).trim(),'app']);
   if(airbyteEnabled)await startAirbyte(existing);
   console.log('Starting the normal authenticated application and indexing worker...');compose(['up','-d','--wait','--wait-timeout','600','app','worker']);
   if(airbyteEnabled){

@@ -3,7 +3,7 @@
 Core owns a tenant-scoped registry and durable inbox over the existing board log.
 The hosted adapter authenticates the CLI and resolves current membership on every
 request. The standalone MCP server exposes the same `/api/board/*` HTTP operations
-using its configured bearer token and SQLite board store. No terminal controller,
+using its configured bearer token and PostgreSQL application state. No terminal controller,
 PTY, hosted account, or harness launcher is part of this protocol.
 
 Install the current CLI and its `opencrawl` skill. Copy only the returned short

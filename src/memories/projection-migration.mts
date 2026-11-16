@@ -1,3 +1,4 @@
+import type {ApplicationState} from '../state/types.mjs';
 import type {ObjectStore, Principal, TenantPrincipal} from '../sessions/types.mjs';
 import type {DocumentItem, SearchDocument} from '../search/types.mjs';
 import type {createRealm} from '../search/realm.mjs';
@@ -12,7 +13,7 @@ import {activeMemoryProjectionFilter, memoryProjectionId} from './projection.mjs
 import {PASSAGE_VERSION} from '../search/passages.mjs';
 
 type Realm = Pick<ReturnType<typeof createRealm>, 'tenantId' | 'collection' | 'ensureIndex' | 'refresh'>;
-interface MigrationBinding {realm: Realm; principal: TenantPrincipal; store: ObjectStore; prefix: string}
+interface MigrationBinding {realm: Realm; principal: TenantPrincipal; state:ApplicationState;store: ObjectStore; prefix: string}
 export interface MemoryProjectionBackup {head: DocumentItem; replacementProjectionId: string; previousPassages: number; sourceSha256: string}
 function scope({realm, principal}: MigrationBinding, headId: string) {
   if (!principal?.tenantId || principal.tenantId !== realm.tenantId || principal.captureAccess !== undefined) throw Object.assign(new Error('Memory migration scope denied'), {status: 403});

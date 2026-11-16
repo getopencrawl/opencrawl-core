@@ -1,3 +1,4 @@
+import type {ApplicationState} from '../state/types.mjs';
 import type {TenantPrincipal,ObjectStore,JsonValue} from './types.mjs';
 import type {SearchRealm,DocumentItem,IndexHit} from '../search/types.mjs';
 import {createSessionIngest,digest} from './ingest.mjs';
@@ -15,8 +16,8 @@ export interface SearchContextMigrationReport {passages:number;skippedDeleted:nu
  * Older readers ignore this additive field, so rolling back code needs no data
  * rewrite. Counts include only previously unclassified passages; after is the
  * last fully checked page, and complete requires a scan with no remaining page. */
-export async function migrateSessionSearchContext({realm,principal,store,prefix,dryRun=true,pageSize=500,maxPassages=1000,sourceConcurrency=4,after=null,onPage=async()=>{}}:{
-  realm:SearchRealm;principal:TenantPrincipal;store:ObjectStore;prefix:string;
+export async function migrateSessionSearchContext({realm,principal,state,store,prefix,dryRun=true,pageSize=500,maxPassages=1000,sourceConcurrency=4,after=null,onPage=async()=>{}}:{
+  realm:SearchRealm;principal:TenantPrincipal;state:ApplicationState;store:ObjectStore;prefix:string;
   dryRun?:boolean;pageSize?:number;maxPassages?:number;sourceConcurrency?:number;after?:JsonValue[]|null;
   onPage?(report:SearchContextMigrationReport):Promise<unknown>;
 }):Promise<SearchContextMigrationReport>{
@@ -24,7 +25,7 @@ export async function migrateSessionSearchContext({realm,principal,store,prefix,
   if(!Number.isInteger(pageSize)||pageSize<1||pageSize>500||!Number.isSafeInteger(maxPassages)||maxPassages<1||maxPassages>1_000_000||
     !Number.isInteger(sourceConcurrency)||sourceConcurrency<1||sourceConcurrency>16)throw new Error('Invalid search context migration bounds');
   if(!dryRun)await realm.ensureIndex();
-  const collection=realm.collection('session'),f=collection.field,ingest=createSessionIngest({store,prefix}),controls=createControls({store,prefix});
+  const collection=realm.collection('session'),f=collection.field,ingest=createSessionIngest({state,store,prefix}),controls=createControls({state});
   const report:SearchContextMigrationReport={passages:0,skippedDeleted:0,after,complete:false};
   // Invocation-local LRU retains classifications, never raw capture bodies. All
   // source/owner and current deletion checks still run before a cache lookup.
@@ -79,7 +80,7 @@ export async function migrateSessionSearchContext({realm,principal,store,prefix,
       const results=await Promise.allSettled(sources.slice(offset,offset+sourceConcurrency).map(prepare));
       for(const result of results)if(result.status==='rejected')throw result.reason;
     }
-    if(!dryRun&&updates.length)await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:updates},async()=>{
+    if(!dryRun&&updates.length)await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:updates},async()=>{
       // Make the missing-field query observe this page before checkpoint/retry.
       await collection.bulk(principal,updates,{refresh:true});
       const actual=await collection.mget(principal,updates.map(item=>item.id)),byId=new Map(actual.docs.map(hit=>[hit._id,hit]));

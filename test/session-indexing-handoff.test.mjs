@@ -1,3 +1,4 @@
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
@@ -10,9 +11,9 @@ const snapshot={schemaVersion:1,owner,harness:'codex',installationId:'device',ho
 for(const kind of ['session','memory'])test(`${kind} handoff retries the existing durable object after dispatch failure without acknowledging it`,async()=>{
  const store=memorySessionStore(),scheduled=[];let fail=true,rawWrites=0,observed=0;
  const put=store.put;store.put=async(key,...args)=>{if(key.endsWith('.json.gz'))rawWrites++;await put(key,...args);};
- const ingest=createSessionIngest({store,prefix:'capture',scheduleIndexing:async key=>{
+ const ingest=createSessionIngest(withTestState({store,prefix:'capture',scheduleIndexing:async key=>{
   assert.ok(store.data.has(key));scheduled.push(key);if(fail)throw new Error('Temporal unavailable');
- },onStored:async()=>observed++,onMemoryStored:async()=>observed++});
+ },onStored:async()=>observed++,onMemoryStored:async()=>observed++}));
  const submit=()=>kind==='session'?ingest.putBatch(owner,batch):ingest.putMemorySnapshot(owner,snapshot);
  await assert.rejects(submit(),/Temporal unavailable/);assert.equal(observed,0);assert.equal(rawWrites,1);
  fail=false;assert.equal((await submit()).stored,true);
@@ -22,7 +23,7 @@ for(const kind of ['session','memory'])test(`${kind} handoff retries the existin
 
 test('forged capture ownership is rejected before storage or durable submission',async()=>{
  const store=memorySessionStore();let dispatched=0;
- const ingest=createSessionIngest({store,prefix:'capture',scheduleIndexing:async()=>{dispatched++;}});
+ const ingest=createSessionIngest(withTestState({store,prefix:'capture',scheduleIndexing:async()=>{dispatched++;}}));
  await assert.rejects(ingest.putBatch({...owner,tenantId:'other'},batch),e=>e.status===403);
  await assert.rejects(ingest.putMemorySnapshot({...owner,userId:'other'},snapshot),e=>e.status===403);
  assert.equal(dispatched,0);assert.equal(store.data.size,0);

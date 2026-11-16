@@ -5,15 +5,19 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomBytes,createHash} from 'node:crypto';
+import {applicationDatabaseFixture,postgresUrl} from '../../test/fixtures/application-database.mjs';
 
-// Real self-host HTTP, Better Auth and SQLite, with disposable local test objects.
-// No hosted credentials, operator environment, or external services are inherited.
+// Real self-host HTTP, Better Auth and PostgreSQL, with disposable local raw objects.
+// Only the explicitly configured test database is passed to the child process.
 let origin:string,directory:string,server:ChildProcess;
+let cleanups:Array<()=>Promise<void>>=[];
 const password='disposable browser password',email='browser@example.com',setup='browser-test-setup-token-32-characters';
 test.beforeEach(async()=>{
   directory=await mkdtemp(join(tmpdir(),'opencrawl-browser-auth-'));
+  cleanups=[];
+  const database=await applicationDatabaseFixture({after:cleanup=>cleanups.push(cleanup)});
   server=fork(new URL('../../test/fixtures/selfhost-restart-server.mjs',import.meta.url),[],{
-    env:{PATH:process.env.PATH,OPENCRAWL_RESTART_TEST:JSON.stringify({dir:directory,secret:randomBytes(32).toString('hex'),setup,browser:true})},
+    env:{PATH:process.env.PATH,OPENCRAWL_RESTART_TEST:JSON.stringify({dir:directory,secret:randomBytes(32).toString('hex'),setup,browser:true,connectionString:postgresUrl,namespace:database.namespace})},
     stdio:['ignore','ignore','pipe','ipc'],execArgv:[],
   });
   let errors='';server.stderr?.on('data',chunk=>{errors+=String(chunk);});
@@ -26,8 +30,8 @@ test.beforeEach(async()=>{
   origin='http://localhost:'+port;
 });
 test.afterEach(async()=>{
-  if(server&&server.exitCode===null&&server.signalCode===null){const exited=once(server,'exit');server.kill('SIGTERM');await exited;}
-  await rm(directory,{recursive:true,force:true});
+  try{if(server&&server.exitCode===null&&server.signalCode===null){const exited=once(server,'exit');server.kill('SIGTERM');await exited;}}
+  finally{try{for(const cleanup of cleanups.reverse())await cleanup();}finally{await rm(directory,{recursive:true,force:true});}}
 });
 
 async function signup(page:Page){

@@ -1,10 +1,6 @@
-# Audited noncredential scheduler object keys in the application-state test
-# fixture: each key concatenates schedulerRoot with a fixed storage path (one
-# also hashes the fixture source identity). These are not authentication keys.
-# Gitleaks 8.30.1 matches these four-part fingerprints exactly; retain the commit
-# prefix so later findings in the same file, rule or line remain detectable.
-# https://github.com/gitleaks/gitleaks/blob/v8.30.1/detect/detect.go
-# Keep the security workflow's whole-ref scan; do not add broader exclusions.
+# Exact historical false positives in the synthetic old-install scheduler fixture:
+# source-key expressions, retry metadata and dummy opaque listing cursors.
+# No credential or provider token was present. Current fixtures generate cursors.
 da4f9cff52c335b368353b8e36ef9e3c8ad95a01:deploy/test-full-app-state.mjs:generic-api-key:129
 da4f9cff52c335b368353b8e36ef9e3c8ad95a01:deploy/test-full-app-state.mjs:generic-api-key:130
 da4f9cff52c335b368353b8e36ef9e3c8ad95a01:deploy/test-full-app-state.mjs:generic-api-key:131

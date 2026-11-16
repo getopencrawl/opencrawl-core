@@ -122,7 +122,7 @@ routing and safe migration/cutover; it must not introduce per-feature index layo
 ## Shared application seam
 
 The single-tenant product uses Better Auth with local accounts in an operator-owned
-SQLite database. Cloud continues to use WorkOS. Both adapters expose core-owned
+PostgreSQL application database. Cloud continues to use WorkOS. Both adapters expose core-owned
 identity directory facts; provider sessions and tokens stay at their runtime boundary.
 Reusable authentication, membership, role controls, UI, Airbyte and connector
 lifecycle implementations belong in core. Hosted multi-tenant selection and
@@ -130,6 +130,25 @@ provisioning, billing, fleet operation and internal administration belong in
 shell. Source SDK names do not determine ownership. Core requires no account
 or service operated by OpenCrawl. This contract supersedes earlier hosted-only
 classification of reusable identity, integrations and product UI.
+
+PostgreSQL owns mutable server application state: identity, integrations, board
+messages and delivery, privacy and deletion controls, write admission, credentials,
+onboarding, connection bindings, capture progress and derived-index receipts.
+Callers supply the explicit `ApplicationState` interface independently of the raw
+object store. Object storage contains immutable source batches, attachments,
+memory snapshots, connector pages and verified recovery archives. It is not a
+fallback database. Optional SQLite FTS is a rebuildable search index.
+
+Temporal owns durable lifecycle and capture orchestration. Workflow arguments
+contain scoped references, while activities read current authorization and secrets
+from repositories. Desired state and queued commands commit atomically; recovery
+schedules recover committed work after process failure. Cancellation or elapsed
+time alone never proves an external writer has stopped.
+
+Application startup requires a verified source/database migration binding.
+Migration imports only while old writers are stopped, retains immutable recovery
+sources, verifies targets before readiness, and never recopies stale sources after
+cutover. See `docs/app-state-migration.md` for the supported upgrade and restore.
 
 ## React document seam
 

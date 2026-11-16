@@ -1,3 +1,7 @@
+import {setTimeout as delay} from 'node:timers/promises';
+import {createConsentProvisioning} from './consent.mjs';
+import type {IntegrationLifecycle, IntegrationCommandReference, IntegrationOperation, IntegrationStepInput, IntegrationStepResult} from './temporal/types.mjs';
+import {integrationSteps, validateIntegrationCommand} from './temporal/contracts.mjs';
 import type {SourceCard} from '../application/types.mjs';
 import {errorInfo, required} from '../errors.mjs';
 import type {Principal} from '../sessions/types.mjs';
@@ -14,14 +18,15 @@ export interface IntegrationOptions {
   backfillDays?: number; schedule?: string; oauth: ConnectorOAuth; airbyte: Airbyte; registry: Registry;
   providers: ProviderCatalog; github?: GithubApp | null; direct?: typeof directApi; now?: () => number;
   log?: Log; maintenance?: boolean; revokeInstallation?: (installationId: string) => Promise<void>;
+  lifecycle?: IntegrationLifecycle; counts?: RecordCounts; consentWaitMs?:number;
 }
 interface Secrets {apiKey?: string}
 interface StatusSnapshot {jobs: AirbyteJob[]; live: Record<string, number> | null}
 interface StatusEntry {attemptedAt: number; updatedAt?: number; value?: StatusSnapshot; pending?: Promise<void>; failed: boolean}
 type PendingSignInState = 'pending' | 'expired' | 'unavailable';
 // Product lifecycle: runtimes supply credential and infrastructure adapters.
-import {randomBytes, timingSafeEqual} from 'node:crypto';
-import {createRecordCounts} from './counts.mjs';
+import {createHash,randomBytes, timingSafeEqual} from 'node:crypto';
+import type {RecordCounts} from './counts.mjs';
 import {createProvisioning, provisioningLabel} from './provisioning.mjs';
 
 const TENANT = /^(org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/;
@@ -55,7 +60,8 @@ export function landingPrefix(provider: Provider, record: IntegrationRecord) {
 
 /**
  * Calls a provider's API directly with a key the user pasted, in the same {status, data} shape as
- * the the OAuth adapter proxy. Only used while connecting; the key is never logged or stored by the app.
+ * the OAuth adapter proxy. The key is never logged; durable provisioning stores
+ * it only in an encrypted, scoped temporary SQL handoff.
  */
 export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
   return async <T = ProviderData,>({endpoint, query = {}}: ProxyRequest) => {
@@ -69,16 +75,17 @@ export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
   };
 }
 
-export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation}: IntegrationOptions) {
+export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation, lifecycle, counts: distinct,consentWaitMs=5000}: IntegrationOptions) {
+  if(!Number.isSafeInteger(consentWaitMs)||consentWaitMs<1||consentWaitMs>10000)throw new Error('Invalid consent response deadline');
+  const consent=createConsentProvisioning({registry,oauth,resources:lifecycle?.resources});
+  const consentConfig=(provider:Exclude<Provider,GithubProvider|KeyProvider>,record:IntegrationRecord)=>({toolkit:provider.toolkit,...provider.authConfig,name:provider.authConfig.name+' '+environment+' '+record.tenantId});
   const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>}>();
   const statusCache = new Map<string, StatusEntry>();
   const statusKey = (record: IntegrationRecord) => JSON.stringify([environment, record.tenantId, record.userId, record.integrationId, record.airbyte?.connectionId]);
-  const provisioning = new Map<string, Promise<IntegrationRecord>>();
   const requireWritable = () => {
     if (maintenance) throw Object.assign(new Error('Integration maintenance is in progress. Please retry shortly.'), {status: 503, expose: true});
   };
   const durable = createProvisioning({environment, registry, airbyte, now});
-  const distinct = typeof buckets?.list === 'function' ? createRecordCounts({buckets, legacyBucket, log, now}) : null;
 
   const oauthUser = ({tenantId, userId}: Pick<Principal, 'tenantId' | 'userId'>) => `${environment}:${tenantId}:${userId}`;
   const proxyFor = (record: IntegrationRecord): Proxy => request => oauth.proxy({...request, connectedAccountId: required(record.connectedAccountId, 'connected account'), userId: oauthUser(record)});
@@ -96,27 +103,39 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
    * never blocks connecting another.
    */
   const definitions = new Map<string, Promise<string>>();
-  function definitionFor(provider: Provider, id: string) {
-    const key = `${id}:${provider.id}`;
+  function definitionFor(provider: Provider, id: string, allowCreate:boolean) {
+    const key = `${id}:${provider.id}:${allowCreate}`;
     if (!definitions.has(key)) {
       definitions.set(key, (async () => {
-        return provider.connector.docker ? dockerDefinition(id, provider.connector) : manifestDefinition(id, provider);
+        return provider.connector.docker ? dockerDefinition(id, provider.connector) : manifestDefinition(id, provider,allowCreate);
       })().catch(error => { definitions.delete(key); throw error; }));
     }
     return definitions.get(key)!;
   }
 
   /** The published declarative manifest, updated when the file changes. */
-  async function manifestDefinition(id: string, provider: Provider) {
-    const {name, manifest} = provider.connector;
-    const definition = (await airbyte.declarativeSources(id)).find(d => d.name === name);
-    if (!definition) return (await airbyte.createDeclarativeSource(id, name, manifest!)).id;
-    if (canonical(definition.manifest) !== canonical(manifest)) {
-      // A failed update keeps the published version; it must not block connecting.
-      await airbyte.updateDeclarativeSource(id, definition.id, manifest!)
-        .catch(error => log('integration.connector.update_failed', {provider: provider.id, message: errorInfo(error).message}));
+  async function manifestDefinition(id: string, provider: Provider,allowCreate:boolean) {
+    const {name,manifest}=provider.connector,resources=lifecycle?.resources;
+    const fingerprint=(value:unknown)=>createHash('sha256').update(canonical(value)).digest('hex');
+    const identity=fingerprint(['airbyte-definition',id,name]),desired=fingerprint(manifest);
+    const find=async()=>{
+      const definitions=(await airbyte.declarativeSources(id)).filter(definition=>definition.name===name);
+      if(definitions.length>1)throw Object.assign(new Error('Ambiguous connector definition'),{code:'ProvisioningRecoveryPending'});
+      return definitions[0]??null;
+    };
+    if(!resources){
+      const existing=await find();
+      if(existing&&fingerprint(existing.manifest)===desired)return existing.id;
+      throw new Error('Durable shared integration resources are not configured');
     }
-    return definition.id;
+    const definitionId=await resources.ensure({kind:'airbyte-definition',scope:id,name,fingerprint:identity},{
+      find:async()=>{const existing=await find();return existing?{id:existing.id,fingerprint:identity}:null;},
+      create:async()=>{if(!allowCreate)throw Object.assign(new Error('Legacy shared definition outcome requires reconciliation'),{code:'ProvisioningRecoveryPending'});return (await airbyte.createDeclarativeSource(id,name,manifest!)).id;},
+    });
+    return resources.ensure({kind:'airbyte-manifest',scope:id,name:definitionId,fingerprint:desired},{
+      find:async()=>{const existing=await find();return existing?.id===definitionId?{id:existing.id,fingerprint:fingerprint(existing.manifest)}:null;},
+      create:async()=>{if(!allowCreate)throw Object.assign(new Error('Legacy shared manifest outcome requires reconciliation'),{code:'ProvisioningRecoveryPending'});await airbyte.updateDeclarativeSource(id,definitionId,manifest!);return definitionId;},
+    });
   }
 
   /**
@@ -165,26 +184,23 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
         refreshing.value = {jobs, live};
         refreshing.updatedAt = now();
         refreshing.failed = false;
-        // Warm durable counts off the response path too. Their own refresh is
-        // single-flight and publishes saved measurements before any raw scan.
-        if (distinct) await distinct.get(record, providerFor(record.provider), new Set(jobs.filter(job => job.status === 'succeeded').map(job => Number(job.jobId))), {wait:0});
       }).catch(error => {
         refreshing.failed = true;
-        log('integration.status.refresh_failed', {provider: record.provider, integrationId: record.integrationId, message: errorInfo(error).message});
+        log('integration.status.refresh_failed', {provider: record.provider, integrationId: record.integrationId, status: errorInfo(error).status || null});
       }).finally(() => {refreshing.pending = undefined;});
     return refreshing;
   }
 
   /** Read-only sign-in health. A provider grant alone never completes our callback. */
-  async function pendingSignIn(record: IntegrationRecord, provider: Exclude<Provider, GithubProvider>): Promise<PendingSignInState> {
+  async function pendingSignIn(record: IntegrationRecord, provider: Exclude<Provider, GithubProvider>, fresh = false): Promise<PendingSignInState> {
     const key = JSON.stringify([environment, record.tenantId, record.userId, record.integrationId, record.connectedAccountId, provider.toolkit]);
     const cached = pendingAccountCache.get(key);
-    if (cached && performance.now() - cached.at < 15000) return cached.result;
+    if (!fresh && cached && performance.now() - cached.at < 15000) return cached.result;
     pendingAccountCache.delete(key);
     const result = Promise.resolve().then(async (): Promise<PendingSignInState> => {
       let account;
       try { account = await oauth.account(required(record.connectedAccountId, 'connected account')); }
-      catch (error) { if (errorInfo(error).status === 404) return 'unavailable'; throw error; }
+      catch (error) { if (!fresh && errorInfo(error).status === 404) return 'unavailable'; throw error; }
       if (account?.id !== record.connectedAccountId || (account.toolkit?.slug || '').toLowerCase() !== provider.toolkit
         || (account.user_id !== undefined && account.user_id !== oauthUser(record))) throw new Error('Sign-in account binding mismatch');
       if (account.is_disabled || ['FAILED', 'REVOKED', 'DELETED', 'INACTIVE'].includes(account.status)) return 'unavailable';
@@ -198,117 +214,213 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     return result;
   }
 
-  /** Local deduplication is only an optimization; durable intents fence external creates. */
-  function provision(record: IntegrationRecord, secrets: Secrets = {}) {
+  async function requestLifecycle(record: IntegrationRecord, operation: IntegrationOperation, requestedBy: string, secrets: Secrets = {}) {
     requireWritable();
-    if (provisioning.has(record.integrationId)) return Promise.reject(Object.assign(new Error('Connection setup is already running'), {status: 409}));
-    const pending = provisionRecord(record, secrets).finally(() => provisioning.delete(record.integrationId));
-    provisioning.set(record.integrationId, pending);
-    return pending;
+    if (!registry.requestLifecycle || !lifecycle) throw Object.assign(new Error('Durable integration lifecycle is not configured'), {status: 503});
+    const reference = await registry.requestLifecycle(record, operation, secrets, requestedBy);
+    // SQL already durably owns this command. Recovery must submit the same ID
+    // if Temporal is unavailable or the API process dies at this boundary.
+    try {await lifecycle.schedule(reference);}
+    catch {log('integration.lifecycle.dispatch_pending', {integrationId: record.integrationId, commandId: reference.commandId});}
+    return (await registry.get(record.tenantId, record.userId, record.integrationId))!;
   }
 
-  /** Recover any earlier create before creating the next resource or starting a sync. */
-  async function provisionRecord(record: IntegrationRecord, secrets: Secrets) {
-    requireWritable();
+  async function abandon(record:IntegrationRecord,requestedBy:string){
+    if(!registry.abandonWithLifecycle||!lifecycle)throw Object.assign(new Error('Durable consent cleanup is not configured'),{status:503});
+    const reference=await registry.abandonWithLifecycle(record,requestedBy);
+    try{await lifecycle.schedule(reference);}catch{log('integration.lifecycle.dispatch_pending',{integrationId:record.integrationId,commandId:reference.commandId});}
+  }
+  async function consentResult(record:IntegrationRecord):Promise<{redirectUrl:string}|null>{
+    if(!lifecycle||!record.lifecycleCommandId||record.lifecycleOperation!=='consent')return null;
+    const reference={environment,tenantId:record.tenantId,userId:record.userId,integrationId:record.integrationId,commandId:record.lifecycleCommandId};
+    const deadline=performance.now()+consentWaitMs;
+    do{
+      const result=await lifecycle.commands.readConsentResult(reference);if(result)return {redirectUrl:result.redirectUrl};
+      const command=await lifecycle.commands.read(reference);if(!command||command.status!=='pending')return null;
+      if(performance.now()>=deadline)break;await delay(Math.min(200,deadline-performance.now()));
+    }while(true);
+    throw Object.assign(new Error('Provider sign-in is still being prepared. Retry to continue the same request.'),{status:503,expose:true,code:'ConsentPending'});
+  }
+
+  /** One Temporal activity step. The runtime resolves current authorization and
+   * storage bindings; all external calls are fenced by the authoritative row. */
+  async function lifecycleStep(input: IntegrationStepInput, check: () => void = () => {}): Promise<IntegrationStepResult> {
+    requireWritable(); check(); validateIntegrationCommand(input);
+    if (!lifecycle || input.environment !== environment) throw Object.assign(new Error('Integration lifecycle scope denied'), {permanent: true});
+    const command = await lifecycle.commands.read(input);
+    if (!command || command.reference.environment !== environment || command.reference.tenantId !== input.tenantId
+      || command.reference.userId !== input.userId || command.reference.integrationId !== input.integrationId
+      || command.reference.commandId !== input.commandId || !integrationSteps[command.operation]?.includes(input.step)) {
+      throw Object.assign(new Error('Integration lifecycle command denied'), {permanent: true});
+    }
+    if (command.status !== 'pending') return {status: 'superseded'};
+    let record = await registry.get(input.tenantId, input.userId, input.integrationId);
+    if (!record || record.environment !== environment || record.lifecycleCommandId !== input.commandId
+      || record.lifecycleOperation !== command.operation) return {status: 'superseded'};
     const provider = providerFor(record.provider);
-    if(provider.unavailableReason)throw Object.assign(new Error(provider.unavailableReason),{status:503,expose:true});
-    record = (await registry.get(record.tenantId, record.userId, record.integrationId))!;
-    if (!ACTIVE.includes(record.status)) throw Object.assign(new Error('Connection setup is no longer authorized'), {status: 409});
-    destination.validate(record);
-    const run = randomBytes(16).toString('hex');
-    record = await registry.update(record, {status: 'provisioning', error: null, provisionRun: run, provisionVersion: randomBytes(16).toString('hex')},
-      {whenStatus: [record.status], whenFields: {provisionVersion: record.provisionVersion}});
-    const label = provisioningLabel(record);
-    let ids = {...record.airbyte};
-    const save = async (fields: Partial<IntegrationRecord>) => record = await registry.update(record, fields,
-      {whenStatus: ['provisioning'], whenFields: {provisionVersion: record.provisionVersion, provisionRun: run}});
-    let workspaceId: string;
-    async function resource(name: ResourceName, create: () => Promise<AirbyteResource>) {
-      record = await durable.ensure(record, name, workspaceId, create);
-      ids = {...record.airbyte};
-      if (record.status !== 'provisioning' || record.provisionRun !== run) {
-        if (record.status === 'disconnecting') await disconnectRecord(record);
-        throw Object.assign(new Error('Connection setup is no longer authorized'), {status: 409});
+    const save = async (fields: Partial<IntegrationRecord>, statuses = [record!.status]) => {
+      check();
+      record = await registry.update(record!, fields, {whenStatus: statuses,
+        whenFields: {lifecycleCommandId: input.commandId, resourceVersion: record!.resourceVersion, provisionVersion: record!.provisionVersion}});
+      return record;
+    };
+    const reread = async () => {
+      check();
+      const current = await registry.get(input.tenantId, input.userId, input.integrationId);
+      if (!current || current.lifecycleCommandId !== input.commandId || current.lifecycleOperation !== command.operation) return false;
+      record = current; return true;
+    };
+    const resource = async (name: ResourceName, create: () => Promise<AirbyteResource>) => {
+      if (!await reread()) return false;
+      if (record!.airbyte?.[name]) return true;
+      const workspace = required(record!.airbyteWorkspaceId, 'Airbyte workspace');
+      record = await durable.ensure(record!, name, workspace, async () => {check(); return create();});
+      return record.status === 'provisioning' && record.lifecycleCommandId === input.commandId && record.provisionRun === input.commandId;
+    };
+    if(command.operation==='consent'){
+      if(record.status!=='connecting')return {status:'superseded'};
+      if(provider.auth==='github-app'||provider.auth==='api-key')throw Object.assign(new Error('Invalid consent provider'),{permanent:true});
+      const deadline=Date.parse(record.oauthExpiresAt??record.createdAt)+(!record.oauthExpiresAt?3600000:0);
+      if(!Number.isSafeInteger(deadline)||deadline<=now()){await abandon(record,command.requestedBy);return {status:'superseded'};}
+      if(input.step==='consent-expire')return {status:'done',waitUntil:Math.min(deadline,now()+60000)};
+      if(input.step==='consent-config')record=await consent.authConfig(record,consentConfig(provider,record));
+      else{
+        if(await lifecycle.commands.readConsentResult(input))return {status:'done'};
+        const callback=new URL('/integrations/'+provider.id+'/callback',appUrl);callback.searchParams.set('integration',record.integrationId);callback.searchParams.set('state',required(record.nonce,'connection nonce'));
+        const linked=await consent.link(record,{authConfigId:required(record.authConfigId,'auth config'),userId:oauthUser(record),callbackUrl:record.oauthIntent?.callbackUrl??callback.href});
+        record=linked.record;if(!await reread())return {status:'superseded'};
+        const expiresAt=Math.min(deadline,linked.result.expires_at?Date.parse(linked.result.expires_at):now()+600000);
+        if(!linked.result.redirect_url||!Number.isSafeInteger(expiresAt)||expiresAt<=now())throw Object.assign(new Error('Retry sign-in after retiring the recovered grant'),{code:'ConsentRetryRequired'});
+        await save({oauthExpiresAt:new Date(expiresAt).toISOString()});
+        await lifecycle.commands.writeConsentResult(input,{redirectUrl:linked.result.redirect_url,expiresAt});
       }
+      return await reread()?{status:'done'}:{status:'superseded'};
     }
-    try {
+    if (command.operation === 'provision') {
+      if (record.status === 'active') return {status: 'done'};
+      if (record.status !== 'provisioning') return {status: 'superseded'};
+      if (provider.unavailableReason) throw Object.assign(new Error('Provider setup is unavailable'), {permanent: true});
+      if (input.step !== 'prepare') destination.validate(record);
+      if (input.step === 'prepare') {
+        if (record.provisionRun !== input.commandId) await save({provisionRun: input.commandId, provisionVersion: randomBytes(16).toString('hex'), error: null});
+        if (record!.provisionIntent) record = await durable.reconcile(record!);
+        if (!await reread()) return {status: 'superseded'};
+        if (provider.auth === 'api-key' && !record!.airbyte?.sourceId) {
+          // Legacy crashes cannot supply the lost temporary key. Reconcile any
+          // prior intent first, then fail before creating more resources.
+          const secret = await lifecycle.commands.readSecret(input);
+          if (!secret.apiKey) throw Object.assign(new Error('Reconnect with the provider key'), {code: 'ProvisioningKeyRequired'});
+        }
+        if (!record!.s3Prefix) {
+          if (provider.auth === 'github-app') throw Object.assign(new Error('Reconnect to confirm repository access'), {code: 'ProvisioningKeyRequired'});
+          const {label, workspace, settings} = await provider.account(proxyFor(record!), record!);
+          await save({account: label || null, workspace: workspace || null, ...(settings ? {settings} : {})});
+          await save({s3Prefix: landingPrefix(provider, record!)});
+        }
+        if (record!.s3Prefix !== landingPrefix(provider, record!)) throw Object.assign(new Error('Invalid landing scope'), {permanent: true});
+        destination.validate(record!);
+        const fields = await destination.prepare(record!);
+        if (Object.keys(fields).length) await save(fields);
+        if (!record!.airbyteWorkspaceId) await save({airbyteWorkspaceId: await workspaceIdOf()});
+        if (provider.auth !== 'github-app' && typeof provider.total === 'function' && record!.total === undefined) {
+          const secret = provider.auth === 'api-key' && !record!.airbyte?.sourceId ? await lifecycle.commands.readSecret(input) : {};
+          const proxy = provider.auth === 'api-key' ? secret.apiKey ? direct(secret.apiKey) : null : proxyFor(record!);
+          if (proxy) {
+            // Source estimates are optional display data. They run on the durable
+            // worker and cannot expose credentials or block provisioning forever.
+            let total: number | null = null;
+            try {check(); total = await provider.total(proxy, {startDate: record!.startDate, record: record!, now: now()});}
+            catch {log('integration.total.unavailable', {integrationId: record!.integrationId});}
+            if (total !== null && (!Number.isSafeInteger(total) || total < 0)) total = null;
+            if (!await reread()) return {status: 'superseded'};
+            await save({total});
+          }
+        }
+      } else if (input.step === 'destination') {
+        const settings = await destination.settings(record);
+        if (!await resource('destinationId', () => airbyte.createDestination({workspaceId: record!.airbyteWorkspaceId, name: provisioningLabel(record!), ...settings}))) return {status: 'superseded'};
+      } else if (input.step === 'source') {
+        if (record.provisionIntent) {record = await durable.reconcile(record); if (!await reread()) return {status: 'superseded'};}
+        if (!record!.airbyte?.sourceId) {
+          const secret = await lifecycle.commands.readSecret(input);
+          if (provider.auth === 'api-key' && !secret.apiKey) throw Object.assign(new Error('Reconnect with the provider key'), {code: 'ProvisioningKeyRequired'});
+          const definitionId = await definitionFor(provider, required(record.airbyteWorkspaceId, 'Airbyte workspace'),record.sharedResourceProtocol===1);
+          if (!await resource('sourceId', async () => airbyte.createSource({workspaceId: record!.airbyteWorkspaceId, name: provisioningLabel(record!), definitionId,
+            configuration: provider.auth === 'api-key' ? provider.sourceConfiguration({startDate: record!.startDate, apiKey: secret.apiKey})
+              : provider.auth === 'github-app' ? provider.sourceConfiguration({githubApp: github!.sourceSettings(), record: record!})
+                : await oauth.sourceConfiguration(record!, provider)}))) return {status: 'superseded'};
+        }
+        await lifecycle.commands.clearSecret(input);
+      } else if (input.step === 'connection') {
+        if (!await resource('connectionId', () => airbyte.createConnection({name: provisioningLabel(record!),
+          sourceId: record!.airbyte?.sourceId, destinationId: record!.airbyte?.destinationId,
+          namespaceDefinition: 'destination', schedule: {scheduleType: 'cron', cronExpression: provider.schedule || schedule}, status: 'active',
+          configurations: {streams: provider.streams}}))) return {status: 'superseded'};
+      } else if (input.step === 'activate') {
+        check(); await lifecycle.runProviderWrite(record, 'airbyte-sync', () => airbyte.sync(required(record!.airbyte?.connectionId, 'connection')).catch(error => {if (errorInfo(error).status !== 409) throw error;}));
+        if (!await reread()) return {status: 'superseded'};
+        await save({status: 'active', error: null});
+      }
+      return {status: 'done'};
+    }
+    if (command.operation === 'sync') {
+      if (!['active', 'error'].includes(record.status)) return {status: 'superseded'};
+      check(); await lifecycle.runProviderWrite(record, 'airbyte-sync', () => airbyte.sync(required(record!.airbyte?.connectionId, 'connection')).catch(error => {if (errorInfo(error).status !== 409) throw error;}));
+      if (!await reread()) return {status: 'superseded'};
+      await save({status: 'active', error: null});
+      statusCache.delete(statusKey(record!));
+      return {status: 'done'};
+    }
+    if (record.status === 'disconnected') return {status: 'done'};
+    if (!['disconnecting','abandoned'].includes(record.status)) return {status: 'superseded'};
+    const gone = (error: unknown) => {if (errorInfo(error).status !== 404) throw error;};
+    if (input.step === 'close-writers') {
+      await lifecycle.cleanup.closeWriters(record);
+    } else if (input.step === 'stop-writers') {
+      if(record.oauthIntent){
+        if(provider.auth==='github-app'||provider.auth==='api-key')throw Object.assign(new Error('Invalid consent recovery provider'),{permanent:true});
+        record=await consent.reconcile(record,consentConfig(provider,record),oauthUser(record));
+      }
       if (record.provisionIntent) record = await durable.reconcile(record);
-      ids = {...record.airbyte};
-      if (record.s3Prefix !== landingPrefix(provider, record)) throw new Error('Invalid provisioning landing scope');
-      const destinationFields = await destination.prepare(record);
-      if (Object.keys(destinationFields).length) record = await save(destinationFields);
-      workspaceId = record.airbyteWorkspaceId || await workspaceIdOf();
-      const definitionId = await definitionFor(provider, workspaceId);
-      const destinationSettings = await destination.settings(record);
-      await resource('destinationId', () => airbyte.createDestination({workspaceId, name: label, ...destinationSettings}));
-      // Key-based sources hand their key straight to Airbyte, which stores it as a secret.
-      if (provider.auth === 'api-key' && !ids.sourceId && !secrets.apiKey) {
-        throw Object.assign(new Error('Reconnect with your workspace API key to finish setup.'), {code: 'ProvisioningKeyRequired'});
+      if (!await reread()) return {status: 'superseded'};
+      const ids = record!.airbyte || {};
+      if (ids.connectionId) {check(); await airbyte.deleteConnection(ids.connectionId).catch(gone);}
+      if (ids.sourceId) {check(); await airbyte.deleteSource(ids.sourceId).catch(gone);}
+      if (ids.destinationId) {check(); await airbyte.deleteDestination(ids.destinationId).catch(gone);}
+      check(); await lifecycle.cleanup.stopWriters(record!);
+      await save({cleanupResourceVersion: record!.resourceVersion || ''});
+    } else if (input.step === 'drain-writers') {
+      try {await lifecycle.cleanup.drainWriters(record);}
+      catch (error) {
+        if ((error as {code?: string})?.code === 'EXTERNAL_WRITER_PROOF_REQUIRED') await save({cleanupBlockedReason: 'external-writer-proof-required'});
+        throw error;
       }
-      await resource('sourceId', async () => airbyte.createSource({workspaceId, name: label, definitionId, configuration: provider.auth === 'api-key'
-        ? provider.sourceConfiguration({startDate: record.startDate, apiKey: secrets.apiKey})
-        : provider.auth === 'github-app' ? provider.sourceConfiguration({githubApp: github!.sourceSettings(), record})
-        : await oauth.sourceConfiguration(record, provider)}));
-      await resource('connectionId', () => airbyte.createConnection({name: label, sourceId: ids.sourceId, destinationId: ids.destinationId,
-        namespaceDefinition: 'destination', schedule: {scheduleType: 'cron', cronExpression: provider.schedule || schedule}, status: 'active',
-        configurations: {streams: provider.streams}}));
-      record = await save({airbyte: ids});
-      await airbyte.sync(required(ids.connectionId, 'connection')).catch(error => { if (errorInfo(error).status !== 409) throw error; });
-      return await save({status: 'active'});
-    } catch (error) {
-      // Airbyte validation errors may echo the source configuration.
-      if (secrets.apiKey && error instanceof Error) error.message = error.message.replaceAll(secrets.apiKey, '[redacted]');
-      log('integration.provision.failed', {integrationId: record.integrationId, message: errorInfo(error).message});
-      // Never replace the durable resource map with a stale local snapshot after
-      // an ambiguous POST or a concurrent recovery/disconnect.
-      const failed = (await registry.get(record.tenantId, record.userId, record.integrationId))!;
-      await registry.update(failed, {status: 'error', error: failed.provisionIntent ? 'recovery' : errorInfo(error).code === 'ProvisioningKeyRequired' ? 'reconnect' : 'setup'},
-        {whenStatus: ['provisioning'], whenFields: {provisionVersion: failed.provisionVersion, provisionRun: run}})
-        .catch(failure => {if (errorInfo(failure).code !== 'ConditionalCheckFailedException') throw failure;});
-      throw error;
+      if (record!.cleanupBlockedReason) await save({cleanupBlockedReason: null});
+    } else if (input.step === 'delete-data') {
+      // Repeat drain on every retry before deleting; cancellation/age are never
+      // evidence of positive settlement of a previously dispatched remote write.
+      await lifecycle.cleanup.drainWriters(record);
+      // A scheduler admitted before closure may have finished after stop-writers.
+      // Once its receipt settles, delete its schedule again before deleting data.
+      check(); await lifecycle.cleanup.stopWriters(record);
+      check();
+      const deletedObjects = record.s3Prefix ? await buckets.deletePrefix(record.s3Bucket || legacyBucket, `${record.s3Prefix}/`) : 0;
+      check(); await lifecycle.cleanup.deleteDocuments(record);
+      await distinct?.remove(record); statusCache.delete(statusKey(record));
+      await save({deletedObjects, dataDeletedAt: new Date(now()).toISOString()});
+    } else if (input.step === 'revoke-grants') {
+      if (record.connectedAccountId) {check(); await oauth.remove(record.connectedAccountId).catch(gone);}
+      if (record.installationId && revokeInstallation) {check(); await revokeInstallation(record.installationId).catch(gone);}
+      check(); await lifecycle.commands.clearSecret(input);
+    } else if (input.step === 'finalize') {
+      await lifecycle.cleanup.drainWriters(record);
+      if (!await reread()) return {status: 'superseded'};
+      if (record!.provisionIntent || record!.oauthIntent || (record!.cleanupResourceVersion ?? '') !== (record!.resourceVersion ?? '')) return {status: 'restart'};
+      await save({status: 'disconnected', disconnectedAt: new Date(now()).toISOString()});
     }
+    return {status: 'done'};
   }
 
-  /** Stops syncing, deletes everything this connection imported, then revokes the grant. */
-  async function disconnectRecord(record: IntegrationRecord): Promise<void> {
-    requireWritable();
-    const gone = (error: unknown) => { if (errorInfo(error).status !== 404) throw error; };
-    // Revoke reads and queued writes before touching providers. Failed cleanup stays
-    // visible and retryable; setup callbacks cannot reactivate this record.
-    record = await registry.update(record, {status: 'disconnecting'}, {whenStatus: VISIBLE});
-    // A successful create may have outlived its app process. Discover its ID
-    // before the cleanup snapshot; an unresolved request cannot be declared gone.
-    if (record.provisionIntent) record = await durable.reconcile(record);
-    const {connectionId, sourceId, destinationId} = record.airbyte || {};
-    distinct?.forget(record.integrationId);
-    // Stop Airbyte before deleting its landing data. Native source workers
-    // fail their next scope check; an already-started storage write still needs
-    // the separate worker quiescence/reconciliation policy.
-    if (connectionId) await airbyte.deleteConnection(connectionId).catch(gone);
-    if (sourceId) await airbyte.deleteSource(sourceId).catch(gone);
-    if (destinationId) await airbyte.deleteDestination(destinationId).catch(gone);
-    if (connectionId) statusCache.delete(statusKey(record));
-    let deletedObjects = 0;
-    if (record.s3Prefix) deletedObjects = await buckets.deletePrefix(record.s3Bucket || legacyBucket, `${record.s3Prefix}/`);
-    if (record.connectedAccountId) await oauth.remove(required(record.connectedAccountId, 'connected account')).catch(gone);
-    // A GitHub installation can serve other applications or deployments. Only a
-    // runtime that owns the entire managed grant may revoke it on disconnect.
-    if (record.installationId && revokeInstallation) await revokeInstallation(record.installationId).catch(gone);
-    try {
-      await registry.update(record, {status: 'disconnected', disconnectedAt: new Date(now()).toISOString(), dataDeletedAt: new Date(now()).toISOString(), deletedObjects},
-        {whenStatus: ['disconnecting'], whenFields: {resourceVersion: record.resourceVersion}});
-    } catch (error) {
-      if (errorInfo(error).code !== 'ConditionalCheckFailedException') throw error;
-      const current = await registry.get(record.tenantId, record.userId, record.integrationId);
-      if (current?.status === 'disconnected') return;
-      // A resource creation returned while cleanup was running. Its durable IDs
-      // must be removed before this connection can be marked finished.
-      if (current?.status === 'disconnecting') return disconnectRecord(current);
-      throw error;
-    }
-  }
-
-  /** What the card shows. Airbyte and the OAuth adapter details never leave the server. */
   async function view(principal: Principal, record: IntegrationRecord | null, provider: Provider): Promise<SourceCard & {integrationId?: string; connectedById?: string}>  {
     const base = {provider: provider.id, name: provider.name, description: provider.description, primaryMetric: provider.primaryMetric, units: provider.units, scope: provider.scope, help: provider.help, auth: provider.auth === 'api-key' ? 'api-key' as const : 'oauth' as const, keyHelp: provider.keyHelp};
     if (!record) return provider.unavailableReason
@@ -331,9 +443,9 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       }
       return {...shown, state: 'connecting'};
     }
-    if (record.status === 'provisioning') return provisioning.has(record.integrationId) ? {...shown, state: 'syncing', synced: 0}
-      : {...shown, state: 'error', message: 'Connection setup was interrupted. Retry to recover it.'};
-    if (record.status === 'disconnecting') return {...shown, state: 'error', recoveryAction: 'disconnect', message: 'Disconnecting is not complete. Retry to finish removing this connection.'};
+    if (record.status === 'provisioning') return {...shown, state: 'syncing', synced: 0};
+    if (record.status === 'disconnecting') return {...shown, state: 'error', recoveryAction: 'disconnect', message: record.cleanupBlockedReason === 'external-writer-proof-required' ? 'Disconnected from search. Data cleanup is waiting for your operator to verify that external writers have stopped.' : 'Disconnected from search. Data cleanup is continuing safely in the background.'};
+    if(record.status==='error'&&record.lifecycleOperation==='consent')return {...shown,state:'error',recoveryAction:'connect',message:'Provider sign-in could not be prepared. Retry sign-in to continue safely.'};
     if (record.status === 'error' && record.error === 'setup') return {...shown, state: 'error', message: 'We couldn’t finish setting up this connection.'};
     if (record.status === 'error' && record.error === 'recovery') return {...shown, state: 'error', message: 'Connection setup is waiting for an earlier request to finish. Retry later; contact support if it persists.'};
     if (record.status === 'error' && record.error === 'reconnect') return {...shown, state: 'error', reconnect: true, message: `We couldn’t finish setting up ${provider.name}. Disconnect it, then connect again with your API key.`};
@@ -349,7 +461,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     // Distinct records from the bucket: Airbyte's per-sync row counts repeat every full-refresh
     // stream and every updated record. Only initial live import progress comes from Airbyte.
     const succeededSyncs = new Set(jobs.filter(j => j.status === 'succeeded').map(j => Number(j.jobId)));
-    const unique = distinct ? await distinct.get(record, provider, succeededSyncs, {wait: 0}) : null;
+    const unique = distinct ? await distinct.get(record) : null;
     const counts = !unique ? (distinct && succeededSyncs.size ? null : live) : !succeededSyncs.size && live
       ? Object.fromEntries([...new Set([...Object.keys(live), ...Object.keys(unique)])].map(s => [s, Math.max(live[s] || 0, unique[s] || 0)]))
       : unique;
@@ -384,28 +496,13 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     const s3Bucket = await teamBucket(principal);
     const stamp = new Date(now()).toISOString();
     let record: IntegrationRecord = {integrationId: integrationId(), tenantId: principal.tenantId, userId: principal.userId, ownerEmail: principal.email || null,
-      provider: provider.id, scope: provider.scope, environment, s3Bucket, provisionProtocol: 1, status: 'provisioning', account: label || null, workspace,
+      provider: provider.id, scope: provider.scope, environment, s3Bucket, provisionProtocol: 1,sharedResourceProtocol:1, status: 'provisioning', account: label || null, workspace,
       createdAt: stamp, updatedAt: stamp, startDate: new Date(now() - backfillDays * DAY).toISOString().replace(/\.\d{3}Z$/, 'Z')};
     record.s3Prefix = landingPrefix(provider, record);
-    await registry.create(record);
-    // Two admins pasting keys at once: the earliest connection wins.
-    const [first] = (await registry.listTenant(principal.tenantId)).filter(r => visible(principal, provider, r) && r.status !== 'connecting')
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.integrationId.localeCompare(b.integrationId));
-    if (first && first.integrationId !== record.integrationId) {
-      await registry.update(record, {status: 'abandoned'});
-      throw Object.assign(new Error('Already connected'), {status: 409});
-    }
-    // Answer now; Airbyte setup takes up to a minute and the card shows its setup status.
-    provision(record, {apiKey: key}).catch(async () => {
-      // Without a source, Airbyte never stored the key, so a retry can't work: ask to reconnect.
-      const failed = (await registry.get(record.tenantId, record.userId, record.integrationId))!;
-      if (failed?.status !== 'error' || failed.airbyte?.sourceId || failed.provisionIntent) return;
-      await registry.update(record, {status: 'error', error: 'reconnect'},
-        {whenStatus: ['error'], whenFields: {provisionVersion: failed.provisionVersion, provisionRun: failed.provisionRun}});
-    }).catch(error => log('integration.provision.cleanup_failed', {integrationId: record.integrationId, message: errorInfo(error).message}));
-    provider.total(api, {startDate: record.startDate})
-      .then(total => registry.update(record, {total}, {whenStatus: ACTIVE}))
-      .catch(error => log('integration.total.failed', {integrationId: record.integrationId, message: errorInfo(error).message}));
+    if (!registry.createWithLifecycle || !lifecycle) throw Object.assign(new Error('Durable integration lifecycle is not configured'), {status: 503});
+    const reference = await registry.createWithLifecycle(record, 'provision', {apiKey: key}, principal.userId);
+    try {await lifecycle.schedule(reference);}
+    catch {log('integration.lifecycle.dispatch_pending', {integrationId: record.integrationId, commandId: reference.commandId});}
     return {connected: true};
   }
 
@@ -425,7 +522,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if (expected.length !== given.length || !timingSafeEqual(expected, given)) return {ok: false, reason: 'invalid'};
     if (record.status !== 'connecting') return {ok: ACTIVE.includes(record.status), reason: 'done'};
     if (!query.get('code')) {
-      await registry.update(record, {status: 'abandoned'}, {whenStatus: ['connecting']});
+      await abandon(record,principal.userId);
       return {ok: false, reason: 'declined'};
     }
     const state = `${id}.${nonce}`;
@@ -455,42 +552,35 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     const s3Prefix = landingPrefix(provider, {...record, workspace});
     const taken = (await registry.listTenant(principal.tenantId)).some(r => r.integrationId !== record.integrationId && visible(principal, provider, r) && r.status !== 'connecting');
     if (taken) {
-      await registry.update(record, {status: 'abandoned'}, {whenStatus: ['connecting']});
+      await abandon(record,principal.userId);
       return {ok: false, reason: 'taken'};
     }
     let claimed;
-    try { claimed = await registry.update(record, {status: 'provisioning', installationId, githubRepositoryIds, account: label, workspace, s3Prefix}, {whenStatus: ['connecting']}); }
+    try { claimed = await registry.update(record, {installationId, githubRepositoryIds, account: label, workspace, s3Prefix}, {whenStatus: ['connecting']}); }
     catch (error) {
       if (errorInfo(error).code !== 'ConditionalCheckFailedException') throw error;
       const current = await registry.get(principal.tenantId, principal.userId, id);
       return {ok: !!current && ['provisioning', 'active', 'error'].includes(current.status), reason: 'done'};
     }
-    provision(claimed).catch(() => {});
+    try {await requestLifecycle(claimed, 'provision', principal.userId);}
+    catch (error) {
+      if (errorInfo(error).code !== 'ConditionalCheckFailedException') throw error;
+      const current = await registry.get(principal.tenantId, principal.userId, id);
+      return {ok: !!current && ['provisioning', 'active', 'error'].includes(current.status), reason: 'done'};
+    }
     return {ok: true, reason: 'connected'};
   }
 
-  async function resume(record: IntegrationRecord, provider: Provider) {
-    if (record.status === 'disconnecting') return disconnectRecord(record);
-    if (provisioning.has(record.integrationId)) throw Object.assign(new Error('Connection setup is already running'), {status: 409});
+  async function resume(record: IntegrationRecord, provider: Provider, requestedBy: string) {
+    if (record.status === 'disconnecting') return requestLifecycle(record, 'disconnect', requestedBy);
     if (record.error === 'reconnect' && !record.provisionIntent) throw Object.assign(new Error(`Disconnect ${provider.name}, then connect it again with your API key.`), {status: 400, expose: true});
-    if (record.status === 'provisioning' || (record.status === 'error' && ['setup', 'recovery', 'reconnect'].includes(record.error || ''))) {
-      if (!record.s3Prefix) {
-        if (provider.auth === 'github-app') throw Object.assign(new Error('Disconnect GitHub, then reconnect to confirm repository access.'), {status: 400, expose: true});
-        const {label, workspace, settings} = await provider.account(proxyFor(record), record);
-        record = await registry.update(record, {account: label || null, workspace: workspace || null, ...(settings ? {settings} : {}), provisionVersion: randomBytes(16).toString('hex')},
-          {whenStatus: ['error', 'provisioning'], whenFields: {provisionVersion: record.provisionVersion, provisionRun: record.provisionRun}});
-        record = await registry.update(record, {s3Prefix: landingPrefix(provider, record), provisionVersion: randomBytes(16).toString('hex')},
-          {whenStatus: ['error', 'provisioning'], whenFields: {provisionVersion: record.provisionVersion, provisionRun: record.provisionRun}});
-      }
-      return provision(record);
-    }
-    statusCache.delete(statusKey(record));
-    await airbyte.sync(required(record.airbyte?.connectionId, 'connection')).catch(error => { if (errorInfo(error).status !== 409) throw error; });
-    if (record.status === 'error') await registry.update(record, {status: 'active', error: null}, {whenStatus: ['error']});
+    if (record.status === 'provisioning' || (record.status === 'error' && ['setup', 'recovery'].includes(record.error || ''))) return requestLifecycle(record, 'provision', requestedBy);
+    return requestLifecycle(record, 'sync', requestedBy);
   }
 
   return {
     providers: () => Object.values(providers),
+    lifecycleStep,
 
     /** Recover one explicitly scoped record; fleet discovery belongs to the runtime. */
     async recoverRecord(record: IntegrationRecord) {
@@ -503,7 +593,11 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       if (current.environment !== environment || current.provider !== record.provider || current.tenantId !== record.tenantId || current.userId !== record.userId || current.integrationId !== record.integrationId) throw new Error('Invalid provisioning recovery scope');
       if (current.status !== 'provisioning' && current.status !== 'disconnecting'
         && !(current.status === 'error' && ['setup', 'recovery'].includes(current.error || ''))) return;
-      return resume(current, providers[current.provider]);
+      // Compatibility recovery only resubmits the already authorized SQL command.
+      if (!lifecycle || !current.lifecycleCommandId) throw Object.assign(new Error('Migrate this integration lifecycle before recovery'), {status: 503});
+      const reference: IntegrationCommandReference = {environment, tenantId: current.tenantId, userId: current.userId, integrationId: current.integrationId, commandId: current.lifecycleCommandId};
+      const command = await lifecycle.commands.read(reference);
+      if (command?.status === 'pending') await lifecycle.schedule(reference);
     },
 
     async list(principal: Principal): Promise<Array<SourceCard & {integrationId?: string; connectedById?: string}>> {
@@ -513,7 +607,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
         const live = records.filter(r => visible(principal, provider, r));
         const record = newest(live.filter(r => r.status !== 'connecting')) || newest(live);
         return view(principal, record, provider).catch(error => {
-          log('integration.status.failed', {provider: provider.id, message: errorInfo(error).message});
+          log('integration.status.failed', {provider: provider.id, status: errorInfo(error).status || null});
           return {provider: provider.id, name: provider.name, description: provider.description, units: provider.units, scope: provider.scope, help: provider.help, auth: provider.auth === 'api-key' ? 'api-key' as const : 'oauth' as const, keyHelp: provider.keyHelp, state: 'unavailable' as const};
         });
       }));
@@ -528,6 +622,17 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       const provider = providerFor(providerId);
       if(provider.unavailableReason)throw Object.assign(new Error(provider.unavailableReason),{status:503,expose:true});
       const live = (await registry.listTenant(principal.tenantId)).filter(r => visible(principal, provider, r));
+      const ownConsent=live.find(r=>r.userId===principal.userId&&r.status==='connecting'&&r.lifecycleOperation==='consent');
+      if(ownConsent){
+        // A cached redirect may outlive the provider's exact grant. A fresh,
+        // positively bound terminal response permits replacement; an outage,
+        // missing account or binding mismatch leaves the accepted intent intact.
+        const terminal=ownConsent.connectedAccountId&&provider.auth!=='github-app'
+          ? await pendingSignIn(ownConsent,provider,true)!=='pending' : false;
+        if(!terminal){const prepared=await consentResult(ownConsent);if(prepared)return prepared;}
+        await abandon(ownConsent,principal.userId);live.splice(live.indexOf(ownConsent),1);
+      }
+      for(const failed of live.filter(r=>r.userId===principal.userId&&r.status==='error'&&r.lifecycleOperation==='consent')){await abandon(failed,principal.userId);live.splice(live.indexOf(failed),1);}
       if (live.some(r => r.status !== 'connecting')) throw Object.assign(new Error('Already connected'), {status: 409});
       // Team-wide sources land under the OpenCrawl organization.
       if (provider.teamOnly && !ORG.test(principal.tenantId)) throw Object.assign(new Error(`Connect ${provider.name} from your team’s OpenCrawl organization.`), {status: 400, expose: true});
@@ -535,22 +640,22 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       // The team bucket exists before anyone signs in, so setup can't fail on it later.
       const s3Bucket = await teamBucket(principal);
       const record: IntegrationRecord = {integrationId: integrationId(), tenantId: principal.tenantId, userId: principal.userId, ownerEmail: principal.email || null,
-        provider: provider.id, scope: provider.scope, environment, s3Bucket, provisionProtocol: 1, status: 'connecting', nonce: randomBytes(24).toString('base64url'),
+        provider: provider.id, scope: provider.scope, environment, s3Bucket, provisionProtocol: 1,sharedResourceProtocol:1, status: 'connecting', nonce: randomBytes(24).toString('base64url'),
         createdAt: new Date(now()).toISOString(), startDate: new Date(now() - backfillDays * DAY).toISOString().replace(/\.\d{3}Z$/, 'Z')};
-      for (const mine of live.filter(r => r.userId === principal.userId)) await registry.update(mine, {status: 'abandoned'}, {whenStatus: ['connecting']}).catch(() => {});
+      for (const mine of live.filter(r => r.userId === principal.userId)) await abandon(mine,principal.userId);
       if (provider.auth === 'github-app') {
         if (!github) throw Object.assign(new Error('GitHub isn’t available yet.'), {status: 503, expose: true});
         // OAuth also returns when the app was already installed for this account.
         await registry.create({...record, updatedAt: record.createdAt});
         return {redirectUrl: github.authorizeUrl(`${record.integrationId}.${record.nonce}`, new URL('/integrations/github/callback', appUrl).href)};
       }
-      const authConfigId = await oauth.authConfig({toolkit: provider.toolkit, ...provider.authConfig});
-      const callback = new URL(`/integrations/${provider.id}/callback`, appUrl);
-      callback.searchParams.set('integration', record.integrationId);
-      callback.searchParams.set('state', record.nonce!);
-      const link = await oauth.link({authConfigId, userId: oauthUser(record), callbackUrl: callback.href});
-      await registry.create({...record, connectedAccountId: link.connected_account_id, authConfigId, updatedAt: record.createdAt});
-      return {redirectUrl: link.redirect_url};
+      if(!registry.createWithLifecycle||!lifecycle)throw Object.assign(new Error('Durable consent setup is not configured'),{status:503});
+      const reference=await registry.createWithLifecycle({...record,oauthExpiresAt:new Date(now()+3600000).toISOString()},'consent',{},principal.userId);
+      try{await lifecycle.schedule(reference);}catch{log('integration.lifecycle.dispatch_pending',{integrationId:record.integrationId,commandId:reference.commandId});}
+      const current=await registry.get(record.tenantId,record.userId,record.integrationId);
+      const prepared=current?await consentResult(current):null;
+      if(!prepared)throw Object.assign(new Error('Provider sign-in could not be prepared. Retry to continue safely.'),{status:503,expose:true});
+      return prepared;
     },
 
     /**
@@ -572,40 +677,24 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       if (expected.length !== given.length || !timingSafeEqual(expected, given)) return {ok: false, reason: 'invalid'};
       if (query.get('connected_account_id') && query.get('connected_account_id') !== record.connectedAccountId) return {ok: false, reason: 'invalid'};
       if (query.get('status') === 'failed') {
-        await registry.update(record, {status: 'abandoned'}, {whenStatus: ['connecting']});
+        await abandon(record,principal.userId);
         return {ok: false, reason: 'declined'};
       }
       const account = await oauth.account(required(record.connectedAccountId, 'connected account'));
-      if (account?.status !== 'ACTIVE' || account.is_disabled || (account.toolkit?.slug || '').toLowerCase() !== provider.toolkit) return {ok: false, reason: 'declined'};
+      if (account?.id !== record.connectedAccountId || account.status !== 'ACTIVE' || account.is_disabled || (account.user_id !== undefined && account.user_id !== oauthUser(record)) || (account.toolkit?.slug || '').toLowerCase() !== provider.toolkit) return {ok: false, reason: 'declined'};
       if (provider.scope === 'team') {
         const taken = (await registry.listTenant(principal.tenantId)).some(r => r.integrationId !== record.integrationId && visible(principal, provider, r) && r.status !== 'connecting');
         if (taken) {
-          await oauth.remove(required(record.connectedAccountId, 'connected account')).catch(() => {});
-          await registry.update(record, {status: 'abandoned'}, {whenStatus: ['connecting']});
+          await abandon(record,principal.userId);
           return {ok: false, reason: 'taken'};
         }
       }
-      let claimed;
-      try { claimed = await registry.update(record, {status: 'provisioning'}, {whenStatus: ['connecting']}); }
-      catch (error) { if (errorInfo(error).code === 'ConditionalCheckFailedException') return {ok: true, reason: 'done'}; throw error; }
-      const proxy = proxyFor(claimed);
-      try {
-        // `settings` is what the source needs beyond the grant (Circleback's Workspace folder).
-        const {label, workspace, settings} = await provider.account(proxy, claimed);
-        claimed = await registry.update(claimed, {account: label || null, workspace: workspace || null, ...(settings ? {settings} : {})}, {whenStatus: ['provisioning']});
-        claimed = await registry.update(claimed, {s3Prefix: landingPrefix(provider, claimed)}, {whenStatus: ['provisioning']});
-      } catch (error) {
-        log('integration.account.failed', {integrationId: claimed.integrationId, message: errorInfo(error).message});
-        if (errorInfo(error).code === 'ConditionalCheckFailedException') return {ok: false, reason: 'done'};
-        await registry.update(claimed, {status: 'error', error: 'setup'}, {whenStatus: ['provisioning']});
-        return {ok: true, reason: 'connected'};
+      try {await requestLifecycle(record, 'provision', principal.userId);}
+      catch (error) {
+        if (errorInfo(error).code !== 'ConditionalCheckFailedException') throw error;
+        const current = await registry.get(principal.tenantId, principal.userId, id);
+        return {ok: !!current && ['provisioning', 'active', 'error'].includes(current.status), reason: 'done'};
       }
-      // Counting can take a few calls; the card shows "of N" once it lands.
-      provider.total(proxy, {startDate: claimed.startDate, now: now(), record: claimed})
-        .then(total => registry.update(claimed, {total}, {whenStatus: ACTIVE}))
-        .catch(error => log('integration.total.failed', {integrationId: claimed.integrationId, message: errorInfo(error).message}));
-      // Setup runs in the background; the card shows progress and any failure.
-      provision(claimed).catch(() => {});
       return {ok: true, reason: 'connected'};
     },
 
@@ -616,14 +705,14 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       const record = await current(principal, provider);
       if (!record || record.status === 'connecting') throw Object.assign(new Error('Not connected'), {status: 404});
       if(provider.unavailableReason&&record.status!=='disconnecting')throw Object.assign(new Error(provider.unavailableReason),{status:503,expose:true});
-      return resume(record, provider);
+      return resume(record, provider, principal.userId);
     },
 
     /** Stops syncing, deletes the imported data and revokes the grant. */
     async disconnect(principal: Principal, providerId: string) {
       requireWritable();
       const record = await current(principal, providerFor(providerId));
-      if (record) await disconnectRecord(record);
+      if (record) await requestLifecycle(record, 'disconnect', principal.userId);
     },
 
     /** Disconnects every live connection this user can see: their own and the team's. Returns how many. */
@@ -631,7 +720,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       requireWritable();
       const records = (await registry.listTenant(principal.tenantId))
         .filter(r => VISIBLE.includes(r.status) && (r.userId === principal.userId || providers[r.provider]?.scope === 'team'));
-      for (const record of records) await disconnectRecord(record);
+      for (const record of records) await requestLifecycle(record, 'disconnect', principal.userId);
       return records.length;
     },
   };

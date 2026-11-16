@@ -1,3 +1,4 @@
+import type {ApplicationState} from '../state/types.mjs';
 import type {TenantPrincipal,JsonValue,ObjectStore,SessionBatch} from './types.mjs';
 import type {DocumentItem,IndexHit,SearchDocument} from '../search/types.mjs';
 import type {createRealm} from '../search/realm.mjs';
@@ -18,15 +19,15 @@ export interface PassageMigrationReport {events:number; passages:number; skipped
  * one session, so the runtime can keep it inside that session's deletion root.
  * Checkpoint after complete pages; replay uses the preserved first backup.
  * Raw captures, event ledgers and ingest receipts are never rewritten. */
-export async function migrateSessionPassages({realm,principal,store,prefix,backup,onPage=async()=>{},dryRun=true,pageSize=100,after=null,maxEvents=Infinity,eventIdRange}: {
-  realm:Realm;principal:TenantPrincipal;store:ObjectStore;prefix:string;backup(step:PassageMigrationStep):Promise<unknown>;
+export async function migrateSessionPassages({realm,principal,state,store,prefix,backup,onPage=async()=>{},dryRun=true,pageSize=100,after=null,maxEvents=Infinity,eventIdRange}: {
+  realm:Realm;principal:TenantPrincipal;state:ApplicationState;store:ObjectStore;prefix:string;backup(step:PassageMigrationStep):Promise<unknown>;
   onPage?(report:PassageMigrationReport):Promise<unknown>;dryRun?:boolean;pageSize?:number;after?:JsonValue[]|null;maxEvents?:number;eventIdRange?:{gte?:string;lt?:string};
 }):Promise<PassageMigrationReport>{
   if(!principal?.tenantId||principal.tenantId!==realm.tenantId||principal.captureAccess!==undefined)throw Object.assign(new Error('Realm scope denied'),{status:403});
   if(!Number.isInteger(pageSize)||pageSize<1||pageSize>100||!(maxEvents>0))throw new Error('Invalid migration bounds');
   if(eventIdRange&&(!Object.keys(eventIdRange).length||Object.entries(eventIdRange).some(([k,v])=>!['gte','lt'].includes(k)||typeof v!=='string'||!v.length||v.length>200)||eventIdRange.gte&&eventIdRange.lt&&eventIdRange.gte>=eventIdRange.lt))throw new Error('Invalid event ID partition');
   if(!dryRun)await realm.ensureIndex();
-  const collection=realm.collection('session'),f=collection.field,controls=createControls({store,prefix});
+  const collection=realm.collection('session'),f=collection.field,controls=createControls({state});
   const report:PassageMigrationReport={events:0,passages:0,skippedDeleted:0,after,complete:false};
   const sessionKey=(d:SearchDocument)=>JSON.stringify([d.userId,d.harness,d.sessionId]);
   const eventKey=(d:SearchDocument)=>JSON.stringify([d.userId,d.harness,d.sessionId,d.eventId]);
@@ -82,7 +83,7 @@ export async function migrateSessionPassages({realm,principal,store,prefix,backu
         }
       }
       const changed=previous.filter(x=>needed.has(x.document.eventId!)),replacementIds=replacements.map(x=>x.id),replacementSet=new Set(replacementIds),retired=changed.map(x=>x.id).filter(id=>!replacementSet.has(id));
-      if(!dryRun)await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:changed},async()=>{
+      if(!dryRun)await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:changed},async()=>{
         const current=await controls.read(owner,'sessions',sample.harness!,sample.sessionId!);
         if(current?.deletedAt)throw Object.assign(new Error('Deleted session cannot be reindexed'),{status:403,writeOutcome:'not-applied'});
         await backup({previous:changed,replacementIds});
@@ -112,14 +113,14 @@ export async function migrateSessionPassages({realm,principal,store,prefix,backu
 
 /** Drain indexing/visibility writes before rollback. Current privacy wins over
  * the backup; deletion fences prevent restoration of a deleted session. */
-export async function restoreSessionPassages({realm,principal,store,prefix,steps}: {
-  realm:Realm;principal:TenantPrincipal;store:ObjectStore;prefix:string;steps:PassageMigrationStep[];
+export async function restoreSessionPassages({realm,principal,state,prefix,steps}: {
+  realm:Realm;principal:TenantPrincipal;state:ApplicationState;store:ObjectStore;prefix:string;steps:PassageMigrationStep[];
 }){
   if(principal?.tenantId!==realm.tenantId||principal.captureAccess!==undefined)throw Object.assign(new Error('Realm scope denied'),{status:403});
-  const collection=realm.collection('session'),controls=createControls({store,prefix});let restored=0;
+  const collection=realm.collection('session'),controls=createControls({state});let restored=0;
   for(const step of [...steps].reverse()){
     if(!step.previous.length)throw new Error('Missing rollback ownership evidence');
-    await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:step.previous},async()=>{
+    await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:step.previous},async()=>{
       for(const item of step.previous){
         const d=item.document,control=await controls.read({tenantId:principal.tenantId,userId:d.userId!},'sessions',d.harness!,d.sessionId!);
         await collection.bulk(principal,[{id:item.id,document:{...d,private:control?.visibility==='private'}}]);restored++;

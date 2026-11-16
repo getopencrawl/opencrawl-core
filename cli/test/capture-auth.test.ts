@@ -1,3 +1,4 @@
+import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {createServer,type IncomingMessage} from 'node:http';
 import {mkdtempSync,readFileSync,writeFileSync,readdirSync,rmSync} from 'node:fs';
@@ -12,7 +13,7 @@ import {hash} from '../src/capture/parse.ts';
 test('capture pins queued data to its original team and human before any attachment upload',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-capture-auth-')),saved={...process.env};
  let principal={tenantId:'personal:alice',userId:'alice',name:'Alice',email:'alice@example.net'},authorized=true,loseResponse=true;
- const token='capture-auth-test-token',store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest({store});
+ const token='capture-auth-test-token',store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest(withTestState({store}));
  const payloads:string[]=[],attachmentAuthors:string[]=[];
  let duringIdentity:(()=>void)|undefined;
  const handler=createCaptureHandler({ingest,authenticate:async (req:IncomingMessage)=>{

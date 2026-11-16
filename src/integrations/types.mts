@@ -15,8 +15,15 @@ export interface IntegrationRecord {
   airbyteLandingMode?: string; airbyteMigration?: AirbyteMigration | null;
   connectedAccountId?: string; authConfigId?: string; installationId?: string; nonce?: string;
   githubRepositoryIds?: number[];
-  provisionIntent?: ProvisionIntent | null; provisionProtocol?: number; provisionRun?: string;
+  provisionIntent?: ProvisionIntent | null; provisionProtocol?: number; sharedResourceProtocol?:1; provisionRun?: string;
   provisionVersion?: string; resourceVersion?: string; error?: string | null;
+  lifecycleCommandId?: string; lifecycleOperation?: 'provision' | 'disconnect' | 'sync' | 'consent';
+  oauthIntent?: {resource:'auth-config'|'link';attemptId:string;requestedAt:string;callbackUrl?:string;config?:{toolkit:string;name:string;scheme?:string}}|null;
+  oauthLinkAttemptId?:string;
+  oauthVersion?:string;
+  oauthExpiresAt?:string;
+  cleanupResourceVersion?: string;
+  cleanupBlockedReason?: 'external-writer-proof-required' | null;
   disconnectedAt?: string; dataDeletedAt?: string | null; deletedObjects?: number;
   settings?: {folderId?: string | number};
 }

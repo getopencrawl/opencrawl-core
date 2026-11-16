@@ -1,6 +1,6 @@
 import type {Principal, Authenticate, HttpHandler} from '../sessions/types.mjs';
 import {parseJson} from '../sessions/types.mjs';
-import type {SearchAdapter, Passage} from './types.mjs';
+import type {SearchAdapter} from './types.mjs';
 import type {WorkspaceHit} from './presentation.mjs';
 interface WorkspaceOptions {sessions?: SearchAdapter & {memories?: SearchAdapter}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
 interface SearchCursor {fingerprint?: string; expires: number; offset: number}

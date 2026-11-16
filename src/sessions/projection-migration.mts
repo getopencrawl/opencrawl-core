@@ -1,3 +1,4 @@
+import type {ApplicationState} from '../state/types.mjs';
 import type {TenantPrincipal, JsonValue, ObjectStore, SessionBatch} from './types.mjs';
 import type {DocumentItem, SearchDocument} from '../search/types.mjs';
 import type {createRealm} from '../search/realm.mjs';
@@ -13,8 +14,8 @@ export interface SessionProjectionBackup {previous: DocumentItem[]}
 /** Repair only the derived projection; raw captures, event IDs, ledgers and
  * receipts stay intact. Deploy the fixed worker before running this migration.
  * Back up each page before mutation. A crash repeats the page idempotently. */
-export async function migrateSessionProjection({realm, principal, store, prefix, backup, dryRun=false, pageSize=100, after=null, onPage=async()=>{}}: {
-  realm: Realm; principal: TenantPrincipal; store: ObjectStore; prefix: string;
+export async function migrateSessionProjection({realm, principal, state, store, prefix, backup, dryRun=false, pageSize=100, after=null, onPage=async()=>{}}: {
+  realm: Realm; principal: TenantPrincipal; state:ApplicationState;store: ObjectStore; prefix: string;
   backup(step: SessionProjectionBackup): Promise<unknown>; dryRun?: boolean; pageSize?: number; after?: JsonValue[] | null;
   onPage?(report: SessionProjectionReport): Promise<unknown>;
 }): Promise<SessionProjectionReport> {
@@ -79,7 +80,7 @@ export async function migrateSessionProjection({realm, principal, store, prefix,
     const cursor=hits.at(-1)?.sort;
     if(!cursor||JSON.stringify(cursor)===JSON.stringify(report.after))throw new Error('Session projection scan returned no advancing cursor');
     if(!dryRun&&previous.length) {
-      await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:previous},async()=>{
+      await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:previous},async()=>{
       await backup({previous});
       // Each replacement is at most one 16k text chunk; cap bulk size separately.
       for(const item of writes)await sessions.bulk(principal,[{...item,policy:'session-projection'}]);
@@ -91,12 +92,12 @@ export async function migrateSessionProjection({realm, principal, store, prefix,
 }
 
 /** Restore saved pages in reverse, using only the tenant they were saved for. */
-export async function restoreSessionProjection({realm,principal,store,prefix,steps}: {realm: Realm; principal: TenantPrincipal; store:ObjectStore; prefix:string; steps: SessionProjectionBackup[]}) {
+export async function restoreSessionProjection({realm,principal,state,prefix,steps}: {realm: Realm; principal: TenantPrincipal; state:ApplicationState;store:ObjectStore; prefix:string; steps: SessionProjectionBackup[]}) {
   if(!principal?.tenantId||principal.tenantId!==realm.tenantId||principal.captureAccess!==undefined)throw Object.assign(new Error('Realm scope denied'),{status:403});
   let restored=0;
   for(const step of [...steps].reverse())for(const item of step.previous) {
     if(item.document.tenantId!==principal.tenantId)throw new Error('Backup scope denied');
-    await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:[item]},()=>realm.collection('session').bulk(principal,[item]));restored++;
+    await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:[item]},()=>realm.collection('session').bulk(principal,[item]));restored++;
   }
   return {restored};
 }

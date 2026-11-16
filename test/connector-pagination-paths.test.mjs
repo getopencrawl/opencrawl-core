@@ -12,27 +12,11 @@ const standalone = async scenario => JSON.parse((await promisify(execFile)(proce
   '--experimental-vm-modules', fileURLToPath(new URL('./fixtures/connector-pagination-paths.mjs', import.meta.url)), '--standalone-fixture', scenario,
 ], {timeout: 15000})).stdout);
 
-test('actual standalone entrypoint rejects empty S3 A/B cycles without refresh or success output', async () => {
-  const result = await standalone('cycle');
-  assert.deepEqual(result.error, {name: 'SourcePaginationError', code: 'cycle', message: 'Source pagination cursor cycle detected'});
-  assert.deepEqual(result.cursors, [null, 'A', 'B']);
-  assert.equal(result.refreshes, 0); assert.deepEqual(result.receipts, []); assert.deepEqual(result.output, []);
-});
-
-test('actual standalone entrypoint advances empty/filtered pages and processes terminal objects sequentially', async () => {
-  const result = await standalone('healthy');
-  assert.equal(result.error, undefined); assert.deepEqual(result.cursors, [null, 'A', 'B']);
-  assert.deepEqual(result.reads, result.keys); assert.equal(result.maxSearching, 1);
-  assert.equal(result.documents, 2); assert.equal(result.receipts.length, 2);
-  assert.equal(result.refreshes, 1); assert.deepEqual(result.output, [{objects: 2, records: 2}]);
-});
-
-test('actual standalone entrypoint stops on the first object failure before later objects/pages', async () => {
-  const result = await standalone('fail-fast');
-  assert.equal(result.error.message, 'fixture search rejection');
-  assert.deepEqual(result.reads, result.keys.slice(0, 2)); assert.equal(result.maxSearching, 1);
-  assert.equal(result.lists, 1); assert.equal(result.documents, 1); assert.equal(result.receipts.length, 1);
-  assert.equal(result.refreshes, 0); assert.deepEqual(result.output, []);
+test('actual standalone indexing entrypoint submits only references and closes its Temporal client',async()=>{
+  const result=await standalone('submit');assert.equal(result.closed,1);assert.equal(result.requests.length,1);
+  assert.equal(result.requests[0][0],'indexConnectorV1');
+  assert.deepEqual(result.requests[0][1].args,[{tenantId:'fixture-team',connectionId:'fixture-conn',generation:'v1'}]);
+  assert.equal(result.output[0].submitted,true);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_CONFIG/);
 });
 
 for (const provider of ['granola', 'circleback', 'notion']) {

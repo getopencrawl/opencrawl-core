@@ -6,6 +6,9 @@ start a second clone with newly generated credentials. `./deploy/up.sh` and
 `./dev/up` automatically coordinate upgrades of an existing full application.
 Use the same startup options as before. Search backend changes remain a separate
 migration; an upgrade does not switch an existing index.
+The application-state transition from published `v0.4.1` is documented in
+[Application-state migration](app-state-migration.md), including the preserved
+identity, privacy, credential and pending-work invariants.
 
 An operator's agent can inspect and run the same operation directly. The shell
 wrapper downloads and verifies the same pinned Node runtime as normal startup;
@@ -63,7 +66,22 @@ copied transactionally and verified row for row, including its database UUID
 and deletion records. No source volume is automatically deleted.
 
 Next, event-ledger migration scans the retained object store, using per-session
-commits for restartability. The app and worker must pass their normal health
+commits for restartability. The application-state migrator checks the original
+source binding, imports SQLite identity and integration records plus mutable
+object-store state into PostgreSQL, and verifies its receipts before allowing
+any new application writer to start. The original SQLite files and object-store
+records remain available for matched rollback. An interrupted upgrade resumes
+the same source and backup; a later release verifies the existing binding and
+never recopies stale legacy state over new writes. Fresh installations run the
+same state readiness gate against a verified empty source.
+
+Stop and confirm retirement of every external old-image writer before this
+transition, including migration and reindex jobs, admin processes and workers
+outside the owned Compose project. Updating a deployment pin only prevents new
+jobs; it does not drain jobs already running. The automated upgrader controls
+its own Compose services and cannot certify that external writers have stopped.
+
+The app and worker must pass their normal health
 checks. For `dev/up`, its normal installer also resumes Airbyte and republishes
 the app endpoint. Owned Airbyte destinations and the built-in demo source move
 from transient container IPs to stable private service names; startup refreshes
@@ -75,7 +93,7 @@ old binaries against partly migrated storage.
 
 ## Restore a matched recovery point
 
-A rollback to JSON-era code requires the whole pre-upgrade recovery point.
+A rollback to SQLite/object-state or JSON-era code requires the whole pre-upgrade recovery point.
 Restoring discards subsequent work if you choose to replace the live installation;
 preserve that newer data separately first. This tool never deletes it for you.
 
@@ -106,7 +124,18 @@ Custom writable bind mounts, external Compose overlays and installations from
 the removed fixed-identity distribution require an explicitly reviewed migration;
 the automated upgrader refuses to guess their ownership or backup coverage.
 
-CI starts immutable older full applications for both startup paths and both
+Ordinary `node deploy/backup.mjs create /private/new-recovery-directory` backups
+use this same matched recovery engine, including immutable images and every
+recorded store. They restart the exact original containers after the cold copy,
+including after an archive failure; `--leave-stopped` keeps them stopped.
+`node deploy/backup.mjs restore /private/recovery-directory` dispatches to the
+matched restore tool. Format 1 backups created by earlier releases remain
+readable only with their exact recorded source revision; they do not contain
+immutable images and cannot provide the stronger format 2 recovery guarantee.
+
+CI starts published `v0.4.1` (`fc748cbcba9da2c9830d842b38a2fcc19c340bd7`)
+for both startup paths and both search engines, alongside immutable older
+applications for both startup paths and both
 pre-PostgreSQL and dedicated-PostgreSQL layouts. It checks existing account and
 OAuth identity, search and board persistence, idempotent event retry, conflicting
 event rejection, new writes, failure/resume, restart, and matched old-version
@@ -115,5 +144,5 @@ evicts a disposable old image to verify exact-ID recovery without replacing the
 new tag. The legacy OpenSearch case also reproduces the old 413 rejection with
 125,000 retained event IDs, accepts the next 1,000 after migration, and verifies
 capture and authenticated tail search for a message larger than 6 MiB. Fresh full-application checks cover x64, ARM64 and the SQLite profile. The
-explicit full-Airbyte workflow also upgrades an older default installation and
+required full-Airbyte upgrade job also upgrades the published default installation and
 checks its retained connector, new Airbyte syncs after upgrade and restore, and the source-to-search path.

@@ -15,6 +15,7 @@ function fixture(t){
   // Upgrade behavior has its own stateful acceptance suite; this fixture isolates backend selection.
   writeFileSync(join(root,'deploy/upgrade.mjs'),"import{appendFileSync}from'node:fs';appendFileSync(process.env.TEST_COMMAND_LOG,JSON.stringify(['upgrade',...process.argv.slice(2)])+'\\n');\n");
   writeFileSync(join(root,'dev/up'),'#!/bin/sh\nprintf \"%s\\n\" \"$TEST_NODE_RUNTIME\"\n',{mode:0o755});
+  writeFileSync(join(root,'bin/git'),'#!/bin/sh\nprintf \"%040d\\n\" 1\n',{mode:0o755});
   const log=join(root,'calls');
   writeFileSync(join(root,'bin/docker'),`#!${process.execPath}\nconst fs=require('node:fs'),args=process.argv.slice(2);fs.appendFileSync(process.env.TEST_LOG,args.join(' ')+'\\n');fs.appendFileSync(process.env.TEST_COMMAND_LOG,JSON.stringify(args)+'\\n');
 if(args[0]==='inspect')process.exit(1);
@@ -63,7 +64,7 @@ for(const args of [['--sqlite','--no-airbyte'],['--no-airbyte','--sqlite']])test
   const saved=readFileSync(path,'utf8');assert.match(saved,/^COMPOSE_FILE=compose.yaml:compose.sqlite.yaml$/m);
   assert.doesNotMatch(f.log(),/compose up/);
   const resume=f.deploy(['--no-airbyte']);assert.equal(resume.status,0,resume.stderr);
-  assert.match(f.log(),/compose build app/);assert.match(f.log(),/compose up -d --no-build --wait/);assert.equal(readFileSync(path,'utf8'),saved);
+  assert.match(f.log(),/compose build --build-arg OPENCRAWL_SOURCE_REVISION=0{39}1 app/);assert.match(f.log(),/compose up -d --no-build --wait/);assert.equal(readFileSync(path,'utf8'),saved);
   const explicit=f.deploy(args);assert.equal(explicit.status,0,explicit.stderr);assert.equal(readFileSync(path,'utf8'),saved);
 });
 
@@ -82,7 +83,7 @@ test('deployment builds its shared image once before starting services and recor
   const f=fixture(t);assert.equal(f.deploy(['--no-airbyte']).status,0);f.env.TEST_REJECT_SHARED_BUILD='1';
   const result=f.deploy(['--no-airbyte','--scale','worker=2','--no-recreate','app','worker']);assert.equal(result.status,0,result.stderr);
   assert.deepEqual(f.commands().slice(0,4),[
-    ['upgrade','--automatic'],['compose','build','app'],
+    ['upgrade','--automatic'],['compose','build','--build-arg','OPENCRAWL_SOURCE_REVISION='+'0'.repeat(39)+'1','app'],
     ['compose','up','-d','--no-build','--wait','--wait-timeout','600','--scale','worker=2','--no-recreate','app','worker'],
     ['upgrade','--record-startup'],
   ]);
@@ -91,7 +92,7 @@ test('deployment builds its shared image once before starting services and recor
 test('a failed shared-image build never starts services or records startup',t=>{
   const f=fixture(t);assert.equal(f.deploy([]).status,0);f.env.TEST_FAIL_BUILD='1';
   const result=f.deploy([]);assert.equal(result.status,17,result.stderr);
-  assert.deepEqual(f.commands(),[['upgrade','--automatic'],['compose','build','app']]);
+  assert.deepEqual(f.commands(),[['upgrade','--automatic'],['compose','build','--build-arg','OPENCRAWL_SOURCE_REVISION='+'0'.repeat(39)+'1','app']]);
 });
 
 for(const [args,build,flag] of [

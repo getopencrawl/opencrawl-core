@@ -21,7 +21,9 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     runs-on: blacksmith-6vcpu-macos-15
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      OPENCRAWL_TEST_POSTGRES_URL: postgres://postgres@127.0.0.1:55473/capture_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -38,7 +40,20 @@ jobs:
       - name: Verify the legacy upgrade fixture transport
         run: bun cli/scripts/legacy-upgrade-smoke.ts --transport-only
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Start disposable PostgreSQL for the core test suite
+        run: |
+          brew install postgresql@17
+          pg_bin="$(brew --prefix postgresql@17)/bin"
+          "$pg_bin/initdb" -D "$RUNNER_TEMP/opencrawl-core-postgres" --username=postgres --auth=trust --encoding=UTF8
+          "$pg_bin/pg_ctl" -D "$RUNNER_TEMP/opencrawl-core-postgres" -l "$RUNNER_TEMP/opencrawl-core-postgres.log" -o '-h 127.0.0.1 -p 55473' -w start
+          "$pg_bin/createdb" -h 127.0.0.1 -p 55473 -U postgres capture_test
       - run: npm test
+      - name: Stop the disposable core test database
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/opencrawl-core-postgres/postmaster.pid"; then
+            "$(brew --prefix postgresql@17)/bin/pg_ctl" -D "$RUNNER_TEMP/opencrawl-core-postgres" -m fast -w stop
+          fi
       - run: bun install --cwd cli --frozen-lockfile --ignore-scripts
       - run: bun run --cwd cli typecheck
       - run: bun cli/scripts/build.ts

@@ -18,6 +18,16 @@ jobs:
   publish:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/core-shell-seam'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    services:
+      postgres:
+        image: postgres:17.11-bookworm
+        env:
+          POSTGRES_PASSWORD: capture-test
+          POSTGRES_DB: capture_test
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      OPENCRAWL_TEST_POSTGRES_URL: postgres://postgres:capture-test@127.0.0.1:5432/capture_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

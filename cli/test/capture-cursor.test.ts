@@ -1,3 +1,4 @@
+import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,existsSync,appendFileSync,symlinkSync,utimesSync,renameSync,statSync} from 'node:fs';
 import {join} from 'node:path';
@@ -32,7 +33,7 @@ test('Cursor uses the native conversation identity across turns and days, and re
 
 async function fixture(run:(f:any)=>Promise<void>) {
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-cursor-')),saved={...process.env};
- const owner={tenantId:'selfhost-team',userId:'owner'},batches:any[]=[],store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest({store});let unavailable=false,supported=true;
+ const owner={tenantId:'selfhost-team',userId:'owner'},batches:any[]=[],store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest(withTestState({store}));let unavailable=false,supported=true;
  const server=createServer(async(req,res)=>{
   const send=(status:number,data:any)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify({schemaVersion:1,data}));};
   if(req.headers.authorization!=='Bearer cursor-test-token'){send(401,{});return;}

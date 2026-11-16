@@ -1,5 +1,5 @@
 import type {ConnectorActivityInput} from './types.mjs';
-import type {ConnectorSegmentInput, ConnectorActivities} from '../workflow.mjs';
+import type {ConnectorActivities} from '../workflow.mjs';
 const {proxyActivities, continueAsNew, ApplicationFailure} = require('@temporalio/workflow') as typeof import('@temporalio/workflow');
 const {runConnectorSegment} = require('../workflow.mjs') as typeof import('../workflow.mjs');
 

@@ -1,3 +1,5 @@
+import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
+import {createPostgresWriteBarrier,ensureWriteBarrierSchema} from '../dist/src/state/write-barriers.mjs';
 import {gunzipSync} from 'node:zlib';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,8 +8,11 @@ import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
 import {documentId, digest} from '../dist/src/connectors/scope.mjs';
 import {createConnectorWriteBarrier, guardConnectorWrites} from '../dist/src/connectors/write-barrier.mjs';
 
+const live=(name,run)=>test(name,{skip:!postgresUrl},run);
 const defer = () => {let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};};
-function fixture() {
+async function fixture(t) {
+  const database=await applicationDatabaseFixture(t);await ensureWriteBarrierSchema(database);
+  const state={namespace:database.namespace,writeBarrier:scope=>createPostgresWriteBarrier({...scope,database})};
   const objects = new Map(); let revision = 0;
   const store = {
     async readVersion(key) {const item = objects.get(key); return item ? {version: item.version, data: Buffer.from(item.data)} : {version: null, data: null};},
@@ -18,28 +23,19 @@ function fixture() {
     async put(key, data) {objects.set(key, {version: String(++revision), data: Buffer.from(data)});},
   };
   const scope = {tenantId: 'tenant_a', connectionId: 'connection_a'};
-  return {objects, store, scope, barrier: options => createConnectorWriteBarrier({...scope, store, ...options})};
+  return {objects,store,scope,state,database,barrier:options=>createPostgresWriteBarrier({...scope,database,...options})};
 }
 
-test('close serializes with registration and blocks stale late writers without reopening after restart', async () => {
-  const h = fixture(), entered = defer(), continueAcquire = defer();
-  let paused = false;
-  const writer = h.barrier({store: {...h.store, async compareAndSet(key, version, data) {
-    if (!paused && JSON.parse(data).writers.length) {paused = true; entered.resolve(); await continueAcquire.promise;}
-    return h.store.compareAndSet(key, version, data);
-  }}});
-  let writes = 0;
-  const writing = writer.run('object-put', async () => {writes++;});
-  await entered.promise;
-  assert.deepEqual(await h.barrier().close(), {closed: true, closedAt: (await h.barrier().inspect()).closedAt, pending: 0, writers: []});
-  continueAcquire.resolve();
-  await assert.rejects(writing, /closed/); assert.equal(writes, 0);
-  for (const barrier of [writer, h.barrier()]) await assert.rejects(barrier.run('object-put', async () => {writes++;}), /closed/);
-  assert.equal(writes, 0);
+live('close serializes with registration and blocks stale late writers without reopening after restart',async t=>{
+  const h=await fixture(t),entered=defer(),continueAcquire=defer();let once=true,writes=0;
+  const delayed={...h.database,transaction:async run=>{if(once){once=false;entered.resolve();await continueAcquire.promise;}return h.database.transaction(run);}};
+  const writer=h.barrier({database:delayed}),writing=writer.run('object-put',async()=>{writes++;});await entered.promise;
+  assert.equal((await h.barrier().close()).pending,0);continueAcquire.resolve();await assert.rejects(writing,/closed/);
+  for(const barrier of [writer,h.barrier()])await assert.rejects(barrier.run('object-put',async()=>{writes++;}),/closed/);assert.equal(writes,0);
 });
 
-test('held native writes keep deletion pending until positive completion; later writes cannot recreate data', async () => {
-  const h = fixture(), entered = defer(), finish = defer();
+live('held native writes keep deletion pending until positive completion; later writes cannot recreate data', async t => {
+  const h = await fixture(t), entered = defer(), finish = defer();
   const writing = h.barrier().run('object-put', async () => {
     entered.resolve(); await finish.promise; await h.store.put('raw/document', 'private'); return 'written';
   });
@@ -54,8 +50,8 @@ test('held native writes keep deletion pending until positive completion; later 
   assert.equal(h.objects.has('raw/document'), false);
 });
 
-test('transport ambiguity remains durable across worker restart and cancellation', async () => {
-  const h = fixture();
+live('transport ambiguity remains durable across worker restart and cancellation', async t => {
+  const h = await fixture(t);
   await assert.rejects(h.barrier().run('object-put', async () => {throw new DOMException('cancelled', 'AbortError');}), error => error.code === 'CONNECTOR_WRITE_PENDING' && typeof error.writeId === 'string');
   const state = await h.barrier().close();
   assert.equal(state.pending, 1); assert.equal(state.writers[0].operation, 'object-put');
@@ -63,56 +59,43 @@ test('transport ambiguity remains durable across worker restart and cancellation
   assert.equal((await h.barrier({now: () => 9999999999999}).close()).pending, 1);
 });
 
-test('lost acquire and settlement responses recover without running the write twice', async () => {
-  const h = fixture(); let lost = 0, writes = 0;
-  const store = {...h.store, async compareAndSet(key, version, bytes) {
-    const state = JSON.parse(bytes), accepted = await h.store.compareAndSet(key, version, bytes);
-    if (accepted && lost < 2 && state.writers.length) {lost++; throw new Error('lost successful response');}
-    return accepted;
+live('lost acquire and settlement responses recover without running the write twice',async t=>{
+  const h=await fixture(t),lost=new Set();let writes=0;
+  const uncertain={...h.database,transaction:async run=>{const result=await h.database.transaction(run);const row=(await h.database.pool.query('SELECT phase FROM opencrawl_resource_writers WHERE namespace=$1 LIMIT 1',[h.database.namespace])).rows[0];if(row&&!lost.has(row.phase)){lost.add(row.phase);throw new Error('lost successful response');}return result;}};
+  assert.equal(await h.barrier({database:uncertain}).run('object-put',async()=>{writes++;return 'ok';}),'ok');assert.equal(writes,1);assert.deepEqual([...lost].sort(),['settled','writing']);assert.equal((await h.barrier().close()).pending,0);
+});
+
+live('durable settled records are reclaimed by a restarted closer after release failure',async t=>{
+  const h=await fixture(t);let settled=false;
+  const failing={...h.database,transaction:async run=>{
+    const value=await h.database.transaction(client=>run({...client,query:(...args)=>{if(settled&&String(args[0]).startsWith('DELETE FROM opencrawl_resource_writers'))throw new Error('release unavailable');return client.query(...args);}}));
+    settled=Boolean((await h.database.pool.query("SELECT 1 FROM opencrawl_resource_writers WHERE namespace=$1 AND phase='settled'",[h.database.namespace])).rowCount);return value;
   }};
-  assert.equal(await h.barrier({store}).run('object-put', async () => {writes++; return 'ok';}), 'ok');
-  assert.equal(writes, 1); assert.equal((await h.barrier().close()).pending, 0);
+  await assert.rejects(h.barrier({database:failing}).run('search-write',async()=>'completed'),/acknowledgment needs reconciliation/);
+  assert.equal((await h.barrier().inspect()).writers[0].phase,'settled');assert.deepEqual((await h.barrier().close()).writers,[]);
 });
 
-test('durable settled records are reclaimed by a restarted closer after release failure', async () => {
-  const h = fixture(); let shouldFail = false;
-  const store = {...h.store, async compareAndSet(key, version, bytes) {
-    const state = JSON.parse(bytes);
-    if (shouldFail && !state.writers.length) throw new Error('release unavailable');
-    const accepted = await h.store.compareAndSet(key, version, bytes);
-    if (accepted && state.writers.some(writer => writer.phase === 'settled')) shouldFail = true;
-    return accepted;
-  }};
-  await assert.rejects(h.barrier({store}).run('search-write', async () => 'completed'), /acknowledgment needs retry/);
-  const state = await h.barrier().inspect();
-  assert.equal(state.writers[0].phase, 'settled');
-  assert.deepEqual((await h.barrier().close()).writers, []);
+live('normalized writer rows retain every unresolved receipt beyond the old object limit',async t=>{
+  const h=await fixture(t);for(let i=0;i<129;i++)await assert.rejects(h.barrier().run('object-put',async()=>{throw new Error('unknown outcome');}),{code:'CONNECTOR_WRITE_PENDING'});
+  assert.equal((await h.barrier().close()).pending,129);assert.equal(h.objects.size,0);
 });
 
-test('bounded writer records fail closed; failed acquisition never starts a data write', async () => {
-  const h = fixture();
-  for (let i = 0; i < 128; i++) await assert.rejects(h.barrier().run('object-put', async () => {throw new Error('unknown outcome');}));
-  await assert.rejects(h.barrier().run('object-put', () => assert.fail('capacity overflow')), /too many unresolved/);
-  assert.equal((await h.barrier().close()).pending, 128);
-});
-
-test('colliding connection IDs remain tenant scoped and forged persisted scope fails closed', async () => {
-  const h = fixture(), a = h.barrier(), b = h.barrier({tenantId: 'tenant_b'});
+live('colliding connection IDs remain tenant scoped and forged persisted scope fails closed', async t => {
+  const h = await fixture(t), a = h.barrier(), b = h.barrier({tenantId: 'tenant_b'});
   await a.close(); assert.notEqual(a.key, b.key);
   const otherDeployment = h.barrier({namespace: 'other'});
   assert.notEqual(a.key, otherDeployment.key); await otherDeployment.run('object-put', async () => {});
   await b.run('search-write', async () => {});
   assert.throws(() => h.barrier({tenantId: '../other'}), /scope/);
-  const raw = await h.store.readVersion(b.key); const state = JSON.parse(raw.data); state.tenantId = 'tenant_a';
-  await h.store.compareAndSet(b.key, raw.version, Buffer.from(JSON.stringify(state)));
+  await h.database.pool.query('UPDATE opencrawl_write_fences SET tenant_id=$3 WHERE namespace=$1 AND fence_key=$2',[h.database.namespace,b.key,'tenant_a']);
   await assert.rejects(b.run('object-put', () => assert.fail('forged state')), /scope/);
 });
 
-test('guard covers raw, receipts, conditional writes and search; foreign scope never acquires', async () => {
-  const h = fixture();
+live('guard covers raw bytes, conditional writes and search; app metadata and foreign scope never acquire', async t => {
+  const h = await fixture(t);
   const binding = {...h.scope, workspaceId: 'T123', provider: 'slack', access: 'team-public', rawPrefix: 'raw/v1/source=slack/workspace=T123/connection=connection_a/'};
   const search = {identity: 'search-a', putDocuments: async () => {}, suppress: async () => {}};
-  const guarded = guardConnectorWrites({binding, store: h.store, search});
+  const guarded = guardConnectorWrites({binding,state:h.state, store: h.store, search});
   assert.throws(() => guarded.store.put('raw/other/document', 'x'), /scope/);
   assert.throws(() => guarded.store.put(binding.rawPrefix + '../escape', 'x'), /scope/);
   assert.throws(() => guarded.search.putDocuments({tenantId: binding.tenantId, captureAccess: 'write'}, binding, []), /capability/);
@@ -140,8 +123,8 @@ function connectorDocuments(binding, count = 1) {
   }}));
 }
 
-test('maximum valid connector bulk retains bounded durable metadata and completes all documents', async () => {
-  const h = fixture(), binding = connectorBinding(h), documents = connectorDocuments(binding, 100);
+live('maximum valid connector bulk retains bounded durable metadata and completes all documents', async t => {
+  const h = await fixture(t), binding = connectorBinding(h), documents = connectorDocuments(binding, 100);
   let requests = 0, target;
   const search = createConnectorSearch({endpoint: 'http://search.test', tenantId: binding.tenantId, fetch: async (url, options) => {
     requests++;
@@ -154,23 +137,23 @@ test('maximum valid connector bulk retains bounded durable metadata and complete
     assert.equal(new Set(lines.filter((_, i) => i % 2 === 0).map(line => JSON.parse(line).update._id)).size, 100);
     return Response.json({errors: false, items: documents.map(() => ({update: {status: 200}}))});
   }});
-  const guarded = guardConnectorWrites({binding, store: h.store, search});
+  const guarded = guardConnectorWrites({binding,state:h.state, store: h.store, search});
   await guarded.search.putDocuments({tenantId: binding.tenantId}, binding, documents);
   assert.equal(requests, 1);
   assert.deepEqual(target, {operation: 'putDocuments', count: 100, idsSha256: digest(documents.map(item => item.id))});
   assert.equal((await guarded.writeBarrier.close()).pending, 0);
 });
 
-test('trusted no-mutation refusal settles; status codes and permanent flags alone do not', async () => {
+live('trusted no-mutation refusal settles; status codes and permanent flags alone do not', async t => {
   for (const positive of [true, false]) {
-    const h = fixture();
+    const h = await fixture(t);
     const error = Object.assign(new Error('denied'), {status: 403, permanent: true, ...(positive ? {writeOutcome: 'not-applied'} : {})});
     await assert.rejects(h.barrier().run('object-put', async () => {throw error;}), result => positive ? result === error : result.code === 'CONNECTOR_WRITE_PENDING');
     assert.equal((await h.barrier().close()).pending, positive ? 0 : 1);
   }
 });
 
-test('reference S3 rejects authorization and validation without stranding a writer, but retains ambiguous errors', async () => {
+live('reference S3 rejects authorization and validation without stranding a writer, but retains ambiguous errors', async t => {
   for (const scenario of [
     {status: 403, code: 'AccessDenied', pending: 0},
     {status: 400, code: 'BadDigest', pending: 0},
@@ -181,7 +164,7 @@ test('reference S3 rejects authorization and validation without stranding a writ
     {credentialsError: true, pending: 0},
     {abort: true, pending: 1},
   ]) {
-    const h = fixture(), binding = connectorBinding(h);
+    const h = await fixture(t), binding = connectorBinding(h);
     let sent = 0;
     const remote = createObjectStore({endpoint: 'http://s3.test', bucket: 'synthetic', credentials: async () => {
       if (scenario.credentialsError) throw new Error('credential lookup failed before PUT');
@@ -191,16 +174,16 @@ test('reference S3 rejects authorization and validation without stranding a writ
       if (scenario.abort) throw new DOMException('cancelled', 'AbortError');
       return new Response('<Error><Code>' + scenario.code + '</Code></Error>', {status: scenario.status});
     }});
-    const guarded = guardConnectorWrites({binding, store: {...h.store, put: remote.put}});
+    const guarded = guardConnectorWrites({binding,state:h.state, store: {...h.store, put: remote.put}});
     await assert.rejects(guarded.store.put(binding.rawPrefix + 'document', Buffer.from('synthetic')));
     assert.equal(sent, scenario.credentialsError ? 0 : 1);
     assert.equal((await guarded.writeBarrier.close()).pending, scenario.pending, JSON.stringify(scenario));
   }
 });
 
-test('reference search settles preflight and definite auth rejection but not partial bulk or uncertain responses', async () => {
+live('reference search settles preflight and definite auth rejection but not partial bulk or uncertain responses', async t => {
   for (const scenario of ['invalid-document', 'oversized-item', 'auth-denied', 'unknown-forbidden', 'partial-bulk', 'bad-response']) {
-    const h = fixture(), binding = connectorBinding(h), documents = connectorDocuments(binding, 1);
+    const h = await fixture(t), binding = connectorBinding(h), documents = connectorDocuments(binding, 1);
     let sent = 0;
     if (scenario === 'invalid-document') documents[0].document.connectionId = 'other';
     if (scenario === 'oversized-item') documents[0].document.text = 'x'.repeat(5*1024*1024);
@@ -212,7 +195,7 @@ test('reference search settles preflight and definite auth rejection but not par
       if (scenario === 'partial-bulk') return Response.json({errors: true, items: [{update: {status: 400}}]});
       return new Response('invalid JSON');
     }});
-    const guarded = guardConnectorWrites({binding, store: h.store, search});
+    const guarded = guardConnectorWrites({binding,state:h.state, store: h.store, search});
     await assert.rejects(guarded.search.putDocuments({tenantId: binding.tenantId}, binding, documents));
     assert.equal(sent, scenario === 'invalid-document' ? 0 : 1);
     assert.equal((await guarded.writeBarrier.close()).pending, ['invalid-document', 'oversized-item', 'auth-denied'].includes(scenario) ? 0 : 1, scenario);

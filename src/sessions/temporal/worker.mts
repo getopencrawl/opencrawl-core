@@ -28,7 +28,7 @@ export function sessionActivities({resolve}: {resolve: SessionResolver}) {
       const resolved=await resolve(input);
       const pipeline=createSessionPipeline({...resolved,checkActive:async()=>{
         const current=await resolve(input);
-        if(current.prefix!==resolved.prefix||current.store.bucket!==resolved.store.bucket||current.search.identity!==resolved.search.identity||JSON.stringify(current.principal)!==JSON.stringify(resolved.principal))throw Object.assign(new Error('Session binding changed'),{permanent:true});
+        if(current.state.namespace!==resolved.state.namespace||current.prefix!==resolved.prefix||current.store.bucket!==resolved.store.bucket||current.search.identity!==resolved.search.identity||JSON.stringify(current.principal)!==JSON.stringify(resolved.principal))throw Object.assign(new Error('Session binding changed'),{permanent:true});
         if(Context.current().cancellationSignal.aborted)throw new Error('Session indexing cancelled');
       }});
       const result=action==='listPage' ? await pipeline.listPage(input) : await pipeline.processObject(input as SessionTaskInput & {key: string});
@@ -51,7 +51,7 @@ export function sessionActivities({resolve}: {resolve: SessionResolver}) {
         const resolved=await resolve(input);
         if(input.generation!==sessionIndexingGeneration(resolved.search.identity,resolved.jobId||'sessions-v1'))throw Object.assign(new Error('Session generation changed'),{permanent:true});
         const {markerKey,marker}=sessionCatchupMarker({...input,prefix:resolved.prefix,taskQueue:Context.current().info.taskQueue});
-        await resolved.store.put(markerKey,Buffer.from(JSON.stringify(marker)),'application/json');
+        await resolved.state.indexingReceipts.put(markerKey,marker);
       } catch(caught) {
         const error=serviceError(caught);
         if(error.permanent)throw ApplicationFailure.nonRetryable('Session catch-up binding denied','InvalidSessionInput');

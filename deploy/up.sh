@@ -82,7 +82,8 @@ runtime_node=$(../dev/up --node-runtime)
 "$runtime_node" upgrade.mjs --automatic
 compose_build_flag=--build=false
 if [ "$compose_build" = true ]; then
-  docker compose build app
+  source_revision=$(git -C .. rev-parse HEAD)
+  docker compose build --build-arg "OPENCRAWL_SOURCE_REVISION=$source_revision" app
   compose_build_flag=--no-build
 elif [ "$compose_no_build" = true ]; then
   compose_build_flag=--no-build
