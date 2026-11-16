@@ -1,12 +1,12 @@
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {CliError} from '../oauth.ts';
-export type Harness = 'claude-code'|'codex'|'cursor'|'grok-bot'|'antigravity'|'devin';
+export type Harness = 'claude-code'|'codex'|'cursor'|'grok-bot'|'antigravity'|'devin'|'reason';
 /** Harnesses that persist a native transcript this collector reads. Cursor and Grok Bot
  * sessions are assembled from hook payloads instead; see cursor.ts and grok-bot.ts. */
 export type TranscriptHarness = Exclude<Harness,'grok-bot'|'cursor'|'devin'>;
-export const HARNESSES:Harness[] = ['claude-code','codex','cursor','grok-bot','antigravity','devin'];
-export const readsTranscript = (harness:Harness): harness is TranscriptHarness => harness==='claude-code'||harness==='codex'||harness==='antigravity';
+export const HARNESSES:Harness[] = ['claude-code','codex','cursor','grok-bot','antigravity','devin','reason'];
+export const readsTranscript = (harness:Harness): harness is TranscriptHarness => harness==='claude-code'||harness==='codex'||harness==='antigravity'||harness==='reason';
 /** Normalize CLI flag aliases ('agy' -> 'antigravity') before validation. */
 export const normalizeHarness = <T extends string|undefined>(value:T): T|('antigravity' extends T ? 'antigravity' : string) => (value==='agy'?'antigravity':value) as any;
 export type Origin = 'cli'|'desktop'|'cloud'|'subagent'|'unknown';
@@ -44,6 +44,8 @@ export function detectOrigin(harness: Harness, record: any, environment:NodeJS.P
     if(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(environment.REPLICAS_WORKSPACE_ID??''))return {origin:'cloud',evidence:'https://app.replicas.dev/workspace/'+environment.REPLICAS_WORKSPACE_ID};
     return {origin:'unknown',evidence:null};
   }
+  // The session log does not say which surface started the agent.
+  if (harness === 'reason') return {origin:'unknown',evidence:null};
   const r = harness === 'codex' ? record.payload ?? record : record;
   if(harness==='claude-code' && r.type==='attachment' && r.attachment?.type==='remote_session_change' && /^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(r.attachment.url??'')) return {origin:'cloud',evidence:r.attachment.url};
   const value = [r.originator, r.entrypoint, typeof r.source === 'string' ? r.source : '', r.client].filter(Boolean).join(' ');
@@ -99,10 +101,109 @@ function antigravityUserText(raw:string):string {
   return raw.replace(/<(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>[\s\S]*?<\/(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>/g,'').trim();
 }
 
+/** Reason capture reads one session log per conversation in the Pi session format:
+ * <agent dir>/sessions/--<cwd>--/<timestamp>_<session id>.jsonl. */
+export const reasonTranscriptName = (name:string,sessionId:string) => name.endsWith('.jsonl')&&name.slice(0,-'.jsonl'.length).endsWith('_'+sessionId);
+/** A forked session names its parent by file path, not by ID. */
+export function reasonParentSessionId(parentSession:unknown):string|null {
+  if(typeof parentSession!=='string')return null;
+  const match=/_([\w.:-]{1,200})\.jsonl$/.exec(parentSession.split(/[\\/]/).pop()??'');
+  return match?match[1]!:null;
+}
+function reasonBlocks(content:any,role:'user'|'assistant'):any[] {
+  if(typeof content==='string')return content.trim()?[{type:'text',text:content}]:[];
+  if(!Array.isArray(content))return [];
+  const blocks:any[]=[];
+  for(const block of content) {
+    if(!block||typeof block!=='object')continue;
+    if(block.type==='text'&&typeof block.text==='string'){if(block.text.trim())blocks.push({type:'text',text:block.text});}
+    // Signatures are opaque provider replay data; redacted thinking has no text.
+    else if(block.type==='thinking'&&role==='assistant'){if(typeof block.thinking==='string'&&block.thinking.trim())blocks.push({type:'thinking',thinking:block.thinking});}
+    else if(block.type==='toolCall'&&role==='assistant'){
+      if(typeof block.name==='string'&&block.name)blocks.push({type:'tool_use',...(typeof block.id==='string'&&block.id?{id:block.id}:{}),name:block.name,input:block.arguments??{}});
+    }
+    else if(block.type==='image'&&typeof block.data==='string')blocks.push({type:'image',source:{type:'base64',media_type:typeof block.mimeType==='string'?block.mimeType:'application/octet-stream',data:block.data}});
+  }
+  return blocks;
+}
+/** One session log entry. System messages repeat the prompt and tool
+ * declarations; usage, labels, context edits and extension state are bookkeeping. */
+function parseReasonRecord(record:any):{kind:string,data:any}|null {
+  if(!record||typeof record!=='object')return null;
+  if(record.type==='session') {
+    if(typeof record.id!=='string'||!record.id)return null;
+    return {kind:'session_metadata',data:{id:record.id,...(record.version!==undefined?{version:record.version}:{}),...(typeof record.cwd==='string'?{cwd:record.cwd}:{}),
+      ...(reasonParentSessionId(record.parentSession)?{forked_from_id:reasonParentSessionId(record.parentSession)}:{})}};
+  }
+  if(record.type==='message') {
+    const message=record.message;
+    if(!message||typeof message!=='object')return null;
+    if(message.role==='user') {
+      const content=reasonBlocks(message.content,'user');
+      return content.length?{kind:'message',data:{role:'user',content}}:null;
+    }
+    if(message.role==='assistant') {
+      const content=reasonBlocks(message.content,'assistant');
+      const error=typeof message.errorMessage==='string'&&message.errorMessage.trim()?message.errorMessage:null;
+      if(!content.length&&!error)return null;
+      return {kind:'message',data:{role:'assistant',content,
+        ...(typeof message.model==='string'?{model:message.model}:{}),...(typeof message.provider==='string'?{provider:message.provider}:{}),
+        ...(typeof message.stopReason==='string'?{stop_reason:message.stopReason}:{}),...(error?{error}:{}),
+        ...(message.usage&&typeof message.usage==='object'?{usage:message.usage}:{})}};
+    }
+    if(message.role==='toolResult') {
+      const blocks=reasonBlocks(message.content,'user');
+      const output=blocks.filter(block=>block.type==='text').map(block=>block.text).join('\n');
+      const media=blocks.filter(block=>block.type!=='text');
+      return {kind:'tool_result',data:{type:'tool_result',...(typeof message.toolCallId==='string'&&message.toolCallId?{tool_use_id:message.toolCallId}:{}),
+        ...(typeof message.toolName==='string'&&message.toolName?{name:message.toolName}:{}),output,...(media.length?{content:media}:{}),...(message.isError===true?{is_error:true}:{})}};
+    }
+    if(message.role==='bashExecution') {
+      if(typeof message.command!=='string'||!message.command)return null;
+      // A command the person ran directly; the same evidence shape as a recorded command execution.
+      return {kind:'exec_command_end',data:{type:'user_shell_command',command:message.command,aggregated_output:typeof message.output==='string'?message.output:'',
+        ...(typeof message.exitCode==='number'?{exit_code:message.exitCode}:{}),...(message.cancelled===true?{cancelled:true}:{}),...(message.truncated===true?{truncated:true}:{})}};
+    }
+    return null;
+  }
+  if(record.type==='custom_message') {
+    const content=reasonBlocks(record.content,'user');
+    if(!content.length)return null;
+    return {kind:'automation_message',data:{source:typeof record.customType==='string'&&record.customType?record.customType:'extension',content}};
+  }
+  if(record.type==='compaction'||record.type==='branch_summary') {
+    if(typeof record.summary!=='string'||!record.summary.trim())return null;
+    return {kind:'compaction',data:{type:record.type,summary:record.summary,
+      ...(typeof record.firstKeptEntryId==='string'?{firstKeptEntryId:record.firstKeptEntryId}:{}),...(typeof record.fromId==='string'?{fromId:record.fromId}:{}),
+      ...(typeof record.tokensBefore==='number'?{tokensBefore:record.tokensBefore}:{})}};
+  }
+  if(record.type==='session_info') {
+    if(typeof record.name!=='string'||!record.name.trim())return null;
+    return {kind:'session_title',data:{title:record.name.trim(),titleType:'custom'}};
+  }
+  if(record.type==='model_change') {
+    if(typeof record.modelId!=='string'||!record.modelId)return null;
+    return {kind:'turn_metadata',data:{model:record.modelId,...(typeof record.provider==='string'?{model_provider:record.provider}:{})}};
+  }
+  if(record.type==='thinking_level_change') {
+    if(typeof record.thinkingLevel!=='string'||!record.thinkingLevel)return null;
+    return {kind:'turn_metadata',data:{effort:record.thinkingLevel}};
+  }
+  return null;
+}
+
 /** Preserve native message/tool content; discard repeated system/developer prompts and UI/transport bookkeeping. */
 export function parseRecord(harness: Harness, record: any, offset: number) {
   const r = record.payload ?? {};
   let kind: string|undefined, data: any;
+  if (harness === 'reason') {
+    const parsed=parseReasonRecord(record);
+    if(!parsed)return null;
+    // The header has no entry ID; every other entry has one that is unique in its file.
+    return {id:hash(harness+':'+offset+':'+JSON.stringify(record)), kind:parsed.kind, sequence:offset, timestamp:typeof record.timestamp==='string'?record.timestamp:null,
+      nativeId:record.type==='session'?null:(typeof record.id==='string'?record.id:null), parentId:record.type==='session'?null:(typeof record.parentId==='string'?record.parentId:null),
+      turnId:null, agentId:null, data:parsed.data};
+  }
   if (harness === 'antigravity') {
     if (record.type === 'USER_INPUT') {
       const raw=typeof record.content==='string'?record.content:'';

@@ -5,7 +5,7 @@ import {atomicJson} from '../session.ts';
 import {createInterface} from 'node:readline/promises';
 import {CliError} from '../oauth.ts';
 import {setTimeout as pause} from 'node:timers/promises';
-import {captureTranscript, captureDir, flushCaptures, readCaptureConfig, refreshCaptureIdentity, recordError, walkAntigravityTranscripts, type CaptureConfig} from './runtime.ts';
+import {captureTranscript, captureDir, flushCaptures, readCaptureConfig, refreshCaptureIdentity, recordError, walkAntigravityTranscripts, reasonAgentDir, type CaptureConfig} from './runtime.ts';
 import {normalizeHarness, type TranscriptHarness} from './parse.ts';
 import {claudeDesktopHistories,defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 
@@ -14,7 +14,7 @@ type Selection = 'all'|TranscriptHarness;
 export type HistoryFile={harness:TranscriptHarness;path:string;bytes:number;ino:number;mtimeMs:number};
 export function selection(value = 'all'): Selection {
   const normalized = normalizeHarness(value);
-  if (!['all','claude-code','codex','antigravity'].includes(normalized)) throw new CliError('INVALID_USAGE','Choose all, claude-code, codex, or antigravity.',64);
+  if (!['all','claude-code','codex','antigravity','reason'].includes(normalized)) throw new CliError('INVALID_USAGE','Choose all, claude-code, codex, antigravity, or reason.',64);
   return normalized as Selection;
 }
 function configFor(api:string) {
@@ -27,7 +27,7 @@ function configFor(api:string) {
 export function inventory(config:Pick<CaptureConfig,'roots'|'claudeDesktopSessionsRoot'>, selected:Selection) {
   const files:HistoryFile[]=[];
   const sources:{harness:TranscriptHarness,files:number,bytes:number}[]=[];
-  for(const harness of ['claude-code','codex','antigravity'] as TranscriptHarness[]) {
+  for(const harness of ['claude-code','codex','antigravity','reason'] as TranscriptHarness[]) {
     if(selected!=='all' && selected!==harness)continue;
     const source={harness,files:0,bytes:0};
     const configured=config.roots[harness];
@@ -44,7 +44,8 @@ export function inventory(config:Pick<CaptureConfig,'roots'|'claudeDesktopSessio
       if(selected==='antigravity' || source.files>0)sources.push(source);
       continue;
     }
-    sources.push(source);
+    // Like Antigravity, Reason is listed only when selected or present.
+    if(harness!=='reason')sources.push(source);
     function visit(dir:string,allowedRoot:string) {
       let entries;
       try{entries=readdirSync(dir,{withFileTypes:true});}catch(e:any){if(e.code==='ENOENT')return;throw new CliError('BACKFILL_SCAN_FAILED','Cannot inspect a local session directory. Check its permissions.');}
@@ -62,7 +63,8 @@ export function inventory(config:Pick<CaptureConfig,'roots'|'claudeDesktopSessio
         }
       }
     }
-    if(root)for(const dir of harness==='codex'?['sessions','archived_sessions']:['projects'])visit(join(root,dir),root);
+    if(root)for(const dir of harness==='codex'?['sessions','archived_sessions']:harness==='reason'?['sessions']:['projects'])visit(join(root,dir),root);
+    if(harness==='reason'&&(selected==='reason'||source.files>0))sources.push(source);
     if(harness==='claude-code') {
       const desktop=claudeDesktopHistories(config);
       for(const projects of desktop.projects)visit(projects,realpathSync(projects));
@@ -83,6 +85,7 @@ export function backfillPreview(api:string, selected:Selection='all') {
     'claude-code':process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),
     codex:process.env.CODEX_HOME||join(homedir(),'.codex'),
     antigravity:process.env.ANTIGRAVITY_HOME||(!process.env.CLAUDE_CONFIG_DIR&&!process.env.CODEX_HOME?join(homedir(),'.gemini'):undefined),
+    reason:process.env.PI_CODING_AGENT_DIR||!process.env.CLAUDE_CONFIG_DIR&&!process.env.CODEX_HOME?reasonAgentDir(homedir()):undefined,
   },claudeDesktopSessionsRoot:defaultClaudeDesktopSessionsRoot()};
   const {sources}=inventory(roots,selected);
   return {status:'preview',api,owner:config?.authPending?null:config?.owner??null,sources,notice:backfillNotice,
@@ -102,7 +105,7 @@ export async function backfill(api:string, selected:Selection, approved:boolean,
   if(!approved)throw new CliError('BACKFILL_CONSENT_REQUIRED','Preview with collect backfill --dry-run. Ask the user to choose Claude, Codex, both, or skip; pass --yes only after approval.',64);
   const config=configFor(api),discovered=options.files?null:inventory(config,selected);
   const files=options.files??discovered!.files;
-  if(files.some(file=>!['claude-code','codex','antigravity'].includes(file.harness)||selected!=='all'&&file.harness!==selected||!Number.isSafeInteger(file.bytes)||file.bytes<0))throw new CliError('BACKFILL_MANIFEST_INVALID','The approved history manifest is invalid.');
+  if(files.some(file=>!['claude-code','codex','antigravity','reason'].includes(file.harness)||selected!=='all'&&file.harness!==selected||!Number.isSafeInteger(file.bytes)||file.bytes<0))throw new CliError('BACKFILL_MANIFEST_INVALID','The approved history manifest is invalid.');
   const sources=discovered?.sources??[...new Set(files.map(f=>f.harness))].map(harness=>({harness,files:files.filter(f=>f.harness===harness).length,bytes:files.filter(f=>f.harness===harness).reduce((n,f)=>n+f.bytes,0)}));
   let processed=0,processedBytes=0,uploaded=0,lastProgress=0;
   const totalBytes=sources.reduce((sum,source)=>sum+source.bytes,0);

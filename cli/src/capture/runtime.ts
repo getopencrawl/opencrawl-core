@@ -14,7 +14,7 @@ import {CliError} from '../oauth.ts';
 import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
 import {workspaceIdentityEnabled, workspaceToken} from '../workspace-identity.ts';
-import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, HARNESSES, type Harness, type TranscriptHarness} from './parse.ts';
+import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, reasonTranscriptName, reasonParentSessionId, HARNESSES, type Harness, type TranscriptHarness} from './parse.ts';
 import {cursorSession,cursorTranscript,cursorMessage,cursorThoughtDuplicate,cursorThoughtState} from './cursor.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {devinEvents,devinOverflow,devinSession,devinUnsupported,DEVIN_MAX_HOOK_BYTES} from './devin.ts';
@@ -34,7 +34,7 @@ export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
 /** Bump when installed hook entries change so the next hook rewrites existing installs. */
 export const HOOK_MODE='native-v5';
-export type CaptureConfig = {disabled?:boolean,authPending?:boolean,captureWorker?:'daemon-v1',daemonRequested?:{backgroundStartup:boolean},backgroundStartup?:boolean,claudeCapture?:'daemon-v1',exclusions?:CaptureExclusions,schemaVersion:1,hookOwnership?:'global'|'plugin',hookMode?:typeof HOOK_MODE|'native-v4'|'managed-v3'|'managed-v2'|'managed',harnesses?:Harness[],historyHarnesses?:TranscriptHarness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:{'claude-code':string,codex:string,'grok-bot'?:string,cursor?:string,antigravity?:string,devin?:string},claudeDesktopSessionsRoot?:string,command:string[]};
+export type CaptureConfig = {disabled?:boolean,authPending?:boolean,captureWorker?:'daemon-v1',daemonRequested?:{backgroundStartup:boolean},backgroundStartup?:boolean,claudeCapture?:'daemon-v1',exclusions?:CaptureExclusions,schemaVersion:1,hookOwnership?:'global'|'plugin',hookMode?:typeof HOOK_MODE|'native-v4'|'managed-v3'|'managed-v2'|'managed',harnesses?:Harness[],historyHarnesses?:TranscriptHarness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:{'claude-code':string,codex:string,'grok-bot'?:string,cursor?:string,antigravity?:string,devin?:string,reason?:string},claudeDesktopSessionsRoot?:string,command:string[]};
 export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
 /** claudeCapture is accepted only for the first opt-in daemon pilot. */
 export const captureDaemonEnabled=(config:CaptureConfig|null=readCaptureConfig())=>config?.captureWorker==='daemon-v1'||config?.claudeCapture==='daemon-v1';
@@ -68,7 +68,7 @@ async function captureIdentity(config:CaptureConfig,token?:string,signal?:AbortS
     }
     atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
   },20_000,signal);
-  return {principal,token:verifiedToken,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip'),cursor:capabilities?.harnesses?.includes('cursor')===true,antigravity:capabilities?.harnesses?.includes('antigravity')===true};
+  return {principal,token:verifiedToken,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip'),cursor:capabilities?.harnesses?.includes('cursor')===true,antigravity:capabilities?.harnesses?.includes('antigravity')===true,reason:capabilities?.harnesses?.includes('reason')===true};
 }
 export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
   return (await captureIdentity(config,token,signal)).principal;
@@ -134,6 +134,9 @@ export function orderedNoticeNames() {
 }
 const under = (file:string,dir:string) => file.startsWith(dir+sep);
 export const ANTIGRAVITY_SURFACES = ['antigravity-cli','antigravity','antigravity-ide'] as const;
+/** Reason capture targets the Pi agent directory layout: settings, extensions
+ * and one JSONL session log per conversation under sessions/. */
+export const reasonAgentDir=(home=homedir(),env:NodeJS.ProcessEnv=process.env)=>env.PI_CODING_AGENT_DIR||join(home,'.pi','agent');
 export function antigravityBrainDirs(root:string):{dir:string;origin:'cli'|'desktop';surface:string}[] {
   return [
     {dir:join(root,'antigravity-cli','brain'),origin:'cli',surface:'antigravity-cli'},
@@ -198,7 +201,7 @@ function transcriptAllowed(file:string, config:CaptureConfig, harness:Transcript
     }
     return path;
   }
-  const allowed=harness==='claude-code' ? [join(root,'projects')] : [join(root,'sessions'),join(root,'archived_sessions')];
+  const allowed=harness==='claude-code' ? [join(root,'projects')] : harness==='reason' ? [join(root,'sessions')] : [join(root,'sessions'),join(root,'archived_sessions')];
   if(!allowed.some(dir=>under(path,dir)) || !(path.endsWith('.jsonl') || harness==='codex' && path.endsWith('.jsonl.zst')))throw new CliError('CAPTURE_PATH_REJECTED','Transcript outside configured harness session directories');
   return path;
 }
@@ -228,6 +231,8 @@ export function assertSessionTranscriptPath(config:CaptureConfig,harness:Transcr
     }
   }else if(harness==='codex'){
     if(!['sessions','archived_sessions'].includes(parts[0]??'')||!basename(parent).endsWith('-'+sessionId+'.jsonl')||resolve(file)!==parent)return reject();
+  }else if(harness==='reason'){
+    if(parts.length!==3||parts[0]!=='sessions'||!reasonTranscriptName(basename(parent),sessionId)||resolve(file)!==parent)return reject();
   }else{
     const valid=(path:string)=>antigravityBrainDirs(root).some(({dir})=>{
       const p=relative(dir,path).split(sep);return p.length===4&&p[0]===sessionId&&p[1]==='.system_generated'&&p[2]==='logs'&&['transcript.jsonl','transcript_full.jsonl'].includes(p[3]!);
@@ -254,8 +259,8 @@ function findTranscript(config:CaptureConfig,harness:TranscriptHarness,sessionId
     for(const path of walkAntigravityTranscripts(root))if(antigravityPathMeta(path).sessionId===sessionId)return path;
     return undefined;
   }
-  const dirs=harness==='codex'?['sessions','archived_sessions']:['projects'];
-  for(const d of dirs)for(const path of walk(join(root,d)))if(basename(path).includes(sessionId))return path;
+  const dirs=harness==='codex'?['sessions','archived_sessions']:harness==='reason'?['sessions']:['projects'];
+  for(const d of dirs)for(const path of walk(join(root,d)))if(harness==='reason'?reasonTranscriptName(basename(path),sessionId):basename(path).includes(sessionId))return path;
 }
 function attachmentTransform(value:any, attachments:any[], cwd:string, localFiles=new Set<any>()):any {
   if(Array.isArray(value))return value.map(v=>attachmentTransform(v,attachments,cwd,localFiles));
@@ -416,9 +421,19 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
     if(agyHook?.cwd&&!meta.cwd)meta={...meta,cwd:agyHook.cwd};
     if(agyPath&&(!meta.origin||meta.origin==='unknown'))meta={...meta,origin:agyPath.origin,originEvidence:agyPath.originEvidence};
     const expectedSession=scoped?(scoped.agentId?scoped.sessionId+':'+scoped.agentId:scoped.sessionId):null;
-    let codexIdentityRead=Boolean(offset>0&&old.meta?.sessionId);
+    let codexIdentityRead=Boolean(offset>0&&old.meta?.sessionId),reasonIdentityRead=codexIdentityRead;
     function metadata(r:any) {
         if(harness==='antigravity')return;
+        if(harness==='reason') {
+          // Only the leading header names the session; entries carry no identity or directory.
+          if(r.type!=='session'||reasonIdentityRead)return;
+          if(typeof r.id!=='string'||!/^[\w.:-]{1,200}$/.test(r.id))throw new CliError('CAPTURE_SESSION_UNKNOWN','The native session header has no usable session ID');
+          if(scoped&&r.id!==scoped.sessionId)throw new CliError('CAPTURE_SESSION_MISMATCH','Native header differs from the registered session');
+          reasonIdentityRead=true;
+          meta.sessionId=r.id;meta.parentSessionId=reasonParentSessionId(r.parentSession);
+          if(typeof r.cwd==='string'&&r.cwd)meta.cwd=r.cwd;
+          return;
+        }
         const p=r.payload??r;
         if(desktopAudit){
           if(typeof r.session_id==='string'&&r.session_id){meta.sessionId=r.session_id;meta.origin='desktop';meta.originEvidence='Claude Desktop local-agent-mode-sessions audit';}
@@ -489,10 +504,16 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
           const native=JSON.parse(header.subarray(0,end).toString('utf8'));
           if(native.type!=='session_meta'||native.payload?.id!==scoped.sessionId)throw new CliError('CAPTURE_SESSION_MISMATCH','Native header differs from the registered session');
         }
+        if(harness==='reason'){
+          const header=Buffer.alloc(Math.min(st.size,1024*1024));readSync(fd,header,0,header.length,0);const end=header.indexOf(10);
+          if(end<0)throw new CliError('CAPTURE_SESSION_UNKNOWN','The native session header is incomplete');
+          const native=JSON.parse(header.subarray(0,end).toString('utf8'));
+          if(native.type!=='session'||native.id!==scoped.sessionId)throw new CliError('CAPTURE_SESSION_MISMATCH','Native header differs from the registered session');
+        }
       }
       // A future-only enrollment starts at its saved byte boundary. Read only
       // the native header to recover identity, never enqueue earlier messages.
-      if(old.forwardBoundary&&!reconcileHistory&&offset>0&&harness==='codex'&&!meta.sessionId&&fd!==undefined){
+      if(old.forwardBoundary&&!reconcileHistory&&offset>0&&(harness==='codex'&&!meta.sessionId||harness==='reason'&&!reasonIdentityRead)&&fd!==undefined){
         const header=Buffer.alloc(Math.min(st.size,1024*1024));readSync(fd,header,0,header.length,0);const end=header.indexOf(10);
         if(end<0)throw new CliError('CAPTURE_SESSION_UNKNOWN','The native session header is incomplete. Start a new session.');
         metadata(JSON.parse(header.subarray(0,end).toString('utf8')));
@@ -1132,7 +1153,7 @@ export async function syncCaptures() {
   const errors:any[]=[];
   for(const harness of (config.harnesses??['claude-code','codex'] as Harness[]).filter(readsTranscript)) {
     const root=config.roots[harness];if(!root)continue;
-    const paths=harness==='antigravity'?walkAntigravityTranscripts(root):(function*(){for(const dir of harness==='codex'?['sessions','archived_sessions']:['projects'])yield*walk(join(root,dir));})();
+    const paths=harness==='antigravity'?walkAntigravityTranscripts(root):(function*(){for(const dir of harness==='codex'?['sessions','archived_sessions']:harness==='reason'?['sessions']:['projects'])yield*walk(join(root,dir));})();
     for(const path of paths) {
       // Installation enrolls new/active sessions; it never silently imports all historical conversations.
       if(statSync(path).mtimeMs<Date.parse(config.installedAt))continue;
@@ -1163,13 +1184,13 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     let token=staticToken||(workspaceIdentityEnabled()?await workspaceToken(config.api):await accessToken(config.api));
     const identity=await captureIdentity(config,token),principal=identity.principal;
     token=identity.token??token;
-    let useGzip=identity.gzip,cursorSupported=identity.cursor,antigravitySupported=identity.antigravity;
+    let useGzip=identity.gzip,cursorSupported=identity.cursor,antigravitySupported=identity.antigravity,reasonSupported=identity.reason;
     // A long flush outlives a short-lived sign-in token. Renew before each request
     // and after a rejection, re-verifying identity whenever the token changes.
     const adopt=async(next:string)=>{
       if(next===token)return token;
       const refreshed=await captureIdentity(config,next),current=refreshed.principal;
-      useGzip=refreshed.gzip;cursorSupported=refreshed.cursor;antigravitySupported=refreshed.antigravity;
+      useGzip=refreshed.gzip;cursorSupported=refreshed.cursor;antigravitySupported=refreshed.antigravity;reasonSupported=refreshed.reason;
       if(current.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Signed-in user changed during upload. Sign back in as the queued author; queued data is retained.');
       if(current.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Signed-in team changed during upload. Sign back into the original destination; queued data is retained.');
       return token=refreshed.token??next;
@@ -1265,6 +1286,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
           if(captureExcluded(latest??config,batch)){excluded++;continue;}
           if(batch.harness==='cursor'&&!cursorSupported){unsupported.add('cursor');continue;}
           if(batch.harness==='antigravity'&&!antigravitySupported){unsupported.add('antigravity');continue;}
+          if(batch.harness==='reason'&&!reasonSupported){unsupported.add('reason');continue;}
           scheduled++;
           if(batchDelayMs){const start=Math.max(Date.now(),nextUploadAt);nextUploadAt=start+batchDelayMs;await pause(Math.max(0,start-Date.now()));if(failure)break;}
           try{await upload(name,batch);}
