@@ -26,14 +26,18 @@ function validate(value:RetiredSessionReceipt){
  if(saved.prefix.split('/').some(part=>!part||part==='.'||part==='..')||!suffix.test(saved.key)||!identity||identity.tenantHash!==scope.tenantHash||identity.userHash!==scope.userHash||identity.sessionHash!==scope.sessionHash||identity.harness!==saved.proof.harness||saved.evidence.controlKey!==scope.controlKey||saved.evidence.fenceKey!==scope.fenceKey||bytes.length>32768||bytes.toString('base64')!==saved.sourceBytesBase64||digest(bytes)!==saved.sourceHash||!isDeepStrictEqual(JSON.parse(bytes.toString('utf8')),saved.receipt))throw new Error('Retired session receipt evidence binding differs');
  return saved;
 }
+function storedNumber(value:unknown){
+ if(typeof value!=='number'&&(typeof value!=='string'||!/^(?:0|[1-9][0-9]*)$/.test(value)))throw new Error('Invalid persisted retired receipt number');
+ return number.parse(Number(value));
+}
 /** Offline audit only. No runtime indexing or scheduling path reads this table. */
 export function createRetiredSessionReceipts(database:ApplicationDatabase){
  async function read(client:Pick<PoolClient,'query'>,bucket:string,key:string):Promise<RetiredSessionReceipt|null>{
   const {rows}=await client.query('SELECT * FROM opencrawl_retired_session_receipts WHERE namespace=$1 AND bucket=$2 AND receipt_key=$3',[database.namespace,bucket,key]);if(!rows.length)return null;const r=rows[0];
-  const receipt=r.status==='indexed'?{status:'indexed' as const,sourceKey:r.source_key,documents:Number(r.documents),indexedAt:r.indexed_at,...(r.deleted===null?{}:{deleted:r.deleted})}:
-   {status:'failed' as const,sourceKey:r.source_key,attempts:Number(r.attempts),lastAttempt:r.last_attempt,nextAttempt:Number(r.next_attempt),error:r.error};
+  const receipt=r.status==='indexed'?{status:'indexed' as const,sourceKey:r.source_key,documents:storedNumber(r.documents),indexedAt:r.indexed_at,...(r.deleted===null?{}:{deleted:r.deleted})}:
+   {status:'failed' as const,sourceKey:r.source_key,attempts:storedNumber(r.attempts),lastAttempt:r.last_attempt,nextAttempt:storedNumber(r.next_attempt),error:r.error};
   return validate({version:1,disposition:'deleted-retired-owner',bucket:r.bucket,prefix:r.source_prefix,key:r.receipt_key,sourceHash:r.source_hash,sourceBytesBase64:r.source_bytes.toString('base64'),receipt,
-   proof:{tenantId:r.tenant_id,userId:r.user_id,harness:r.harness,sessionId:r.session_id,proof:r.proof_reference},evidence:{controlKey:r.control_key,controlHash:r.control_hash,deletedAt:r.deleted_at,fenceKey:r.fence_key,fenceHash:r.fence_hash,closedAt:Number(r.closed_at)}});
+   proof:{tenantId:r.tenant_id,userId:r.user_id,harness:r.harness,sessionId:r.session_id,proof:r.proof_reference},evidence:{controlKey:r.control_key,controlHash:r.control_hash,deletedAt:r.deleted_at,fenceKey:r.fence_key,fenceHash:r.fence_hash,closedAt:storedNumber(r.closed_at)}});
  }
  return {
   async ready(){await database.ready();await database.transaction(async client=>{
@@ -44,8 +48,8 @@ export function createRetiredSessionReceipts(database:ApplicationDatabase){
     tenant_id text NOT NULL,user_id text NOT NULL,harness text NOT NULL,session_id text NOT NULL,proof_reference text NOT NULL,
     control_key text NOT NULL,control_hash text NOT NULL CHECK(control_hash~'^[a-f0-9]{64}$'),deleted_at text NOT NULL,fence_key text NOT NULL,fence_hash text NOT NULL CHECK(fence_hash~'^[a-f0-9]{64}$'),closed_at bigint NOT NULL CHECK(closed_at>=0),
     PRIMARY KEY(namespace,bucket,receipt_key),
-    CHECK((status='indexed' AND documents>=0 AND indexed_at IS NOT NULL AND attempts IS NULL AND last_attempt IS NULL AND next_attempt IS NULL AND error IS NULL)
-     OR(status='failed' AND documents IS NULL AND indexed_at IS NULL AND deleted IS NULL AND attempts>0 AND last_attempt IS NOT NULL AND next_attempt>=0 AND error='INDEXING_FAILED')))`);
+    CHECK((status='indexed' AND documents IS NOT NULL AND documents>=0 AND indexed_at IS NOT NULL AND attempts IS NULL AND last_attempt IS NULL AND next_attempt IS NULL AND error IS NULL)
+     OR(status='failed' AND documents IS NULL AND indexed_at IS NULL AND deleted IS NULL AND attempts IS NOT NULL AND attempts>0 AND last_attempt IS NOT NULL AND next_attempt IS NOT NULL AND next_attempt>=0 AND error IS NOT NULL AND error='INDEXING_FAILED')))`);
   });},
   async exportRetirement(bucket:string,key:string){if((await database.pool.query("SELECT to_regclass('opencrawl_retired_session_receipts') AS relation")).rows[0].relation===null)return null;return read(database.pool,bucket,key);},
   async importRetirement(input:RetiredSessionReceipt){const value=validate(input),r=value.receipt,p=value.proof,e=value.evidence;

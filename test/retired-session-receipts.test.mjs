@@ -43,3 +43,30 @@ test('retirement resume rejects changed original bytes, changed proof and target
  await assert.rejects(f.audit.importRetirement({...original.target,key:key+'bad'}),/binding differs/);assert.deepEqual(await f.audit.exportRetirement(bucket,key),original.target);
  await f.database.pool.query('UPDATE opencrawl_retired_session_receipts SET documents=documents+1 WHERE namespace=$1',[f.database.namespace]);await assert.rejects(f.audit.exportRetirement(bucket,key),/binding differs/);
 });
+
+test('fresh retirement schema rejects NULL conditional fields and retains exact rows',{skip:!postgresUrl},async t=>{
+ const f=await fixture(t),schema='retired_null_'+f.database.namespace.replaceAll('-',''),client=await f.database.pool.connect();
+ try{
+  await client.query(`CREATE SCHEMA "${schema}"`);await client.query(`SET search_path TO "${schema}"`);
+  const database={...f.database,pool:{query:(...args)=>client.query(...args)},ready:async()=>{},transaction:async run=>{await client.query('BEGIN');try{const result=await run(client);await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}}},audit=createRetiredSessionReceipts(database);await audit.ready();
+  for(const status of ['indexed','failed']){
+   const {key,bytes}=f.receipt(status),{source}=await f.importer().process(key,bytes,{write:false});await audit.importRetirement(source);
+   for(const column of status==='indexed'?['documents','indexed_at']:['attempts','last_attempt','next_attempt','error']){
+    await assert.rejects(client.query(`UPDATE opencrawl_retired_session_receipts SET ${column}=NULL WHERE namespace=$1 AND receipt_key=$2`,[database.namespace,key]),{code:'23514'});
+    assert.deepEqual(await audit.exportRetirement(bucket,key),source,'Rejected NULL update must preserve the original row');
+   }
+  }
+ }finally{try{await client.query('RESET search_path');await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);}finally{client.release();}}
+});
+test('readback rejects NULL numeric fields instead of normalizing them to zero',{skip:!postgresUrl},async t=>{
+ const f=await fixture(t);
+ for(const status of ['indexed','failed']){
+  const original=f.receipt(status),value={...original.value,...(status==='indexed'?{documents:0}:{nextAttempt:0})},bytes=encode(value),saved=await f.importer().process(original.key,bytes,{write:true});
+  const row=(await f.database.pool.query('SELECT * FROM opencrawl_retired_session_receipts WHERE namespace=$1 AND receipt_key=$2',[f.database.namespace,original.key])).rows[0];
+  for(const column of status==='indexed'?['documents','closed_at']:['attempts','next_attempt','closed_at']){
+   const corrupt=createRetiredSessionReceipts({...f.database,pool:{query:async sql=>sql.includes('to_regclass')?{rows:[{relation:'opencrawl_retired_session_receipts'}]}:{rows:[{...row,[column]:null}]}}});
+   await assert.rejects(corrupt.exportRetirement(bucket,original.key),/Invalid persisted retired receipt number/);
+  }
+  assert.deepEqual(await f.audit.exportRetirement(bucket,original.key),saved.target);
+ }
+});
