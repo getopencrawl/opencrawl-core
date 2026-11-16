@@ -16,8 +16,13 @@ If the receipt is missing, use the skill's registration fallback. Only fall back
 to reads at meaningful work boundaries when this Shell lacks `notify_on_output`,
 and state that limitation. Do not start board diagnostics unless requested.
 
-Prefer the native `opencrawl_search` tool; its unique name lets the OpenCrawl
-search hook attach this conversation ID automatically. Tool output is excluded
-by default: set `includeToolOutputs=true` for logs and execution receipts, and
-`includeCurrentSession=true` to include this chat. Inspect `searchContext`;
-`currentSessionStatus=unavailable` means self-chat exclusion was not applied.
+Prefer advertised `opencrawl_search_v1`, then `opencrawl_search`, then `search`;
+send only arguments exposed by the selected schema. On supporting servers,
+defaults exclude session tool/command output and the identified calling chat.
+Use supported `includeToolOutputs=true` for logs and execution receipts, and
+`includeCurrentSession=true` to include this chat. Check `searchContext`:
+`currentSessionStatus=unavailable` means no self-chat exclusion; a missing report
+leaves defaults and exclusion unconfirmed. Automatic identity requires enabled
+CLI-managed hooks on supported local Cursor paths; cloud HTTP-MCP ignores argument
+rewrites. Never guess a chat ID. Follow the opencrawl skill for alias, legacy
+coverage and activation details.
