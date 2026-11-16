@@ -28,7 +28,7 @@ import type {ApplicationState} from '../state/types.mjs';
 import type {IntegrationCommandReference,IntegrationCommand} from '../integrations/temporal/types.mjs';
 import {createConnectorCounts} from '../state/connector-counts.mjs';
 import {createIntegrationDrainProofs} from '../state/integration-drain-proofs.mjs';
-import {createRecordCounts} from '../integrations/counts.mjs';
+import {createRecordCounts, createCountMeasurement} from '../integrations/counts.mjs';
 import {guardConnectorWrites} from '../connectors/write-barrier.mjs';
 import {integrationLifecycleScheduler} from '../integrations/temporal/client.mjs';
 import {connectorClient,ensureConnectorSchedule} from '../connectors/temporal/client.mjs';
@@ -184,13 +184,12 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   const connectors={...baseConnectors,async resolve(input:Parameters<typeof baseConnectors.resolve>[0]){
     const resolved=await baseConnectors.resolve(input);
     const guarded=guardConnectorWrites({state,binding:resolved.binding,store:resolved.store,search:resolved.search});
-    return {...resolved,...guarded,async afterObject(key:string,check:()=>void){
-      check();await baseConnectors.resolve(input);
+    return {...resolved,...guarded,...createCountMeasurement({counts,jobs:(id,limit)=>airbyte.jobs(id,limit),async resolve(){
+      await baseConnectors.resolve(input);
       const record=await registry.get(input.tenantId as string,input.userId as string,input.connectionId as string);
       if(!record||record.status!=='active')throw Object.assign(new Error('Measurement connection is inactive'),{permanent:true});
-      const jobs=await airbyte.jobs(record.airbyte?.connectionId||'',100);
-      await counts.refresh(record,providers[record.provider]!,new Set(jobs.filter(job=>job.status==='succeeded').map(job=>Number(job.jobId))),{key,check});
-    }};
+      return {record,provider:providers[record.provider]!};
+    }})};
   }};
   const validateReference=(reference:IntegrationCommandReference)=>{
     if(reference.environment!=='selfhost'||reference.tenantId!==settings.organizationId)throw Object.assign(new Error('Integration workflow scope denied'),{permanent:true});

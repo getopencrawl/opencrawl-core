@@ -90,6 +90,24 @@ requires its own generation migration, independently of enabling new providers.
 
 ## Verification
 
+Connector measurement stages each indexed object's deduplicated IDs in PostgreSQL,
+including retries whose search receipt already exists. It never lists the source
+prefix or requests Airbyte jobs per object. A durable `completeSweep` activity runs
+after all indexing segments succeed: it reads one inventory and job snapshot and
+publishes totals once. Full-refresh totals require every expected object of the
+selected successful sync; newly arrived, unprocessed objects keep that snapshot
+unpublished. Publication never reads raw bodies. Incomplete or failed sweeps retain
+the last published totals until a successful retry. Historical full-refresh objects
+may need a one-time count read when first encountered; completed count receipts
+avoid rereading them. There is no SQL schema change or authorization cache.
+
+Upgrade connector workers together before admitting new workflow executions.
+The `connector-counts-after-sweep-v1` Temporal patch lets the new worker replay
+completed pre-upgrade histories without adding an activity; it must remain while
+those histories are retained. Rollback must keep a worker supporting the new
+completion activity until workflows started with it have drained. Cloud must use
+the same core measurement adapter when advancing its immutable runtime pin.
+
 `npm test` exercises scopes, real source shapes, cross-file assembly, ordering,
 chunk coverage, replay, failures and content exclusions without hosted services.
 CI also runs `test/connector-live.test.mjs` against disposable S3/OpenSearch. It

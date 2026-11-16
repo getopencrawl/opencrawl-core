@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {Readable} from 'node:stream';
 import {gzipSync} from 'node:zlib';
 import {createConnectorCounts,legacyCountsHash} from '../dist/src/state/connector-counts.mjs';
-import {createRecordCounts,recordKey} from '../dist/src/integrations/counts.mjs';
+import {createRecordCounts,createCountMeasurement,recordKey} from '../dist/src/integrations/counts.mjs';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 const record={environment:'selfhost',tenantId:'org_team',userId:'user_a',integrationId:'int_'+'a'.repeat(26),provider:'slack',status:'active',s3Bucket:'owned',s3Prefix:'raw/v1/source=slack/workspace=T123/connection=int_'+'a'.repeat(26)};
 const object=(stream='messages',sync=1,part=1,fullRefresh=false)=>({key:record.s3Prefix+`/stream=${stream}/date=2026-01-01/sync=${sync}/${part}.jsonl.gz`,stream,sync,fullRefresh});
@@ -54,4 +54,33 @@ test('a completed full-refresh measurement never publishes only part of its obje
  const {repository}=await fixture(t),first=object('users',1,1,true),second=object('users',1,2,true);
  await repository.processObject(record,first,keys('one'));await repository.publish(record,{users:1},{users:[first.key,second.key]});assert.equal(await repository.read(record),null);
  await repository.processObject(record,second,keys('two'));await repository.publish(record,{users:1},{users:[first.key,second.key]});assert.deepEqual(await repository.read(record),{users:2});
+});
+
+test('a complete incremental sweep aggregates SQL once, including retries and colliding tenant IDs',{skip:!postgresUrl},async t=>{
+ const {repository,database}=await fixture(t);let aggregates=0,scans=0,streams=0,jobs=0;
+ const original=database.transaction.bind(database);
+ database.transaction=operation=>original(client=>operation({query:(sql,params)=>{if(sql.includes('GROUP BY stream,generation'))aggregates++;return client.query(sql,params);}}));
+ const objects=Array.from({length:100},(_,i)=>object('messages',1,i));
+ const buckets={list:async()=>{scans++;return objects.map(({key})=>({key,size:1}));},stream:async()=>{streams++;return Readable.from(gzipSync(JSON.stringify({_airbyte_data:{id:'same-record'}})));}};
+ const counts=createRecordCounts({repository,buckets,legacyBucket:'owned'}),provider={streams:[],keys:{messages:['id']}};
+ for(const tenantId of [record.tenantId,'org_other']){
+  const selected={...record,tenantId,airbyte:{connectionId:'airbyte'}};
+  const measurement=createCountMeasurement({counts,resolve:async()=>({record:selected,provider}),jobs:async()=>{jobs++;return [{jobId:1,status:'succeeded'}];}});
+  for(const item of objects)await measurement.afterObject(item.key,()=>{});
+  assert.equal(await counts.get(selected),null,'staging does not publish partial totals');
+  await measurement.afterSweep(()=>{});assert.deepEqual(await counts.get(selected),{messages:1});
+  for(const item of objects)await measurement.afterObject(item.key,()=>{});
+  await measurement.afterSweep(()=>{});assert.deepEqual(await counts.get(selected),{messages:1});
+ }
+ assert.equal(aggregates,4);assert.equal(scans,4);assert.equal(jobs,4);assert.equal(streams,200);
+});
+
+test('sweep publication never reads late source objects or exposes an incomplete full snapshot',{skip:!postgresUrl},async t=>{
+ const {repository}=await fixture(t),first=object('users',1,1,true),late=object('users',1,2,true);let streams=0;
+ const objects=[first];
+ const counts=createRecordCounts({repository,legacyBucket:'owned',buckets:{list:async()=>objects.map(({key})=>({key,size:1})),stream:async(_bucket,key)=>{streams++;return Readable.from(gzipSync(JSON.stringify({_airbyte_data:{id:key}})));}}});
+ const measurement=createCountMeasurement({counts,resolve:async()=>({record:{...record,airbyte:{connectionId:'airbyte'}},provider:{streams:[{name:'users',syncMode:'full_refresh'}],keys:{users:['id']}}}),jobs:async()=>[{jobId:1,status:'succeeded'}]});
+ await measurement.afterObject(first.key,()=>{});objects.push(late);
+ await measurement.afterSweep(()=>{});assert.equal(await counts.get(record),null);assert.equal(streams,1);
+ await measurement.afterObject(late.key,()=>{});await measurement.afterSweep(()=>{});assert.deepEqual(await counts.get(record),{users:2});assert.equal(streams,2);
 });

@@ -14,7 +14,9 @@ export interface RecordCountRepository {
 }
 export interface RecordCounts {
   get(record: IntegrationRecord): Promise<Record<string, number> | null>;
-  refresh(record: IntegrationRecord, provider: Provider, succeeded: Set<number>, options?: {key?: string; check?: () => void}): Promise<void>;
+  /** Stage one indexed object without scanning inventory or publishing totals. */
+  process(record: IntegrationRecord, provider: Provider, key: string, check?: () => void): Promise<void>;
+  refresh(record: IntegrationRecord, provider: Provider, succeeded: Set<number>, options?: {key?: string; check?: () => void; publishOnly?: boolean}): Promise<void>;
   remove(record: IntegrationRecord): Promise<void>;
 }
 const PATH = /\/stream=([^/]+)\/date=[^/]+\/sync=(\d+)\//;
@@ -34,8 +36,8 @@ export function recordKey(data: Record<string, unknown> | undefined, key?: strin
   return hash(key?.length ? JSON.stringify(key.map(field => data?.[field] ?? null)) : JSON.stringify(data));
 }
 
-/** Reads never enqueue or scan. Only a reauthorized Temporal indexing activity
- * calls refresh; each source object is published atomically by the repository. */
+/** Reads never enqueue or scan. Object activities stage IDs; a
+ * reauthorized sweep-completion activity selects complete snapshots and publishes. */
 export function createRecordCounts({buckets, legacyBucket, repository}: {buckets: IntegrationStorage; legacyBucket: string; repository: RecordCountRepository}): RecordCounts {
   async function* ids(bucket: string, object: CountObject, keys: string[] | undefined, check: () => void) {
     const source = await buckets.stream(bucket, object.key), unzip = createGunzip();
@@ -54,7 +56,17 @@ export function createRecordCounts({buckets, legacyBucket, repository}: {buckets
   return {
     get: record => record.s3Prefix ? repository.read(record) : Promise.resolve(null),
     remove: record => repository.remove(record),
-    async refresh(record, provider, succeeded, {key, check = () => {}} = {}) {
+    async process(record, provider, key, check = () => {}) {
+      if (!record.s3Prefix) return;
+      check();
+      const match = PATH.exec(key), sync = match ? Number(match[2]) : NaN;
+      if (!match || !key.startsWith(`${record.s3Prefix}/`) || !key.endsWith('.jsonl.gz') || !Number.isSafeInteger(sync) || sync < 0) return;
+      const fullRefresh = provider.streams.some(stream => stream.name === match[1] && stream.syncMode.startsWith('full_refresh'));
+      const object = {key, stream: match[1], sync, fullRefresh};
+      const primary = provider.keys || (provider.connector?.manifest ? manifestKeys(provider.connector.manifest) : {});
+      await repository.processObject(record, object, ids(record.s3Bucket || legacyBucket, object, primary[object.stream], check), check);
+    },
+    async refresh(record, provider, succeeded, {key, check = () => {}, publishOnly = false} = {}) {
       if (!record.s3Prefix) return;
       check();
       const bucket = record.s3Bucket || legacyBucket;
@@ -68,15 +80,53 @@ export function createRecordCounts({buckets, legacyBucket, repository}: {buckets
       const full: Record<string, number> = {};
       for (const stream of fullStreams) {
         const syncs = [...new Set(objects.filter(object => object.stream === stream).map(object => object.sync))].sort((a, b) => b - a);
-        const sync = syncs.find(value => succeeded.has(value)) ?? (succeeded.size ? undefined : syncs[0]);
+        const sync = syncs.find(value => succeeded.has(value)) ?? (!publishOnly && !succeeded.size ? syncs[0] : undefined);
         if (sync !== undefined) full[stream] = sync;
       }
       for (const object of objects) {
+        if (publishOnly) break;
         if (key && object.key !== key) continue;
         if (object.fullRefresh && full[object.stream] !== object.sync) continue;
         check(); await repository.processObject(record, object, ids(bucket, object, primary[object.stream], check), check);
       }
       check(); await repository.publish(record, full, Object.fromEntries(Object.entries(full).map(([stream,sync]) => [stream,objects.filter(object => object.stream===stream && object.sync===sync).map(object => object.key)])));
+    },
+  };
+}
+
+/** Shared self-host/cloud orchestration. Resolve current authority for every
+ * activity; no authorization, inventory or provider-result cache crosses calls. */
+export function createCountMeasurement({counts, resolve, jobs}: {
+  counts: RecordCounts;
+  resolve(): Promise<{record: IntegrationRecord; provider: Provider}>;
+  jobs(connectionId: string, limit: number): Promise<Array<{status?: string; jobId: string | number}>>;
+}) {
+  const binding = ({record, provider}: {record: IntegrationRecord; provider: Provider}) => JSON.stringify([
+    record.environment, record.tenantId, record.userId, record.integrationId, record.provider,
+    record.s3Bucket, record.s3Prefix, record.airbyte?.connectionId, provider.streams, provider.keys, provider.connector?.manifest,
+  ]);
+  async function current(check: () => void) {
+    check();
+    const resolved = await resolve();
+    if (resolved.record.status !== 'active') throw Object.assign(new Error('Measurement connection is inactive'), {permanent: true});
+    check();
+    return resolved;
+  }
+  return {
+    async afterObject(key: string, check: () => void) {
+      const {record, provider} = await current(check);
+      await counts.process(record, provider, key, check);
+    },
+    async afterSweep(check: () => void) {
+      const initial = await current(check), identity = binding(initial);
+      const {record, provider} = initial;
+      const completed = record.airbyte?.connectionId ? await jobs(record.airbyte.connectionId, 100) : [];
+      // A slow provider response must not admit work after scope/binding changes.
+      const latest = await current(check);
+      if (binding(latest) !== identity) throw Object.assign(new Error('Measurement connection changed'), {permanent: true});
+      // Only indexed objects have been staged. Never stream newly arrived or
+      // unselected source files here; expected keys keep partial snapshots hidden.
+      await counts.refresh(record, provider, new Set(completed.filter(job => job.status === 'succeeded').map(job => Number(job.jobId))), {check, publishOnly: true});
     },
   };
 }

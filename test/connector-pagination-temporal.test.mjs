@@ -48,7 +48,7 @@ test('real Temporal: pagination activity failures replay across worker restarts 
         return page;
       };
       const process = async () => {processed++; return {records: 1};};
-      const activities = {listPage: list, listSessionPage: list, processObject: process, indexSessionObject: process};
+      const activities = {listPage: list, listSessionPage: list, processObject: process, indexSessionObject: process, completeSweep: async () => {}};
       const options = {connection: env.nativeConnection, taskQueue, activities, shutdownGraceTime: '5 seconds', maxCachedWorkflows: 0};
       const handle = await env.client.workflow.start(workflowType, {
         taskQueue, workflowId, args: [{sourceId: 'fixture', ...scenario.input}],
@@ -78,7 +78,7 @@ test('real Temporal: pagination activity failures replay across worker restarts 
         const history = await env.client.workflow.getHandle(workflowId, runId).fetchHistory();
         await Worker.runReplayHistory({workflowBundle: current}, history);
         assert.ok(!history.events.some(event => event.workflowTaskFailedEventAttributes), 'guard must not cause workflow-task retries');
-        assert.ok(!history.events.some(event => event.markerRecordedEventAttributes), 'no new marker commands');
+        if(workflowType==='indexSessionsV1'||!scenario.healthy)assert.ok(!history.events.some(event => event.markerRecordedEventAttributes), 'pagination guards add no marker commands');
         const continued = history.events.find(event => event.workflowExecutionContinuedAsNewEventAttributes)?.workflowExecutionContinuedAsNewEventAttributes;
         if (!continued) assert.ok(history.events.some(event => scenario.healthy
           ? event.workflowExecutionCompletedEventAttributes : event.workflowExecutionFailedEventAttributes));
@@ -106,5 +106,35 @@ test('real Temporal: pagination activity failures replay across worker restarts 
     await worker.runUntil(() => assert.rejects(handle.result(), isPaginationFailure));
     const history = await handle.fetchHistory();
     await Worker.runReplayHistory({workflowBundle: current}, history);
+  }
+});
+
+test('real Temporal: one retried count publication after all segments; old completed histories replay without it',{
+  skip:process.env.OPENCRAWL_TEST_TEMPORAL!=='1',timeout:120000,
+},async t=>{
+  Runtime.install({logger:new DefaultLogger('ERROR')});
+  const env=await TestWorkflowEnvironment.createLocal();t.after(()=>env.teardown());
+  const current=await bundleWorkflowCode({workflowsPath:fileURLToPath(new URL('../dist/src/connectors/temporal/workflows.cjs',import.meta.url))});
+  const legacy=await bundleWorkflowCode({workflowsPath:fileURLToPath(new URL('./fixtures/connector-workflow-before-counts.cjs',import.meta.url))});
+  for(const version of ['legacy','current','failed']){
+    const taskQueue=`counts-${version}`;let objects=0,publications=0;
+    const activities={
+      listPage:async({cursor})=>({keys:[cursor??'0'],cursor:cursor==='5'?null:String(Number(cursor??'0')+1)}),
+      processObject:async()=>{objects++;if(version==='failed')throw ApplicationFailure.nonRetryable('poison','PoisonFixture');return {records:1};},
+      completeSweep:async()=>{assert.equal(objects,6,'only after every segment');if(++publications===1)throw Error('transient publication failure');},
+    };
+    const worker=await Worker.create({connection:env.nativeConnection,taskQueue,workflowBundle:version==='legacy'?legacy:current,activities});
+    const handle=await env.client.workflow.start('indexConnectorV1',{taskQueue,workflowId:taskQueue,args:[{tenantId:'org_fixture',connectionId:'int_fixture'}]});
+    await worker.runUntil(async()=>{if(version==='failed')await assert.rejects(handle.result());else await handle.result();});
+    assert.equal(publications,version==='current'?2:0);
+    let runId=handle.firstExecutionRunId,runs=0,commands=0;
+    while(runId){
+      const history=await env.client.workflow.getHandle(taskQueue,runId).fetchHistory();
+      await Worker.runReplayHistory({workflowBundle:current},history);
+      commands+=history.events.filter(event=>event.activityTaskScheduledEventAttributes?.activityType?.name==='completeSweep').length;
+      assert.ok(!history.events.some(event=>event.workflowTaskFailedEventAttributes));
+      runId=history.events.find(event=>event.workflowExecutionContinuedAsNewEventAttributes)?.workflowExecutionContinuedAsNewEventAttributes.newExecutionRunId;runs++;
+    }
+    assert.equal(runs,2);assert.equal(commands,version==='current'?1:0,'publication retries reuse one durable command');
   }
 });

@@ -62,7 +62,7 @@ test('completed rows cannot authorize a forged source or installation manifest',
 test('real Temporal full catch-up retries an activity, follows the actual workflow, replays and resumes from PG',{skip:!postgresUrl||process.env.OPENCRAWL_TEST_TEMPORAL!=='1',timeout:120000},async t=>{
  Runtime.install({logger:new DefaultLogger('ERROR')});const f=await fixture(t),env=await TestWorkflowEnvironment.createLocal();t.after(()=>env.teardown());
  const workflowBundle=await bundleWorkflowCode({workflowsPath:fileURLToPath(new URL('../dist/src/connectors/temporal/workflows.cjs',import.meta.url))});
- let attempts=0,processed=0;const worker=await Worker.create({connection:env.nativeConnection,taskQueue:'fixture-v1',workflowBundle,activities:{listPage:async()=>({keys:['fixture-object'],cursor:null}),processObject:async()=>{if(++attempts===1)throw Error('transient fixture failure');processed++;return {records:1};}}});
+ let attempts=0,processed=0;const worker=await Worker.create({connection:env.nativeConnection,taskQueue:'fixture-v1',workflowBundle,activities:{listPage:async()=>({keys:['fixture-object'],cursor:null}),processObject:async()=>{if(++attempts===1)throw Error('transient fixture failure');processed++;return {records:1};},completeSweep:async()=>{}}});
  f.options.client=env.client;const result=await worker.runUntil(()=>activateConnectorCatchup(f.options));assert.equal(result.completed,true);assert.equal(processed,1);assert.equal(attempts,2);
  const saved=(await f.database.pool.query('SELECT workflow_id,run_id FROM opencrawl_connector_catchup_runs WHERE namespace=$1',[f.database.namespace])).rows[0];
  const history=await env.client.workflow.getHandle(saved.workflow_id,saved.run_id).fetchHistory();await Worker.runReplayHistory({workflowBundle},history);

@@ -20,12 +20,24 @@ export async function buildConnectorWorkflows(path: string) {
  */
 export function connectorActivities({resolve}: ConnectorActivityOptions) {
   const indexes = new Map<string, Promise<unknown>>();
-  async function operation(input: ConnectorActivityInput & {key?: string}, action: 'listPage' | 'processObject') {
+  async function measure(operation: () => Promise<void>) {
+    try {await operation();}
+    catch (error) {
+      if (Context.current().cancellationSignal.aborted) throw Context.current().cancellationSignal.reason;
+      if (errorMetadata(error).permanent) throw ApplicationFailure.nonRetryable('Connector measurement scope is inactive', 'InvalidConnectorMeasurement');
+      throw ApplicationFailure.retryable('Connector measurement failed; retrying safely', 'ConnectorMeasurementFailed');
+    }
+  }
+  async function operation(input: ConnectorActivityInput & {key?: string}, action: 'listPage' | 'processObject' | 'completeSweep') {
     const pulse = setInterval(() => heartbeat(), 10000);
     try {
       if (action === 'listPage') assertSourcePaginationInput(input);
       heartbeat();
       const resolved = await resolve(input);
+      if (action === 'completeSweep') {
+        if (resolved.afterSweep) await measure(() => resolved.afterSweep!(() => Context.current().cancellationSignal.throwIfAborted()));
+        return;
+      }
       const identity = resolved.search.identity;
       if (!indexes.has(identity)) indexes.set(identity, resolved.search.ensureIndex().catch(error => {indexes.delete(identity); throw error;}));
       await indexes.get(identity);
@@ -42,12 +54,7 @@ export function connectorActivities({resolve}: ConnectorActivityOptions) {
       else if (resolved.afterObject) {
         const current = await resolve(input);
         if (JSON.stringify(current.binding) !== JSON.stringify(resolved.binding) || current.search.identity !== identity || current.store.bucket !== resolved.store.bucket) throw Object.assign(new Error('Connector binding changed before measurement'), {permanent: true});
-        try {await resolved.afterObject(input.key!, () => Context.current().cancellationSignal.throwIfAborted());}
-        catch (error) {
-          if (Context.current().cancellationSignal.aborted) throw Context.current().cancellationSignal.reason;
-          if (errorMetadata(error).permanent) throw ApplicationFailure.nonRetryable('Connector measurement scope is inactive', 'InvalidConnectorMeasurement');
-          throw ApplicationFailure.retryable('Connector measurement failed; retrying safely', 'ConnectorMeasurementFailed');
-        }
+        await measure(() => resolved.afterObject!(input.key!, () => Context.current().cancellationSignal.throwIfAborted()));
       }
       return result;
     } catch (error) {
@@ -56,7 +63,11 @@ export function connectorActivities({resolve}: ConnectorActivityOptions) {
       throw error;
     } finally { clearInterval(pulse); }
   }
-  return {listPage: (input: ConnectorActivityInput) => operation(input, 'listPage') as Promise<SourcePage>, processObject: (input: ConnectorActivityInput & {key: string}) => operation(input, 'processObject') as Promise<{status: string; records: number}>};
+  return {
+    listPage: (input: ConnectorActivityInput) => operation(input, 'listPage') as Promise<SourcePage>,
+    processObject: (input: ConnectorActivityInput & {key: string}) => operation(input, 'processObject') as Promise<{status: string; records: number}>,
+    completeSweep: (input: ConnectorActivityInput) => operation(input, 'completeSweep') as Promise<void>,
+  };
 }
 
 /** Operator-supplied SDK connectionOptions support TLS/auth; callers own key rotation. */
