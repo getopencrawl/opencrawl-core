@@ -1,5 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {Pool} from 'pg';
+import {createApplicationDatabase} from '../dist/src/state/postgres.mjs';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {createPostgresSlackCapture} from '../dist/src/state/slack-capture.mjs';
 import {createSlackMessageCapture} from '../dist/src/connectors/slack-source-messages.mjs';
@@ -23,7 +26,7 @@ test('PostgreSQL Slack import reconstructs every catalog and checkpoint without 
  assert.equal(counts.rows.find(row=>row.item_kind==='file-comment').count,2);
  assert.equal((await database.pool.query("SELECT count(*)::int AS count FROM opencrawl_slack_catalog_items WHERE namespace=$1 AND item_kind='file-share'",[database.namespace])).rows[0].count,2);
  await assert.rejects(repository.importLegacy(key('messages-v1','pending'),bytes({...message,pages:99})),/differs/);
- await assert.rejects(repository.readCheckpoint({...binding,tenantId:'org_foreign'},'messages-v1','pending'),/scope mismatch/);
+ assert.equal(await repository.readCheckpoint({...binding,tenantId:'org_foreign'},'messages-v1','pending'),null);
  await assert.rejects(repository.importLegacy(key('messages-v1','unknown'),bytes({...message,runId:'unknown',forgottenField:true})));
  assert.equal(await repository.readCheckpoint(binding,'messages-v1','unknown'),null);
 });
@@ -61,4 +64,75 @@ test('real Slack adapter stores only immutable source pages in object storage an
  await assert.rejects(capture.step({runId:'first',cutoff:1000}),/transport/);
  assert.deepEqual(await capture.step({runId:'second',cutoff:1000}),{done:false,waitMs:3500});assert.equal(calls,1);
  assert.equal(objects.size,0);assert.ok(await repository.readCheckpoint(binding,'messages-v1','first'));
+});
+
+
+test('Slack capture isolates colliding raw prefixes across tenant imports, restart, CAS, pacing and cascades',{skip:!postgresUrl},async t=>{
+ const {database,repository}=await fixture(t),other={...binding,tenantId:'org_other'},first=checkpoint(),second={...checkpoint(),scope:digest(other),pages:22,channels:{C2:{id:'C2',cursor:'',done:true}},threads:{},priorChannels:[]};
+ // Separate tenant buckets can use the identical workspace/connection path.
+ for(const [value,catalog]of [[first,{scope:first.scope,channels:['C1']}],[second,{scope:second.scope,channels:['C2']}]]){
+  await repository.importLegacy(key('messages-v1','pending'),bytes(value));await repository.importLegacy(key('messages-v1'),bytes(catalog));
+ }
+ await assert.rejects(repository.exportLegacy(key('messages-v1')),/Explicit Slack capture binding/);
+ const restarted=createPostgresSlackCapture(database);await restarted.ready();
+ assert.deepEqual((await restarted.readCheckpoint(binding,'messages-v1','pending')).value,first);
+ assert.deepEqual((await restarted.readCheckpoint(other,'messages-v1','pending')).value,second);
+ assert.deepEqual((await restarted.exportLegacy(key('messages-v1'),second.scope)).channels,['C2']);
+ const revision=(await restarted.readCheckpoint(binding,'messages-v1','pending')).revision;
+ await restarted.saveCheckpoint(binding,'messages-v1','pending',{...first,channels:{},threads:{},pages:4},revision);
+ assert.deepEqual((await restarted.readCheckpoint(other,'messages-v1','pending')).value,second,'first tenant child deletion cannot touch the second');
+ await restarted.defer(binding,'conversations.history',300000);
+ assert.deepEqual(await restarted.reserve(other,'conversations.history',100000,5000),{reserved:true,waitMs:0});
+ assert.deepEqual(await restarted.reserve(binding,'conversations.history',100000,5000),{reserved:false,waitMs:200000});
+ await database.pool.query('DELETE FROM opencrawl_slack_scopes WHERE namespace=$1 AND raw_prefix=$2 AND scope_hash=$3',[database.namespace,binding.rawPrefix,first.scope]);
+ assert.equal(await restarted.readCheckpoint(binding,'messages-v1','pending'),null);
+ assert.deepEqual((await restarted.readCheckpoint(other,'messages-v1','pending')).value,second,'FK cascade retains the other binding');
+});
+
+
+async function legacySchema(t,{orphan=false}={}){
+ const schema='slack_upgrade_'+randomUUID().replaceAll('-',''),admin=new Pool({connectionString:postgresUrl,max:1});
+ await admin.query('CREATE SCHEMA '+schema);
+ const database=createApplicationDatabase({connectionString:postgresUrl,namespace:schema,options:'-c search_path='+schema,max:2});
+ t.after(async()=>{try{await database.close();await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.query('DROP SCHEMA '+database.identitySchema+' CASCADE');}finally{await admin.end();}});
+ await database.ready();
+ await database.pool.query(`CREATE TABLE opencrawl_slack_scopes(namespace text NOT NULL,raw_prefix text NOT NULL,scope_hash text NOT NULL,PRIMARY KEY(namespace,raw_prefix));
+ CREATE TABLE opencrawl_slack_catalogs(namespace text NOT NULL,raw_prefix text NOT NULL,kind text NOT NULL,PRIMARY KEY(namespace,raw_prefix,kind));
+ CREATE TABLE opencrawl_slack_catalog_items(namespace text NOT NULL,raw_prefix text NOT NULL,kind text NOT NULL,item_kind text NOT NULL,item_key text NOT NULL,ordinal integer NOT NULL,value jsonb,PRIMARY KEY(namespace,raw_prefix,kind,item_kind,item_key));
+ CREATE TABLE opencrawl_slack_runs(namespace text NOT NULL,raw_prefix text NOT NULL,kind text NOT NULL,run_id text NOT NULL,metadata jsonb NOT NULL,revision bigint NOT NULL DEFAULT 1,PRIMARY KEY(namespace,raw_prefix,kind,run_id));
+ CREATE TABLE opencrawl_slack_run_items(namespace text NOT NULL,raw_prefix text NOT NULL,kind text NOT NULL,run_id text NOT NULL,item_kind text NOT NULL,item_key text NOT NULL,ordinal integer NOT NULL,value jsonb NOT NULL,PRIMARY KEY(namespace,raw_prefix,kind,run_id,item_kind,item_key));
+ CREATE TABLE opencrawl_slack_pacing(namespace text NOT NULL,raw_prefix text NOT NULL,method text NOT NULL,next_due bigint NOT NULL,PRIMARY KEY(namespace,raw_prefix,method));`);
+ const args=[database.namespace,binding.rawPrefix],scope=digest(binding),channel={id:'C1',cursor:'next',done:false};
+ const metadata={version:1,scope,runId:'pending',cutoff:1234,cursor:'',listed:true,nextDue:{'conversations.history':12345},pages:1,emitted:1,hasPriorChannels:true};
+ if(!orphan)await database.pool.query('INSERT INTO opencrawl_slack_scopes VALUES($1,$2,$3)',[...args,scope]);
+ await database.pool.query("INSERT INTO opencrawl_slack_catalogs VALUES($1,$2,'messages-v1')",args);
+ await database.pool.query("INSERT INTO opencrawl_slack_catalog_items VALUES($1,$2,'messages-v1','channel','C1',0,null)",args);
+ await database.pool.query("INSERT INTO opencrawl_slack_runs VALUES($1,$2,'messages-v1','pending',$3::jsonb,7)",[...args,JSON.stringify(metadata)]);
+ await database.pool.query("INSERT INTO opencrawl_slack_run_items VALUES($1,$2,'messages-v1','pending','channels','C1',0,$3::jsonb)",[...args,JSON.stringify(channel)]);
+ await database.pool.query("INSERT INTO opencrawl_slack_pacing VALUES($1,$2,'conversations.history',12345)",args);
+ return {database,scope,channel,metadata};
+}
+
+test('Slack capture upgrades existing SQL rows and revisions in place before accepting a colliding tenant',{skip:!postgresUrl},async t=>{
+ const {database,scope,channel}=await legacySchema(t),repository=createPostgresSlackCapture(database);await repository.ready();
+ assert.deepEqual(await repository.readCatalog(binding,'messages-v1'),{scope,channels:['C1']});
+ const saved=await repository.readCheckpoint(binding,'messages-v1','pending');assert.equal(saved.revision,'7');assert.deepEqual(saved.value.channels,{C1:channel});
+ assert.deepEqual(await repository.reserve(binding,'conversations.history',12344,5000),{reserved:false,waitMs:1});
+ for(const table of ['scopes','catalogs','catalog_items','runs','run_items','pacing']){
+  const {rows}=await database.pool.query('SELECT scope_hash FROM opencrawl_slack_'+table);assert.equal(rows.length,1);assert.equal(rows[0].scope_hash,scope);
+ }
+ const other={...binding,tenantId:'org_other'};
+ await repository.mergeCatalog(other,'messages-v1',{scope:digest(other),channels:['C2']});
+ const restarted=createPostgresSlackCapture(database);await restarted.ready();
+ assert.deepEqual(await restarted.readCatalog(binding,'messages-v1'),{scope,channels:['C1']});
+ assert.deepEqual(await restarted.readCatalog(other,'messages-v1'),{scope:digest(other),channels:['C2']});
+ assert.equal((await restarted.readCheckpoint(binding,'messages-v1','pending')).revision,'7');
+});
+
+test('Slack capture schema upgrade rolls back completely for orphaned historical state',{skip:!postgresUrl},async t=>{
+ const {database}=await legacySchema(t,{orphan:true}),repository=createPostgresSlackCapture(database);
+ await assert.rejects(repository.ready());
+ assert.equal((await database.pool.query('SELECT count(*)::int n FROM opencrawl_slack_runs')).rows[0].n,1);
+ assert.equal((await database.pool.query("SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='opencrawl_slack_runs' AND column_name='scope_hash'")).rows[0].n,0);
+ assert.equal((await database.pool.query("SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid='opencrawl_slack_scopes'::regclass AND contype='p'")).rows[0].definition,'PRIMARY KEY (namespace, raw_prefix)');
 });

@@ -56,6 +56,7 @@ export interface ObjectMigrationOptions {
 export interface TenantObjectMigrationOptions extends Omit<ObjectMigrationOptions,'organizationId'> {
   tenantId:string;credentialPurpose?:'capture'|'agent';
 }
+export interface BoundObjectMigrationOptions extends Omit<TenantObjectMigrationOptions,'tenantId'> {tenantIds:readonly string[]}
 
 /** Self-host migration pins exactly one organization. The portable per-tenant
  * importer below is also used by explicitly bound multi-tenant runtimes. */
@@ -67,9 +68,16 @@ export function createObjectMigration(options:ObjectMigrationOptions){
 /** Offline source reader. Every mutable path has a typed importer and an
  * independent readback. Unknown paths fail closed; no runtime object-state
  * adapter is available here. Schema creation is lazy and only happens on write. */
-export function createTenantObjectMigration({database,prefix,tenantId:organizationId,store,registryRecords,connectorKey,eventIdentities,credentialPurpose='capture'}:TenantObjectMigrationOptions){
-  if(!prefix||prefix.split('/').some(value=>!value||value==='.'||value==='..')||!/^(?:org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(organizationId)||!['capture','agent'].includes(credentialPurpose)||!store.bucket)fail('Invalid object migration scope');
-  const tenantHash=digest(organizationId),roots=credentialPurpose==='agent'?[prefix+'/']:[prefix+'/', 'control/connectors/write-barriers/v1/','connector-credentials/v1/','connector-settings/v1/','derived/indexing/','raw/v1/source=slack/','_opencrawl/counts/'];
+export function createTenantObjectMigration({tenantId,...options}:TenantObjectMigrationOptions){return createBoundObjectMigration({...options,tenantIds:[tenantId]});}
+
+/** The runtime supplies a finite reviewed source binding. Scoped records must
+ * match that set exactly; installation-level markers remain bound to this
+ * bucket and prefix and never borrow an arbitrary tenant identity. */
+export function createBoundObjectMigration({database,prefix,tenantIds,store,registryRecords,connectorKey,eventIdentities,credentialPurpose='capture'}:BoundObjectMigrationOptions){
+  if(!prefix||prefix.split('/').some(value=>!value||value==='.'||value==='..')||!tenantIds.length||tenantIds.length>100000||tenantIds.some(value=>!/^(?:org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(value))||!['capture','agent'].includes(credentialPurpose)||!store.bucket)fail('Invalid object migration scope');
+  const tenants=new Set(tenantIds),tenantHashes=new Set(tenantIds.map(digest));
+  if(tenants.size!==tenantIds.length||tenantHashes.size!==tenants.size)fail('Ambiguous object migration tenant binding');
+  const roots=credentialPurpose==='agent'?[prefix+'/']:[prefix+'/', 'control/connectors/write-barriers/v1/','connector-credentials/v1/','connector-settings/v1/','derived/indexing/','raw/v1/source=slack/','_opencrawl/counts/'];
   const controls=createPostgresControls(database),deletions=createPostgresDeletionRequests(database,prefix),accounts=createAccountState(database),secrets=createConnectorSecrets(database),
     replicas=createReplicasState(database),reports=createValueReports(database),receipts=createPostgresIndexingReceipts(database),slack=createPostgresSlackCapture(database),counts=createConnectorCounts({database,legacyBucket:store.bucket}),board=createPostgresBoardState(database),retirements=createSchedulerRetirements(database);
   const preparations=new Map<string,Promise<void>>();
@@ -77,8 +85,8 @@ export function createTenantObjectMigration({database,prefix,tenantId:organizati
   // Missing domain tables mean an uninitialized target. Every other SQL error
   // remains an error, including missing columns, constraints and access denial.
   async function read<T>(run:()=>Promise<T>):Promise<T|null>{try{return await run();}catch(error){if((error as {code?:string}).code==='42P01')return null;throw error;}}
-  const tenant=(value:string)=>{if(value!==organizationId)fail('Legacy object belongs to another installation organization');};
-  const tenantDigest=(value:string)=>{if(value!==tenantHash)fail('Legacy object owner hash differs from the installation organization');};
+  const tenant=(value:string)=>{if(!tenants.has(value))fail('Legacy object belongs to another installation organization');};
+  const tenantDigest=(value:string)=>{if(!tenantHashes.has(value))fail('Legacy object owner hash differs from the installation organization');};
   function classify(key:string):Classification|null {
     if(typeof key!=='string'||key.length>8192||key.split('/').some(part=>!part||part==='.'||part==='..'))fail('Invalid object migration key');
     const match=(pattern:RegExp,domain:string,maxBytes=65536):Classification|null=>{const value=pattern.exec(key.startsWith(prefix+'/')?key.slice(prefix.length+1):key);return value?{domain,maxBytes,parts:value.slice(1)}:null;};
@@ -182,14 +190,14 @@ export function createTenantObjectMigration({database,prefix,tenantId:organizati
         if(write){await prepare('accounts',accounts.ready);await accounts.importReceipt(parts[0],kind,source);}target=await read(()=>accounts.onboarding.read(parts[0],kind));break;
       }
       case 'role-writes':{
-        tenant(parts[0]);const value=roleWriteSchema.parse(json(bytes));if(value.state==='held')tenant(value.organizationId);source=value;
+        tenant(parts[0]);const value=roleWriteSchema.parse(json(bytes));if(value.state==='held'&&value.organizationId!==parts[0])fail('Role write organization differs from its source key');source=value;
         if(write){await prepare('accounts',accounts.ready);await accounts.importRole(parts[0],source);}target=await read(()=>accounts.exportRole(parts[0]));break;
       }
       case 'connector-grants':case 'connector-settings':{
         tenant(parts[0]);if(!connectorKey||connectorKey.length!==32)fail('The original connector encryption key is required to verify saved connector credentials');
         const plain=json(sealedEnvelope(connectorKey).open(key,bytes));
-        if(domain==='connector-grants'){const grant=connectorGrantSchema.parse(plain);tenant(grant.organizationId);if(grant.id!==parts[1])fail('Connector grant identity mismatch');}
-        else tenant(connectorSettingsSchema.parse(plain).organizationId);
+        if(domain==='connector-grants'){const grant=connectorGrantSchema.parse(plain);if(grant.organizationId!==parts[0])fail('Connector grant organization differs from its source key');if(grant.id!==parts[1])fail('Connector grant identity mismatch');}
+        else if(connectorSettingsSchema.parse(plain).organizationId!==parts[0])fail('Connector settings organization differs from its source key');
         const scope={kind:domain==='connector-grants'?'grant' as const:'settings' as const,organizationId:parts[0],id:parts[1]??'settings'};source=bytes;
         if(write){await prepare('secrets',secrets.ready);await secrets.importSecret(scope,key,bytes);}target=await read(async()=>(await secrets.read(scope,key)).data);break;
       }
@@ -205,16 +213,17 @@ export function createTenantObjectMigration({database,prefix,tenantId:organizati
         tenantDigest(parts[0]);const value=z.strictObject({organizationId:z.string().regex(new RegExp('^'+U+'$'))}).parse(json(bytes));if(value.organizationId!==parts[1])fail('Replicas index identity mismatch');
         const connectionKey=prefix+'/identity/replicas-v1/organizations/'+value.organizationId+'.json';
         const raw=await store.get(connectionKey,{maxBytes:65536});if(!raw)fail('Replicas lookup has no authoritative source connection');
-        const connection=replicasConnectionSchema.parse(json(raw));tenant(connection.tenantId);if(connection.organizationId!==value.organizationId)fail('Replicas index source mismatch');
+        const connection=replicasConnectionSchema.parse(json(raw));tenant(connection.tenantId);if(connection.organizationId!==value.organizationId||digest(connection.tenantId)!==parts[0])fail('Replicas index source mismatch');
         source=value;rows=0;if(write){await prepare('replicas',replicas.ready);await replicas.importConnection(connection);}
-        const actual=await read(async()=>(await replicas.readConnection(value.organizationId)).record);if(actual){tenant(actual.tenantId);target={organizationId:actual.organizationId};}break;
+        const actual=await read(async()=>(await replicas.readConnection(value.organizationId)).record);if(actual){if(actual.tenantId!==connection.tenantId)fail('Replicas index target tenant mismatch');target={organizationId:actual.organizationId};}break;
       }
       case 'value-reports':{
         tenantDigest(parts[0]);source=z.record(z.string(),z.unknown()).parse(json(bytes));
         if(write){await prepare('reports',reports.ready);await reports.importReport(parts[0],source);}target=await read(()=>reports.exportReport(parts[0]));break;
       }
       case 'slack-capture':{
-        source=slack.validateLegacy(key,bytes);if(write){await prepare('slack',slack.ready);await slack.importLegacy(key,bytes);}target=await read(()=>slack.exportLegacy(key));break;
+        const value=slack.validateLegacy(key,bytes),scope=hash.parse((value as {scope:unknown}).scope);source=value;
+        if(write){await prepare('slack',slack.ready);await slack.importLegacy(key,bytes);}target=await read(()=>slack.exportLegacy(key,scope));break;
       }
       case 'record-counts':{
         const matches=registryRecords.filter(record=>record.integrationId===parts[0]&&(record.s3Bucket||store.bucket)===store.bucket);

@@ -1,3 +1,4 @@
+import {z} from 'zod';
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import type {PoolClient} from 'pg';
@@ -6,6 +7,14 @@ import type {Environment, IntegrationRecord, UpdateOptions} from './types.mjs';
 import type {IntegrationRegistry} from './ports.mjs';
 import type {IntegrationCommand, IntegrationCommandOperation, IntegrationCommandReference, IntegrationCommandSecret} from './temporal/types.mjs';
 
+const optionalText=z.string().optional(),nullableText=z.string().nullable().optional();
+const importSchema=z.object({
+ tenantId:z.string(),userId:z.string(),integrationId:z.string(),provider:z.string(),environment:z.enum(['selfhost','staging','production']),scope:z.enum(['team','user']),status:z.enum(['connecting','provisioning','active','disconnecting','disconnected','error','abandoned']),createdAt:z.string().min(1),startDate:z.string().min(1),
+ updatedAt:optionalText,ownerEmail:nullableText,account:nullableText,workspace:nullableText,s3Bucket:optionalText,s3Prefix:optionalText,total:z.number().finite().nullable().optional(),airbyte:z.object({destinationId:optionalText,sourceId:optionalText,connectionId:optionalText}).passthrough().optional(),airbyteWorkspaceId:optionalText,airbyteLandingMode:optionalText,
+ airbyteMigration:z.object({format:z.number(),nonce:z.string(),oldDestinationId:z.string(),definitionId:z.string(),name:z.string(),newDestinationId:z.string().nullable()}).passthrough().nullable().optional(),connectedAccountId:optionalText,authConfigId:optionalText,installationId:optionalText,nonce:optionalText,githubRepositoryIds:z.array(z.number()).optional(),
+ provisionIntent:z.object({resource:z.enum(['destinationId','sourceId','connectionId']),workspaceId:z.string(),name:z.string(),attemptId:z.string(),requestedAt:z.string(),sourceId:optionalText,destinationId:optionalText,responseStatus:z.number().nullable().optional()}).passthrough().nullable().optional(),provisionProtocol:z.number().optional(),sharedResourceProtocol:z.literal(1).optional(),provisionRun:optionalText,provisionVersion:optionalText,resourceVersion:optionalText,error:nullableText,
+ lifecycleCommandId:optionalText,lifecycleOperation:z.enum(['consent','provision','disconnect','sync']).optional(),oauthIntent:z.object({resource:z.enum(['auth-config','link']),attemptId:z.string(),requestedAt:z.string(),callbackUrl:optionalText,config:z.object({toolkit:z.string(),name:z.string(),scheme:optionalText}).passthrough().optional()}).passthrough().nullable().optional(),oauthLinkAttemptId:optionalText,oauthVersion:optionalText,oauthExpiresAt:optionalText,cleanupResourceVersion:optionalText,cleanupBlockedReason:z.literal('external-writer-proof-required').nullable().optional(),disconnectedAt:optionalText,dataDeletedAt:nullableText,deletedObjects:z.number().optional(),settings:z.object({folderId:z.union([z.string(),z.number()]).optional()}).passthrough().optional(),
+}).passthrough();
 const denied=()=>Object.assign(new Error('Integration scope is not authorized'),{status:403});
 const conflict=()=>Object.assign(new Error('Integration changed; refresh and retry'),{status:409,code:'ConditionalCheckFailedException'});
 export interface IntegrationCommandTransactions {
@@ -67,6 +76,7 @@ function createRegistry({database,environment,commands,organizationId,bindingId,
     if(record.environment!==environment||!/^int_[a-f0-9]{26}$/.test(record.integrationId)||!(/^[a-z]+$/).test(record.provider))throw denied();
     return record;
   };
+  const validateImportRecord=(value:unknown):IntegrationRecord=>{z.json().parse(value);return validate(importSchema.parse(value));};
   const decode=(value:unknown):IntegrationRecord=>{if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid integration record');return validate(value as IntegrationRecord);};
   const key=(identity:Pick<IntegrationRecord,'tenantId'|'userId'|'integrationId'>)=>[database.namespace,environment,identity.tenantId,identity.userId,identity.integrationId];
   async function locked(client:PoolClient,identity:Pick<IntegrationRecord,'tenantId'|'userId'|'integrationId'>){
@@ -165,7 +175,7 @@ function createRegistry({database,environment,commands,organizationId,bindingId,
       await checked.commands.enqueue(client,ref,'disconnect',{},checked.requestedBy);return ref;
     });
   }
-  return {...registry,requestLifecycle,createWithLifecycle,abandonWithLifecycle,ready,close:()=>{},
+  return {...registry,requestLifecycle,createWithLifecycle,abandonWithLifecycle,ready,validateImportRecord,close:()=>{},
     async exportRecord(tenantId:string,userId:string,integrationId:string){
       scope(tenantId,userId);
       if(!/^int_[a-f0-9]{26}$/.test(integrationId))throw denied();
@@ -174,9 +184,8 @@ function createRegistry({database,environment,commands,organizationId,bindingId,
       const {rows}=await database.pool.query('SELECT record FROM opencrawl_integrations WHERE namespace=$1 AND environment=$2 AND tenant_id=$3 AND user_id=$4 AND integration_id=$5',key({tenantId,userId,integrationId}));
       return rows[0]?decode(rows[0].record):null;
     },
-    async importRecord(record:IntegrationRecord){
-      validate(record);
-      if(!['connecting','provisioning','active','disconnecting','disconnected','error','abandoned'].includes(record.status)||!['team','user'].includes(record.scope))throw new Error('Invalid integration import');
+    async importRecord(value:unknown){
+      const record=validateImportRecord(value);
       await ready();return database.transaction(async client=>{
         await client.query('INSERT INTO opencrawl_integrations(namespace,environment,tenant_id,user_id,integration_id,provider,status,record) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT DO NOTHING',[...key(record),record.provider,record.status,JSON.stringify(record)]);
         const current=await locked(client,record);if(!isDeepStrictEqual(current,record))throw conflict();return current!;

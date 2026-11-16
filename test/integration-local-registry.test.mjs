@@ -137,3 +137,11 @@ live('offline registry export leaves an unbound target namespace unchanged',asyn
  const {rows}=await database.pool.query('SELECT namespace FROM opencrawl_integration_bindings WHERE namespace=$1',[database.namespace]);assert.deepEqual(rows,[]);
  await assert.rejects(registry.exportRecord('org_other',record.userId,record.integrationId),{status:403});
 });
+
+test('legacy import validation is pure, typed and preserves unknown JSON fields exactly',()=>{
+ const noWrite=()=>assert.fail('validation must not query or initialize a database');
+ const registry=createPostgresIntegrationRegistry({database:{namespace:'read-only',ready:noWrite,pool:{query:noWrite}},environment:'production',bindingId:'hosted:production',authorizeTenant:tenant=>tenant==='org_team'});
+ const legacy={...record,environment:'production',futureVersion:{unknown:[1,null,'kept']},airbyte:{sourceId:'source',futureField:'kept'}};
+ assert.deepEqual(registry.validateImportRecord(legacy),legacy);
+ for(const value of [{...legacy,createdAt:null},{...legacy,startDate:undefined},{...legacy,airbyte:{sourceId:42}},{...legacy,githubRepositoryIds:['invalid']},{...legacy,tenantId:'org_other'}])assert.throws(()=>registry.validateImportRecord(value));
+});

@@ -14,7 +14,7 @@ async function fixture(t){
  const database=await applicationDatabaseFixture(t),key=Buffer.alloc(32,7),commands=createIntegrationCommands({database,environment:'selfhost',encryptionKey:key});await commands.ready();const resources=createIntegrationResources({database,environment:'selfhost'});await resources.ready();
  const registry=createSingleOrganizationRegistry({database,organizationId:owner.tenantId,commands:commands.transactional});
  const calls={config:0,link:0,recoverConfig:0,recoverLink:0,removed:[]},scheduled=[];let now=Date.now(),authorized=true;
- const oauth={authConfig:async()=>{calls.config++;return 'config';},recoverAuthConfig:async()=>{calls.recoverConfig++;return calls.config?'config':null;},
+ const oauth={account:async id=>({id,status:'INITIATED',toolkit:{slug:'notion'},user_id:'selfhost:org_team:user_owner'}),authConfig:async()=>{calls.config++;return 'config';},recoverAuthConfig:async()=>{calls.recoverConfig++;return calls.config?'config':null;},
   link:async()=>{calls.link++;return {connected_account_id:'grant',redirect_url:'https://provider.example/authorize?state=PRIVATE_FLOW',expires_at:new Date(now+600000).toISOString()};},
   recoverLink:async()=>{calls.recoverLink++;return {connected_account_id:'grant'};},remove:async id=>{calls.removed.push(id);}};
  const lifecycle={commands,resources,schedule:async ref=>{scheduled.push(ref);},runProviderWrite:async(_r,_op,fn)=>fn(),cleanup:{closeWriters:async()=>{},stopWriters:async()=>{},drainWriters:async()=>{},deleteDocuments:async()=>0}};
@@ -78,4 +78,17 @@ live('consent output cannot be changed, revived after supersession, or read afte
  await f.commands.writeConsentResult(ref,result);await f.commands.writeConsentResult(ref,result);await assert.rejects(f.commands.writeConsentResult(ref,{...result,expiresAt:result.expiresAt+1}),{status:409});
  await f.database.pool.query('UPDATE opencrawl_integration_command_secrets SET expires_at=now()-interval \'1 second\' WHERE namespace=$1',[f.database.namespace]);assert.equal(await f.commands.readConsentResult(ref),null);
  await f.registry.abandonWithLifecycle(await f.record(),owner.userId);await assert.rejects(f.commands.writeConsentResult(ref,result),{status:409});assert.equal(await f.commands.readConsentResult(ref),null);
+});
+
+live('restart replaces a positively expired owned grant, while outages and wrong bindings preserve its pending intent',async t=>{
+ const f=await fixture(t),ref=await f.start();await f.step(ref,'consent-config');await f.step(ref,'consent-link');
+ const account=f.oauth.account;for(const response of ['outage','missing','wrong-owner','unknown-status']){
+  f.oauth.account=async id=>{if(response==='outage'||response==='missing')throw Object.assign(Error('PRIVATE_PROVIDER'),{status:response==='missing'?404:503});return {...await account(id),...(response==='wrong-owner'?{user_id:'selfhost:org_other:user_other'}:{status:'UNKNOWN'})};};
+  await assert.rejects(f.service.connect(owner,'notion'));assert.equal((await f.commands.read(ref)).status,'pending');assert.equal((await f.registry.get(owner.tenantId,owner.userId,ref.integrationId)).status,'connecting');assert.deepEqual([f.calls.config,f.calls.link],[1,1]);
+ }
+ f.oauth.account=async id=>({...await account(id),status:'EXPIRED'});
+ const enqueue=f.commands.transactional.enqueue;f.commands.transactional.enqueue=async()=>{throw Error('injected outbox failure');};await assert.rejects(f.service.connect(owner,'notion'),/outbox failure/);assert.equal((await f.commands.read(ref)).status,'pending');assert.equal((await f.registry.get(owner.tenantId,owner.userId,ref.integrationId)).status,'connecting');
+ f.commands.transactional.enqueue=enqueue;await assert.rejects(f.service.connect(owner,'notion'),{code:'ConsentPending'});
+ const prior=await f.registry.get(owner.tenantId,owner.userId,ref.integrationId);assert.equal(prior.status,'abandoned');assert.equal((await f.commands.read(ref)).status,'superseded');
+ const pending=await f.commands.listPending({});assert.equal(pending.commands.length,2);const operations=await Promise.all(pending.commands.map(r=>f.commands.read(r)));assert.deepEqual(operations.map(c=>c.operation).sort(),['consent','disconnect']);assert.deepEqual([f.calls.config,f.calls.link],[1,1]);
 });

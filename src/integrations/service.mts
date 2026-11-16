@@ -192,15 +192,15 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
   }
 
   /** Read-only sign-in health. A provider grant alone never completes our callback. */
-  async function pendingSignIn(record: IntegrationRecord, provider: Exclude<Provider, GithubProvider>): Promise<PendingSignInState> {
+  async function pendingSignIn(record: IntegrationRecord, provider: Exclude<Provider, GithubProvider>, fresh = false): Promise<PendingSignInState> {
     const key = JSON.stringify([environment, record.tenantId, record.userId, record.integrationId, record.connectedAccountId, provider.toolkit]);
     const cached = pendingAccountCache.get(key);
-    if (cached && performance.now() - cached.at < 15000) return cached.result;
+    if (!fresh && cached && performance.now() - cached.at < 15000) return cached.result;
     pendingAccountCache.delete(key);
     const result = Promise.resolve().then(async (): Promise<PendingSignInState> => {
       let account;
       try { account = await oauth.account(required(record.connectedAccountId, 'connected account')); }
-      catch (error) { if (errorInfo(error).status === 404) return 'unavailable'; throw error; }
+      catch (error) { if (!fresh && errorInfo(error).status === 404) return 'unavailable'; throw error; }
       if (account?.id !== record.connectedAccountId || (account.toolkit?.slug || '').toLowerCase() !== provider.toolkit
         || (account.user_id !== undefined && account.user_id !== oauthUser(record))) throw new Error('Sign-in account binding mismatch');
       if (account.is_disabled || ['FAILED', 'REVOKED', 'DELETED', 'INACTIVE'].includes(account.status)) return 'unavailable';
@@ -623,7 +623,15 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       if(provider.unavailableReason)throw Object.assign(new Error(provider.unavailableReason),{status:503,expose:true});
       const live = (await registry.listTenant(principal.tenantId)).filter(r => visible(principal, provider, r));
       const ownConsent=live.find(r=>r.userId===principal.userId&&r.status==='connecting'&&r.lifecycleOperation==='consent');
-      if(ownConsent){const prepared=await consentResult(ownConsent);if(prepared)return prepared;await abandon(ownConsent,principal.userId);live.splice(live.indexOf(ownConsent),1);}
+      if(ownConsent){
+        // A cached redirect may outlive the provider's exact grant. A fresh,
+        // positively bound terminal response permits replacement; an outage,
+        // missing account or binding mismatch leaves the accepted intent intact.
+        const terminal=ownConsent.connectedAccountId&&provider.auth!=='github-app'
+          ? await pendingSignIn(ownConsent,provider,true)!=='pending' : false;
+        if(!terminal){const prepared=await consentResult(ownConsent);if(prepared)return prepared;}
+        await abandon(ownConsent,principal.userId);live.splice(live.indexOf(ownConsent),1);
+      }
       for(const failed of live.filter(r=>r.userId===principal.userId&&r.status==='error'&&r.lifecycleOperation==='consent')){await abandon(failed,principal.userId);live.splice(live.indexOf(failed),1);}
       if (live.some(r => r.status !== 'connecting')) throw Object.assign(new Error('Already connected'), {status: 409});
       // Team-wide sources land under the OpenCrawl organization.

@@ -149,7 +149,8 @@ test('real session and memory library: viewer, private visibility, owner-only co
   const accepted = await api(alice, 'sessions/delete', {harness: 'claude-code', sessionId: 'alpha'});
   assert.equal(accepted.pending,true);
   const deleted = await sessions.delete(alice,{harness:'claude-code',sessionId:'alpha'});
-  assert.equal(deleted.objects, 4); // Two batches and two event ledgers.
+  assert.equal(deleted.objects, 2); // Two raw batches; event identity state lives in PostgreSQL.
+  assert.equal([...objects].filter(key => key.endsWith('/event-identities-v1.json')).length, 0);
   for (const key of objects) if (key.includes('/claude-code/') && !key.includes('/controls/')) assert.equal(await underlying.get(key), null, key);
   assert.deepEqual((await api(alice, 'sessions/list', {})).sessions.map(s => s.sessionId), ['gamma', 'beta']);
   assert.equal((await workspace.search(alice, {query: 'lighthouse', source: 'sessions'})).results.length, 1);
@@ -294,7 +295,8 @@ test('real Grok Bot sessions: hook-derived conversations and tool-only activity 
   const accepted = await api(alice, 'sessions/delete', {harness: 'grok-bot', sessionId: 'bot-conversation'});
   assert.equal(accepted.pending,true);
   const deleted = await sessions.delete(alice,{harness:'grok-bot',sessionId:'bot-conversation'});
-  assert.equal(deleted.objects, 2); // One batch and its event ledger.
+  assert.equal(deleted.objects, 1); // One raw batch; no object-store event ledger.
+  assert.equal([...objects].filter(key => key.endsWith('/event-identities-v1.json')).length, 0);
   assert.deepEqual((await api(alice, 'sessions/list', {})).sessions.map(s => s.sessionId), ['bob-chat', activity]);
   assert.equal((await workspace.search(alice, {query: 'conference', source: 'sessions'})).results.length, 0);
 });

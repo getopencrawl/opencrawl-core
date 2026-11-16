@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
-import {createObjectMigration,createTenantObjectMigration} from '../dist/src/state/object-migration.mjs';
+import {createObjectMigration,createTenantObjectMigration,createBoundObjectMigration} from '../dist/src/state/object-migration.mjs';
 import {createPostgresEventIdentities} from '../dist/src/sessions/postgres-identities.mjs';
 import {digest,eventIdentityLocation} from '../dist/src/sessions/event-identity.mjs';
 import {digest as objectDigest} from '../dist/src/connectors/scope.mjs';
@@ -210,4 +210,31 @@ test('explicit tenant import preserves personal scope and separate capture/agent
  assert.throws(()=>agent.classify(prefix+'/_agent-access/'+scope+'/codex/'+digest('i')+'/'+digest('s')+'/'+digest('batch')+'.json.gz'),/unrelated application state/);
  const foreign=createTenantObjectMigration({...base,tenantId:'org_other'});
  await assert.rejects(foreign.process(prefix+'/_credentials/'+id+'.json',encode(record),{write:false}),/another installation organization/);
+});
+
+
+test('finite reviewed tenant sets preserve colliding resource IDs and reject cross-bound source identities',{skip:!postgresUrl},async t=>{
+ const f=await setup(t),second='org_second',bound=createBoundObjectMigration({...f.options,registryRecords:[],tenantIds:[organizationId,second]});
+ for(const tenantId of [organizationId,second]){
+  const key=prefix+'/tenants/'+digest(tenantId)+'/users/'+digest(owner.userId)+'/controls/sessions/codex/'+digest('same-resource')+'.json';
+  const value={schemaVersion:1,visibility:tenantId===organizationId?'private':'team',deletedAt:null,updatedAt:date};
+  assert.deepEqual((await bound.process(key,encode(value),{write:true})).target,value);
+ }
+ const state=await createApplicationState({database:f.database});
+ assert.equal((await state.controls.read(owner,'sessions','codex','same-resource')).visibility,'private');
+ assert.equal((await state.controls.read({...owner,tenantId:second},'sessions','codex','same-resource')).visibility,'team');
+ const badControl=prefix+'/tenants/'+digest('org_unreviewed')+'/users/'+digest(owner.userId)+'/controls/sessions/codex/'+digest('same-resource')+'.json';
+ await assert.rejects(bound.process(badControl,encode({schemaVersion:1,visibility:'team',deletedAt:null,updatedAt:date}),{write:false}),/owner hash differs/);
+ const role={schemaVersion:1,state:'held',operationId:randomUUID(),organizationId:second,actorId:owner.userId,userId:owner.userId,role:'member',startedAt:date};
+ await assert.rejects(bound.process(prefix+'/organization-role-writes/'+organizationId+'.json',encode(role),{write:false}),/source key/);
+ const settingsKey='connector-settings/v1/'+organizationId+'/settings.enc';
+ const settings=sealedEnvelope(f.connectorKey).seal(settingsKey,encode({version:1,organizationId:second,broker:{apiKey:randomBytes(8).toString('hex'),savedAt:date,savedBy:owner.userId}}));
+ await assert.rejects(bound.process(settingsKey,settings,{write:false}),/source key/);
+ const replica='12345678-1234-4234-9234-123456789abc';
+ f.objects.set(prefix+'/identity/replicas-v1/organizations/'+replica+'.json',encode({schemaVersion:1,organizationId:replica,tenantId:second,approvedBy:owner.userId,approvedAt:date,revokedAt:null,installations:[]}));
+ await assert.rejects(bound.process(prefix+'/identity/replicas-v1/tenants/'+tenantHash+'/'+replica+'.json',encode({organizationId:replica}),{write:false}),/source mismatch/);
+ assert.throws(()=>createBoundObjectMigration({...f.options,tenantIds:[]}),/Invalid object migration scope/);
+ assert.throws(()=>createBoundObjectMigration({...f.options,tenantIds:[organizationId,organizationId]}),/Ambiguous/);
+ const marker=sessionCatchupMarker({prefix,sourceId:'shared-hosted-source',taskQueue:'session-indexing-v1',generation:'old-generation'});
+ assert.deepEqual((await bound.process(marker.markerKey,encode(marker.marker),{write:true})).target,marker.marker);
 });

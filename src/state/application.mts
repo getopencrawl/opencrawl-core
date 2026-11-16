@@ -13,8 +13,8 @@ import {createPostgresWriteBarrier,ensureWriteBarrierSchema} from './write-barri
 
 /** Schema preparation is deliberately separate from migration admission. The
  * runtime must requireApplicationStateReady before constructing request handlers. */
-export async function createApplicationState({database}:{database:ApplicationDatabase}):Promise<ApplicationState>{
+export async function createApplicationState({database,prepareSchema=true}:{database:ApplicationDatabase;prepareSchema?:boolean}):Promise<ApplicationState>{
   const board=createPostgresBoardState(database),controls=createPostgresControls(database),indexingReceipts=createPostgresIndexingReceipts(database),accounts=createAccountState(database),connectorSecrets=createConnectorSecrets(database),slackCapture=createPostgresSlackCapture(database),replicas=createReplicasState(database),valueReports=createValueReports(database);
-  await Promise.all([board.ready(),valueReports.ready(),replicas.ready(),slackCapture.ready(),connectorSecrets.ready(),accounts.ready(),controls.ready(),indexingReceipts.ready(),ensureDeletionRequestSchema(database),ensureWriteBarrierSchema(database)]);
+  if(prepareSchema)await Promise.all([board.ready(),valueReports.ready(),replicas.ready(),slackCapture.ready(),connectorSecrets.ready(),accounts.ready(),controls.ready(),indexingReceipts.ready(),ensureDeletionRequestSchema(database),ensureWriteBarrierSchema(database)]);
   return {namespace:database.namespace,board,valueReports,replicas,slackCapture,connectorSecrets,accounts,controls,indexingReceipts,deletionRequests:prefix=>createPostgresDeletionRequests(database,prefix),writeBarrier:scope=>createPostgresWriteBarrier({...scope,database})};
 }
