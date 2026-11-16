@@ -4,7 +4,7 @@ import {createReplicasConnections} from '../identity/replicas-connections.mjs';
 import {replicasConnectionHandler} from '../identity/replicas-http.mjs';
 import {createDevinWorkloads, createDevinVerifier, isDevinToken} from '../identity/devin.mjs';
 import {createDevinConnections} from '../identity/devin-connections.mjs';
-import {devinConnectionHandler} from '../identity/devin-http.mjs';
+import {devinConnectionHandler,devinApprovalHandler} from '../identity/devin-http.mjs';
 import type {EventIdentityStore} from '../sessions/types.mjs';
 import {createReplicasWorkloads, createReplicasVerifier, isReplicasToken, isWorkloadPrincipal} from '../identity/replicas.mjs';
 import type {createSlackOAuth} from '../integrations/slack-oauth.mjs';
@@ -22,7 +22,7 @@ import {Readable} from 'node:stream';
 import {readFile} from 'node:fs/promises';
 import {currentVerifiedUser} from '../identity/auth.mjs';
 import {singleOrganizationIdentity} from '../identity/single-organization.mjs';
-import {singleOrganizationPrincipal} from '../identity/principal.mjs';
+import {singleOrganizationPrincipal,activeMemberships} from '../identity/principal.mjs';
 import {mcpMetadata} from '../identity/mcp.mjs';
 import {teamService,isAdmin} from '../identity/team.mjs';
 import {roleWriteGuard} from '../identity/role-write.mjs';
@@ -101,6 +101,15 @@ export function selfhostApplication({state,settings,store,eventIdentities,prefix
   const accounts=localAuth({identity,url:settings.url,organizationId:settings.organizationId,setupToken:settings.setupToken,member:async browser=>(await admit(browser)).status===200});
   const credentials=createCaptureCredentials({state});
   const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(state),credentials.revokeAll);
+  const approveDevin=devinApprovalHandler({connections:devin,authenticate:async req=>{
+    const token=/^Bearer (.+)$/i.exec(req.headers.authorization??'')?.[1];
+    if(isDevinToken(token)||isReplicasToken(token)||isCaptureCredential(token))throw Object.assign(new Error('Human admin sign-in required'),{status:403});
+    const identity=await identifyCli(req.headers.authorization,{capture:true});
+    if(identity.status!==200)throw Object.assign(new Error('Admin sign-in required'),{status:identity.status});
+    const memberships=await activeMemberships(directory,identity.principal.userId,identity.principal.tenantId);
+    if(memberships.length!==1)throw Object.assign(new Error('Workspace membership required'),{status:403});
+    return {principal:identity.principal,member:memberships[0]!};
+  }});
   const onboarding=createOnboardingStatus({state,
     onSharedReady:principal=>principal.owner?.provider==='devin'?devin.confirmInstallation(principal):replicas.confirmInstallation(principal),
     sharedInstallations:async principal=>(await Promise.all([replicas.sharedInstallations(principal,settings.replicasBindings??[]),devin.sharedInstallations(principal)])).flat()});
@@ -177,6 +186,7 @@ export function selfhostApplication({state,settings,store,eventIdentities,prefix
       if(url.pathname==='/api/connector-proxy')return credentialProxy?await credentialProxy(req,res):respond(503,'Connector proxy unavailable');
       if(url.pathname==='/api/replicas/connect')return await replicasConnect(req,res);
       if(url.pathname==='/api/devin/connect')return await devinConnect(req,res);
+      if(url.pathname==='/api/cli/workloads/devin/approval')return await approveDevin(req,res);
       if(url.pathname==='/mcp')return await mcp(req,res);
       if(url.pathname.startsWith('/api/sessions/'))return await capture(req,res);
       if(url.pathname==='/api/search')return await query(req,res);

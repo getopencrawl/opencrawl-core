@@ -22,7 +22,7 @@ async function fixture(run:(f:Fixture)=>Promise<void>,recording=true){
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-devin-plugin-')),profile=join(dir,'profile'),bundle=join(dir,'bundle'),helper=join(dir,'helpers'),saved={...process.env};
  let userId='workload_devin_fixture',publishFailure=false,changeAt:'setup'|'capture'|undefined,identityCalls=0,sessionId=nativeSession;
  const observations:Record<string,unknown>[]=[],calls:string[]=[],installations:Record<string,unknown>[]=[];
- const principal=()=>({tenantId:'fixture-tenant',userId,owner:{kind:'shared',provider:'devin',organizationId:'org-8116610651f3465eafd661d6817a4d5d',sessionId}});
+ const principal=()=>({tenantId:'fixture-tenant',userId,owner:{kind:'shared',provider:'devin',organizationId:'org-0123456789abcdef0123456789abcdef',sessionId}});
  let token='';
  const server=createServer(async(req,res)=>{
   calls.push(req.url??'');

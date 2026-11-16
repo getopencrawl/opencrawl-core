@@ -158,6 +158,24 @@ the setup endpoint still returns a code, native operational plugin acceptance
 and hosted delivery remain unfinished, and no real Cloud identity has been
 enrolled in OpenCrawl.
 
+An admin with an existing CLI sign-in can issue the one-time code without a
+provider-specific setup page:
+
+```sh
+opencrawl workload approve --provider devin --api https://opencrawl.example \
+  --code-file /private/path/devin-approval
+```
+
+The command requires an explicit deployment and a new private file. It uses
+the saved human sign-in, rechecks current admin membership and prints no code.
+It is unavailable in workload identity mode. The runtime endpoint is
+`POST /api/cli/workloads/devin/approval` with an empty JSON object; scope always
+comes from the authenticated identity. Browser origins, query parameters,
+workload tokens and caller-supplied workspace fields are rejected. Send only
+the short-lived code through a secure channel to `workload connect --code-stdin`
+in Devin Cloud, then remove the file. This entry point does not install the
+plugin or establish capture parity.
+
 The same Cloud VM supplied a real signed identity through Cognition's official
 `setup-devin-oidc` helper. Signature verification against Devin's public JWKS,
 issuer, audience, subject and expiry checks passed. The signed `org_id` used
@@ -181,25 +199,43 @@ native MCP authorization or capture upload.
 
 ## Fresh Cloud environment prerequisite
 
-Install Cognition's official OIDC helper in the environment snapshot, rather
-than manually in each session. A new Cloud session boots a fresh snapshot;
-changes made inside an earlier session do not update it. Add this Linux block
-to the organization blueprint, preserving existing repository setup:
+Install the native OpenCrawl CLI and Cognition's official OIDC helper in the
+environment snapshot. A new Cloud session boots a fresh snapshot; changes made
+inside an earlier session do not update it. Add these steps to the Linux
+organization blueprint, preserving existing repository setup. This pinned
+example was verified with CLI 0.4.87; update the version and installer checksum
+together when validating a newer release:
 
 ```yaml
 runs-on: linux
 initialize:
   - name: Install Devin OIDC helper
     uses: github.com/CognitionAI/actions/setup-devin-oidc@c63a5d75c304ec2a2e5842ed844ff23763d28379
+  - name: Install OpenCrawl CLI 0.4.87
+    run: |
+      set -eu
+      test "$(id -un)" = ubuntu
+      oc_blueprint_tmp=$(mktemp -d /tmp/opencrawl-blueprint.XXXXXX)
+      trap 'rm -rf "$oc_blueprint_tmp"' EXIT HUP INT TERM
+      curl -q --fail --silent --show-error --location --retry 3 --proto '=https' --proto-redir '=https' https://github.com/getopencrawl/opencrawl-core/releases/download/cli-v0.4.87/install.sh -o "$oc_blueprint_tmp/install.sh"
+      printf '%s  %s\n' 80e82261e154fccb634f6ca2ac60fc2211d89811e27d765e8b16cf95603cf7d4 "$oc_blueprint_tmp/install.sh" | sha256sum -c -
+      env -u OPENCRAWL_DOWNLOAD_BASE -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 sh "$oc_blueprint_tmp/install.sh" 0.4.87
 post-build:
   - name: Verify Devin OIDC helper
     run: test -x /usr/local/bin/devin-oidc
+  - name: Verify native OpenCrawl CLI without Node
+    run: |
+      set -eu
+      test -x /home/ubuntu/.local/bin/opencrawl
+      oc_blueprint_version=$(env -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 PATH=/nonexistent /home/ubuntu/.local/bin/opencrawl --version)
+      test "$oc_blueprint_version" = 0.4.87
+      env -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 PATH=/nonexistent /home/ubuntu/.local/bin/opencrawl workload --help
 ```
 
-This uses the official action already inspected in the live probe. It does
-not enroll an organization, store a token, configure a human credential, or
-install the OpenCrawl plugin. `post-build` checks that the executable is present
-without minting an identity during snapshot creation. Verify the pinned action
+This uses the official action and a checksum-verified published CLI installer.
+It does not enroll an organization, store a token, configure a human credential,
+or install the OpenCrawl plugin. `post-build` checks the executables without
+minting an identity during snapshot creation. Verify the pinned action
 in a successful snapshot build and then test renewal in a fresh Cloud session;
 the earlier manual installation is not evidence for either step. A later fresh
 Ubuntu session did verify two signed 60-second identities with the second issued
@@ -207,9 +243,17 @@ after the first expired. The helper matched the snapshot's recorded SHA-256 and
 the native session ID matched both signatures. Tokens stayed in memory. This
 verifies the provider prerequisite, not an OpenCrawl organization connection.
 
+The combined Ubuntu snapshot subsequently built successfully and became active.
+A fresh Cloud session inherited CLI 0.4.87 at
+`/home/ubuntu/.local/bin/opencrawl`; version and workload help both exited zero
+with `PATH=/nonexistent`. No per-session install was required. This release
+predates the admin approval command described above: use a release containing
+that command for the administrator step. Snapshot inheritance does not establish
+OpenCrawl enrollment, native MCP, board access, capture or recovery.
+
 Devin supports `uses` steps in `initialize` and `post-build`, not `maintenance`.
 Maintenance instructions are shown to the agent at session start and are not
-automatically executed. The organization blueprint applies the helper across
+automatically executed. The organization blueprint applies the prerequisites across
 repositories; keep project dependency installation in each repository blueprint.
 See the [blueprint reference](https://docs.devin.ai/onboard-devin/environment/blueprint-reference)
 and [environment lifecycle](https://docs.devin.ai/onboard-devin/environment/blueprints).
@@ -251,7 +295,7 @@ Prepare a deployment-bound bundle with an explicit recording choice:
 ```sh
 opencrawl workload bundle --api https://opencrawl.example \
   --directory /absolute/export/opencrawl-devin \
-  --command /usr/local/bin/opencrawl \
+  --command /home/ubuntu/.local/bin/opencrawl \
   --config-home /home/ubuntu/.config/opencrawl-cloud \
   --recording on --json
 ```

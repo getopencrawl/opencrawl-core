@@ -7,6 +7,7 @@ import {configuredProvider,createWorkspaceTokenProvider,workspaceIdentityEnabled
 export type EnrollmentFetch=(url:string,init:RequestInit)=>Promise<Response>;
 
 const help=`Usage: opencrawl workload connect --code-stdin --api https://host [--json]
+       opencrawl workload approve --provider devin --api ORIGIN --code-file PATH [--json]
        opencrawl workload bundle --api ORIGIN --directory PATH --command LINUX_EXECUTABLE --config-home CLOUD_PROFILE --recording on|off [--json]
 
 Connect a cloud organization using its administrator's one-time setup code.
@@ -17,6 +18,9 @@ The code and token are not saved. Repeating the same code from the same cloud
 session safely retries interrupted enrollment until the approval expires.
 This connects the organization; capture, plugin installation and verification
 remain separate setup steps.
+
+Approve runs on an admin's signed-in machine and writes a short-lived setup code
+to a new private file. Supply that code securely to connect inside Devin Cloud.
 
 Bundle exports a public Devin Cloud plugin for review and native installation.
 Its SessionStart hook invokes workload start --api ORIGIN with native hook input;
@@ -85,6 +89,7 @@ export async function connectWorkload(api:string,code:string,{fetcher=fetch,mint
 
 /** No updater, skill refresh, interactive login or capture migration occurs. */
 export async function workloadCommand(args:string[],input:Readable=process.stdin){
+  if(args[0]==='approve')return (await import('./workload-approval.ts')).workloadApprovalCommand(args);
   if(args[0]==='bundle'||args[0]==='start')return (await import('./workload-plugin-command.ts')).workloadPluginCommand(args,input);
   const json=args.includes('--json');
   try{
