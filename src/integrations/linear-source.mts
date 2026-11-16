@@ -23,7 +23,7 @@ export interface LinearDocument extends Record<string, unknown> {
 }
 /** Only application-authored read queries reach Linear. Airbyte receives no arbitrary GraphQL capability. */
 export async function linearQuery<T>(request: Proxy, query: string, variables: Record<string, unknown> = {}): Promise<T> {
-  const response = await request<GraphResponse<T>>({endpoint: LINEAR_API, method: 'POST', body: {query, variables}});
+  const response = await request<GraphResponse<T>>({endpoint: LINEAR_API, method: 'POST', headers: {'Content-Type': 'application/json'}, body: {query, variables}});
   if (response.status !== 200 || response.data?.errors?.length || !response.data?.data) throw new Error('Linear read failed');
   return response.data.data;
 }

@@ -47,6 +47,7 @@ test('Linear catalog uses read OAuth, full snapshots and a gated complete adapte
   assert.equal(provider.unavailableReason,undefined);assert.equal(provider.authConfig.credentials.scopes,'read');
   assert.deepEqual(provider.streams.map(s=>s.name),['issues','comments']);assert.ok(provider.streams.every(s=>s.syncMode==='full_refresh_append'));
   const f=fixture();assert.deepEqual(await provider.account(f.request),{label:'Example',workspace:workspaceId});
+  assert.deepEqual(f.calls[0].headers,{'Content-Type':'application/json'});
   f.state.errors=true;await assert.rejects(provider.account(f.request),/read failed/);
 });
 test('Linear excludes private, restricted, unknown, foreign and trashed issues and comments',async()=>{
