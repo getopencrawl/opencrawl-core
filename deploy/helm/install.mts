@@ -56,7 +56,7 @@ function execute(command:string,args:string[],input?:string,optional=false):stri
 export function plan(c:Values){return {schemaVersion:1,release:c.release,namespace:c.namespace,context:c.context,steps:[
   {release:c.release+'-infra',chart:'opencrawl',components:{postgresql:c.postgresql.enabled,temporal:c.temporal.mode,opensearch:c.opensearch.mode,objectStorage:c.objectStorage.mode}},
   ...(c.airbyte.mode==='bundled'?[{release:c.release+'-airbyte',chart:`airbyte@${c.airbyte.chartVersion}`}]:[]),
-  {release:c.release,chart:'opencrawl',components:{app:1,worker:1},image:c.image}],databases:Object.fromEntries(Object.entries(c.databases).map(([k,v])=>[k,(v as Values).mode])),automaticUpgrade:false};}
+  {release:c.release,chart:'opencrawl',components:{app:1,worker:1},image:c.image}],databases:{app:c.databases.app.mode,...(c.temporal.mode==='bundled'?{temporal:c.databases.temporal.mode}:{}),...(c.airbyte.mode==='bundled'?{airbyte:c.databases.airbyte.mode}:{})},automaticUpgrade:false};}
 
 export function airbyteValues(c:Values,secretName:string,dbHost:string,storagePassword:string):Values {
   const d=c.databases.airbyte,dbSecret=d.mode==='bundled'?secretName:d.existingSecret;

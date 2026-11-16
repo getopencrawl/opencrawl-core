@@ -1,45 +1,42 @@
 {{- if .Values.runtime.enabled }}
 {{- $name := include "opencrawl.name" . }}
-apiVersion: batch/v1
-kind: Job
+apiVersion: v1
+kind: Pod
 metadata:
   name: {{ $name }}-helm-test
   labels: {{ include "opencrawl.labels" . | nindent 4 }}
   annotations:
     helm.sh/hook: test
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-delete-policy: before-hook-creation
 spec:
-  backoffLimit: 0
   activeDeadlineSeconds: 120
-  template:
-    spec:
-      {{- include "opencrawl.scheduling" . | nindent 6 }}
-      serviceAccountName: {{ default $name .Values.serviceAccount.name }}
-      restartPolicy: Never
-      securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
-      containers:
-        - name: state-and-http
-          image: {{ include "opencrawl.image" . | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
-          command:
-            - node
-            - --input-type=module
-            - -e
-            - |
-              import assert from 'node:assert/strict';
-              import {spawnSync} from 'node:child_process';
-              const state=spawnSync('node',['dist/src/state/migrate.mjs','verify'],{stdio:'inherit'});
-              assert.equal(state.status,0,'Application state must be verified');
-              const base={{ printf "http://%s:%v" $name .Values.service.port | toJson }};
-              const headers={host:new URL(process.env.OPENCRAWL_URL).host};
-              assert.equal((await fetch(base+'/health',{headers,redirect:'manual',signal:AbortSignal.timeout(15000)})).status,200);
-              assert.equal((await fetch(base+'/api/cli/me',{headers,redirect:'manual',signal:AbortSignal.timeout(15000)})).status,401);
-              console.log(JSON.stringify({status:'passed',state:true,health:true,anonymousDenied:true}));
-          {{- include "opencrawl.runtimeEnv" . | nindent 10 }}
-          {{- include "opencrawl.runtimeMounts" . | nindent 10 }}
-          resources:
-            requests: {cpu: 100m, memory: 256Mi}
-            limits: {memory: 1Gi}
-      {{- include "opencrawl.runtimeVolumes" . | nindent 6 }}
+  {{- include "opencrawl.scheduling" . | nindent 2 }}
+  serviceAccountName: {{ default $name .Values.serviceAccount.name }}
+  restartPolicy: Never
+  securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: state-and-http
+      image: {{ include "opencrawl.image" . | quote }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+      command:
+        - node
+        - --input-type=module
+        - -e
+        - |
+          import assert from 'node:assert/strict';
+          import {spawnSync} from 'node:child_process';
+          const state=spawnSync('node',['dist/src/state/migrate.mjs','verify'],{stdio:'inherit'});
+          assert.equal(state.status,0,'Application state must be verified');
+          const base={{ printf "http://%s:%v" $name .Values.service.port | toJson }};
+          const headers={host:new URL(process.env.OPENCRAWL_URL).host};
+          assert.equal((await fetch(base+'/health',{headers,redirect:'manual',signal:AbortSignal.timeout(15000)})).status,200);
+          assert.equal((await fetch(base+'/api/cli/me',{headers,redirect:'manual',signal:AbortSignal.timeout(15000)})).status,401);
+          console.log(JSON.stringify({status:'passed',state:true,health:true,anonymousDenied:true}));
+      {{- include "opencrawl.runtimeEnv" . | nindent 6 }}
+      {{- include "opencrawl.runtimeMounts" . | nindent 6 }}
+      resources:
+        requests: {cpu: 100m, memory: 256Mi}
+        limits: {memory: 1Gi}
+  {{- include "opencrawl.runtimeVolumes" . | nindent 2 }}
 {{- end }}

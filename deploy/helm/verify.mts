@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {randomBytes} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {parseArgs} from 'node:util';
+import {setTimeout as delay} from 'node:timers/promises';
 import {configuration} from './install.mts';
 const {values}=parseArgs({options:{config:{type:'string'},exercise:{type:'boolean'},existing:{type:'boolean'},'deny-marker':{type:'string'}}});
 if(!values.config)throw Error('--config is required');
@@ -23,11 +24,21 @@ apply({apiVersion:'v1',kind:'ConfigMap',metadata:{name},data:{'probe.mts':script
 const app=JSON.parse(kube(['get','deployment',c.release+'-app','-o','json']));
 const spec=structuredClone(app.spec.template.spec),container=spec.containers[0];
 delete spec.initContainers;spec.restartPolicy='Never';
-spec.containers=[{name:'conformance',image:container.image,imagePullPolicy:container.imagePullPolicy,command:['node','/opencrawl/deploy/helm/runtime/probe.mts'],envFrom:[...container.envFrom,...(values.exercise?[{secretRef:{name:secret}}]:[])],env:[...(container.env||[]),{name:'CONFORMANCE_EXERCISE',value:String(!!values.exercise)},{name:'CONFORMANCE_EXISTING',value:String(!!values.existing)},{name:'CONFORMANCE_DENY_MARKER',value:values['deny-marker']||''},{name:'CONFORMANCE_APP_URL',value:`http://${c.release}:${c.application.service?.port||8092}`}],securityContext:container.securityContext,volumeMounts:[...container.volumeMounts,{name:'conformance',mountPath:'/opencrawl/deploy/helm/runtime',readOnly:true}],resources:{requests:{cpu:'100m',memory:'256Mi'},limits:{memory:'1Gi'}}}];
+spec.containers=[{name:'conformance',image:container.image,imagePullPolicy:container.imagePullPolicy,command:['node','/opencrawl/deploy/helm/runtime/probe.mts'],envFrom:[...container.envFrom,...(values.exercise?[{secretRef:{name:secret}}]:[])],env:[...(container.env||[]),{name:'CONFORMANCE_EXERCISE',value:String(!!values.exercise)},{name:'CONFORMANCE_EXISTING',value:String(!!values.existing)},{name:'CONFORMANCE_DENY_MARKER',value:values['deny-marker']||''},{name:'CONFORMANCE_APP_URL',value:`http://${c.release}:${c.application.service?.port||8092}`}],securityContext:container.securityContext,volumeMounts:[...container.volumeMounts,{name:'conformance',mountPath:'/opencrawl/deploy/helm/runtime/probe.mts',subPath:'probe.mts',readOnly:true}],resources:{requests:{cpu:'100m',memory:'256Mi'},limits:{memory:'1Gi'}}}];
 spec.volumes.push({name:'conformance',configMap:{name}});
 kube(['delete','job',name,'--ignore-not-found','--wait=true']);
 apply({apiVersion:'batch/v1',kind:'Job',metadata:{name,labels:{'app.kubernetes.io/instance':c.release,'app.kubernetes.io/component':'conformance'}},spec:{backoffLimit:0,activeDeadlineSeconds:900,ttlSecondsAfterFinished:86400,template:{spec}}});
+// kubectl logs can return immediately while a newly scheduled container is creating.
+// Accept Running or Terminated so a fast successful probe cannot be missed.
+let pod:string|undefined;
+for(let attempt=0;attempt<180;attempt++){
+  const pods=JSON.parse(kube(['get','pods','-l','job-name='+name,'-o','json'])).items;
+  const started=pods.find((p:any)=>{const state=p.status?.containerStatuses?.[0]?.state;return state?.running||state?.terminated;});
+  if(started){pod=started.metadata.name;break;}
+  await delay(1000);
+}
+if(!pod)throw Error('Conformance container did not start within 180 seconds; inspect pod events and image access');
 // Logs carry structured diagnostic results and no credential material.
-const logs=spawnSync(process.env.KUBECTL||'kubectl',['--context',c.context,'-n',c.namespace,'logs','job/'+name,'--follow','--pod-running-timeout=180s'],{stdio:'inherit'});
+const logs=spawnSync(process.env.KUBECTL||'kubectl',['--context',c.context,'-n',c.namespace,'logs','pod/'+pod,'--follow','--pod-running-timeout=180s'],{stdio:'inherit'});
 if(logs.status!==0)process.exit(1);
 try{kube(['wait','--for=condition=complete','job/'+name,'--timeout=15s']);}catch{process.exitCode=1;}

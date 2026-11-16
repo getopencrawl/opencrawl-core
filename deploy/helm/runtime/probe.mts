@@ -11,7 +11,7 @@ const env=process.env,results:object[]=[],exercise=env.CONFORMANCE_EXERCISE==='t
 const required=(key:string)=>{const value=env[key];assert.ok(value,`${key} required`);return value;};
 async function check(name:string,hint:string,run:()=>Promise<unknown>){
   const started=Date.now();
-  try{await run();const result={name,status:'passed',elapsedMs:Date.now()-started};results.push(result);console.log(JSON.stringify(result));}
+  try{const detail=await run();const result={name,status:'passed',elapsedMs:Date.now()-started,...(typeof detail==='string'?{detail}:{})};results.push(result);console.log(JSON.stringify(result));}
   catch{console.error(JSON.stringify({schemaVersion:1,status:'failed',check:name,hint,results}));process.exit(1);}
 }
 const origin=required('OPENCRAWL_URL'),url=required('CONFORMANCE_APP_URL');
@@ -29,12 +29,14 @@ await check('temporal-namespace','Check Temporal address, namespace, TLS and cre
 await check('worker-poller','Check the worker readiness probe and session task-queue configuration.',async()=>{
   const c=await connectorClient(temporal);try{const response=await c.connection.workflowService.describeTaskQueue({namespace:temporal.namespace,taskQueue:{name:env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1'},taskQueueType:1});assert.ok(response.pollers?.length);}finally{await c.connection.close();}
 });
-await check('opensearch-index','Grant access to the configured index and check app/worker readiness.',async()=>{
+async function indexMapping(allowMissing=false){
   const index=env.OPENCRAWL_OPENSEARCH_INDEX||realmIndex('selfhost',required('OPENCRAWL_ORGANIZATION_ID'));
   const authorization:Record<string,string>=env.OPENCRAWL_OPENSEARCH_USERNAME?{authorization:'Basic '+Buffer.from(env.OPENCRAWL_OPENSEARCH_USERNAME+':'+required('OPENCRAWL_OPENSEARCH_PASSWORD')).toString('base64')}:{};
-  const r=await fetch(required('OPENCRAWL_OPENSEARCH_URL')+'/'+index+'/_mapping',{headers:authorization,redirect:'error',signal:AbortSignal.timeout(15000)});assert.equal(r.status,200);
-  const mapping=await r.json();assert.equal(mapping[index].mappings._meta.tenantId,env.OPENCRAWL_ORGANIZATION_ID);
-});
+  const r=await fetch(required('OPENCRAWL_OPENSEARCH_URL')+'/'+index+'/_mapping',{headers:authorization,redirect:'error',signal:AbortSignal.timeout(15000)});const mapping=await r.json();
+  if(r.status===404&&allowMissing){assert.equal(mapping.error?.type,'index_not_found_exception');return 'Index is not initialized yet; exercise mode verifies its creation and tenant binding.';}
+  assert.equal(r.status,200);assert.equal(mapping[index].mappings._meta.tenantId,env.OPENCRAWL_ORGANIZATION_ID);
+}
+await check('opensearch-access','Grant access to the configured index and check app/worker readiness.',()=>indexMapping(!existing));
 await check('application-health','Inspect application readiness and migration logs.',async()=>assert.equal((await request('/health')).status,200));
 await check('anonymous-denied','The application must reject unauthenticated CLI identity requests.',async()=>assert.equal((await request('/api/cli/me')).status,401));
 if(env.OPENCRAWL_AIRBYTE_ENABLED!=='false')await check('airbyte-workspace','Check the Airbyte API client credentials and configured workspace.',async()=>{
@@ -65,6 +67,7 @@ if(exercise){
   if(!existing)await check('temporal-indexing','Check worker pollers, task queues, S3 access and index write permissions.',async()=>{
     const c=await connectorClient(temporal);try{await c.client.workflow.execute('indexSessionsV1',{workflowId:'helm-'+marker+'-'+Date.now(),taskQueue:env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',args:[{sourceId:'sessions-'+env.OPENCRAWL_ORGANIZATION_ID+'-v1'}],workflowExecutionTimeout:'5 minutes'});}finally{await c.connection.close();}
   });
+  await check('opensearch-index-binding','Indexing must create the configured organization-bound index.',()=>indexMapping());
   await check('mcp-search','Indexing completed but authenticated MCP retrieval did not find the fixture.',async()=>{
     let id=0,session:string|undefined;
     async function rpc(method:string,params:unknown){const r=await request('/mcp',{method:'POST',headers:{...bearer,'content-type':'application/json',accept:'application/json, text/event-stream',...(session?{'Mcp-Session-Id':session}:{})},body:JSON.stringify({jsonrpc:'2.0',id:++id,method,params})});assert.equal(r.status,200);session=r.headers.get('mcp-session-id')||session;const raw=await r.text(),payload=JSON.parse(raw.startsWith('data:')||raw.startsWith('event:')?raw.split('\n').find(l=>l.startsWith('data:'))!.slice(5):raw);assert.ok(!payload.error&&!payload.result?.isError);return payload.result;}

@@ -130,8 +130,9 @@ app-state readiness, the application health endpoint and anonymous access denial
 
 `verify.mts` runs a Job using the deployed image, identity, mounted trust and network
 configuration. Default probes check restricted PostgreSQL credentials, S3 access,
-Temporal namespace, tenant-bound OpenSearch mapping, app health, anonymous denial
-and the Airbyte workspace. Each check emits JSON with pass/fail and a remediation hint.
+Temporal namespace, OpenSearch access and existing index ownership, app health,
+anonymous denial and the Airbyte workspace. A fresh lazy-created index is explicitly
+reported as not initialized; exercise mode must create it and verify its tenant binding. Each check emits JSON with pass/fail and a remediation hint.
 
 On a **disposable fresh installation**, add `--exercise` to create a synthetic first
 administrator and run device OAuth, duplicate capture, conflicting-event rejection,
