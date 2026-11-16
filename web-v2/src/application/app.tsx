@@ -69,12 +69,13 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   const boardQuery = new URLSearchParams(location.search);
   const boardNavigation = location.pathname === '/diagnostics' && boardQuery.get('nav') !== 'workspace' && boardQuery.get('view') !== 'search' && data?.workspace.role === 'admin';
   const boardTopic = boardQuery.get('view') === 'stream' ? '' : boardQuery.get('topic')?.trim() || '';
+  const canConfigureSources = data?.workspace.role === 'admin';
   const routes: ConsoleRoute[] = [
     {path:'/setup',label:'Setup',icon:'terminal',element:data ? <SetupPage api={api} mcpUrl={data.mcpUrl} setupStartCommand={data.setupStartCommand} setupCliCommand={data.setupCliCommand}/> : null,pending:feedback => <PendingPage title="Setup" description="Manage your agent connections and history imports.">{feedback}</PendingPage>},
     {path:'/',label:'Usage',icon:'usage',element:<UsagePage adapter={dataAdapter}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them.">{feedback}</PendingPage>},
-    {path:'/sources',label:'Integrations',icon:'sources',element:<SourcesPage adapter={api} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
+    {path:'/sources',label:'Integrations',icon:'sources',navigation:canConfigureSources,element:<SourcesPage adapter={api} canConfigure={canConfigureSources}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
     {path:'/diagnostics',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All topics'}>{feedback}</PendingPage>},
     {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
@@ -93,9 +94,10 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   if (!data) {
     const feedback = error ? <div className="stack"><Notice tone="danger">{error}</Notice><div className="action-row"><Button onClick={() => setAttempt(value => value + 1)}>Try again</Button><LinkButton to="/auth/login" reloadDocument>Sign in</LinkButton></div></div> : undefined;
     const route = routes.find(item => item.path === location.pathname);
-    return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
+    const sourcesPending = ['/sources', '/integrations', '/data', '/onboarding/sources'].includes(location.pathname);
+    return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{sourcesPending ? <PendingPage title="Workspace">{feedback}</PendingPage> : route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
   }
-  const shown = extensions?.decorateRoute ? routes.map(route => extensions.decorateRoute!(route, data)) : routes;
+  const shown = extensions?.decorateRoute ? routes.map(route => route.path === '/sources' && !canConfigureSources ? route : extensions.decorateRoute!(route, data)) : routes;
   return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board topics' : undefined} navigation={boardNavigation ? closeNavigation => <BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/> : undefined}/></ConsoleDataProvider>;
 }
 /** One application composition for self-hosted and hosted deployments. */

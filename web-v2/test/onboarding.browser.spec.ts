@@ -173,15 +173,16 @@ test('the Integrations page takes the operator key and opens sign-in in the rese
   await expect(page.getByText('One Composio key unlocks')).toHaveCount(0);
 });
 
-test('members can inspect shared integrations without mutation controls',async({page,request})=>{
+test('members cannot open the integrations page',async({page,request})=>{
   await request.post('/__test/state',{data:{status:complete,sources:[
     {id:'slack',name:'Slack',scope:'team',state:'synced',auth:'oauth'},
     {id:'notion',name:'Notion',scope:'team',state:'disconnected',auth:'oauth'},
     {id:'granola',name:'Granola',scope:'team',state:'error',auth:'api-key'},
   ]}});
   await page.goto('/integrations-fixture?role=member');
-  await expect(page.getByText('Workspace admins manage shared integrations.',{exact:true})).toBeVisible();
-  await expect(page.getByRole('article',{name:'Slack'})).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('heading',{name:'Workspace overview'})).toBeVisible();
+  await expect(page.getByRole('article',{name:'Slack'})).toHaveCount(0);
   await expect(page.getByRole('button',{name:/Disconnect|Connect Notion|Retry sync/})).toHaveCount(0);
   await page.goto('/onboarding/sources?role=member');
   await expect(page.getByRole('button',{name:'Connect Notion',exact:true})).toHaveAttribute('aria-disabled','true');
