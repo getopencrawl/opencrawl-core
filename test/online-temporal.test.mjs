@@ -3,6 +3,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {Pool} from 'pg';
+import {setTimeout as delay} from 'node:timers/promises';
 import {createOnlineMigrationController} from '../dist/src/state/online-temporal/controller.mjs';
 import {onlineMigrationBindingId,onlineMigrationReference,onlineMigrationTaskQueue,onlineMigrationWorkflowId} from '../dist/src/state/online-temporal/binding.mjs';
 import {startOnlineMigration} from '../dist/src/state/online-temporal/client.mjs';
@@ -57,7 +58,12 @@ live('a lost checkpoint response repeats only idempotent target work and cancell
  const {database}=await fixture(t),b=binding(),ref=onlineMigrationReference(b,0);await database.pool.query('CREATE TABLE target(k text PRIMARY KEY,v text NOT NULL)');let calls=0,fail=true;
  const adapter={...defaults(),backfillPage:async()=>{calls++;await database.pool.query("INSERT INTO target VALUES('one','value') ON CONFLICT(k) DO UPDATE SET v=EXCLUDED.v");if(fail){fail=false;throw Error('lost response');}return {cursor:null,processed:1};}};
  const controller=createOnlineMigrationController({database,binding:b,adapter});await assert.rejects(controller.advance(ref,signal()),/lost response/);assert.equal((await database.pool.query('SELECT revision FROM opencrawl_online_migration_runs')).rows[0].revision,'0');
- await controller.advance(ref,signal());assert.equal(calls,2);assert.equal((await database.pool.query('SELECT count(*) FROM target')).rows[0].count,'1');
+ // The failed controller destroys its connection. PostgreSQL may still hold
+ // its session lock until it processes that disconnect, so an immediate retry
+ // can legitimately wait without invoking target work again.
+ const retrySignal=AbortSignal.timeout(5000);let recovered;
+ do {recovered=await controller.advance(ref,retrySignal);if(recovered.waiting){assert.equal(calls,1);await delay(10,undefined,{signal:retrySignal});}} while(recovered.waiting);
+ assert.equal(recovered.phase,'replay');assert.equal(calls,2);assert.equal((await database.pool.query('SELECT count(*) FROM target')).rows[0].count,'1');
  const cancelled=new AbortController();cancelled.abort();await assert.rejects(controller.advance(ref,cancelled.signal));assert.equal((await database.pool.query('SELECT phase FROM opencrawl_online_migration_runs')).rows[0].phase,'replay');
 });
 live('actual journal gates source read, replays newer mutations and preserves target transaction checkpoints',async t=>{
