@@ -750,11 +750,16 @@ export async function drainCaptureNotices(config=readCaptureConfig()!,{until=Inf
 
 async function reconcileSources(config:CaptureConfig,seen:Map<string,string>,until=Infinity) {
   let changed=false;
-  for(const name of readdirSync(join(captureDir(),'sources')).filter(n=>n.endsWith('.json'))) {
+  const names=readdirSync(join(captureDir(),'sources')).filter(n=>n.endsWith('.json')).sort();
+  const progressFile=join(captureDir(),'source-scan.json'),after=read(progressFile)?.after;
+  const next=typeof after==='string'?names.findIndex(name=>name>after):0,start=next<0?0:next;
+  let visited:string|undefined;
+  try {for(const name of [...names.slice(start),...names.slice(0,start)]) {
     await yieldToOwner();
-    // A source may finish after the hook's budget. Leave the remaining sources
-    // for a later pass so queued batches can still receive their acknowledgements.
+    // Leave the rest for a later pass without restarting at the same stale
+    // entries. This scheduling cursor never advances a transcript's byte cursor.
     if(Date.now()>=until)break;
+    visited=name;
     const sourceFile=join(captureDir(),'sources',name),source=read(sourceFile);
     const rawPath=source.path || findTranscript(config,source.harness,source.sessionId);
     const path=source.harness==='antigravity'&&rawPath?resolveAntigravityTranscript(rawPath):rawPath;
@@ -764,7 +769,7 @@ async function reconcileSources(config:CaptureConfig,seen:Map<string,string>,unt
     if(seen.get(path)===signature)continue;
     await captureTranscript(config,source.harness,path,{session_id:source.sessionId,conversationId:source.sessionId,cwd:source.cwd});
     seen.set(path,signature);changed=true;
-  }
+  }}finally{if(visited!==undefined)atomicJson(progressFile,{after:visited});}
   return changed;
 }
 
@@ -818,24 +823,39 @@ export async function captureWorker({idleMs=30_000,pollMs=1000,flushMs=LIVE_FLUS
     await withSessionLock('capture:worker',async()=>{
       const seen=new Map<string,string>();let activeAt=Date.now(),failures=0;
       const windowFile=join(captureDir(),'live-window.json');
+      const liveWindow=()=>{
+        const pendingSince=pendingLiveSince(captureDir());
+        let window=read(windowFile);
+        if(pendingSince!==undefined&&!window){window={dueAt:pendingSince+flushMs};atomicJson(windowFile,window);}
+        if(window&&pendingSince===undefined){unlinkSync(windowFile);window=null;}
+        return {
+          ready:flushMs===0||Date.now()>=flushBy||Boolean(window&&(!Number.isFinite(window.dueAt)||Date.now()>=window.dueAt)),
+          until:window&&Number.isFinite(window.dueAt)?window.dueAt:Infinity,
+        };
+      };
+      const flushQueued=async(maxBatches?:number)=>{
+        const {ready}=liveWindow();
+        if(queuedNames().some(name=>ready||!isPendingLive(captureDir(),name))){
+          const result=await flushCaptures({wait:false,liveReady:ready,maxBatches});if(result.uploaded)activeAt=Date.now();
+          if(ready&&existsSync(windowFile))unlinkSync(windowFile);
+        }
+      };
       while(readCaptureConfig() && !readCaptureConfig()!.disabled) {
-        let captureError:any,liveReady=flushMs===0||Date.now()>=flushBy;
+        let captureError:any;
         try {
           if(config.authPending)await refreshCaptureIdentity(config);
-          const processed=await drainCaptureNotices(config);
-          const changed=await reconcileSources(config,seen);
+          // Existing due bytes must not wait behind a catalogue scan. Keep this
+          // first upload wave bounded so new local notices also make progress.
+          await flushQueued(4);
+          const until=Math.min(flushBy,liveWindow().until,Date.now()+LIVE_FLUSH_MS);
+          const processed=await drainCaptureNotices(config,{until});
+          // New notices may have opened an earlier live window. Yield before
+          // another source at either that window or the owned flush deadline.
+          const changed=await reconcileSources(config,seen,Math.min(until,liveWindow().until));
           if(processed||changed)activeAt=Date.now();
-          const pendingSince=pendingLiveSince(captureDir());
-          let window=read(windowFile);
-          if(pendingSince!==undefined&&!window){window={dueAt:pendingSince+flushMs};atomicJson(windowFile,window);}
-          liveReady=liveReady||Boolean(window&&(!Number.isFinite(window.dueAt)||Date.now()>=window.dueAt));
-          if(window&&pendingSince===undefined)unlinkSync(windowFile);
         }catch(error){captureError=error;}
         try {
-          if(queuedNames().some(name=>liveReady||!isPendingLive(captureDir(),name))){
-            const result=await flushCaptures({wait:false,liveReady});if(result.uploaded)activeAt=Date.now();
-            if(liveReady&&existsSync(windowFile))unlinkSync(windowFile);
-          }
+          await flushQueued();
         }catch(error){captureError??=error;}
         if(captureError){recordError(captureError);failures++;}
         else {
