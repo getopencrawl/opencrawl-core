@@ -435,7 +435,8 @@ test('the person and workspace stay together in the docked account menu', async 
   await expect(page.getByRole('button', {name: 'Sign out', exact: true})).not.toBeVisible();
   await trigger.click();
   await expect(account).toBeVisible();
-  await expect(account).toContainText('alex@example.test');
+  await expect(account.getByRole('button', {name: 'Sign out', exact: true})).toBeVisible();
+  await expect(account).not.toContainText('alex@example.test');
   await page.keyboard.press('Escape');
   await expect(account).not.toBeVisible();
   await expect(trigger).toBeFocused();
