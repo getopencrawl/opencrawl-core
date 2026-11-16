@@ -1,8 +1,9 @@
-import {existsSync,readFileSync,readdirSync,mkdirSync,unlinkSync,openSync,writeFileSync,fsyncSync,closeSync,renameSync} from 'node:fs';
-import {join,dirname} from 'node:path';
+import {existsSync,readFileSync,readdirSync,mkdirSync,unlinkSync,openSync,writeFileSync,fsyncSync,closeSync,renameSync,realpathSync} from 'node:fs';
+import {join,dirname,isAbsolute} from 'node:path';
 import {homedir} from 'node:os';
 import {isDeepStrictEqual} from 'node:util';
 import {spawn,spawnSync} from 'node:child_process';
+import {setTimeout as pause} from 'node:timers/promises';
 import {atomicJson,syncDirectory,configDir,withSessionLock} from '../session.ts';
 import {captureDir,readCaptureConfig,captureDaemonEnabled,captureDaemonHarnesses,recordError,type CaptureConfig} from './runtime.ts';
 import {hash} from './parse.ts';
@@ -162,18 +163,29 @@ export async function installCaptureDaemon(config:CaptureConfig,{home=homedir(),
       const result=run('launchctl',args,{stdio:'pipe',timeout:5000});
       operations.push(launchdOperation(operation,result));return result;
     };
+    const recordFailure=(error:CliError):never=>{
+      atomicJson(receipt,{...service,status:'failed',supervised:false,operations});recordError(error);throw error;
+    };
     const failed=(operation:Parameters<typeof launchdOperation>[0],result:ReturnType<typeof spawnSync>):never=>{
       const failure=launchdOperation(operation,result);
       const error=new CliError('CAPTURE_SUPERVISION_FAILED',`Could not install the capture LaunchAgent: launchctl ${operation} failed (exit=${failure.exitStatus??'none'}, signal=${failure.signal??'none'}, error=${failure.errorCode??'none'}). Check this user's LaunchAgent registration, then rerun setup resume.`);
-      atomicJson(receipt,{...service,status:'failed',supervised:false,operations});recordError(error);throw error;
+      return recordFailure(error);
     };
+    const isAbsent=(result:ReturnType<typeof spawnSync>)=>result.status===113&&!result.error&&!result.signal&&String(result.stderr).includes('Could not find service');
+    const sameServicePath=(candidate:unknown)=>{
+      if(typeof candidate!=='string'||!isAbsolute(candidate))return false;
+      if(candidate===path)return true;
+      try{return realpathSync(candidate)===realpathSync(path);}catch{return false;}
+    };
+    const loadedFromPath=(result:ReturnType<typeof spawnSync>)=>String(result.stdout).split('\n').some(line=>{
+      const value=line.trim();return value.startsWith('path = ')&&sameServicePath(value.slice(7));
+    });
     const checked=invoke('print',['print',target]);
-    const absent=checked.status===113&&!checked.error&&!checked.signal&&String(checked.stderr).includes('Could not find service');
+    const absent=isAbsent(checked);
     if(checked.status!==0&&!absent)failed('print',checked);
     if(checked.status===0){
-      const owned=previous?.kind==='launchd'&&previous.label===label()&&previous.path===path&&existing!==null;
-      const loadedFromPath=String(checked.stdout).split('\n').some(line=>line.trim()==='path = '+path);
-      if(!owned||!loadedFromPath)throw new CliError('CAPTURE_SUPERVISION_CONFLICT','The loaded LaunchAgent is not bound to this profile receipt and service file. Its registration was preserved.');
+      const owned=previous?.kind==='launchd'&&previous.label===label()&&sameServicePath(previous.path)&&existing!==null;
+      if(!owned||!loadedFromPath(checked))throw new CliError('CAPTURE_SUPERVISION_CONFLICT','The loaded LaunchAgent is not bound to this profile receipt and service file. Its registration was preserved.');
     }
     unchanged(beforeGeneration);
     if(checked.status===0&&existing===definition){
@@ -184,8 +196,41 @@ export async function installCaptureDaemon(config:CaptureConfig,{home=homedir(),
       atomicJson(receipt,service);return service;
     }
     if(checked.status===0){
+      const beforeReceipt=readFileSync(receipt,'utf8');
+      const replacementUnchanged=()=>{
+        unchanged(beforeGeneration);
+        if(!existsSync(path)||readFileSync(path,'utf8')!==existing||!existsSync(receipt)||readFileSync(receipt,'utf8')!==beforeReceipt)
+          throw new CliError('CAPTURE_SUPERVISION_CONFLICT','The capture LaunchAgent file or receipt changed while stopping it. The newer state was preserved.');
+      };
       const stopped=invoke('bootout',['bootout',target]);
-      unchanged(beforeGeneration);if(stopped.status!==0)failed('bootout',stopped);
+      replacementUnchanged();if(stopped.status!==0)failed('bootout',stopped);
+      // bootout acceptance is not proof that removal and worker shutdown have
+      // completed. Keep the old definition/generation until both are observed.
+      // Never hold the singleton over bootstrap: the new worker takes it once.
+      const deadline=performance.now()+30_000;
+      while(true){
+        replacementUnchanged();
+        const remaining=deadline-performance.now();
+        if(remaining<=0)recordFailure(new CliError('CAPTURE_SUPERVISION_TIMEOUT','The previous capture LaunchAgent or worker did not stop within 30 seconds. Its service file and queued data were preserved; check the user LaunchAgent, then rerun setup resume.'));
+        const checked=run('launchctl',['print',target],{stdio:'pipe',timeout:Math.max(1,Math.min(5000,Math.ceil(remaining)))});
+        operations.push(launchdOperation('print',checked));replacementUnchanged();
+        if(isAbsent(checked)){
+          let released=false;
+          try{await withSessionLock('capture:daemon',async()=>{},0);released=true;}
+          catch(error){
+            replacementUnchanged();
+            if(!(error instanceof CliError)||error.code!=='SESSION_BUSY')
+              recordFailure(new CliError('CAPTURE_SUPERVISION_FAILED','Could not verify that the previous capture worker stopped. Its service file and queued data were preserved; rerun setup resume after checking local state.'));
+          }
+          replacementUnchanged();
+          if(released&&performance.now()<deadline)break;
+        }else{
+          if(checked.status!==0)failed('print',checked);
+          if(!loadedFromPath(checked))throw new CliError('CAPTURE_SUPERVISION_CONFLICT','The LaunchAgent registration changed while stopping it. The newer registration was preserved.');
+        }
+        await pause(Math.max(0,Math.min(100,deadline-performance.now())));
+      }
+      replacementUnchanged();
     }
     atomicJson(generationFile,{generation:crypto.randomUUID()});
     const generation=readGeneration();
