@@ -1,4 +1,5 @@
-import {randomBytes} from 'node:crypto';
+import type {IntegrationResources} from '../state/integration-resources.mjs';
+import {createHash,randomBytes} from 'node:crypto';
 import type {IntegrationRecord} from './types.mjs';
 import type {ConnectorOAuth,IntegrationRegistry,OAuthLinkInput,OAuthLinkResult} from './ports.mjs';
 const version=()=>randomBytes(16).toString('hex');
@@ -8,7 +9,7 @@ const conflict=()=>Object.assign(new Error('Consent setup changed'),{code:'Condi
 type Intent=NonNullable<IntegrationRecord['oauthIntent']>;
 /** A provider POST gets one durable intent. An empty or incomplete provider list
  * cannot authorize a second POST, including after activity/process replacement. */
-export function createConsentProvisioning({registry,oauth}:{registry:IntegrationRegistry;oauth:ConnectorOAuth}){
+export function createConsentProvisioning({registry,oauth,resources}:{registry:IntegrationRegistry;oauth:ConnectorOAuth;resources?:IntegrationResources}){
  async function fresh(expected:IntegrationRecord){
   const current=await registry.get(expected.tenantId,expected.userId,expected.integrationId);
   if(!current||current.environment!==expected.environment||current.provider!==expected.provider)throw conflict();return current;
@@ -40,7 +41,11 @@ export function createConsentProvisioning({registry,oauth}:{registry:Integration
    return remember(record,record.oauthIntent,{authConfigId:id});
   }
   const held=await claim(record,'auth-config',undefined,{toolkit:input.toolkit,name:input.name,...(input.scheme?{scheme:input.scheme}:{})});record=held.record;
-  const id=await oauth.authConfig(input);
+  const fingerprint=createHash('sha256').update(JSON.stringify([input.toolkit,input.name,input.scheme??null])).digest('hex');
+  if(!resources)throw new Error('Durable shared integration resources are not configured');
+  const id=await resources.ensure({kind:'oauth-auth-config',scope:record.tenantId,name:input.name,fingerprint},{
+   find:async()=>{const id=await oauth.recoverAuthConfig?.(input);return id?{id,fingerprint}:null;},create:()=>oauth.authConfig(input),
+  });
   if(!validId(id))throw pending();
   return remember(record,held.intent,{authConfigId:id});
  }

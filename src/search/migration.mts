@@ -80,7 +80,7 @@ export async function migrateRealmCorpus({principal,corpus,source,realm,state:ap
     };
     if(corpus==='session'){
       if(!store||!prefix)throw new Error('Session migration requires authoritative deletion controls');
-      await withSessionDocumentWrites({state:applicationState,store,prefix,tenantId:principal.tenantId,documents:page.documents},copy);
+      await withSessionDocumentWrites({state:applicationState,prefix,tenantId:principal.tenantId,documents:page.documents},copy);
     }else await copy();
     state={...state,total:page.total,after:page.next,copied:state.copied+page.documents.length};
     if(state.copied>page.total)throw new Error('Migration duplicated source records');

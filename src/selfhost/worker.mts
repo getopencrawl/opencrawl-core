@@ -51,8 +51,9 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
     if(services.connectors)await buildConnectorWorkflows(bundleRoot+'/connectors.cjs');
     if(services.lifecycleActivities)await buildIntegrationWorkflows(bundleRoot+'/integrations.cjs');
     await buildSessionWorkflows(bundleRoot+'/sessions.cjs');
-    const scheduling=await connectorClient(config),source=singleOrganizationSessionSource(settings,store,prefix,state,eventIdentities);
+    const scheduling=await connectorClient(config);
     releases.push(()=>scheduling.connection.close());
+    const source=singleOrganizationSessionSource(settings,store,prefix,state,eventIdentities);
     const workers:Awaited<ReturnType<typeof createSessionWorker>>[]=[];
     const runs:Promise<void>[]=[];
     const readiness=env.OPENCRAWL_WORKER_READY_PATH||'/tmp/opencrawl-worker-ready.json';

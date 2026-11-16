@@ -80,7 +80,7 @@ export async function migrateSessionSearchContext({realm,principal,state,store,p
       const results=await Promise.allSettled(sources.slice(offset,offset+sourceConcurrency).map(prepare));
       for(const result of results)if(result.status==='rejected')throw result.reason;
     }
-    if(!dryRun&&updates.length)await withSessionDocumentWrites({state,store,prefix,tenantId:principal.tenantId,documents:updates},async()=>{
+    if(!dryRun&&updates.length)await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:updates},async()=>{
       // Make the missing-field query observe this page before checkpoint/retry.
       await collection.bulk(principal,updates,{refresh:true});
       const actual=await collection.mget(principal,updates.map(item=>item.id)),byId=new Map(actual.docs.map(hit=>[hit._id,hit]));

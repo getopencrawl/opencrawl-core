@@ -22,6 +22,7 @@ import {errorInfo} from '../errors.mjs';
 import type {IdentityDirectory} from '../identity/types.mjs';
 import {createDriveAccess,workspaceDriveAudience} from '../integrations/google-drive-access.mjs';
 import type {ApplicationDatabase} from '../state/postgres.mjs';
+import {createIntegrationResources} from '../state/integration-resources.mjs';
 import {createIntegrationCommands} from '../state/integration-commands.mjs';
 import type {ApplicationState} from '../state/types.mjs';
 import type {IntegrationCommandReference,IntegrationCommand} from '../integrations/temporal/types.mjs';
@@ -41,9 +42,10 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   if(!database||!state)throw new Error('Configure the application database and authoritative state');
   const encryptionKey=env.OPENCRAWL_CONNECTOR_KEY?Buffer.from(env.OPENCRAWL_CONNECTOR_KEY,'base64'):undefined;
   const commands=createIntegrationCommands({database,environment:'selfhost',encryptionKey});
+  const resources=createIntegrationResources({database,environment:'selfhost'});
   const registry=createSingleOrganizationRegistry({database,organizationId:settings.organizationId,commands:commands.transactional});
   const countRepository=createConnectorCounts({database,legacyBucket:store.bucket}),drainProofs=createIntegrationDrainProofs({database,environment:'selfhost'});
-  const ready=async()=>{await commands.ready();await registry.ready();await countRepository.ready();await drainProofs.ready();};
+  const ready=async()=>{await resources.ready();await commands.ready();await registry.ready();await countRepository.ready();await drainProofs.ready();};
   const integrationSourceId='integrations-'+settings.organizationId+'-v1';
   const enabled=airbyteEnabled(env);
   const definitions:Record<string,ConnectorDefinition>=Object.fromEntries(['slack','googledrive','notion','circleback','granola'].map(id=>[id,{name:`OpenCrawl ${id} (operator-owned)`,manifest:connectorManifest(id)}]));
@@ -136,7 +138,7 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   const counts=createRecordCounts({buckets,legacyBucket:store.bucket,repository:countRepository});
   const realm=createRealm(settings.search);
   const barrier=(record:import('../integrations/types.mjs').IntegrationRecord)=>state.writeBarrier({namespace:'selfhost',tenantId:record.tenantId,connectionId:record.integrationId});
-  const lifecycle={commands,runProviderWrite:<T,>(record:import('../integrations/types.mjs').IntegrationRecord,operation:string,write:()=>Promise<T>)=>barrier(record).run('object-put',write,{target:operation}),schedule:(reference:IntegrationCommandReference)=>integrationLifecycleScheduler({...selfhostTemporalSettings(env),taskQueue:env.TEMPORAL_INTEGRATION_TASK_QUEUE||'integration-lifecycle-v1'})(reference),cleanup:{
+  const lifecycle={commands,resources,runProviderWrite:<T,>(record:import('../integrations/types.mjs').IntegrationRecord,operation:string,write:()=>Promise<T>)=>barrier(record).run('object-put',write,{target:operation}),schedule:(reference:IntegrationCommandReference)=>integrationLifecycleScheduler({...selfhostTemporalSettings(env),taskQueue:env.TEMPORAL_INTEGRATION_TASK_QUEUE||'integration-lifecycle-v1'})(reference),cleanup:{
     async closeWriters(record:import('../integrations/types.mjs').IntegrationRecord){await barrier(record).close();await counts.remove(record);},
     async stopWriters(record:import('../integrations/types.mjs').IntegrationRecord){
       const scheduling=await connectorClient(selfhostTemporalSettings(env));

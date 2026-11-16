@@ -25,7 +25,7 @@ interface StatusSnapshot {jobs: AirbyteJob[]; live: Record<string, number> | nul
 interface StatusEntry {attemptedAt: number; updatedAt?: number; value?: StatusSnapshot; pending?: Promise<void>; failed: boolean}
 type PendingSignInState = 'pending' | 'expired' | 'unavailable';
 // Product lifecycle: runtimes supply credential and infrastructure adapters.
-import {randomBytes, timingSafeEqual} from 'node:crypto';
+import {createHash,randomBytes, timingSafeEqual} from 'node:crypto';
 import type {RecordCounts} from './counts.mjs';
 import {createProvisioning, provisioningLabel} from './provisioning.mjs';
 
@@ -77,7 +77,7 @@ export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
 
 export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation, lifecycle, counts: distinct,consentWaitMs=5000}: IntegrationOptions) {
   if(!Number.isSafeInteger(consentWaitMs)||consentWaitMs<1||consentWaitMs>10000)throw new Error('Invalid consent response deadline');
-  const consent=createConsentProvisioning({registry,oauth});
+  const consent=createConsentProvisioning({registry,oauth,resources:lifecycle?.resources});
   const consentConfig=(provider:Exclude<Provider,GithubProvider|KeyProvider>,record:IntegrationRecord)=>({toolkit:provider.toolkit,...provider.authConfig,name:provider.authConfig.name+' '+environment+' '+record.tenantId});
   const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>}>();
   const statusCache = new Map<string, StatusEntry>();
@@ -103,27 +103,39 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
    * never blocks connecting another.
    */
   const definitions = new Map<string, Promise<string>>();
-  function definitionFor(provider: Provider, id: string) {
-    const key = `${id}:${provider.id}`;
+  function definitionFor(provider: Provider, id: string, allowCreate:boolean) {
+    const key = `${id}:${provider.id}:${allowCreate}`;
     if (!definitions.has(key)) {
       definitions.set(key, (async () => {
-        return provider.connector.docker ? dockerDefinition(id, provider.connector) : manifestDefinition(id, provider);
+        return provider.connector.docker ? dockerDefinition(id, provider.connector) : manifestDefinition(id, provider,allowCreate);
       })().catch(error => { definitions.delete(key); throw error; }));
     }
     return definitions.get(key)!;
   }
 
   /** The published declarative manifest, updated when the file changes. */
-  async function manifestDefinition(id: string, provider: Provider) {
-    const {name, manifest} = provider.connector;
-    const definition = (await airbyte.declarativeSources(id)).find(d => d.name === name);
-    if (!definition) return (await airbyte.createDeclarativeSource(id, name, manifest!)).id;
-    if (canonical(definition.manifest) !== canonical(manifest)) {
-      // A failed update keeps the published version; it must not block connecting.
-      await airbyte.updateDeclarativeSource(id, definition.id, manifest!)
-        .catch(error => log('integration.connector.update_failed', {provider: provider.id, status: errorInfo(error).status || null}));
+  async function manifestDefinition(id: string, provider: Provider,allowCreate:boolean) {
+    const {name,manifest}=provider.connector,resources=lifecycle?.resources;
+    const fingerprint=(value:unknown)=>createHash('sha256').update(canonical(value)).digest('hex');
+    const identity=fingerprint(['airbyte-definition',id,name]),desired=fingerprint(manifest);
+    const find=async()=>{
+      const definitions=(await airbyte.declarativeSources(id)).filter(definition=>definition.name===name);
+      if(definitions.length>1)throw Object.assign(new Error('Ambiguous connector definition'),{code:'ProvisioningRecoveryPending'});
+      return definitions[0]??null;
+    };
+    if(!resources){
+      const existing=await find();
+      if(existing&&fingerprint(existing.manifest)===desired)return existing.id;
+      throw new Error('Durable shared integration resources are not configured');
     }
-    return definition.id;
+    const definitionId=await resources.ensure({kind:'airbyte-definition',scope:id,name,fingerprint:identity},{
+      find:async()=>{const existing=await find();return existing?{id:existing.id,fingerprint:identity}:null;},
+      create:async()=>{if(!allowCreate)throw Object.assign(new Error('Legacy shared definition outcome requires reconciliation'),{code:'ProvisioningRecoveryPending'});return (await airbyte.createDeclarativeSource(id,name,manifest!)).id;},
+    });
+    return resources.ensure({kind:'airbyte-manifest',scope:id,name:definitionId,fingerprint:desired},{
+      find:async()=>{const existing=await find();return existing?.id===definitionId?{id:existing.id,fingerprint:fingerprint(existing.manifest)}:null;},
+      create:async()=>{if(!allowCreate)throw Object.assign(new Error('Legacy shared manifest outcome requires reconciliation'),{code:'ProvisioningRecoveryPending'});await airbyte.updateDeclarativeSource(id,definitionId,manifest!);return definitionId;},
+    });
   }
 
   /**
@@ -332,7 +344,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
         if (!record!.airbyte?.sourceId) {
           const secret = await lifecycle.commands.readSecret(input);
           if (provider.auth === 'api-key' && !secret.apiKey) throw Object.assign(new Error('Reconnect with the provider key'), {code: 'ProvisioningKeyRequired'});
-          const definitionId = await definitionFor(provider, required(record.airbyteWorkspaceId, 'Airbyte workspace'));
+          const definitionId = await definitionFor(provider, required(record.airbyteWorkspaceId, 'Airbyte workspace'),record.sharedResourceProtocol===1);
           if (!await resource('sourceId', async () => airbyte.createSource({workspaceId: record!.airbyteWorkspaceId, name: provisioningLabel(record!), definitionId,
             configuration: provider.auth === 'api-key' ? provider.sourceConfiguration({startDate: record!.startDate, apiKey: secret.apiKey})
               : provider.auth === 'github-app' ? provider.sourceConfiguration({githubApp: github!.sourceSettings(), record: record!})
@@ -484,7 +496,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     const s3Bucket = await teamBucket(principal);
     const stamp = new Date(now()).toISOString();
     let record: IntegrationRecord = {integrationId: integrationId(), tenantId: principal.tenantId, userId: principal.userId, ownerEmail: principal.email || null,
-      provider: provider.id, scope: provider.scope, environment, s3Bucket, provisionProtocol: 1, status: 'provisioning', account: label || null, workspace,
+      provider: provider.id, scope: provider.scope, environment, s3Bucket, provisionProtocol: 1,sharedResourceProtocol:1, status: 'provisioning', account: label || null, workspace,
       createdAt: stamp, updatedAt: stamp, startDate: new Date(now() - backfillDays * DAY).toISOString().replace(/\.\d{3}Z$/, 'Z')};
     record.s3Prefix = landingPrefix(provider, record);
     if (!registry.createWithLifecycle || !lifecycle) throw Object.assign(new Error('Durable integration lifecycle is not configured'), {status: 503});
@@ -620,7 +632,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       // The team bucket exists before anyone signs in, so setup can't fail on it later.
       const s3Bucket = await teamBucket(principal);
       const record: IntegrationRecord = {integrationId: integrationId(), tenantId: principal.tenantId, userId: principal.userId, ownerEmail: principal.email || null,
-        provider: provider.id, scope: provider.scope, environment, s3Bucket, provisionProtocol: 1, status: 'connecting', nonce: randomBytes(24).toString('base64url'),
+        provider: provider.id, scope: provider.scope, environment, s3Bucket, provisionProtocol: 1,sharedResourceProtocol:1, status: 'connecting', nonce: randomBytes(24).toString('base64url'),
         createdAt: new Date(now()).toISOString(), startDate: new Date(now() - backfillDays * DAY).toISOString().replace(/\.\d{3}Z$/, 'Z')};
       for (const mine of live.filter(r => r.userId === principal.userId)) await abandon(mine,principal.userId);
       if (provider.auth === 'github-app') {

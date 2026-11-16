@@ -78,7 +78,7 @@ export async function migrateSessionDocumentIds({realm, principal, state, store,
 
   async function flush() {
     if (dryRun || !writes.length && !removals.length) {writes = []; removals = []; return;}
-    await withSessionDocumentWrites({state,store,prefix,tenantId:principal.tenantId,documents:[...writes,...removals]},async()=>{
+    await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:[...writes,...removals]},async()=>{
     await backup({written: writes.map(item => item.id), removed: removals});
     // Write the surviving copy before removing anything, so an interrupted run
     // leaves at most an extra copy that the next run resolves.
@@ -152,7 +152,7 @@ export async function restoreSessionDocumentIds({realm, principal, state, store,
   const sessions = realm.collection('session');
   let restored = 0, removed = 0;
   for (const step of [...steps].reverse()) {
-    await withSessionDocumentWrites({state,store,prefix,tenantId:principal.tenantId,documents:step.removed},()=>write(sessions, principal, step.removed));
+    await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:step.removed},()=>write(sessions, principal, step.removed));
     const previous = new Set(step.removed.map(item => item.id)), created = step.written.filter(id => !previous.has(id));
     for (let start = 0; start < created.length; start += 500) await sessions.delete(principal, created.slice(start, start + 500));
     restored += step.removed.length; removed += created.length;

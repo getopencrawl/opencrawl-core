@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {MockActivityEnvironment} from '@temporalio/testing';
 import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-registry.mjs';
+import {createIntegrationResources} from '../dist/src/state/integration-resources.mjs';
 import {createIntegrationCommands} from '../dist/src/state/integration-commands.mjs';
 import {createIntegrations} from '../dist/src/integrations/service.mjs';
 import {integrationActivities} from '../dist/src/integrations/temporal/activities.mjs';
@@ -10,13 +11,13 @@ import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-dat
 const owner={tenantId:'org_team',userId:'user_owner'},provider={id:'notion',name:'Notion',scope:'team',toolkit:'notion',auth:'oauth',authConfig:{name:'OpenCrawl',credentials:{client_secret:'PRIVATE_CLIENT_SECRET'}}};
 const live=(name,run)=>test(name,{skip:!postgresUrl},run);
 async function fixture(t){
- const database=await applicationDatabaseFixture(t),key=Buffer.alloc(32,7),commands=createIntegrationCommands({database,environment:'selfhost',encryptionKey:key});await commands.ready();
+ const database=await applicationDatabaseFixture(t),key=Buffer.alloc(32,7),commands=createIntegrationCommands({database,environment:'selfhost',encryptionKey:key});await commands.ready();const resources=createIntegrationResources({database,environment:'selfhost'});await resources.ready();
  const registry=createSingleOrganizationRegistry({database,organizationId:owner.tenantId,commands:commands.transactional});
  const calls={config:0,link:0,recoverConfig:0,recoverLink:0,removed:[]},scheduled=[];let now=Date.now(),authorized=true;
- const oauth={authConfig:async()=>{calls.config++;return 'config';},recoverAuthConfig:async()=>{calls.recoverConfig++;return 'config';},
+ const oauth={authConfig:async()=>{calls.config++;return 'config';},recoverAuthConfig:async()=>{calls.recoverConfig++;return calls.config?'config':null;},
   link:async()=>{calls.link++;return {connected_account_id:'grant',redirect_url:'https://provider.example/authorize?state=PRIVATE_FLOW',expires_at:new Date(now+600000).toISOString()};},
   recoverLink:async()=>{calls.recoverLink++;return {connected_account_id:'grant'};},remove:async id=>{calls.removed.push(id);}};
- const lifecycle={commands,schedule:async ref=>{scheduled.push(ref);},runProviderWrite:async(_r,_op,fn)=>fn(),cleanup:{closeWriters:async()=>{},stopWriters:async()=>{},drainWriters:async()=>{},deleteDocuments:async()=>0}};
+ const lifecycle={commands,resources,schedule:async ref=>{scheduled.push(ref);},runProviderWrite:async(_r,_op,fn)=>fn(),cleanup:{closeWriters:async()=>{},stopWriters:async()=>{},drainWriters:async()=>{},deleteDocuments:async()=>0}};
  const options={environment:'selfhost',appUrl:'https://self.example',registry,lifecycle,legacyBucket:'owned',buckets:{get:async()=>'owned'},workspaceId:async()=>'workspace',destination:{},oauth,airbyte:{},providers:{notion:provider},consentWaitMs:1,now:()=>now};
  const service=createIntegrations(options),activityOptions={resolve:async()=>({commands,runner:{step:service.lifecycleStep},authorize:async()=>{if(!authorized)throw Object.assign(Error('PRIVATE_AUTH_BODY'),{status:403});}})},activities=integrationActivities(activityOptions),env=new MockActivityEnvironment();
  const record=()=>registry.listTenant(owner.tenantId).then(rows=>rows.sort((a,b)=>Date.parse(a.createdAt)-Date.parse(b.createdAt)).at(-1));

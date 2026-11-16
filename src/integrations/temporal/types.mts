@@ -1,3 +1,4 @@
+import type {IntegrationResources} from '../../state/integration-resources.mjs';
 import type {Environment, IntegrationRecord} from '../types.mjs';
 
 export type IntegrationCommandOperation = 'provision' | 'disconnect' | 'sync' | 'consent';
@@ -60,6 +61,7 @@ export interface IntegrationCleanup {
   deleteDocuments(record: IntegrationRecord): Promise<number>;
 }
 export interface IntegrationLifecycle {
+  resources?: IntegrationResources;
   commands: IntegrationCommands;
   schedule(reference: IntegrationCommandReference): Promise<unknown>;
   cleanup: IntegrationCleanup;

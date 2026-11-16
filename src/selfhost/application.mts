@@ -219,7 +219,15 @@ export function selfhostApplication({state,settings,store,eventIdentities,prefix
           try{const {value}=await smallJson(request,8192);await connectorSettings.save(selected.provider||'',value,principal);return reply(200,JSON.stringify({ok:true}),'application/json');}
           catch(error){const info=errorInfo(error);return info.expose?refuse(info.status||400,'CREDENTIAL_NOT_SAVED',info.message):refuse(503,'INTEGRATION_UNAVAILABLE','We couldn’t save that. Please try again.');}
         }
-        if(selected.name.startsWith('integration-')||selected.name.startsWith('/api/integrations'))return integrationRequest(request,target,selected,{integrations,providers,principal,member,onboarding,guided,respond:reply,message,document});
+        if(selected.name.startsWith('integration-')||selected.name.startsWith('/api/integrations')){
+          if(rpc)return integrationRequest(request,target,selected,{integrations,providers,principal,member,onboarding,guided,respond:reply,message,document});
+          // Consent preparation can outlive this request's initial membership
+          // check. Recheck before releasing a provider sign-in URL to the caller.
+          let response:Parameters<typeof reply>|undefined;
+          await integrationRequest(request,target,selected,{integrations,providers,principal,member,onboarding,guided,respond:(...value)=>{response=value;},message,document});
+          if(response){if(!await revalidate())return reply(403,'Workspace access denied');return reply(...response);}
+          return;
+        }
         if(selected.name==='cloud-capture'||selected.name==='cloud-capture-revoke'){
           let credential,revoked=false;
           if(request.method==='POST'){

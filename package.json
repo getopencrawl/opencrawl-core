@@ -113,6 +113,7 @@
     "./state/migration": "./dist/src/state/migrate.mjs",
     "./state/integration-drain-cli": "./dist/src/state/integration-drain-cli.mjs",
     "./state/integration-commands": "./dist/src/state/integration-commands.mjs",
+    "./state/integration-resources": "./dist/src/state/integration-resources.mjs",
     "./state/connector-counts": "./dist/src/state/connector-counts.mjs",
     "./state/integration-drain-proofs": "./dist/src/state/integration-drain-proofs.mjs",
     "./state/account-state": "./dist/src/state/account-state.mjs",

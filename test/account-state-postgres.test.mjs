@@ -83,3 +83,18 @@ test('agent credentials cannot authenticate capture secrets and keep independent
  await restarted.revoke(legacy.principal,legacy.id);assert.equal(await restarted.authenticate(token),null);
  assert.deepEqual(await accounts.exportGeneration(sessionScope(legacy.principal),'agent'),{generation:legacy.generation});
 });
+
+test('encrypted connector retirement envelopes have a hard bounded size',{skip:!postgresUrl},async t=>{
+ const database=await applicationDatabaseFixture(t),secrets=createConnectorSecrets(database);await secrets.ready();const id='grant_'+'c'.repeat(48),scope={kind:'grant',organizationId:'org_team',id},aad=`connector-credentials/v1/org_team/${id}.enc`,bytes=Buffer.alloc(262144,1);
+ assert.equal(await secrets.compareAndSet(scope,aad,null,bytes),true);const saved=await secrets.read(scope,aad);assert.equal(saved.data.length,262144);
+ await assert.rejects(secrets.compareAndSet(scope,aad,saved.version,Buffer.alloc(262145,1)),/Invalid connector secret envelope/);assert.equal((await secrets.read(scope,aad)).version,saved.version);
+});
+
+test('malformed persisted role-write holds fail closed with a redacted service error',{skip:!postgresUrl},async t=>{
+ const database=await applicationDatabaseFixture(t),accounts=createAccountState(database);await accounts.ready();
+ const malformed={state:'held',privateData:'never return database payload'};
+ await database.pool.query('INSERT INTO opencrawl_role_writes(namespace,organization_id,record) VALUES($1,$2,$3::jsonb)',[database.namespace,owner.tenantId,JSON.stringify(malformed)]);
+ await assert.rejects(accounts.roles.acquire(owner.tenantId,owner.userId,peer.userId,'remove'),error=>error.status===503&&!error.message.includes('privateData'));
+ const {rows}=await database.pool.query('SELECT record FROM opencrawl_role_writes WHERE namespace=$1 AND organization_id=$2',[database.namespace,owner.tenantId]);
+ assert.deepEqual(rows[0].record,malformed,'a malformed hold cannot be replaced by a new authorized mutation');
+});

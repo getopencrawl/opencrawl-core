@@ -57,7 +57,7 @@ export async function migrateSessionParticipants({realm, principal, state, store
       const results = await Promise.allSettled(sources.slice(offset, offset + 4).map(prepare));
       for (const result of results) if (result.status === 'rejected') throw result.reason;
     }
-    if (!dryRun && updates.length) await withSessionDocumentWrites({state,store, prefix, tenantId: principal.tenantId, documents: updates}, async () => {
+    if (!dryRun && updates.length) await withSessionDocumentWrites({state, prefix, tenantId: principal.tenantId, documents: updates}, async () => {
       await collection.bulk(principal, updates);
       const actual = await collection.mget(principal, updates.map(item => item.id));
       const byId = new Map(actual.docs.map(hit => [hit._id, hit]));

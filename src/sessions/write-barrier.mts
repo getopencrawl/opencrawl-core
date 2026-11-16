@@ -28,8 +28,8 @@ export function sessionWriteStore(store: ObjectStore, state:ApplicationState, pr
 
 /** A migration may copy several sessions in one remote write. Acquire every
  * affected session's fence before invoking it, including backup writes. */
-export async function withSessionDocumentWrites<T>({state,store,prefix,tenantId,documents}: {
-  state:ApplicationState;store:ObjectStore;prefix:string;tenantId:string;documents:DocumentItem[];
+export async function withSessionDocumentWrites<T>({state,prefix,tenantId,documents}: {
+  state:ApplicationState;prefix:string;tenantId:string;documents:DocumentItem[];
 },write:()=>Promise<T>):Promise<T> {
   if(!state||!prefix)throw new Error('Session migrations require authoritative deletion controls');
   const controls=createControls({state}),identities=new Map<string,{owner:Principal;harness:string;sessionId:string}>();

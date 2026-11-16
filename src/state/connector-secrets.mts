@@ -16,7 +16,7 @@ export function createConnectorSecrets(database:ApplicationDatabase):ConnectorSe
       !aad.endsWith(`/${scope.organizationId}/${scope.id}.enc`))throw new Error('Invalid connector secret scope');
     return [database.namespace,scope.kind,scope.organizationId,scope.id,aad];
   }
-  function validate(bytes:Uint8Array){if(bytes.length<30||bytes.length>65536||bytes[0]!==1)throw new Error('Invalid connector secret envelope');}
+  function validate(bytes:Uint8Array){if(bytes.length<30||bytes.length>262144||bytes[0]!==1)throw new Error('Invalid connector secret envelope');}
   async function read(scope:ConnectorSecretScope,aad:string){const params=values(scope,aad);const {rows}=await database.pool.query('SELECT aad,ciphertext,revision FROM opencrawl_connector_secrets WHERE namespace=$1 AND kind=$2 AND organization_id=$3 AND secret_id=$4',params.slice(0,4));
     if(!rows[0])return {data:null,version:null};if(rows[0].aad!==aad)throw new Error('Connector secret binding mismatch');return {data:Buffer.from(rows[0].ciphertext),version:rows[0].revision as string};}
   return {
