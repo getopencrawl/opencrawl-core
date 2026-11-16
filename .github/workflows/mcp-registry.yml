@@ -1,4 +1,4 @@
-name: Publish reviewed MCP registry metadata
+name: Withdraw OpenCrawl MCP registry listing
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   publish:
-    if: github.repository == 'getopencrawl/opencrawl-core' && github.ref == 'refs/heads/main'
+    if: github.repository == 'getopencrawl/opencrawl-core' && github.ref == 'refs/heads/codex/withdraw-mcp-listing-20261116'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -52,12 +52,15 @@ jobs:
           tar xzf "$archive" mcp-publisher
       - name: Authenticate using this organization's repository identity
         run: ./mcp-publisher login github-oidc
-      - name: Publish the reviewed metadata
-        run: ./mcp-publisher publish plugins/registry/server.json
-      - name: Verify the public registry record
+      - name: Hide all OpenCrawl registry versions
+        run: ./mcp-publisher status --status deleted --all-versions --yes --message "Publisher withdrawal. OpenCrawl continues through OSS and direct distribution." io.github.getopencrawl/opencrawl
+      - name: Verify withdrawal
         shell: bash
         run: |
           set -euo pipefail
-          version=$(jq -r '.version' plugins/registry/server.json)
-          curl --fail --silent --show-error "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.getopencrawl%2Fopencrawl/versions/$version" > published-server.json
-          jq -e --arg version "$version" '.server.name == "io.github.getopencrawl/opencrawl" and .server.version == $version and .server.remotes == [{"type":"streamable-http","url":"https://app.getopencrawl.com/mcp"}]' published-server.json
+          base='https://registry.modelcontextprotocol.io/v0.1/servers/io.github.getopencrawl%2Fopencrawl'
+          curl --fail --silent --show-error "$base/versions?include_deleted=true" > withdrawn-versions.json
+          jq -e '.servers | length > 0 and all(.; ._meta["io.modelcontextprotocol.registry/official"].status == "deleted")' withdrawn-versions.json
+          code=$(curl --silent --show-error --output hidden-record.json --write-out '%{http_code}' "$base/versions/0.1.0")
+          test "$code" = 404
+          cat withdrawn-versions.json
