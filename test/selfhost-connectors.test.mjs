@@ -266,7 +266,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
   const composio=await brokerService(t),f=await installation(t,{COMPOSIO_BASE_URL:composio.url}),service=f.open();
   const before=await service.integrations.list(principal),notion=before.find(card=>card.provider==='notion');
   assert.equal(notion.state,'setup-required');assert.equal(notion.setup.requirement,'Needs a Composio key');
-  assert.deepEqual({id:notion.setup.credential.id,unlocks:notion.setup.credential.unlocks},{id:'composio',unlocks:['Google Drive','Notion','Circleback','Slack']});
+  assert.deepEqual({id:notion.setup.credential.id,unlocks:notion.setup.credential.unlocks},{id:'composio',unlocks:['Google Drive','Notion','Circleback','Linear','Slack']});
   assert.match(notion.setup.credential.url,/^https:\/\/dashboard\.composio\.dev\//);
   const github=before.find(card=>card.provider==='github');
   assert.equal(github.setup.requirement,'Needs a GitHub App');assert.equal(github.setup.credential,undefined);

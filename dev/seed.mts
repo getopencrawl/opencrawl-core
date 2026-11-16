@@ -205,7 +205,7 @@ try{
     if(!verifyOnly)await scheduling.client.workflow.execute('indexSessionsV1',{workflowId,taskQueue:required('TEMPORAL_SESSION_TASK_QUEUE'),args:[{sourceId:'sessions-'+input.organization+'-v1'}],workflowExecutionTimeout:'5 minutes'});
   }finally{await scheduling.connection.close();}
   const sources=await json<{items:Array<{state:string;setup?:{requirement?:string}}>}>('/api/onboarding/sources');
-  assert.equal(sources.items.length,6);
+  assert.equal(sources.items.length,7);
   assert.ok(sources.items.every(card=>card.state==='setup-required'&&card.setup?.requirement==='Airbyte disabled'));
   ingestion={airbyte:{enabled:false},temporal:verifyOnly?{reindex:false}:{workflowId}};expected=sessionText;
 }
