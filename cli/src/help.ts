@@ -5,7 +5,7 @@ export function commandHelp(command:string, operation?:string):string|undefined 
        opencrawl setup hooks --json
        opencrawl setup apply --plugins IDS --forward IDS --history IDS --plan-id ID --yes
 
-New setup supports Claude Code and Codex on macOS.
+New setup supports Claude Code, Codex, and Cursor on macOS.
 Review independent plugin, future-recording and history choices.
 Existing installations retain setup resume, status, and collect uninstall.
 setup hooks inspects this installation's Codex hook trust locally without changing it.
