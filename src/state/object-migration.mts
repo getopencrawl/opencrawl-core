@@ -1,3 +1,4 @@
+import {decodeOnlineSlackCapture,type OnlineSlackCaptureProjection} from './slack-online-projection.mjs';
 import type {LegacyWriteFence} from './write-barriers.mjs';
 import type {SessionDeletionRequest} from '../sessions/deletion-requests.mjs';
 import type {PoolClient} from 'pg';
@@ -29,7 +30,7 @@ import {connectorGrantSchema,sealedEnvelope} from '../integrations/credential-va
 import {connectorSettingsSchema} from '../integrations/connector-settings.mjs';
 import {createReplicasState} from './replicas.mjs';
 import {replicasConnectionSchema,replicasChallengeSchema} from '../identity/replicas-connections.mjs';
-import {createValueReports} from './value-reports.mjs';
+import {createValueReports,encodeSavedValueReport} from './value-reports.mjs';
 import {createPostgresIndexingReceipts,sessionIndexingReceiptSchema,type SessionReceiptImport} from './indexing-receipts.mjs';
 import {createPostgresSlackCapture} from './slack-capture.mjs';
 import {digest as connectorBindingHash,validateBinding} from '../connectors/scope.mjs';
@@ -60,12 +61,15 @@ const eventSchema=z.discriminatedUnion('schemaVersion',[
 const normalizeCounts=(value:z.infer<typeof countSchema>)=>({version:1 as const,read:[...new Set(value.read)].sort(),
   ids:Object.fromEntries(Object.entries(value.ids).map(([stream,ids])=>[stream,[...new Set(ids)].sort()])),full:value.full??{}});
 export type OnlineObjectProjection=
+ |OnlineSlackCaptureProjection
  |{kind:'fence';domain:'session-write-fences'|'connector-write-fences';identity:string[];controlPrefix:string;value:LegacyWriteFence}
  |{kind:'deletion';domain:'deletion-requests';identity:string[];key:string;value:SessionDeletionRequest|null}
  |{kind:'control';domain:'resource-controls';identity:string[];scope:ResourceControlIdentity;value:ResourceControl|null}
  |{kind:'account';domain:'capture-credentials'|'credential-generations'|'onboarding'|'role-writes';identity:string[];record:OnlineAccountProjection}
  |{kind:'secret';domain:'connector-grants'|'connector-settings';identity:string[];scope:ConnectorSecretScope;aad:string;value:Buffer|null}
  |{kind:'replicas-connection';domain:'replicas-connections';identity:string[];organizationId:string;value:ReplicasConnection|null}
+ |{kind:'replicas-reference';domain:'replicas-index';identity:string[];tenantHash:string;organizationId:string;value:{organizationId:string}|null}
+ |{kind:'value-report';domain:'value-reports';identity:string[];tenantHash:string;value:Record<string,unknown>|null}
  |{kind:'replicas-setup';domain:'replicas-setup';identity:string[];codeHash:string;value:ReplicasChallenge|null}
  |{kind:'board';domain:'board';identity:string[];tenantHash:string;value:BoardState|null};
 export function onlineProjectionValue(value:OnlineObjectProjection):unknown{return value.kind==='account'?value.record.value:value.value;}
@@ -158,7 +162,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
     return {source:value,target:await read(()=>retirements.exportRetirement(key)),rows:1};
   }
   /** Decode without target SQL, schema changes or dependency reads. Unsupported
-   * domains (including Replicas aliases) never become competing publishers. */
+   * domains fail closed; Replicas aliases are references, never publishers. */
   function decodeOnline(key:string,bytes:Buffer|null,onlineTenantIds?:readonly string[]):OnlineObjectProjection{
     // Only the explicit online projector supplies its verified PG enrollment.
     // Offline process() never overrides the original finite reviewed set.
@@ -171,6 +175,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
     if(bytes!==null&&bytes.length>found.maxBytes)fail('Legacy state object exceeds its supported migration limit');
     const {domain,parts}=found;
     switch(domain){
+      case 'slack-capture':return decodeOnlineSlackCapture({key,bytes,bucket:store.bucket!,registryRecords,tenantIds:enrolled});
       case 'resource-controls':{
         const [tenantHash,userHash,kind,harness,resourceHash]=parts;if(!retiredHashes.has(tenantHash))tenantDigest(tenantHash);if(!isSessionHarness(harness))fail('Unknown control harness');
         const value=bytes===null?null:controlSchema.parse(json(bytes));
@@ -223,6 +228,15 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
         const value=bytes===null?null:replicasConnectionSchema.parse(json(bytes));if(value){tenant(value.tenantId);if(value.organizationId!==parts[0]||value.installations.some(item=>item.tenantId!==value.tenantId))fail('Replicas connection key mismatch');}
         return {kind:'replicas-connection',domain,identity:[parts[0]],organizationId:parts[0],value};
       }
+      case 'replicas-index':{
+        tenantDigest(parts[0]);const value=bytes===null?null:z.strictObject({organizationId:z.string().regex(new RegExp('^'+U+'$'))}).parse(json(bytes));
+        if(value&&value.organizationId!==parts[1])fail('Replicas index identity mismatch');
+        return {kind:'replicas-reference',domain,identity:[parts[0],parts[1]],tenantHash:parts[0],organizationId:parts[1],value};
+      }
+      case 'value-reports':{
+        tenantDigest(parts[0]);const value=bytes===null?null:z.record(z.string(),z.unknown()).parse(json(bytes));if(value!==null)encodeSavedValueReport(value);
+        return {kind:'value-report',domain,identity:[parts[0]],tenantHash:parts[0],value};
+      }
       case 'replicas-setup':{
         const value=bytes===null?null:replicasChallengeSchema.parse(json(bytes));if(value)tenant(value.tenantId);
         return {kind:'replicas-setup',domain,identity:[parts[0]],codeHash:parts[0],value};
@@ -241,6 +255,9 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
       case 'control':return controls.readIn(client,value.scope);
       case 'account':return accounts.readIn(client,value.record);
       case 'secret':return (await secrets.readIn(client,value.scope,value.aad)).data;
+      case 'slack':return slack.readProjectedLegacyIn(client,value.key,connectorBindingHash(value.binding));
+      case 'replicas-reference':fail('Replicas references require the migration projection coordinator');
+      case 'value-report':return reports.readIn(client,value.tenantHash);
       case 'replicas-connection':return (await replicas.readConnectionIn(client,value.organizationId)).record;
       case 'replicas-setup':return (await replicas.readSetupIn(client,value.codeHash)).record;
       case 'board':return board.readIn(client,value.tenantHash);
@@ -253,12 +270,15 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
       case 'control':return controls.projectIn(client,value.scope,value.value);
       case 'account':return accounts.projectIn(client,value.record);
       case 'secret':return secrets.projectIn(client,value.scope,value.aad,value.value);
+      case 'slack':return slack.projectLegacyIn(client,value.key,value.value,value.binding);
+      case 'replicas-reference':fail('Replicas references cannot publish canonical connections');
+      case 'value-report':return reports.projectIn(client,value.tenantHash,value.value);
       case 'replicas-connection':return replicas.projectConnectionIn(client,value.organizationId,value.value);
       case 'replicas-setup':return replicas.projectSetupIn(client,value.codeHash,value.value);
       case 'board':return board.projectIn(client,value.tenantHash,value.value);
     }
   }
-  async function prepareOnline(){for(const run of [controls.ready,accounts.ready,secrets.ready,replicas.ready,board.ready,()=>ensureWriteBarrierSchema(database),()=>ensureDeletionRequestSchema(database)])await run();}
+  async function prepareOnline(){for(const run of [controls.ready,accounts.ready,secrets.ready,replicas.ready,reports.ready,slack.ready,board.ready,()=>ensureWriteBarrierSchema(database),()=>ensureDeletionRequestSchema(database)])await run();}
   async function process(key:string,bytes:Buffer,{write}:{write:boolean}):Promise<{source:unknown|Buffer;target:unknown|Buffer|null;rows:number}>{
     const found=classify(key);if(!found)fail('Immutable source objects do not use application-state import');
     if(bytes.length>found.maxBytes)fail('Legacy state object exceeds its supported migration limit');
@@ -315,7 +335,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
         const actual=await read(async()=>(await replicas.readConnection(value.organizationId)).record);if(actual){if(actual.tenantId!==connection.tenantId)fail('Replicas index target tenant mismatch');target={organizationId:actual.organizationId};}break;
       }
       case 'value-reports':{
-        tenantDigest(parts[0]);source=z.record(z.string(),z.unknown()).parse(json(bytes));
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='value-report'||!decoded.value)fail('Invalid value report projection');source=decoded.value;
         if(write){await prepare('reports',reports.ready);await reports.importReport(parts[0],source);}target=await read(()=>reports.exportReport(parts[0]));break;
       }
       case 'slack-capture':{

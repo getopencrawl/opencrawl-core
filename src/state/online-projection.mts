@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
-import {createBoundObjectMigration,onlineProjectionValue,type BoundObjectMigrationOptions} from './object-migration.mjs';
+import {createBoundObjectMigration,onlineProjectionValue,type BoundObjectMigrationOptions,type OnlineObjectProjection} from './object-migration.mjs';
 import type {OnlineIntent} from './online-journal.mjs';
 
 /** Typed shadow projection only. This module never makes an installation ready.
@@ -37,6 +37,7 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
     await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_online_projection_namespaces(namespace text PRIMARY KEY,epoch uuid NOT NULL);
       CREATE TABLE IF NOT EXISTS opencrawl_online_projection_bindings(namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,binding_hash text NOT NULL CHECK(binding_hash~'^[a-f0-9]{64}$'),enrollment_revision bigint NOT NULL DEFAULT 0 CHECK(enrollment_revision>=0 AND enrollment_revision<=100000),PRIMARY KEY(namespace,epoch,source_id));
       CREATE TABLE IF NOT EXISTS opencrawl_online_projection_tenants(namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,tenant_id text NOT NULL,tenant_hash text NOT NULL CHECK(tenant_hash~'^[a-f0-9]{64}$'),receipt_hash text NOT NULL CHECK(receipt_hash~'^[a-f0-9]{64}$'),PRIMARY KEY(namespace,epoch,source_id,tenant_id),UNIQUE(namespace,epoch,source_id,tenant_hash));
+      CREATE TABLE IF NOT EXISTS opencrawl_online_projection_replicas_references(namespace text NOT NULL,epoch uuid NOT NULL,target_key text COLLATE "C" NOT NULL,source_id text NOT NULL,source_key text COLLATE "C" NOT NULL,tenant_hash text NOT NULL CHECK(tenant_hash~'^[a-f0-9]{64}$'),organization_id uuid NOT NULL,PRIMARY KEY(namespace,epoch,target_key),UNIQUE(namespace,epoch,source_id,source_key));
       CREATE TABLE IF NOT EXISTS opencrawl_online_projection_heads(namespace text NOT NULL,epoch uuid NOT NULL,target_key text COLLATE "C" NOT NULL,source_id text NOT NULL,source_key text COLLATE "C" NOT NULL,domain text NOT NULL,revision bigint NOT NULL CHECK(revision>=0),operation_id uuid,source_version text NOT NULL,content_hash text NOT NULL CHECK(content_hash~'^[a-f0-9]{64}$'),target_hash text NOT NULL CHECK(target_hash~'^[a-f0-9]{64}$'),deleted boolean NOT NULL,
       PRIMARY KEY(namespace,epoch,target_key),UNIQUE(namespace,epoch,source_id,source_key),CHECK((revision=0 AND operation_id IS NULL) OR (revision>0 AND operation_id IS NOT NULL)))`);
     await client.query('INSERT INTO opencrawl_online_projection_namespaces VALUES($1,$2) ON CONFLICT DO NOTHING',[namespace,epoch]);await assertEpoch(client);
@@ -72,6 +73,53 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   }
   return enrolledTenants;
  }
+ // An alias is migration evidence only. It never creates or removes a runtime
+ // connection, and can be replayed before its canonical source arrives.
+ async function readTargetIn(client:PoolClient,value:OnlineObjectProjection,targetKey:string,key:string):Promise<unknown>{
+  if(value.kind!=='replicas-reference')return object.readOnlineIn(client,value);
+  const row=(await client.query('SELECT source_id,source_key,tenant_hash,organization_id FROM opencrawl_online_projection_replicas_references WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,targetKey])).rows[0];
+  if(!row)return null;
+  if(row.source_id!==sourceId||row.source_key!==key||row.tenant_hash!==value.tenantHash||row.organization_id!==value.organizationId)fail('Replicas reference scope changed');
+  return {organizationId:row.organization_id};
+ }
+ async function writeTargetIn(client:PoolClient,value:OnlineObjectProjection,targetKey:string,key:string){
+  if(value.kind!=='replicas-reference')return object.projectOnlineIn(client,value);
+  if(value.value===null){await client.query('DELETE FROM opencrawl_online_projection_replicas_references WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,targetKey]);return;}
+  await client.query('INSERT INTO opencrawl_online_projection_replicas_references(namespace,epoch,target_key,source_id,source_key,tenant_hash,organization_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(namespace,epoch,target_key) DO NOTHING',[namespace,epoch,targetKey,sourceId,key,value.tenantHash,value.organizationId]);
+ }
+ /** Relationship observation only, never cutover/readiness. The caller must page
+  * within ONE read-only repeatable-read transaction after replaying its closed
+  * frontier. Source/frontier/fence verification belongs to that composition.
+  * The union detects reference rows whose projection head was removed too. */
+ async function inspectReplicasReferencesPageIn(client:PoolClient,input:{after?:string;limit?:number}={}){
+  const after=input.after??'',limit=input.limit??64;if(after)bounded(after,8192);if(!Number.isSafeInteger(limit)||limit<1||limit>64)fail('invalid Replicas reference page bound');
+  const settings=(await client.query("SELECT current_setting('transaction_isolation') AS isolation,current_setting('transaction_read_only') AS read_only")).rows[0];
+  if(!settings||!['repeatable read','serializable'].includes(settings.isolation)||settings.read_only!=='on')fail('reference parity requires a read-only repeatable snapshot');
+  const bound=(await client.query('SELECT b.binding_hash,n.epoch FROM opencrawl_online_projection_bindings b JOIN opencrawl_online_projection_namespaces n USING(namespace) WHERE b.namespace=$1 AND b.epoch=$2 AND b.source_id=$3',scope)).rows[0];
+  if(bound?.epoch!==epoch||bound.binding_hash!==bindingHash)fail('reference parity source binding changed');
+  const rows=(await client.query(`SELECT target_key FROM (
+    SELECT target_key FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND domain='replicas-index'
+    UNION SELECT target_key FROM opencrawl_online_projection_replicas_references WHERE namespace=$1 AND epoch=$2 AND source_id=$3
+   ) references_to_check WHERE target_key>$4 COLLATE "C" ORDER BY target_key COLLATE "C" LIMIT $5`,[...scope,after,limit+1])).rows;
+  const page=rows.slice(0,limit);let mismatches=0;
+  for(const row of page){
+   const targetKey=String(row.target_key),head=(await client.query('SELECT source_id,source_key,domain,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,targetKey])).rows[0];
+   const ref=(await client.query('SELECT source_id,source_key,tenant_hash,organization_id FROM opencrawl_online_projection_replicas_references WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,targetKey])).rows[0];
+   if(!head||head.source_id!==sourceId||head.domain!=='replicas-index'){mismatches++;continue;}
+   const found=object.classify(head.source_key);
+   if(!found||found.domain!=='replicas-index'||targetKey!==JSON.stringify([found.domain,...found.parts])){mismatches++;continue;}
+   if(head.deleted){if(ref||head.target_hash!==onlineProjectionHash(null))mismatches++;continue;}
+   const [tenantHash,organizationId]=found.parts;
+   if(!ref||ref.source_id!==sourceId||ref.source_key!==head.source_key||ref.tenant_hash!==tenantHash||ref.organization_id!==organizationId||head.target_hash!==onlineProjectionHash({organizationId})){mismatches++;continue;}
+   const enrolled=(await client.query('SELECT tenant_id,tenant_hash FROM opencrawl_online_projection_tenants WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND tenant_hash=$4',[...scope,tenantHash])).rows[0];
+   if(!enrolled||hash(enrolled.tenant_id)!==tenantHash){mismatches++;continue;}
+   const canonical=(await client.query('SELECT source_id,source_key,domain,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,JSON.stringify(['replicas-connections',organizationId])])).rows[0];
+   if(!canonical||canonical.source_id!==sourceId||canonical.source_key!==options.prefix+'/identity/replicas-v1/organizations/'+organizationId+'.json'||canonical.domain!=='replicas-connections'||canonical.deleted){mismatches++;continue;}
+   const connection=await object.readOnlineIn(client,{kind:'replicas-connection',domain:'replicas-connections',identity:[organizationId],organizationId,value:null});
+   if(!connection||typeof connection!=='object'||!('tenantId' in connection)||connection.tenantId!==enrolled.tenant_id||onlineProjectionHash(connection)!==canonical.target_hash)mismatches++;
+  }
+  return {processed:page.length,matched:page.length-mismatches,mismatches,next:rows.length>limit?String(page[page.length-1].target_key):null};
+ }
  async function project(client:PoolClient,input:{key:string;bytes:Buffer|null;revision:string;operationId:string|null;version:string}){
   bounded(input.key,8192);bounded(input.version,2048);revision(input.revision);
   if(input.revision==='0'?input.operationId!==null:input.operationId===null||!uuid.test(input.operationId))fail('invalid source operation');
@@ -82,7 +130,7 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify(['online-projection',namespace,targetKey])]);
   const prior=(await client.query('SELECT source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=$3 FOR UPDATE',[namespace,epoch,targetKey])).rows[0];
   if(prior&&(prior.source_id!==sourceId||prior.source_key!==key||prior.domain!==decoded.domain))fail('canonical target has a different source publisher');
-  const current=await object.readOnlineIn(client,decoded),currentHash=onlineProjectionHash(current);
+  const current=await readTargetIn(client,decoded,targetKey,key),currentHash=onlineProjectionHash(current);
   if(prior){
    if(prior.deleted&&bytes!==null&&['capture-credentials','connector-grants','replicas-connections','replicas-setup'].includes(decoded.domain))fail('deleted security identity cannot be reused');
    revision(prior.revision);if(currentHash!==prior.target_hash)fail('typed target changed outside its source projection');
@@ -91,8 +139,8 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   }else if(current!==null&&currentHash!==targetHash)fail('initial typed target conflicts with source');
   // Domain owners retain privacy/revocation/held-operation invariants even when
   // the current target is absent. Unsupported deletions never silently pass.
-  await object.projectOnlineIn(client,decoded);
-  if(onlineProjectionHash(await object.readOnlineIn(client,decoded))!==targetHash)fail('typed readback differs from source');
+  await writeTargetIn(client,decoded,targetKey,key);
+  if(onlineProjectionHash(await readTargetIn(client,decoded,targetKey,key))!==targetHash)fail('typed readback differs from source');
   await client.query(`INSERT INTO opencrawl_online_projection_heads(namespace,epoch,target_key,source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     ON CONFLICT(namespace,epoch,target_key) DO UPDATE SET revision=EXCLUDED.revision,operation_id=EXCLUDED.operation_id,source_version=EXCLUDED.source_version,content_hash=EXCLUDED.content_hash,target_hash=EXCLUDED.target_hash,deleted=EXCLUDED.deleted`,[namespace,epoch,targetKey,sourceId,key,decoded.domain,rev,operationId,version,contentHash,targetHash,bytes===null]);
  }
@@ -102,5 +150,5 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   await project(client,{key:intent.key,bytes:intent.mutation.kind==='put'?intent.mutation.bytes:null,revision:intent.revision,operationId:intent.operationId,version:intent.resultVersion});
  }
  async function backfill(client:PoolClient,input:{key:string;bytes:Buffer;version:string}){await project(client,{...input,revision:'0',operationId:null});}
- return {binding:Object.freeze({namespace,epoch,sourceId,bindingHash}),ready,apply,backfill,enrollTenant};
+ return {binding:Object.freeze({namespace,epoch,sourceId,bindingHash}),ready,apply,backfill,enrollTenant,inspectReplicasReferencesPageIn};
 }

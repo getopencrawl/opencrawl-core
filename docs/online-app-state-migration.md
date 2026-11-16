@@ -8,7 +8,8 @@ verified application-state admission record.
 
 The `state/online-migration` export provides a durable PostgreSQL write journal,
 an S3 adapter, a legacy ObjectStore wrapper, shared source classification, a
-migration-only PostgreSQL shadow mirror, and a background controller. Separate
+legacy-to-journal write authority, a migration-only PostgreSQL shadow mirror,
+and a background controller. Separate
 `state/online-migration-worker` and `state/online-migration-client` exports use
 operator-owned Temporal infrastructure. None selects a hosted account or changes
 the application's storage authority automatically.
@@ -39,11 +40,19 @@ do not enter Temporal history.
 The byte mirror is temporary migration evidence, not an implementation of
 `ApplicationState`. The typed projector currently covers account credentials and
 revocations, onboarding, role operations, privacy controls, connector secrets,
-Replicas records, board state, write fences and deletion requests. It binds one
+Replicas records and alias references, Slack capture state and pacing, bounded
+value reports, board state, write fences and deletion requests. It binds one
 epoch to a target namespace and checks source ownership, revisions and independent
 typed readback in the replay transaction. New tenant enrollment requires an
 explicit trusted verifier and append-only receipt; offline owner bounds remain
 unchanged. Unsupported domains fail closed.
+
+Replicas aliases never publish or delete canonical connections. Their separate
+bounded reference inspection must run during final typed parity after replay
+reaches the fixed frontier. A missing, deleted or differently owned canonical
+connection remains a mismatch. Slack projection retains unfinished runs and
+revocation history; pacing can only advance. These projection methods do not
+grant runtime admission or start background jobs.
 
 ## Release and switch requirements
 
@@ -54,6 +63,23 @@ separate rollout control; the low-level adapters do not prove fleet enrollment.
 After envelopes exist, application rollback must retain compatible readers and
 the journal. The original uninstrumented application image cannot read them.
 
+`createOnlineWriteAuthority` binds one namespace, epoch and compatibility
+protocol. Explicit preparation starts in legacy mode. Every compatible mutable
+write acquires the authority gate, including legacy writes before activation.
+Activation takes the exclusive gate, waits for those calls, verifies the injected
+fleet enrollment evidence and commits journal mode. A dedicated authority pool
+must be separate from callback pools to avoid nested connection starvation.
+New object-store adapters require this authority for mutable writes; compatible
+readers work independently, and immutable raw object operations remain unchanged.
+
+A legacy operation records its dispatch before external I/O. If its outcome or
+gate connection becomes uncertain, that durable record blocks later same-key
+writes and activation even after a process restart. Only a definitive adapter
+rejection can complete a rejected dispatch. There is no timeout-based clearance
+or generic operator override. Resolving an uncertain legacy operation requires
+a supported source-specific reconciliation/fencing procedure before activation;
+that recovery command is still part of the remaining composition work.
+
 Before switching runtime authority, complete the remaining typed domains and
 workflow handoff, finish replay, fence legacy mutation admission, drain accepted
 operations, and verify typed parity at the resulting closed frontier. Keep auth,
@@ -61,7 +87,7 @@ reads and capture intake available, and route or durably queue mutations during
 the fence. A live parity observation alone is not a cutover receipt. Cancel the
 migration worker only after the completed authority switch or an explicit abort.
 
-The current components do not implement fleet enrollment, the mutation-routing
+The current components do not implement fleet enrollment, the final mutation-routing
 fence, full registry and workflow projection, a final readiness receipt, or a
 one-command online upgrade. Those remain release gates. Existing-installation
 traffic, signup, capture, restart, deletion and rollback rehearsals must verify

@@ -60,8 +60,9 @@ function fixture() {
     async delete(...args) {calls.push(['raw.delete', ...args]);},
     async listPage(...args) {calls.push(['raw.listPage', ...args]); return {keys: [], nextToken: null};},
   };
-  return {objects, calls, intents, pending, raw, external, journal, setAfterWrite: run => {afterWrite = run;},
-    store: createOnlineMigrationObjectStore({raw, external, journal, classify})};
+  const sourceId = 'fixture', writeAuthority = {run: async (_context, callbacks) => callbacks.journal()};
+  return {objects, calls, intents, pending, raw, external, journal, sourceId, writeAuthority, setAfterWrite: run => {afterWrite = run;},
+    store: createOnlineMigrationObjectStore({raw, external, journal, classify, sourceId, writeAuthority})};
 }
 
 test('raw methods preserve their bytes, versions, options and return values without journal reads', async () => {
@@ -277,4 +278,52 @@ test('listing failure drains in-flight reads, issues no extra work and never ret
   assert.equal(settled, false); assert.equal(reads, 8); assert.equal(active, 7);
   released(); await assert.rejects(pending, /failed bounded source read/);
   assert.equal(reads, 8); assert.equal(active, 0);
+});
+
+test('compatible readers work before activation and without write authority while mutable writes fail closed', async () => {
+  const f = fixture(), reader = createOnlineMigrationObjectStore({...f, journal: undefined, writeAuthority: undefined, classify});
+  await f.store.put('state/active', Buffer.from('wrapped'));
+  await f.store.put('state/deleted', Buffer.from('gone')); await f.store.delete('state/deleted');
+  assert.equal((await reader.get('state/active')).toString(), 'wrapped'); assert.equal(await reader.get('state/deleted'), null);
+  const prior = f.calls.length;
+  await assert.rejects(reader.put('state/new', Buffer.from('x')), {code: 'ONLINE_OBJECT_STORE_WRITE_AUTHORITY_NOT_CONFIGURED'});
+  await assert.rejects(reader.compareAndSet('state/new', null, Buffer.from('x')), {code: 'ONLINE_OBJECT_STORE_WRITE_AUTHORITY_NOT_CONFIGURED'});
+  await assert.rejects(reader.delete('state/active'), {code: 'ONLINE_OBJECT_STORE_WRITE_AUTHORITY_NOT_CONFIGURED'});
+  assert.equal(f.calls.length, prior);
+  await reader.put('raw/batch', Buffer.from('raw')); assert.equal(f.calls.at(-1)[0], 'raw.put');
+});
+
+test('authority selects the entire legacy mutation before activation and payload freezes before its wait', async () => {
+  const f = fixture(), contexts = []; let selected;
+  const writeAuthority = {run: async (context, callbacks) => {contexts.push(context); await new Promise(resolve => {selected = resolve;}); return callbacks.legacy();}};
+  const store = createOnlineMigrationObjectStore({...f, journal: undefined, writeAuthority, classify});
+  const bytes = Buffer.from('original'), put = store.put('state/key', bytes, 'text/plain'); bytes.fill(120); selected(); await put;
+  assert.deepEqual(contexts, [{sourceId: 'fixture', key: 'state/key'}]);
+  assert.equal(f.calls.at(-1)[0], 'raw.put'); assert.equal(f.calls.at(-1)[2].toString(), 'original'); assert.equal(f.intents.length, 0);
+  const cas = store.compareAndSet('state/key', 'before', Buffer.from('next')); selected(); assert.equal(await cas, false);
+  const deletion = store.delete('state/key'); selected(); await deletion; assert.equal(f.calls.at(-1)[0], 'raw.delete');
+});
+
+test('write routing rejects missing journal and duplicate or skipped authority callbacks', async () => {
+  const f = fixture();
+  const missing = createOnlineMigrationObjectStore({...f, journal: undefined, classify});
+  await assert.rejects(missing.put('state/key', Buffer.from('x')), {code: 'ONLINE_OBJECT_STORE_JOURNAL_NOT_CONFIGURED'});
+  const twice = createOnlineMigrationObjectStore({...f, classify, writeAuthority: {run: async (_context, callbacks) => {await callbacks.journal(); return callbacks.legacy();}}});
+  await assert.rejects(twice.put('state/key', Buffer.from('x')), {code: 'ONLINE_OBJECT_STORE_AUTHORITY_CALLBACK_REUSED'});
+  assert.ok(!f.calls.some(call => call[0] === 'raw.put'));
+  const skipped = createOnlineMigrationObjectStore({...f, classify, writeAuthority: {run: async () => undefined}});
+  await assert.rejects(skipped.put('state/key', Buffer.from('x')), {code: 'ONLINE_OBJECT_STORE_AUTHORITY_CALLBACK_NOT_RUN'});
+});
+
+test('object routing refuses early return, late dispatch and swallowed mutation errors', async () => {
+  const f = fixture(); let selected, finish;
+  const late = createOnlineMigrationObjectStore({...f, classify, writeAuthority: {run: async (_context, callbacks) => {selected = callbacks.legacy;}}});
+  await assert.rejects(late.put('state/key', Buffer.from('x')), {code: 'ONLINE_OBJECT_STORE_AUTHORITY_CALLBACK_NOT_RUN'});
+  assert.throws(() => selected(), {code: 'ONLINE_OBJECT_STORE_AUTHORITY_CALLBACK_REUSED'});
+  f.raw.put = async () => {await new Promise(resolve => {finish = resolve;});};
+  const early = createOnlineMigrationObjectStore({...f, classify, writeAuthority: {run: async (_context, callbacks) => {callbacks.legacy();}}});
+  await assert.rejects(early.put('state/key', Buffer.from('x')), {code: 'ONLINE_OBJECT_STORE_AUTHORITY_CALLBACK_NOT_AWAITED'}); finish();
+  f.raw.put = async () => {throw Error('external outcome unknown');};
+  const swallowed = createOnlineMigrationObjectStore({...f, classify, writeAuthority: {run: async (_context, callbacks) => {try {await callbacks.legacy();} catch {} return true;}}});
+  await assert.rejects(swallowed.put('state/key', Buffer.from('x')), /external outcome unknown/);
 });

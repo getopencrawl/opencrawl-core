@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {ObjectStore, ReadOptions, StoreVersion} from '../sessions/types.mjs';
 import {ONLINE_MAX_PAYLOAD_BYTES, type createOnlineJournal, type OnlineExternalSnapshot, type OnlineExternalStore, type OnlineMutation} from './online-journal.mjs';
+import type {OnlineWriteAuthority} from './online-authority.mjs';
 
 type Journal = Pick<ReturnType<typeof createOnlineJournal>, 'mutate' | 'reconcile'>;
 export interface OnlineObjectClassification {maxBytes: number}
@@ -21,12 +22,15 @@ function fail(code: string): never {
 
 /** Explicit compatibility adapter. No classifier, epoch or live wiring is
  * inferred here. Raw objects retain their existing representation and methods. */
-export function createOnlineMigrationObjectStore({raw, external, journal, classify}: {
+export function createOnlineMigrationObjectStore({raw, external, journal, classify, sourceId, writeAuthority}: {
   raw: LegacyOnlineObjectStore;
   external: OnlineExternalStore;
-  journal: Journal;
+  journal?: Journal;
   classify: (key: string) => OnlineObjectClassification | null;
+  sourceId: string;
+  writeAuthority?: OnlineWriteAuthority;
 }): OnlineMigrationObjectStore {
+  if (typeof sourceId !== 'string' || !sourceId || Buffer.byteLength(sourceId) > 2048 || sourceId.includes('\0')) fail('INVALID_SOURCE');
   function classification(key: string) {
     const value = classify(key);
     if (value === null) return null;
@@ -52,12 +56,29 @@ export function createOnlineMigrationObjectStore({raw, external, journal, classi
     return {kind: 'put', bytes: Buffer.from(bytes), contentType};
   }
   async function mutate(key: string, mutation: OnlineMutation, condition?: {version: string | null}) {
+    if (!journal) fail('JOURNAL_NOT_CONFIGURED');
     const reconciled = await journal.reconcile(key, external);
     if (reconciled?.state === 'pending') fail('PENDING_RECONCILIATION');
     const result = await journal.mutate({operationId: randomUUID(), key, mutation, ...(condition ? {condition} : {})}, external);
     if (result.state === 'pending') fail('PENDING_MUTATION');
     if (result.state !== 'applied' && result.state !== 'notApplied') fail('INVALID_MUTATION_RESULT');
     return result.state === 'applied';
+  }
+  async function route<T>(key: string, callbacks: {legacy(): Promise<T>; journal(): Promise<T>}) {
+    if (!writeAuthority) fail('WRITE_AUTHORITY_NOT_CONFIGURED');
+    let invoked = false, closed = false, settled = false, operation: Promise<T> | undefined;
+    const once = (callback: () => Promise<T>) => () => {
+      if (invoked || closed) fail('AUTHORITY_CALLBACK_REUSED');
+      invoked = true; operation = (async () => callback())();
+      void operation.then(() => {settled = true;}, () => {settled = true;});
+      return operation;
+    };
+    try {
+      await writeAuthority.run(Object.freeze({sourceId, key}), {legacy: once(callbacks.legacy), journal: once(callbacks.journal)});
+      if (!invoked) fail('AUTHORITY_CALLBACK_NOT_RUN');
+      if (!settled) fail('AUTHORITY_CALLBACK_NOT_AWAITED');
+      return await operation!;
+    } finally {closed = true;}
   }
   function applied(value: boolean) {
     if (!value) throw Object.assign(new Error('Online object store: write was not applied'), {code: 'ONLINE_OBJECT_STORE_NOT_APPLIED', writeOutcome: 'not-applied'});
@@ -111,19 +132,29 @@ export function createOnlineMigrationObjectStore({raw, external, journal, classi
     async put(key, bytes, contentType) {
       const bound = classification(key);
       if (!bound) return raw.put(key, bytes, contentType);
-      applied(await mutate(key, payload(bytes, contentType ?? 'application/octet-stream', bound)));
+      const frozen = payload(bytes, contentType ?? 'application/octet-stream', bound);
+      if (frozen.kind !== 'put') fail('INVALID_PAYLOAD');
+      return route(key, {
+        legacy: () => raw.put(key, frozen.bytes, contentType),
+        journal: async () => {applied(await mutate(key, frozen));},
+      });
     },
     async compareAndSet(key, version, bytes) {
       const bound = classification(key);
       if (!bound) return raw.compareAndSet(key, version, bytes);
-      return mutate(key, payload(bytes, 'application/json', bound), condition(version));
+      const frozen = payload(bytes, 'application/json', bound), expected = condition(version);
+      if (frozen.kind !== 'put') fail('INVALID_PAYLOAD');
+      return route(key, {legacy: () => raw.compareAndSet(key, version, frozen.bytes), journal: () => mutate(key, frozen, expected)});
     },
     async delete(key) {
       if (!classification(key)) {
         if (!raw.delete) fail('RAW_DELETE_UNSUPPORTED');
         return raw.delete(key);
       }
-      applied(await mutate(key, {kind: 'delete'}));
+      return route(key, {
+        legacy: async () => {if (!raw.delete) fail('RAW_DELETE_UNSUPPORTED'); await raw.delete(key);},
+        journal: async () => {applied(await mutate(key, {kind: 'delete'}));},
+      });
     },
     async listPage(prefix, options) {
       if (options?.maxKeys !== undefined && (!Number.isSafeInteger(options.maxKeys) || options.maxKeys < 1 || options.maxKeys > 1000)) fail('INVALID_PAGE_LIMIT');

@@ -56,7 +56,7 @@ live('credential delete retains projection tombstone and cannot revive the same 
 live('canonical publisher, source binding, target drift and Replicas alias checks fail closed',async t=>{
  const f=await fixture(t);assert.throws(()=>createOnlineProjection({...f.options,journalBinding:{...f.journal.binding,sourceId:'other'}}),/journal binding/);
  await f.baseline(keyCred,credential);await f.database.pool.query("UPDATE opencrawl_capture_credentials SET record=record||'{\"revoked\":true}'::jsonb");await f.put(keyCred,{...credential,revoked:true});await assert.rejects(f.replay(),/outside its source projection/);
- const alias=prefix+'/identity/replicas-v1/tenants/'+digest(owner.tenantId)+'/'+randomUUID()+'.json';await assert.rejects(f.database.transaction(c=>f.projection.backfill(c,{key:alias,bytes:encode({organizationId:randomUUID()}),version:'legacy'})),/No typed online projection/);
+ const alias=prefix+'/identity/replicas-v1/tenants/'+digest(owner.tenantId)+'/'+randomUUID()+'.json';await assert.rejects(f.database.transaction(c=>f.projection.backfill(c,{key:alias,bytes:encode({organizationId:randomUUID()}),version:'legacy'})),/Replicas index identity mismatch/);
  const other=createOnlineJournal({database:f.database,epoch:f.epoch,sourceId:'other'});await other.ready();const p=createOnlineProjection({...f.options,sourceId:'other',journalBinding:other.binding});await p.ready();await assert.rejects(f.database.transaction(c=>p.backfill(c,{key:keyCred,bytes:encode(credential),version:'legacy'})),/different source publisher/);
 });
 live('board projection preserves normalized publications, delivery receipts and atomic child replacement',async t=>{
@@ -115,4 +115,51 @@ live('one projection epoch owns typed namespace targets; a concurrent new epoch 
  const f=await fixture(t);await f.baseline(keyCred,credential);const epoch=randomUUID(),other=createOnlineJournal({database:f.database,epoch,sourceId:f.sourceId});await other.ready();
  const candidate=createOnlineProjection({...f.options,epoch,journalBinding:other.binding});await assert.rejects(candidate.ready(),/different projection epoch/);
  assert.equal((await f.database.pool.query('SELECT epoch FROM opencrawl_online_projection_namespaces WHERE namespace=$1',[f.database.namespace])).rows[0].epoch,f.epoch);assert.deepEqual(await f.accounts.exportCredential(credential.id),credential);
+});
+
+async function references(f,limit=64){
+ const client=await f.database.pool.connect();try{await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');let after,processed=0,mismatches=0,pages=0;
+  do{const page=await f.projection.inspectReplicasReferencesPageIn(client,{after,limit});processed+=page.processed;mismatches+=page.mismatches;pages++;after=page.next??undefined;}while(after);
+  await client.query('COMMIT');return {processed,mismatches,pages};
+ }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+const connectionValue=organizationId=>({schemaVersion:1,organizationId,tenantId:owner.tenantId,approvedBy:owner.userId,approvedAt:date,revokedAt:null,installations:[]});
+const canonicalKey=organizationId=>prefix+'/identity/replicas-v1/organizations/'+organizationId+'.json';
+const aliasKey=(organizationId,tenant=owner.tenantId)=>prefix+'/identity/replicas-v1/tenants/'+digest(tenant)+'/'+organizationId+'.json';
+live('Replicas reference can arrive before canonical source; bounded parity waits, and alias deletion never mutates the connection',async t=>{
+ const f=await fixture(t),repo=createReplicasState(f.database),orgs=[randomUUID(),randomUUID(),randomUUID()];
+ for(const org of orgs)await f.baseline(aliasKey(org),{organizationId:org});
+ assert.deepEqual(await references(f,2),{processed:3,mismatches:3,pages:2});assert.deepEqual(await repo.listConnections(owner.tenantId),[]);
+ for(const org of orgs)await f.baseline(canonicalKey(org),connectionValue(org));assert.deepEqual(await references(f,2),{processed:3,mismatches:0,pages:2});
+ const before=await repo.readConnection(orgs[0]);await f.del(aliasKey(orgs[0]));await f.replay();assert.deepEqual(await repo.readConnection(orgs[0]),before);
+ assert.deepEqual(await references(f,2),{processed:3,mismatches:0,pages:2});assert.equal((await f.database.pool.query('SELECT count(*)::int n FROM opencrawl_online_projection_replicas_references')).rows[0].n,2);
+});
+live('Replicas reference effects and head/checkpoint rollback together; deleting canonical source leaves an honest unresolved reference',async t=>{
+ const f=await fixture(t),org=randomUUID();await f.baseline(canonicalKey(org),connectionValue(org));await f.put(aliasKey(org),{organizationId:org});
+ await assert.rejects(f.journal.replayPage({consumer:'typed',apply:async(c,i)=>{await f.projection.apply(c,i);throw Error('rollback reference');}}),/rollback reference/);
+ assert.equal((await f.database.pool.query('SELECT count(*)::int n FROM opencrawl_online_projection_replicas_references')).rows[0].n,0);assert.equal((await f.database.pool.query("SELECT count(*)::int n FROM opencrawl_online_projection_heads WHERE domain='replicas-index'")).rows[0].n,0);assert.equal(await f.journal.replayCheckpoint('typed'),null);
+ await f.replay();assert.equal((await references(f)).mismatches,0);await f.del(canonicalKey(org));await f.replay();assert.equal((await references(f)).mismatches,1);
+ await f.del(aliasKey(org));await f.replay();assert.equal((await references(f)).mismatches,0);
+});
+live('Replicas reference parity rejects a different canonical publisher/tenant and detects orphan or tampered reference evidence',async t=>{
+ const f=await fixture(t),org=randomUUID(),other=createOnlineJournal({database:f.database,epoch:f.epoch,sourceId:'other'});await other.ready();
+ const p=createOnlineProjection({...f.options,sourceId:'other',journalBinding:other.binding});await p.ready();await f.database.transaction(c=>p.backfill(c,{key:canonicalKey(org),bytes:encode(connectionValue(org)),version:'other-source'}));await f.baseline(aliasKey(org),{organizationId:org});assert.equal((await references(f)).mismatches,1,'Another source cannot satisfy this reference');
+ const foreign='org_other';await f.projection.enrollTenant({tenantId:foreign,evidence:'verified-test-origin'});const org2=randomUUID();await f.baseline(canonicalKey(org2),{...connectionValue(org2),tenantId:foreign});await f.baseline(aliasKey(org2),{organizationId:org2});assert.equal((await references(f)).mismatches,2,'Enrolled does not mean the same tenant');
+ await f.database.pool.query("DELETE FROM opencrawl_online_projection_heads WHERE domain='replicas-index' AND source_key=$1",[aliasKey(org2)]);assert.equal((await references(f)).processed,2,'Orphan reference remains in coverage');assert.equal((await references(f)).mismatches,2);
+ const org3=randomUUID();await f.baseline(canonicalKey(org3),connectionValue(org3));await f.baseline(aliasKey(org3),{organizationId:org3});await f.database.pool.query("UPDATE opencrawl_replicas_connections SET record=record||'{\"approvedBy\":\"user_tampered\"}'::jsonb WHERE organization_id=$1",[org3]);assert.equal((await references(f)).mismatches,3,'Typed row drift cannot pass reference parity');
+});
+live('value reports update/delete and projection checkpoint commit atomically, preserving unsupported historical schemas without invented measurements',async t=>{
+ const f=await fixture(t),{createValueReports}=await import('../dist/src/state/value-reports.mjs'),repo=createValueReports(f.database),key=prefix+'/value/tenants/'+digest(owner.tenantId)+'.json',old={schema:0,historical:'retained'},next={schema:0,historical:'changed'};
+ await f.baseline(key,old);assert.deepEqual(await repo.exportReport(digest(owner.tenantId)),old);assert.equal(await repo.read(owner.tenantId),null);
+ await f.put(key,next);await f.del(key);await assert.rejects(f.journal.replayPage({consumer:'typed',apply:async(c,i)=>{await f.projection.apply(c,i);if(i.sequence==='2')throw Error('rollback report');}}),/rollback report/);
+ assert.deepEqual(await repo.exportReport(digest(owner.tenantId)),old);assert.equal(await f.journal.replayCheckpoint('typed'),null);assert.equal((await f.database.pool.query("SELECT revision FROM opencrawl_online_projection_heads WHERE domain='value-reports'")).rows[0].revision,'0');
+ await f.replay();assert.equal(await repo.exportReport(digest(owner.tenantId)),null);await f.put(key,next);await f.replay();assert.deepEqual(await repo.exportReport(digest(owner.tenantId)),next,'Derived report may be recreated after a tombstone');
+ await f.database.pool.query("UPDATE opencrawl_value_reports SET report='{\"tampered\":true}'::jsonb WHERE namespace=$1",[f.database.namespace]);await f.del(key);await assert.rejects(f.replay(),/outside its source projection/);assert.equal(await f.journal.replayCheckpoint('typed'),'3');
+});
+live('value report and reference projection isolate identical local keys by namespace',async t=>{
+ const f=await fixture(t),org=randomUUID(),otherDb={...f.database,namespace:'isolated-'+randomUUID()},otherJournal=createOnlineJournal({database:otherDb,epoch:f.epoch,sourceId:f.sourceId});await otherJournal.ready();
+ const projection=createOnlineProjection({...f.options,database:otherDb,journalBinding:otherJournal.binding});await projection.ready();const key=prefix+'/value/tenants/'+digest(owner.tenantId)+'.json';
+ await f.database.transaction(async c=>{await projection.backfill(c,{key,bytes:encode({scope:'other'}),version:'legacy'});await projection.backfill(c,{key:aliasKey(org),bytes:encode({organizationId:org}),version:'legacy'});});
+ await f.baseline(key,{scope:'primary'});await f.del(key);await f.replay();assert.equal((await f.database.pool.query('SELECT report FROM opencrawl_value_reports WHERE namespace=$1',[otherDb.namespace])).rows[0].report.scope,'other');assert.deepEqual(await references(f),{processed:0,mismatches:0,pages:1});
+ await assert.rejects(f.database.transaction(c=>f.projection.backfill(c,{key:key.replace(digest(owner.tenantId),digest('org_unenrolled')),bytes:encode({}),version:'x'})),/owner hash/);
 });
