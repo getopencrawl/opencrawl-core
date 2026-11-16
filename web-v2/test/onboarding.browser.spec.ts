@@ -535,7 +535,7 @@ for(const width of [1280,390]) test(`self-host invites work before verification 
   await page.setViewportSize({width,height:844});
   await page.route('**/api/onboarding/invites',route=>route.fulfill({json:route.request().method()==='POST'?{items:[{email:'teammate@example.com',inviteUrl:'https://oss.example/auth/signup?invitation=private-grant'}],addedCount:1}:{items:[]}}));
   await page.goto('/onboarding?selfhost');
-  await expect(page.getByText('CLI sign-in, a successful MCP connection test, and a new session recording are required to open your workspace.')).toBeVisible();
+  await expect(page.getByText('You can use your workspace while your agent completes setup.',{exact:true})).toBeVisible();
   await page.evaluate(()=>{document.documentElement.dataset.navigationSentinel='same-document';});
   await page.getByRole('link',{name:'Invite teammates now'}).focus();await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/onboarding\/invite$/);
