@@ -21,7 +21,7 @@ import {connectorSettingsSchema} from '../integrations/connector-settings.mjs';
 import {createReplicasState} from './replicas.mjs';
 import {replicasConnectionSchema,replicasChallengeSchema} from '../identity/replicas-connections.mjs';
 import {createValueReports} from './value-reports.mjs';
-import {createPostgresIndexingReceipts} from './indexing-receipts.mjs';
+import {createPostgresIndexingReceipts,sessionIndexingReceiptSchema,type SessionReceiptImport} from './indexing-receipts.mjs';
 import {createPostgresSlackCapture} from './slack-capture.mjs';
 import {digest as connectorBindingHash,validateBinding} from '../connectors/scope.mjs';
 import {createConnectorCounts} from './connector-counts.mjs';
@@ -132,6 +132,16 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
     if(/^raw\/v1\/source=slack\/workspace=[A-Za-z0-9_:-]{1,200}\/connection=[A-Za-z0-9_:-]{1,200}\/(?:stream=[A-Za-z0-9_-]+\/date=\d{4}-\d{2}-\d{2}\/sync=[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+\.jsonl\.gz|files\/sha256\/[a-f0-9]{64}\.bin|capture\/(?:files-v1|messages-v1|message-references-v1)\/[A-Za-z0-9_-]{1,150}\/pages\/[a-f0-9]{64}\.json)$/.test(key))return null;
     if(roots.some(root=>key.startsWith(root)))fail('Unrecognized object under a mutable state namespace; retain it and add a reviewed migration');
     return null;
+  }
+  /** Pure classification for the only batchable migration domain. Failed
+   * receipts retain their existing raw-source/deletion-proof retirement path. */
+  function sessionReceipt(key:string,bytes:Buffer):SessionReceiptImport|null{
+    const found=classify(key);if(found?.domain!=='session-indexing')return null;
+    if(bytes.length>found.maxBytes)fail('Legacy state object exceeds its supported migration limit');
+    const raw=json(bytes);if(raw&&typeof raw==='object'&&'status' in raw&&raw.status==='failed')return null;
+    const value=sessionIndexingReceiptSchema.parse(raw),identity=sourceBatchIdentity(prefix,value.sourceKey)??memorySourceIdentity(prefix,value.sourceKey);
+    if(!identity||digest(value.sourceKey)!==found.parts[0])fail('Session indexing receipt identity mismatch');
+    tenantDigest(identity.tenantHash);return {key,value};
   }
   async function retirementDisposition(sourceKey:string):Promise<'full-temporal-catchup'|'deleted'>{
     const identity=sourceBatchIdentity(prefix,sourceKey);if(!identity)fail('Legacy scheduler source is not a captured session');tenantDigest(identity.tenantHash);
@@ -266,8 +276,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
             const {status,...details}=value;
             return retire(key,{kind:'failed',...details,disposition:await retirementDisposition(value.sourceKey),generation:'postgres-app-state-v1'},write);
           }
-          const value=z.strictObject({status:z.literal('indexed'),sourceKey:z.string().max(8192),documents:number,indexedAt:date,deleted:z.boolean().optional()}).parse(raw);
-          const identity=sourceBatchIdentity(prefix,value.sourceKey)??memorySourceIdentity(prefix,value.sourceKey);if(!identity||digest(value.sourceKey)!==parts[0])fail('Session indexing receipt identity mismatch');tenantDigest(identity.tenantHash);source=value;
+          const validated=sessionReceipt(key,bytes);if(!validated)fail('Session indexing receipt is not a completed receipt');source=validated.value;
         }else if(domain==='temporal-cutover'){
           const value=z.strictObject({schemaVersion:z.literal(1),sourceId:z.string(),taskQueue:z.string(),generation:z.string(),workflowId:z.string(),completed:z.literal(true)}).parse(raw);
           const marker=sessionCatchupMarker({...value,prefix});if(marker.markerKey!==key||!isDeepStrictEqual(marker.marker,value))fail('Temporal catch-up receipt identity mismatch');source=value;
@@ -300,5 +309,5 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
       tenant(record.tenantId);
       if(record.s3Bucket&&record.s3Bucket!==store.bucket)fail('Legacy integration state uses another bucket; a reviewed multi-store migration is required');
     }
-  },classify,process};
+  },classify,process,sessionReceipt};
 }

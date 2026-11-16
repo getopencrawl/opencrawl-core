@@ -68,8 +68,9 @@ export async function migrateApplicationState(options:ApplicationMigrationOption
       const classification=objects.classify(key);
       if(classification&&['connector-indexing','connector-snapshots'].includes(classification.domain))connectorCaches.add(key);if(!classification)fail('Mutable source no longer has a migration classification');
       const raw=await store.readVersion(key,{maxBytes:classification.maxBytes});if(!raw.data)fail('Source object disappeared during migration inventory');
-      const bytes=raw.data;
-      return {entry:{key,domain:classification.domain,version:raw.version===null?null:String(raw.version),hash:sha(bytes),bytes:bytes.length},readback:await objects.process(key,bytes,{write:false}),migrate:()=>objects.process(key,bytes,{write:true})};
+      const bytes=raw.data,entry={key,domain:classification.domain,version:raw.version===null?null:String(raw.version),hash:sha(bytes),bytes:bytes.length};
+      const sessionReceipt=objects.sessionReceipt(key,bytes);if(sessionReceipt)return {entry,sessionReceipt};
+      return {entry,readback:await objects.process(key,bytes,{write:false}),migrate:()=>objects.process(key,bytes,{write:true})};
     }
     const commands=createIntegrationCommands({database,environment:'selfhost',encryptionKey:options.connectorKey});
     return {
