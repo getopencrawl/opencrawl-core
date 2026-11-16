@@ -23,7 +23,7 @@ async function fixture(run:(f:{dir:string;root:string;cache:string;launcher:any}
 }
 function registry(version='0.2.0',change:(name:string,files:Record<string,string>,metadata:any)=>void=()=>{}) {
   const origin='http://127.0.0.1:9345',target=cli.target(),name='@getopencrawl/cli';
-  const data=new Map<string,{metadata:any;files:Record<string,string>}>();
+  const data=new Map<string,{metadata:any;files:Record<string,string>;archive?:ReturnType<Bun.Archive['bytes']>}>();
   for(const pkg of [name,name+'-'+target]) {
     const manifest={name:pkg,version,...pkg===name?{optionalDependencies:{[name+'-'+target]:version}}:{}};
     const files:Record<string,string>={'package/package.json':JSON.stringify(manifest),['package/'+(pkg===name?'bin/opencrawl.cjs':'bin/'+(target.startsWith('win32-')?'opencrawl.exe':'opencrawl'))]:'synthetic executable fixture',
@@ -36,12 +36,26 @@ function registry(version='0.2.0',change:(name:string,files:Record<string,string
     requests++;const path=decodeURIComponent(new URL(String(input)).pathname).slice(1);
     const tar=path.endsWith('.tgz'),item=data.get(tar?path.slice(0,-4):path.slice(0,-version.length-1));
     if(!item)return new Response('',{status:404});
-    const bytes=await new Bun.Archive(item.files,{compress:'gzip'}).bytes();
+    // Published metadata and downloads must refer to the same immutable archive.
+    const bytes=await(item.archive??=new Bun.Archive(item.files,{compress:'gzip'}).bytes());
     if(tar)return new Response(bytes);
     return Response.json({...item.metadata,dist:{...item.metadata.dist,integrity:item.metadata.dist.integrity||'sha512-'+createHash('sha512').update(bytes).digest('base64')}});
   },{preconnect:()=>{}}) as typeof fetch;
   return {origin,fetcher,get requests(){return requests;}};
 }
+
+test('fake registry metadata and tarballs retain identical bytes across timestamp boundaries',async()=>{
+  const r=registry(),names=['@getopencrawl/cli','@getopencrawl/cli-'+cli.target()];
+  const metadata=await Promise.all(names.map(async name=>(await r.fetcher(r.origin+'/'+encodeURIComponent(name)+'/0.2.0')).json()));
+  // Archive generation records timestamps, so cross a whole second before downloading.
+  await Bun.sleep(1100);
+  for(const item of metadata) {
+    const archives=await Promise.all([1,2].map(async()=>new Uint8Array(await(await r.fetcher(item.dist.tarball)).arrayBuffer())));
+    for(const archive of archives)expect('sha512-'+createHash('sha512').update(archive).digest('base64')).toBe(item.dist.integrity);
+    expect(archives[0]).toEqual(archives[1]);
+  }
+  expect(metadata[0].dist.integrity).not.toBe(metadata[1].dist.integrity);
+});
 
 test('successful checks persist one jittered 3–6 hour deadline and migrate daily receipts',async()=>fixture(async({root,cache})=>{
   const now=Date.now();let requests=0;
