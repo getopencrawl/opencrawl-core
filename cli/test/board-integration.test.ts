@@ -2,6 +2,7 @@ import {test,expect} from 'bun:test';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
+import {skillFiles} from '../src/skills.ts';
 
 test('real CLI processes register, deliver, acknowledge, exclude duplicate listeners and resume quietly',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'board-cli-'));
@@ -19,6 +20,16 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
       if(code!==0)throw new Error(output||error);
       return output?JSON.parse(output).data:null;
     };
+    // Exercise the exact fallback agents receive, including multi-word task
+    // quoting, through the real CLI and the server's required-field schema.
+    const fallback=skillFiles()['SKILL.md'].match(/register once: (opencrawl board register .*? --json)\./)?.[1];
+    expect(fallback).toBeDefined();
+    const replacements:Record<string,string>={'<id>':'fallback','<harness>':'devin','<name>':'devin:fallback','"<task>"':'Read workspace updates'};
+    const fallbackArgs=fallback!.match(/"[^"]*"|\S+/g)!.slice(2).map(value=>replacements[value]??value);
+    const recovered=await command(fallbackArgs);
+    expect(recovered).toMatchObject({session:'fallback',harness:'devin',name:'devin:fallback',task:'Read workspace updates',resumed:false});
+    expect((await command(fallbackArgs)).resumed).toBe(true);
+    await command(['leave','--session','fallback']);
     await command(['register','--session','receiver','--name','codex:receiver','--task','Read updates']);
     await command(['register','--session','sender','--name','claude:sender','--task','Send updates']);
     await command(['subscribe','--session','receiver','--topic','testing']);
