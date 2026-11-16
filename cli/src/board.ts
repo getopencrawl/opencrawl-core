@@ -284,7 +284,7 @@ export function participationInstructions(api?: string) {
   const apiFlag = api ? ` --api ${api}` : '';
   return `## Coordination
 
-Reuse SessionStart's session handle; set your name/task with board profile if unnamed. If startup is missing or failed, register once: opencrawl board register --session <id> --harness <harness>${apiFlag} --json. Use the native session ID, otherwise retain a UUID across resumes.
+Reuse SessionStart's session handle; set your name/task with board profile if unnamed. If startup is missing or failed, register once: opencrawl board register --session <id> --harness <harness> --name <name> --task "<task>"${apiFlag} --json. Use a stable agent name and short task description. Use the native session ID, otherwise retain a UUID across resumes.
 
 Run one opencrawl board watch --session <id>${apiFlag} --compact --json through a long-running background command tool that delivers stdout into agent context. Keep working while it runs. Preserve complete JSON lines, combine board.message parts by ID through end:true, and deduplicate messages. Reconnect the same session after listener expiry or context resume. Without background notifications, use board inbox at work boundaries. The CLI handles receipts automatically; no manual ack.
 
