@@ -36,13 +36,30 @@ function toolBlocks(event:SessionEvent):Record<string,unknown>[] {
 const object=(value:unknown):value is Record<string,unknown>=>Boolean(value&&typeof value==='object'&&!Array.isArray(value));
 const failedNativeResult=(block:Record<string,unknown>)=>block.is_error===true||block.isError===true||
   object(block.output)&&Array.isArray(block.output.content)&&block.output.isError===true;
-function agyValue(value:unknown):unknown {
+function nativeValue(value:unknown):unknown {
   // Compact native records JSON-encode individual wrapper arguments. Proof
   // inputs are small; never recursively decode arbitrary tool output.
   if(typeof value!=='string'||value.length>8192)return value;
   try{return JSON.parse(value);}catch{return value;}
 }
 function verificationBlocks(batch:SessionBatch,event:SessionEvent,proofId:string):Record<string,unknown>[] {
+  if(batch.harness==='devin') {
+    const data=event.data??{},id=callId(data,true),output=nativeValue(data.output);
+    // Cloud's completed hook wraps MCP in mcp_call_tool. Both halves come
+    // from one notice; tool_args is JSON inside the provider's wrapper.
+    if(event.kind!=='tool_result'||data.type!=='tool_result'||data.name!=='mcp_call_tool'||failedNativeResult(data)||
+      !id||!id.trim()||!Number.isSafeInteger(event.sequence)||Number(event.sequence)<1||!object(output)||output.isError===true||output.error)return [];
+    const calls=batch.events.filter(candidate=>candidate.kind==='tool_call'&&candidate.data?.type==='tool_use'&&
+      candidate.data.name===data.name&&callId(candidate.data)===id&&candidate.nativeId===event.nativeId&&
+      Number.isSafeInteger(candidate.sequence)&&Number(candidate.sequence)+1===event.sequence&&candidate.timestamp===event.timestamp);
+    if(calls.length!==1||failedNativeResult(calls[0]!.data!))return [];
+    const wrapper=calls[0]!.data!.input;
+    if(!object(wrapper)||typeof wrapper.server!=='string'||!/^opencrawl(?:-[a-f0-9]{12})?$/.test(wrapper.server)||
+      wrapper.tool_name!=='verify_installation'||typeof wrapper.tool_args!=='string'||wrapper.tool_args.length>8192)return [];
+    const call={id,name:wrapper.server+'/'+wrapper.tool_name,input:nativeValue(wrapper.tool_args)};
+    if(!nativeVerificationCall(call,proofId,batch.installationId,batch.harness))return [];
+    return [call,{type:'tool_result',call_id:id,output}];
+  }
   if(batch.harness==='cursor') {
     const data=event.data??{},id=callId(data,true),output=data.output;
     // Cursor's completed MCP hook omits the server namespace. Its collector
@@ -79,8 +96,8 @@ function verificationBlocks(batch:SessionBatch,event:SessionEvent,proofId:string
   // matching sequence/nativeId; neither contains a native tool call ID.
   if(event.kind==='hook'&&data.hookEventName==='PostToolUse'&&!data.error&&data.conversationId===batch.sessionId&&Number.isSafeInteger(data.stepIdx)&&Number(data.stepIdx)>=0){
     const tool=data.toolCall;if(!object(tool)||tool.name!=='call_mcp_tool')return [];
-    const args=agyValue(tool.args);if(!object(args))return [];
-    const server=agyValue(args.ServerName),name=agyValue(args.ToolName),input=agyValue(args.Arguments);
+    const args=nativeValue(tool.args);if(!object(args))return [];
+    const server=nativeValue(args.ServerName),name=nativeValue(args.ToolName),input=nativeValue(args.Arguments);
     if(typeof server!=='string'||!/^opencrawl(?:-[a-f0-9]{12})?(?:_opencrawl)?$/.test(server)||name!=='verify_installation'||!object(input))return [];
     return [{id:'antigravity-step:'+data.stepIdx,name,input}];
   }
