@@ -4,25 +4,15 @@ import {randomUUID} from 'node:crypto';
 import {createServer} from 'node:http';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {createBoard} from '../dist/src/board/board.mjs';
-import {realmIndex} from '../dist/src/search/realm.mjs';
+import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
 import {createBoardSearch} from '../dist/src/board/search.mjs';
 import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
 
-const endpoint = process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
-test('real OpenSearch and MCP: relevance, phrase boost, facets, scope, full text and stable pagination', {skip: !endpoint}, async t => {
-  const environment='test-'+randomUUID().slice(0,8),index=realmIndex(environment,'team-a');
-  for (let attempt = 0; ; attempt++) {
-    try {const response = await fetch(endpoint + '/_cluster/health?wait_for_status=yellow&timeout=1s'); if (!response.ok || !['green','yellow'].includes((await response.json()).status)) throw new Error('not ready'); break;}
-    catch(e) {if (attempt >= 60) throw e; await new Promise(r => setTimeout(r,1000));}
-  }
-  t.after(async () => {const response=await fetch(endpoint+'/'+index,{method:'DELETE'}); assert.ok(response.ok || response.status===404);});
-  const objects = new Map();
-  const store = {async readVersion(k) {return objects.get(k)||{version:null,data:null};}, async compareAndSet(k,v,data) {
-    if ((objects.get(k)?.version??null)!==v) return false; objects.set(k,{version:(v||0)+1,data});return true;
-  }};
-  const search = createBoardSearch({endpoint,environment});
+
+test('real PostgreSQL and MCP: relevance, phrase boost, facets, scope, full text and stable pagination', async t => {
+  const f=await boardStateFixture(t);
   let tick = Date.parse('2026-11-01T00:00:00Z');
-  const board = createBoard({store,prefix:'pilot',search,now:()=>tick++});
+  const board = createBoard({state:f.state,now:()=>tick++});
   let handler;
   const http=createServer((req,res)=>handler(req,res));
   await new Promise(r=>http.listen(0,'127.0.0.1',r));
@@ -58,43 +48,40 @@ test('real OpenSearch and MCP: relevance, phrase boost, facets, scope, full text
   const browsed=await call('board_search',{workspace:'team-a',facetSize:1});
   assert.equal(browsed.total,4);assert.equal(browsed.facets.topic.other,1);
   const bad=await client.callTool({name:'board_search',arguments:{workspace:'team-b',query:'confidential'}});assert.equal(bad.isError,true);
-  // Replaying a lost index repairs projection directly from the unchanged source.
-  assert.equal((await fetch(endpoint+'/'+index,{method:'DELETE'})).ok,true);
   assert.equal((await call('board_search',{workspace:'team-a',query:'refresh'})).total,3);
 });
 
 
-test('more than 10000 messages remain searchable with exact facets and exhaustive stable pages', {skip:!endpoint}, async t => {
-  const environment='test-'+randomUUID().slice(0,8),principal={tenantId:'large-board',userId:'author'},index=realmIndex(environment,principal.tenantId);
-  t.after(async()=>{const r=await fetch(endpoint+'/'+index,{method:'DELETE'});assert.ok(r.ok||r.status===404);});
-  const search=createBoardSearch({endpoint,environment});
+test('more than 10000 messages remain searchable with exact facets and exhaustive stable pages', async t => {
+  const f=await boardStateFixture(t),principal={tenantId:'large-board',userId:'author'},search=createBoardSearch({state:f.state});
   const messages=Array.from({length:10005},(_,i)=>({id:i+1,timestamp:1700000000000+i,topic:'work',agent:'writer',author:'author',name:'System test',text:i>=10000?'marker priority':'marker',requestId:String(i)}));
-  const key='test/large-board.json',args={workspace:principal.tenantId,query:'marker',limit:10,facets:['topic']};
-  let page=await search.search(principal,messages,key,args);
+  await f.repository.importLegacy(boardTenant(principal.tenantId),{schema:1,messages,agents:{},usage:{calls:0,inputBytes:0,outputBytes:0}});
+  const args={workspace:principal.tenantId,query:'marker',limit:10,facets:['topic']};
+  let page=await search.search(principal,args);
   assert.equal(page.total,10005);assert.deepEqual(page.facets.topic.values,[{value:'work',count:10005}]);
-  const seen=new Set(),grown=[...messages,{...messages[0],id:10006,text:'marker concurrent'}];
+  const seen=new Set();await f.make().sync(principal,{agent:'writer',posts:[{id:'concurrent',topic:'work',text:'marker concurrent'}]});
   for(;;){
     assert.ok(Buffer.byteLength(JSON.stringify(page))<=8192);
     for(const m of page.messages){assert.ok(!seen.has(m.id));seen.add(m.id);assert.equal(m.text,messages[m.id-1].text);}
     if(!page.next)break;
-    page=await search.search(principal,grown,key,{...args,cursor:page.next});assert.equal(page.total,10005);
+    page=await search.search(principal,{...args,cursor:page.next});assert.equal(page.total,10005);
   }
   assert.equal(seen.size,10005);assert.ok(seen.has(1)&&seen.has(10005));assert.ok(!seen.has(10006));
-  const tail=await search.search(principal,messages,key,{...args,query:'priority'});
+  const tail=await search.search(principal,{...args,query:'priority'});
   assert.equal(tail.total,5);assert.deepEqual(tail.messages.map(m=>m.id),[10005,10004,10003,10002,10001]);
 });
 
-test('real OpenSearch indexes long board posts through their tail and pages complete bodies', {skip:!endpoint}, async t => {
-  const environment='test-'+randomUUID().slice(0,8),principal={tenantId:'long-board',userId:'author'},index=realmIndex(environment,principal.tenantId);
-  t.after(async()=>{const response=await fetch(endpoint+'/'+index,{method:'DELETE'});assert.ok(response.ok||response.status===404);});
+test('real PostgreSQL searches long board posts through their tail and pages complete bodies', async t => {
+  const f=await boardStateFixture(t),principal={tenantId:'long-board',userId:'author'};
   const bodies=['marker short',('詳🧪 detail '.repeat(1800))+' marker uniquetail',('more detail '.repeat(2000))+' marker uniquetail'];
   const messages=bodies.map((text,i)=>({id:i+1,timestamp:1700000000000+i,topic:'work',agent:'writer',author:'author',name:'Writer',text,requestId:String(i)}));
-  const search=createBoardSearch({endpoint,environment}),args={query:'marker',sort:'newest',limit:10};
-  const first=await search.search(principal,messages,'long-board',args);
+  await f.repository.importLegacy(boardTenant(principal.tenantId),{schema:1,messages,agents:{},usage:{calls:0,inputBytes:0,outputBytes:0}});
+  const search=createBoardSearch({state:f.state}),args={query:'marker',sort:'newest',limit:10};
+  const first=await search.search(principal,args);
   assert.equal(first.total,3);assert.deepEqual(first.messages.map(m=>m.id),[3]);assert.equal(first.messages[0].text,bodies[2]);
-  const second=await search.search(principal,messages,'long-board',{...args,cursor:first.next});
+  const second=await search.search(principal,{...args,cursor:first.next});
   assert.deepEqual(second.messages.map(m=>m.id),[2]);assert.equal(second.messages[0].text,bodies[1]);
-  const third=await search.search(principal,messages,'long-board',{...args,cursor:second.next});
+  const third=await search.search(principal,{...args,cursor:second.next});
   assert.deepEqual(third.messages.map(m=>m.id),[1]);assert.equal(third.next,null);
-  assert.equal((await search.search(principal,messages,'long-board',{query:'uniquetail'})).total,2);
+  assert.equal((await search.search(principal,{query:'uniquetail'})).total,2);
 });

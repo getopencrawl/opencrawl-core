@@ -11,9 +11,9 @@ import {pipelineVersion} from './scope.mjs';
 
 
 /** One fixed authorized connection, one scoped bucket adapter, one scoped index. */
-export function createConnectorPipeline({binding, store, search, checkActive = async () => {}, heartbeat = () => {}}: PipelineOptions) {
+export function createConnectorPipeline({binding, state, store, search, checkActive = async () => {}, heartbeat = () => {}}: PipelineOptions) {
   validateBinding(binding);
-  if (['granola', 'circleback', 'notion'].includes(binding.provider)) return createWorkspacePipeline({binding, store, search, checkActive, heartbeat});
+  if (['granola', 'circleback', 'notion'].includes(binding.provider)) return createWorkspacePipeline({binding, state, store, search, checkActive, heartbeat});
   const principal = {tenantId: binding.tenantId};
   async function active() { authorize(principal, binding); await checkActive(binding); }
   return {
@@ -27,7 +27,7 @@ export function createConnectorPipeline({binding, store, search, checkActive = a
       await active();
       const stream = objectStream(binding, key);
       const receipt = receiptKey(binding, search.identity, key);
-      if (await store.get(receipt, {maxBytes: 8192})) return {status: 'already-indexed', records: 0};
+      if (await state.indexingReceipts.read(receipt)) return {status: 'already-indexed', records: 0};
       let batch: DocumentItem[] = []; let records = 0, batchBytes = 0;
       async function flush() {
         if (!batch.length) return;
@@ -72,7 +72,7 @@ export function createConnectorPipeline({binding, store, search, checkActive = a
       await flush();
       await active();
       // Only acknowledge after every bulk item succeeded. Partial writes replay safely.
-      await store.put(receipt, Buffer.from(JSON.stringify({pipeline: pipelineVersion(binding), key, sha256: result.sha256, sourceRecords: result.records, records})), 'application/json');
+      await state.indexingReceipts.put(receipt,{pipeline: pipelineVersion(binding), key, sha256: result.sha256, sourceRecords: result.records, records});
       return {status: 'indexed', records};
     },
   };

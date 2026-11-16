@@ -1,6 +1,6 @@
-/** Portable product boundary. Runtimes authenticate; core enforces resource access.
- * This greeting has no resources. See ARCHITECTURE.md before adding operations.
- */
-export function hello() {
-  return { message: 'hello world' };
-}
+/** Portable application-state composition. Runtimes authenticate and explicitly
+ * supply the operator-owned database; importing core never starts services. */
+export {createApplicationDatabase,requireApplicationStateReady} from './state/postgres.mjs';
+export type {ApplicationDatabase} from './state/postgres.mjs';
+export {createApplicationState} from './state/application.mjs';
+export type {ApplicationState} from './state/types.mjs';

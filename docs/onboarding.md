@@ -13,7 +13,7 @@ sign-in, recording consent, hook trust and proof of a stored session.
 
 ## Progress and gates
 
-`createOnboardingStatus` persists individual receipts under the authenticated
+`createOnboardingStatus` persists individual PostgreSQL receipts under the authenticated
 user and tenant scope. Step one requires CLI authentication, a successful native
 MCP `test_connection`, and an accepted batch containing a recorded message.
 MCP initialization is not a connection-test receipt. Hook-only batches cannot

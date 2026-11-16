@@ -5,18 +5,11 @@ import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createBoard} from '../dist/src/board/board.mjs';
-import {createLocalBoardStore} from '../dist/src/board/local-store.mjs';
+import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
 import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
 
 const a = {tenantId: 'a', userId: 'alice'}, b = {tenantId: 'b', userId: 'bob'};
-async function fixture(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'board-test-'));
-  let store = createLocalBoardStore(join(dir, 'board.sqlite'));
-  t.after(async () => {store.close(); await rm(dir, {recursive: true, force: true});});
-  let time = 10000000;
-  const make = () => createBoard({store, prefix: 'test', now: () => time});
-  return {store, make, later: () => {time += 16 * 60 * 1000;}, restart: () => {store.close(); store = createLocalBoardStore(join(dir, 'board.sqlite')); return make();}};
-}
+async function fixture(t){const f=await boardStateFixture(t);let time=10000000;const make=()=>createBoard({state:f.state,now:()=>time});return {...f,make,later:()=>{time+=16*60*1000;},restart:make};}
 const post = (id, text = 'Taking auth refresh') => ({id, topic: 'auth', text});
 
 test('read-only browsing is scoped, paginated newest first and never changes the stored board', async t => {
@@ -133,20 +126,12 @@ test('S3 CAS signs the expected condition, rejects collisions and bounds reads',
   await assert.rejects(store.readVersion('board', {maxBytes: 1}), /read limit/);
 });
 
-test('a default sync cursor keeps messages that arrive during a conditional-write retry', async t => {
-  const f = await fixture(t); let raced = false;
-  const board = createBoard({prefix: 'test', store: {...f.store, compareAndSet: async (...args) => {
-    if (!raced) {
-      raced = true;
-      await f.make().sync({...a, userId: 'concurrent'}, {workspace: a.tenantId, agent: 'writer', posts: [post('during-sync')]});
-    }
-    return f.store.compareAndSet(...args);
-  }}});
-  const result = await board.sync(a, {workspace: a.tenantId, agent: 'reader', topics: ['auth']});
-  assert.deepEqual(result.messages.map(m => m.id), [1]);
-  assert.equal(result.cursor, 1);
-  assert.equal(result.more, false);
-});
+test('concurrent transactions allocate contiguous IDs and explicit cursors cannot miss publications',async t=>{
+    const f=await fixture(t),board=f.make();
+    await Promise.all(Array.from({length:20},(_,i)=>board.sync({...a,userId:'writer'+i},{agent:'writer',posts:[post(String(i))]})));
+    let cursor=0,ids=[];for(;;){const page=await board.sync(a,{agent:'reader',topics:['auth'],after:cursor});ids.push(...page.messages.map(m=>m.id));cursor=page.cursor;if(!page.more)break;}
+    assert.deepEqual(ids,Array.from({length:20},(_,i)=>i+1));assert.equal(cursor,20);
+  });
 
 test('real MCP clients exchange scoped messages and revoked credentials cannot read', async t => {
   const {createServer} = await import('node:http');

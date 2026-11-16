@@ -4,7 +4,6 @@ import { readFile, readdir, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { hello } from '../dist/src/index.mjs';
 
 const sourceRoot = new URL('../src/', import.meta.url);
 
@@ -12,12 +11,14 @@ const sourceRoot = new URL('../src/', import.meta.url);
 // or security sandbox. Review network/configuration coupling independently.
 function checkImports(source, file, root = sourceRoot) {
   assert.doesNotMatch(source, /\b(?:import|require(?:\.resolve)?)\s*\(\s*(?!\s*["'])\S/, 'Computed imports need boundary review');
-  for (const match of source.matchAll(/\b(?:from\s*|import\s*(?:\(\s*)?|require(?:\.resolve)?\s*\(\s*)["']([^"']+)["']/g)) {
+  for (const match of source.matchAll(/(?:\b(?:from|import)\s+|\b(?:import|require(?:\.resolve)?)\s*\(\s*)["']([^"']+)["']/g)) {
     const specifier = match[1];
     assert.ok(!specifier.includes('\\'), `Escaped dependency needs review: ${specifier}`);
     if (specifier.startsWith('node:') || ['@modelcontextprotocol/server', '@modelcontextprotocol/node', 'zod'].includes(specifier)) continue;
     if (file.href.endsWith('/sessions/token-count.mts') && specifier === 'gpt-tokenizer/encoding/o200k_base') continue;
     if (file.href.endsWith('/sessions/postgres-identities.mts') && specifier === 'pg') continue;
+    if ((file.href.includes('/state/') || file.href.endsWith('/integrations/local-registry.mts') || file.href.endsWith('/identity/better-auth.mts')) && specifier === 'pg') continue;
+    if (file.href.endsWith('/state/identity-migration.mts') && specifier === 'better-auth/db') continue;
     if (file.href.includes('/identity/') && specifier==='jose') continue;
     if (['workos.mts','cli.mts','single-organization-device.mts'].some(name=>file.href.endsWith('/identity/'+name)) && specifier==='@workos-inc/node') continue;
     // Self-host identity: Better Auth is confined to its adapter and the self-host auth routes.
@@ -27,7 +28,7 @@ function checkImports(source, file, root = sourceRoot) {
     // Document parsers run only in the bounded, credential-free extraction thread.
     if (file.href.endsWith('/connectors/document-text-worker.mts') && ['parse5', 'pdfjs-dist/legacy/build/pdf.mjs'].includes(specifier)) continue;
     // Temporal is an optional customer-operated adapter, not a domain dependency.
-    if ((file.href.includes('/connectors/temporal/') || file.href.includes('/sessions/temporal/')) && ['@temporalio/worker', '@temporalio/activity', '@temporalio/workflow', '@temporalio/common', '@temporalio/client'].includes(specifier)) continue;
+    if ((file.href.includes('/connectors/temporal/') || file.href.includes('/sessions/temporal/') || file.href.includes('/integrations/temporal/')) && ['@temporalio/worker', '@temporalio/activity', '@temporalio/workflow', '@temporalio/common', '@temporalio/client'].includes(specifier)) continue;
     assert.ok(specifier.startsWith('./') || specifier.startsWith('../'), `Forbidden core dependency: ${specifier}`);
     assert.ok(new URL(specifier, file).href.startsWith(root.href), `Dependency escapes product runtime: ${specifier}`);
   }
@@ -42,17 +43,13 @@ async function checkTree(directory, root = directory) {
   }
 }
 
-test('core runs without any hosted service or credentials', () => {
-  assert.deepEqual(hello(), {message: 'hello world'});
-});
-
 test('core runtime imports stay inside src, Node builtins, or reviewed portable libraries', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url)));
   // Reviewed portable MCP SDK/PDF.js (Apache-2.0), schema validation and parse5 (MIT).
   // PDF/HTML parsing is lazy and isolated; no hosted credentials or external fetches.
-  // Better Auth (MIT) is the self-host identity provider; it stores accounts locally, telemetry off.
+  // Better Auth (MIT) is the self-host identity provider, backed by operator PostgreSQL, telemetry off.
   // gpt-tokenizer (MIT) counts transcript text locally, without network access.
-  // pg (MIT) is confined to the operator-owned event identity database adapter.
+  // pg (MIT) is confined to explicit operator-owned application state adapters.
   assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@better-auth/oauth-provider', '@modelcontextprotocol/node', '@modelcontextprotocol/server', '@trpc/client', '@trpc/server', '@workos-inc/node', 'better-auth', 'gpt-tokenizer', 'jose', 'parse5', 'pdfjs-dist', 'pg', 'zod']);
   assert.deepEqual(pkg.optionalDependencies || {}, {});
   const temporal = ['@temporalio/activity', '@temporalio/client', '@temporalio/common', '@temporalio/worker', '@temporalio/workflow'];
@@ -89,6 +86,7 @@ test('boundary lint rejects common reverse dependencies and permits internal nes
     'import(`@workos-inc/node`);',
   ]) assert.throws(() => checkImports(source, nested), undefined, source);
   checkImports(`import {hello} from '../index.mjs'; export {x} from './data.mjs'; import 'node:fs';`, nested);
+  checkImports(`const label = 'board-import'; const sql = "SELECT 'from'";`, nested);
 });
 
 

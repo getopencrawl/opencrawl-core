@@ -1,3 +1,4 @@
+import type {ApplicationState} from '../state/types.mjs';
 import type {Principal, ObjectStore, SessionEvent, SessionBatch, JsonValue} from './types.mjs';
 import {isSessionHarness} from './types.mjs';
 import type {RealmOptions, QueryBody, IndexHit} from '../search/types.mjs';
@@ -37,8 +38,8 @@ export function sessionMessage(event: SessionEvent) {
 
 /** Read the current tenant's ten newest indexed sessions, then verify and read
  * original events from immutable capture. No new projection or reindex needed. */
-export function createRecentSessions({store, prefix, ...options}: RealmOptions & {store: ObjectStore; prefix: string}) {
-  const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
+export function createRecentSessions({state,store, prefix, ...options}: RealmOptions & {state:ApplicationState;store: ObjectStore; prefix: string}) {
+  const resolve = createRealmResolver(options), ingest = createSessionIngest({state,store, prefix}), controls = createControls({state});
   async function read(principal: Principal, {signal, summary = false, id, field = 'context'}: {signal?: AbortSignal; summary?: boolean; id?: string; field?: SessionContextField} = {}) {
     sessionScope(principal);
     if (principal.captureAccess !== undefined) throw Object.assign(new Error('Session read access required'), {status: 403});

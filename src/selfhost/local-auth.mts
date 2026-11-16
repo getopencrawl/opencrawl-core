@@ -202,7 +202,7 @@ export function localAuth({identity,url,organizationId,setupToken,member}:LocalA
     catch(error){return {status:errorInfo(error).code?.startsWith('ERR_J')?401:503};}
     if(typeof payload.sub!=='string'||!/^user_[A-Za-z0-9]+$/.test(payload.sub))return {status:401};
     if(typeof payload.client_id!=='string'||typeof payload.scope!=='string'||!payload.scope.split(' ').includes('openid')||payload.cnf!==undefined)return {status:401};
-    if(typeof payload.iat!=='number'||!identity.tokenCurrent(payload.sub,payload.iat))return {status:401};
+    if(typeof payload.iat!=='number'||!await identity.tokenCurrent(payload.sub,payload.iat))return {status:401};
     const current=await currentVerifiedUser(directory,payload.sub);
     if(current.status!==200)return current;
     const principal=await resolve(current.user).catch(()=>undefined);

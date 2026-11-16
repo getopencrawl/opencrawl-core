@@ -1,3 +1,4 @@
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test, before} from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,8 +19,8 @@ test('session hostnames cover the whole authorized session across search and tra
   const environment = 'hosts-' + randomUUID().slice(0, 8), prefix = 'sessions/hosts', store = deletionTestStore();
   const alice = {tenantId: 'one', userId: 'alice'}, bob = {tenantId: 'one', userId: 'bob'}, outsider = {tenantId: 'two', userId: 'alice'};
   const options = {endpoint, environment, store, prefix};
-  const ingest = createSessionIngest({store, prefix}), search = createSessionSearch(options), library = createSessionLibrary(options);
-  const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
+  const ingest = createSessionIngest(withTestState({store, prefix})), search = createSessionSearch(withTestState(options)), library = createSessionLibrary(withTestState(options));
+  const pipeline = createSessionPipeline(withTestState({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner}));
   t.after(async () => {for (const tenant of ['one', 'two']) await fetch(endpoint + '/' + realmIndex(environment, tenant), {method: 'DELETE'});});
   async function capture(owner, sessionId, host, sequence) {
     const before = new Set(store.data.keys());
@@ -76,10 +77,10 @@ test('real session and memory library: viewer, private visibility, owner-only co
   await createIndexTransport({endpoint, index: realmIndex(environment, tenantId)})('', {settings: {number_of_shards: 1, number_of_replicas: 0}, mappings: {...old, _meta: {schema: 1, tenantId}}}, 'PUT');
 
   const options = {endpoint, environment, store, prefix};
-  const search = createSessionSearch({store,prefix,endpoint, environment}), ingest = createSessionIngest({store, prefix});
-  const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
-  const sessions = createSessionLibrary({...options,scheduleDeletion:async()=>{}}), memories = createMemoryLibrary(options), api = createLibraryApi({sessions, memories});
-  const workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
+  const search = createSessionSearch(withTestState({store,prefix,endpoint, environment})), ingest = createSessionIngest(withTestState({store, prefix}));
+  const pipeline = createSessionPipeline(withTestState({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner}));
+  const sessions = createSessionLibrary(withTestState({...options,scheduleDeletion:async()=>{}})), memories = createMemoryLibrary(withTestState(options)), api = createLibraryApi({sessions, memories});
+  const workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(withTestState(options));
   const keys = () => [...objects].filter(key => key.endsWith('.json.gz'));
   async function upload(owner, sessionId, harness, events, installationId = 'laptop') {
     const before = new Set(keys());
@@ -203,7 +204,7 @@ test('visibility changes upgrade a realm no indexer has touched since the releas
   const store = createObjectStore({endpoint: s3, bucket: 'capture-test', credentials: {accessKeyId: 'capture-test', secretAccessKey: 'capture-test-secret'}});
   const prefix = 'sessions/visibility-test/' + run, options = {endpoint, environment, store, prefix};
   t.after(async () => {for (const key of (await store.list(prefix + '/')).keys) await store.delete(key);});
-  const api = createLibraryApi({sessions: createSessionLibrary({...options,scheduleDeletion:async()=>{}}), memories: createMemoryLibrary(options)});
+  const api = createLibraryApi({sessions: createSessionLibrary(withTestState({...options,scheduleDeletion:async()=>{}})), memories: createMemoryLibrary(withTestState(options))});
   assert.equal((await api(owner, 'sessions/visibility', {harness: 'codex', sessionId: 'legacy', visibility: 'private'})).visibility, 'private');
   assert.equal((await api(owner, 'memories/visibility', {harness: 'codex', path: 'memories/a.md', visibility: 'private'})).visibility, 'private');
   const stored = await transport('/_doc/session:one', undefined, 'GET');
@@ -217,10 +218,10 @@ test('real Grok Bot sessions: hook-derived conversations and tool-only activity 
   const store = {...underlying, put: async (k, b, m) => {objects.add(k); return underlying.put(k, b, m);}, compareAndSet: async (k, v, b) => {objects.add(k); return underlying.compareAndSet(k, v, b);}};
   const prefix = 'sessions/grok-bot-test/' + run, options = {endpoint, environment, store, prefix};
   t.after(async () => {for (const key of objects) await underlying.delete(key); await fetch(endpoint + '/' + realmIndex(environment, tenantId), {method: 'DELETE'});});
-  const search = createSessionSearch({store,prefix,endpoint, environment}), ingest = createSessionIngest({store, prefix});
-  const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
-  const sessions = createSessionLibrary({...options, scheduleDeletion: async () => {}});
-  const api = createLibraryApi({sessions}), workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(options);
+  const search = createSessionSearch(withTestState({store,prefix,endpoint, environment})), ingest = createSessionIngest(withTestState({store, prefix}));
+  const pipeline = createSessionPipeline(withTestState({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner}));
+  const sessions = createSessionLibrary(withTestState({...options, scheduleDeletion: async () => {}}));
+  const api = createLibraryApi({sessions}), workspace = createWorkspaceSearch({sessions: search}), recent = createRecentSessions(withTestState(options));
   const keys = () => [...objects].filter(key => key.endsWith('.json.gz'));
   async function upload(owner, sessionId, harness, events) {
     const before = new Set(keys());

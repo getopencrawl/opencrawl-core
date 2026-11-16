@@ -1,3 +1,5 @@
+import type {ApplicationState} from '../../state/types.mjs';
+import {isDeepStrictEqual} from 'node:util';
 import type {Client, ConnectionOptions} from '@temporalio/client';
 import {ActivityExecutionAlreadyStartedError, ScheduleNotFoundError, WorkflowExecutionAlreadyStartedError, WorkflowIdReusePolicy} from '@temporalio/client';
 import {connectorClient} from '../../connectors/temporal/client.mjs';
@@ -115,9 +117,9 @@ export function sessionIndexingScheduler(config:SessionIndexingBinding & {addres
 /** Run only after every producer durably submits new objects and compatible
  * workers are running. Unless completed is true, await the returned workflow.
  * Its final Activity stores the completion marker durably, beyond retention. */
-export async function activateSessionIndexing(client:Client,input:SessionIndexingBinding & {store:ObjectStore;prefix:string}) {
+export async function activateSessionIndexing(client:Client,input:SessionIndexingBinding & {state:ApplicationState;store:ObjectStore;prefix:string}) {
   indexingBinding(input);
-  const {sourceId,taskQueue,generation,store,prefix}=input;
+  const {sourceId,taskQueue,generation,state,prefix}=input;
   const {workflowId,markerKey,marker:expected}=sessionCatchupMarker(input);
   const scheduleId='sessions-'+digest(sourceId),schedule=client.schedule.getHandle(scheduleId);
   try {
@@ -125,10 +127,10 @@ export async function activateSessionIndexing(client:Client,input:SessionIndexin
     if(existing.action.workflowType!=='indexSessionsV1'||existing.action.taskQueue!==taskQueue||JSON.stringify(existing.action.args)!==JSON.stringify([{sourceId}]))throw new Error('Session schedule binding mismatch');
     await schedule.pause('New capture objects are submitted directly to Temporal');
   } catch(error) {if(!(error instanceof ScheduleNotFoundError))throw error;}
-  const saved=await store.get(markerKey,{maxBytes:4096});
+  const saved=await state.indexingReceipts.read(markerKey);
   if(saved){
-    const marker=parseJson<typeof expected>(saved);
-    if(JSON.stringify(marker)!==JSON.stringify(expected))throw new Error('Session cutover marker mismatch');
+    const marker=saved;
+    if(!isDeepStrictEqual(marker,expected))throw new Error('Session cutover marker mismatch');
     return {scheduleId,workflowId,markerKey,completed:true};
   }
   try {

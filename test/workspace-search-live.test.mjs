@@ -1,3 +1,4 @@
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,17 +22,17 @@ test('live unified MCP searches native sessions and every connector; no private 
   const environment='ws-'+run.slice(0,8),connectorIndex=realmIndex(environment,principal.tenantId),objects=[];
   const underlying=createObjectStore({endpoint:s3,bucket:'capture-test',credentials:{accessKeyId:'capture-test',secretAccessKey:'capture-test-secret'}});
   const store={...underlying,put:async(k,b,m)=>{objects.push(k);return underlying.put(k,b,m);}};
-  const sessions=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment}),search=createConnectorSearch({endpoint,index:connectorIndex,tenantId:principal.tenantId});
+  const sessions=createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment})),search=createConnectorSearch({endpoint,index:connectorIndex,tenantId:principal.tenantId});
   t.after(async()=>{for(const key of objects)await store.delete(key);for(const owner of [principal,outsider])await fetch(endpoint+'/'+realmIndex(environment,owner.tenantId),{method:'DELETE'});});
-  const prefix='sessions/workspace-live/'+run,ingest=createSessionIngest({store,prefix});
+  const prefix='sessions/workspace-live/'+run,ingest=createSessionIngest(withTestState({store,prefix}));
   for(const owner of [peer,outsider])await ingest.putBatch(owner,{schemaVersion:1,owner,harness:'codex',origin:'unknown',installationId:'fixture',sessionId:'same',attachments:[],events:[{id:'event',kind:'message',data:{role:'user',content:'violet lighthouse session evidence'}}]});
-  const pipeline=createSessionPipeline({store,prefix,search:sessions,resolvePrincipal:async({batch})=>batch.owner});
+  const pipeline=createSessionPipeline(withTestState({store,prefix,search:sessions,resolvePrincipal:async({batch})=>batch.owner}));
   for(const key of (await pipeline.listPage()).keys)await pipeline.processObject({key});await sessions.refresh(principal);await sessions.refresh(outsider);
   await search.ensureIndex();
   const bindings=[];const date='2026-11-05T12:00:00Z';
   for(const provider of ['slack','notion','github','granola','circleback']) {
     const connectionId=provider+'-'+run,binding={tenantId:principal.tenantId,connectionId,workspaceId:'w',provider,access:provider==='slack'?'team-public':'workspace-global',rawPrefix:`raw/v1/source=${provider}/workspace=w/connection=${connectionId}/`};bindings.push(binding);
-    const pipeline=createConnectorPipeline({binding,store,search});
+    const pipeline=createConnectorPipeline(withTestState({binding,store,search}));
     async function raw(stream,data){const key=binding.rawPrefix+`stream=${stream}/date=2026-11-05/sync=1/input.jsonl.gz`;await store.put(key,gzipSync(JSON.stringify({_airbyte_extracted_at:2000,_airbyte_data:data})+'\n'));}
     if(provider==='slack') {
       await raw('channels',{id:'C123',name:'public',is_private:false});await raw('channel_messages',{channel_id:'C123',ts:'1234567890.000001',text:'violet lighthouse Slack evidence'});

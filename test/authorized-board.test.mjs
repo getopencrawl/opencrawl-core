@@ -5,8 +5,7 @@ import {authorizedBoard} from '../dist/src/application/board.mjs';
 test('reusing request admission never skips final authorization or permits a workspace mismatch',async()=>{
   const principal={tenantId:'org_a',userId:'user_a'};
   let admissions=0,checks=0,reads=0,active=true,revoke=false;
-  const board=authorizedBoard({prefix:'board',
-    store:{async readVersion(){reads++;if(revoke)active=false;return {data:null,version:null};},async compareAndSet(){return true;}},
+  const board=authorizedBoard({state:{board:{async read(_key,run){reads++;if(revoke)active=false;return run({async topics(){return [];},async agents(){return {};}});}}},
     admit:async p=>{admissions++;return p;},
     authorize:async p=>{checks++;if(!active)throw Object.assign(Error('revoked'),{status:403});return p;},
   });

@@ -1,3 +1,4 @@
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import {realmIndex} from '../dist/src/search/realm.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
@@ -23,7 +24,7 @@ function harness({records = [envelope()], failBulk = false} = {}) {
     if (failBulk && attempts === 1) throw new Error('Connection lost after commit');
   }};
   const store = {get: async k => objects.get(k) || null, put: async (k, v) => objects.set(k, v), listPage: async () => ({keys: [key()], nextToken: null})};
-  const pipeline = createConnectorPipeline({binding, store, search, checkActive: async () => {if (!active) throw new Error('Connection revoked');}});
+  const pipeline = createConnectorPipeline(withTestState({binding, store, search, checkActive: async () => {if (!active) throw new Error('Connection revoked');}}));
   return {objects, written, search, pipeline, revoke: () => {active = false;}};
 }
 
@@ -70,7 +71,7 @@ test('bounded segments retain cursors and continue other objects after one fails
 });
 test('extra source streams do not starve supported data; selection never bypasses scope or path checks', async () => {
   let keys = [key('emoji'), key(), key('replies')];
-  const pipeline = createConnectorPipeline({binding, search: {}, store: {listPage: async () => ({keys, nextToken: 'next-page'})}});
+  const pipeline = createConnectorPipeline(withTestState({binding, search: {}, store: {listPage: async () => ({keys, nextToken: 'next-page'})}}));
   assert.deepEqual(await pipeline.listPage(), {keys: [key()], cursor: 'next-page', ignored: 2});
   keys = [key('emoji')];
   assert.deepEqual(await pipeline.listPage(), {keys: [], cursor: 'next-page', ignored: 1});

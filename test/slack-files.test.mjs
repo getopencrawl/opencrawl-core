@@ -1,3 +1,4 @@
+import {withTestState,stateFor} from './fixtures/memory-application-state.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,12 +39,13 @@ test('file content references reject foreign scope, corruption, lossy records, a
 test('failed chunk writes never publish a manifest or receipt; retry publishes all chunks first',async()=>{
  const f=fixture();let fail=true;const writes=[];
  const search={identity:'test',putDocuments:async(_,__,docs)=>{writes.push(...docs);if(fail)throw Error('bulk failure');}};
- const pipeline=createConnectorPipeline({binding,store:f.store,search});
+ const options=withTestState({binding,store:f.store,search}),pipeline=createConnectorPipeline(options);
+ const receiptId=receiptKey(binding,'test',key);
  await assert.rejects(pipeline.processObject({key}),/bulk failure/);
- assert.ok(writes.every(d=>d.document.kind==='file_chunk'));assert.equal(f.objects.has(receiptKey(binding,'test',key)),false);
+ assert.ok(writes.every(d=>d.document.kind==='file_chunk'));assert.equal(await stateFor(f.store).indexingReceipts.read(receiptKey(binding,'test',key)),null);
  fail=false;writes.length=0;assert.equal((await pipeline.processObject({key})).records,1);
  assert.equal(writes.at(-1).document.kind,'file');assert.ok(writes.slice(0,-1).every(d=>d.document.kind==='file_chunk'));
- const receipt=JSON.parse(f.objects.get(receiptKey(binding,'test',key)));assert.equal(receipt.sourceRecords,1);assert.equal(receipt.records,1);
+ const receipt=await stateFor(f.store).indexingReceipts.read(receiptKey(binding,'test',key));assert.equal(receipt.sourceRecords,1);assert.equal(receipt.records,1);
  const n=await normalizeSlackFile(binding,{...f.envelope,_airbyte_data:{...f.envelope._airbyte_data,available:false}},key,{store:f.store});
  assert.equal(n.manifest.document.available,false);assert.equal(n.chunks.length,0);
 });

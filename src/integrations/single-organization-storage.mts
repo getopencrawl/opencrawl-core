@@ -8,7 +8,7 @@ export function singleOrganizationStorage(organizationId:string,store:ReturnType
   if(!/^org_[A-Za-z0-9]+$/.test(organizationId))throw new Error('Configure one organization');
   const deny=()=>{throw Object.assign(new Error('Storage scope denied'),{status:403});};
   const check=(bucket:string,key:string)=>{
-    if(bucket!==store.bucket||!key||key.split('/').some(p=>p==='.'||p==='..')||!(key.startsWith('raw/v1/source=')||/^_opencrawl\/counts\/connection=int_[a-f0-9]{26}\.json\.gz$/.test(key)))deny();
+    if(bucket!==store.bucket||!key||key.split('/').some(p=>p==='.'||p==='..')||!key.startsWith('raw/v1/source='))deny();
   };
   return {
     async get(id){return id===organizationId?store.bucket:null;},

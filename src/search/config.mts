@@ -1,3 +1,4 @@
+import type {ApplicationState} from '../state/types.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import {parseJson} from '../sessions/types.mjs';
 import type {RealmOptions, SearchInput} from './types.mjs';
@@ -12,10 +13,10 @@ import {sessionScope} from '../sessions/ingest.mjs';
 import {sessionStorage} from '../sessions/storage.mjs';
 
 /** Operator-owned config only. Requests cannot choose credentials, indexes or bindings. */
-export async function configuredWorkspaceSearch(path: string) {
+export async function configuredWorkspaceSearch(path:string,state:ApplicationState) {
   const config = parseJson<OperatorSearchConfig>(await readFile(path, 'utf8'));
   const {principal} = config; sessionScope(principal);
-  const sessions = config.sessions ? createSessionSearch({...config.sessions, ...sessionStorage(), tenantId:principal.tenantId}) : undefined;
+  const sessions = config.sessions ? createSessionSearch({state,...config.sessions, ...sessionStorage(), tenantId:principal.tenantId}) : undefined;
   let connectors;
   if (config.connectors) {
     const bindings = config.connectors.bindings.map(validateBinding);

@@ -22,8 +22,9 @@ const started=Date.now();
 if(phase==='before')for(let start=0;start<125000;start+=1000){assert.equal((await upload(events(start))).status,200);}
 const overflow=await upload(events(125000));
 const old=phase==='before'||phase==='restored';
-assert.equal(overflow.status,old?413:200,overflow.body.slice(0,300));
-if(old)assert.match(overflow.body,/identity capacity exceeded/);
+const limited=old&&process.env.UPGRADE_LEGACY_CEILING==='true';
+assert.equal(overflow.status,limited?413:200,overflow.body.slice(0,300));
+if(limited)assert.match(overflow.body,/identity capacity exceeded/);
 assert.equal((await upload(events(0))).status,200,'Original event retry failed');
 const conflict=events(0);conflict[0].data.sequence=-1;assert.equal((await upload(conflict)).status,409);
 const marker='oversizedtailproof';

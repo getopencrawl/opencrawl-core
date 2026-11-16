@@ -106,7 +106,8 @@ product requirements and adapter conformance coverage.
 
 FTS5 uses `unicode61` tokenization, case folding and no stemming or diacritic
 removal. Query text is treated literally, without exposing FTS query syntax.
-Title and board-topic columns have weight 2; body text has weight 1. FTS5 BM25
+Title columns have weight 2; body text has weight 1. Board search uses the
+PostgreSQL application-state repository independently of this derived index. FTS5 BM25
 scores are converted so higher is better. Tokenization and scoring differ from
 OpenSearch's analyzer and BM25 implementation; scores are not comparable.
 Each realm has its own FTS table, including corpus-wide term statistics.
@@ -120,12 +121,21 @@ retry and authoritative visibility checks remain required for both.
 SQLite computes exact SQL counts/cardinality for supported aggregations.
 Workspace facets still describe the authorized candidate window, as before.
 Aggregation output is bounded to 10,000 buckets per request; oversized requests
-fail explicitly. SQLite work is synchronous in the process, so expensive
-queries or writer contention can affect API latency. This adapter targets
+fail explicitly. SQL, aggregation loops and lock waits execute in a bounded
+pool of two child processes per API or indexing process, with up to 64 queued
+operations. Idle children retire after one second; active children retire after
+256 operations or five minutes. Each operation closes its database connection.
+This adapter targets
 smaller single-host installations; no throughput or corpus-size guarantee is
 implied by the conformance suite.
-The internal query timeout is checked before returning results; it cannot
-interrupt an executing synchronous SQLite statement. Requests exceeding it fail.
+Operations have a 30-second deadline including queue and process startup time;
+a query can request a shorter `timeout`. The parent terminates a child at the
+deadline and observes its exit before freeing its pool slot. A write rejected
+before dispatch is unapplied. A dispatched write with a lost response or timeout
+remains uncertain, even if the child was terminated; durable write barriers must
+reconcile that outcome before deletion. Pool saturation rejects excess work
+explicitly. Children receive no environment credentials and emit no diagnostics.
+See the [Node process lifecycle contract](https://nodejs.org/download/release/v24.13.1/docs/api/child_process.html).
 
 The index uses an application ID and schema version and rejects unrelated or
 unsupported SQLite files. A newly created file is mode 0600. Back up/restore the
@@ -155,7 +165,8 @@ The conformance suite runs SQLite unconditionally and OpenSearch when that
 explicit test endpoint is supplied. CI runs both against a disposable real
 OpenSearch instance. `test/sqlite-search.test.mjs` additionally exercises a real
 MCP client, native session ingestion, connector revocation, privacy, durable
-reopening, atomic rollback, board facets and usage/library aggregations.
+reopening, atomic rollback and usage/library aggregations. Board facets and
+cursor continuity are verified separately against PostgreSQL.
 Self-host CI boots the SQLite Compose profile without OpenSearch, ingests and
 searches through the real application, then repeats verification after restart
 and a cold backup/restore into empty disposable volumes.

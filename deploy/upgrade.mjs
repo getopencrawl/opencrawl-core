@@ -49,7 +49,7 @@ try {
  journal=existsSync(journalFile)?JSON.parse(readFileSync(journalFile,'utf8')):null;
  inventory=containers(current.project);app=inventory.find(c=>c.Config.Labels['com.docker.compose.service']==='app');
  if(journal?.phase==='complete'&&journal.target===target&&journal.image===app?.Image)process.exit(0);
- if(journal&&(journal.format!==1||!['prepared','images-preserved','built','stopped','backed-up','configured','database-ready','database-transferred','migrated','healthy','complete'].includes(journal.phase)))throw new Error('Unsupported upgrade journal; preserve recovery files for review');
+ if(journal&&(journal.format!==1||!['prepared','images-preserved','built','stopped','backed-up','configured','database-ready','database-transferred','migrated','app-state-checked','app-state-migrated','app-state-verified','healthy','complete'].includes(journal.phase)))throw new Error('Unsupported upgrade journal; preserve recovery files for review');
  if(journal&&journal.phase!=='complete'&&journal.target!==target)throw new Error('An upgrade is incomplete. Return to its recorded target revision and resume before upgrading again');
  // A refused journal must not trigger cleanup against the running installation.
  validatedJournal=true;
@@ -83,7 +83,7 @@ try {
    legacyDatabase:databaseHost==='app-db'?(inventory.find(c=>c.Config.Labels['com.docker.compose.service']==='app-db')?.Id||null):null};
   privateFile(journalFile,journal);
  }
- const phases=['prepared','images-preserved','built','stopped','backed-up','configured','database-ready','database-transferred','migrated','healthy','complete'];
+ const phases=['prepared','images-preserved','built','stopped','backed-up','configured','database-ready','database-transferred','migrated','app-state-checked','app-state-migrated','app-state-verified','healthy','complete'];
  const done=phase=>phases.indexOf(journal.phase)>=phases.indexOf(phase);
  const mark=phase=>{journal.phase=phase;if(phase==='complete')journal.image=containers(current.project).find(c=>c.Config.Labels['com.docker.compose.service']==='app')?.Image;privateFile(journalFile,journal);console.log(JSON.stringify({upgrade:'progress',phase,backup:journal.backup}));};
  // A mutable image tag can discard the old image from a containerd store as
@@ -128,6 +128,19 @@ try {
  if(!done('migrated')){
   current.compose(['run','--rm','--no-deps','app','node','dist/src/sessions/identity-migration.mjs','migrate'],{capture:false});mark('migrated');
  }
+ // Every source writer remains stopped until both imports and their independent
+ // verification succeed. Each command is resumable; completed migration receipts
+ // prevent a later release from copying stale legacy objects over live SQL rows.
+ if(!done('app-state-checked')){
+  current.compose(['run','--rm','--no-deps','app','node','dist/src/state/migrate.mjs','check','--writers-stopped','--expect-existing'],{capture:false});mark('app-state-checked');
+ }
+ if(!done('app-state-migrated')){
+  current.compose(['run','--rm','--no-deps','app','node','dist/src/state/migrate.mjs','migrate','--writers-stopped','--expect-existing'],{capture:false});mark('app-state-migrated');
+ }
+ // Reverify on every resumed attempt before starting writers, including after a
+ // health-check failure. A stale journal is not proof the database still matches.
+ current.compose(['run','--rm','--no-deps','app','node','dist/src/state/migrate.mjs','verify','--writers-stopped','--expect-existing'],{capture:false});
+ if(!done('app-state-verified'))mark('app-state-verified');
  {
   current.compose(['up','-d','--wait','--wait-timeout','600','app','worker'],{capture:false});mark('healthy');
  }
@@ -140,7 +153,7 @@ try {
  } else mark('complete');
  if(!automatic||current.kind==='deploy')console.log(JSON.stringify({upgrade:'complete',project:current.project,target,backup:journal.backup}));
 } catch(error) {
- if(validatedJournal&&journal&&['stopped','backed-up','configured','database-ready','database-transferred','migrated','healthy'].includes(journal.phase)) {
+ if(validatedJournal&&journal&&['stopped','backed-up','configured','database-ready','database-transferred','migrated','app-state-checked','app-state-migrated','app-state-verified','healthy'].includes(journal.phase)) {
   try {
    const writers=containers(current.project).filter(c=>['app','worker'].includes(c.Config.Labels['com.docker.compose.service']));
    if(writers.length)docker(['stop',...writers.map(c=>c.Id)]);

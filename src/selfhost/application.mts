@@ -1,4 +1,5 @@
 import type {ReplicasIdentityKey} from '../identity/replicas.mjs';
+import type {ApplicationState} from '../state/types.mjs';
 import {createReplicasConnections} from '../identity/replicas-connections.mjs';
 import {replicasConnectionHandler} from '../identity/replicas-http.mjs';
 import type {EventIdentityStore} from '../sessions/types.mjs';
@@ -36,7 +37,6 @@ import {diagnosticRequest} from '../application/diagnostics.mjs';
 import {integrationRequest} from '../application/integration-http.mjs';
 import {securityHeaders,document} from '../application/presentation.mjs';
 import {authorizedBoard} from '../application/board.mjs';
-import {createBoardSearch} from '../board/search.mjs';
 import {createBoardHandler} from '../board/http.mjs';
 import {createOpenCrawlMcp} from '../mcp/server.mjs';
 import {createSessionSearch} from '../sessions/search.mjs';
@@ -52,6 +52,7 @@ import {errorInfo} from '../errors.mjs';
 import type {Log} from '../integrations/ports.mjs';
 type Store=ReturnType<typeof createObjectStore>;
 export interface SelfhostApplicationOptions {
+  state:ApplicationState;
   log?: Log;
   settings:SelfhostSettings;store:Store;eventIdentities?:EventIdentityStore;prefix:string;identity:LocalIdentity;
   integrations?:Integrations;providers?:ProviderCatalog;connectors?:ReturnType<typeof createConnectorResolver>;
@@ -65,12 +66,12 @@ export interface SelfhostApplicationOptions {
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,eventIdentities,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
+export function selfhostApplication({state,settings,store,eventIdentities,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
 }:SelfhostApplicationOptions) {
   const directory=identity.directory;
-  const replicas = createReplicasConnections({store,prefix,tenantId:settings.organizationId,
+  const replicas = createReplicasConnections({state,tenantId:settings.organizationId,
     verify:workloadIdentity?.verify ?? createReplicasVerifier({audience:settings.url,key:workloadIdentityKey}),
     isAdmin:async principal=>{
       if(principal.tenantId!==settings.organizationId)return false;
@@ -88,11 +89,11 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
   const credentialProxy=sourceCredentials?connectorProxyHandler(sourceCredentials):null;
   const admit=singleOrganizationIdentity(directory,settings.organizationId),resolve=singleOrganizationPrincipal(directory,settings.organizationId);
   const accounts=localAuth({identity,url:settings.url,organizationId:settings.organizationId,setupToken:settings.setupToken,member:async browser=>(await admit(browser)).status===200});
-  const credentials=createCaptureCredentials({store,prefix});
-  const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(store,prefix),credentials.revokeAll);
-  const onboarding=createOnboardingStatus({store,prefix,onSharedReady:principal=>replicas.confirmInstallation(principal),sharedInstallations:principal=>replicas.sharedInstallations(principal,settings.replicasBindings??[])}),observe=createOnboardingObserver(onboarding);
-  const values=valueReports({store,prefix});
-  const search=createSessionSearch({...settings.search,store,prefix});
+  const credentials=createCaptureCredentials({state});
+  const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(state),credentials.revokeAll);
+  const onboarding=createOnboardingStatus({state,onSharedReady:principal=>replicas.confirmInstallation(principal),sharedInstallations:principal=>replicas.sharedInstallations(principal,settings.replicasBindings??[])}),observe=createOnboardingObserver(onboarding);
+  const values=valueReports({state});
+  const search=createSessionSearch({...settings.search,state,store,prefix});
   async function authorize(principal:Principal,requested?:unknown) {
     if(principal?.tenantId!==settings.organizationId || principal.captureAccess!==undefined || requested!=null&&requested!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
     if(isWorkloadPrincipal(principal))return workloads.revalidate(principal,requested);
@@ -107,7 +108,7 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
     async search(p:Principal,input:unknown){await authorize(p);const result=await workspace.search(p,input);await authorize(p);return result;},
     async fetch(p:Principal,input:unknown){await authorize(p);const result=await workspace.fetch(p,input);await authorize(p);return result;},
   };
-  const board=authorizedBoard({store,prefix:prefix+'/board',authorize,search:createBoardSearch(settings.search),recentSessions:createRecentSessions({store,prefix,...settings.search})});
+  const board=authorizedBoard({state,authorize,recentSessions:createRecentSessions({state,store,prefix,...settings.search})});
   const identifyAgent=async(req:IncomingMessage)=>{const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];return isReplicasToken(token)?workloads.identify(token):identifyCli(req.headers.authorization,{capture:true});};
   const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});return identity.principal;};
   const query=createWorkspaceSearchHandler({search:authorizedSearch,authenticate});
@@ -119,7 +120,7 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
     const result=await workloads.identify(token);if(result.status===200)return result.principal;
     res.writeHead(result.status,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'invalid_workload'}));return null;
   },onConnectionTest:async p=>{await onboarding.mcpTest(p);},onAuthenticated:async(p,info)=>{await onboarding.mcp(p,info);}});
-  const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:scheduleSessionIndexing,onStored:observe.session}),authenticate:async req=>{
+  const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({state,store,eventIdentities,prefix,scheduleIndexing:scheduleSessionIndexing,onStored:observe.session}),authenticate:async req=>{
     const token=/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1];
     if(isReplicasToken(token)){const result=await workloads.identify(token);if(result.status!==200)throw Object.assign(new Error('Workload authentication required'),{status:result.status});return {...result.principal,captureAccess:'write'};}
     if(isCaptureCredential(token)) {
@@ -134,7 +135,7 @@ export function selfhostApplication({settings,store,eventIdentities,prefix,ident
     return principal;
   }});
   const guided=createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,smallJson,inviteBeforeSetup:true});
-  const library=createLibraryApi({sessions:createSessionLibrary({store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion}),memories:createMemoryLibrary({store,prefix,...settings.search})});
+  const library=createLibraryApi({sessions:createSessionLibrary({state,store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion}),memories:createMemoryLibrary({state,store,prefix,...settings.search})});
   const members=async(organizationId:string)=>{
     if(organizationId!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
     const result=await directory.userManagement.listOrganizationMemberships({organizationId,statuses:['active'],limit:100});

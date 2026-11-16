@@ -1,4 +1,5 @@
-import type {Principal, ObjectStore, SessionBatch} from './sessions/types.mjs';
+import type {ApplicationState} from './state/types.mjs';
+import type {Principal, SessionBatch} from './sessions/types.mjs';
 export interface OnboardingReceipt {observedAt: string; client?: string | null; harness?: string; state?: string}
 export type OnboardingKind = 'cli' | 'mcp' | 'mcpTest' | 'session' | 'history' | 'completed';
 export type OnboardingReceipts = Record<OnboardingKind, OnboardingReceipt | null> & {shared?: OnboardingReceipt & {id: string; name: string; owner: 'shared'}};
@@ -8,16 +9,15 @@ import {sessionScope} from './sessions/ingest.mjs';
 import {isSessionHarness} from './sessions/types.mjs';
 
 /** Durable per-user setup milestones, not a claim that credentials remain valid forever. */
-export function createOnboardingStatus({store, prefix = 'capture-v1', now = () => new Date(), sharedInstallations = () => [], onSharedReady}: {store: Pick<ObjectStore, 'put' | 'get'>; prefix?: string; now?: () => Date; sharedInstallations?: (principal: Principal) => readonly SharedInstallation[] | Promise<readonly SharedInstallation[]>; onSharedReady?: (principal: Principal) => Promise<void>}) {
-  if (!store?.put || !store?.get) throw new Error('Onboarding requires durable storage');
-  const key = (principal: Principal, kind: OnboardingKind) => `${prefix}/${sessionScope(principal)}/onboarding/${kind}.json`;
+export function createOnboardingStatus({state, now = () => new Date(), sharedInstallations = () => [], onSharedReady}: {state: ApplicationState; now?: () => Date; sharedInstallations?: (principal: Principal) => readonly SharedInstallation[] | Promise<readonly SharedInstallation[]>; onSharedReady?: (principal: Principal) => Promise<void>}) {
+  const repository=state.accounts.onboarding;
+  const readReceipt=(principal:Principal,kind:OnboardingKind)=>repository.read(sessionScope(principal),kind);
   async function record(principal: Principal, kind: OnboardingKind, details: Omit<Partial<OnboardingReceipt>, 'observedAt'> = {}) {
     const value = {observedAt: now().toISOString(), ...details};
-    await store.put(key(principal, kind), Buffer.from(JSON.stringify(value)), 'application/json');
+    await repository.write(sessionScope(principal),kind,value);
     if (onSharedReady && principal.owner?.kind === 'shared' && ['cli','mcpTest','session'].includes(kind)) {
       const receipts = await Promise.all((['cli','mcpTest','session'] as const).map(async item => {
-        const bytes = await store.get(key(principal,item));
-        return bytes ? JSON.parse(bytes.toString()) as OnboardingReceipt : null;
+        return readReceipt(principal,item);
       }));
       if (deriveOnboarding({cli:receipts[0],mcpTest:receipts[1],session:receipts[2]}).complete) await onSharedReady(principal);
     }
@@ -26,8 +26,8 @@ export function createOnboardingStatus({store, prefix = 'capture-v1', now = () =
   return {
     cli: (principal: Principal) => record(principal, 'cli'),
     async mcp(principal: Principal, clientInfo?: {name?: unknown}) {
-      const previous = !clientInfo ? await store.get(key(principal, 'mcp')) : null;
-      const client = clientInfo ? mcpClientName(clientInfo.name) : previous ? JSON.parse(previous.toString()).client : null;
+      const previous = !clientInfo ? await readReceipt(principal, 'mcp') : null;
+      const client = clientInfo ? mcpClientName(clientInfo.name) : previous?.client??null;
       return record(principal, 'mcp', {client});
     },
     mcpTest: (principal: Principal) => record(principal, 'mcpTest'),
@@ -49,14 +49,12 @@ export function createOnboardingStatus({store, prefix = 'capture-v1', now = () =
       sessionScope(principal);
       if (principal.captureAccess === 'write') throw Object.assign(new Error('Capture credentials cannot read onboarding status'), {status: 403});
       const values = await Promise.all((['cli','mcp','mcpTest','session','history','completed'] as const).map(async kind => {
-        const bytes = await store.get(key(principal, kind));
-        return bytes ? JSON.parse(bytes.toString()) : null;
+        return readReceipt(principal,kind);
       }));
       const status: OnboardingReceipts = {cli: values[0], mcp: values[1], mcpTest: values[2], session: values[3], history: values[4], completed: values[5]};
       for (const installation of (await sharedInstallations(principal)).filter(row => row.tenantId === principal.tenantId)) {
         const receipts = await Promise.all((['cli', 'mcpTest', 'session'] as const).map(async kind => {
-          const bytes = await store.get(key(installation, kind));
-          return bytes ? JSON.parse(bytes.toString()) as OnboardingReceipt : null;
+          return readReceipt(installation,kind);
         }));
         if (deriveOnboarding({cli: receipts[0], mcpTest: receipts[1], session: receipts[2]}).complete) {
           status.shared = {id: installation.id, name: installation.name, owner: 'shared', observedAt: receipts.map(receipt => receipt!.observedAt).sort().at(-1)!};

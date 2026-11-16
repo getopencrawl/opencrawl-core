@@ -29,20 +29,18 @@ function apiText(file: SlackFile,comments: Record<string, string>) {
 /** The source adapter supplies provider-neutral, authenticated request/download
  * operations. State and raw text stay in the scoped store, never workflow history.
  * Exactly one capture workflow may advance a connection's run at a time. */
-export function createSlackFileCapture({binding,store,request,download,checkActive=async()=>{},now=Date.now}: FileCaptureOptions) {
+export function createSlackFileCapture({binding,store,state:applicationState,request,download,checkActive=async()=>{},now=Date.now}: FileCaptureOptions) {
  validateBinding(binding);if(binding.provider!=='slack')invalidRecord('Slack source binding required');
+ if(!applicationState?.slackCapture)throw new Error('PostgreSQL Slack capture state is required');
  async function active(){validateBinding(binding);await checkActive(binding);}
  async function put(key: string,body: Uint8Array,type: string){await active();await store.put(key,body,type);}
  return {async step({runId,cutoff}: CaptureRun): Promise<CaptureStepResult> {
   if(!/^[A-Za-z0-9_-]{1,150}$/.test(runId||'')||!Number.isSafeInteger(cutoff)||cutoff<0)invalidRecord('Invalid source run');
   await active();
-  const stateKey=binding.rawPrefix+'capture/files-v1/'+runId+'/state.json';
-  const raw=await store.get(stateKey,{maxBytes:16*1024*1024});
-  const catalogKey=binding.rawPrefix+'capture/files-v1/catalog.json';
-  const catalogBytes=await store.get(catalogKey,{maxBytes:16*1024*1024});
-  const catalog: FileCatalog=catalogBytes?JSON.parse(catalogBytes.toString()) as FileCatalog:{scope:digest(binding),channels:[],files:{}};
+  const saved=await applicationState.slackCapture.readCheckpoint(binding,'files-v1',runId);let revision=saved?.revision??null;
+  const catalog: FileCatalog=await applicationState.slackCapture.readCatalog(binding,'files-v1')??{scope:digest(binding),channels:[],files:{}};
   if(catalog.scope!==digest(binding))invalidRecord('Capture catalog scope mismatch');
-  const state: FileCheckpoint=raw?JSON.parse(raw.toString()) as FileCheckpoint:{version:1,runId,cutoff,scope:digest(binding),channels:{},priorChannels:catalog.channels,files:Object.fromEntries(Object.entries(catalog.files).map(([id,channels])=>[id,{id,channels,comments:{},cursor:'',done:false}])),cursor:'',listed:false,nextDue:0,pages:0,emitted:0,errors:[]};
+  const state: FileCheckpoint=saved?.value??{version:1,runId,cutoff,scope:digest(binding),channels:{},priorChannels:catalog.channels,files:Object.fromEntries(Object.entries(catalog.files).map(([id,channels])=>[id,{id,channels,comments:{},cursor:'',done:false}])),cursor:'',listed:false,nextDue:0,pages:0,emitted:0,errors:[]};
   if(state.version!==1||state.runId!==runId||state.cutoff!==cutoff||state.scope!==digest(binding))invalidRecord('Capture checkpoint scope mismatch');
   // The catalog can be ahead of the checkpoint when publication succeeded but
   // the final state write failed. Never erase those already-published shares.
@@ -51,8 +49,8 @@ export function createSlackFileCapture({binding,store,request,download,checkActi
    const saved=state.files[id]||={id,channels:[],comments:{},cursor:'',done:false};
    saved.channels=[...new Set([...saved.channels,...channels])];
   }
-  const saveCatalog=async()=>{const catalog={scope:digest(binding),channels:[...new Set([...state.priorChannels,...Object.keys(state.channels)])],files:Object.fromEntries(Object.values(state.files).map(f=>[f.id,f.channels]))};await put(catalogKey,Buffer.from(JSON.stringify(catalog)),'application/json');};
-  const save=async()=>{await saveCatalog();const body=Buffer.from(JSON.stringify(state));if(body.length>16*1024*1024)invalidRecord('Capture checkpoint exceeds limit');await put(stateKey,body,'application/json');};
+  const saveCatalog=async()=>{const catalog={scope:digest(binding),channels:[...new Set([...state.priorChannels,...Object.keys(state.channels)])],files:Object.fromEntries(Object.values(state.files).map(f=>[f.id,f.channels]))};await active();await applicationState.slackCapture.mergeCatalog(binding,'files-v1',catalog);};
+  const save=async()=>{await saveCatalog();await active();revision=await applicationState.slackCapture.saveCheckpoint(binding,'files-v1',runId,state,revision);};
   const emit=async(stream: string,records: object[],observedAt: number)=>{
    if(!records.length)return;
    const body=Buffer.from(records.map(data=>JSON.stringify({_airbyte_extracted_at:observedAt,_airbyte_data:data})).join('\n')+'\n');
@@ -73,12 +71,15 @@ export function createSlackFileCapture({binding,store,request,download,checkActi
   const progress=cursorOwner&&pagination(()=>sourcePaginationProgress(cursorOwner.cursor===''?null:cursorOwner.cursor,cursorOwner.paginationProgress));
   // Reserve pacing durably before sending. A lost response or failed decode must
   // not make a Temporal retry send the same request inside the provider window.
+  const reservation=await applicationState.slackCapture.reserve(binding,method,now(),3500);
+  if(!reservation.reserved)return {done:false,waitMs:reservation.waitMs};
   state.nextDue=now()+3500;await save();await active();
   const response=await request(method,query);const data=response?.data;const observedAt=now();
   state.nextDue=observedAt+3500;
+  await applicationState.slackCapture.defer(binding,method,state.nextDue);
   if(response?.status===429||data?.error==='ratelimited') {
    const delay=Number(Object.entries(response.headers||{}).find(([k])=>k.toLowerCase()==='retry-after')?.[1]||60);
-   state.nextDue=observedAt+Math.max(65000,Number.isFinite(delay)?delay*1000:65000);await save();return {done:false,waitMs:state.nextDue-now()};
+   state.nextDue=observedAt+Math.max(65000,Number.isFinite(delay)?delay*1000:65000);await applicationState.slackCapture.defer(binding,method,state.nextDue);await save();return {done:false,waitMs:state.nextDue-now()};
   }
   if(response?.status>=500)throw new Error('Transient Slack source failure');
   if(response?.status!==200||data?.ok!==true) {

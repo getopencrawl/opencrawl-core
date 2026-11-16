@@ -1,3 +1,4 @@
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {digest,sessionScope} from '../dist/src/sessions/ingest.mjs';
 import {createSessionLibrary} from '../dist/src/sessions/library.mjs';
@@ -29,10 +30,10 @@ export function fixture() {
     if(url.pathname.endsWith('_refresh'))return Response.json({_shards:{failed:0}});
     throw Error('Unexpected request: '+url);
   }};
-  const ingest=createSessionIngest({store,prefix}), library=()=>createSessionLibrary(options), search=createSessionSearch(options);
+  const ingest=createSessionIngest(withTestState({store,prefix})), library=()=>createSessionLibrary(withTestState(options)), search=createSessionSearch(withTestState(options));
   const projection={identity:'deletion-test',ensureIndex:async()=>{},putDocuments:async items=>{for(const item of items)docs.set(item.id,item.document);},
     applySessionControl:async(p,key)=>{for(const [id,doc]of docs)if(doc.tenantId===p.tenantId&&doc.userId===p.userId&&doc.harness===key.harness&&doc.sessionId===key.sessionId)docs.delete(id);}};
-  const pipeline=()=>createSessionPipeline({store,prefix,search:projection,resolvePrincipal:async({batch})=>batch.owner});
+  const pipeline=()=>createSessionPipeline(withTestState({store,prefix,search:projection,resolvePrincipal:async({batch})=>batch.owner}));
   const upload=async value=>{const receipt=await ingest.putBatch(value.owner,value);const key=`${prefix}/${sessionScope(value.owner)}/${value.harness}/${digest(value.installationId)}/${digest(value.sessionId)}/${receipt.batchId}.json.gz`;await pipeline().processObject({key});return {key,receipt};};
   return {store,docs,ingest,library,search,projection,pipeline,upload,options,setSearchFailure:value=>searchFailure=value};
 }

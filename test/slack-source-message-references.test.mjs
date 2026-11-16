@@ -1,3 +1,4 @@
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gunzipSync} from 'node:zlib';
@@ -9,7 +10,7 @@ const ok=data=>({status:200,data:{ok:true,...data}});
 function setup(handler){
  const objects=new Map(),calls=[];let clock=1800000000000,active=true;
  const store={bucket:'fixture',get:async k=>objects.get(k),put:async(k,v)=>objects.set(k,Buffer.from(v))};
- const options={binding,store,now:()=>clock,checkActive:async()=>{if(!active)throw Error('revoked');},request:async(method,query)=>{calls.push({method,query});return handler(method,query);}};
+ const options=withTestState({binding,store,now:()=>clock,checkActive:async()=>{if(!active)throw Error('revoked');},request:async(method,query)=>{calls.push({method,query});return handler(method,query);}});
  return {objects,calls,store,options,restart:()=>createSlackMessageReferenceCapture(options),advance:(ms=70000)=>clock+=ms,revoke:()=>active=false};
 }
 const native=(method,q)=>method==='conversations.info'?ok({channel:{id:q.channel,is_private:false,is_archived:true}}):ok({messages:[{ts:q.oldest,...(q.ts?{thread_ts:q.ts}:{}),text:'Connect button',blocks:[{type:'section',text:{type:'mrkdwn',text:'Connect'}}]}]});
@@ -20,7 +21,7 @@ test('explicit roots and replies preserve native fallback and blocks through the
  assert.deepEqual(h.calls.map(c=>c.method),['conversations.info','conversations.history','conversations.info','conversations.replies']);
  assert.equal(h.calls[3].query.ts,'1.000001');assert.equal(h.calls[3].query.oldest,'2.000001');assert.equal(h.calls[3].query.latest,'2.000001');assert.equal(h.calls[3].query.inclusive,true);
  const keys=[...h.objects.keys()].filter(k=>k.includes('stream=canonical_messages/')),writes=[];
- const pipeline=createConnectorPipeline({binding,store:h.store,search:{identity:'fixture',putDocuments:async(_,__,docs)=>writes.push(...docs)}});
+ const pipeline=createConnectorPipeline(withTestState({binding,store:h.store,search:{identity:'fixture',putDocuments:async(_,__,docs)=>writes.push(...docs)}}));
  for(const key of keys){assert.equal(JSON.parse(gunzipSync(h.objects.get(key)))._airbyte_data.text,'Connect button');await pipeline.processObject({key});}
  assert.equal(writes.length,2);assert.ok(writes.every(d=>d.document.sourceAuthority===1&&d.document.text.includes('Connect button')));
  const before=h.calls.length;await h.restart().step(input);assert.equal(h.calls.length,before);

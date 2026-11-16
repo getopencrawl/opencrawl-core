@@ -1,3 +1,4 @@
+import {boardStateFixture} from './fixtures/board-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -8,21 +9,10 @@ import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/clien
 
 const alice={tenantId:'team-a',userId:'alice'},bob={tenantId:'team-b',userId:'bob'};
 const post=text=>({id:'same-retry-id',topic:'work',text});
-function storeFixture(){
-  const rows=new Map();let sequence=0,reads=0,writes=0;
-  return {get reads(){return reads;},get writes(){return writes;},
-    store:{
-      async readVersion(key){reads++;return rows.get(key)??{data:null,version:null};},
-      async compareAndSet(key,version,data){
-        if((rows.get(key)?.version??null)!==version)return false;
-        writes++;rows.set(key,{data:Buffer.from(data),version:String(++sequence)});return true;
-      },
-    }};
-}
-const scopedSearch={async search(_principal,messages){return {messages};}};
+async function storeFixture(t){const f=await boardStateFixture(t);let reads=0,writes=0;const repository=f.repository;return {...f,get reads(){return reads;},get writes(){return writes;},state:{...f.state,board:{...repository,async read(...args){reads++;return repository.read(...args);},async transaction(...args){writes++;return repository.transaction(...args);},async search(...args){reads++;return repository.search(...args);}}}};}
 
-test('board operations derive scope from authentication and reject foreign or absent authority',async()=>{
-  const f=storeFixture(),board=createBoard({store:f.store,prefix:'board',search:scopedSearch});
+test('board operations derive scope from authentication and reject foreign or absent authority',async t=>{
+  const f=await storeFixture(t),board=createBoard({state:f.state});
   for(const [principal,text]of [[alice,'Team A content'],[bob,'Team B content']]){
     await board.sync(principal,{agent:'same-agent',posts:[post(text)]});
     assert.equal((await board.fetch(principal,{id:'message:1'})).text,text);
@@ -40,9 +30,9 @@ test('board operations derive scope from authentication and reject foreign or ab
   assert.deepEqual({reads:f.reads,writes:f.writes},before);
 });
 
-test('deployment-authorized workspace selection remains available alongside authenticated defaults',async()=>{
-  const f=storeFixture(),memberships=new Set(['team-a','team-b']),finalScopes=[];
-  const board=authorizedBoard({store:f.store,prefix:'board',search:scopedSearch,
+test('deployment-authorized workspace selection remains available alongside authenticated defaults',async t=>{
+  const f=await storeFixture(t),memberships=new Set(['team-a','team-b']),finalScopes=[];
+  const board=authorizedBoard({state:f.state,
     admit:async(principal,requested)=>{
       const tenantId=requested??principal.tenantId;
       if(principal.userId!=='alice'||!memberships.has(tenantId))throw Object.assign(Error('Membership required'),{status:403});
@@ -68,9 +58,9 @@ test('deployment-authorized workspace selection remains available alongside auth
   assert.deepEqual({reads:f.reads,writes:f.writes},before);
 });
 
-test('omitting workspace still rechecks revocation after reading content',async()=>{
-  const f=storeFixture();let active=true,revokeOnRead=false;
-  const board=authorizedBoard({prefix:'board',store:{...f.store,async readVersion(key){const value=await f.store.readVersion(key);if(revokeOnRead)active=false;return value;}},
+test('omitting workspace still rechecks revocation after reading content',async t=>{
+  const f=await storeFixture(t);let active=true,revokeOnRead=false;
+  const board=authorizedBoard({state:{...f.state,board:{...f.state.board,async read(...args){const value=await f.state.board.read(...args);if(revokeOnRead)active=false;return value;}}},
     admit:async principal=>principal,
     authorize:async principal=>{if(!active)throw Object.assign(Error('Membership revoked'),{status:403});return principal;},
   });
@@ -80,14 +70,14 @@ test('omitting workspace still rechecks revocation after reading content',async(
 });
 
 test('real MCP tools omit workspace, isolate identical references and reject revoked tokens',async t=>{
-  const f=storeFixture(),board=createBoard({store:f.store,prefix:'board',search:scopedSearch});
+  const f=await storeFixture(t),board=createBoard({state:f.state});
   let handler,revoked=false;
   const server=createServer((req,res)=>handler(req,res));
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin=`http://127.0.0.1:${server.address().port}`;
   handler=createOpenCrawlMcp({origin,board,authenticate:async req=>revoked?null:req.headers.authorization==='Bearer alice'?alice:bob});
   const clients=[];
-  t.after(async()=>{await Promise.all(clients.map(client=>client.close()));await handler.close();await new Promise(resolve=>server.close(resolve));});
+  t.after(async t=>{await Promise.all(clients.map(client=>client.close()));await handler.close();await new Promise(resolve=>server.close(resolve));});
   for(const user of ['alice','bob']){
     const client=new Client({name:'workspace-omission',version:'1'});
     await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers:{authorization:'Bearer '+user}}}));clients.push(client);

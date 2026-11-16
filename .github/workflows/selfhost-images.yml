@@ -1,81 +1,49 @@
-name: Self-host images
+name: Staging Helm candidate images
 on:
-  workflow_dispatch:
   push:
-    branches: [main, codex/helm-v1]
-    paths: ['src/**', 'web/**', 'web-v2/**', 'connectors/**', 'deploy/**', 'tools/**', 'package*.json', 'tsconfig.json', '.github/workflows/selfhost-images.yml']
+    branches: [codex/helm-v1-eks-candidate]
+  workflow_dispatch:
 permissions:
   contents: read
-  packages: write
+  id-token: write
 concurrency:
-  group: selfhost-images-${{ github.sha }}
+  group: staging-helm-candidate-${{ github.sha }}
   cancel-in-progress: false
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {arch: amd64, runner: blacksmith-4vcpu-ubuntu-2404}
-          - {arch: arm64, runner: blacksmith-4vcpu-ubuntu-2404-arm}
-    runs-on: ${{ matrix.runner }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build the shared API and worker runtime
+          role-to-assume: arn:aws:iam::017535066453:role/opencrawl-helm-validation-images-20261115
+          aws-region: us-east-1
+          allowed-account-ids: '017535066453'
+          role-duration-seconds: 3600
+      - name: Sign in to disposable staging ECR
+        run: aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 017535066453.dkr.ecr.us-east-1.amazonaws.com
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Build cleared persistence and Helm runtime
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           file: deploy/Dockerfile
-          platforms: linux/${{ matrix.arch }}
+          platforms: linux/amd64
           push: true
-          tags: ghcr.io/getopencrawl/opencrawl-core:sha-${{ github.sha }}-${{ matrix.arch }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/getopencrawl/opencrawl-core
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.licenses=Apache-2.0
+          tags: 017535066453.dkr.ecr.us-east-1.amazonaws.com/opencrawl-helm-validation/runtime:sha-${{ github.sha }}
           build-args: REVISION=${{ github.sha }}
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=runtime-${{ matrix.arch }}
-          cache-to: type=gha,scope=runtime-${{ matrix.arch }},mode=max
-      - name: Build the GitHub Airbyte connector
+          cache-from: type=gha,scope=runtime-amd64
+          cache-to: type=gha,scope=helm-validation-runtime,mode=max
+      - name: Build matching GitHub connector
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: connectors/github
-          platforms: linux/${{ matrix.arch }}
+          platforms: linux/amd64
           push: true
-          tags: ghcr.io/getopencrawl/source-github:sha-${{ github.sha }}-${{ matrix.arch }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/getopencrawl/opencrawl-core
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.licenses=Apache-2.0
+          tags: 017535066453.dkr.ecr.us-east-1.amazonaws.com/opencrawl-helm-validation/github:sha-${{ github.sha }}
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=github-${{ matrix.arch }}
-          cache-to: type=gha,scope=github-${{ matrix.arch }},mode=max
-  manifest:
-    needs: build
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish immutable multi-architecture image references
-        env:
-          REVISION: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          for image in opencrawl-core source-github; do
-            ref="ghcr.io/getopencrawl/$image:sha-$REVISION"
-            docker buildx imagetools create --tag "$ref" "$ref-amd64" "$ref-arm64"
-            docker buildx imagetools inspect "$ref" >> "$GITHUB_STEP_SUMMARY"
-          done
+          cache-from: type=gha,scope=github-amd64
+          cache-to: type=gha,scope=helm-validation-github,mode=max

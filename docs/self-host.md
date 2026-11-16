@@ -9,16 +9,18 @@ deployment path.
 
 The default Docker Compose deployment runs the full application for one local
 organization with multiple users. Better Auth stores accounts, password hashes,
-sessions and OAuth grants in your installation’s SQLite database. You operate
+sessions and OAuth grants in your installation’s PostgreSQL application database. You operate
 Airbyte, connector credentials, and infrastructure. It does not contact an
 OpenCrawl hosted service.
 
 This branch is a candidate. [Acceptance status](seam-acceptance.md) distinguishes
 unit/regression checks from a clean-server install and real provider verification.
 
-Existing installations: follow the [PostgreSQL identity upgrade](event-identity-migration.md)
+Existing installations: follow the [PostgreSQL application-state upgrade](app-state-migration.md)
 before deploying this version. The application database is included in Compose
-and cold backups; capture event identities no longer have a session-size ceiling.
+and cold backups. Mutable state, including board history, privacy controls and
+connector progress, lives in PostgreSQL. Object storage retains immutable source
+captures and attachments. Temporal runs durable capture and connector workflows.
 
 ## Configure your installation
 

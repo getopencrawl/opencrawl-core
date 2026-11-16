@@ -11,6 +11,8 @@ if(process.env.CI!=='true')throw new Error('Run this destructive acceptance harn
 const root=process.cwd(),scratch=join(process.env.RUNNER_TEMP,'full-upgrade');mkdirSync(scratch,{recursive:true});
 const target=process.env.UPGRADE_TARGET,old=process.env.UPGRADE_FROM,kind=process.env.UPGRADE_INSTALLATION||'deploy',sqlite=process.env.UPGRADE_SQLITE==='true',airbyte=process.env.UPGRADE_AIRBYTE==='true';
 const large=kind==='deploy'&&!sqlite;
+const legacyCeiling=old==='831eb9a89b34c2a2e04002f754f3d1e1e8e21bb6';
+const stateFixture=old==='fc748cbcba9da2c9830d842b38a2fcc19c340bd7';
 assert.match(target,/^[a-f0-9]{40}$/);assert.match(old,/^[a-f0-9]{40}$/);
 const env={...process.env,OPENCRAWL_AIRBYTE_ENABLED:String(airbyte),OPENCRAWL_URL:'http://localhost:8092',OPENCRAWL_IMAGE_TAG:'upgrade-ci'};
 function run(command,args,options={}){const r=spawnSync(command,args,{cwd:root,env,encoding:'utf8',stdio:options.capture?'pipe':'inherit',...options,maxBuffer:32*1024*1024});if(!options.failure)assert.equal(r.status,0,`${command} ${args[0]} failed: ${r.stderr||''}`);return options.failure?r:r.stdout?.trim()||'';}
@@ -18,6 +20,7 @@ const docker=(args,options)=>run('docker',args,options);
 const seedDir=join(scratch,'seed'),fixtureDir=join(scratch,'fixture');mkdirSync(seedDir);mkdirSync(fixtureDir);
 copyFileSync(join(root,'dev/seed.mts'),join(fixtureDir,'seed.mts'));
 copyFileSync(join(root,'deploy/test-full-large-session.mjs'),join(fixtureDir,'large-upgrade.mjs'));
+copyFileSync(join(root,'deploy/test-full-app-state.mjs'),join(fixtureDir,'state-upgrade.mjs'));
 run('git',['fetch','--depth','1','origin',old]);run('git',['checkout','--detach',old]);
 let project='ocdev-0123456789ab',envFile=join(root,'deploy/.env'),override;
 if(kind==='deploy'){
@@ -42,7 +45,7 @@ const verify=(readOnly=false)=>{
  const actual=fixture?JSON.parse(docker(['inspect',fixture],{capture:true}))[0].NetworkSettings.Networks[project+'_default'].IPAddress:null;
  return compose(['run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(airbyte?['-e','OPENCRAWL_UPGRADE_FRESH_SYNC=true','-e','OPENCRAWL_UPGRADE_FIXTURE_ACTUAL_URL=http://'+actual+':8080']:[]),...(readOnly&&!airbyte?['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']:[]),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts'])};
 verify();
-const largeSession=(phase,recovery)=>{if(!large)return;const args=['run','--rm','--no-deps','--user','root','-e','UPGRADE_LARGE_PHASE='+phase,'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','dev/large-upgrade.mjs'];if(recovery)docker([...recovery,...args]);else compose(args);};
+const largeSession=(phase,recovery)=>{if(!large)return;const args=['run','--rm','--no-deps','--user','root','-e','UPGRADE_LARGE_PHASE='+phase,'-e','UPGRADE_LEGACY_CEILING='+legacyCeiling,'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','dev/large-upgrade.mjs'];if(recovery)docker([...recovery,...args]);else compose(args);};
 largeSession('before');
 // Keep a reservation without a raw upload and a deletion fence in the old PG
 // layout. A migration that copies only accepted session batches would lose them.
@@ -68,6 +71,16 @@ const checkIdentities=()=>{
  assert.deepEqual(result.role,{rolsuper:false,rolcreatedb:false,rolcreaterole:false});
  if(!previousIdentities.legacy){assert.equal(result.identity,previousIdentities.identity);assert.deepEqual(result.reserved,previousIdentities.reserved);assert.deepEqual(result.deleted,previousIdentities.deleted);}
 };
+const applicationState=(phase,recovery)=>{
+ if(!stateFixture)return;
+ const args=['run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true','-e','UPGRADE_APP_STATE_PHASE='+phase,'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','dev/state-upgrade.mjs'];
+ return recovery?docker([...recovery,...args]):compose(args);
+};
+if(stateFixture){
+ compose(['stop','app','worker']);
+ applicationState('seed');
+ compose(['up','-d','--wait','--wait-timeout','600','app','worker']);
+}
 const originalEnv=readFileSync(envFile),originalInput=readFileSync(join(seedDir,'seed-input.json'));
 const originalFixture=readFileSync(join(seedDir,'upgrade-fixture.json'));
 const oldApp=compose(['ps','-q','app'],{capture:true});
@@ -111,6 +124,16 @@ const journalFile=kind==='dev'?'.opencrawl-dev/upgrade.json':'deploy/.upgrade/up
 let journal=JSON.parse(readFileSync(journalFile,'utf8'));assert.equal(journal.phase,'database-transferred');
 const backup=journal.backup,manifest=readFileSync(join(backup,'manifest.json'));
 assert.equal(compose(['ps','--status','running','-q','app','worker'],{capture:true}),'');
+if(stateFixture){
+ // Stop after the real state import, before the verification/startup gate. The
+ // offline reader can prove pending state before workers are allowed to act.
+ writeFileSync(join(bin,'docker'),'#!/usr/bin/env node\nconst a=process.argv.slice(2);if(a.includes("dist/src/state/migrate.mjs")&&a.includes("verify"))process.exit(98);const r=require("node:child_process").spawnSync('+JSON.stringify(realDocker)+',a,{stdio:"inherit"});process.exit(r.status??1);\n',{mode:0o700});
+ const stateFailed=run(process.execPath,['deploy/upgrade.mjs','--installation',kind],{failure:true,env:{...env,PATH:bin+':'+env.PATH}});assert.notEqual(stateFailed.status,0);
+ journal=JSON.parse(readFileSync(journalFile,'utf8'));assert.equal(journal.phase,'app-state-migrated');
+ assert.ok(readFileSync(join(backup,'manifest.json')).equals(manifest));
+ assert.equal(compose(['ps','--status','running','-q','app','worker'],{capture:true}),'');
+ applicationState('verify');
+}
 // The operator's usual startup command must resume this very backup.
 run(kind==='dev'?'bash':'sh',[kind==='dev'?'dev/up':'deploy/up.sh',...(!airbyte?['--no-airbyte']:[])]);
 assert.ok(readFileSync(join(backup,'manifest.json')).equals(manifest));
@@ -156,9 +179,10 @@ if(airbyte){
 }
 // Verify the exact saved old images without rebuilding or changing checkout.
 // A new Airbyte sync must reach the restored fixture and S3 addresses.
+applicationState('restored',recoveryChecks);
 docker([...recoveryChecks,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(airbyte?['-e','OPENCRAWL_UPGRADE_FRESH_SYNC=true']:['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
 largeSession('restored',recoveryChecks);
-const report={ok:true,imageRecovery,historicalDeploySingleImagePrebuild:kind==='deploy',largeSessionCeilingReproducedAndRemoved:large,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,freshAirbyteSyncAfterUpgradeAndRestore:airbyte,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
+const report={ok:true,imageRecovery,historicalDeploySingleImagePrebuild:kind==='deploy',largeSessionCeilingReproducedAndRemoved:large&&legacyCeiling,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,freshAirbyteSyncAfterUpgradeAndRestore:airbyte,applicationStateFixture:stateFixture?{sourceObjects:JSON.parse(readFileSync(join(seedDir,'app-state-fixture.json'))).objects.length,sourceReceipts:true,retainedSources:true,privacyAndFences:true,pendingInvitation:true,matchedRestore:true}:null,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};
 writeFileSync(join(process.env.RUNNER_TEMP,'full-upgrade-receipt.json'),JSON.stringify(report,null,2));
 docker([...recovery,'down','--volumes','--remove-orphans']);
 if(airbyte)run('bash',['dev/up','reset','--yes']);

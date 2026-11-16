@@ -1,3 +1,4 @@
+import type {IntegrationCommandReference, IntegrationCommandOperation, IntegrationCommandSecret} from './temporal/types.mjs';
 import type {Readable} from 'node:stream';
 import type {IntegrationRecord, UpdateOptions, Provider, ProxyRequest, ProxyResponse, ProviderData} from './types.mjs';
 export type Fetch = typeof globalThis.fetch;
@@ -8,6 +9,8 @@ export interface IntegrationRegistry {
   listTenant(tenantId: string): Promise<IntegrationRecord[]>;
   get(tenantId: string, userId: string, integrationId: string): Promise<IntegrationRecord | null>;
   create(record: IntegrationRecord): Promise<IntegrationRecord>;
+  createWithLifecycle?(record: IntegrationRecord, operation: IntegrationCommandOperation, secret?: IntegrationCommandSecret, requestedBy?: string): Promise<IntegrationCommandReference>;
+  requestLifecycle?(record: Pick<IntegrationRecord, 'tenantId' | 'userId' | 'integrationId'>, operation: IntegrationCommandOperation, secret?: IntegrationCommandSecret, requestedBy?: string): Promise<IntegrationCommandReference>;
   update(record: Pick<IntegrationRecord, 'tenantId' | 'userId' | 'integrationId'>, fields: Partial<IntegrationRecord>, options?: UpdateOptions): Promise<IntegrationRecord>;
 }
 /** The runtime supplies existing storage, scoped to the admitted organization. */

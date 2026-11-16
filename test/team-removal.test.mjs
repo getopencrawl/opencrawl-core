@@ -1,3 +1,4 @@
+import {stateFor} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {teamService} from '../dist/src/identity/team.mjs';
@@ -12,7 +13,7 @@ function fixture(){
   deleteOrganizationMembership:async id=>{deleted.push(id);members.delete(id);},
   updateOrganizationMembership:async(id,{roleSlug})=>{const m=members.get(id);m.role={slug:roleSlug};return m;},
  }};
- const service=teamService(directory,roleWriteGuard(store,'access'),async principal=>{revoked.push(principal);});
+ const service=teamService(directory,roleWriteGuard(stateFor(store)),async principal=>{revoked.push(principal);});
  return {members,deleted,revoked,directory,store,service};
 }
 test('member removal resolves its target only within the trusted organization and revokes its capture delegations',async()=>{

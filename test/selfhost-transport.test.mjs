@@ -1,9 +1,10 @@
+import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {createServer,Agent,request} from 'node:http';
-import {randomBytes} from 'node:crypto';
+import {randomBytes,randomUUID} from 'node:crypto';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -20,6 +21,8 @@ test('the self-host entrypoint outlives proxy idle timeouts without widening req
     storage.closeAllConnections();await new Promise(resolve=>storage.close(resolve));
     await rm(dir,{recursive:true,force:true});
   });
+  const sourceIdentity={version:1,bucket:'transport-test',prefix:'sessions/self-hosted/v1',organizationId:'org_transporttest'},database=await applicationDatabaseFixture(t,{sourceIdentity});
+  await database.pool.query("INSERT INTO opencrawl_application_installations(namespace,source_identity,migration_id,state,verified_at) VALUES($1,$2::jsonb,$3,'ready',now())",[database.namespace,JSON.stringify(sourceIdentity),randomUUID()]);
   await new Promise(resolve=>storage.listen(0,'127.0.0.1',resolve));
   const code=`
     import {startSelfhost} from ${JSON.stringify(new URL('../dist/src/selfhost/server.mjs',import.meta.url).href)};
@@ -28,10 +31,9 @@ test('the self-host entrypoint outlives proxy idle timeouts without widening req
       buffer:server.keepAliveTimeoutBuffer,headersTimeout:server.headersTimeout,requestTimeout:server.requestTimeout});
   `;
   child=spawn(process.execPath,['--input-type=module','--eval',code],{
-    env:{OPENCRAWL_DATABASE_URL:process.env.OPENCRAWL_TEST_POSTGRES_URL,PATH:process.env.PATH,HOST:'127.0.0.1',PORT:'0',OPENCRAWL_URL:'http://localhost:8092',
+    env:{OPENCRAWL_DATABASE_URL:postgresUrl,OPENCRAWL_APP_STATE_NAMESPACE:database.namespace,TEMPORAL_ADDRESS:'127.0.0.1:1',TEMPORAL_NAMESPACE:'transport-fixture',PATH:process.env.PATH,HOST:'127.0.0.1',PORT:'0',OPENCRAWL_URL:'http://localhost:8092',
       OPENCRAWL_ORGANIZATION_ID:'org_transporttest',OPENCRAWL_AUTH_SECRET:randomBytes(32).toString('hex'),
-      OPENCRAWL_SETUP_TOKEN:randomBytes(32).toString('hex'),OPENCRAWL_IDENTITY_PATH:join(dir,'identity.sqlite'),
-      OPENCRAWL_REGISTRY_PATH:join(dir,'registry.sqlite'),OPENCRAWL_AIRBYTE_ENABLED:'false',
+      OPENCRAWL_SETUP_TOKEN:randomBytes(32).toString('hex'),OPENCRAWL_AIRBYTE_ENABLED:'false',
       OPENCRAWL_OPENSEARCH_URL:'http://127.0.0.1:1',OPENCRAWL_LANDING_S3_BUCKET:'transport-test',
       OPENCRAWL_LANDING_S3_ENDPOINT:'http://127.0.0.1:'+storage.address().port,
       OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test-key',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test-secret'},

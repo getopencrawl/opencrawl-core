@@ -11,15 +11,16 @@ replies. Private channels and DMs are outside this contract.
 Use `createSlackMessageCapture` from `@getopencrawl/opencrawl-core/connectors/slack-source-messages`
 with an explicit validated binding, scoped object store, and a workspace-verified
 read adapter. The customer-operated HTTP adapter verifies `auth.test`. The
-standalone runner accepts the same config as [file capture](slack-file-capture.md):
+Temporal submitter accepts the same reference/cutoff config as [file capture](slack-file-capture.md):
 
 ```sh
 node dist/src/connectors/slack-source-standalone.mjs config.json stable-run-id messages
 ```
 
 The config must retain a stable epoch-millisecond `cutoff` across restarts.
-Capture writes exact API pages and cursor checkpoints under
-`capture/messages-v1/<run-id>/` beneath the bound raw prefix. Normalized input
+Capture writes immutable exact API pages under
+`capture/messages-v1/<run-id>/` beneath the bound raw prefix. Mutable cursor and
+pacing checkpoints live in PostgreSQL. Normalized input
 lands as immutable gzip Airbyte-shaped envelopes in `stream=canonical_messages/`;
 the channel ID comes from the enumerated/requested public channel. No source text
 or credentials belong in workflow arguments, results or history.
@@ -50,7 +51,7 @@ always wins. This policy can delay an edit seen only in search until the next
 canonical pass; operate and monitor capture accordingly. Never choose the longest
 body as an edit-ordering rule.
 
-Message capture also keeps `capture/messages-v1/catalog.json`, recording public
+Message capture also keeps a PostgreSQL catalog, recording public
 channel identities before publishing them. After a complete channel enumeration,
 it emits non-public metadata for previously observed channels that are no longer
 returned; a partial enumeration never does so. This works without file capture.
@@ -79,7 +80,7 @@ catalog remembers observations; it does not grant access.
 import {seedSlackSourceCatalog} from '@getopencrawl/opencrawl-core/connectors/slack-source-messages';
 
 await seedSlackSourceCatalog({
-  binding, store,
+  state, binding, store,
   channelIds, // Native IDs from channel sourceId/channel_id metadata.
   fileShares, // [{fileId, channelId}] from file manifests or raw file records.
   checkActive, // Revalidate the operator-authorized binding before each write.
@@ -93,7 +94,7 @@ accepts up to 100,000 input channel IDs and 100,000 input share pairs; each cata
 is bounded at 16 MiB. It never deletes source/index data or marks a resource
 public. Retry the same operation after an interrupted write: already committed
 identities are preserved. Do not run it concurrently with capture, because the
-two catalog writes are not a cross-object transaction.
+two catalog updates are separate operations.
 
 Resume capture and indexing after seeding. Verify that a complete current channel
 enumeration has landed, indexed metadata agrees with current visibility, and
@@ -122,7 +123,7 @@ through history or replies. The workspace-verified adapter must support
 `conversations.info`. Capture preserves native fallback text and blocks, including
 accessibility text that a search connector's synthesized fallback may omit.
 
-Checkpoints and exact API pages live under
+Checkpoints live in PostgreSQL. Immutable exact API pages live under
 `capture/message-references-v1/<run-id>/`. A run ID binds the ordered reference
 set and authorized scope; use the same inputs to resume. Raw envelopes land in
 `stream=canonical_messages/` and use the existing normalizer, source authority,

@@ -1,3 +1,4 @@
+import type {ApplicationState} from '../state/types.mjs';
 import type {Principal, SourceOptions, SessionBatch, Attachment, SessionEvent} from './types.mjs';
 import {parseJson} from './types.mjs';
 import type {DocumentItem} from '../search/types.mjs';
@@ -114,7 +115,7 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
  * The runtime supplies fixed self-host identity or resolves server-authenticated
  * stored owners. Workflow arguments never select a bucket, index, or principal.
  */
-export function createSessionPipeline({store,eventIdentities,prefix,search,principal,resolvePrincipal,jobId='sessions-v1',checkActive=async()=>{}}: SessionPipelineOptions) {
+export function createSessionPipeline({state,store,eventIdentities,prefix,search,principal,resolvePrincipal,jobId='sessions-v1',checkActive=async()=>{}}: SessionPipelineOptions) {
   if(Boolean(principal)===Boolean(resolvePrincipal))throw new Error('Supply one fixed single-tenant principal or a trusted scope resolver');
   if(principal)sessionScope(principal);
   if(!prefix||prefix.split('/').some(p=>!p||p==='.'||p==='..'))throw new Error('Invalid session prefix');
@@ -126,10 +127,10 @@ export function createSessionPipeline({store,eventIdentities,prefix,search,princ
     if(typeof key!=='string'||!key.startsWith(sourcePrefix)||!(sourceBatchIdentity(prefix,key)||memorySourceIdentity(prefix,key)))throw Object.assign(new Error('Session object outside authorized source'),{permanent:true});
   }
   const receiptKey=(key: string)=>statePrefix+'/batches/'+digest(key)+'.json';
-  const controls=createControls({store,prefix});
+  const controls=createControls({state});
   async function indexed(key: string) {
-    const receipt=await store.get(receiptKey(key));
-    return Boolean(receipt&&parseJson<{status: string}>(receipt).status==='indexed');
+    const receipt=await state.indexingReceipts.read(receiptKey(key));
+    return receipt?.status==='indexed';
   }
   return {
     async listPage({cursor=null}: {cursor?: string | null}={}) {
@@ -174,22 +175,22 @@ export function createSessionPipeline({store,eventIdentities,prefix,search,princ
         const snapshot=batch as unknown as StoredMemorySnapshot;
         const count=await search.memories.putSnapshot(snapshot,scope,key,{controls:await memoryControls(controls,scope,snapshot)});
         await checkActive();
-        await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:count,indexedAt:new Date().toISOString()})),'application/json');
+        await state.indexingReceipts.put(stateKey,{status:'indexed',sourceKey:key,documents:count,indexedAt:new Date().toISOString()});
         return {records:count,skipped:false};
       }
       // Owner controls apply before any write: deleted sessions are never indexed
       // again, and private sessions are written private.
       const control=await controls.read(scope,'sessions',batch.harness,batch.sessionId);
-      const barrier=sessionWriteBarrier(store,prefix,scope,batch.harness,batch.sessionId);
+      const barrier=sessionWriteBarrier(state,prefix,scope,batch.harness,batch.sessionId);
       if(control?.deletedAt || (await barrier.inspect()).closed) {
-        await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:0,deleted:true,indexedAt:new Date().toISOString()})),'application/json');
+        await state.indexingReceipts.put(stateKey,{status:'indexed',sourceKey:key,documents:0,deleted:true,indexedAt:new Date().toISOString()});
         return {records:0,skipped:true};
       }
       const docs=batchDocuments({prefix,key,batch,principal:scope,visibility:control?.visibility});
       // Check the whole event before any chunk write. Receipt order, shorter
       // payloads and concurrent activities must never assemble mixed revisions.
       try {
-      await checkActive();await reserveSessionEvents({eventIdentities,store:sessionWriteStore(store,prefix,scope,batch.harness,batch.sessionId),prefix,principal:scope,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
+      await checkActive();await reserveSessionEvents({eventIdentities,store:sessionWriteStore(store,state,prefix,scope,batch.harness,batch.sessionId),prefix,principal:scope,harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId,events:batch.events});
       await checkActive();await search.ensureIndex(scope);
       await barrier.run('search-write',()=>search.putDocuments(docs,scope),{target:digest(key)});
       } catch(error) {if((await barrier.inspect()).closed)return {records:0,skipped:true};throw error;}
@@ -198,7 +199,7 @@ export function createSessionPipeline({store,eventIdentities,prefix,search,princ
       const after=await controls.read(scope,'sessions',batch.harness,batch.sessionId);
       if(after?.deletedAt||(after?.visibility??'team')!==(control?.visibility??'team'))await search.applySessionControl(scope,{harness:batch.harness,sessionId:batch.sessionId},after!);
       await checkActive();
-      await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:docs.length,indexedAt:new Date().toISOString()})),'application/json');
+      await state.indexingReceipts.put(stateKey,{status:'indexed',sourceKey:key,documents:docs.length,indexedAt:new Date().toISOString()});
       return {records:docs.length,skipped:false};
     },
   };
