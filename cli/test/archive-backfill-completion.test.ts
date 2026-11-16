@@ -1,3 +1,4 @@
+import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
@@ -12,7 +13,7 @@ import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 
 test('a compressed history with an unfinished JSONL record fails progress and remains recoverable',async()=>{
  const saved={...process.env},dir=mkdtempSync(join(tmpdir(),'opencrawl-archive-completion-'));
- const owner={tenantId:'test',userId:'importer'},ingest=createSessionIngest({store:createLocalSessionStore(join(dir,'objects'))});
+ const owner={tenantId:'test',userId:'importer'},ingest=createSessionIngest(withTestState({store:createLocalSessionStore(join(dir,'objects'))}));
  const batches:any[]=[],progress:BackfillProgress[]=[];
  const server=createServer(async(req,res)=>{
   const send=(status:number,body:unknown)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(body));};

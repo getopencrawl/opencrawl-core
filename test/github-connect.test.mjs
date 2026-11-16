@@ -29,6 +29,12 @@ function fixture({installations = [installation(42)], repositories = [{id: 7, fu
     await registry.update(record,{status:'provisioning',lifecycleCommandId:commandId,lifecycleOperation:operation},{whenStatus:['connecting']});
     return {environment:'selfhost',tenantId:record.tenantId,userId:record.userId,integrationId:record.integrationId,commandId};
   };
+  registry.abandonWithLifecycle=async(record,requestedBy)=>{
+    assert.equal(requestedBy,owner.userId);
+    const commandId='abandon_1234567890123456';
+    await registry.update(record,{status:'abandoned',lifecycleCommandId:commandId,lifecycleOperation:'disconnect'},{whenStatus:['connecting']});
+    return {environment:'selfhost',tenantId:record.tenantId,userId:record.userId,integrationId:record.integrationId,commandId};
+  };
   const github = {
     authorizeUrl: (state, redirect_uri) => 'https://github.com/login/oauth/authorize?' + new URLSearchParams({client_id:'app-client', state, redirect_uri}),
     installUrl: state => 'https://github.com/apps/owned-app/installations/new?' + new URLSearchParams({state}),

@@ -48,3 +48,10 @@ test('mismatched final readback rolls back earlier lifecycle commands and never 
  await assert.rejects(f.database.transaction(client=>finalizeIntegrationLifecycles({...f.options,client})),/differs/);assert.equal((await f.commands.listPending({})).commands.length,0);assert.deepEqual((await f.read())[0],f.records[0]);
  await assert.rejects(f.database.transaction(client=>finalizeIntegrationLifecycles({...f.options,organizationId:'org_other',client})),/another installation/);
 });
+
+test('legacy abandoned grants and uncertain consent requests become cleanup commands without occupying a provider slot',{skip:!postgresUrl},async t=>{
+ const intent={resource:'link',attemptId:'a'.repeat(32),requestedAt:'2026-01-01',callbackUrl:'https://self.example/callback'};
+ const f=await fixture(t,[{status:'abandoned',provider:'notion',connectedAccountId:'grant'},{status:'abandoned',provider:'notion',oauthIntent:intent},{status:'abandoned'}]);
+ const result=await f.database.transaction(client=>finalizeIntegrationLifecycles({...f.options,client}));assert.equal(result.disconnect,2);assert.equal(result.preserved,1);
+ const current=await f.read();assert.equal(current[0].status,'abandoned');assert.equal(current[0].connectedAccountId,'grant');assert.deepEqual(current[1].oauthIntent,intent);assert.deepEqual(current[2],f.records[2]);assert.equal((await f.commands.listPending({})).commands.length,2);
+});

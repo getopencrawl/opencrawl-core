@@ -1,3 +1,4 @@
+import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,existsSync,statSync,chmodSync,utimesSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -73,8 +74,8 @@ test('Grok Bot hook answers never withhold a permission',()=>{
 async function fixture(run:(f:any)=>Promise<void>) {
   const dir=mkdtempSync(join(tmpdir(),'opencrawl-grok-bot-')),saved={...process.env};
   const principal={tenantId:'tenant-test',userId:'user-test',name:'Bot Owner',email:'owner@example.com'},token='grok-bot-capture-token-0123456789012345';
-  const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest({store,onStored:undefined});
-  const handler=standaloneCapture({token,principal,store,prefix:undefined,search:undefined}),batches:any[]=[];
+  const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest(withTestState({store,onStored:undefined}));
+  const handler=standaloneCapture(withTestState({token,principal,store,prefix:undefined,search:undefined})),batches:any[]=[];
   let uploads=0,fail=false,stall=false;
   const server=createServer(async(req,res)=>{
     if(req.url==='/api/sessions/batches'){
@@ -205,7 +206,7 @@ test('tool-only runtimes without conversation IDs still produce a named, searcha
   const titles=readdirSync(join(captureDir(),'queue')).map(name=>JSON.parse(readFileSync(join(captureDir(),'queue',name),'utf8'))).filter(batch=>batch.cwd==='/home/bot/expenses').map(batch=>batch.events[0]);
   expect(titles).toHaveLength(2);expect(titles[0]).toEqual(titles[1]);
   // A recorded tool call proves live Grok Bot capture; other harnesses still need a message.
-  const status=createOnboardingStatus({store:createLocalSessionStore(join(f.dir,'onboarding'))});
+  const status=createOnboardingStatus(withTestState({store:createLocalSessionStore(join(f.dir,'onboarding'))}));
   await status.session(f.principal,{...expenses,harness:'codex'});expect((await status.read(f.principal)).session).toBeNull();
   await status.session(f.principal,expenses);expect((await status.read(f.principal)).session).toMatchObject({harness:'grok-bot'});
   const stop=hook('stop');await captureHook('grok-bot',stop);await hookFlush(stop);

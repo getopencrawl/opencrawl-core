@@ -79,7 +79,12 @@ const applicationState=(phase,recovery)=>{
 if(stateFixture){
  compose(['stop','app','worker']);
  applicationState('seed');
- compose(['up','-d','--wait','--wait-timeout','600','app','worker']);
+ // Keep the deliberately half-done deletion and connector work stopped until
+ // migration. Restarting its old worker would legitimately change the source
+ // snapshot before the upgrader even begins. The app remains live for --check.
+ compose(['up','-d','--wait','--wait-timeout','600','app']);
+ assert.equal(compose(['ps','--status','running','-q','worker'],{capture:true}),'');
+ applicationState('retained');
 }
 const originalEnv=readFileSync(envFile),originalInput=readFileSync(join(seedDir,'seed-input.json'));
 const originalFixture=readFileSync(join(seedDir,'upgrade-fixture.json'));
@@ -124,6 +129,7 @@ const journalFile=kind==='dev'?'.opencrawl-dev/upgrade.json':'deploy/.upgrade/up
 let journal=JSON.parse(readFileSync(journalFile,'utf8'));assert.equal(journal.phase,'database-transferred');
 const backup=journal.backup,manifest=readFileSync(join(backup,'manifest.json'));
 assert.equal(compose(['ps','--status','running','-q','app','worker'],{capture:true}),'');
+applicationState('retained');
 if(stateFixture){
  // Stop after the real state import, before the verification/startup gate. The
  // offline reader can prove pending state before workers are allowed to act.
@@ -156,7 +162,10 @@ for(const store of saved.stores){const names=docker(['volume','ls','--format','{
 for(const config of saved.configurations)rmSync(resolve(root,config.path),{force:true});
 run(process.execPath,['deploy/restore.mjs','--backup',backup]);
 const recovery=['compose','--project-name',project,'-f',join(backup,'restore-compose.json')];
-docker([...recovery,'up','-d','--wait','--wait-timeout','600']);
+// Verify the matched stopped source snapshot before allowing recovered jobs
+// to retry it. Live restore acceptance resumes every worker immediately after.
+docker([...recovery,'up','-d','--wait','--wait-timeout','600',...Object.keys(saved.compose.services).filter(name=>!stateFixture||name!=='worker')]);
+if(stateFixture)assert.equal(docker([...recovery,'ps','--status','running','-q','worker'],{capture:true}),'');
 // A verification sidecar shares the restored app's image, environment and
 // volumes, but must not claim the real app's reserved IP address.
 const verificationCompose=structuredClone(saved.compose);
@@ -180,6 +189,7 @@ if(airbyte){
 // Verify the exact saved old images without rebuilding or changing checkout.
 // A new Airbyte sync must reach the restored fixture and S3 addresses.
 applicationState('restored',recoveryChecks);
+if(stateFixture)docker([...recovery,'up','-d','--wait','--wait-timeout','600','worker']);
 docker([...recoveryChecks,'run','--rm','--no-deps','--user','root','-e','OPENCRAWL_UPGRADE_FIXTURE=true',...(airbyte?['-e','OPENCRAWL_UPGRADE_FRESH_SYNC=true']:['-e','OPENCRAWL_DEV_VERIFY_ONLY=true']),'--volume',fixtureDir+':/opencrawl/dev:ro','--volume',seedDir+':/dev-state','app','node','--disable-warning=ExperimentalWarning','dev/seed.mts']);
 largeSession('restored',recoveryChecks);
 const report={ok:true,imageRecovery,historicalDeploySingleImagePrebuild:kind==='deploy',largeSessionCeilingReproducedAndRemoved:large&&legacyCeiling,largeMessageCaptureAndTailSearch:large,from:old,to:target,installation:kind,airbyte,freshAirbyteSyncAfterUpgradeAndRestore:airbyte,applicationStateFixture:stateFixture?{sourceObjects:JSON.parse(readFileSync(join(seedDir,'app-state-fixture.json'))).objects.length,sourceReceipts:true,retainedSources:true,privacyAndFences:true,pendingInvitation:true,matchedRestore:true}:null,search:sqlite?'sqlite':'opensearch',checkReadOnly:true,normalStartupResumed:true,matchedBackupRetained:true,legacyDatabaseStopped:true,oldGrantPreserved:true,eventRetryAndConflict:true,newWrites:true,restart:true,matchedOldVersionRestore:true,subsequentUpgradePreservesNewEvents:true,restrictedDatabaseRole:true,failedReservationAndDeletion:!previousIdentities.legacy,backupManifestSha256:createHash('sha256').update(manifest).digest('hex')};

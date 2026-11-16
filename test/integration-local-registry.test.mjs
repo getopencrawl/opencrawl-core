@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes} from 'node:crypto';
-import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-registry.mjs';
+import {createSingleOrganizationRegistry,createPostgresIntegrationRegistry} from '../dist/src/integrations/local-registry.mjs';
 import {createIntegrationCommands} from '../dist/src/state/integration-commands.mjs';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 const live=(name,run)=>test(name,{skip:!postgresUrl},run);
@@ -60,4 +60,74 @@ live('restarting OAuth consent can claim a provider slot after its prior attempt
   assert.equal((await f.registry.get(restarted.tenantId,restarted.userId,restarted.integrationId)).status,'provisioning');
   assert.deepEqual((await f.commands.listPending({})).commands,[command]);
   await assert.rejects(f.registry.requestLifecycle(record,'provision',{},'user_admin'),{status:409});
+});
+live('durable consent keeps pending rows non-live and verified provision supersedes its command',async t=>{
+  const f=await fixture(t),other={...record,integrationId:'int_'+'c'.repeat(26)};
+  const consent=await f.registry.createWithLifecycle(record,'consent',{},'user_admin');
+  const restarted=await f.registry.createWithLifecycle(other,'consent',{},'user_admin');
+  assert.equal((await f.registry.get(record.tenantId,record.userId,record.integrationId)).status,'connecting');
+  assert.deepEqual(await f.registry.requestLifecycle(record,'consent',{},'user_admin'),consent);
+  const provision=await f.registry.requestLifecycle(record,'provision',{},'user_admin');
+  assert.equal((await f.commands.read(consent)).status,'superseded');
+  assert.equal((await f.commands.read(provision)).operation,'provision');
+  await assert.rejects(f.registry.requestLifecycle(record,'consent',{},'user_admin'),{status:409});
+  await assert.rejects(f.registry.requestLifecycle(other,'provision',{},'user_admin'),{status:409});
+  // The losing transaction must retain its consent command after slot refusal.
+  assert.equal((await f.commands.read(restarted)).status,'pending');
+  assert.equal((await f.registry.get(other.tenantId,other.userId,other.integrationId)).lifecycleCommandId,restarted.commandId);
+});
+live('abandoning consent atomically queues cleanup and leaves the provider slot available',async t=>{
+  const f=await fixture(t),consent=await f.registry.createWithLifecycle(record,'consent',{},'user_admin');
+  const cleanup=await f.registry.abandonWithLifecycle(record,'user_admin');
+  assert.equal((await f.commands.read(consent)).status,'superseded');
+  assert.equal((await f.commands.read(cleanup)).operation,'disconnect');
+  assert.equal((await f.commands.read(cleanup)).requestedBy,'user_admin');
+  assert.equal((await f.registry.get(record.tenantId,record.userId,record.integrationId)).status,'abandoned');
+  assert.deepEqual(await f.registry.abandonWithLifecycle(record,'user_admin'),cleanup);
+  const restarted={...record,integrationId:'int_'+'d'.repeat(26)};
+  const provision=await f.registry.createWithLifecycle(restarted,'provision',{},'user_admin');
+  assert.equal((await f.commands.read(provision)).status,'pending');
+  await assert.rejects(f.registry.requestLifecycle(record,'provision',{},'user_admin'),{status:409});
+  await assert.rejects(f.registry.abandonWithLifecycle(restarted,'user_admin'),{status:409});
+});
+live('consent create and abandon roll back every row and command on enqueue failure',async t=>{
+  const f=await fixture(t),broken=createSingleOrganizationRegistry({...f.options,commands:{...f.commands.transactional,enqueue:async()=>{throw new Error('enqueue unavailable');}}});
+  await assert.rejects(broken.createWithLifecycle(record,'consent',{},'user_admin'),/enqueue unavailable/);
+  assert.equal(await f.registry.get(record.tenantId,record.userId,record.integrationId),null);
+  const consent=await f.registry.createWithLifecycle(record,'consent',{},'user_admin');
+  await assert.rejects(broken.abandonWithLifecycle(record,'user_admin'),/enqueue unavailable/);
+  assert.equal((await f.commands.read(consent)).status,'pending');
+  const current=await f.registry.get(record.tenantId,record.userId,record.integrationId);
+  assert.equal(current.status,'connecting');assert.equal(current.lifecycleCommandId,consent.commandId);
+  assert.deepEqual((await f.commands.listPending({})).commands,[consent]);
+});
+live('only unprovisioned consent errors can use abandonment and secrets remain provision-only',async t=>{
+  const f=await fixture(t);
+  for(const operation of ['consent','disconnect','sync'])await assert.rejects(f.registry.createWithLifecycle(record,operation,{apiKey:'secret'},'user_admin'),/Only provisioning/);
+  await assert.rejects(f.registry.createWithLifecycle(record,'consent',{},undefined),{status:403});
+  await f.registry.createWithLifecycle(record,'consent',{},'user_admin');
+  const identity=[record.tenantId,record.userId,record.integrationId];
+  await f.registry.update(record,{status:'error',error:'setup',airbyte:{workspaceId:'existing'}});
+  await assert.rejects(f.registry.abandonWithLifecycle(record,'user_admin'),{status:409});
+  await f.registry.update(record,{airbyte:{},provisionIntent:{resource:'sourceId',workspaceId:'existing',name:'source',attemptId:'attempt',requestedAt:record.createdAt}});
+  await assert.rejects(f.registry.abandonWithLifecycle(record,'user_admin'),{status:409});
+  await f.registry.update(record,{provisionIntent:undefined});
+  await f.registry.abandonWithLifecycle(record,'user_admin');
+  assert.equal((await f.registry.get(...identity)).status,'abandoned');
+});
+live('hosted registry uses one fixed installation with independent tenant slots and exact imports',async t=>{
+ const database=await applicationDatabaseFixture(t),commands=createIntegrationCommands({database,environment:'production',encryptionKey:randomBytes(32)});await commands.ready();
+ const options={database,environment:'production',bindingId:'hosted-production',authorizeTenant:id=>['org_team','personal:user_a'].includes(id),commands:commands.transactional};
+ const registry=createPostgresIntegrationRegistry(options),a={...record,environment:'production'},b={...a,tenantId:'personal:user_a'};
+ await registry.importRecord(a);assert.deepEqual(await registry.importRecord(a),a);
+ await assert.rejects(registry.importRecord({...a,status:'active'}),{status:409});
+ await registry.importRecord(b);
+ const results=await Promise.all([registry.requestLifecycle(a,'provision',{},'user_admin'),registry.requestLifecycle(b,'provision',{},'user_a')]);assert.equal(results.length,2);
+ const page=await registry.scanPage({limit:1});assert.equal(page.records.length,1);assert.ok(page.cursor);
+ const next=await registry.scanPage({limit:1,cursor:page.cursor});assert.equal(next.records.length,1);assert.equal(next.cursor,null);assert.notEqual(page.records[0].tenantId,next.records[0].tenantId);
+ assert.deepEqual(await registry.scanPage({status:'active'}),{records:[],cursor:null});
+ await assert.rejects(registry.get('org_other','user_a',record.integrationId),{status:403});
+ await assert.rejects(createPostgresIntegrationRegistry({...options,bindingId:'other'}).ready(),/another organization/);
+ await assert.rejects(createSingleOrganizationRegistry({database,organizationId:'org_team',environment:'production'}).ready(),/another organization/);
+ const restarted=createPostgresIntegrationRegistry(options);assert.equal((await restarted.exportRecord(b.tenantId,b.userId,b.integrationId)).lifecycleCommandId,results[1].commandId);
 });

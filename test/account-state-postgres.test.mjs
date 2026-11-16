@@ -68,3 +68,18 @@ test('value report imports keep unknown historical schemas without presenting in
  const database=await applicationDatabaseFixture(t),reports=createValueReports(database);await reports.ready();const historical={schema:3,recorded:'legacy evidence'};
  assert.deepEqual(await reports.importReport(hash(owner.tenantId),historical),historical);assert.equal(await reports.read(owner.tenantId),null);await assert.rejects(reports.importReport(hash(owner.tenantId),{schema:3,recorded:'different'}),/conflicts/);
 });
+test('agent credentials cannot authenticate capture secrets and keep independent historical revocation generations',{skip:!postgresUrl},async t=>{
+ const database=await applicationDatabaseFixture(t),accounts=createAccountState(database);await accounts.ready();
+ const capture=createCaptureCredentials({state:{accounts}}),agent=createCaptureCredentials({state:{accounts},purpose:'agent'});
+ const captureKey=await capture.issue(owner),agentKey=await agent.issue(owner);
+ assert.equal(await capture.authenticate(agentKey.token),null);assert.equal(await agent.authenticate(captureKey.token),null);
+ await capture.revokeAll(owner);assert.equal(await capture.authenticate(captureKey.token),null);assert.ok(await agent.authenticate(agentKey.token));
+ const fresh=await capture.issue(owner);await agent.revokeAll(owner);assert.ok(await capture.authenticate(fresh.token));assert.equal(await agent.authenticate(agentKey.token),null);
+ const token='occ1_'+'e'.repeat(64),legacy={schemaVersion:1,id:hash(token),principal:{...owner,userId:'user_imported'},expiresAt:'2030-01-01T00:00:00Z',revoked:false,generation:'a'.repeat(64)};
+ await accounts.importCredential(legacy,'agent');await accounts.importGeneration(sessionScope(legacy.principal),{generation:legacy.generation},'agent');
+ assert.deepEqual(await accounts.exportCredential(legacy.id,'agent'),legacy);assert.equal(await accounts.exportCredential(legacy.id),null);
+ const restarted=createCaptureCredentials({state:{accounts:createAccountState(database)},purpose:'agent'});assert.ok(await restarted.authenticate(token));assert.equal(await capture.authenticate(token),null);
+ await accounts.importGeneration(sessionScope(legacy.principal),{generation:'b'.repeat(64)});assert.ok(await restarted.authenticate(token));
+ await restarted.revoke(legacy.principal,legacy.id);assert.equal(await restarted.authenticate(token),null);
+ assert.deepEqual(await accounts.exportGeneration(sessionScope(legacy.principal),'agent'),{generation:legacy.generation});
+});

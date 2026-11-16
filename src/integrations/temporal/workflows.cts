@@ -1,5 +1,5 @@
 import type {IntegrationActivities, IntegrationCommandReference, IntegrationRecoveryInput} from './types.mjs';
-const {proxyActivities, continueAsNew, startChild, ParentClosePolicy, WorkflowIdReusePolicy} = require('@temporalio/workflow') as typeof import('@temporalio/workflow');
+const {proxyActivities, continueAsNew, startChild, sleep, ParentClosePolicy, WorkflowIdReusePolicy} = require('@temporalio/workflow') as typeof import('@temporalio/workflow');
 const {WorkflowExecutionAlreadyStartedError} = require('@temporalio/common') as typeof import('@temporalio/common');
 const {integrationSteps, integrationWorkflowId} = require('./contracts.mjs') as typeof import('./contracts.mjs');
 
@@ -16,7 +16,11 @@ async function runIntegrationCommandV1(reference: IntegrationCommandReference) {
   for (let pass = 0; pass < 64; pass++) {
     let restart = false;
     for (const step of integrationSteps[command.operation]) {
-      const result = await activities.executeIntegrationStep({...reference, step});
+      let result = await activities.executeIntegrationStep({...reference, step});
+      while(command.operation==='consent'&&result.waitUntil!==undefined){
+        await sleep(Math.max(1,result.waitUntil-Date.now()));
+        result=await activities.executeIntegrationStep({...reference,step});
+      }
       if (result.status === 'superseded') return result;
       if (result.status === 'restart') {restart = true; break;}
     }

@@ -53,12 +53,23 @@ export interface ObjectMigrationOptions {
   connectorKey?:Uint8Array;eventIdentities:ReturnType<typeof createPostgresEventIdentities>;
 }
 
+export interface TenantObjectMigrationOptions extends Omit<ObjectMigrationOptions,'organizationId'> {
+  tenantId:string;credentialPurpose?:'capture'|'agent';
+}
+
+/** Self-host migration pins exactly one organization. The portable per-tenant
+ * importer below is also used by explicitly bound multi-tenant runtimes. */
+export function createObjectMigration(options:ObjectMigrationOptions){
+  if(!/^org_[A-Za-z0-9]+$/.test(options.organizationId))fail('Invalid object migration scope');
+  return createTenantObjectMigration({...options,tenantId:options.organizationId});
+}
+
 /** Offline source reader. Every mutable path has a typed importer and an
  * independent readback. Unknown paths fail closed; no runtime object-state
  * adapter is available here. Schema creation is lazy and only happens on write. */
-export function createObjectMigration({database,prefix,organizationId,store,registryRecords,connectorKey,eventIdentities}:ObjectMigrationOptions){
-  if(!prefix||prefix.split('/').some(value=>!value||value==='.'||value==='..')||!/^org_[A-Za-z0-9]+$/.test(organizationId)||!store.bucket)fail('Invalid object migration scope');
-  const tenantHash=digest(organizationId),roots=[prefix+'/', 'control/connectors/write-barriers/v1/','connector-credentials/v1/','connector-settings/v1/','derived/indexing/','raw/v1/source=slack/','_opencrawl/counts/'];
+export function createTenantObjectMigration({database,prefix,tenantId:organizationId,store,registryRecords,connectorKey,eventIdentities,credentialPurpose='capture'}:TenantObjectMigrationOptions){
+  if(!prefix||prefix.split('/').some(value=>!value||value==='.'||value==='..')||!/^(?:org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(organizationId)||!['capture','agent'].includes(credentialPurpose)||!store.bucket)fail('Invalid object migration scope');
+  const tenantHash=digest(organizationId),roots=credentialPurpose==='agent'?[prefix+'/']:[prefix+'/', 'control/connectors/write-barriers/v1/','connector-credentials/v1/','connector-settings/v1/','derived/indexing/','raw/v1/source=slack/','_opencrawl/counts/'];
   const controls=createPostgresControls(database),deletions=createPostgresDeletionRequests(database,prefix),accounts=createAccountState(database),secrets=createConnectorSecrets(database),
     replicas=createReplicasState(database),reports=createValueReports(database),receipts=createPostgresIndexingReceipts(database),slack=createPostgresSlackCapture(database),counts=createConnectorCounts({database,legacyBucket:store.bucket}),board=createPostgresBoardState(database),retirements=createSchedulerRetirements(database);
   const preparations=new Map<string,Promise<void>>();
@@ -72,7 +83,9 @@ export function createObjectMigration({database,prefix,organizationId,store,regi
     if(typeof key!=='string'||key.length>8192||key.split('/').some(part=>!part||part==='.'||part==='..'))fail('Invalid object migration key');
     const match=(pattern:RegExp,domain:string,maxBytes=65536):Classification|null=>{const value=pattern.exec(key.startsWith(prefix+'/')?key.slice(prefix.length+1):key);return value?{domain,maxBytes,parts:value.slice(1)}:null;};
     if(key.startsWith(prefix+'/')){
-      const raw=key.slice(prefix.length+1),source=sourceBatchIdentity(prefix,key)??memorySourceIdentity(prefix,key);
+      const raw=key.slice(prefix.length+1);
+      if(credentialPurpose==='agent'&&!new RegExp(`^(?:_credentials/${H}|_credential-generations/tenants/${H}/users/${H})\\.json$`).test(raw))fail('Agent credential source contains unrelated application state');
+      const source=sourceBatchIdentity(prefix,key)??memorySourceIdentity(prefix,key);
       if(source){tenantDigest(source.tenantHash);return null;}
       const attachment=new RegExp(`^tenants/(${H})/users/${H}/(?:(?:${SESSION_HARNESSES.join('|')})/${H}/${H}/)?attachments/${H}$`).exec(raw);
       if(attachment){tenantDigest(attachment[1]);return null;}
@@ -93,9 +106,10 @@ export function createObjectMigration({database,prefix,organizationId,store,regi
         ??match(new RegExp(`^_index/${H}/${H}/batches/(${H})\\.json$`),'session-indexing',32768)
         ??match(new RegExp(`^_index/temporal-cutover/(${H})\\.json$`),'temporal-cutover',32768)
         ??match(new RegExp(`^tenants/(${H})/users/${H}/(?:${SESSION_HARNESSES.join('|')})/${H}/${H}/event-identities-v1\\.json$`),'event-identities',MAX_EVENT_LEDGER_BYTES);
-      if(found)return found;
+      if(found){if(credentialPurpose==='agent'&&!['capture-credentials','credential-generations'].includes(found.domain))fail('Agent credential source contains unrelated application state');return found;}
       fail('Unrecognized object under the application source prefix; retain it and add a reviewed migration');
     }
+    if(credentialPurpose==='agent')fail('Agent credential source escaped its bound prefix');
     const found=match(new RegExp(`^control/connectors/write-barriers/v1/(${H})\\.json$`),'connector-write-fences',16*1024*1024)
       ??match(/^connector-credentials\/v1\/(org_[A-Za-z0-9]+)\/(grant_[a-f0-9]{48})\.enc$/,'connector-grants')
       ??match(/^connector-settings\/v1\/(org_[A-Za-z0-9]+)\/settings\.enc$/,'connector-settings')
@@ -157,11 +171,11 @@ export function createObjectMigration({database,prefix,organizationId,store,regi
       }
       case 'capture-credentials':{
         const value=captureCredentialSchema.parse(json(bytes));tenant(value.principal.tenantId);if(value.id!==parts[0])fail('Capture credential key mismatch');source=value;
-        if(write){await prepare('accounts',accounts.ready);await accounts.importCredential(value);}target=await read(()=>accounts.exportCredential(parts[0]));break;
+        if(write){await prepare('accounts',accounts.ready);await accounts.importCredential(value,credentialPurpose);}target=await read(()=>accounts.exportCredential(parts[0],credentialPurpose));break;
       }
       case 'credential-generations':{
         tenantDigest(parts[1]);source=z.strictObject({generation:hash}).parse(json(bytes));
-        if(write){await prepare('accounts',accounts.ready);await accounts.importGeneration(parts[0],source);}target=await read(()=>accounts.exportGeneration(parts[0]));break;
+        if(write){await prepare('accounts',accounts.ready);await accounts.importGeneration(parts[0],source,credentialPurpose);}target=await read(()=>accounts.exportGeneration(parts[0],credentialPurpose));break;
       }
       case 'onboarding':{
         tenantDigest(parts[1]);source=onboardingReceiptSchema.parse(json(bytes));const kind=parts[2] as OnboardingKind;

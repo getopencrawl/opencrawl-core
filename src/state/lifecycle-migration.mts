@@ -18,7 +18,7 @@ export interface LifecycleMigrationReport {
  * only names its original owner as a candidate; activities revalidate current
  * membership/role before every side effect. Consent-pending rows are untouched. */
 function operation(record:IntegrationRecord):IntegrationCommandOperation|null {
- if(record.status==='disconnecting'||record.status==='disconnected')return 'disconnect';
+ if(record.status==='disconnecting'||record.status==='disconnected'||record.status==='abandoned'&&(record.connectedAccountId||record.oauthIntent))return 'disconnect';
  if(record.status==='provisioning'||record.status==='error'&&['setup','recovery'].includes(record.error||''))return 'provision';
  return null;
 }
@@ -29,7 +29,7 @@ export function migratedIntegrationCommand(namespace:string,record:IntegrationRe
 }
 const key=(options:LifecycleMigrationOptions,record:IntegrationRecord)=>[options.namespace,options.environment,record.tenantId,record.userId,record.integrationId];
 const nextRecord=(record:IntegrationRecord,op:IntegrationCommandOperation,reference:IntegrationCommandReference):IntegrationRecord=>({...record,
- status:op==='disconnect'?'disconnecting':'provisioning',lifecycleOperation:op,lifecycleCommandId:reference.commandId});
+ status:op==='disconnect'?record.status==='abandoned'?'abandoned':'disconnecting':'provisioning',lifecycleOperation:op,lifecycleCommandId:reference.commandId});
 const report=():LifecycleMigrationReport=>({provision:0,disconnect:0,awaitingConsent:0,reconnectRequired:0,preserved:0,commands:[]});
 function validate(options:LifecycleMigrationOptions,record:IntegrationRecord){
  if(record.environment!==options.environment||record.tenantId!==options.organizationId)throw new Error('Legacy integration belongs to another installation');

@@ -1,3 +1,4 @@
+import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,chmodSync,statSync,utimesSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -78,10 +79,10 @@ async function fixture(run:(ctx:{
 })=>Promise<void>) {
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-agy-')),saved={...process.env};
  const principal={tenantId:'tenant-agy',userId:'alice'},token='antigravity-test-token-01234567890123456789';
- const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest({store});
+ const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest(withTestState({store}));
  const batches:any[]=[],attachments=new Map<string,Buffer>();
  const documents:ReturnType<typeof batchDocuments>=[];
- const handler=standaloneCapture({token,principal,store});
+ const handler=standaloneCapture(withTestState({token,principal,store}));
  const server=createServer(async(req,res)=>{
   if(req.method==='PUT'&&req.url?.startsWith('/api/sessions/attachments/')) {
    const chunks:Buffer[]=[];for await(const c of req)chunks.push(Buffer.from(c));

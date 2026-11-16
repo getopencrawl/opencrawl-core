@@ -1,3 +1,4 @@
+import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {createServer} from 'node:http';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -11,7 +12,7 @@ import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 test('capture retries a lost response after durable storage with the identical payload, but does not retry rejection',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-capture-retry-')),saved=process.env.OPENCRAWL_CONFIG_HOME;
  process.env.OPENCRAWL_CONFIG_HOME=join(dir,'config');
- const owner={tenantId:'test',userId:'test'},ingest=createSessionIngest({store:createLocalSessionStore(join(dir,'objects'))});
+ const owner={tenantId:'test',userId:'test'},ingest=createSessionIngest(withTestState({store:createLocalSessionStore(join(dir,'objects'))}));
  const batch={schemaVersion:1,owner,installationId:'test',sessionId:'session',harness:'codex',origin:'desktop',events:[finalizeEventIdentity({id:'event',kind:'message',data:{role:'user',content:'preserve me'}})],attachments:[]};
  const body=JSON.stringify(batch),payloads:string[]=[];let reject=false;
  const server=createServer(async(req,res)=>{

@@ -75,3 +75,11 @@ test('expiring tokens refresh once and local revocation denies all further proxy
   assert.equal((await f.vault.read(id)).record.accessToken,undefined);
   await assert.rejects(f.service.proxyCredential(id,g.proxyToken,`selfhost:${org}:${user}`,{endpoint:'https://slack.com/api/auth.test'}),{status:403});
 });
+
+test('Slack consent intent uses one deterministic grant and recovers the original redirect after lost acknowledgement',async t=>{
+ const f=await fixture(t),input={authConfigId:'slack',userId:`selfhost:${org}:${user}`,callbackUrl:f.callbackUrl,requestId:'a'.repeat(32)};
+ assert.equal(await f.service.recoverLink(input),null);
+ const first=await f.service.link(input),again=await f.service.link(input);assert.deepEqual(again,first);assert.deepEqual(await f.service.recoverLink(input),first);
+ assert.notEqual(first.connected_account_id,f.link.connected_account_id);assert.equal(f.state.calls.length,0);
+ await assert.rejects(f.service.link({...input,callbackUrl:f.callbackUrl+'&other=changed'}),{status:403});
+});

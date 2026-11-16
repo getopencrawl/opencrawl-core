@@ -103,6 +103,8 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   // Existing grants retain their original adapter even if another is configured.
   const byGrant=async(id:string)=>/^grant_[a-f0-9]{48}$/.test(id)?oauth||unavailable:await broker()||unavailable;
   const authorization:ConnectorOAuth={
+    recoverAuthConfig:async input=>(input.toolkit==='slack'&&oauth?oauth:await broker()||unavailable).recoverAuthConfig?.(input)??null,
+    recoverLink:async input=>(input.authConfigId==='slack'?oauth||unavailable:await broker()||unavailable).recoverLink?.(input)??null,
     authConfig:async input=>(input.toolkit==='slack'&&oauth?oauth:await broker()||unavailable).authConfig(input),
     link:async input=>(input.authConfigId==='slack'?oauth||unavailable:await broker()||unavailable).link(input),
     account:async id=>(await byGrant(id)).account(id),remove:async id=>(await byGrant(id)).remove(id),

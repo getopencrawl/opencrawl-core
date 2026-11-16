@@ -1,3 +1,5 @@
+import {setTimeout as delay} from 'node:timers/promises';
+import {createConsentProvisioning} from './consent.mjs';
 import type {IntegrationLifecycle, IntegrationCommandReference, IntegrationOperation, IntegrationStepInput, IntegrationStepResult} from './temporal/types.mjs';
 import {integrationSteps, validateIntegrationCommand} from './temporal/contracts.mjs';
 import type {SourceCard} from '../application/types.mjs';
@@ -16,7 +18,7 @@ export interface IntegrationOptions {
   backfillDays?: number; schedule?: string; oauth: ConnectorOAuth; airbyte: Airbyte; registry: Registry;
   providers: ProviderCatalog; github?: GithubApp | null; direct?: typeof directApi; now?: () => number;
   log?: Log; maintenance?: boolean; revokeInstallation?: (installationId: string) => Promise<void>;
-  lifecycle?: IntegrationLifecycle; counts?: RecordCounts;
+  lifecycle?: IntegrationLifecycle; counts?: RecordCounts; consentWaitMs?:number;
 }
 interface Secrets {apiKey?: string}
 interface StatusSnapshot {jobs: AirbyteJob[]; live: Record<string, number> | null}
@@ -73,7 +75,10 @@ export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
   };
 }
 
-export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation, lifecycle, counts: distinct}: IntegrationOptions) {
+export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation, lifecycle, counts: distinct,consentWaitMs=5000}: IntegrationOptions) {
+  if(!Number.isSafeInteger(consentWaitMs)||consentWaitMs<1||consentWaitMs>10000)throw new Error('Invalid consent response deadline');
+  const consent=createConsentProvisioning({registry,oauth});
+  const consentConfig=(provider:Exclude<Provider,GithubProvider|KeyProvider>,record:IntegrationRecord)=>({toolkit:provider.toolkit,...provider.authConfig,name:provider.authConfig.name+' '+environment+' '+record.tenantId});
   const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>}>();
   const statusCache = new Map<string, StatusEntry>();
   const statusKey = (record: IntegrationRecord) => JSON.stringify([environment, record.tenantId, record.userId, record.integrationId, record.airbyte?.connectionId]);
@@ -208,6 +213,23 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     return (await registry.get(record.tenantId, record.userId, record.integrationId))!;
   }
 
+  async function abandon(record:IntegrationRecord,requestedBy:string){
+    if(!registry.abandonWithLifecycle||!lifecycle)throw Object.assign(new Error('Durable consent cleanup is not configured'),{status:503});
+    const reference=await registry.abandonWithLifecycle(record,requestedBy);
+    try{await lifecycle.schedule(reference);}catch{log('integration.lifecycle.dispatch_pending',{integrationId:record.integrationId,commandId:reference.commandId});}
+  }
+  async function consentResult(record:IntegrationRecord):Promise<{redirectUrl:string}|null>{
+    if(!lifecycle||!record.lifecycleCommandId||record.lifecycleOperation!=='consent')return null;
+    const reference={environment,tenantId:record.tenantId,userId:record.userId,integrationId:record.integrationId,commandId:record.lifecycleCommandId};
+    const deadline=performance.now()+consentWaitMs;
+    do{
+      const result=await lifecycle.commands.readConsentResult(reference);if(result)return {redirectUrl:result.redirectUrl};
+      const command=await lifecycle.commands.read(reference);if(!command||command.status!=='pending')return null;
+      if(performance.now()>=deadline)break;await delay(Math.min(200,deadline-performance.now()));
+    }while(true);
+    throw Object.assign(new Error('Provider sign-in is still being prepared. Retry to continue the same request.'),{status:503,expose:true,code:'ConsentPending'});
+  }
+
   /** One Temporal activity step. The runtime resolves current authorization and
    * storage bindings; all external calls are fenced by the authoritative row. */
   async function lifecycleStep(input: IntegrationStepInput, check: () => void = () => {}): Promise<IntegrationStepResult> {
@@ -243,6 +265,25 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       record = await durable.ensure(record!, name, workspace, async () => {check(); return create();});
       return record.status === 'provisioning' && record.lifecycleCommandId === input.commandId && record.provisionRun === input.commandId;
     };
+    if(command.operation==='consent'){
+      if(record.status!=='connecting')return {status:'superseded'};
+      if(provider.auth==='github-app'||provider.auth==='api-key')throw Object.assign(new Error('Invalid consent provider'),{permanent:true});
+      const deadline=Date.parse(record.oauthExpiresAt??record.createdAt)+(!record.oauthExpiresAt?3600000:0);
+      if(!Number.isSafeInteger(deadline)||deadline<=now()){await abandon(record,command.requestedBy);return {status:'superseded'};}
+      if(input.step==='consent-expire')return {status:'done',waitUntil:Math.min(deadline,now()+60000)};
+      if(input.step==='consent-config')record=await consent.authConfig(record,consentConfig(provider,record));
+      else{
+        if(await lifecycle.commands.readConsentResult(input))return {status:'done'};
+        const callback=new URL('/integrations/'+provider.id+'/callback',appUrl);callback.searchParams.set('integration',record.integrationId);callback.searchParams.set('state',required(record.nonce,'connection nonce'));
+        const linked=await consent.link(record,{authConfigId:required(record.authConfigId,'auth config'),userId:oauthUser(record),callbackUrl:record.oauthIntent?.callbackUrl??callback.href});
+        record=linked.record;if(!await reread())return {status:'superseded'};
+        const expiresAt=Math.min(deadline,linked.result.expires_at?Date.parse(linked.result.expires_at):now()+600000);
+        if(!linked.result.redirect_url||!Number.isSafeInteger(expiresAt)||expiresAt<=now())throw Object.assign(new Error('Retry sign-in after retiring the recovered grant'),{code:'ConsentRetryRequired'});
+        await save({oauthExpiresAt:new Date(expiresAt).toISOString()});
+        await lifecycle.commands.writeConsentResult(input,{redirectUrl:linked.result.redirect_url,expiresAt});
+      }
+      return await reread()?{status:'done'}:{status:'superseded'};
+    }
     if (command.operation === 'provision') {
       if (record.status === 'active') return {status: 'done'};
       if (record.status !== 'provisioning') return {status: 'superseded'};
@@ -319,11 +360,15 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       return {status: 'done'};
     }
     if (record.status === 'disconnected') return {status: 'done'};
-    if (record.status !== 'disconnecting') return {status: 'superseded'};
+    if (!['disconnecting','abandoned'].includes(record.status)) return {status: 'superseded'};
     const gone = (error: unknown) => {if (errorInfo(error).status !== 404) throw error;};
     if (input.step === 'close-writers') {
       await lifecycle.cleanup.closeWriters(record);
     } else if (input.step === 'stop-writers') {
+      if(record.oauthIntent){
+        if(provider.auth==='github-app'||provider.auth==='api-key')throw Object.assign(new Error('Invalid consent recovery provider'),{permanent:true});
+        record=await consent.reconcile(record,consentConfig(provider,record),oauthUser(record));
+      }
       if (record.provisionIntent) record = await durable.reconcile(record);
       if (!await reread()) return {status: 'superseded'};
       const ids = record!.airbyte || {};
@@ -358,7 +403,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     } else if (input.step === 'finalize') {
       await lifecycle.cleanup.drainWriters(record);
       if (!await reread()) return {status: 'superseded'};
-      if (record!.provisionIntent || (record!.cleanupResourceVersion ?? '') !== (record!.resourceVersion ?? '')) return {status: 'restart'};
+      if (record!.provisionIntent || record!.oauthIntent || (record!.cleanupResourceVersion ?? '') !== (record!.resourceVersion ?? '')) return {status: 'restart'};
       await save({status: 'disconnected', disconnectedAt: new Date(now()).toISOString()});
     }
     return {status: 'done'};
@@ -388,6 +433,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     }
     if (record.status === 'provisioning') return {...shown, state: 'syncing', synced: 0};
     if (record.status === 'disconnecting') return {...shown, state: 'error', recoveryAction: 'disconnect', message: record.cleanupBlockedReason === 'external-writer-proof-required' ? 'Disconnected from search. Data cleanup is waiting for your operator to verify that external writers have stopped.' : 'Disconnected from search. Data cleanup is continuing safely in the background.'};
+    if(record.status==='error'&&record.lifecycleOperation==='consent')return {...shown,state:'error',recoveryAction:'connect',message:'Provider sign-in could not be prepared. Retry sign-in to continue safely.'};
     if (record.status === 'error' && record.error === 'setup') return {...shown, state: 'error', message: 'We couldn’t finish setting up this connection.'};
     if (record.status === 'error' && record.error === 'recovery') return {...shown, state: 'error', message: 'Connection setup is waiting for an earlier request to finish. Retry later; contact support if it persists.'};
     if (record.status === 'error' && record.error === 'reconnect') return {...shown, state: 'error', reconnect: true, message: `We couldn’t finish setting up ${provider.name}. Disconnect it, then connect again with your API key.`};
@@ -464,7 +510,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if (expected.length !== given.length || !timingSafeEqual(expected, given)) return {ok: false, reason: 'invalid'};
     if (record.status !== 'connecting') return {ok: ACTIVE.includes(record.status), reason: 'done'};
     if (!query.get('code')) {
-      await registry.update(record, {status: 'abandoned'}, {whenStatus: ['connecting']});
+      await abandon(record,principal.userId);
       return {ok: false, reason: 'declined'};
     }
     const state = `${id}.${nonce}`;
@@ -494,7 +540,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     const s3Prefix = landingPrefix(provider, {...record, workspace});
     const taken = (await registry.listTenant(principal.tenantId)).some(r => r.integrationId !== record.integrationId && visible(principal, provider, r) && r.status !== 'connecting');
     if (taken) {
-      await registry.update(record, {status: 'abandoned'}, {whenStatus: ['connecting']});
+      await abandon(record,principal.userId);
       return {ok: false, reason: 'taken'};
     }
     let claimed;
@@ -564,6 +610,9 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       const provider = providerFor(providerId);
       if(provider.unavailableReason)throw Object.assign(new Error(provider.unavailableReason),{status:503,expose:true});
       const live = (await registry.listTenant(principal.tenantId)).filter(r => visible(principal, provider, r));
+      const ownConsent=live.find(r=>r.userId===principal.userId&&r.status==='connecting'&&r.lifecycleOperation==='consent');
+      if(ownConsent){const prepared=await consentResult(ownConsent);if(prepared)return prepared;await abandon(ownConsent,principal.userId);live.splice(live.indexOf(ownConsent),1);}
+      for(const failed of live.filter(r=>r.userId===principal.userId&&r.status==='error'&&r.lifecycleOperation==='consent')){await abandon(failed,principal.userId);live.splice(live.indexOf(failed),1);}
       if (live.some(r => r.status !== 'connecting')) throw Object.assign(new Error('Already connected'), {status: 409});
       // Team-wide sources land under the OpenCrawl organization.
       if (provider.teamOnly && !ORG.test(principal.tenantId)) throw Object.assign(new Error(`Connect ${provider.name} from your team’s OpenCrawl organization.`), {status: 400, expose: true});
@@ -573,20 +622,20 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       const record: IntegrationRecord = {integrationId: integrationId(), tenantId: principal.tenantId, userId: principal.userId, ownerEmail: principal.email || null,
         provider: provider.id, scope: provider.scope, environment, s3Bucket, provisionProtocol: 1, status: 'connecting', nonce: randomBytes(24).toString('base64url'),
         createdAt: new Date(now()).toISOString(), startDate: new Date(now() - backfillDays * DAY).toISOString().replace(/\.\d{3}Z$/, 'Z')};
-      for (const mine of live.filter(r => r.userId === principal.userId)) await registry.update(mine, {status: 'abandoned'}, {whenStatus: ['connecting']}).catch(() => {});
+      for (const mine of live.filter(r => r.userId === principal.userId)) await abandon(mine,principal.userId);
       if (provider.auth === 'github-app') {
         if (!github) throw Object.assign(new Error('GitHub isn’t available yet.'), {status: 503, expose: true});
         // OAuth also returns when the app was already installed for this account.
         await registry.create({...record, updatedAt: record.createdAt});
         return {redirectUrl: github.authorizeUrl(`${record.integrationId}.${record.nonce}`, new URL('/integrations/github/callback', appUrl).href)};
       }
-      const authConfigId = await oauth.authConfig({toolkit: provider.toolkit, ...provider.authConfig});
-      const callback = new URL(`/integrations/${provider.id}/callback`, appUrl);
-      callback.searchParams.set('integration', record.integrationId);
-      callback.searchParams.set('state', record.nonce!);
-      const link = await oauth.link({authConfigId, userId: oauthUser(record), callbackUrl: callback.href});
-      await registry.create({...record, connectedAccountId: link.connected_account_id, authConfigId, updatedAt: record.createdAt});
-      return {redirectUrl: link.redirect_url};
+      if(!registry.createWithLifecycle||!lifecycle)throw Object.assign(new Error('Durable consent setup is not configured'),{status:503});
+      const reference=await registry.createWithLifecycle({...record,oauthExpiresAt:new Date(now()+3600000).toISOString()},'consent',{},principal.userId);
+      try{await lifecycle.schedule(reference);}catch{log('integration.lifecycle.dispatch_pending',{integrationId:record.integrationId,commandId:reference.commandId});}
+      const current=await registry.get(record.tenantId,record.userId,record.integrationId);
+      const prepared=current?await consentResult(current):null;
+      if(!prepared)throw Object.assign(new Error('Provider sign-in could not be prepared. Retry to continue safely.'),{status:503,expose:true});
+      return prepared;
     },
 
     /**
@@ -608,7 +657,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       if (expected.length !== given.length || !timingSafeEqual(expected, given)) return {ok: false, reason: 'invalid'};
       if (query.get('connected_account_id') && query.get('connected_account_id') !== record.connectedAccountId) return {ok: false, reason: 'invalid'};
       if (query.get('status') === 'failed') {
-        await registry.update(record, {status: 'abandoned'}, {whenStatus: ['connecting']});
+        await abandon(record,principal.userId);
         return {ok: false, reason: 'declined'};
       }
       const account = await oauth.account(required(record.connectedAccountId, 'connected account'));
@@ -616,8 +665,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       if (provider.scope === 'team') {
         const taken = (await registry.listTenant(principal.tenantId)).some(r => r.integrationId !== record.integrationId && visible(principal, provider, r) && r.status !== 'connecting');
         if (taken) {
-          await oauth.remove(required(record.connectedAccountId, 'connected account')).catch(() => {});
-          await registry.update(record, {status: 'abandoned'}, {whenStatus: ['connecting']});
+          await abandon(record,principal.userId);
           return {ok: false, reason: 'taken'};
         }
       }
