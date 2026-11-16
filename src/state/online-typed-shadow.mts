@@ -44,9 +44,9 @@ export function createOnlineObjectParticipant({binding:inputBinding,journal,reti
   if(!proof||Object.keys(proof).sort().join(',')!=='binding,eventRowsCounted,historicalBodiesRead,metadataOnly,rowsWritten'||proof.metadataOnly!==true||proof.historicalBodiesRead!==false||proof.eventRowsCounted!==false||proof.rowsWritten!==false||onlineProjectionHash(proof.binding)!==onlineProjectionHash(native))fail('NATIVE_METADATA_MISMATCH');
   nativeVerified=true;
  }
- const retirements=retireDerived?createOnlineRetirements({database:options.database,epoch:binding.epoch,sourceId:binding.sourceId,journalBinding:journal.binding,source:{bucket:options.store.bucket!,prefix:options.prefix},registryRecords,tenantIds:options.tenantIds}):undefined;
+ const retirements=retireDerived?createOnlineRetirements({database:options.database,epoch:binding.epoch,sourceId:binding.sourceId,journalBinding:journal.binding,source:{bucket:options.store.bucket!,prefix:options.prefix},registryRecords,tenantIds:options.tenantIds,...(options.connectionScopes?{connectionScopes:options.connectionScopes,connectionTenantEnrolledIn:(client:PoolClient,tenantId:string)=>projection.hasEnrolledTenantHashIn(client,createHash('sha256').update(tenantId).digest('hex'))}:{})}):undefined;
  if(retirements&&(retirements.binding.namespace!==options.database.namespace||retirements.binding.epoch!==binding.epoch||retirements.binding.sourceId!==binding.sourceId||retirements.source.bucket!==options.store.bucket||retirements.source.prefix!==options.prefix))fail('RETIREMENT_BINDING_MISMATCH');
- const identity=onlineProjectionHash({format:1,projection:projection.binding,registryScopeHash:createHash('sha256').update(encoded).digest('hex'),retirementPolicyHash:retirements?.binding.policyHash??null,objectPolicyHash:classifier.policyHash});
+ const identity=onlineProjectionHash({format:1,projection:projection.binding,registryScopeHash:options.connectionScopes?onlineProjectionHash(options.connectionScopes.binding):createHash('sha256').update(encoded).digest('hex'),retirementPolicyHash:retirements?.binding.policyHash??null,objectPolicyHash:classifier.policyHash});
  function disposition(key:string):OnlineTypedDisposition{
   const found=classifier.classify(key);if(!found)return {kind:'immutable'};
   if(found.preservedNative)return {kind:'preserved-native',domain:'event-identities',maxBytes:found.maxBytes,nativeBindingHash:classifier.nativeBindingHash!};
@@ -82,7 +82,7 @@ export function createOnlineObjectParticipant({binding:inputBinding,journal,reti
    return [...new Set([...a,...b])].sort(compare).slice(0,input.limit);
   },
  });
- return {binding,participant,objectPolicy:classifier,disposition,verifyNative,enrollTenant:projection.enrollTenant,inspectReplicasReferencesPageIn:projection.inspectReplicasReferencesPageIn};
+ return {binding,source:Object.freeze({bucket:options.store.bucket!,prefix:options.prefix,credentialPurpose:options.credentialPurpose??'capture'}),participant,objectPolicy:classifier,disposition,verifyNative,enrollTenant:projection.enrollTenant,inspectReplicasReferencesPageIn:projection.inspectReplicasReferencesPageIn};
 }
 /** Backward-compatible single-participant convenience factory. */
 export function createOnlineTypedShadow({external,physicalListing,assertCurrent,sourceRegistration,...options}:OnlineObjectParticipantOptions&{

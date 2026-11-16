@@ -1,7 +1,7 @@
 import {EventEmitter} from 'node:events';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {Pool} from 'pg';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createOnlineMigrationController} from '../dist/src/state/online-temporal/controller.mjs';
@@ -26,6 +26,42 @@ test('binding, target, epoch and shard select isolated deterministic workflow/qu
  let args;await startOnlineMigration({workflow:{start:async(...v)=>{args=v;return {};}}},b,0);
  assert.equal(args[0],'migrateApplicationShadowV1');assert.equal(args[1].taskQueue,onlineMigrationTaskQueue(b));assert.deepEqual(args[1].args,[reference]);assert.equal(args[1].workflowIdConflictPolicy,'USE_EXISTING');
  assert.equal(JSON.stringify(args).includes('secret'),false);
+});
+test('canonical physical source IDs are accepted without changing legacy binding identities',()=>{
+ const b=binding(),expected=createHash('sha256').update(JSON.stringify(['online-app-state-v1',b.epoch,b.sourceId,b.targetId,b.shards])).digest('hex');
+ assert.equal(onlineMigrationBindingId(b),expected);
+ for(const prefix of ['s3:','dynamodb:'])assert.notEqual(onlineMigrationBindingId({...b,sourceId:prefix+b.sourceId}),expected);
+ for(const sourceId of ['s3:', 'S3:'+b.sourceId,'s3:'+b.sourceId.toUpperCase(),'dynamodb:'+b.sourceId+'x','https:'+b.sourceId,'s3:dynamodb:'+b.sourceId,'s3:'+b.sourceId+'\n'])assert.throws(()=>onlineMigrationBindingId({...b,sourceId}));
+ assert.throws(()=>onlineMigrationBindingId({...b,targetId:'s3:'+b.targetId}));
+});
+live('durable source preparation survives lost replies and never resets an existing migration cursor',async t=>{
+ const {database}=await fixture(t),b={...binding(),sourceId:'dynamodb:'+'a'.repeat(64)},ref=onlineMigrationReference(b,0),seen=[];let paused=false,recoveryCalls=0;
+ await database.pool.query('CREATE TABLE physical_preparation(id boolean PRIMARY KEY,pages integer NOT NULL)');await database.pool.query('INSERT INTO physical_preparation VALUES(true,0)');
+ const adapter={...defaults(),prepareSource:async()=>{
+  if(paused)return {ready:false};const pages=(await database.pool.query('SELECT pages FROM physical_preparation WHERE id')).rows[0].pages;
+  if(pages<2){await database.pool.query('UPDATE physical_preparation SET pages=pages+1 WHERE id');if(pages===0)throw Error('lost committed inventory response');return {ready:false};}
+  return {ready:true};
+ },reconcilePending:async input=>{recoveryCalls++;return defaults().reconcilePending(input);},backfillPage:async({cursor})=>{seen.push(cursor);return {cursor:cursor===null?'saved-cursor':null,processed:1};}};
+ const make=()=>createOnlineMigrationController({database,binding:b,adapter}),row=async()=>(await database.pool.query('SELECT phase,cursor,revision::text FROM opencrawl_online_migration_runs WHERE binding_id=$1',[ref.bindingId])).rows[0];
+ await assert.rejects(make().advance(ref,signal()),/lost committed inventory/);assert.deepEqual(await row(),{phase:'backfill',cursor:null,revision:'0'});
+ // A destroyed session can briefly retain its lock; wait only for that known
+ // handoff, never reinterpret the physical preparation's waiting response.
+ const retry=AbortSignal.timeout(5000);let waiting;
+ do{waiting=await make().advance(ref,retry);if(waiting.phase==='waiting')await delay(10,undefined,{signal:retry});}while(waiting.phase==='waiting');
+ assert.deepEqual(waiting,{phase:'backfill',revision:0,waiting:true,parityObserved:false});assert.deepEqual(seen,[]);assert.equal(recoveryCalls,0);
+ assert.equal((await make().advance(ref,signal())).phase,'backfill');assert.deepEqual(await row(),{phase:'backfill',cursor:'saved-cursor',revision:'1'});
+ paused=true;assert.equal((await make().advance(ref,signal())).waiting,true);assert.deepEqual(await row(),{phase:'backfill',cursor:'saved-cursor',revision:'1'});assert.equal(recoveryCalls,1);
+ paused=false;assert.equal((await make().advance(ref,signal())).phase,'replay');assert.deepEqual(seen,[null,'saved-cursor']);assert.equal((await database.pool.query('SELECT pages FROM physical_preparation')).rows[0].pages,2);
+});
+live('invalid or cancelled source preparation cannot execute target work',async t=>{
+ const {database}=await fixture(t);
+ for(const prepared of [null,{}, {ready:1},{ready:true,cursor:'not-workflow-input'}]){
+  const b=binding(),adapter={...defaults(),prepareSource:async()=>prepared,reconcilePending:async()=>assert.fail('no phase work')},controller=createOnlineMigrationController({database,binding:b,adapter});
+  await assert.rejects(controller.advance(onlineMigrationReference(b,0),signal()),{code:'ONLINE_MIGRATION_UNSAFE'});
+ }
+ const b=binding(),cancelled=new AbortController(),controller=createOnlineMigrationController({database,binding:b,adapter:{...defaults(),prepareSource:async()=>{cancelled.abort();return {ready:true};},reconcilePending:async()=>assert.fail('no phase work')}});
+ await assert.rejects(controller.advance(onlineMigrationReference(b,0),cancelled.signal));
+ assert.equal((await database.pool.query('SELECT count(*)::int AS n FROM opencrawl_online_migration_runs WHERE revision<>0')).rows[0].n,0);
 });
 live('durable phases survive controller restart and observe parity only after bounded replay',async t=>{
  const {database}=await fixture(t),b=binding(),ref=onlineMigrationReference(b,0),seen=[];let replay=0;

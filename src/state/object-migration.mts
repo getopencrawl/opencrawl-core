@@ -1,3 +1,4 @@
+import type {OnlineConnectionScope} from './online-connection-scopes.mjs';
 import {decodeOnlineSlackCapture,type OnlineSlackCaptureProjection} from './slack-online-projection.mjs';
 import type {LegacyWriteFence} from './write-barriers.mjs';
 import type {SessionDeletionRequest} from '../sessions/deletion-requests.mjs';
@@ -167,7 +168,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
   }
   /** Decode without target SQL, schema changes or dependency reads. Unsupported
    * domains fail closed; Replicas aliases are references, never publishers. */
-  function decodeOnline(key:string,bytes:Buffer|null,onlineTenantIds?:readonly string[]):OnlineObjectProjection{
+  function decodeOnline(key:string,bytes:Buffer|null,onlineTenantIds?:readonly string[],connectionScope?:OnlineConnectionScope):OnlineObjectProjection{
     // Only the explicit online projector supplies its verified PG enrollment.
     // Offline process() never overrides the original finite reviewed set.
     const enrolled=onlineTenantIds??tenantIds;
@@ -185,7 +186,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
         if(value){tenant(value.scope.tenantId);if(prefix+'/'+sessionScope(value.scope)+'/setup/status-v1.json'!==key)fail('Setup state key differs from its owner');}
         return {kind:'setup-status',domain,identity:[parts[0],parts[1]],scope:{tenantId,userHash:parts[1]},value};
       }
-      case 'slack-capture':return decodeOnlineSlackCapture({key,bytes,bucket:store.bucket!,registryRecords,tenantIds:enrolled});
+      case 'slack-capture':return decodeOnlineSlackCapture({key,bytes,bucket:store.bucket!,registryRecords,tenantIds:enrolled,connectionScope});
       case 'resource-controls':{
         const [tenantHash,userHash,kind,harness,resourceHash]=parts;if(!retiredHashes.has(tenantHash))tenantDigest(tenantHash);if(!isSessionHarness(harness))fail('Unknown control harness');
         const value=bytes===null?null:controlSchema.parse(json(bytes));

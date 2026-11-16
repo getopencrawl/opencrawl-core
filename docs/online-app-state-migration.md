@@ -47,6 +47,13 @@ typed readback in the replay transaction. New tenant enrollment requires an
 explicit trusted verifier and append-only receipt; offline owner bounds remain
 unchanged. Unsupported domains fail closed.
 
+Online connector routing can use a verified PostgreSQL registry reader on the
+same transaction client. Its binding stays stable while new connections arrive.
+Slack capture pins the exact historical prefix and owner; count retirement pins
+the logical connection owner, allowing a legitimate reconnect to change its
+prefix. The pins survive deletion. Missing, ambiguous or reassigned ownership
+fails verification. These migration facts grant no current connector access.
+
 `createOnlineTypedShadow` connects the typed projector to background backfill
 and replay. The byte mirror, typed readback and replay checkpoint share one
 PostgreSQL transaction. Background parity inspects typed state independently
@@ -124,6 +131,24 @@ the owning catalog, then attaches through read-only metadata checks after a
 restart. Request handlers do not create schemas or adopt an unbound source.
 The low-level `ready()` helper remains for explicitly unbound migration tooling.
 
+An adapter may supply a bounded `prepareSource` step to the Temporal controller.
+Incomplete physical-list preparation retains the existing backfill or replay
+cursor and waits; it cannot masquerade as an empty completed source.
+
+Final admission has a separate installation discriminator. The explicit version
+2 schema upgrade preserves genuine offline migration IDs and receipts. An online
+installation has no offline migration ID, source manifest or completed offline
+inventory. Its startup reader requires an exact target identity and canonical
+sealed proof matching both the terminal write authority and fenced journal epoch.
+Schema preparation and receipt validation alone create no ready installation.
+
+The authority's explicit finalization preparation adds a terminal `target` mode
+without changing the current writer mode. Its finalization gate refuses to queue
+behind accepted mutations; callers retry once those calls finish. Terminal mode
+refuses both legacy and journal callbacks and cannot be reactivated. The final
+sealer that verifies parity and commits the receipt with that transition is
+still required.
+
 A legacy operation records its dispatch before external I/O. If its outcome or
 gate connection becomes uncertain, that durable record blocks later same-key
 writes and activation even after a process restart. Only a definitive adapter
@@ -134,14 +159,16 @@ that recovery command is still part of the remaining composition work.
 
 Before switching runtime authority, complete the remaining typed domains and
 workflow handoff, finish replay, fence legacy mutation admission, drain accepted
-operations, and verify typed parity at the resulting closed frontier. Keep auth,
-reads and capture intake available, and route or durably queue mutations during
-the fence. A live parity observation alone is not a cutover receipt. Cancel the
+operations, and verify typed parity at the resulting closed frontier. Keep signup
+and login serving independently of the stateful request drain. Stateful requests
+may need a bounded retry response during the handoff; do not acknowledge capture
+before its durable write or claim an unmeasured zero-error switch. A live parity
+observation alone is not a cutover receipt. Cancel the
 migration worker only after the completed authority switch or an explicit abort.
 
-The current components do not implement fleet enrollment, the compact final
-typed parity proof, the final mutation-routing fence, full registry and workflow
-projection, a final readiness receipt, or a
+The current components do not implement fleet enrollment, the final complete
+typed parity proof, the final request-routing fence, the complete workflow
+handoff, a final readiness receipt producer, or a
 one-command online upgrade. Those remain release gates. Existing-installation
 traffic, signup, capture, restart, deletion and rollback rehearsals must verify
 the composed release before production activation.

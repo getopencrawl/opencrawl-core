@@ -66,6 +66,7 @@ async function manifestHash(client:PoolClient,namespace:string,temporary=false){
 }
 async function readyReceipt(client:PoolClient,namespace:string,source:ApplicationSourceIdentity,allowImporting=false){
   const {rows}=await client.query('SELECT * FROM opencrawl_application_installations WHERE namespace=$1',[namespace]);const installation=rows[0];
+  if(installation?.admission_kind&&installation.admission_kind!=='offline')fail('Online admission is not an offline migration receipt');
   if(!installation||!isDeepStrictEqual(installation.source_identity,source))fail('Application-state source binding differs; restore or use a reviewed migration');
   if(!installation.inventory_complete||!allowImporting&&(installation.state!=='ready'||!installation.verified_at))fail('Application-state migration is incomplete; keep writers stopped');
   const manifest=await manifestHash(client,namespace);
@@ -112,6 +113,7 @@ export async function migrateApplicationSources<Result extends object>(options:A
   try{
     await client.query('SELECT pg_advisory_lock(hashtextextended($1,0))',[ns+':application-migration']);locked=true;
     const {rows}=await client.query('SELECT * FROM opencrawl_application_installations WHERE namespace=$1',[ns]);const existing=rows[0];
+    if(existing?.admission_kind&&existing.admission_kind!=='offline')fail('Online admission cannot be changed by the offline importer');
     if(existing&&!isDeepStrictEqual(existing.source_identity,source))fail('This application namespace is already bound to another source');
     if(existing?.state==='ready'){
       const receipt=await readyReceipt(client,ns,source);

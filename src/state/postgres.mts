@@ -2,6 +2,8 @@ import {Pool, type PoolClient, type PoolConfig} from 'pg';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import type {ApplicationSourceIdentity} from './settings.mjs';
+import {readApplicationAdmission,verifyOnlineAdmissionSchemaIn} from './application-admission.mjs';
+export {readApplicationAdmission} from './application-admission.mjs';
 
 /** One operator-owned application database. Temporal keeps its own database. */
 export interface ApplicationDatabase {
@@ -10,6 +12,7 @@ export interface ApplicationDatabase {
   readonly namespace: string;
   readonly identitySchema: string;
   readonly sourceIdentity?:ApplicationSourceIdentity;
+  readonly onlineTargetId?:string;
   ready(): Promise<void>;
   transaction<T>(run: (client: PoolClient) => Promise<T>): Promise<T>;
   close(): Promise<void>;
@@ -78,8 +81,9 @@ export async function ensureSchemaIndex(client:PoolClient,{table,name,keys,metho
   if(found.relkind!=='i'||!found.indisvalid||!found.indisready||!found.indislive||found.indisunique||found.indisexclusion||!found.owns_table||!found.default_classes||!found.builtin_expressions||found.amname!==method||found.indnkeyatts!==keys.length||found.indnatts!==keys.length||!isDeepStrictEqual(found.keys,rendered)||!isDeepStrictEqual(found.options,options)||!isDeepStrictEqual(found.collations.map(Number),collations)||!isDeepStrictEqual(found.opclasses,opclasses)||found.predicate!==condition)throw new Error('Existing schema index is incompatible: '+name);
 }
 
-export function createApplicationDatabase({namespace,sourceIdentity, ...config}: PoolConfig & {namespace: string;sourceIdentity?:ApplicationSourceIdentity}): ApplicationDatabase {
+export function createApplicationDatabase({namespace,sourceIdentity,onlineTargetId, ...config}: PoolConfig & {namespace: string;sourceIdentity?:ApplicationSourceIdentity;onlineTargetId?:string}): ApplicationDatabase {
   if (!namespace || namespace.length > 2048 || namespace.includes('\0')) throw new Error('A stable application-state namespace is required');
+  if(onlineTargetId!==undefined&&!/^[a-f0-9]{64}$/.test(onlineTargetId))throw new Error('An exact online target identity is required');
   const identitySchema = 'oc_auth_' + createHash('sha256').update(namespace).digest('hex').slice(0, 24);
   const defaults: PoolConfig = {max: 8, connectionTimeoutMillis: 10000, ...config};
   const pool = new Pool(defaults);
@@ -104,7 +108,7 @@ export function createApplicationDatabase({namespace,sourceIdentity, ...config}:
     } finally {client.release(destroy);}
   }
   return {
-    pool, identityPool, namespace, identitySchema,sourceIdentity, transaction,
+    pool, identityPool, namespace, identitySchema,sourceIdentity,onlineTargetId, transaction,
     async ready() {
       if (closed) throw new Error('Application database is closed');
       preparing ??= transaction(async client => {
@@ -134,7 +138,8 @@ export function createApplicationDatabase({namespace,sourceIdentity, ...config}:
         // The schema advisory lock serializes this one-time offline upgrade.
         await ensureByteOrderIndex(client,'opencrawl_application_migration_sources','opencrawl_application_sources_byte_order',['namespace','source_key']);
         const result = await client.query('SELECT version FROM opencrawl_application_schema WHERE singleton');
-        if (result.rows[0]?.version !== 1) throw new Error('Unsupported application database schema; use the supported upgrade');
+        if(result.rows[0]?.version===2)await verifyOnlineAdmissionSchemaIn(client);
+        else if (result.rows[0]?.version !== 1) throw new Error('Unsupported application database schema; use the supported upgrade');
       }).catch(error => {preparing = undefined; throw error;});
       await preparing;
     },
@@ -144,7 +149,5 @@ export function createApplicationDatabase({namespace,sourceIdentity, ...config}:
 
 /** Preparing schemas does not authorize runtime reads of a half-imported store. */
 export async function requireApplicationStateReady(database: ApplicationDatabase): Promise<void> {
-  const result = await database.pool.query('SELECT state,source_identity FROM opencrawl_application_installations WHERE namespace=$1', [database.namespace]);
-  if (result.rows[0]?.state !== 'ready') throw Object.assign(new Error('Application-state migration is incomplete; run the supported upgrade before starting writers'), {status: 503});
-  if(database.sourceIdentity&&!isDeepStrictEqual(result.rows[0].source_identity,database.sourceIdentity))throw Object.assign(new Error('Application-state source binding differs from this runtime; use the supported migration'),{status:503});
+  await readApplicationAdmission(database);
 }

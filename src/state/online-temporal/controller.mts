@@ -51,6 +51,14 @@ export function createOnlineMigrationController({database,binding:input,adapter,
    if(!locked)return {phase:'waiting',revision:0,waiting:true,parityObserved:false};
    await client.query("INSERT INTO opencrawl_online_migration_runs(namespace,binding_id,shard,epoch,source_id,target_id,shards,phase) VALUES($1,$2,$3,$4,$5,$6,$7,'backfill') ON CONFLICT DO NOTHING",[...keys(ref),binding.epoch,binding.sourceId,binding.targetId,binding.shards]);
    const current=await load(client,ref);
+   if(adapter.prepareSource){
+    const prepared=await adapter.prepareSource({signal:activeSignal});
+    if(!prepared||Object.keys(prepared).join(',')!=='ready'||typeof prepared.ready!=='boolean')unsafe();
+    activeSignal.throwIfAborted();await adapter.assertCurrent(activeSignal);if(broken)unsafe();
+    // Preparation stores its own page chain. Do not manufacture an empty
+    // backfill page or overwrite an already durable replay/parity cursor.
+    if(!prepared.ready)return progress(current,true);
+   }
    const next={...current},common={shard:ref.shard,shards:binding.shards,limit:pageSize,signal:activeSignal};let waiting=false;
    const recovery=await adapter.reconcilePending({cursor:current.pendingCursor,limit:8,signal:activeSignal});
    if(!recovery||recovery.cursor!==null&&!sequence(recovery.cursor)||!safeCount(recovery.processed)||recovery.processed>8||!safeCount(recovery.pending)||!safeCount(recovery.settled)||recovery.pending+recovery.settled!==recovery.processed||typeof recovery.budgetExhausted!=='boolean')unsafe();

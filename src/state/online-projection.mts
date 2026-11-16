@@ -1,3 +1,5 @@
+import {createOnlineConnectionScopePins,type OnlineConnectionScopeReader} from './online-connection-scopes.mjs';
+import {slackCaptureLegacyIdentity} from './slack-capture.mjs';
 import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {createBoundObjectMigration,onlineProjectionValue,type BoundObjectMigrationOptions,type OnlineObjectProjection} from './object-migration.mjs';
@@ -21,8 +23,8 @@ export const onlineProjectionHash=(value:unknown)=>hash(JSON.stringify(canonical
 function revision(value:string){if(!/^(0|[1-9][0-9]*)$/.test(value)||BigInt(value)>9223372036854775807n)fail('invalid source revision');}
 function bounded(value:string,max:number){if(typeof value!=='string'||!value||value.includes('\0')||Buffer.byteLength(value)>max)fail('invalid source binding');}
 export interface OnlineTenantEnrollmentRequest {tenantId:string;evidence:unknown}
-export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment,agentPrefix,...options}:BoundObjectMigrationOptions&{
- epoch:string;sourceId:string;agentPrefix?:string;enrollment:{verifierId:string;initialReceiptHash:string;verify(request:OnlineTenantEnrollmentRequest):Promise<{tenantId:string;receiptHash:string}>};journalBinding:Readonly<{namespace:string;epoch:string;sourceId:string}>;
+export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment,agentPrefix,connectionScopes,...options}:BoundObjectMigrationOptions&{
+ epoch:string;sourceId:string;agentPrefix?:string;connectionScopes?:OnlineConnectionScopeReader;enrollment:{verifierId:string;initialReceiptHash:string;verify(request:OnlineTenantEnrollmentRequest):Promise<{tenantId:string;receiptHash:string}>};journalBinding:Readonly<{namespace:string;epoch:string;sourceId:string}>;
 }){
  const {database}=options,namespace=database.namespace;bounded(sourceId,2048);bounded(enrollment.verifierId,512);if(!/^[a-f0-9]{64}$/.test(enrollment.initialReceiptHash)||typeof enrollment.verify!=='function')fail('invalid tenant enrollment verifier');
  const verifyEnrollment=enrollment.verify,verifierId=enrollment.verifierId,initialReceiptHash=enrollment.initialReceiptHash;if(!uuid.test(epoch))fail('invalid epoch');
@@ -32,11 +34,12 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
  const policy=createOnlineObjectPolicy({prefix:options.prefix,credentialPurpose:options.credentialPurpose,agentPrefix});
  const agentObject=agentPrefix?createBoundObjectMigration({...options,prefix:agentPrefix,credentialPurpose:'agent',tenantIds:initialTenants,retiredTenantHashes}):undefined;
  const decoder=(key:string)=>agentObject&&policy.route(key).credentialPurpose==='agent'?agentObject:object;
- const bindingHash=onlineProjectionHash({bucket:options.store.bucket,prefix:options.prefix,purpose:options.credentialPurpose??'capture',tenantIds:[...initialTenants].sort(),retiredTenantHashes:[...retiredTenantHashes].sort(),verifierId,initialReceiptHash,...(agentPrefix?{agentPrefix,routePolicyHash:policy.policyHash}:{})});
+ const connectionPins=connectionScopes?createOnlineConnectionScopePins({database,epoch,sourceId,bucket:options.store.bucket!,reader:connectionScopes,hasTenantIn:(client,tenantId)=>hasEnrolledTenantHashIn(client,hash(tenantId))}):undefined;
+ const bindingHash=onlineProjectionHash({bucket:options.store.bucket,prefix:options.prefix,purpose:options.credentialPurpose??'capture',tenantIds:[...initialTenants].sort(),retiredTenantHashes:[...retiredTenantHashes].sort(),verifierId,initialReceiptHash,...(connectionPins?{connectionScopes:connectionPins.readerBinding}:{}),...(agentPrefix?{agentPrefix,routePolicyHash:policy.policyHash}:{})});
  let preparing:Promise<void>|undefined,enrollmentRevision:string|undefined,enrolledTenants:readonly string[]=[];
  async function ready(){
   preparing??=(async()=>{
-   await object.ready();await object.prepareOnline();
+   await object.ready();await object.prepareOnline();await connectionPins?.ready();
    await database.transaction(async client=>{
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:online-projection:schema',0))");
     await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_online_projection_namespaces(namespace text PRIMARY KEY,epoch uuid NOT NULL);
@@ -128,17 +131,26 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   }
   return {processed:page.length,matched:page.length-mismatches,mismatches,next:rows.length>limit?String(page[page.length-1].target_key):null};
  }
+ async function decodeIn(client:PoolClient,key:string,bytes:Buffer|null,readOnly=false){
+  const tenants=await enrolled(client,readOnly),owner=decoder(key),found=owner.classify(key);
+  if(!connectionPins||found?.domain!=='slack-capture')return {decoded:owner.decodeOnline(key,bytes,tenants),connectionScopeHash:null};
+  const prefix=slackCaptureLegacyIdentity(key).prefix.slice(0,-1);
+  const routing=await connectionPins.resolveIn(client,{key,lookup:{bucket:options.store.bucket!,prefix},write:!readOnly});
+  if(!routing)fail('connection scope pin is missing');
+  return {decoded:owner.decodeOnline(key,bytes,tenants,routing.scope),connectionScopeHash:routing.scopeHash};
+ }
+ const targetValueHash=(value:unknown,connectionScopeHash:string|null)=>onlineProjectionHash(connectionScopeHash===null?value:{value,connectionScopeHash});
  async function project(client:PoolClient,input:{key:string;bytes:Buffer|null;revision:string;operationId:string|null;version:string}):Promise<OnlineCoverageTarget>{
   bounded(input.key,8192);bounded(input.version,2048);revision(input.revision);
   if(input.revision==='0'?input.operationId!==null:input.operationId===null||!uuid.test(input.operationId))fail('invalid source operation');
   // Freeze decode input before the first SQL await; callbacks cannot redirect it.
   const key=input.key,version=input.version,rev=input.revision,operationId=input.operationId,bytes=input.bytes===null?null:Buffer.from(input.bytes);
-  const decoded=decoder(key).decodeOnline(key,bytes,await enrolled(client)),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);bounded(targetKey,8192);
-  const value=onlineProjectionValue(decoded),contentHash=bytes===null?hash('deleted'):hash(bytes),targetHash=onlineProjectionHash(value);
+  const {decoded,connectionScopeHash}=await decodeIn(client,key,bytes),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);bounded(targetKey,8192);
+  const value=onlineProjectionValue(decoded),contentHash=bytes===null?hash('deleted'):hash(bytes),targetHash=targetValueHash(value,connectionScopeHash);
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify(['online-projection',namespace,targetKey])]);
   const prior=(await client.query('SELECT source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=$3 FOR UPDATE',[namespace,epoch,targetKey])).rows[0];
   if(prior&&(prior.source_id!==sourceId||prior.source_key!==key||prior.domain!==decoded.domain))fail('canonical target has a different source publisher');
-  const current=await readTargetIn(client,decoded,targetKey,key),currentHash=onlineProjectionHash(current);
+  const current=await readTargetIn(client,decoded,targetKey,key),currentHash=targetValueHash(current,connectionScopeHash);
   if(prior){
    if(prior.deleted&&bytes!==null&&['capture-credentials','connector-grants','replicas-connections','replicas-setup'].includes(decoded.domain))fail('deleted security identity cannot be reused');
    revision(prior.revision);if(currentHash!==prior.target_hash)fail('typed target changed outside its source projection');
@@ -148,7 +160,7 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   // Domain owners retain privacy/revocation/held-operation invariants even when
   // the current target is absent. Unsupported deletions never silently pass.
   await writeTargetIn(client,decoded,targetKey,key);
-  if(onlineProjectionHash(await readTargetIn(client,decoded,targetKey,key))!==targetHash)fail('typed readback differs from source');
+  if(targetValueHash(await readTargetIn(client,decoded,targetKey,key),connectionScopeHash)!==targetHash)fail('typed readback differs from source');
   await client.query(`INSERT INTO opencrawl_online_projection_heads(namespace,epoch,target_key,source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     ON CONFLICT(namespace,epoch,target_key) DO UPDATE SET revision=EXCLUDED.revision,operation_id=EXCLUDED.operation_id,source_version=EXCLUDED.source_version,content_hash=EXCLUDED.content_hash,target_hash=EXCLUDED.target_hash,deleted=EXCLUDED.deleted`,[namespace,epoch,targetKey,sourceId,key,decoded.domain,rev,operationId,version,contentHash,targetHash,bytes===null]);  return {targetKey,targetHash};
  }
@@ -158,11 +170,11 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   bounded(input.key,8192);bounded(input.version,2048);revision(input.revision);
   if(input.revision==='0'?input.operationId!==null:input.operationId===null||!uuid.test(input.operationId))fail('invalid inspected source operation');
   const key=input.key,version=input.version,rev=input.revision,operationId=input.operationId,bytes=input.bytes===null?null:Buffer.from(input.bytes);
-  const decoded=decoder(key).decodeOnline(key,bytes,await enrolled(client,true)),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);
-  const targetHash=onlineProjectionHash(onlineProjectionValue(decoded)),contentHash=bytes===null?hash('deleted'):hash(bytes);
+  const {decoded,connectionScopeHash}=await decodeIn(client,key,bytes,true),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);
+  const targetHash=targetValueHash(onlineProjectionValue(decoded),connectionScopeHash),contentHash=bytes===null?hash('deleted'):hash(bytes);
   const head=(await client.query('SELECT source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,targetKey])).rows[0];
   if(!head||head.source_id!==sourceId||head.source_key!==key||head.domain!==decoded.domain||head.revision!==rev||head.operation_id!==operationId||head.source_version!==version||head.content_hash!==contentHash||head.target_hash!==targetHash||head.deleted!==(bytes===null))return false;
-  if(onlineProjectionHash(await readTargetIn(client,decoded,targetKey,key))!==targetHash)return false;
+  if(targetValueHash(await readTargetIn(client,decoded,targetKey,key),connectionScopeHash)!==targetHash)return false;
   return decoded.kind!=='replicas-reference'||decoded.value===null||await referenceMatchesIn(client,decoded.tenantHash,decoded.organizationId);
  }
  /** Exact enrolled owner check for metadata-only native ledger coverage. */

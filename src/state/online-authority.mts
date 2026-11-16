@@ -1,5 +1,6 @@
 import {createHash, randomUUID} from 'node:crypto';
 import type {Pool, PoolClient} from 'pg';
+import {prepareOnlineAuthorityTargetSchemaIn} from './online-authority-schema.mjs';
 
 export interface OnlineWriteContext {sourceId: string; key: string}
 export interface OnlineWriteAuthority {
@@ -8,7 +9,7 @@ export interface OnlineWriteAuthority {
 export interface OnlineAuthorityBinding {namespace: string; epoch: string; protocol: string}
 export interface OnlineEnrollmentEvidence extends OnlineAuthorityBinding {receiptHash: string}
 export interface OnlineAuthorityStatus extends OnlineAuthorityBinding {
-  mode: 'legacy' | 'journal'; preparationReceiptHash: string; enrollmentReceiptHash: string | null;
+  mode: 'legacy' | 'journal' | 'target'; preparationReceiptHash: string; enrollmentReceiptHash: string | null;targetReceiptHash?:string;
 }
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const sha = /^[a-f0-9]{64}$/;
@@ -44,7 +45,7 @@ export function createOnlineWriteAuthority({database, epoch, protocol}: {
   const gate = JSON.stringify(['online-write-authority', binding.namespace]);
   const keyGate = (sourceId: string, key: string) => JSON.stringify(['online-write-authority-key', binding.namespace, sourceId, key]);
 
-  async function locked<T>(exclusive: boolean, context: OnlineWriteContext | null, run: (client: PoolClient, alive: () => void) => Promise<T>) {
+  async function locked<T>(exclusive: boolean, context: OnlineWriteContext | null, run: (client: PoolClient, alive: () => void) => Promise<T>,nonblocking=false) {
     const client = await database.pool.connect();
     let acquired = false, acquiredKey = false, broken = false, destroy = false;
     const onError = () => {broken = true;}; client.on('error', onError);
@@ -52,7 +53,8 @@ export function createOnlineWriteAuthority({database, epoch, protocol}: {
     try {
       // An acquisition timeout is ambiguous: destroy the connection even when
       // the server may have acquired a lock after the query promise rejected.
-      await client.query(`SELECT pg_advisory_lock${exclusive ? '' : '_shared'}(hashtextextended($1,0))`, [gate]); acquired = true;
+      if(nonblocking){if((await client.query(`SELECT pg_try_advisory_lock${exclusive ? '' : '_shared'}(hashtextextended($1,0)) AS acquired`,[gate])).rows[0]?.acquired!==true)fail('BUSY');}
+      else await client.query(`SELECT pg_advisory_lock${exclusive ? '' : '_shared'}(hashtextextended($1,0))`, [gate]); acquired = true;
       if (context) {await client.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [keyGate(context.sourceId, context.key)]); acquiredKey = true;}
       alive(); const result = await run(client, alive); alive(); return result;
     } catch (error) {destroy = true; throw error;}
@@ -72,12 +74,13 @@ export function createOnlineWriteAuthority({database, epoch, protocol}: {
     catch (error) {await client.query('ROLLBACK').catch(() => {}); throw error;}
   }
   async function readIn(client: PoolClient): Promise<OnlineAuthorityStatus> {
-    const row = (await client.query('SELECT epoch,protocol,mode,preparation_receipt_hash,enrollment_receipt_hash FROM opencrawl_online_write_authorities WHERE namespace=$1', [binding.namespace])).rows[0];
+    const row = (await client.query("SELECT epoch,protocol,mode,preparation_receipt_hash,enrollment_receipt_hash,to_jsonb(w)->>'target_receipt_hash' AS target_receipt_hash FROM opencrawl_online_write_authorities w WHERE namespace=$1", [binding.namespace])).rows[0];
     if (!row) fail('NOT_PREPARED');
     if (row.epoch !== epoch || row.protocol !== protocol) fail('BINDING_MISMATCH');
-    if (!['legacy', 'journal'].includes(row.mode) || !sha.test(row.preparation_receipt_hash) ||
-      (row.mode === 'legacy' ? row.enrollment_receipt_hash !== null : !sha.test(row.enrollment_receipt_hash))) fail('INVALID_STORED_STATE');
-    return {...binding, mode: row.mode, preparationReceiptHash: row.preparation_receipt_hash, enrollmentReceiptHash: row.enrollment_receipt_hash};
+    if (!['legacy', 'journal','target'].includes(row.mode) || !sha.test(row.preparation_receipt_hash) ||
+      (row.mode === 'legacy' ? row.enrollment_receipt_hash !== null : !sha.test(row.enrollment_receipt_hash))||
+      (row.mode==='target'?!sha.test(row.target_receipt_hash??''):row.target_receipt_hash!==null)) fail('INVALID_STORED_STATE');
+    return {...binding, mode: row.mode, preparationReceiptHash: row.preparation_receipt_hash, enrollmentReceiptHash: row.enrollment_receipt_hash,...(row.mode==='target'?{targetReceiptHash:String(row.target_receipt_hash)}:{})};
   }
   async function prepare({receiptHash}: {receiptHash: string}) {
     if (!sha.test(receiptHash)) fail('INVALID_PREPARATION_RECEIPT');
@@ -102,6 +105,7 @@ export function createOnlineWriteAuthority({database, epoch, protocol}: {
     const context = {...input}, legacy = callbacks.legacy, journal = callbacks.journal;
     return locked(false, context, async (client, alive) => {
       const state = await readIn(client);
+      if(state.mode==='target')fail('TARGET_ADMITTED');
       if (state.mode === 'journal') return journal();
       const values = [binding.namespace, epoch, context.sourceId, hash(context.key), context.key, randomUUID()];
       const inserted = await client.query(`INSERT INTO opencrawl_online_legacy_inflight(namespace,epoch,source_id,key_hash,source_key,operation_id)
@@ -135,6 +139,7 @@ export function createOnlineWriteAuthority({database, epoch, protocol}: {
     if (!sha.test(receiptHash) || typeof verify !== 'function') fail('INVALID_ENROLLMENT_RECEIPT');
     return locked(true, null, (client, alive) => transaction(client, async () => {
       const state = await readIn(client);
+      if(state.mode==='target')fail('TARGET_ADMITTED');
       if (state.mode === 'journal') {
         if (state.enrollmentReceiptHash !== receiptHash) fail('ENROLLMENT_RECEIPT_CHANGED');
         return state;
@@ -146,5 +151,22 @@ export function createOnlineWriteAuthority({database, epoch, protocol}: {
       return readIn(client);
     }));
   }
-  return {binding, prepare, run, status, pending, activate};
+  async function prepareFinalization(){return locked(true,null,client=>transaction(client,async()=>{
+    await readIn(client);await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:online-write-authority:schema',0))");
+    await prepareOnlineAuthorityTargetSchemaIn(client);return readIn(client);
+  }));}
+  /** Operator gate only, not admission. Acquire without queuing behind active
+   * writes. The final sealer owns the bounded tail and same-client transaction;
+   * loss of this connection makes its outcome uncertain and requires readback. */
+  async function withFinalization<T>(expected:{preparationReceiptHash:string;enrollmentReceiptHash:string},runFinal:(client:PoolClient,alive:()=>void)=>Promise<T>){
+    if(!sha.test(expected.preparationReceiptHash)||!sha.test(expected.enrollmentReceiptHash)||typeof runFinal!=='function')fail('INVALID_FINALIZATION');
+    const frozen={...expected};
+    return locked(true,null,async(client,alive)=>{
+      const state=await readIn(client);if(state.mode!=='journal')fail(state.mode==='target'?'TARGET_ADMITTED':'NOT_ACTIVATED');
+      if(state.preparationReceiptHash!==frozen.preparationReceiptHash||state.enrollmentReceiptHash!==frozen.enrollmentReceiptHash)fail('FINALIZATION_BINDING');
+      if((await client.query('SELECT 1 FROM opencrawl_online_legacy_inflight WHERE namespace=$1 LIMIT 1',[binding.namespace])).rows.length)fail('LEGACY_OUTCOME_UNRESOLVED');
+      return runFinal(client,alive);
+    },true);
+  }
+  return {binding, prepare, run, status, pending, activate,prepareFinalization,withFinalization};
 }

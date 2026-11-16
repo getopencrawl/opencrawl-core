@@ -10,6 +10,10 @@ export interface OnlineMigrationPage {cursor:string|null;processed:number}
  * Replay applies only committed entries through the closed contiguous frontier.
  * Parity observes this same epoch/target/frontier; it does not authorize cutover. */
 export interface OnlineMigrationAdapter {
+ /** Optional bounded physical-list preparation. Each call performs at most one
+  * durable source page or seal operation; false keeps all migration cursors.
+  * No source values or credentials enter Workflow input/history. */
+ prepareSource?(input:{signal:AbortSignal}):Promise<{ready:boolean}>;
  assertCurrent(signal:AbortSignal):Promise<void>;
  reconcilePending(input:{cursor:string|null;limit:number;signal:AbortSignal}):Promise<{cursor:string|null;processed:number;pending:number;settled:number;budgetExhausted:boolean}>;
  frontierState(signal:AbortSignal):Promise<{allocated:string;closed:string;pending:boolean}>;

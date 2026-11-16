@@ -15,11 +15,16 @@ export {createOnlineObjectParticipant, createOnlineTypedShadow} from './online-t
 export type {OnlineTypedDisposition} from './online-typed-shadow.mjs';
 export type {OnlineCoverageAuthority, OnlineCoveragePolicy} from './online-coverage.mjs';
 export {validateOnlineIndexingHandoff, onlineIndexingHandoffHash} from './online-indexing-handoff.mjs';
+export {validateOnlineApplicationAdmission,onlineApplicationAdmissionHash} from './application-admission.mjs';
+export type {OnlineApplicationAdmission} from './application-admission.mjs';
 export type {OnlineIndexingHandoff, OnlineIndexingHandoffReader} from './online-indexing-handoff.mjs';
 export {createOnlineRetirements} from './online-retirements.mjs';
 export type {OnlineRetirementDomain, OnlineRetirementClassification, OnlineRetirementDisposition, OnlineRetirementRecord} from './online-retirements.mjs';
 export {createOnlineProjection} from './online-projection.mjs';
+export {prepareSetupSchemaIn} from './setup.mjs';
 export type {OnlineTenantEnrollmentRequest} from './online-projection.mjs';
+export type {OnlineConnectionScope, OnlineConnectionScopeLookup, OnlineConnectionScopeReader} from './online-connection-scopes.mjs';
+export {normalizeOnlineConnectionScope} from './online-connection-scopes.mjs';
 export {createOnlineMigrationController} from './online-temporal/controller.mjs';
 export {onlineMigrationBindingId, onlineMigrationReference, onlineMigrationTaskQueue, onlineMigrationWorkflowId} from './online-temporal/binding.mjs';
 export type {OnlineMigrationBinding, OnlineMigrationReference, OnlineMigrationAdapter} from './online-temporal/types.mjs';

@@ -1,3 +1,4 @@
+import {createOnlineConnectionScopePins,type OnlineConnectionScopeReader} from './online-connection-scopes.mjs';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import type {PoolClient} from 'pg';
@@ -15,7 +16,7 @@ interface CountScope {environment:string;tenantId:string;userId:string;connectio
 export interface OnlineRetirementRecord {
  key:string;domain:OnlineRetirementDomain;scopeHash:string;disposition:OnlineRetirementDisposition;
  revision:string;sequence:string;operationId:string|null;deleted:boolean;sourceVersion:string|null;
- sourceHash:string|null;sourceBytes:number|null;contentType:string|null;requestHash:string|null;
+ sourceHash:string|null;sourceBytes:number|null;contentType:string|null;requestHash:string|null;connectionScopeHash?:string;
 }
 const sha=/^[a-f0-9]{64}$/,uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const digest=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
@@ -25,25 +26,27 @@ function text(value:unknown,max:number):asserts value is string{if(typeof value!
 function sequence(value:unknown):asserts value is string{if(typeof value!=='string'||!/^(0|[1-9][0-9]*)$/.test(value)||BigInt(value)>9223372036854775807n)fail('invalid sequence');}
 function integer(value:unknown):number{if(typeof value!=='number'||!Number.isSafeInteger(value)||value<0)fail('invalid byte count');return value;}
 const disposition=(domain:OnlineRetirementDomain):OnlineRetirementDisposition=>domain==='record-counts'?'unavailable-until-count-rebuild':domain.startsWith('connector-')?'full-current-connector-catchup':'full-current-session-catchup';
-const columns='source_key,domain,scope_hash,disposition,revision::text,source_sequence::text,operation_id::text,deleted,source_version,source_hash,source_bytes,content_type,request_hash';
+const columns='source_key,domain,scope_hash,disposition,revision::text,source_sequence::text,operation_id::text,deleted,source_version,source_hash,source_bytes,content_type,request_hash,connection_scope_hash';
 
 /** Migration-only audit of explicitly retired derived objects. No raw bodies,
  * old cursor, old completion marker or count enters a runtime repository.
  * Caller owns the journal key gate AND transaction for backfill/apply/inspect.
- * Registry scope is an explicit frozen enrollment snapshot; a new connection
- * requires separately reviewed enrollment, not authority inferred from its key. */
-export function createOnlineRetirements({database,epoch,sourceId,journalBinding,source,registryRecords=[],tenantIds=[]}:{
+ * Fixed registry scope preserves offline compatibility. Dynamic routing requires
+ * a bound same-client reader and persistent owner pins; keys grant no authority. */
+export function createOnlineRetirements({database,epoch,sourceId,journalBinding,source,registryRecords=[],tenantIds=[],connectionScopes,connectionTenantEnrolledIn}:{
  database:ApplicationDatabase;epoch:string;sourceId:string;journalBinding:Readonly<{namespace:string;epoch:string;sourceId:string}>;
- source:{bucket:string;prefix:string};registryRecords?:readonly IntegrationRecord[];tenantIds?:readonly string[];
+ source:{bucket:string;prefix:string};registryRecords?:readonly IntegrationRecord[];tenantIds?:readonly string[];connectionScopes?:OnlineConnectionScopeReader;connectionTenantEnrolledIn?:(client:PoolClient,tenantId:string)=>Promise<boolean>;
 }){
  const namespace=database.namespace,bucket=source.bucket,prefix=source.prefix;text(namespace,2048);text(sourceId,2048);text(bucket,1024);
  if(!uuid.test(epoch)||journalBinding.namespace!==namespace||journalBinding.epoch!==epoch||journalBinding.sourceId!==sourceId)fail('journal binding differs');
  const classifier=createLegacyObjectClassifier({prefix}),scope=[namespace,epoch,sourceId];
+ if(connectionScopes&&!connectionTenantEnrolledIn)fail('dynamic counts require same-client tenant verifier');
+ const connectionPins=connectionScopes?createOnlineConnectionScopePins({database,epoch,sourceId,bucket,reader:connectionScopes,hasTenantIn:connectionTenantEnrolledIn!}):undefined;
  if(tenantIds.length>100000||registryRecords.length>100000)fail('enrollment scope exceeds bound');
  const tenants=new Set(tenantIds);if(tenants.size!==tenantIds.length||tenantIds.some(id=>!/^(org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(id)))fail('invalid enrolled tenant set');
  const countScopes:CountScope[]=registryRecords.filter(record=>(record.s3Bucket||bucket)===bucket).map(record=>({environment:record.environment,tenantId:record.tenantId,userId:record.userId,connectionId:record.integrationId,bucket,prefix:record.s3Prefix??''}));
  countScopes.sort((a,b)=>Buffer.compare(Buffer.from(JSON.stringify(a)),Buffer.from(JSON.stringify(b))));
- const policy=JSON.stringify({format:1,source:{bucket,prefix},domains,tenants:[...tenants].sort(),countScopes});if(Buffer.byteLength(policy)>8*1024*1024)fail('enrollment policy exceeds byte bound');
+ const policy=JSON.stringify(connectionPins?{format:2,source:{bucket,prefix},domains,connectionScopes:connectionPins.readerBinding}:{format:1,source:{bucket,prefix},domains,tenants:[...tenants].sort(),countScopes});if(Buffer.byteLength(policy)>8*1024*1024)fail('enrollment policy exceeds byte bound');
  const policyHash=digest(policy),binding=Object.freeze({namespace,epoch,sourceId,policyHash}),sourceBinding=Object.freeze({bucket,prefix});
  function countScope(connectionId:string){
   const found=countScopes.filter(record=>record.connectionId===connectionId);
@@ -54,15 +57,16 @@ export function createOnlineRetirements({database,epoch,sourceId,journalBinding,
  function classify(key:string):OnlineRetirementClassification|null{
   const found=classifier.classify(key);if(!found||!domains.includes(found.domain as OnlineRetirementDomain))return null;
   const domain=found.domain as OnlineRetirementDomain;
-  return {domain,maxBytes:found.maxBytes,scopeHash:identity({bucket,prefix,domain,parts:found.parts,...(domain==='record-counts'?{connection:countScope(found.parts[0])}:{})})};
+  return {domain,maxBytes:found.maxBytes,scopeHash:identity({bucket,prefix,domain,parts:found.parts,...(domain==='record-counts'?connectionPins?{connectionId:found.parts[0],reader:connectionPins.readerBinding}:{connection:countScope(found.parts[0])}:{})})};
  }
  function observation(input:OnlineRetirementObservation):OnlineRetirementClassification&{key:string}{
   const found=classify(input.key);if(!found||found.domain!==input.domain||found.scopeHash!==input.scopeHash)fail('source classification differs');return {key:input.key,...found};
  }
- function decode(row:Record<string,any>):OnlineRetirementRecord{
+ function decode(row:Record<string,any>,connectionScopeHash?:string):OnlineRetirementRecord{
   const observed=observation({key:row.source_key,domain:row.domain,scopeHash:row.scope_hash});sequence(row.revision);sequence(row.source_sequence);
+  if(connectionScopeHash!==undefined?row.connection_scope_hash!==connectionScopeHash:row.connection_scope_hash!=null)fail('stored connection scope changed');
   if(row.disposition!==disposition(observed.domain)||typeof row.deleted!=='boolean')fail('stored disposition changed');
-  const value:OnlineRetirementRecord={key:observed.key,domain:observed.domain,scopeHash:observed.scopeHash,disposition:row.disposition,revision:row.revision,sequence:row.source_sequence,operationId:row.operation_id,deleted:row.deleted,sourceVersion:row.source_version,sourceHash:row.source_hash,sourceBytes:row.source_bytes===null?null:integer(row.source_bytes),contentType:row.content_type,requestHash:row.request_hash};
+  const value:OnlineRetirementRecord={key:observed.key,domain:observed.domain,scopeHash:observed.scopeHash,disposition:row.disposition,revision:row.revision,sequence:row.source_sequence,operationId:row.operation_id,deleted:row.deleted,sourceVersion:row.source_version,sourceHash:row.source_hash,sourceBytes:row.source_bytes===null?null:integer(row.source_bytes),contentType:row.content_type,requestHash:row.request_hash,...(connectionScopeHash?{connectionScopeHash}:{})};
   if(value.revision==='0'){
    if(value.sequence!=='0'||value.operationId!==null||value.deleted||value.sourceVersion!==null||value.sourceHash!==null||value.sourceBytes!==null||value.contentType!==null||value.requestHash!==null)fail('listed-key baseline contains invented body evidence');
   }else{
@@ -72,8 +76,14 @@ export function createOnlineRetirements({database,epoch,sourceId,journalBinding,
   }return value;
  }
  async function assertBindingIn(client:PoolClient){const row=(await client.query('SELECT policy_hash FROM opencrawl_online_retirement_bindings WHERE namespace=$1 AND epoch=$2 AND source_id=$3',scope)).rows[0];if(row?.policy_hash!==policyHash)fail('retirement source policy changed');}
+ async function connectionIn(client:PoolClient,key:string,domain:OnlineRetirementDomain,write:boolean){
+  if(!connectionPins||domain!=='record-counts')return undefined;
+  const connectionId=classifier.classify(key)!.parts[0],found=await connectionPins.resolveIn(client,{key,lookup:{bucket,connectionId},write});
+  if(!found)fail('connection scope pin is missing');return found.scopeHash;
+ }
  async function readIn(client:PoolClient,input:OnlineRetirementObservation){
-  const {key}=observation(input);await assertBindingIn(client);const row=(await client.query(`SELECT ${columns} FROM opencrawl_online_retirements WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4`,[...scope,key])).rows[0];return row?decode(row):null;
+  const observed=observation(input);await assertBindingIn(client);const row=(await client.query(`SELECT ${columns} FROM opencrawl_online_retirements WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4`,[...scope,observed.key])).rows[0];
+  return row?decode(row,await connectionIn(client,observed.key,observed.domain,false)):null;
  }
  async function journalIn(client:PoolClient,key:string,operationId?:string){
   return (await client.query(`SELECT revision::text,sequence::text,operation_id::text,kind,state,result_version,payload_hash,octet_length(payload) AS source_bytes,content_type,request_hash
@@ -81,26 +91,30 @@ export function createOnlineRetirements({database,epoch,sourceId,journalBinding,
  }
  function matchesJournal(value:OnlineRetirementRecord,row:Record<string,any>|undefined){return Boolean(row&&['put','delete'].includes(row.kind)&&row.state==='applied'&&value.revision===row.revision&&value.sequence===row.sequence&&value.operationId===row.operation_id&&value.deleted===(row.kind==='delete')&&value.sourceVersion===row.result_version&&value.sourceHash===row.payload_hash&&value.sourceBytes===row.source_bytes&&value.contentType===row.content_type&&value.requestHash===row.request_hash);}
  async function saveIn(client:PoolClient,value:OnlineRetirementRecord){
-  await client.query(`INSERT INTO opencrawl_online_retirements(namespace,epoch,source_id,source_key,domain,scope_hash,disposition,revision,source_sequence,operation_id,deleted,source_version,source_hash,source_bytes,content_type,request_hash)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT(namespace,epoch,source_id,source_key) DO UPDATE SET revision=EXCLUDED.revision,source_sequence=EXCLUDED.source_sequence,operation_id=EXCLUDED.operation_id,deleted=EXCLUDED.deleted,source_version=EXCLUDED.source_version,source_hash=EXCLUDED.source_hash,source_bytes=EXCLUDED.source_bytes,content_type=EXCLUDED.content_type,request_hash=EXCLUDED.request_hash`,[...scope,value.key,value.domain,value.scopeHash,value.disposition,value.revision,value.sequence,value.operationId,value.deleted,value.sourceVersion,value.sourceHash,value.sourceBytes,value.contentType,value.requestHash]);
+  await client.query(`INSERT INTO opencrawl_online_retirements(namespace,epoch,source_id,source_key,domain,scope_hash,disposition,revision,source_sequence,operation_id,deleted,source_version,source_hash,source_bytes,content_type,request_hash,connection_scope_hash)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(namespace,epoch,source_id,source_key) DO UPDATE SET revision=EXCLUDED.revision,source_sequence=EXCLUDED.source_sequence,operation_id=EXCLUDED.operation_id,deleted=EXCLUDED.deleted,source_version=EXCLUDED.source_version,source_hash=EXCLUDED.source_hash,source_bytes=EXCLUDED.source_bytes,content_type=EXCLUDED.content_type,request_hash=EXCLUDED.request_hash,connection_scope_hash=EXCLUDED.connection_scope_hash`,[...scope,value.key,value.domain,value.scopeHash,value.disposition,value.revision,value.sequence,value.operationId,value.deleted,value.sourceVersion,value.sourceHash,value.sourceBytes,value.contentType,value.requestHash,value.connectionScopeHash??null]);
   if(!isDeepStrictEqual(await readIn(client,value),value))fail('independent retirement readback differs');
  }
  let preparing:Promise<void>|undefined;
- async function ready(){preparing??=(async()=>{await database.ready();await database.transaction(async client=>{
+ async function ready(){preparing??=(async()=>{await database.ready();await connectionPins?.ready();await database.transaction(async client=>{
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:online-retirements:schema',0))");
   await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_online_retirement_bindings(namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,policy_hash text NOT NULL CHECK(policy_hash~'^[a-f0-9]{64}$'),PRIMARY KEY(namespace,epoch,source_id));
    CREATE TABLE IF NOT EXISTS opencrawl_online_retirements(namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,source_key text COLLATE "C" NOT NULL,domain text NOT NULL CHECK(domain IN('session-scheduler-retirement','session-indexing','temporal-cutover','connector-indexing','connector-snapshots','record-counts')),
-   scope_hash text NOT NULL CHECK(scope_hash~'^[a-f0-9]{64}$'),disposition text NOT NULL CHECK(disposition IN('full-current-session-catchup','full-current-connector-catchup','unavailable-until-count-rebuild')),revision bigint NOT NULL CHECK(revision>=0),source_sequence bigint NOT NULL CHECK(source_sequence>=0),operation_id uuid,deleted boolean NOT NULL,source_version text,source_hash text,source_bytes integer CHECK(source_bytes>=0 AND source_bytes<=67108864),content_type text,request_hash text,
+   scope_hash text NOT NULL CHECK(scope_hash~'^[a-f0-9]{64}$'),disposition text NOT NULL CHECK(disposition IN('full-current-session-catchup','full-current-connector-catchup','unavailable-until-count-rebuild')),revision bigint NOT NULL CHECK(revision>=0),source_sequence bigint NOT NULL CHECK(source_sequence>=0),operation_id uuid,deleted boolean NOT NULL,source_version text,source_hash text,source_bytes integer CHECK(source_bytes>=0 AND source_bytes<=67108864),content_type text,request_hash text,connection_scope_hash text CHECK(connection_scope_hash IS NULL OR connection_scope_hash~'^[a-f0-9]{64}$'),
    PRIMARY KEY(namespace,epoch,source_id,source_key),FOREIGN KEY(namespace,epoch,source_id) REFERENCES opencrawl_online_retirement_bindings(namespace,epoch,source_id),
    CHECK((revision=0 AND source_sequence=0 AND operation_id IS NULL AND NOT deleted AND source_version IS NULL AND source_hash IS NULL AND source_bytes IS NULL AND content_type IS NULL AND request_hash IS NULL) OR
     (revision>0 AND source_sequence>0 AND operation_id IS NOT NULL AND source_version IS NOT NULL AND request_hash IS NOT NULL AND request_hash~'^[a-f0-9]{64}$' AND ((deleted AND source_hash IS NULL AND source_bytes IS NULL AND content_type IS NULL) OR (NOT deleted AND source_hash IS NOT NULL AND source_hash~'^[a-f0-9]{64}$' AND source_bytes IS NOT NULL AND content_type IS NOT NULL)))))`);
+  const scopeColumn=(await client.query("SELECT format_type(atttypid,atttypmod) AS type,attnotnull FROM pg_attribute WHERE attrelid='opencrawl_online_retirements'::regclass AND attname='connection_scope_hash' AND NOT attisdropped")).rows[0];
+  if(!scopeColumn)await client.query("ALTER TABLE opencrawl_online_retirements ADD COLUMN connection_scope_hash text CHECK(connection_scope_hash IS NULL OR connection_scope_hash~'^[a-f0-9]{64}$')");
+  else if(scopeColumn.type!=='text'||scopeColumn.attnotnull)fail('connection scope column changed');
   await client.query('INSERT INTO opencrawl_online_retirement_bindings VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[...scope,policyHash]);await assertBindingIn(client);
  });})().catch(error=>{preparing=undefined;throw error;});await preparing;}
  async function backfillIn(client:PoolClient,input:OnlineRetirementObservation){
   const observed=observation(input);await assertBindingIn(client);
   if(await journalIn(client,observed.key))fail('baseline key has pending or applied journal history');
+  const connectionScopeHash=await connectionIn(client,observed.key,observed.domain,true);
   const prior=await readIn(client,observed);if(prior){if(prior.revision!=='0')fail('baseline would overwrite replay');return;}
-  await saveIn(client,{key:observed.key,domain:observed.domain,scopeHash:observed.scopeHash,disposition:disposition(observed.domain),revision:'0',sequence:'0',operationId:null,deleted:false,sourceVersion:null,sourceHash:null,sourceBytes:null,contentType:null,requestHash:null});
+  await saveIn(client,{key:observed.key,domain:observed.domain,scopeHash:observed.scopeHash,disposition:disposition(observed.domain),revision:'0',sequence:'0',operationId:null,deleted:false,sourceVersion:null,sourceHash:null,sourceBytes:null,contentType:null,requestHash:null,...(connectionScopeHash?{connectionScopeHash}:{})});
  }
  async function applyIn(client:PoolClient,intent:OnlineIntent,input:Omit<OnlineRetirementObservation,'key'>){
   // Hash/copy scalar metadata before awaiting SQL. Payloads are never retained.
@@ -111,6 +125,7 @@ export function createOnlineRetirements({database,epoch,sourceId,journalBinding,
   const mutation=intent.mutation,put=mutation.kind==='put';if(mutation.kind==='put'&&(!Buffer.isBuffer(mutation.bytes)||mutation.bytes.length>observed.maxBytes))fail('derived source exceeds its declared bound');
   const value:OnlineRetirementRecord={key:observed.key,domain:observed.domain,scopeHash:observed.scopeHash,disposition:disposition(observed.domain),revision:intent.revision,sequence:intent.sequence,operationId:intent.operationId,deleted:!put,sourceVersion:intent.resultVersion,sourceHash:mutation.kind==='put'?digest(mutation.bytes):null,sourceBytes:mutation.kind==='put'?mutation.bytes.length:null,contentType:mutation.kind==='put'?mutation.contentType:null,requestHash:intent.requestHash};
   text(value.sourceVersion,2048);if(put)text(value.contentType,256);await assertBindingIn(client);
+  const connectionScopeHash=await connectionIn(client,value.key,value.domain,true);if(connectionScopeHash)value.connectionScopeHash=connectionScopeHash;
   if(!matchesJournal(value,await journalIn(client,value.key,value.operationId!)))fail('applied intent differs from durable journal');
   const prior=await readIn(client,observed);if(prior){if(BigInt(prior.revision)>BigInt(value.revision)||BigInt(prior.sequence)>BigInt(value.sequence))fail('stale retirement replay');if(prior.revision===value.revision){if(!isDeepStrictEqual(prior,value))fail('retirement revision was reused');return;}if(BigInt(prior.sequence)>=BigInt(value.sequence))fail('retirement sequence did not advance');}
   await saveIn(client,value);
