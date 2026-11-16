@@ -2,7 +2,7 @@ import {test,expect} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname,resolve} from 'node:path';
-import {ChildProcess,type spawnSync,type spawn,type SpawnSyncReturns} from 'node:child_process';
+import {ChildProcess,spawnSync as executeSync,type spawnSync,type spawn,type SpawnSyncReturns} from 'node:child_process';
 import {launchAgent,systemdUnit,windowsTaskScript,installCaptureDaemon,uninstallCaptureDaemon,ensureCaptureDaemon} from '../src/capture/daemon-service.ts';
 import {applyDaemonEnvironment} from '../src/capture/daemon-environment.ts';
 import {captureDir,type CaptureConfig} from '../src/capture/runtime.ts';
@@ -11,7 +11,7 @@ import {hash} from '../src/capture/parse.ts';
 import {CliError} from '../src/oauth.ts';
 
 const outcome=(status=0,stdout='',stderr=''):SpawnSyncReturns<Buffer>=>({pid:0,output:[null,Buffer.from(stdout),Buffer.from(stderr)],stdout:Buffer.from(stdout),stderr:Buffer.from(stderr),status,signal:null});
-const runner=(fn:(command:string,args:string[])=>SpawnSyncReturns<Buffer>)=>((command:string,args?:readonly string[])=>fn(command,[...(args??[])])) as typeof spawnSync;
+const runner=(fn:(command:string,args:string[],options?:{timeout?:number})=>SpawnSyncReturns<Buffer>)=>((command:string,args?:readonly string[],options?:{timeout?:number})=>fn(command,[...(args??[])],options)) as typeof spawnSync;
 const forbidden=runner(()=>{throw Error('Unexpected supervisor invocation');});
 async function fixture(run:(f:{root:string,config:CaptureConfig,label:string,receipt:string,unit:(platform:'linux'|'darwin')=>string})=>Promise<void>|void){
   const root=mkdtempSync(join(tmpdir(),'opencrawl-service-unit-')),before={...process.env};
@@ -289,14 +289,14 @@ test('Mac missing job with stale receipt bootstraps; changed owned definition ex
  }finally{if(uid)Object.defineProperty(process,'getuid',uid);else delete process.getuid;}
 }));
 
-test('Mac kickstart failure retains exact registration and safe actionable diagnostics',()=>fixture(async f=>{
+for(const timeout of [false,true])test(`Mac kickstart ${timeout?'timeout':'exit'} retains exact registration and safe actionable diagnostics`,()=>fixture(async f=>{
  const uid=Object.getOwnPropertyDescriptor(process,'getuid');Object.defineProperty(process,'getuid',{configurable:true,value:()=>501});
  try{
   const path=f.unit('darwin'),bytes=ownedUnit(path,f.config,'darwin');atomicJson(f.receipt,{kind:'launchd',status:'installed',label:f.label,path});
   const calls:string[]=[];const generation=join(captureDir(),'daemon','generation.json');atomicJson(generation,{generation:'existing-worker'});const generationBefore=readFileSync(generation,'utf8');
-  await expect(installCaptureDaemon(f.config,{home:f.root,platform:'darwin',run:runner((_command,args)=>{calls.push(args[0]!);return args[0]==='print'?outcome(0,'path = '+path):outcome(5,'private-output','private-error');})})).rejects.toMatchObject({code:'CAPTURE_SUPERVISION_FAILED'});
+  await expect(installCaptureDaemon(f.config,{home:f.root,platform:'darwin',run:runner((_command,args)=>{calls.push(args[0]!);return args[0]==='print'?outcome(0,'path = '+path):timeout?{...outcome(),status:null,signal:'SIGTERM',error:Object.assign(Error('private-error'),{code:'ETIMEDOUT'})}:outcome(5,'private-output','private-error');})})).rejects.toMatchObject({code:'CAPTURE_SUPERVISION_FAILED'});
   expect(calls).toEqual(['print','kickstart']);expect(readFileSync(path,'utf8')).toBe(bytes);expect(readFileSync(generation,'utf8')).toBe(generationBefore);
-  const receipt=readFileSync(f.receipt,'utf8');expect(JSON.parse(receipt)).toMatchObject({status:'failed',supervised:false,operations:[{operation:'print',exitStatus:0},{operation:'kickstart',exitStatus:5}]});expect(receipt).not.toContain('private-');
+  const receipt=readFileSync(f.receipt,'utf8');expect(JSON.parse(receipt)).toMatchObject({status:'failed',supervised:false,operations:[{operation:'print',exitStatus:0},{operation:'kickstart',exitStatus:timeout?null:5,signal:timeout?'SIGTERM':null,errorCode:timeout?'ETIMEDOUT':null}]});expect(receipt).not.toContain('private-');
  }finally{if(uid)Object.defineProperty(process,'getuid',uid);else delete process.getuid;}
 }));
 
@@ -468,3 +468,27 @@ for(const foreign of [false,true])(process.platform==='win32'?test.skip:test)(`M
     expect(readFileSync(path,'utf8')).toBe(bytes);
   }finally{if(uid)Object.defineProperty(process,'getuid',uid);else delete process.getuid;}
 }));
+
+test('Mac repeat setup accepts a restart acknowledgement after the short inspection deadline',()=>fixture(async f=>{
+  const uid=Object.getOwnPropertyDescriptor(process,'getuid');Object.defineProperty(process,'getuid',{configurable:true,value:()=>501});
+  try{
+    const path=f.unit('darwin'),bytes=ownedUnit(path,f.config,'darwin');atomicJson(f.receipt,{kind:'launchd',status:'installed',label:f.label,path});
+    const generation=join(captureDir(),'daemon','generation.json');atomicJson(generation,{generation:'existing'});
+    const beforeGeneration=readFileSync(generation,'utf8'),beforeConfig=readFileSync(join(captureDir(),'config.json'),'utf8');
+    const calls:string[]=[];let elapsed=0;
+    const service=await installCaptureDaemon(f.config,{home:f.root,platform:'darwin',run:runner((command,args,options)=>{
+      expect(command).toBe('launchctl');calls.push(args[0]!);
+      if(args[0]==='print'){expect(options?.timeout).toBe(5000);return outcome(0,'path = '+path);}
+      if(args[0]!=='kickstart')throw Error('An identical definition must not be removed');
+      expect(args).toEqual(['kickstart','-k','gui/501/'+f.label]);
+      // A real disposable process acknowledges after six seconds. Forward the
+      // actual production deadline: the former five-second limit kills it.
+      const started=performance.now();
+      const result=executeSync(process.execPath,['-e','setTimeout(()=>process.stdout.write("ready"),6000)'],{stdio:'pipe',timeout:options?.timeout});
+      elapsed=performance.now()-started;expect(result.stdout.toString()).toBe('ready');return result;
+    })});
+    expect(service).toMatchObject({status:'installed',supervised:true});expect(elapsed).toBeGreaterThan(5000);
+    expect(calls).toEqual(['print','kickstart']);expect(readFileSync(path,'utf8')).toBe(bytes);
+    expect(readFileSync(generation,'utf8')).toBe(beforeGeneration);expect(readFileSync(join(captureDir(),'config.json'),'utf8')).toBe(beforeConfig);
+  }finally{if(uid)Object.defineProperty(process,'getuid',uid);else delete process.getuid;}
+}),15_000);

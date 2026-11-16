@@ -160,7 +160,9 @@ export async function installCaptureDaemon(config:CaptureConfig,{home=homedir(),
     const service={kind:'launchd',status:'installed',supervised:true,label:label(),path};
     const operations:ReturnType<typeof launchdOperation>[]=[];
     const invoke=(operation:Parameters<typeof launchdOperation>[0],args:string[])=>{
-      const result=run('launchctl',args,{stdio:'pipe',timeout:5000});
+      // A restart can wait for shutdown and our 10-second launchd throttle.
+      // Do not terminate its acknowledgement before that normal interval.
+      const result=run('launchctl',args,{stdio:'pipe',timeout:operation==='kickstart'?30_000:5000});
       operations.push(launchdOperation(operation,result));return result;
     };
     const recordFailure=(error:CliError):never=>{
