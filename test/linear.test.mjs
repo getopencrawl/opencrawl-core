@@ -64,6 +64,7 @@ test('Linear rejects arbitrary GraphQL, partial errors and invalid pagination; c
   const f=fixture();
   for(const input of [{endpoint:LINEAR_API,method:'POST',body:{query:'mutation { issueDelete }'}},{endpoint:'opencrawl://linear/issues',query:{first:10000}},{endpoint:'opencrawl://linear/issues',headers:{Authorization:'bad'}}])await assert.rejects(f.source.read(input),/Unsupported/);
   f.state.errors=true;await assert.rejects(f.source.read({endpoint:'opencrawl://linear/issues'}),/read failed/);
+  f.state.errors=false;delete f.state.issue.description;await assert.rejects(f.source.read({endpoint:'opencrawl://linear/issues'}),/Incomplete/);
   let pages=0;
   const request=async input=>input.body.query.includes('OpenCrawlOrganization')?f.request({...input,body:{query:'query OpenCrawlAccount'}}):{status:200,data:{data:{issues:{nodes:pages++? [issue]:[],pageInfo:{hasNextPage:pages===1,endCursor:'next'}}}}};
   f.state.errors=false;

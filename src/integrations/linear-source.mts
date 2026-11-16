@@ -46,8 +46,10 @@ export function createLinearSource({tenantId, connectionId, workspaceId, request
     const issue = kind === 'issue' ? value as Issue : (value as Comment).issue;
     if (!publicIssue(issue, workspaceId)) return null;
     linearId(value.id); linearId(issue.team.id);
+    if (kind === 'issue' && (value as Issue).description !== null && typeof (value as Issue).description !== 'string') throw new Error('Incomplete Linear issue body');
     const title = `${issue.identifier}: ${issue.title}`, body = kind === 'issue' ? (value as Issue).description ?? '' : (value as Comment).body;
     if (typeof issue.title !== 'string' || typeof issue.identifier !== 'string' || typeof body !== 'string' || !Number.isFinite(Date.parse(value.updatedAt))) throw new Error('Invalid Linear content');
+    if (Buffer.byteLength(title) + Buffer.byteLength(body) > 8 * 1024 * 1024) throw new Error('Linear content exceeds 8 MiB');
     const fields = {id: `${kind}:${value.id}`, kind, title, text: body, url: linearUrl(value.url), updatedAt: value.updatedAt};
     return {...fields, access: {policy: LINEAR_POLICY, tenantId, connectionId, workspaceId, teamId: issue.team.id, checkedAt: now(), contentHash: digest(fields)}};
   }
