@@ -9,6 +9,10 @@ export type {OnlineWriteAuthority, OnlineWriteContext, OnlineAuthorityBinding, O
 export {createLegacyObjectClassifier} from './legacy-object-classification.mjs';
 export type {LegacyObjectClassification} from './legacy-object-classification.mjs';
 export {createOnlineShadow} from './online-shadow.mjs';
+export {createOnlineTypedShadow} from './online-typed-shadow.mjs';
+export type {OnlineTypedDisposition} from './online-typed-shadow.mjs';
+export {createOnlineRetirements} from './online-retirements.mjs';
+export type {OnlineRetirementDomain, OnlineRetirementClassification, OnlineRetirementDisposition, OnlineRetirementRecord} from './online-retirements.mjs';
 export {createOnlineProjection} from './online-projection.mjs';
 export type {OnlineTenantEnrollmentRequest} from './online-projection.mjs';
 export {createOnlineMigrationController} from './online-temporal/controller.mjs';

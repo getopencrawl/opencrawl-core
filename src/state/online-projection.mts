@@ -47,7 +47,7 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
    });
   })();try{await preparing;}catch(error){preparing=undefined;throw error;}
  }
- async function assertEpoch(client:PoolClient){const row=(await client.query('SELECT epoch FROM opencrawl_online_projection_namespaces WHERE namespace=$1 FOR SHARE',[namespace])).rows[0];if(row?.epoch!==epoch)fail('namespace is owned by a different projection epoch');}
+ async function assertEpoch(client:PoolClient,readOnly=false){const row=(await client.query('SELECT epoch FROM opencrawl_online_projection_namespaces WHERE namespace=$1'+(readOnly?'':' FOR SHARE'),[namespace])).rows[0];if(row?.epoch!==epoch)fail('namespace is owned by a different projection epoch');}
  async function insertEnrollment(client:PoolClient,tenantId:string,receiptHash:string){
   await assertEpoch(client);
   const row=(await client.query('SELECT binding_hash FROM opencrawl_online_projection_bindings WHERE namespace=$1 AND epoch=$2 AND source_id=$3 FOR UPDATE',scope)).rows[0];if(row?.binding_hash!==bindingHash)fail('source binding changed');
@@ -63,8 +63,8 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   const verified=await verifyEnrollment(frozen);if(verified.tenantId!==tenantId||!/^[a-f0-9]{64}$/.test(verified.receiptHash))fail('tenant enrollment verifier mismatch');
   return database.transaction(client=>insertEnrollment(client,tenantId,verified.receiptHash));
  }
- async function enrolled(client:PoolClient){
-  await assertEpoch(client);
+ async function enrolled(client:PoolClient,readOnly=false){
+  await assertEpoch(client,readOnly);
   const bound=(await client.query('SELECT binding_hash,enrollment_revision::text FROM opencrawl_online_projection_bindings WHERE namespace=$1 AND epoch=$2 AND source_id=$3',scope)).rows[0];if(bound?.binding_hash!==bindingHash)fail('projection is not prepared for this source');
   if(enrollmentRevision!==bound.enrollment_revision){
    const rows=(await client.query('SELECT tenant_id,tenant_hash FROM opencrawl_online_projection_tenants WHERE namespace=$1 AND epoch=$2 AND source_id=$3 ORDER BY tenant_id LIMIT 100001',scope)).rows;
@@ -86,6 +86,14 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   if(value.kind!=='replicas-reference')return object.projectOnlineIn(client,value);
   if(value.value===null){await client.query('DELETE FROM opencrawl_online_projection_replicas_references WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,targetKey]);return;}
   await client.query('INSERT INTO opencrawl_online_projection_replicas_references(namespace,epoch,target_key,source_id,source_key,tenant_hash,organization_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(namespace,epoch,target_key) DO NOTHING',[namespace,epoch,targetKey,sourceId,key,value.tenantHash,value.organizationId]);
+ }
+ async function referenceMatchesIn(client:PoolClient,tenantHash:string,organizationId:string){
+  const tenant=(await client.query('SELECT tenant_id,tenant_hash FROM opencrawl_online_projection_tenants WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND tenant_hash=$4',[...scope,tenantHash])).rows[0];
+   if(!tenant||hash(tenant.tenant_id)!==tenantHash)return false;
+   const canonical=(await client.query('SELECT source_id,source_key,domain,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,JSON.stringify(['replicas-connections',organizationId])])).rows[0];
+   if(!canonical||canonical.source_id!==sourceId||canonical.source_key!==options.prefix+'/identity/replicas-v1/organizations/'+organizationId+'.json'||canonical.domain!=='replicas-connections'||canonical.deleted)return false;
+   const connection=await object.readOnlineIn(client,{kind:'replicas-connection',domain:'replicas-connections',identity:[organizationId],organizationId,value:null});
+  return Boolean(connection&&typeof connection==='object'&&'tenantId' in connection&&connection.tenantId===tenant.tenant_id&&onlineProjectionHash(connection)===canonical.target_hash);
  }
  /** Relationship observation only, never cutover/readiness. The caller must page
   * within ONE read-only repeatable-read transaction after replaying its closed
@@ -111,12 +119,7 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
    if(head.deleted){if(ref||head.target_hash!==onlineProjectionHash(null))mismatches++;continue;}
    const [tenantHash,organizationId]=found.parts;
    if(!ref||ref.source_id!==sourceId||ref.source_key!==head.source_key||ref.tenant_hash!==tenantHash||ref.organization_id!==organizationId||head.target_hash!==onlineProjectionHash({organizationId})){mismatches++;continue;}
-   const enrolled=(await client.query('SELECT tenant_id,tenant_hash FROM opencrawl_online_projection_tenants WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND tenant_hash=$4',[...scope,tenantHash])).rows[0];
-   if(!enrolled||hash(enrolled.tenant_id)!==tenantHash){mismatches++;continue;}
-   const canonical=(await client.query('SELECT source_id,source_key,domain,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,JSON.stringify(['replicas-connections',organizationId])])).rows[0];
-   if(!canonical||canonical.source_id!==sourceId||canonical.source_key!==options.prefix+'/identity/replicas-v1/organizations/'+organizationId+'.json'||canonical.domain!=='replicas-connections'||canonical.deleted){mismatches++;continue;}
-   const connection=await object.readOnlineIn(client,{kind:'replicas-connection',domain:'replicas-connections',identity:[organizationId],organizationId,value:null});
-   if(!connection||typeof connection!=='object'||!('tenantId' in connection)||connection.tenantId!==enrolled.tenant_id||onlineProjectionHash(connection)!==canonical.target_hash)mismatches++;
+   if(!await referenceMatchesIn(client,tenantHash,organizationId))mismatches++;
   }
   return {processed:page.length,matched:page.length-mismatches,mismatches,next:rows.length>limit?String(page[page.length-1].target_key):null};
  }
@@ -144,11 +147,32 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   await client.query(`INSERT INTO opencrawl_online_projection_heads(namespace,epoch,target_key,source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     ON CONFLICT(namespace,epoch,target_key) DO UPDATE SET revision=EXCLUDED.revision,operation_id=EXCLUDED.operation_id,source_version=EXCLUDED.source_version,content_hash=EXCLUDED.content_hash,target_hash=EXCLUDED.target_hash,deleted=EXCLUDED.deleted`,[namespace,epoch,targetKey,sourceId,key,decoded.domain,rev,operationId,version,contentHash,targetHash,bytes===null]);
  }
+ /** Independent target inspection on the caller's key-gated snapshot. No
+  * source I/O, repair, row locks or transaction boundaries are introduced. */
+ async function inspectIn(client:PoolClient,input:{key:string;bytes:Buffer|null;revision:string;operationId:string|null;version:string}){
+  bounded(input.key,8192);bounded(input.version,2048);revision(input.revision);
+  if(input.revision==='0'?input.operationId!==null:input.operationId===null||!uuid.test(input.operationId))fail('invalid inspected source operation');
+  const key=input.key,version=input.version,rev=input.revision,operationId=input.operationId,bytes=input.bytes===null?null:Buffer.from(input.bytes);
+  const decoded=object.decodeOnline(key,bytes,await enrolled(client,true)),targetKey=JSON.stringify([decoded.domain,...decoded.identity]);
+  const targetHash=onlineProjectionHash(onlineProjectionValue(decoded)),contentHash=bytes===null?hash('deleted'):hash(bytes);
+  const head=(await client.query('SELECT source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND target_key=$3',[namespace,epoch,targetKey])).rows[0];
+  if(!head||head.source_id!==sourceId||head.source_key!==key||head.domain!==decoded.domain||head.revision!==rev||head.operation_id!==operationId||head.source_version!==version||head.content_hash!==contentHash||head.target_hash!==targetHash||head.deleted!==(bytes===null))return false;
+  if(onlineProjectionHash(await readTargetIn(client,decoded,targetKey,key))!==targetHash)return false;
+  return decoded.kind!=='replicas-reference'||decoded.value===null||await referenceMatchesIn(client,decoded.tenantHash,decoded.organizationId);
+ }
+ async function keysPageIn(client:PoolClient,{after='',limit=64}:{after?:string;limit?:number}={}){
+  if(after)bounded(after,8192);if(!Number.isSafeInteger(limit)||limit<1||limit>64)fail('invalid projection key page bound');await enrolled(client,true);
+  const rows=(await client.query(`SELECT source_key FROM (
+    SELECT source_key FROM opencrawl_online_projection_heads WHERE namespace=$1 AND epoch=$2 AND source_id=$3
+    UNION SELECT source_key FROM opencrawl_online_projection_replicas_references WHERE namespace=$1 AND epoch=$2 AND source_id=$3
+   ) projected_keys WHERE source_key>$4 COLLATE "C" ORDER BY source_key COLLATE "C" LIMIT $5`,[...scope,after,limit])).rows;
+  return rows.map(row=>{bounded(row.source_key,8192);return row.source_key as string;});
+ }
  async function apply(client:PoolClient,intent:OnlineIntent){
   if(intent.namespace!==namespace||intent.epoch!==epoch||intent.sourceId!==sourceId||intent.state!=='applied'||!intent.resultVersion)fail('journal intent is not applied in this source binding');
   if(intent.revision==='0')fail('journal revision cannot be baseline');
   await project(client,{key:intent.key,bytes:intent.mutation.kind==='put'?intent.mutation.bytes:null,revision:intent.revision,operationId:intent.operationId,version:intent.resultVersion});
  }
  async function backfill(client:PoolClient,input:{key:string;bytes:Buffer;version:string}){await project(client,{...input,revision:'0',operationId:null});}
- return {binding:Object.freeze({namespace,epoch,sourceId,bindingHash}),ready,apply,backfill,enrollTenant,inspectReplicasReferencesPageIn};
+ return {binding:Object.freeze({namespace,epoch,sourceId,bindingHash}),ready,apply,backfill,enrollTenant,inspectReplicasReferencesPageIn,inspectIn,keysPageIn};
 }

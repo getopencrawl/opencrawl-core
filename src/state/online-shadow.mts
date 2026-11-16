@@ -1,10 +1,24 @@
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import type {Pool,PoolClient} from 'pg';
 import {ONLINE_MAX_PAYLOAD_BYTES,type OnlineExternalSnapshot,type OnlineExternalStore,type OnlineIntent,type createOnlineJournal} from './online-journal.mjs';
 import {onlineMigrationBindingId} from './online-temporal/binding.mjs';
 import type {OnlineMigrationAdapter,OnlineMigrationBinding} from './online-temporal/types.mjs';
 type Journal=ReturnType<typeof createOnlineJournal>;
 export interface OnlineShadowListing {listPage(input:{prefix:string;cursor:string|null;limit:number;signal:AbortSignal}):Promise<{keys:string[];cursor:string|null}>}
+export type OnlineShadowSelection={kind:'retained';domain:string;maxBytes:number}|{kind:'retired';domain:string;maxBytes:number;scopeHash:string}|{kind:'immutable'};
+/** Implemented by the typed coordinator. It is a transaction participant, not
+ * a runtime store or an admission callback. */
+export interface OnlineShadowParticipant {
+ binding:Readonly<{namespace:string;epoch:string;sourceId:string;targetId:string;identity:string}>;
+ select(key:string):OnlineShadowSelection;
+ ready():Promise<void>;
+ backfillIn(client:PoolClient,key:string,snapshot:OnlineExternalSnapshot):Promise<void>;
+ backfillRetiredIn(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'retired'}>):Promise<void>;
+ applyIn(client:PoolClient,intent:OnlineIntent,selection:Exclude<OnlineShadowSelection,{kind:'immutable'}>):Promise<void>;
+ inspectIn(client:PoolClient,key:string,snapshot:OnlineExternalSnapshot):Promise<boolean>;
+ inspectRetiredIn(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'retired'}>):Promise<boolean>;
+ keysPageIn(client:PoolClient,input:{after:string;limit:number}):Promise<string[]>;
+}
 export type OnlineShadowClassifier=(key:string)=>{maxBytes:number}|null;
 type SourceCursor={stage:'source';root:number;token:string|null;last:string|null};
 type Cursor=SourceCursor|{stage:'shadow';after:string};
@@ -18,12 +32,20 @@ const ordered=(a:string,b:string)=>Buffer.compare(Buffer.from(a),Buffer.from(b))
 /** A migration mirror only. It neither implements ApplicationState nor marks an
  * installation ready. The caller supplies reviewed roots/classification and a
  * trusted live source/target check; Workflow callers cannot choose them. */
-export function createOnlineShadow({database,binding:input,journal,external,listing,roots:inputRoots,classify,assertCurrent}:{database:{pool:Pool;namespace:string};binding:OnlineMigrationBinding;journal:Journal;external:OnlineExternalStore;listing:OnlineShadowListing;roots:readonly string[];classify:OnlineShadowClassifier;assertCurrent:(signal:AbortSignal)=>Promise<void>}){
+export function createOnlineShadow({database,binding:input,journal,external,listing,roots:inputRoots,classify,assertCurrent,participant}:{database:{pool:Pool;namespace:string};binding:OnlineMigrationBinding;journal:Journal;external:OnlineExternalStore;listing:OnlineShadowListing;roots:readonly string[];classify:OnlineShadowClassifier;assertCurrent:(signal:AbortSignal)=>Promise<void>;participant?:OnlineShadowParticipant}){
  const binding=Object.freeze({...input}),bindingId=onlineMigrationBindingId(binding);const namespace=database.namespace,roots=Object.freeze([...inputRoots]),scope=[namespace,binding.epoch,binding.sourceId];
  if(!text(namespace,2048)||roots.length<1||roots.length>32||roots.some(root=>!text(root,4096))||roots.some((root,i)=>roots.some((other,j)=>i!==j&&(root.startsWith(other)||other.startsWith(root)))))unsafe();
  if(!journal.binding||journal.binding.namespace!==namespace||journal.binding.epoch!==binding.epoch||journal.binding.sourceId!==binding.sourceId)unsafe();
+ if(participant&&(!participant.binding||participant.binding.namespace!==namespace||participant.binding.epoch!==binding.epoch||participant.binding.sourceId!==binding.sourceId||participant.binding.targetId!==binding.targetId||!/^[a-f0-9]{64}$/.test(participant.binding.identity)))unsafe();
+ const participantIdentity=hash(JSON.stringify([bindingId,roots,participant?.binding.identity??'byte-mirror-only-v1']));
  let preparing:Promise<void>|undefined;
  function bound(key:string){if(!text(key,8192)||!roots.some(root=>key.startsWith(root)))unsafe();const value=classify(key);if(value===null)return null;if(!value||!Number.isSafeInteger(value.maxBytes)||value.maxBytes<1||value.maxBytes>ONLINE_MAX_PAYLOAD_BYTES)unsafe();return value;}
+ function selected(key:string):OnlineShadowSelection{
+  const cap=bound(key);if(!participant)return cap?{kind:'retained',domain:'byte-mirror',maxBytes:cap.maxBytes}:{kind:'immutable'};
+  const choice=participant.select(key);if(!choice||!['retained','retired','immutable'].includes(choice.kind))unsafe();
+  if(choice.kind==='immutable'){if(cap!==null)unsafe();return choice;}
+  if(!cap||!text(choice.domain,200)||choice.maxBytes!==cap.maxBytes||choice.kind==='retired'&&!/^[a-f0-9]{64}$/.test(choice.scopeHash))unsafe();return {...choice};
+ }
  function shard(key:string){return createHash('sha256').update(key).digest().readUInt32BE(0)%binding.shards;}
  function pageInput(input:{shard:number;shards:number;limit:number;signal:AbortSignal}){if(input.shards!==binding.shards||!Number.isSafeInteger(input.shard)||input.shard<0||input.shard>=binding.shards||!Number.isSafeInteger(input.limit)||input.limit<1||input.limit>64)unsafe();input.signal.throwIfAborted();}
  function parseCursor(value:string|null):Cursor{
@@ -35,14 +57,21 @@ export function createOnlineShadow({database,binding:input,journal,external,list
  }
  function encodeCursor(value:Cursor|null){if(value===null)return null;const encoded=JSON.stringify(value);if(Buffer.byteLength(encoded)>8192)unsafe();return encoded;}
  async function ready(){preparing??=(async()=>{
-  await journal.ready();const client=await database.pool.connect();try{await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:online-shadow:schema',0))");
+  await journal.ready();await participant?.ready();const client=await database.pool.connect();try{await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:online-shadow:schema',0))");
    await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_online_shadow_objects(
     namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,source_key text COLLATE "C" NOT NULL,target_id text NOT NULL,
     logical_deleted boolean NOT NULL,payload bytea,payload_hash text,content_type text,revision bigint NOT NULL CHECK(revision>=0),operation_id uuid,
     source_sequence bigint NOT NULL CHECK(source_sequence>=0),source_version text,
     PRIMARY KEY(namespace,epoch,source_id,source_key),
     CHECK((logical_deleted AND payload IS NULL AND payload_hash IS NULL AND content_type IS NULL) OR (NOT logical_deleted AND payload IS NOT NULL AND octet_length(payload)<=${ONLINE_MAX_PAYLOAD_BYTES} AND payload_hash IS NOT NULL AND payload_hash~'^[a-f0-9]{64}$' AND content_type IS NOT NULL)),
-    CHECK((revision=0 AND operation_id IS NULL AND source_sequence=0) OR (revision>0 AND operation_id IS NOT NULL AND source_sequence>0 AND source_version IS NOT NULL)))`);await client.query('COMMIT');
+    CHECK((revision=0 AND operation_id IS NULL AND source_sequence=0) OR (revision>0 AND operation_id IS NOT NULL AND source_sequence>0 AND source_version IS NOT NULL)))`);
+   await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_online_shadow_bindings(namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,target_id text NOT NULL,participant_identity text NOT NULL CHECK(participant_identity~'^[a-f0-9]{64}$'),PRIMARY KEY(namespace,epoch,source_id));
+    CREATE TABLE IF NOT EXISTS opencrawl_online_shadow_seen_retirements(namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,source_key text COLLATE "C" NOT NULL,participant_identity text NOT NULL CHECK(participant_identity~'^[a-f0-9]{64}$'),pass_id uuid NOT NULL,through_sequence bigint NOT NULL CHECK(through_sequence>=0),PRIMARY KEY(namespace,epoch,source_id,source_key))`);
+   const prior=(await client.query('SELECT target_id,participant_identity FROM opencrawl_online_shadow_bindings WHERE namespace=$1 AND epoch=$2 AND source_id=$3',scope)).rows[0];
+   if(!prior){if((await client.query('SELECT 1 FROM opencrawl_online_shadow_objects WHERE namespace=$1 AND epoch=$2 AND source_id=$3 LIMIT 1',scope)).rows.length)unsafe();
+    await client.query('INSERT INTO opencrawl_online_shadow_bindings VALUES($1,$2,$3,$4,$5)',[...scope,binding.targetId,participantIdentity]);
+   }else if(prior.target_id!==binding.targetId||prior.participant_identity!==participantIdentity)unsafe();
+   await client.query('COMMIT');
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
  })().catch(error=>{preparing=undefined;throw error;});await preparing;}
  function snapshot(value:OnlineExternalSnapshot,maxBytes:number):OnlineExternalSnapshot{
@@ -63,26 +92,31 @@ export function createOnlineShadow({database,binding:input,journal,external,list
  const equal=(a:Mirror,b:Mirror)=>a.deleted===b.deleted&&a.hash===b.hash&&a.contentType===b.contentType&&a.revision===b.revision&&a.operationId===b.operationId&&a.sequence===b.sequence&&a.sourceVersion===b.sourceVersion&&(a.bytes===null?b.bytes===null:b.bytes!==null&&a.bytes.equals(b.bytes));
  const values=(key:string,value:Mirror)=>[...scope,key,binding.targetId,value.deleted,value.bytes,value.hash,value.contentType,value.revision,value.operationId,value.sequence,value.sourceVersion];
  async function insert(client:PoolClient,key:string,value:Mirror){await client.query('INSERT INTO opencrawl_online_shadow_objects(namespace,epoch,source_id,source_key,target_id,logical_deleted,payload,payload_hash,content_type,revision,operation_id,source_sequence,source_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING',values(key,value));}
- async function backfill(key:string){const cap=bound(key);if(!cap)return {applied:false};return journal.backfillIfUnchanged({key,apply:async client=>{
-  const observed=snapshot(await external.read(key,{maxBytes:cap.maxBytes}),cap.maxBytes);
-  // A stamp without this epoch's journal history needs explicit recovery; it
-  // cannot silently become a revision-zero baseline for a new installation.
+ async function backfill(key:string){const choice=selected(key);if(choice.kind==='immutable')return {applied:false};return journal.backfillIfUnchanged({key,apply:async client=>{
+  if(choice.kind==='retired'){await participant!.backfillRetiredIn(client,key,choice);return;}
+  const observed=snapshot(await external.read(key,{maxBytes:choice.maxBytes}),choice.maxBytes);
   if(observed.operationId!==null||observed.revision!==null)unsafe();
+  // A stale listing may outlive a pre-enrollment physical delete. Absence has
+  // no authority to clear an existing mirror or typed target.
+  if(observed.version===null){if(await read(client,key))unsafe();return;}
   const expected:Mirror={deleted:observed.deleted,bytes:observed.bytes,contentType:observed.contentType,hash:observed.bytes===null?null:hash(observed.bytes),revision:'0',operationId:null,sequence:'0',sourceVersion:observed.version};
   await insert(client,key,expected);const actual=await read(client,key);if(!actual||!equal(actual,expected))unsafe();
+  await participant?.backfillIn(client,key,observed);
  }});}
  async function applyJournal(client:PoolClient,intent:OnlineIntent){
   if(!intent||intent.namespace!==namespace||intent.epoch!==binding.epoch||intent.sourceId!==binding.sourceId||intent.state!=='applied'||!uuid(intent.operationId)||!decimal(intent.revision)||intent.revision==='0'||!decimal(intent.sequence)||intent.sequence==='0'||!text(intent.resultVersion,2048))unsafe();
-  const cap=bound(intent.key);if(!cap)return false;
+  const choice=selected(intent.key);if(choice.kind==='immutable'){if(participant)unsafe();return false;}const cap=choice;
   const mutation=intent.mutation;if(mutation.kind!=='put'&&mutation.kind!=='delete')unsafe();
   if(mutation.kind==='put'&&(!Buffer.isBuffer(mutation.bytes)||mutation.bytes.length>cap.maxBytes||!text(mutation.contentType,256)||/[\r\n]/.test(mutation.contentType)))unsafe();
+  intent={...intent,mutation:mutation.kind==='put'?{...mutation,bytes:Buffer.from(mutation.bytes)}:{kind:'delete'}};
+  if(choice.kind==='retired'){await participant!.applyIn(client,intent,choice);return true;}
   const bytes=mutation.kind==='put'?Buffer.from(mutation.bytes):null;
   const expected:Mirror={deleted:mutation.kind==='delete',bytes,hash:bytes===null?null:hash(bytes),contentType:mutation.kind==='put'?mutation.contentType:null,revision:intent.revision,operationId:intent.operationId,sequence:intent.sequence,sourceVersion:intent.resultVersion};
   const prior=await read(client,intent.key);
-  if(prior){if(BigInt(prior.revision)>BigInt(expected.revision)||prior.revision===expected.revision&&!equal(prior,expected)||BigInt(prior.sequence)>BigInt(expected.sequence))unsafe();if(equal(prior,expected))return true;}
+  if(prior){if(BigInt(prior.revision)>BigInt(expected.revision)||prior.revision===expected.revision&&!equal(prior,expected)||BigInt(prior.sequence)>BigInt(expected.sequence))unsafe();if(equal(prior,expected)){await participant?.applyIn(client,intent,choice);return true;}}
   await insert(client,intent.key,expected);
   if(prior){const changed=await client.query('UPDATE opencrawl_online_shadow_objects SET logical_deleted=$6,payload=$7,payload_hash=$8,content_type=$9,revision=$10,operation_id=$11,source_sequence=$12,source_version=$13 WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4 AND target_id=$5 AND revision=$14', [...values(intent.key,expected),prior.revision]);if(changed.rowCount!==1)unsafe();}
-  const actual=await read(client,intent.key);if(!actual||!equal(actual,expected))unsafe();return true;
+  const actual=await read(client,intent.key);if(!actual||!equal(actual,expected))unsafe();await participant?.applyIn(client,intent,choice);return true;
  }
  async function sourcePage(position:SourceCursor,limit:number,signal:AbortSignal){
   let current=position;
@@ -96,12 +130,39 @@ export function createOnlineShadow({database,binding:input,journal,external,list
   }return unsafe();
  }
  async function drift(through:string){if(!decimal(through))unsafe();const frontier=await journal.frontierState();return frontier.pending||frontier.allocated!==through||frontier.closed!==through;}
- async function compare(key:string,through:string){
-  const cap=bound(key);if(!cap)return {drift:false,mismatch:false};
+ function parityPosition(value:string|null,through:string,shard:number){
+  if(!participant)return {position:parseCursor(value),passId:null};
+  if(value===null)return {position:parseCursor(null),passId:randomUUID()};
+  if(!text(value,8192))unsafe();let parsed;try{parsed=JSON.parse(value);}catch{return unsafe();}
+  if(!parsed||Object.keys(parsed).sort().join(',')!=='bindingId,identity,passId,position,shard,through'||parsed.bindingId!==bindingId||parsed.identity!==participantIdentity||parsed.through!==through||parsed.shard!==shard||!uuid(parsed.passId))unsafe();
+  return {position:parseCursor(JSON.stringify(parsed.position)),passId:parsed.passId as string};
+ }
+ function parityCursor(position:Cursor|null,through:string,shard:number,passId:string|null){
+  if(!participant||position===null)return encodeCursor(position);const value=JSON.stringify({bindingId,identity:participantIdentity,passId,through,shard,position});if(!text(value,8192))unsafe();return value;
+ }
+ async function targetKeys(after:string,limit:number){
+  const client=await database.pool.connect();let failed=false;try{
+   const mirror=(await client.query('SELECT source_key FROM opencrawl_online_shadow_objects WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key>$4 COLLATE "C" ORDER BY source_key COLLATE "C" LIMIT $5',[...scope,after,limit])).rows.map(row=>row.source_key as string);
+   const additional=participant?await participant.keysPageIn(client,{after,limit}):[];
+   const seen=participant?(await client.query('SELECT source_key FROM opencrawl_online_shadow_seen_retirements WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key>$4 COLLATE "C" ORDER BY source_key COLLATE "C" LIMIT $5',[...scope,after,limit])).rows.map(row=>row.source_key as string):[];
+   for(const keys of [mirror,additional,seen])if(keys.length>limit||keys.some((key,i)=>!text(key,8192)||ordered(key,i?keys[i-1]!:after)<=0))unsafe();
+   return [...new Set([...mirror,...additional,...seen])].sort(ordered).slice(0,limit);
+  }catch(error){failed=true;throw error;}finally{client.release(failed);}
+ }
+ async function compare(key:string,through:string,passId:string|null,fromSource:boolean){
+  const choice=selected(key);if(choice.kind==='immutable')return {drift:false,mismatch:false};
   const observation=await journal.observeKey({key,through,read:async client=>{
-   const actual=await read(client,key),observed=snapshot(await external.read(key,{maxBytes:cap.maxBytes}),cap.maxBytes);
+   if(choice.kind==='retired'){
+    if(!passId||!await participant!.inspectRetiredIn(client,key,choice))return false;
+    if((await client.query('SELECT 1 FROM opencrawl_online_shadow_objects WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4',[...scope,key])).rows.length)unsafe();
+    if(fromSource)await client.query(`INSERT INTO opencrawl_online_shadow_seen_retirements VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(namespace,epoch,source_id,source_key) DO UPDATE SET participant_identity=EXCLUDED.participant_identity,pass_id=EXCLUDED.pass_id,through_sequence=EXCLUDED.through_sequence`,[...scope,key,participantIdentity,passId,through]);
+    const seen=(await client.query('SELECT participant_identity,pass_id,through_sequence::text FROM opencrawl_online_shadow_seen_retirements WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4',[...scope,key])).rows[0];
+    return seen?.participant_identity===participantIdentity&&seen.pass_id===passId&&seen.through_sequence===through;
+   }
+   const actual=await read(client,key),observed=snapshot(await external.read(key,{maxBytes:choice.maxBytes}),choice.maxBytes);
    if(!actual||BigInt(actual.sequence)>BigInt(through))return false;
-   return actual.deleted===observed.deleted&&actual.contentType===observed.contentType&&actual.sourceVersion===observed.version&&actual.operationId===observed.operationId&&(actual.revision==='0'?observed.revision===null:actual.revision===observed.revision)&&(actual.bytes===null?observed.bytes===null:observed.bytes!==null&&actual.bytes.equals(observed.bytes));
+   const same=actual.deleted===observed.deleted&&actual.contentType===observed.contentType&&actual.sourceVersion===observed.version&&actual.operationId===observed.operationId&&(actual.revision==='0'?observed.revision===null:actual.revision===observed.revision)&&(actual.bytes===null?observed.bytes===null:observed.bytes!==null&&actual.bytes.equals(observed.bytes));
+   return same&&(!participant||await participant.inspectIn(client,key,observed));
   }});return observation.observed?{drift:false,mismatch:!observation.value}:{drift:true,mismatch:false};
  }
  const adapter:OnlineMigrationAdapter={
@@ -120,21 +181,21 @@ export function createOnlineShadow({database,binding:input,journal,external,list
    return {cursor:exhausted?after:page.next,processed,pending,settled,budgetExhausted:exhausted||performance.now()-started>=30000};
   },
   async backfillPage(input){pageInput(input);const position=parseCursor(input.cursor);if(position.stage!=='source')unsafe();const page=await sourcePage(position,input.limit,input.signal);
-   for(const key of page.keys){input.signal.throwIfAborted();if(bound(key)&&shard(key)===input.shard)await backfill(key);}return {cursor:encodeCursor(page.next),processed:page.keys.length};},
+   for(const key of page.keys){input.signal.throwIfAborted();if(selected(key).kind!=='immutable'&&shard(key)===input.shard)await backfill(key);}return {cursor:encodeCursor(page.next),processed:page.keys.length};},
   closedFrontier:()=>journal.closedFrontier(),
-  async replayPage(input){pageInput(input);if(input.consumer!==bindingId+'-'+input.shard)unsafe();const result=await journal.replayPage({consumer:input.consumer,through:input.through,limit:input.limit,apply:async(client,intent)=>{input.signal.throwIfAborted();if(bound(intent.key)&&shard(intent.key)===input.shard)await applyJournal(client,intent);}});return {checkpoint:result.checkpoint,processed:result.applied+result.notApplied,blocked:result.pending};},
-  async parityPage(input){pageInput(input);if(await journal.replayCheckpoint(bindingId+'-'+input.shard)!==input.through)unsafe();if(await drift(input.through))return {cursor:null,processed:0,mismatches:0,drift:true};let position=parseCursor(input.cursor),keys:string[],next:Cursor|null;
+  async replayPage(input){pageInput(input);if(input.consumer!==bindingId+'-'+input.shard)unsafe();const result=await journal.replayPage({consumer:input.consumer,through:input.through,limit:input.limit,apply:async(client,intent)=>{input.signal.throwIfAborted();const choice=selected(intent.key);if(participant&&choice.kind==='immutable')unsafe();if(choice.kind!=='immutable'&&shard(intent.key)===input.shard)await applyJournal(client,intent);}});return {checkpoint:result.checkpoint,processed:result.applied+result.notApplied,blocked:result.pending};},
+  async parityPage(input){pageInput(input);if(!decimal(input.through))unsafe();const checkpoint=await journal.replayCheckpoint(bindingId+'-'+input.shard);if(checkpoint===null||BigInt(checkpoint)<BigInt(input.through))unsafe();if(BigInt(checkpoint)>BigInt(input.through))return {cursor:null,processed:0,mismatches:0,drift:true};if(await drift(input.through))return {cursor:null,processed:0,mismatches:0,drift:true};const parsed=parityPosition(input.cursor,input.through,input.shard);let position=parsed.position,keys:string[],next:Cursor|null;const fromSource=position.stage==='source';
    if(position.stage==='source'){
     const page=await sourcePage(position,input.limit,input.signal);keys=page.keys;next=page.next??{stage:'shadow',after:''};
     if(keys.length===0)position={stage:'shadow',after:''};
    }else{keys=[];next=null;}
    if(position.stage==='shadow'){
-    keys=(await database.pool.query('SELECT source_key FROM opencrawl_online_shadow_objects WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key COLLATE "C">$4 ORDER BY source_key COLLATE "C" LIMIT $5',[...scope,position.after,input.limit])).rows.map(row=>row.source_key);
+    keys=await targetKeys(position.after,input.limit);
     next=keys.length===input.limit?{stage:'shadow',after:keys.at(-1)!}:null;
    }
-   let mismatches=0,changed=false;for(const key of keys!){input.signal.throwIfAborted();if(bound(key)&&shard(key)===input.shard){const result=await compare(key,input.through);if(result.mismatch)mismatches++;changed ||= result.drift;}}
-   changed ||= await drift(input.through);return {cursor:encodeCursor(next!),processed:keys!.length,mismatches,drift:changed};
+   let mismatches=0,changed=false;for(const key of keys!){input.signal.throwIfAborted();if(selected(key).kind!=='immutable'&&shard(key)===input.shard){const result=await compare(key,input.through,parsed.passId,fromSource&&position.stage==='source');if(result.mismatch)mismatches++;changed ||= result.drift;}}
+   changed ||= await drift(input.through);return {cursor:parityCursor(next!,input.through,input.shard,parsed.passId),processed:keys!.length,mismatches,drift:changed};
   },
  };
- return {ready,backfill,applyJournal,adapter};
+ return {bindingId,participantIdentity,ready,backfill,applyJournal,adapter};
 }

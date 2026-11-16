@@ -47,6 +47,20 @@ typed readback in the replay transaction. New tenant enrollment requires an
 explicit trusted verifier and append-only receipt; offline owner bounds remain
 unchanged. Unsupported domains fail closed.
 
+`createOnlineTypedShadow` connects the typed projector to background backfill
+and replay. The byte mirror, typed readback and replay checkpoint share one
+PostgreSQL transaction. Background parity inspects typed state independently
+and detects projection heads missing from the byte mirror. Its physical source
+listing must include retained deletion tombstones. It reports observations only;
+it does not certify complete baseline coverage or grant runtime admission.
+
+An explicit derived-state retirement policy records old session scheduling,
+indexing, cutover markers, connector indexing and count-cache obligations without
+reading their historical bodies. These records require current Temporal catchup
+or a rebuild; they never assert that indexing is complete or an unknown count is
+zero. Connecting those obligations to the online workflow handoff remains a
+release requirement.
+
 Replicas aliases never publish or delete canonical connections. Their separate
 bounded reference inspection must run during final typed parity after replay
 reaches the fixed frontier. A missing, deleted or differently owned canonical
@@ -87,8 +101,9 @@ reads and capture intake available, and route or durably queue mutations during
 the fence. A live parity observation alone is not a cutover receipt. Cancel the
 migration worker only after the completed authority switch or an explicit abort.
 
-The current components do not implement fleet enrollment, the final mutation-routing
-fence, full registry and workflow projection, a final readiness receipt, or a
+The current components do not implement fleet enrollment, durable baseline
+coverage seals, the final mutation-routing fence, full registry and workflow
+projection, a final readiness receipt, or a
 one-command online upgrade. Those remain release gates. Existing-installation
 traffic, signup, capture, restart, deletion and rollback rehearsals must verify
 the composed release before production activation.
