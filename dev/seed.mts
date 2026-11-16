@@ -3,6 +3,7 @@ import {randomBytes} from 'node:crypto';
 import {chownSync,existsSync,readFileSync,statSync,writeFileSync} from 'node:fs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createAirbyte,createAirbyteTransport} from '../dist/src/integrations/airbyte.mjs';
+import {createProviderCatalog} from '../dist/src/integrations/providers.mjs';
 import {createProvisioning,provisioningLabel} from '../dist/src/integrations/provisioning.mjs';
 import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-registry.mjs';
 import {singleOrganizationDestination} from '../dist/src/integrations/single-organization-storage.mjs';
@@ -204,8 +205,10 @@ try{
   try{
     if(!verifyOnly)await scheduling.client.workflow.execute('indexSessionsV1',{workflowId,taskQueue:required('TEMPORAL_SESSION_TASK_QUEUE'),args:[{sourceId:'sessions-'+input.organization+'-v1'}],workflowExecutionTimeout:'5 minutes'});
   }finally{await scheduling.connection.close();}
-  const sources=await json<{items:Array<{state:string;setup?:{requirement?:string}}>}>('/api/onboarding/sources');
-  assert.equal(sources.items.length,7);
+  const sources=await json<{items:Array<{id:string;state:string;setup?:{requirement?:string}}>}>('/api/onboarding/sources');
+  // Upgrade rehearsals also run this seed against the published predecessor.
+  // Require the exact catalog of the running image, including newly added sources.
+  assert.deepEqual(sources.items.map(card=>card.id).sort(),Object.keys(createProviderCatalog({})).sort());
   assert.ok(sources.items.every(card=>card.state==='setup-required'&&card.setup?.requirement==='Airbyte disabled'));
   ingestion={airbyte:{enabled:false},temporal:verifyOnly?{reindex:false}:{workflowId}};expected=sessionText;
 }
