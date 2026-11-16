@@ -57,7 +57,7 @@ try{
   await until(()=>existsSync(status));daemonPid=JSON.parse(readFileSync(status,'utf8')).pid;
   evidence.initialPid=daemonPid;
   const start=performance.now();
-  const claude=Bun.spawn(['claude','-p','Reply with exactly: '+marker,'--session-id',sessionId,'--setting-sources','','--settings',settings,'--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--tools','','--disable-slash-commands','--system-prompt','You are verifying session capture. Follow the requested exact response.','--output-format','stream-json','--verbose','--include-hook-events','--max-budget-usd','0.50'],{cwd:scratch,env:{...before,CLAUDE_CONFIG_DIR:claudeRoot,OPENCRAWL_NO_UPDATE:'1'},stdout:'pipe',stderr:'pipe'});
+  const claude=Bun.spawn(['claude','-p','Reply with exactly: '+marker,'--session-id',sessionId,'--setting-sources','','--settings',settings,'--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--tools','','--disable-slash-commands','--system-prompt','You are verifying session capture. Follow the requested exact response.','--output-format','stream-json','--verbose','--include-hook-events','--max-budget-usd','0.50'],{cwd:scratch,env:{...before,CLAUDE_CONFIG_DIR:claudeRoot,XDG_CACHE_HOME:process.env.XDG_CACHE_HOME,XDG_DATA_HOME:process.env.XDG_DATA_HOME,OPENCRAWL_NO_UPDATE:'1'},stdout:'pipe',stderr:'pipe'});
   const [exit,stdout,stderr]=await Promise.all([claude.exited,new Response(claude.stdout).text(),new Response(claude.stderr).text()]);
   evidence.claude={exit,elapsedMs:performance.now()-start,stderr:stderr.slice(-2000)};
   const events=stdout.split('\n').filter(Boolean).map(line=>{try{return JSON.parse(line);}catch{return {type:'unparsed'};}});
