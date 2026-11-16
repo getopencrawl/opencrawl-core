@@ -1,0 +1,6 @@
+# Exact historical false positives in the synthetic old-install scheduler fixture:
+# source-key expressions, retry metadata and dummy opaque listing cursors.
+# No credential or provider token was present. Current fixtures generate cursors.
+da4f9cff52c335b368353b8e36ef9e3c8ad95a01:deploy/test-full-app-state.mjs:generic-api-key:129
+da4f9cff52c335b368353b8e36ef9e3c8ad95a01:deploy/test-full-app-state.mjs:generic-api-key:130
+da4f9cff52c335b368353b8e36ef9e3c8ad95a01:deploy/test-full-app-state.mjs:generic-api-key:131

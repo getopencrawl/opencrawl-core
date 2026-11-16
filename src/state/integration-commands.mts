@@ -2,7 +2,7 @@ import type {PoolClient} from 'pg';
 import {createHash} from 'node:crypto';
 import type {ApplicationDatabase} from './postgres.mjs';
 import type {Environment} from '../integrations/types.mjs';
-import type {IntegrationCommand, IntegrationCommandReference, IntegrationCommandSecret, IntegrationCommands, IntegrationOperation} from '../integrations/temporal/types.mjs';
+import type {IntegrationConsentResult, IntegrationCommand, IntegrationCommandReference, IntegrationCommandSecret, IntegrationCommands, IntegrationOperation} from '../integrations/temporal/types.mjs';
 import {sealedEnvelope} from '../integrations/credential-vault.mjs';
 import {ensureRegistrySchema} from '../integrations/local-registry.mjs';
 
@@ -47,22 +47,38 @@ export function createIntegrationCommands({database, environment, encryptionKey,
   async function removeSecret(client: Pick<PoolClient, 'query'>, reference: IntegrationCommandReference) {
     await client.query(`DELETE FROM opencrawl_integration_command_secrets WHERE ${columns}`, values(reference));
   }
-  async function finish(client: Pick<PoolClient, 'query'>, reference: IntegrationCommandReference, status: 'completed' | 'superseded' | 'failed', reason: FailureReason | null = null) {
+  async function finish(client: PoolClient, reference: IntegrationCommandReference, status: 'completed' | 'superseded' | 'failed', reason: FailureReason | null = null) {
     const params = values(reference);
-    const exists = await read(client, reference);
-    if (!exists) deny();
+    // Registry lifecycle requests lock the integration before its command. Keep
+    // that order for terminal activity writes to avoid a callback/failure deadlock.
+    await client.query(`SELECT integration_id FROM opencrawl_integrations WHERE namespace=$1 AND environment=$2 AND tenant_id=$3 AND user_id=$4 AND integration_id=$5 FOR UPDATE`,params.slice(0,5));
+    const exists = (await read(client, reference))??deny();
     const changed=await client.query(`UPDATE opencrawl_integration_commands SET status=$7,failure_reason=$8,finished_at=now() WHERE ${columns} AND status='pending'`, [...params, status, reason]);
     if(changed.rowCount&&status==='failed')await client.query(`UPDATE opencrawl_integrations SET status='error',revision=revision+1,
       record=record||jsonb_build_object('status','error','error',$7::text,'updatedAt',$8::text)
       WHERE namespace=$1 AND environment=$2 AND tenant_id=$3 AND user_id=$4 AND integration_id=$5 AND record->>'lifecycleCommandId'=$6`,
       [...params,reason==='reconnect_required'?'reconnect':'setup',new Date().toISOString()]);
-    await removeSecret(client, reference);
+    if(changed.rowCount&&status==='failed'&&exists.operation==='consent'){
+      const cleanup={...reference,commandId:'abandon_'+createHash('sha256').update(JSON.stringify(values(reference))).digest('hex')};
+      const owned=await client.query(`UPDATE opencrawl_integrations SET status='abandoned',revision=revision+1,
+        record=record||jsonb_build_object('status','abandoned','lifecycleOperation','disconnect','lifecycleCommandId',$7::text)
+        WHERE namespace=$1 AND environment=$2 AND tenant_id=$3 AND user_id=$4 AND integration_id=$5 AND record->>'lifecycleCommandId'=$6`,[...params,cleanup.commandId]);
+      if(owned.rowCount)await transactional.enqueue(client,cleanup,'disconnect',{},exists.requestedBy);
+    }
+    if(exists.operation!=='consent'||status!=='completed')await removeSecret(client, reference);
   }
+  const consentResult=(value:unknown):IntegrationConsentResult=>{
+    const result=value as IntegrationConsentResult;
+    if(!result||typeof result.redirectUrl!=='string'||result.redirectUrl.length>8192||!Number.isSafeInteger(result.expiresAt))throw new Error('Invalid consent result');
+    const url=new URL(result.redirectUrl);if(url.protocol!=='https:'||url.username||url.password)throw new Error('Invalid consent redirect');
+    return {redirectUrl:result.redirectUrl,expiresAt:result.expiresAt};
+  };
   const transactional: TransactionalIntegrationCommands = {
     read,
     async enqueue(client, reference, operation, secret, requestedBy) {
       const params = values(reference);
-      if (!identifier(requestedBy) || !['provision', 'disconnect', 'sync'].includes(operation)) throw new Error('Invalid integration lifecycle request');
+      if (!identifier(requestedBy) || !['provision', 'disconnect', 'sync', 'consent'].includes(operation)) throw new Error('Invalid integration lifecycle request');
+      if(operation==='consent'&&!envelope)throw new Error('Encrypted consent result storage must be configured');
       const bytes = secretBytes(secret);
       if (bytes && (!envelope || operation !== 'provision')) throw new Error('Encrypted provisioning secret storage must be configured');
       const result = await client.query(`INSERT INTO opencrawl_integration_commands
@@ -92,11 +108,13 @@ export function createIntegrationCommands({database, environment, encryptionKey,
             sequence bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
             namespace text NOT NULL, environment text NOT NULL, tenant_id text NOT NULL, user_id text NOT NULL,
             integration_id text NOT NULL, command_id text NOT NULL, requested_by text NOT NULL,
-            operation text NOT NULL CHECK(operation IN ('provision','disconnect','sync')),
+            operation text NOT NULL CHECK(operation IN ('provision','disconnect','sync','consent')),
             status text NOT NULL CHECK(status IN ('pending','completed','superseded','failed')),
             failure_reason text CHECK(failure_reason IN ('authorization_denied','invalid_command','reconnect_required')),
             created_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz,
             PRIMARY KEY(namespace,environment,tenant_id,user_id,integration_id,command_id));
+            ALTER TABLE opencrawl_integration_commands DROP CONSTRAINT IF EXISTS opencrawl_integration_commands_operation_check;
+            ALTER TABLE opencrawl_integration_commands ADD CONSTRAINT opencrawl_integration_commands_operation_check CHECK(operation IN ('provision','disconnect','sync','consent'));
             CREATE INDEX IF NOT EXISTS opencrawl_integration_commands_pending ON opencrawl_integration_commands(namespace,environment,sequence) WHERE status='pending';
             CREATE TABLE IF NOT EXISTS opencrawl_integration_command_secrets (
               namespace text NOT NULL, environment text NOT NULL, tenant_id text NOT NULL, user_id text NOT NULL,
@@ -120,6 +138,28 @@ export function createIntegrationCommands({database, environment, encryptionKey,
       const secret = JSON.parse(envelope.open(context(reference), result.rows[0].ciphertext).toString()) as IntegrationCommandSecret;
       secretBytes(secret);
       return secret;
+    },
+    async readConsentResult(reference){
+      const result=await database.pool.query(`SELECT s.ciphertext,s.expires_at>now() AS valid FROM opencrawl_integration_command_secrets s JOIN opencrawl_integration_commands c
+        USING(namespace,environment,tenant_id,user_id,integration_id,command_id) WHERE s.namespace=$1 AND s.environment=$2 AND s.tenant_id=$3 AND s.user_id=$4 AND s.integration_id=$5 AND s.command_id=$6 AND c.operation='consent' AND c.status IN ('pending','completed')`,values(reference));
+      if(!result.rows[0]?.valid)return null;
+      if(!envelope)throw new Error('Integration secret encryption key is unavailable');
+      return consentResult(JSON.parse(envelope.open(context(reference),result.rows[0].ciphertext).toString()).consent);
+    },
+    async writeConsentResult(reference,input){
+      const result=consentResult(input),now=Date.now();
+      if(!envelope||result.expiresAt<=now||result.expiresAt>now+7*86400_000)throw new Error('Consent result expired or encrypted storage is unavailable');
+      await database.transaction(async client=>{
+        const locked=await client.query(`SELECT operation,status FROM opencrawl_integration_commands WHERE ${columns} FOR UPDATE`,values(reference));
+        if(locked.rows[0]?.operation!=='consent'||locked.rows[0]?.status!=='pending')invalid('Consent command no longer accepts results');
+        const prior=await client.query(`SELECT ciphertext FROM opencrawl_integration_command_secrets WHERE ${columns}`,values(reference));
+        if(prior.rows.length){
+          const saved=consentResult(JSON.parse(envelope.open(context(reference),prior.rows[0].ciphertext).toString()).consent);
+          if(saved.redirectUrl!==result.redirectUrl||saved.expiresAt!==result.expiresAt)invalid('Consent result cannot change');return;
+        }
+        await client.query(`INSERT INTO opencrawl_integration_command_secrets(namespace,environment,tenant_id,user_id,integration_id,command_id,ciphertext,expires_at)
+          VALUES($1,$2,$3,$4,$5,$6,$7,to_timestamp($8::double precision/1000))`,[...values(reference),envelope.seal(context(reference),Buffer.from(JSON.stringify({consent:result}))),result.expiresAt]);
+      });
     },
     clearSecret: reference => removeSecret(database.pool, reference),
     complete: reference => database.transaction(client => finish(client, reference, 'completed')),

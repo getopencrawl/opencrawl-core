@@ -1,3 +1,4 @@
+import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readdirSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
@@ -11,7 +12,7 @@ import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 
 for(const fail of [false,true])test('backfill bounds parsing ahead of blocked uploads'+(fail?' and resumes a failed wave':''),async()=>{
  const saved={...process.env},dir=mkdtempSync(join(tmpdir(),'backfill-pipeline-')),owner={tenantId:'team',userId:'owner'};
- const ingest=createSessionIngest({store:createLocalSessionStore(join(dir,'objects'))});
+ const ingest=createSessionIngest(withTestState({store:createLocalSessionStore(join(dir,'objects'))}));
  let release!:()=>void;const gate=new Promise<void>(r=>release=r);
  let firstWave!:()=>void;const started=new Promise<void>(r=>firstWave=r);
  let active=0,peak=0,requests=0,deny=fail;const batches=new Map<string,any>();

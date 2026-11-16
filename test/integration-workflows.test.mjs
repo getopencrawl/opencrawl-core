@@ -44,3 +44,16 @@ test('real Temporal lifecycle retries, worker replacement, SQL outbox recovery a
  const id=await ensureIntegrationRecoverySchedule(env.client,{sourceId:'integration-test',taskQueue:config.taskQueue});assert.equal(await ensureIntegrationRecoverySchedule(env.client,{sourceId:'integration-test',taskQueue:config.taskQueue}),id);const schedule=env.client.schedule.getHandle(id);await schedule.pause('test owns execution');
  runtime=await createIntegrationWorker(config);await runtime.worker.runUntil(async()=>{for(let i=0;i<100&&f.command.status!=='completed';i++)await new Promise(resolve=>setTimeout(resolve,100));assert.equal(f.command.status,'completed');});await runtime.connection.close();await schedule.delete();
 });
+
+test('real Temporal consent expiry timer survives worker replacement and history never contains its redirect',{skip:process.env.OPENCRAWL_TEST_TEMPORAL!=='1',timeout:90000},async t=>{
+ Runtime.install({logger:new DefaultLogger('ERROR')});const directory=await mkdtemp(join(tmpdir(),'opencrawl-consent-temporal-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+ const env=await TestWorkflowEnvironment.createLocal();t.after(()=>env.teardown());const bundlePath=join(directory,'workflows.cjs');await buildIntegrationWorkflows(bundlePath);
+ const f=fixture('consent'),waiting=Promise.withResolvers();let expiryCalls=0;
+ f.binding.runner.step=async({step})=>{if(step!=='consent-expire')return {status:'done'};if(++expiryCalls===1){waiting.resolve();return {status:'done',waitUntil:Date.now()+3000};}f.command.status='superseded';return {status:'superseded'};};
+ const config={address:env.address,namespace:'default',taskQueue:'consent-test',bundlePath,...f.options};
+ const id=await startIntegrationCommand(env.client,ref,config.taskQueue),handle=env.client.workflow.getHandle(id);
+ let runtime=await createIntegrationWorker(config);await runtime.worker.runUntil(()=>waiting.promise);await runtime.connection.close();assert.equal(f.command.status,'pending');
+ runtime=await createIntegrationWorker(config);assert.deepEqual(await runtime.worker.runUntil(()=>handle.result()),{status:'superseded'});await runtime.connection.close();assert.equal(expiryCalls,2);
+ const history=await handle.fetchHistory();assert.ok(history.events.some(event=>event.timerStartedEventAttributes));
+ function inspect(value){if(value instanceof Uint8Array)assert.doesNotMatch(Buffer.from(value).toString(),/PRIVATE|redirect_url|redirectUrl/);else if(value&&typeof value==='object')for(const child of Object.values(value))inspect(child);}inspect(history);await Worker.runReplayHistory({workflowBundle:{codePath:bundlePath}},history);
+});

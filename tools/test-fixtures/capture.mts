@@ -53,17 +53,20 @@ export async function startStandaloneCapture(env=process.env) {
   const principal={tenantId:env.OPENCRAWL_TENANT_ID||'self-hosted',userId:env.OPENCRAWL_USER_ID||'owner',
     name:env.OPENCRAWL_USER_NAME||null,email:env.OPENCRAWL_USER_EMAIL||null};
   const {store,prefix}=standaloneStorage(env);
-  const application=await openApplicationState(env),{state}=application;
-  const settings=searchSettings(env),search=settings?createSessionSearch({...settings,state,store,prefix}):null;
-  const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
-  const handler=standaloneCapture({token:env.OPENCRAWL_SESSIONS_TOKEN,principal,state,store,eventIdentities,prefix,search});
   await store.checkAccess();
+  const application=await openApplicationState(env),{state}=application;
+  let eventIdentities:ReturnType<typeof standaloneEventIdentities>|undefined;
+  try {
+  const settings=searchSettings(env),search=settings?createSessionSearch({...settings,state,store,prefix}):null;
+  eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
+  const handler=standaloneCapture({token:env.OPENCRAWL_SESSIONS_TOKEN,principal,state,store,eventIdentities,prefix,search});
   const server=createServer(handler);
-  server.once('close',()=>{void Promise.all([eventIdentities.close(),application.close()]);});
+  server.once('close',()=>{void Promise.all([eventIdentities!.close(),application.close()]);});
   server.requestTimeout=60000;
   await new Promise<void>((resolve,reject)=>{
     server.once('error',reject);
     server.listen(Number(env.PORT||8093),env.HOST||'127.0.0.1',()=>{server.removeListener('error',reject);resolve();});
   });
   return server;
+  }catch(error){await Promise.allSettled([eventIdentities?.close(),application.close()]);throw error;}
 }

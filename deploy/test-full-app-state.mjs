@@ -28,7 +28,7 @@ import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-r
 import {digest,receiptKey,pipelineVersion} from '../dist/src/connectors/scope.mjs';
 
 const phase=process.env.UPGRADE_APP_STATE_PHASE;
-assert.ok(['seed','verify','restored'].includes(phase));
+assert.ok(['seed','retained','verify','restored'].includes(phase));
 assert.equal(process.env.OPENCRAWL_UPGRADE_FIXTURE,'true');
 const input=JSON.parse(readFileSync('/dev-state/seed-input.json','utf8'));
 const seed=JSON.parse(readFileSync('/dev-state/seed.json','utf8'));
@@ -121,14 +121,14 @@ if(phase==='seed'){
  domain='legacy-scheduler';
  // Exact pre-Temporal formats can remain in a current v0.4.1 installation.
  // This session was deleted: its retained tombstone proves why raw bytes are absent.
- const deletedSource=prefix+'/tenants/'+sha(owner.tenantId)+'/users/'+sha(owner.userId)+'/codex/'+sha('upgrade-installation')+'/'+sha('upgrade-deleted')+'/'+sha('old-pending')+'.json.gz';
- const schedulerRoot=prefix+'/_index/'+sha('fixture-search')+'/'+sha('old-scheduler');
- const schedulerTime=new Date().toISOString();
+ const oldRaw=prefix+'/tenants/'+sha(owner.tenantId)+'/users/'+sha(owner.userId)+'/codex/'+sha('upgrade-installation')+'/'+sha('upgrade-deleted')+'/'+sha('old-pending')+'.json.gz';
+ const oldRoot=prefix+'/_index/'+sha('fixture-search')+'/'+sha('old-scheduler');
+ const oldTime=new Date().toISOString(),cursor=randomBytes(12).toString('hex'),reconcile=randomBytes(12).toString('hex');
  expected.scheduler=[
-  {key:prefix+'/index-pending/tenants/'+sha(owner.tenantId)+'/users/'+sha(owner.userId)+'/'+sha(deletedSource)+'.json',payload:{sourceKey:deletedSource},retired:{kind:'pending',sourceKey:deletedSource,disposition:'deleted',generation:'postgres-app-state-v1'}},
-  {key:schedulerRoot+'/batches/'+sha(deletedSource)+'.json',payload:{status:'failed',sourceKey:deletedSource,attempts:2,lastAttempt:schedulerTime,nextAttempt:Date.parse(schedulerTime)+4000,error:'INDEXING_FAILED'},retired:{kind:'failed',sourceKey:deletedSource,attempts:2,lastAttempt:schedulerTime,nextAttempt:Date.parse(schedulerTime)+4000,error:'INDEXING_FAILED',disposition:'deleted',generation:'postgres-app-state-v1'}},
-  {key:schedulerRoot+'/cursor.json',payload:{nextToken:'old-pending-cursor',updatedAt:schedulerTime},retired:{kind:'cursor',nextToken:'old-pending-cursor',updatedAt:schedulerTime,disposition:'full-temporal-catchup',generation:'postgres-app-state-v1'}},
-  {key:schedulerRoot+'/reconcile.json',payload:{nextToken:'old-source-cursor'},retired:{kind:'reconcile',nextToken:'old-source-cursor',disposition:'full-temporal-catchup',generation:'postgres-app-state-v1'}},
+  {key:prefix+'/index-pending/tenants/'+sha(owner.tenantId)+'/users/'+sha(owner.userId)+'/'+sha(oldRaw)+'.json',payload:{sourceKey:oldRaw},retired:{kind:'pending',sourceKey:oldRaw,disposition:'deleted',generation:'postgres-app-state-v1'}},
+  {key:oldRoot+'/batches/'+sha(oldRaw)+'.json',payload:{status:'failed',sourceKey:oldRaw,attempts:2,lastAttempt:oldTime,nextAttempt:Date.parse(oldTime)+4000,error:'INDEXING_FAILED'},retired:{kind:'failed',sourceKey:oldRaw,attempts:2,lastAttempt:oldTime,nextAttempt:Date.parse(oldTime)+4000,error:'INDEXING_FAILED',disposition:'deleted',generation:'postgres-app-state-v1'}},
+  {key:oldRoot+'/cursor.json',payload:{nextToken:cursor,updatedAt:oldTime},retired:{kind:'cursor',nextToken:cursor,updatedAt:oldTime,disposition:'full-temporal-catchup',generation:'postgres-app-state-v1'}},
+  {key:oldRoot+'/reconcile.json',payload:{nextToken:reconcile},retired:{kind:'reconcile',nextToken:reconcile,disposition:'full-temporal-catchup',generation:'postgres-app-state-v1'}},
  ];
  for(const item of expected.scheduler)await store.put(item.key,Buffer.from(JSON.stringify(item.payload)),'application/json');
  domain='connector-indexing';
@@ -198,7 +198,7 @@ if(phase==='seed'){
    // the exact matched rollback snapshot, never a live fallback or dual write.
    for(const object of manifest.objects)assert.equal(sha(await raw.get(object.key)),object.sha256);
   }finally{await database.close();}
- }else{
+ }else if(phase==='restored'){
   await verifyControls(createControls(scope));
   await verifyFences(createConnectorWriteBarrier({store,tenantId:owner.tenantId,connectionId:expected.integrationId}),sessionWriteBarrier(store,prefix,owner,'codex','upgrade-deleted'));
   const identity=await createLocalIdentity({databasePath:required('OPENCRAWL_IDENTITY_PATH'),url:required('OPENCRAWL_URL'),secret:required('OPENCRAWL_AUTH_SECRET'),organizationId:owner.tenantId});

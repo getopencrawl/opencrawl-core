@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
-import {createObjectMigration} from '../dist/src/state/object-migration.mjs';
+import {createObjectMigration,createTenantObjectMigration} from '../dist/src/state/object-migration.mjs';
 import {createPostgresEventIdentities} from '../dist/src/sessions/postgres-identities.mjs';
 import {digest,eventIdentityLocation} from '../dist/src/sessions/event-identity.mjs';
 import {digest as objectDigest} from '../dist/src/connectors/scope.mjs';
@@ -185,4 +185,29 @@ test('a retained old cutover marker cannot suppress fresh full catch-up after re
  assert.equal(started.length,1);assert.equal(started[0].type,'reconcileSessionsV2');assert.deepEqual(started[0].args,[{sourceId:binding.sourceId,generation:binding.generation}]);
  assert.deepEqual(await state.indexingReceipts.read(oldMarker.markerKey),oldMarker.marker);
  assert.equal(await state.indexingReceipts.read(activation.markerKey),null);
+});
+
+
+test('explicit tenant import preserves personal scope and separate capture/agent revocation histories',{skip:!postgresUrl},async t=>{
+ const fixture=await setup(t),principal={tenantId:'personal:user_fixture',userId:'user_fixture'},scope='tenants/'+digest(principal.tenantId)+'/users/'+digest(principal.userId),id=digest('same-synthetic-hash');
+ assert.throws(()=>createObjectMigration({...fixture.options,organizationId:principal.tenantId}),/Invalid object migration scope/);
+ const base={...fixture.options,registryRecords:[],tenantId:principal.tenantId};
+ const capture=createTenantObjectMigration(base),agent=createTenantObjectMigration({...base,prefix:prefix+'/_agent-access',credentialPurpose:'agent'});
+ const record={schemaVersion:1,id,principal,expiresAt:'2099-01-01T00:00:00.000Z',revoked:false,generation:digest('original-generation')};
+ const entries=[
+  [capture,prefix+'/_credentials/'+id+'.json',record],
+  [capture,prefix+'/_credential-generations/'+scope+'.json',{generation:digest('capture-was-revoked')}],
+  [agent,prefix+'/_agent-access/_credentials/'+id+'.json',record],
+  [agent,prefix+'/_agent-access/_credential-generations/'+scope+'.json',{generation:record.generation}],
+ ];
+ for(const [importer,key,value]of entries){const result=await importer.process(key,encode(value),{write:true});assert.deepEqual(result.target,result.source);}
+ const state=await createApplicationState({database:fixture.database});
+ assert.equal(await state.accounts.credentials.authenticate(id,'capture'),null);
+ assert.equal((await state.accounts.credentials.authenticate(id,'agent')).principal.tenantId,principal.tenantId);
+ await state.accounts.credentials.revokeAll(principal,'agent');assert.equal(await state.accounts.credentials.authenticate(id,'agent'),null);
+ assert.throws(()=>agent.classify(prefix+'/_agent-access/value/tenants/'+digest(principal.tenantId)+'.json'),/unrelated application state/);
+ assert.throws(()=>agent.classify('control/connectors/write-barriers/v1/'+digest('fence')+'.json'),/escaped its bound prefix/);
+ assert.throws(()=>agent.classify(prefix+'/_agent-access/'+scope+'/codex/'+digest('i')+'/'+digest('s')+'/'+digest('batch')+'.json.gz'),/unrelated application state/);
+ const foreign=createTenantObjectMigration({...base,tenantId:'org_other'});
+ await assert.rejects(foreign.process(prefix+'/_credentials/'+id+'.json',encode(record),{write:false}),/another installation organization/);
 });

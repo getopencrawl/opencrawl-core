@@ -4,13 +4,14 @@ import {captureCredentialSchema} from '../../dist/src/state/account-state.mjs';
 import {parseValueReport} from '../../dist/src/application/value-report.mjs';
 const clone=value=>value==null?null:structuredClone(value);
 export function memoryAccountState(){
+ const credentialKey=(id,purpose)=>purpose==='capture'?id:JSON.stringify([purpose,id]);
  const credentialRecords=new Map(),generations=new Map(),receipts=new Map(),roleRecords=new Map();
  return {credentialRecords,generations,receipts,roleRecords,
   credentials:{
-   async create(input){const record=captureCredentialSchema.parse(input),owner=sessionScope(record.principal);if(credentialRecords.has(record.id))throw Error('Credential exists');credentialRecords.set(record.id,{...record,generation:generations.get(owner)||''});},
-   async authenticate(id){const record=credentialRecords.get(id);return record&&(record.generation||'')===(generations.get(sessionScope(record.principal))||'')?clone(record):null;},
-   async revokeAll(principal){generations.set(sessionScope(principal),randomBytes(32).toString('hex'));},
-   async revoke(principal,id){const record=credentialRecords.get(id);if(!record)return;if(sessionScope(record.principal)!==sessionScope(principal))throw Object.assign(Error('Credential owner mismatch'),{status:403});record.revoked=true;},
+   async create(input,purpose='capture'){const record=captureCredentialSchema.parse(input),owner=credentialKey(sessionScope(record.principal),purpose),key=credentialKey(record.id,purpose);if(credentialRecords.has(key))throw Error('Credential exists');credentialRecords.set(key,{...record,generation:generations.get(owner)||''});},
+   async authenticate(id,purpose='capture'){const record=credentialRecords.get(credentialKey(id,purpose));return record&&(record.generation||'')===(generations.get(credentialKey(sessionScope(record.principal),purpose))||'')?clone(record):null;},
+   async revokeAll(principal,purpose='capture'){generations.set(credentialKey(sessionScope(principal),purpose),randomBytes(32).toString('hex'));},
+   async revoke(principal,id,purpose='capture'){const record=credentialRecords.get(credentialKey(id,purpose));if(!record)return;if(sessionScope(record.principal)!==sessionScope(principal))throw Object.assign(Error('Credential owner mismatch'),{status:403});record.revoked=true;},
   },
   onboarding:{async read(owner,kind){return clone(receipts.get(JSON.stringify([owner,kind])));},async write(owner,kind,value){receipts.set(JSON.stringify([owner,kind]),clone(value));}},
   roles:{async acquire(organizationId,actorId,userId,role){

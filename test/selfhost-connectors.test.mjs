@@ -304,3 +304,19 @@ test('a broker key from the server environment cannot be replaced in the product
   await assert.rejects(bare.connectorSettings.save('composio','good-project-key',{userId:'user_a'}),{status:409,expose:true});
   assert.equal(composio.seen.length,0);
 });
+
+test('broker reconciliation pages exact aliases and refuses duplicates, cursor loops and foreign scopes without another POST',async()=>{
+ const requestId='a'.repeat(32),userId='selfhost:org_team:user_a',input={authConfigId:'config',userId,callbackUrl:'https://self.example/callback',requestId};
+ let mode='paged';const calls=[];
+ const exact={id:'owned-grant',user_id:userId,alias:'opencrawl_'+requestId,auth_config:{id:'config'}};
+ const oauth=createComposioOAuth({apiKey:'private-key',organizationId:'org_team',proxyUrl:'https://self.example',proxyKey:Buffer.alloc(32,7),registry:{list:async()=>[]},fetch:async(target,options)=>{
+  const url=new URL(target);calls.push({url,options});assert.equal(options.method,'GET');assert.equal(url.searchParams.get('user_ids'),userId);assert.equal(url.searchParams.get('auth_config_ids'),'config');
+  if(mode==='loop')return Response.json({items:[],next_cursor:'repeat'});
+  if(mode==='duplicates')return Response.json({items:[exact,exact]});
+  if(mode==='empty')return Response.json({items:[]});
+  return Response.json(url.searchParams.has('cursor')?{items:[exact]}:{items:[{...exact,user_id:'selfhost:org_other:user_a'},{...exact,auth_config:{id:'foreign'}},{...exact,alias:'foreign'}],next_cursor:'page-two'});
+ }});
+ assert.deepEqual(await oauth.recoverLink(input),{connected_account_id:'owned-grant'});assert.equal(calls.length,2);
+ mode='duplicates';await assert.rejects(oauth.recoverLink(input),{status:503});mode='loop';await assert.rejects(oauth.recoverLink(input),{status:503});mode='empty';assert.equal(await oauth.recoverLink(input),null);
+ const count=calls.length;await assert.rejects(oauth.recoverLink({...input,userId:'selfhost:org_other:user_a'}),{status:403});assert.equal(calls.length,count);
+});

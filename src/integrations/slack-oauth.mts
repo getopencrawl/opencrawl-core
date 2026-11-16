@@ -1,4 +1,4 @@
-import {randomBytes,timingSafeEqual} from 'node:crypto';
+import {createHash,randomBytes,timingSafeEqual} from 'node:crypto';
 import type {ConnectorOAuth,IntegrationRegistry} from './ports.mjs';
 import type {ConnectorManifest,ProxyRequest,ProxyResponse,ProviderData} from './types.mjs';
 import type {JsonObject} from '../sessions/types.mjs';
@@ -66,15 +66,26 @@ export function createSlackOAuth({organizationId,url,proxyUrl,clientId,clientSec
   };
   const service:ConnectorOAuth={
     async authConfig({toolkit}){if(toolkit!=='slack')fail(404);return 'slack';},
-    async link({authConfigId,userId,callbackUrl}){
+    async recoverAuthConfig({toolkit}){if(toolkit!=='slack')fail(404);return 'slack';},
+    async recoverLink(input){
+      if(!input.requestId)return null;
+      const callback=new URL(input.callbackUrl),integrationId=callback.searchParams.get('integration')||'',owner=input.userId.slice(`selfhost:${organizationId}:`.length);
+      const id='grant_'+createHash('sha256').update(JSON.stringify([organizationId,owner,integrationId,input.requestId])).digest('hex').slice(0,48);
+      if(!(await vault.read(id)).record)return null;
+      return service.link(input);
+    },
+    async link({authConfigId,userId,callbackUrl,requestId}){
       if(authConfigId!=='slack'||!userId.startsWith(`selfhost:${organizationId}:`))fail(403);
       const owner=userId.slice(`selfhost:${organizationId}:`.length),callback=new URL(callbackUrl);
       if(!/^user_[A-Za-z0-9]+$/.test(owner)||callback.origin!==url||callback.pathname!=='/integrations/slack/callback')fail(403);
       const integrationId=callback.searchParams.get('integration')||'';if(!/^int_[a-f0-9]{26}$/.test(integrationId))fail(400);
-      const id='grant_'+randomBytes(24).toString('hex'),state=randomBytes(32).toString('base64url');
-      const record:ConnectorGrant={version:1,id,organizationId,userId:owner,integrationId,provider:'slack',status:'INITIATED',callbackUrl,flowExpiresAt:now()+600000,state,proxyToken:randomBytes(32).toString('base64url')};
-      await vault.write(record,null);
-      const authorize=new URL('https://slack.com/oauth/v2/authorize');authorize.search=new URLSearchParams({client_id:clientId,user_scope:SCOPES.join(','),redirect_uri:redirectUri,state:id+'.'+state}).toString();
+      if(requestId!==undefined&&!/^[a-f0-9]{32}$/.test(requestId))fail(400);
+      const id='grant_'+(requestId?createHash('sha256').update(JSON.stringify([organizationId,owner,integrationId,requestId])).digest('hex').slice(0,48):randomBytes(24).toString('hex')),state=randomBytes(32).toString('base64url');
+      const previous=await vault.read(id);
+      if(previous.record&&(previous.record.userId!==owner||previous.record.integrationId!==integrationId||previous.record.callbackUrl!==callbackUrl))fail(403);
+      const record:ConnectorGrant=previous.record??{version:1,id,organizationId,userId:owner,integrationId,provider:'slack',status:'INITIATED',callbackUrl,flowExpiresAt:now()+600000,state,proxyToken:randomBytes(32).toString('base64url')};
+      if(!previous.record)await vault.write(record,null);
+      const authorize=new URL('https://slack.com/oauth/v2/authorize');authorize.search=new URLSearchParams({client_id:clientId,user_scope:SCOPES.join(','),redirect_uri:redirectUri,state:id+'.'+record.state}).toString();
       return {redirect_url:authorize.href,connected_account_id:id,expires_at:new Date(record.flowExpiresAt).toISOString()};
     },
     async account(id){const {record:g}=await load(id);return {id:g.id,user_id:userKey(g.userId),status:g.status==='REFRESHING'?'EXPIRED':g.status==='EXCHANGING'?'INITIALIZING':g.status,toolkit:{slug:'slack'}};},

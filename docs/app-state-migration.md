@@ -153,3 +153,12 @@ cutover markers cannot complete the new generation. Operators must drain old
 workers before migration, then run and await the supported activation/catch-up
 before considering search caught up. Database migration readiness alone does not
 claim that the asynchronous search catch-up has completed.
+
+The published-version upgrade fixture stops the old worker before seeding its
+half-done operations and keeps it stopped through the source snapshot. The old
+API still runs during the read-only upgrade check. Exact source hashes are
+checked again after the upgrader stops writers, before any migration, and after
+import. Matched restore verifies the old bytes and typed readbacks before
+restarting the old worker; normal live acceptance then runs with workers active.
+This ordering prevents a legitimate old deletion retry from changing the test
+snapshot before migration and does not weaken source-preservation checks.

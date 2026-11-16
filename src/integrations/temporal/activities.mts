@@ -38,9 +38,9 @@ export function integrationActivities(options: IntegrationActivityOptions): Inte
       if (Context.current().cancellationSignal.aborted) throw Context.current().cancellationSignal.reason;
       if (caught instanceof ApplicationFailure) throw caught;
       const error = caught as {permanent?: boolean; code?: string};
-      if (error.code === 'ProvisioningKeyRequired') {
+      if (['ProvisioningKeyRequired','ConsentRetryRequired'].includes(error.code || '')) {
         await terminal('reconnect_required');
-        throw ApplicationFailure.nonRetryable('Reconnect with the provider credential to finish setup', 'IntegrationReconnectRequired');
+        throw ApplicationFailure.nonRetryable(error.code==='ConsentRetryRequired'?'Restart provider sign-in to continue setup':'Reconnect with the provider credential to finish setup', 'IntegrationReconnectRequired');
       }
       if (error.permanent) {
         await terminal('invalid_command');
@@ -50,10 +50,10 @@ export function integrationActivities(options: IntegrationActivityOptions): Inte
       // fixed error types enter history; unresolved external effects keep retrying.
       throw ApplicationFailure.retryable(error.code === 'CONNECTOR_WRITE_PENDING'
         ? 'Waiting for positive connector write settlement'
-        : error.code === 'ProvisioningRecoveryPending'
+        : ['ProvisioningRecoveryPending','ConsentRecoveryPending'].includes(error.code || '')
           ? 'Waiting to reconcile an earlier external resource request'
           : 'Integration lifecycle activity failed; retrying safely',
-      error.code === 'CONNECTOR_WRITE_PENDING' ? 'IntegrationWritesPending' : error.code === 'ProvisioningRecoveryPending' ? 'IntegrationProvisioningPending' : 'IntegrationActivityFailed');
+      error.code === 'CONNECTOR_WRITE_PENDING' ? 'IntegrationWritesPending' : ['ProvisioningRecoveryPending','ConsentRecoveryPending'].includes(error.code || '') ? 'IntegrationProvisioningPending' : 'IntegrationActivityFailed');
     } finally {clearInterval(pulse);}
   }
   return {
@@ -77,7 +77,7 @@ export function integrationActivities(options: IntegrationActivityOptions): Inte
     }),
     completeIntegrationCommand: reference => operation(reference, async (binding, command, check) => {
       if (command.status !== 'pending') return;
-      check(); await binding.commands.clearSecret(reference);
+      if(command.operation!=='consent'){check();await binding.commands.clearSecret(reference);}
       check(); await binding.commands.complete(reference);
     }),
     async listIntegrationCommands(input) {

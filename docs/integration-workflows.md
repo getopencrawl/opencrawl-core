@@ -28,6 +28,41 @@ durable, cancellation or command completion. It is never sent in workflow input,
 activity results, logs or errors. Existing installations with interrupted key setup
 and no retained key remain reconnect-required; migration cannot recreate secrets.
 
+## Provider consent
+
+OAuth sign-in first commits a `consent` command and an integration row in one
+PostgreSQL transaction. Temporal prepares the auth configuration and grant; the API
+waits briefly for the encrypted result and can return a retryable preparation status.
+A retry reuses that command and the same redirect, including after API restart. The
+redirect and its one-time state remain in scoped encrypted SQL storage, never in
+workflow history, integration JSON, logs or failure details.
+
+Each provider create call first saves a durable intent. A lost response is reconciled
+by the persisted exact identity, never by repeating a POST after an empty listing.
+Local Slack derives a stable grant ID from the intent and can recover its original
+redirect. The broker adapter sends the documented unique account alias and pages
+accounts restricted to exact user, auth configuration and alias. If it can recover
+the grant but not its original redirect, it queues revocation and requires a fresh
+sign-in. See the broker [link API](https://docs.composio.dev/reference/api-reference/connected-accounts/postConnectedAccountsLink)
+and [account list API](https://docs.composio.dev/reference/api-reference/connected-accounts/getConnectedAccounts).
+
+A Temporal timer keeps consent pending until verified callback or expiry, checking
+current authorization at least once a minute. Prepared redirects expire at the
+provider deadline, capped by a one-hour attempt deadline. Expiry is consent policy;
+it never establishes that an uncertain external request did not apply. Declined,
+expired and revoked attempts atomically become non-live abandoned records with a
+cleanup command. A verified callback supersedes the consent command and erases its
+saved redirect before provisioning. Abandoned attempts do not reserve the provider
+slot; their accepted cleanup continues after the initiating user loses access.
+
+Cleanup adopts and revokes late-created grants even if abandonment won the race.
+An incomplete, empty or ambiguous recovery listing keeps the saved intent and
+cleanup command pending for operator investigation. No time-based fallback clears
+that uncertainty. Auth configurations are reusable operator configuration; cleanup
+revokes the exact connected-account grant, not a shared auth configuration. Legacy
+abandoned rows with grants or saved consent intents receive deterministic cleanup
+commands in the final migration readiness transaction.
+
 ## Provisioning
 
 The workflow executes separate activities for preparation, destination creation,

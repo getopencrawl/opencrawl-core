@@ -11,6 +11,7 @@ export interface IntegrationRegistry {
   create(record: IntegrationRecord): Promise<IntegrationRecord>;
   createWithLifecycle?(record: IntegrationRecord, operation: IntegrationCommandOperation, secret?: IntegrationCommandSecret, requestedBy?: string): Promise<IntegrationCommandReference>;
   requestLifecycle?(record: Pick<IntegrationRecord, 'tenantId' | 'userId' | 'integrationId'>, operation: IntegrationCommandOperation, secret?: IntegrationCommandSecret, requestedBy?: string): Promise<IntegrationCommandReference>;
+  abandonWithLifecycle?(record: Pick<IntegrationRecord, 'tenantId' | 'userId' | 'integrationId'>, requestedBy?: string): Promise<IntegrationCommandReference>;
   update(record: Pick<IntegrationRecord, 'tenantId' | 'userId' | 'integrationId'>, fields: Partial<IntegrationRecord>, options?: UpdateOptions): Promise<IntegrationRecord>;
 }
 /** The runtime supplies existing storage, scoped to the admitted organization. */
@@ -22,10 +23,14 @@ export interface IntegrationStorage {
   list(bucket: string, prefix: string): Promise<Array<{key: string; size: number}>>;
   deletePrefix(bucket: string, prefix: string): Promise<number>;
 }
+export interface OAuthLinkInput {authConfigId:string;userId:string;callbackUrl:string;requestId?:string}
+export interface OAuthLinkResult {redirect_url?:string;connected_account_id:string;expires_at?:string}
 /** Provider consent and credential ownership are supplied by the runtime. */
 export interface ConnectorOAuth {
   authConfig(input: {toolkit: string; name: string; scheme?: string; credentials?: Record<string, string>}): Promise<string>;
-  link(input: {authConfigId: string; userId: string; callbackUrl: string}): Promise<{redirect_url: string; connected_account_id: string; expires_at?: string}>;
+  link(input: OAuthLinkInput): Promise<{redirect_url: string; connected_account_id: string; expires_at?: string}>;
+  recoverAuthConfig?(input:Parameters<ConnectorOAuth['authConfig']>[0]):Promise<string|null>;
+  recoverLink?(input:OAuthLinkInput):Promise<OAuthLinkResult|null>;
   account(id: string): Promise<{id: string; user_id?: string; status: string; is_disabled?: boolean; toolkit?: {slug: string}}>;
   remove(id: string): Promise<void>;
   proxy<T = ProviderData>(input: ProxyRequest & {connectedAccountId: string; userId: string}): Promise<ProxyResponse<T>>;

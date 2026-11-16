@@ -1,8 +1,9 @@
 import type {Environment, IntegrationRecord} from '../types.mjs';
 
-export type IntegrationCommandOperation = 'provision' | 'disconnect' | 'sync';
+export type IntegrationCommandOperation = 'provision' | 'disconnect' | 'sync' | 'consent';
 export type IntegrationOperation = IntegrationCommandOperation;
 export interface IntegrationCommandSecret {apiKey?: string}
+export interface IntegrationConsentResult {redirectUrl:string;expiresAt:number}
 export interface IntegrationCommandReference {
   environment: Environment;
   tenantId: string;
@@ -27,6 +28,8 @@ export interface IntegrationCommandPage {
 export interface IntegrationCommands {
   read(reference: IntegrationCommandReference): Promise<IntegrationCommand | null>;
   readSecret(reference: IntegrationCommandReference): Promise<IntegrationCommandSecret>;
+  readConsentResult(reference: IntegrationCommandReference): Promise<IntegrationConsentResult|null>;
+  writeConsentResult(reference: IntegrationCommandReference,result:IntegrationConsentResult):Promise<void>;
   clearSecret(reference: IntegrationCommandReference): Promise<void>;
   fail(reference: IntegrationCommandReference, reason: IntegrationCommandFailure): Promise<void>;
   complete(reference: IntegrationCommandReference): Promise<void>;
@@ -38,10 +41,10 @@ export interface IntegrationLifecycleRequest {
   requestLifecycle(record: Pick<IntegrationRecord, 'tenantId' | 'userId' | 'integrationId'>,
     operation: IntegrationOperation, secrets?: IntegrationCommandSecret, requestedBy?: string): Promise<IntegrationCommandReference>;
 }
-export type IntegrationStep = 'prepare' | 'destination' | 'source' | 'connection' | 'activate'
+export type IntegrationStep = 'consent-config' | 'consent-link' | 'consent-expire' | 'prepare' | 'destination' | 'source' | 'connection' | 'activate'
   | 'close-writers' | 'stop-writers' | 'drain-writers' | 'delete-data' | 'revoke-grants' | 'finalize' | 'sync';
 export interface IntegrationStepInput extends IntegrationCommandReference {step: IntegrationStep}
-export interface IntegrationStepResult {status: 'done' | 'superseded' | 'restart'}
+export interface IntegrationStepResult {status: 'done' | 'superseded' | 'restart';waitUntil?:number}
 export interface IntegrationLifecycleRunner {
   step(input: IntegrationStepInput, check?: () => void): Promise<IntegrationStepResult>;
 }

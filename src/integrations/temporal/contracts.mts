@@ -14,6 +14,7 @@ export function integrationWorkflowId(reference: IntegrationCommandReference): s
   return `integration-lifecycle-v1-${reference.environment}-${reference.commandId}`;
 }
 export const integrationSteps: Record<IntegrationOperation, readonly IntegrationStep[]> = {
+  consent: ['consent-config','consent-link','consent-expire'],
   provision: ['prepare', 'destination', 'source', 'connection', 'activate'],
   disconnect: ['close-writers', 'stop-writers', 'drain-writers', 'delete-data', 'revoke-grants', 'finalize'],
   sync: ['sync'],

@@ -1,3 +1,4 @@
+import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {createServer,type IncomingMessage} from 'node:http';
 import {mkdtempSync,readFileSync,writeFileSync,readdirSync,rmSync} from 'node:fs';
@@ -16,7 +17,7 @@ test('a flush that outlives its sign-in token renews it, re-verifies identity an
  // Tokens map to principals; the server expires tokens by removing them.
  const valid=new Map<string,typeof alice>([['token-1',alice]]);
  let issue='token-2',issuedFor=alice,refreshes=0,identities=0,uploads=0,expireAfterUploads=1;
- const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest({store});
+ const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest(withTestState({store}));
  const handler=createCaptureHandler({ingest,authenticate:async (req:IncomingMessage)=>{
   const principal=valid.get(/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1]??'');
   if(!principal)throw Object.assign(Error('Capture sign-in required'),{status:401});
