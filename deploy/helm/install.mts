@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Node 24+, kubectl and Helm. No application build or npm install is required.
-import {readFileSync,writeFileSync,mkdirSync,existsSync,chmodSync,unlinkSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,existsSync,chmodSync,unlinkSync,cpSync} from 'node:fs';
 import {dirname,resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
@@ -61,9 +61,20 @@ export function plan(c:Values){return {schemaVersion:1,release:c.release,namespa
 export function airbyteValues(c:Values,secretName:string,dbHost:string,storagePassword:string):Values {
   const d=c.databases.airbyte,dbSecret=d.mode==='bundled'?secretName:d.existingSecret;
   const jdbc='jdbc:postgresql://'+(d.mode==='bundled'?dbHost:d.host)+':'+(d.port||5432)+'/'+d.name+(d.tls?'?sslmode=verify-full'+(d.caPath?'&sslrootcert='+encodeURIComponent(d.caPath):'&sslfactory=org.postgresql.ssl.DefaultJavaSSLFactory'):'?sslmode=disable');
-  return merge({global:{env_vars:{DATABASE_URL:jdbc,CONFIG_DATABASE_REPLICA_URL:jdbc},airbyteUrl:`http://${c.release}-airbyte-server-svc:8001`,auth:{enabled:true,secretName:secretName,security:{cookieSecureSetting:false}},database:{type:d.tls?'external':'internal',host:d.mode==='bundled'?dbHost:d.host,port:d.port||5432,name:d.name,user:d.user,secretName:dbSecret,passwordSecretKey:'DATABASE_PASSWORD',replica:{userSecretKey:'DATABASE_USER',passwordSecretKey:'DATABASE_PASSWORD'}},tracking:{enabled:false,strategy:'logging'},workloads:{resources:{useConnectorResourceDefaults:false,mainContainer:{cpu:{request:'100m',limit:'2'},memory:{request:'256Mi',limit:'2Gi'}},check:{cpu:{request:'100m'},memory:{request:'256Mi'}},discover:{cpu:{request:'100m'},memory:{request:'256Mi'}},sidecar:{cpu:{request:'100m'},memory:{request:'128Mi'}}}}},
-      postgresql:{enabled:false},temporal:{secretName:dbSecret,database:{host:d.mode==='bundled'?dbHost:d.host,port:d.port||5432,user:d.user,passwordSecretKey:'DATABASE_PASSWORD'},env_vars:{DBNAME:d.temporalName,VISIBILITY_DBNAME:d.visibilityName,SKIP_DB_CREATE:'true',POSTGRES_TLS_DISABLE_HOST_VERIFICATION:'false',SQL_TLS_DISABLE_HOST_VERIFICATION:'false',SQL_HOST_VERIFICATION:'true',SQL_HOST_NAME:d.mode==='bundled'?dbHost:d.host,...(d.caPath?{POSTGRES_TLS_CA_FILE:d.caPath,SQL_CA:d.caPath}:{})}},
+  return merge({global:{airbyteUrl:`http://${c.release}-airbyte-airbyte-server-svc:8001`,auth:{enabled:true,secretName:secretName,security:{cookieSecureSetting:false}},database:{jdbcUrl:jdbc,type:d.tls?'external':'internal',host:d.mode==='bundled'?dbHost:d.host,port:d.port||5432,name:d.name,user:d.user,secretName:dbSecret,passwordSecretKey:'DATABASE_PASSWORD',replica:{userSecretKey:'DATABASE_USER',passwordSecretKey:'DATABASE_PASSWORD'}},tracking:{enabled:false,strategy:'logging'},workloads:{resources:{useConnectorResourceDefaults:false,mainContainer:{cpu:{request:'100m',limit:'2'},memory:{request:'256Mi',limit:'2Gi'}},check:{cpu:{request:'100m'},memory:{request:'256Mi'}},discover:{cpu:{request:'100m'},memory:{request:'256Mi'}},sidecar:{cpu:{request:'100m'},memory:{request:'128Mi'}}}}},
+      postgresql:{enabled:false},temporal:{secretName:dbSecret,database:{host:d.mode==='bundled'?dbHost:d.host,port:d.port||5432,user:d.user,passwordSecretKey:'DATABASE_PASSWORD'},env_vars:{DBNAME:d.temporalName,VISIBILITY_DBNAME:d.visibilityName,SKIP_DB_CREATE:'true',SQL_HOST_VERIFICATION:'true',SQL_HOST_NAME:d.mode==='bundled'?dbHost:d.host,...(d.caPath?{POSTGRES_TLS_CA_FILE:d.caPath,SQL_CA:d.caPath}:{})}},
       connectorBuilderServer:{enabled:false},server:{env_vars:{JOB_RESOURCE_VARIANT_OVERRIDE:'lowresource'}},minio:{rootUser:'opencrawl',rootPassword:storagePassword,storage:{volumeClaimValue:'5Gi'},resources:{requests:{cpu:'100m',memory:'256Mi'},limits:{memory:'1Gi'}}}},c.airbyte.values);
+}
+
+// A parent template supplies the JDBC URL missing from the pinned upstream values.
+// Preserve upstream hooks and emit each environment variable exactly once.
+export function prepareAirbyteChart(stateDir:string,archive:Uint8Array):string {
+  if(createHash('sha256').update(archive).digest('hex')!=='ec25fcddc952dbef05183f426149553f78db0f7e61642c9d13c77e32c93433a3')fail('CHART_CHECKSUM','Airbyte chart checksum mismatch');
+  const wrapper=join(stateDir,'airbyte-wrapper');
+  cpSync(join(dirname(fileURLToPath(import.meta.url)),'airbyte-wrapper'),wrapper,{recursive:true});
+  mkdirSync(join(wrapper,'charts'),{recursive:true});
+  writeFileSync(join(wrapper,'charts/airbyte-2.4.0.tgz'),archive,{mode:0o600});
+  return wrapper;
 }
 
 async function install(c:Values,stateDir:string,through='application'){
@@ -99,18 +110,18 @@ async function install(c:Values,stateDir:string,through='application'){
   progress('infrastructure');helm(['upgrade','--install',c.release+'-infra',chart,'-n',c.namespace,'-f',values('infrastructure.json',infra),'--wait','--timeout','15m']);
   if(through==='infrastructure')return;
   let workspaceId=c.airbyte.workspaceId;
-  const airbyteUrl=c.airbyte.mode==='bundled'?`http://${c.release}-airbyte-server-svc:8001`:c.airbyte.url;
+  const airbyteUrl=c.airbyte.mode==='bundled'?`http://${c.release}-airbyte-airbyte-server-svc:8001`:c.airbyte.url;
   if(c.airbyte.mode==='bundled'){
     const d=c.databases.airbyte,dbSecret=d.mode==='bundled'?secretName:d.existingSecret;
     const airbyte=airbyteValues(c,secretName,dbHost,secrets.AWS_SECRET_ACCESS_KEY);
     // Upstream MinIO requires a value; this generated file is private and never emitted.
-    progress('airbyte');const privateValues=values('airbyte.private.json',airbyte);
+    progress('airbyte');const privateValues=values('airbyte.private.json',{airbyte});
     const airbyteChart=join(stateDir,'airbyte-2.4.0.tgz');
     try{
       const archive=existsSync(airbyteChart)?readFileSync(airbyteChart):Buffer.from(await (await fetch('https://airbytehq.github.io/charts/airbyte-2.4.0.tgz',{signal:AbortSignal.timeout(60000)})).arrayBuffer());
-      if(createHash('sha256').update(archive).digest('hex')!=='ec25fcddc952dbef05183f426149553f78db0f7e61642c9d13c77e32c93433a3')fail('CHART_CHECKSUM','Airbyte chart checksum mismatch');
+      const wrapper=prepareAirbyteChart(stateDir,archive);
       writeFileSync(airbyteChart,archive,{mode:0o600});
-      helm(['upgrade','--install',c.release+'-airbyte',airbyteChart,'-n',c.namespace,'-f',privateValues,'--wait','--timeout','25m']);
+      helm(['upgrade','--install',c.release+'-airbyte',wrapper,'-n',c.namespace,'-f',privateValues,'--wait','--timeout','25m']);
     }finally{unlinkSync(privateValues);}
     // Catalog repair is scoped to the pinned bundled Airbyte release. External Airbyte is never changed.
     const bootstrapEnv=[{name:'PG_TLS_ENABLED',value:String(!!d.tls)},{name:'PG_TLS_CA_PATH',value:d.caPath||''},{name:'PGHOST',value:d.mode==='bundled'?dbHost:d.host},{name:'PGPORT',value:String(d.port||5432)},{name:'PGDATABASE',value:d.name},{name:'PGUSER',value:d.user},{name:'PGPASSWORD',valueFrom:{secretKeyRef:{name:dbSecret,key:'DATABASE_PASSWORD'}}},{name:'AIRBYTE_URL',value:airbyteUrl},{name:'AIRBYTE_WORKSPACE_NAME',value:c.release},{name:'AIRBYTE_CLIENT_ID',valueFrom:{secretKeyRef:{name:secretName,key:'AB_INSTANCE_ADMIN_CLIENT_ID'}}},{name:'AIRBYTE_CLIENT_SECRET',valueFrom:{secretKeyRef:{name:secretName,key:'AB_INSTANCE_ADMIN_CLIENT_SECRET'}}}];
@@ -135,7 +146,7 @@ async function install(c:Values,stateDir:string,through='application'){
   if(c.temporal.tls.existingSecret){extraVolumes.push({name:'temporal-tls',secret:{secretName:c.temporal.tls.existingSecret}});extraVolumeMounts.push({name:'temporal-tls',mountPath:'/etc/opencrawl/temporal',readOnly:true});for(const [field,key] of [['TEMPORAL_TLS_CA_PATH','caKey'],['TEMPORAL_TLS_CERT_PATH','certKey'],['TEMPORAL_TLS_KEY_PATH','keyKey']])if(c.temporal.tls[key])tlsEnv[field]='/etc/opencrawl/temporal/'+c.temporal.tls[key];}
   if(c.temporal.tls.serverName)tlsEnv.TEMPORAL_TLS_SERVER_NAME=c.temporal.tls.serverName;
   const endpoint=c.objectStorage.mode==='bundled'?`http://${c.release}-infra-s3:8333`:c.objectStorage.endpoint;
-  const app=merge({image:c.image,storageClass:c.storageClass,postgresql:{enabled:false},opensearch:{enabled:false},objectStorage:{enabled:false},temporal:{enabled:false},runtime:{enabled:true,existingSecret:runtimeSecret,extraEnv,extraVolumes,extraVolumeMounts,env:{OPENCRAWL_URL:c.url,OPENCRAWL_APP_STATE_NAMESPACE:organization,OPENCRAWL_LANDING_S3_BUCKET:c.objectStorage.bucket,OPENCRAWL_LANDING_S3_REGION:c.objectStorage.region,OPENCRAWL_LANDING_S3_ENDPOINT:endpoint,OPENCRAWL_LANDING_S3_PATH:binding.prefix,OPENCRAWL_AIRBYTE_ENABLED:String(c.airbyte.mode!=='disabled'),OPENCRAWL_AIRBYTE_S3_ENDPOINT:c.objectStorage.airbyteEndpoint||endpoint,OPENCRAWL_AIRBYTE_APP_URL:c.airbyte.appUrl||`http://${c.release}:8092`,AIRBYTE_URL:airbyteUrl||'',AIRBYTE_WORKSPACE_ID:workspaceId||'',AIRBYTE_GITHUB_REPOSITORY:c.githubConnector.repository,AIRBYTE_GITHUB_TAG:c.githubConnector.tag,OPENCRAWL_OPENSEARCH_INDEX:binding.index,OPENCRAWL_OPENSEARCH_URL:c.opensearch.mode==='bundled'?`http://${c.release}-infra-opensearch:9200`:c.opensearch.url,TEMPORAL_ADDRESS:c.temporal.mode==='bundled'?`${c.release}-infra-temporal:7233`:c.temporal.address,TEMPORAL_NAMESPACE:c.temporal.namespace,...tlsEnv}}},c.application);
+  const app=merge({image:c.image,storageClass:c.storageClass,postgresql:{enabled:false},opensearch:{enabled:false},objectStorage:{enabled:false},temporal:{enabled:false},runtime:{enabled:true,existingSecret:runtimeSecret,extraEnv,extraVolumes,extraVolumeMounts,env:{OPENCRAWL_URL:c.url,OPENCRAWL_APP_STATE_NAMESPACE:organization,OPENCRAWL_LANDING_S3_BUCKET:c.objectStorage.bucket,OPENCRAWL_LANDING_S3_REGION:c.objectStorage.region,OPENCRAWL_LANDING_S3_ENDPOINT:endpoint,OPENCRAWL_LANDING_S3_PATH:binding.prefix,OPENCRAWL_AIRBYTE_ENABLED:String(c.airbyte.mode!=='disabled'),OPENCRAWL_AIRBYTE_S3_ENDPOINT:c.objectStorage.airbyteEndpoint||endpoint,OPENCRAWL_AIRBYTE_APP_URL:c.airbyte.appUrl||`http://${c.release}.${c.namespace}.svc.cluster.local:8092`,AIRBYTE_URL:airbyteUrl||'',AIRBYTE_WORKSPACE_ID:workspaceId||'',AIRBYTE_GITHUB_REPOSITORY:c.githubConnector.repository,AIRBYTE_GITHUB_TAG:c.githubConnector.tag,OPENCRAWL_OPENSEARCH_INDEX:binding.index,OPENCRAWL_OPENSEARCH_URL:c.opensearch.mode==='bundled'?`http://${c.release}-infra-opensearch:9200`:c.opensearch.url,TEMPORAL_ADDRESS:c.temporal.mode==='bundled'?`${c.release}-infra-temporal:7233`:c.temporal.address,TEMPORAL_NAMESPACE:c.temporal.namespace,...tlsEnv}}},c.application);
   progress('application');helm(['upgrade','--install',c.release,chart,'-n',c.namespace,'-f',values('application.json',app),'--wait','--timeout','15m']);
   const receipt={...plan(c),status:'installed',organization,workspaceId,installedAt:new Date().toISOString()};values('receipt.json',receipt);console.log(JSON.stringify(receipt));
 }

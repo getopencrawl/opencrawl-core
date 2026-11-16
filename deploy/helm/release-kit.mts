@@ -31,7 +31,7 @@ mkdirSync(out,{recursive:true});
 const scratch=mkdtempSync(join(tmpdir(),'opencrawl-kit-'));
 const run=(command:string,args:string[])=>{const r=spawnSync(command,args,{encoding:'utf8'});if(r.status!==0)throw Error(`${command} packaging failed: ${r.stderr}`);};
 try{
-  for(const file of ['install.mts','verify.mts','runtime','opencrawl','examples','README.md'])cpSync(join(root,file),join(scratch,file),{recursive:true});
+  for(const file of ['install.mts','verify.mts','runtime','opencrawl','airbyte-wrapper','examples','README.md'])cpSync(join(root,file),join(scratch,file),{recursive:true});
   writeFileSync(join(scratch,'release.json'),JSON.stringify(receipt,null,2)+'\n');
   for(const file of ['bundled.json','external.json','mixed.json']){const p=join(scratch,'examples',file),config=JSON.parse(readFileSync(p,'utf8'));config.image=image;config.githubConnector=githubConnector;writeFileSync(p,JSON.stringify(config,null,2)+'\n');}
   run(process.env.HELM||'helm',['package',join(scratch,'opencrawl'),'--destination',out]);

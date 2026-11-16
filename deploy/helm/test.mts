@@ -5,7 +5,7 @@ import {mkdtempSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {configuration,plan,airbyteValues} from './install.mts';
+import {configuration,plan,airbyteValues,prepareAirbyteChart} from './install.mts';
 const root=dirname(fileURLToPath(import.meta.url));
 const input={context:'test',url:'https://opencrawl.example.com',image:{tag:'sha-test'}};
 test('all shipped agent tools parse without installing dependencies',()=>{
@@ -26,16 +26,20 @@ test('upstream Airbyte references only supplied credentials in bundled and exter
     const config=join(dir,'instance.json');writeFileSync(config,JSON.stringify(input));
     const run=spawnSync(process.execPath,[join(root,'install.mts'),'--config',config,'--state-dir',join(dir,'state'),'--apply','--through','infrastructure'],{encoding:'utf8',env:{...process.env,KUBECTL:stub,HELM:stub}});assert.equal(run.status,0,run.stderr);
     const generated=new Set(JSON.parse(readFileSync(capture,'utf8')));
+    const wrapper=prepareAirbyteChart(dir,readFileSync(process.env.AIRBYTE_CHART!));
     for(const external of [false,true])for(const tls of [false,true]){
       const c=configuration({...input,databases:{airbyte:{...(external?{mode:'external',host:'pg.example',user:'airbyte',name:'airbyte',existingSecret:'external-db'}:{}),tls}}});
-      const values=airbyteValues(c,'opencrawl-credentials','postgres','synthetic-test-only'),path=join(dir,'airbyte.json');writeFileSync(path,JSON.stringify(values));
-      const render=spawnSync(process.env.HELM||'helm',['template','sample',process.env.AIRBYTE_CHART!,'-f',path],{encoding:'utf8',maxBuffer:16*1024*1024});assert.equal(render.status,0,render.stderr);
+      const values=airbyteValues(c,'opencrawl-credentials','postgres','synthetic-test-only'),path=join(dir,'airbyte.json');writeFileSync(path,JSON.stringify({airbyte:values}));
+      const render=spawnSync(process.env.HELM||'helm',['template',c.release+'-airbyte',wrapper,'-f',path],{encoding:'utf8',maxBuffer:16*1024*1024});assert.equal(render.status,0,render.stderr);
+      const serviceHost=new URL(values.global.airbyteUrl).hostname;assert.ok(render.stdout.includes('name: '+serviceHost+'\n'),'Configured API host must match the upstream Service');
+      assert.ok(render.stdout.includes('DATABASE_URL: '+JSON.stringify(values.global.database.jdbcUrl)));
+      for(const document of render.stdout.split('\n---'))for(const key of ['DATABASE_URL','CONFIG_DATABASE_REPLICA_URL','POSTGRES_TLS_DISABLE_HOST_VERIFICATION','SQL_TLS_DISABLE_HOST_VERIFICATION'])assert.ok([...document.matchAll(new RegExp('^\\s*- name: '+key+'$','gm'))].length<=1,`Duplicate ${key} breaks Helm upgrades`);
       let checked=0;for(const match of render.stdout.matchAll(/secretKeyRef:\s*\n\s+name: ([^\n]+)\n\s+key: ([^\n]+)/g)){
         const name=match[1].replaceAll('"','').trim(),key=match[2].replaceAll('"','').trim();
         if(name==='opencrawl-credentials'){assert.ok(generated.has(key),`Generated credentials lack upstream key ${key}`);checked++;}
         if(name==='external-db'){assert.ok(['DATABASE_USER','DATABASE_PASSWORD'].includes(key),`Undocumented external key ${key}`);checked++;}
       }
-      assert.ok(checked>=8);assert.match(render.stdout,new RegExp('POSTGRES_TLS_ENABLED: "'+String(tls)+'"'));assert.equal(values.temporal.env_vars.POSTGRES_TLS_DISABLE_HOST_VERIFICATION,'false');
+      assert.ok(checked>=8);assert.match(render.stdout,new RegExp('POSTGRES_TLS_ENABLED: "'+String(tls)+'"'));assert.match(render.stdout,/POSTGRES_TLS_DISABLE_HOST_VERIFICATION: "false"/);assert.match(render.stdout,/SQL_TLS_DISABLE_HOST_VERIFICATION: "false"/);
     }
   }finally{rmSync(dir,{recursive:true});}
 });

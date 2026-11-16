@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {setTimeout as delay} from 'node:timers/promises';
 import pg from 'pg';
-import {createObjectStore,awsCredentials} from '../../../dist/src/sessions/s3-store.mjs';
+import {sessionStorage} from '../../../dist/src/sessions/storage.mjs';
 import {connectorClient} from '../../../dist/src/connectors/temporal/client.mjs';
 import {selfhostTemporalSettings} from '../../../dist/src/selfhost/temporal-settings.mjs';
 import {realmIndex} from '../../../dist/src/search/realm-format.mjs';
@@ -20,7 +20,7 @@ await check('postgresql','Check OPENCRAWL_DATABASE_URL, TLS trust, DB ownership 
   const db=new pg.Client({connectionString:required('OPENCRAWL_DATABASE_URL'),connectionTimeoutMillis:15000});
   await db.connect();try{const r=await db.query('SELECT rolsuper FROM pg_roles WHERE rolname=current_user');assert.equal(r.rows[0].rolsuper,false,'App must use a restricted role');}finally{await db.end();}
 });
-const storage=createObjectStore({endpoint:env.OPENCRAWL_LANDING_S3_ENDPOINT,region:env.OPENCRAWL_LANDING_S3_REGION,bucket:required('OPENCRAWL_LANDING_S3_BUCKET'),credentials:awsCredentials()});
+const {store:storage}=sessionStorage();
 await check('object-storage','Check bucket existence, credentials, endpoint and network policies.',()=>storage.checkAccess());
 const temporal=selfhostTemporalSettings();
 await check('temporal-namespace','Check Temporal address, namespace, TLS and credentials.',async()=>{
