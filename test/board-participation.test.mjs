@@ -6,17 +6,11 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {request as httpRequest} from 'node:http';
 import {createBoard} from '../dist/src/board/board.mjs';
-import {createLocalBoardStore} from '../dist/src/board/local-store.mjs';
+import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
 import {standaloneMcp} from '../dist/tools/test-fixtures/mcp.mjs';
 
 const alice = {tenantId:'a', userId:'alice'}, bob = {tenantId:'a', userId:'bob'}, other = {tenantId:'b', userId:'alice'};
-async function fixture(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'board-participation-'));
-  let store = createLocalBoardStore(join(dir, 'board.sqlite')), time = 1_000_000;
-  t.after(async () => {store.close(); await rm(dir, {recursive:true, force:true});});
-  const make = () => createBoard({store, prefix:'test', now:() => time});
-  return {make, get store() {return store;}, advance:(ms = 60_000) => {time += ms;}, restart:() => {store.close(); store = createLocalBoardStore(join(dir, 'board.sqlite')); return make();}};
-}
+async function fixture(t){const f=await boardStateFixture(t);let time=1000000;const make=()=>createBoard({state:f.state,now:()=>time});return {...f,make,advance:(ms=60000)=>{time+=ms;},restart:make};}
 const register = (board, principal, session='one', name='codex:one') => board.participate(principal, 'register', {session, name, task:'Test work', harness:'codex'});
 const post = (board, id, text='Useful change', topic='build') => board.participate(bob, 'publish', {session:'two', id:String(id), text, topic});
 const inbox = board => board.participate(alice, 'inbox', {session:'one'});
@@ -105,7 +99,7 @@ test('existing listeners establish ownership without guessing from names or chan
   const key='test/tenants/'+createHash('sha256').update('a').digest('hex')+'.json';
   const before=await f.store.readVersion(key), state=JSON.parse(before.data);
   delete state.participants[registered.agent].userId; // Persisted pre-upgrade registration.
-  assert.equal(await f.store.compareAndSet(key,before.version,Buffer.from(JSON.stringify(state))),true);
+  await f.repository.transaction(boardTenant('a'),tx=>tx.putParticipant(registered.agent,state.participants[registered.agent]));
   const publication={id:'legacy',topic:'build',text:'Legacy publication remains immutable'};
   const args={workspace:'a',agent:'codex:one',topics:['build'],posts:[publication]};
   const legacy=await board.sync(alice,args);
@@ -147,18 +141,12 @@ test('name resolution stays account- and tenant-scoped and cannot overwrite anot
   await assert.rejects(board.sync(bob,{...args,workspace:'b'}),{status:403});
 });
 
-test('sync resolves a registration committed during its CAS retry', async t => {
-  const f=await fixture(t); let first=true, registered;
-  const board=createBoard({prefix:'test',store:{...f.store,compareAndSet:async(...args)=>{
-    if(first) {first=false; registered=await register(f.make(),alice);}
-    return f.store.compareAndSet(...args);
-  }}});
-  const synced=await board.sync(alice,{workspace:'a',agent:'codex:one',topics:['build'],posts:[{id:'race',topic:'build',text:'Concurrent update'}]});
-  assert.equal(synced.agent,registered.agent);
-  assert.deepEqual(synced.accepted,[1]);
-  assert.equal((await board.read(alice)).messages[0].agent,registered.agent);
-  assert.deepEqual((await board.topics(alice)).topics[0].active.map(p=>p.id),[registered.agent]);
-});
+test('sync resolves a registration committed before its transaction',async t=>{
+    const f=await fixture(t),registered=await register(f.make(),alice),board=f.make();
+    const synced=await board.sync(alice,{agent:'codex:one',topics:['build'],posts:[{id:'race',topic:'build',text:'Concurrent update'}]});
+    assert.equal(synced.agent,registered.agent);assert.deepEqual(synced.accepted,[1]);
+    assert.equal((await board.read(alice)).messages[0].agent,registered.agent);
+  });
 
 test('MCP-only names retain their separate retry namespaces until registration', async t => {
   const board=(await fixture(t)).make();
@@ -351,12 +339,13 @@ test('unknown inline tags warn once per response and retries retain original rou
 });
 
 test('single-tenant HTTP registration and inbox persist without hosted credentials', async t => {
+  const pg=await boardStateFixture(t);
   const dir=await mkdtemp(join(tmpdir(),'board-http-')); const token='local-test-only-token-'.repeat(3);
   let server;
   t.after(async()=>{if(server?.listening)await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});});
   const start=async()=>{
     // Bind once to select a port, then use the same origin for strict Host validation.
-    server=standaloneMcp({token,origin:'http://127.0.0.1:8093',boardPath:join(dir,'board.sqlite'),principal:alice});
+    server=standaloneMcp({token,origin:'http://127.0.0.1:8093',state:pg.state,principal:alice});
     await new Promise(r=>server.listen(0,'127.0.0.1',r));
   };
   await start();

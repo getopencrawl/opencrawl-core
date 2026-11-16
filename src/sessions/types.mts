@@ -1,3 +1,4 @@
+import type {ApplicationState} from '../state/types.mjs';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 
 export interface Principal {
@@ -63,7 +64,7 @@ export interface EventIdentityStore {
 }
 export interface EventReservationOptions extends SessionIdentity {store: ObjectStore; events: SessionEvent[]; eventIdentities?: EventIdentityStore; initialize?: boolean}
 export interface SourceOptions {
-  store: ObjectStore; prefix: string; principal?: Principal;
+  state:ApplicationState;store: ObjectStore; prefix: string; principal?: Principal;
   resolvePrincipal?: (input: {key: string; batch: SessionBatch}) => Promise<Principal>;
   initialize?: boolean;
   eventIdentities?: EventIdentityStore;

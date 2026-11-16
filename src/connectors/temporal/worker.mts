@@ -39,6 +39,16 @@ export function connectorActivities({resolve}: ConnectorActivityOptions) {
       }});
       const result = action === 'listPage' ? await pipeline.listPage(input) : await pipeline.processObject(input as {key: string});
       if (action === 'listPage') assertSourcePaginationPage(result);
+      else if (resolved.afterObject) {
+        const current = await resolve(input);
+        if (JSON.stringify(current.binding) !== JSON.stringify(resolved.binding) || current.search.identity !== identity || current.store.bucket !== resolved.store.bucket) throw Object.assign(new Error('Connector binding changed before measurement'), {permanent: true});
+        try {await resolved.afterObject(input.key!, () => Context.current().cancellationSignal.throwIfAborted());}
+        catch (error) {
+          if (Context.current().cancellationSignal.aborted) throw Context.current().cancellationSignal.reason;
+          if (errorMetadata(error).permanent) throw ApplicationFailure.nonRetryable('Connector measurement scope is inactive', 'InvalidConnectorMeasurement');
+          throw ApplicationFailure.retryable('Connector measurement failed; retrying safely', 'ConnectorMeasurementFailed');
+        }
+      }
       return result;
     } catch (error) {
       if (error instanceof SourcePaginationError) throw ApplicationFailure.nonRetryable(error.message, 'SourcePaginationFailed');

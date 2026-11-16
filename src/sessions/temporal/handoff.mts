@@ -3,7 +3,9 @@ import {digest} from '../event-identity.mjs';
  * and receipt configuration. No tenant-selected target enters a Temporal task. */
 export function sessionIndexingGeneration(searchIdentity:string,jobId:string) {
   if(!searchIdentity||!jobId)throw new Error('Explicit indexing generation required');
-  return digest(JSON.stringify([searchIdentity,jobId]));
+  // A fresh full scan is required when retiring legacy pending/retry/cursor
+  // objects. Old cutover markers remain evidence, never proof for this generation.
+  return digest(JSON.stringify([searchIdentity,jobId,'postgres-app-state-v1']));
 }
 export interface SessionIndexingBinding {sourceId:string;taskQueue:string;generation:string}
 export function indexingBinding(input:SessionIndexingBinding) {

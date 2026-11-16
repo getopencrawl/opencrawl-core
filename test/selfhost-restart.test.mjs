@@ -1,3 +1,4 @@
+import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {fork} from 'node:child_process';
@@ -7,7 +8,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
-test('MCP and CLI grants survive a process restart and expired access tokens without reopening enrollment',async t=>{
+test('MCP and CLI grants survive a process restart and expired access tokens without reopening enrollment',{skip:!postgresUrl},async t=>{
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-restart-'));
   const config={dir,secret:randomBytes(32).toString('hex'),setup:randomBytes(32).toString('hex')};
   const children=[];
@@ -15,6 +16,7 @@ test('MCP and CLI grants survive a process restart and expired access tokens wit
     for(const child of children)if(child.exitCode===null&&child.signalCode===null){const exit=once(child,'exit');child.kill('SIGKILL');await exit;}
     await rm(dir,{recursive:true,force:true});
   });
+  const database=await applicationDatabaseFixture(t);config.connectionString=postgresUrl;config.namespace=database.namespace;
   async function start(extra={}){
     const child=fork(new URL('./fixtures/selfhost-restart-server.mjs',import.meta.url),[],{
       env:{PATH:process.env.PATH,OPENCRAWL_RESTART_TEST:JSON.stringify({...config,...extra})},

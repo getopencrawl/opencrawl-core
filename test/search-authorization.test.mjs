@@ -1,3 +1,4 @@
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +16,7 @@ const denied=error=>error.status===403;
 test('upload-only and unknown capabilities cannot read or mutate indexes through the core operations',async()=>{
   let requests=0;
   const options={endpoint:'https://search.example.test',tenantId:principal.tenantId,fetch:async()=>{requests++;throw new Error('Unexpected storage access');}};
-  const realm=createRealm(options), collection=realm.collection('session'), sessions=createSessionSearch({...options,store:deletionTestStore(),prefix:"capture-v1"}), connectors=createConnectorSearch(options);
+  const realm=createRealm(options), collection=realm.collection('session'), sessions=createSessionSearch(withTestState({...options,store:deletionTestStore(),prefix:"capture-v1"})), connectors=createConnectorSearch(options);
   for(const captureAccess of restrictedAccess){
   const delegated={...principal,captureAccess};
   const actions=[
@@ -43,20 +44,20 @@ test('upload-only and unknown capabilities cannot read or mutate indexes through
 test('upload-only and unknown capabilities cannot discover, read, post, or search the board',async()=>{
   let calls=0;
   const unexpected=async()=>{calls++;throw new Error('Unexpected board access');};
-  const board=createBoard({store:{readVersion:unexpected,compareAndSet:unexpected},prefix:'board',search:{search:unexpected}});
+  const board=createBoard({state:{board:{}},search:{search:unexpected}});
   const input={workspace:principal.tenantId,agent:'capture',topics:['secret'],after:0,posts:[{id:'post',topic:'secret',text:'injected'}]};
   for(const captureAccess of restrictedAccess){
   const delegated={...principal,captureAccess};
   for(const action of [()=>board.topics(delegated),()=>board.sync(delegated,input),()=>board.search(delegated,{workspace:principal.tenantId,query:'secret'})])await assert.rejects(action,denied);
-  const search=createBoardSearch({endpoint:'https://search.example.test',fetch:unexpected});
-  await assert.rejects(search.search(delegated,[],'board',{workspace:principal.tenantId,query:'secret'}),denied);
+  const search=createBoardSearch({state:{board:{search:unexpected}}});
+  await assert.rejects(search.search(delegated,{workspace:principal.tenantId,query:'secret'}),denied);
   }
   assert.equal(calls,0);
 });
 
 test('session indexing cannot write another uploader or tenant under the current principal',async()=>{
   let requests=0;
-  const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'https://search.example.test',fetch:async()=>{requests++;throw new Error('Unexpected index write');}});
+  const search=createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint:'https://search.example.test',fetch:async()=>{requests++;throw new Error('Unexpected index write');}}));
   const doc={...principal,harness:'codex',receivedAt:'2026-11-06T00:00:00Z',text:'forged attribution'};
   for(const document of [{...doc,userId:'another-author'},{...doc,tenantId:'another-tenant'},{...doc,userId:undefined}]){
     await assert.rejects(search.putDocuments([{id:'colliding-id',document}],principal),denied);

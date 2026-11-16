@@ -8,34 +8,86 @@ import {spawnSync} from 'node:child_process';
 
 function fixture(options={}){
  const root=mkdtempSync(join(tmpdir(),'opencrawl-full-upgrade-')),deploy=join(root,'deploy'),bin=join(root,'bin');mkdirSync(deploy);mkdirSync(bin);
- for(const file of ['upgrade.mjs','installation.mjs','recovery.mjs'])copyFileSync(new URL('../deploy/'+file,import.meta.url),join(deploy,file));
+ for(const file of ['upgrade.mjs','installation.mjs','recovery.mjs','backup.mjs','legacy-backup.mjs'])copyFileSync(new URL('../deploy/'+file,import.meta.url),join(deploy,file));
  const before='COMPOSE_PROJECT_NAME=existing\nOPENCRAWL_S3_SECRET_ACCESS_KEY=private-fixture-secret\n';writeFileSync(join(deploy,'.env'),before);
- const containers=['app','worker','temporal-db'].map(name=>({Id:name,Image:'sha256:fixture',Config:{Labels:{'com.docker.compose.service':name,'com.docker.compose.oneoff':'False'},Cmd:['true'],Env:['SECRET=private-fixture-secret']},HostConfig:{RestartPolicy:{Name:'unless-stopped'}},Mounts:[],State:{Running:true}}));
+ const names=options.stateInit?['app','worker','app-state-ready','database-ready','s3','temporal-db']:['app','worker','temporal-db'];
+ const dependencies={app:'app-state-ready:service_completed_successfully',worker:'app:service_healthy','app-state-ready':'database-ready:service_completed_successfully,s3:service_started','database-ready':'temporal-db:service_healthy'};
+ const containers=names.map(name=>({Id:name,Image:'sha256:fixture',Config:{Labels:{'com.docker.compose.service':name,'com.docker.compose.oneoff':'False',...(options.stateInit&&dependencies[name]?{'com.docker.compose.depends_on':dependencies[name]}:{})},Cmd:['true'],Env:['SECRET=private-fixture-secret']},HostConfig:{RestartPolicy:{Name:'unless-stopped'}},Mounts:[],State:{Running:!name.endsWith('-ready')}}));
  writeFileSync(join(bin,'git'),'#!/bin/sh\nprintf "%040d\\n" 1\n',{mode:0o700});
  writeFileSync(join(bin,'docker'),'#!/usr/bin/env node\n'+`
  const fs=require('node:fs'),a=process.argv.slice(2),stateFile=process.env.CALLS+'.state';fs.appendFileSync(process.env.CALLS,JSON.stringify(a)+'\\n');
  const options=JSON.parse(process.env.OPTIONS),state=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):{oldAvailable:true,tags:{},newRunning:false};
  const save=()=>fs.writeFileSync(stateFile,JSON.stringify(state));
- if(a[0]==='ps')console.log('app\\nworker\\ntemporal-db');
+ if(a[0]==='ps')console.log(${JSON.stringify(names.join('\n'))});
  else if(a[0]==='inspect'){const rows=${JSON.stringify(containers)};if(state.newRunning)for(const row of rows)if(['app','worker'].includes(row.Id))row.Image='sha256:new';console.log(JSON.stringify(rows));}
  else if(a[0]==='image'&&a[1]==='tag'){if(!state.oldAvailable)process.exit(125);state.tags[a[3]]=a[2];save();}
  else if(a[0]==='image'&&a[1]==='inspect'){const ref=a.at(-1);if(!state.oldAvailable)process.exit(125);console.log(state.tags[ref]||ref);}
  else if(a[0]==='image'&&a[1]==='save'){if(options.failImageSave)process.exit(18);if(!state.oldAvailable)process.exit(125);console.log(JSON.stringify({tags:Object.fromEntries(a.slice(2).map(tag=>[tag,state.tags[tag]]))}));}
  else if(a[0]==='image'&&a[1]==='load'){if(options.failImageLoad)process.exit(125);Object.assign(state.tags,JSON.parse(fs.readFileSync(0,'utf8')).tags);state.oldAvailable=true;save();}
  else if(a.includes('build')){if(options.failBuild!==false)process.exit(17);if(options.loseImagesAfterBuild)state.oldAvailable=false;save();}
- else if(a[0]==='stop'){}
- else if(a[0]==='run'){if(!state.oldAvailable)process.exit(125);console.log('cold-store-archive');}
- else if(a[0]==='compose'){if(a.includes('dist/src/sessions/identity-migration.mjs')&&options.failMigration)process.exit(97);if(a.includes('up')&&a.includes('app')){state.newRunning=true;save();}}
+ else if(a[0]==='stop'||a[0]==='start'){if(a[0]==='stop'&&options.failStop)process.exit(95);}
+ else if(a[0]==='run'){if(!state.oldAvailable)process.exit(125);if(options.failStoreArchive)process.exit(96);console.log('cold-store-archive');}
+ else if(a[0]==='compose'){if(a.includes('dist/src/sessions/identity-migration.mjs')&&options.failMigration)process.exit(97);if(a.includes('dist/src/state/migrate.mjs')&&a.includes(options.failStateOperation))process.exit(98);if(a.includes('up')&&a.includes('app')){state.newRunning=true;save();}}
  else process.exit(19);
  `,{mode:0o700});
- const run=args=>spawnSync(process.execPath,[join(deploy,'upgrade.mjs'),...args],{encoding:'utf8',env:{PATH:bin+':'+process.env.PATH,CALLS:join(root,'calls'),OPTIONS:JSON.stringify(options)}});
- return {root,deploy,before,run,cleanup:()=>rmSync(root,{recursive:true,force:true})};
+ const runScript=(name,args)=>spawnSync(process.execPath,[join(deploy,name),...args],{encoding:'utf8',env:{PATH:bin+':'+process.env.PATH,CALLS:join(root,'calls'),OPTIONS:JSON.stringify(options)}});
+ const run=args=>runScript('upgrade.mjs',args);
+ return {root,deploy,before,run,backupRun:args=>runScript('backup.mjs',args),cleanup:()=>rmSync(root,{recursive:true,force:true})};
 }
 test('upgrade check is read-only and does not disclose persisted credentials',()=>{
  const f=fixture();try{
   const r=f.run(['--check']);assert.equal(r.status,0,r.stderr);assert.equal(JSON.parse(r.stdout).needed,true);
   assert.equal(existsSync(join(f.deploy,'.upgrade')),false);assert.equal(readFileSync(join(f.deploy,'.env'),'utf8'),f.before);
   assert.ok(!r.stdout.includes('private-fixture-secret'));assert.ok(!readFileSync(join(f.root,'calls'),'utf8').includes('stop'));
+ }finally{f.cleanup();}
+});
+
+test('ordinary backups use matched recovery and restart only the exact original containers',()=>{
+ const f=fixture(),backup=join(f.root,'backup');try{
+  const result=f.backupRun(['create',backup]);assert.equal(result.status,0,result.stderr);
+  assert.equal(JSON.parse(readFileSync(join(backup,'manifest.json'),'utf8')).format,2);
+  assert.ok(existsSync(join(backup,'images.tar')));assert.ok(existsSync(join(backup,'snapshot.json')));
+  const calls=readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  assert.ok(calls.findIndex(a=>a[0]==='image'&&a[1]==='save')<calls.findIndex(a=>a[0]==='stop'));
+  assert.deepEqual(calls.filter(a=>a[0]==='start').map(a=>a[1]).sort(),['app','temporal-db','worker']);
+  assert.ok(!calls.some(a=>a[0]==='compose'),'backup must not recreate containers from a newer checkout');
+  assert.ok(!result.stdout.includes('private-fixture-secret'));
+ }finally{f.cleanup();}
+});
+
+test('failed cold archive restarts original containers but never marks an incomplete backup complete',()=>{
+ const f=fixture({failStoreArchive:true}),backup=join(f.root,'backup');try{
+  const result=f.backupRun(['create',backup]);assert.equal(result.status,1);
+  assert.ok(existsSync(join(backup,'images.json')));assert.equal(existsSync(join(backup,'manifest.json')),false);
+  const calls=readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  assert.equal(calls.filter(a=>a[0]==='start').length,3);
+ }finally{f.cleanup();}
+});
+
+test('backup restart follows completed init dependencies without rerunning migrations',()=>{
+ const f=fixture({stateInit:true}),backup=join(f.root,'backup');try{
+  const result=f.backupRun(['create',backup]);assert.equal(result.status,0,result.stderr);
+  const calls=readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  const starts=calls.filter(a=>a[0]==='start').map(a=>a[1]);
+  assert.deepEqual(starts,['temporal-db','s3','app','worker']);
+ }finally{f.cleanup();}
+});
+
+test('a partial writer-stop failure restarts originals and cannot produce a cold backup',()=>{
+ const f=fixture({failStop:true}),backup=join(f.root,'backup');try{
+  const result=f.backupRun(['create',backup]);assert.equal(result.status,1);
+  assert.equal(existsSync(join(backup,'manifest.json')),false);
+  const calls=readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  assert.equal(calls.filter(a=>a[0]==='start').length,3);
+  assert.ok(!calls.some(a=>a[0]==='run'),'No archive is valid when draining failed');
+ }finally{f.cleanup();}
+});
+
+test('leave-stopped backup retains a complete matched archive without restarting writers',()=>{
+ const f=fixture(),backup=join(f.root,'backup');try{
+  const result=f.backupRun(['create',backup,'--leave-stopped']);assert.equal(result.status,0,result.stderr);
+  assert.ok(existsSync(join(backup,'manifest.json')));
+  assert.ok(!readFileSync(join(f.root,'calls'),'utf8').includes('"start"'));
  }finally{f.cleanup();}
 });
 test('a failed target build leaves old writers and credentials unchanged, and can retry',()=>{
@@ -50,6 +102,39 @@ test('a failed target build leaves old writers and credentials unchanged, and ca
   const calls=readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
   assert.equal(calls.filter(args=>args[0]==='image'&&args[1]==='save').length,1,'retry reuses the original exported images');
   assert.equal(calls.filter(args=>args.includes('build')).length,2);
+ }finally{f.cleanup();}
+});
+
+test('application-state verification precedes every new writer and follows the matched backup',()=>{
+ const f=fixture({failBuild:false});try{
+  const result=f.run([]);assert.equal(result.status,0,result.stderr);
+  const calls=readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  const stores=calls.findIndex(a=>a[0]==='run'),events=calls.findIndex(a=>a.includes('dist/src/sessions/identity-migration.mjs'));
+  const operations=calls.map((a,index)=>({a,index})).filter(({a})=>a.includes('dist/src/state/migrate.mjs'));
+  assert.deepEqual(operations.map(({a})=>a[a.indexOf('dist/src/state/migrate.mjs')+1]),['check','migrate','verify']);
+  assert.ok(operations.every(({a})=>a.includes('--writers-stopped')&&a.includes('--expect-existing')));
+  const start=calls.findIndex(a=>a[0]==='compose'&&a.includes('up')&&a.includes('app'));
+  assert.ok(stores<events&&events<operations[0].index&&operations.at(-1).index<start);
+ }finally{f.cleanup();}
+});
+
+for(const [operation,phase] of [['check','migrated'],['migrate','app-state-checked'],['verify','app-state-migrated']])test(`failed application-state ${operation} keeps writers stopped and resumes the same backup`,()=>{
+ const options={failBuild:false,failStateOperation:operation},f=fixture(options);try{
+  const result=f.run([]);assert.equal(result.status,1);assert.match(result.stderr,new RegExp('"phase":"'+phase+'"'));
+  const journalPath=join(f.deploy,'.upgrade/upgrade.json'),journal=JSON.parse(readFileSync(journalPath,'utf8'));
+  const manifest=readFileSync(join(journal.backup,'manifest.json'));
+  let calls=readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  assert.ok(!calls.some(a=>a[0]==='compose'&&a.includes('up')&&a.includes('app')));
+  assert.ok(calls.some(a=>a[0]==='stop'&&a.includes('app')&&a.includes('worker')));
+  delete options.failStateOperation;writeFileSync(join(f.root,'calls'),'');
+  const resumed=f.run([]);assert.equal(resumed.status,0,resumed.stderr);
+  assert.ok(readFileSync(join(journal.backup,'manifest.json')).equals(manifest));
+  assert.equal(JSON.parse(readFileSync(journalPath,'utf8')).phase,'complete');
+  calls=readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  assert.ok(!calls.some(a=>a[0]==='image'&&a[1]==='save'),'resume must not replace the recovery point');
+  const verify=calls.findIndex(a=>a.includes('dist/src/state/migrate.mjs')&&a.includes('verify'));
+  const start=calls.findIndex(a=>a[0]==='compose'&&a.includes('up')&&a.includes('app'));
+  assert.ok(verify>=0&&verify<start);
  }finally{f.cleanup();}
 });
 

@@ -22,7 +22,7 @@ headers. Reverse proxies therefore share their connection IP’s rate limit.
 
 Local invitation possession authorizes a local account. It does not verify its
 email address, and account linking is disabled. Bootstrap and invitation
-consumption use a SQLite transaction; an initialization marker prevents reopening
+consumption use a PostgreSQL transaction; an initialization marker prevents reopening
 bootstrap after account removal. The database refuses a different organization.
 Password recovery invalidates sessions and OAuth grants and establishes a token
 issuance cutoff. OAuth access tokens require the installation issuer and audience,
@@ -42,7 +42,20 @@ they contain no server-rendered feature markup. Cloud extensions use the same
 route registry and component tree. Provider-specific auth pages are selected by
 the runtime composition, not by cloud conditionals throughout the UI.
 
-The supported standalone stack persists local identity beside the integration
-registry and includes it in offline backup/restore. Changing from an old WorkOS
-standalone preview requires a fresh installation for this release. This change
-does not migrate users or existing data.
+The supported standalone stack persists identity and integration state in the
+application PostgreSQL database. Better Auth uses its native PostgreSQL adapter
+inside an installation-bound schema; it never opens SQLite at runtime. The
+application owns shared pool lifetime. Account admission, invitation consumption,
+password recovery and local credential invalidation use database transactions.
+
+The offline application-state migration imports the existing Better Auth SQLite
+database without recreating accounts, sessions, signing keys, client secrets,
+grants or revocation epochs. It validates the original organization binding and
+compares canonical per-table counts and hashes before admitting the new runtime.
+The migration refuses unknown legacy tables, conflicting target rows and foreign
+organizations. Retain the stopped-installation backup, unchanged identity secret
+and public issuer URL; changing either invalidates existing authentication even
+when stored rows are preserved. PostgreSQL backup/restore replaces the separate
+runtime SQLite backups. See `docs/app-state-migration.md` for the required upgrade
+and rollback procedure. WorkOS-to-Better-Auth account conversion is not part of
+this SQLite-to-PostgreSQL migration.

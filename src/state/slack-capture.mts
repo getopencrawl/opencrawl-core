@@ -1,0 +1,227 @@
+import {isDeepStrictEqual} from 'node:util';
+import {z} from 'zod';
+import type {PoolClient} from 'pg';
+import type {ApplicationDatabase} from './postgres.mjs';
+import type {ConnectorBinding} from '../connectors/types.mjs';
+import type {FileCatalog,MessageCatalog,FileCheckpoint,MessageCheckpoint,ReferenceCheckpoint} from '../connectors/capture-types.mjs';
+import {digest,validateBinding} from '../connectors/scope.mjs';
+import {sourcePaginationProgress} from '../connectors/workflow.mjs';
+
+export type SlackCaptureKind='files-v1'|'messages-v1'|'message-references-v1';
+export type SlackCatalogKind='files-v1'|'messages-v1';
+export interface SlackCheckpoints {'files-v1':FileCheckpoint;'messages-v1':MessageCheckpoint;'message-references-v1':ReferenceCheckpoint}
+export interface SlackCatalogs {'files-v1':FileCatalog;'messages-v1':MessageCatalog}
+export interface SlackCaptureState {
+ readCatalog<K extends SlackCatalogKind>(binding:ConnectorBinding,kind:K):Promise<SlackCatalogs[K]|null>;
+ mergeCatalog<K extends SlackCatalogKind>(binding:ConnectorBinding,kind:K,value:SlackCatalogs[K]):Promise<void>;
+ readCheckpoint<K extends SlackCaptureKind>(binding:ConnectorBinding,kind:K,runId:string):Promise<{value:SlackCheckpoints[K];revision:string}|null>;
+ saveCheckpoint<K extends SlackCaptureKind>(binding:ConnectorBinding,kind:K,runId:string,value:SlackCheckpoints[K],revision:string|null):Promise<string>;
+ reserve(binding:ConnectorBinding,method:string,now:number,interval:number):Promise<{reserved:boolean;waitMs:number}>;
+ defer(binding:ConnectorBinding,method:string,due:number):Promise<void>;
+}
+const id=z.string().regex(/^[A-Z][A-Z0-9]{1,100}$/),hash=z.string().regex(/^[a-f0-9]{64}$/),integer=z.number().int().nonnegative().safe();
+const runIdSchema=z.string().regex(/^[A-Za-z0-9_-]{1,150}$/),cursor=z.string().max(10000);
+const progress=z.strictObject({version:z.literal(1),anchor:z.string().min(1).max(10000),window:z.string().regex(/^[1-9][0-9]*$/).max(4096),distance:z.string().regex(/^(0|[1-9][0-9]*)$/).max(4096)});
+const target={cursor,paginationProgress:progress.optional(),done:z.boolean(),error:z.string().max(100).optional()};
+const channel=z.strictObject({...target,id}),thread=z.strictObject({...target,channel:id,ts:z.string().regex(/^\d{1,16}\.\d{1,6}$/)});
+const file=z.strictObject({...target,id,channels:z.array(id),comments:z.record(z.string(),z.string())});
+const due=z.record(z.string().regex(/^(conversations\.(list|history|replies|info)|files\.(list|info))$/),integer);
+const common={version:z.literal(1),scope:hash,runId:runIdSchema,pages:integer,emitted:integer};
+const schemas={
+ 'messages-v1':z.strictObject({...common,cutoff:integer,cursor,paginationProgress:progress.optional(),channels:z.record(id,channel),threads:z.record(z.string(),thread),priorChannels:z.array(id).optional(),listed:z.boolean(),nextDue:due,errors:z.array(z.strictObject({method:z.string(),channel:z.union([z.string(),z.number(),z.boolean()]).optional(),thread:z.union([z.string(),z.number(),z.boolean()]).optional(),code:z.string().max(100)}))}),
+ 'files-v1':z.strictObject({...common,cutoff:integer,cursor,paginationProgress:progress.optional(),channels:z.record(id,z.strictObject({id,page:integer,done:z.boolean(),error:z.string().max(100).optional()})),files:z.record(id,file),priorChannels:z.array(id),listed:z.boolean(),nextDue:integer,errors:z.array(z.strictObject({method:z.string(),id:z.string(),code:z.string().max(100)}))}),
+ 'message-references-v1':z.strictObject({...common,inputHash:hash,position:integer,nextDue:due,errors:z.array(z.strictObject({position:integer,method:z.string(),code:z.string().max(100)}))}),
+};
+const catalogSchemas={'messages-v1':z.strictObject({scope:hash,channels:z.array(id)}),'files-v1':z.strictObject({scope:hash,channels:z.array(id),files:z.record(id,z.array(id))})};
+const conflict=()=>Object.assign(new Error('Slack capture checkpoint changed; retry the durable activity'),{status:409});
+const scopeError=()=>Object.assign(new Error('Slack capture state scope mismatch'),{status:403,permanent:true});
+const canonical=(value:unknown)=>JSON.parse(JSON.stringify(value));
+interface Identity {prefix:string;scope:string}
+interface Item {kind:string;key:string;ordinal:number;value:unknown}
+interface CheckpointRow {metadata:Record<string,unknown>;revision:string}
+function bindingIdentity(binding:ConnectorBinding):Identity {validateBinding(binding);if(binding.provider!=='slack')throw scopeError();return {prefix:binding.rawPrefix,scope:digest(binding)};}
+function validateCheckpoint<K extends SlackCaptureKind>(kind:K,value:unknown):SlackCheckpoints[K]{
+ const parsed=schemas[kind].parse(value);
+ if('cursor' in parsed)sourcePaginationProgress(parsed.cursor||null,parsed.paginationProgress);
+ if('channels' in parsed)for(const [key,item] of Object.entries(parsed.channels)){if(item.id!==key)throw scopeError();if('cursor' in item)sourcePaginationProgress(item.cursor||null,item.paginationProgress);}
+ if('threads' in parsed)for(const [key,item] of Object.entries(parsed.threads)){if(key!==item.channel+':'+item.ts)throw scopeError();sourcePaginationProgress(item.cursor||null,item.paginationProgress);}
+ if('files' in parsed)for(const [key,item] of Object.entries(parsed.files)){if(item.id!==key)throw scopeError();sourcePaginationProgress(item.cursor||null,item.paginationProgress);}
+ return parsed as SlackCheckpoints[K];
+}
+function splitCheckpoint(value:FileCheckpoint|MessageCheckpoint|ReferenceCheckpoint){
+ const metadata=canonical(value) as Record<string,unknown>,items:Item[]=[];
+ for(const category of ['channels','threads','files'] as const){
+  const rows=metadata[category] as Record<string,Record<string,unknown>>|undefined;delete metadata[category];
+  if(!rows)continue;
+  for(const [key,original] of Object.entries(rows)){
+   const item={...original};
+   if(category==='files'){
+    for(const [index,channel] of (item.channels as string[]).entries())items.push({kind:'file-channel',key:JSON.stringify([key,channel]),ordinal:index,value:{file:key,channel}});
+    for(const [comment,text] of Object.entries(item.comments as Record<string,string>))items.push({kind:'file-comment',key:JSON.stringify([key,comment]),ordinal:0,value:{file:key,id:comment,text}});
+    delete item.channels;delete item.comments;
+   }
+   items.push({kind:category,key,ordinal:0,value:item});
+  }
+ }
+ if(Array.isArray(metadata.priorChannels)){metadata.hasPriorChannels=true;for(const [index,value] of metadata.priorChannels.entries())items.push({kind:'prior-channel',key:String(index),ordinal:index,value});delete metadata.priorChannels;}
+ for(const [index,value] of (metadata.errors as unknown[]).entries())items.push({kind:'error',key:String(index),ordinal:index,value});delete metadata.errors;
+ if(Buffer.byteLength(JSON.stringify(metadata))>65536)throw new Error('Slack capture scalar metadata exceeds limit');
+ return {metadata,items};
+}
+function joinCheckpoint(kind:SlackCaptureKind,metadata:Record<string,unknown>,items:Item[]){
+ const value={...metadata,errors:[]} as Record<string,unknown>;
+ if(kind!=='message-references-v1'){value.channels={};value[kind==='files-v1'?'files':'threads']={};}
+ if(value.hasPriorChannels){value.priorChannels=[];delete value.hasPriorChannels;}
+ for(const item of items){
+  if(['channels','threads','files'].includes(item.kind)){
+   (value[item.kind] as Record<string,unknown>)[item.key]=item.kind==='files'?{...item.value as object,channels:[],comments:{}}:item.value;
+  }else if(item.kind==='prior-channel')(value.priorChannels as unknown[]).push(item.value);
+  else if(item.kind==='error')(value.errors as unknown[]).push(item.value);
+ }
+ for(const item of items){
+  if(item.kind==='file-channel'||item.kind==='file-comment'){
+   const v=item.value as {file:string;channel?:string;id?:string;text?:string},file=(value.files as Record<string,Record<string,unknown>>)[v.file];
+   if(!file)throw new Error('Slack capture child has no file');
+   if(item.kind==='file-channel')(file.channels as string[]).push(v.channel!);else(file.comments as Record<string,string>)[v.id!]=v.text!;
+  }
+ }
+ return validateCheckpoint(kind,value);
+}
+
+/** Capture metadata is relational: one row per target, comment, share and error.
+ * The scalar run record is bounded; a large catalog never rewrites one object.
+ * Revision checks reject late activities, and pacing spans every run/worker. */
+export function createPostgresSlackCapture(database:ApplicationDatabase):SlackCaptureState&{
+ ready():Promise<void>;validateLegacy(key:string,bytes:Uint8Array):unknown;importLegacy(key:string,bytes:Uint8Array):Promise<void>;exportLegacy(key:string):Promise<unknown>;
+}{
+ let preparing:Promise<void>|undefined;
+ const parameters=(identity:Identity)=>[database.namespace,identity.prefix];
+ async function lock(client:PoolClient,identity:Identity){
+  await client.query('INSERT INTO opencrawl_slack_scopes(namespace,raw_prefix,scope_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[...parameters(identity),identity.scope]);
+  const {rows}=await client.query('SELECT scope_hash FROM opencrawl_slack_scopes WHERE namespace=$1 AND raw_prefix=$2 FOR UPDATE',parameters(identity));
+  if(rows[0]?.scope_hash!==identity.scope)throw scopeError();
+ }
+ async function check(client:Pick<PoolClient,'query'>,identity:Identity){const {rows}=await client.query('SELECT scope_hash FROM opencrawl_slack_scopes WHERE namespace=$1 AND raw_prefix=$2',parameters(identity));if(rows[0]&&rows[0].scope_hash!==identity.scope)throw scopeError();return Boolean(rows.length);}
+ async function readCatalog<K extends SlackCatalogKind>(identity:Identity,kind:K):Promise<SlackCatalogs[K]|null>{
+  return database.transaction(async client=>{
+   await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+   if(!await check(client,identity))return null;
+   if(!(await client.query('SELECT 1 FROM opencrawl_slack_catalogs WHERE namespace=$1 AND raw_prefix=$2 AND kind=$3',[...parameters(identity),kind])).rowCount)return null;
+   const {rows}=await client.query<{item_kind:string;item_key:string;value:unknown}>('SELECT item_kind,item_key,value FROM opencrawl_slack_catalog_items WHERE namespace=$1 AND raw_prefix=$2 AND kind=$3 ORDER BY ordinal,item_key',[...parameters(identity),kind]);
+   const result:FileCatalog={scope:identity.scope,channels:[],files:{}};
+   for(const row of rows){if(row.item_kind==='channel')result.channels.push(row.item_key);if(row.item_kind==='file')result.files[row.item_key]=[];}
+   for(const row of rows)if(row.item_kind==='file-share'){const share=row.value as {file:string;channel:string};if(!result.files[share.file])throw new Error('Slack catalog share has no file');result.files[share.file].push(share.channel);}
+   return (kind==='files-v1'?result:{scope:result.scope,channels:result.channels}) as SlackCatalogs[K];
+  });
+ }
+ async function mergeCatalog<K extends SlackCatalogKind>(identity:Identity,kind:K,input:SlackCatalogs[K]){
+  const value=catalogSchemas[kind].parse(input);if(value.scope!==identity.scope)throw scopeError();
+  await database.transaction(async client=>{
+   await lock(client,identity);
+   await client.query('INSERT INTO opencrawl_slack_catalogs(namespace,raw_prefix,kind) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[...parameters(identity),kind]);
+   const items:Item[]=value.channels.map((key,ordinal)=>({kind:'channel',key,ordinal,value:null}));
+   if(kind==='files-v1')for(const [key,channels] of Object.entries((value as FileCatalog).files)){
+    items.push({kind:'file',key,ordinal:0,value:null});
+    channels.forEach((channel,ordinal)=>items.push({kind:'file-share',key:JSON.stringify([key,channel]),ordinal,value:{file:key,channel}}));
+   }
+   // Catalog identities are monotonic history needed to discover revocations.
+   // Union concurrent captures; never replace a previously observed share.
+   await client.query(`INSERT INTO opencrawl_slack_catalog_items(namespace,raw_prefix,kind,item_kind,item_key,ordinal,value)
+    SELECT $1,$2,$3,x.kind,x.key,x.ordinal+coalesce((SELECT max(ordinal)+1 FROM opencrawl_slack_catalog_items WHERE namespace=$1 AND raw_prefix=$2 AND kind=$3 AND item_kind=x.kind),0),x.value
+    FROM jsonb_to_recordset($4::jsonb) AS x(kind text,key text,ordinal integer,value jsonb)
+    ON CONFLICT(namespace,raw_prefix,kind,item_kind,item_key) DO NOTHING`,[...parameters(identity),kind,JSON.stringify(items)]);
+  });
+ }
+ async function readCheckpoint<K extends SlackCaptureKind>(identity:Identity,kind:K,runId:string):Promise<{value:SlackCheckpoints[K];revision:string}|null>{
+  runIdSchema.parse(runId);
+  return database.transaction(async client=>{
+   await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+   if(!await check(client,identity))return null;
+   const args=[...parameters(identity),kind,runId],{rows}=await client.query<CheckpointRow>('SELECT metadata,revision::text FROM opencrawl_slack_runs WHERE namespace=$1 AND raw_prefix=$2 AND kind=$3 AND run_id=$4',args);
+   if(!rows[0])return null;
+   const items=(await client.query<Item>('SELECT item_kind kind,item_key key,ordinal,value FROM opencrawl_slack_run_items WHERE namespace=$1 AND raw_prefix=$2 AND kind=$3 AND run_id=$4 ORDER BY ordinal,item_key',args)).rows;
+   return {value:joinCheckpoint(kind,rows[0].metadata,items) as SlackCheckpoints[K],revision:rows[0].revision};
+  });
+ }
+ async function saveCheckpoint<K extends SlackCaptureKind>(identity:Identity,kind:K,runId:string,input:SlackCheckpoints[K],revision:string|null){
+  const value=validateCheckpoint(kind,input);if(value.scope!==identity.scope||value.runId!==runId)throw scopeError();
+  if(revision!==null&&!/^[1-9][0-9]*$/.test(revision))throw conflict();
+  const {metadata,items}=splitCheckpoint(value),args=[...parameters(identity),kind,runId];
+  return database.transaction(async client=>{
+   await lock(client,identity);
+   const result=revision===null
+    ?await client.query<{revision:string}>('INSERT INTO opencrawl_slack_runs(namespace,raw_prefix,kind,run_id,metadata) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING RETURNING revision::text',[...args,JSON.stringify(metadata)])
+    :await client.query<{revision:string}>('UPDATE opencrawl_slack_runs SET metadata=$5::jsonb,revision=revision+1 WHERE namespace=$1 AND raw_prefix=$2 AND kind=$3 AND run_id=$4 AND revision=$6::bigint RETURNING revision::text',[...args,JSON.stringify(metadata),revision]);
+   if(!result.rows[0])throw conflict();
+   await client.query(`WITH input AS (SELECT * FROM jsonb_to_recordset($5::jsonb) AS x(kind text,key text,ordinal integer,value jsonb)),
+    upserted AS (INSERT INTO opencrawl_slack_run_items(namespace,raw_prefix,kind,run_id,item_kind,item_key,ordinal,value)
+     SELECT $1,$2,$3,$4,x.kind,x.key,x.ordinal,x.value FROM input x
+     ON CONFLICT(namespace,raw_prefix,kind,run_id,item_kind,item_key) DO UPDATE SET ordinal=excluded.ordinal,value=excluded.value
+     WHERE opencrawl_slack_run_items.value IS DISTINCT FROM excluded.value OR opencrawl_slack_run_items.ordinal<>excluded.ordinal)
+    DELETE FROM opencrawl_slack_run_items old WHERE namespace=$1 AND raw_prefix=$2 AND kind=$3 AND run_id=$4
+     AND NOT EXISTS(SELECT 1 FROM input x WHERE x.kind=old.item_kind AND x.key=old.item_key)`,[...args,JSON.stringify(items)]);
+   return result.rows[0].revision;
+  });
+ }
+ const methodSchema=z.string().regex(/^(conversations\.(list|history|replies|info)|files\.(list|info))$/);
+ async function defer(identity:Identity,method:string,due:number){
+  methodSchema.parse(method);integer.parse(due);
+  await database.transaction(async client=>{await lock(client,identity);await client.query(`INSERT INTO opencrawl_slack_pacing(namespace,raw_prefix,method,next_due) VALUES($1,$2,$3,$4)
+   ON CONFLICT(namespace,raw_prefix,method) DO UPDATE SET next_due=greatest(opencrawl_slack_pacing.next_due,excluded.next_due)`,[...parameters(identity),method,due]);});
+ }
+ function legacyIdentity(key:string){
+  const match=/^(raw\/v1\/source=slack\/workspace=[A-Za-z0-9_:-]{1,200}\/connection=[A-Za-z0-9_:-]{1,200}\/)capture\/(files-v1|messages-v1|message-references-v1)\/(?:(catalog\.json)|([A-Za-z0-9_-]{1,150})\/state\.json)$/.exec(key);
+  if(!match||match[3]&&match[2]==='message-references-v1')throw new Error('Invalid legacy Slack capture state key');
+  return {prefix:match[1],kind:match[2] as SlackCaptureKind,catalog:Boolean(match[3]),runId:match[4]};
+ }
+ const api={
+  async ready(){
+   preparing??=(async()=>{await database.ready();await database.transaction(async client=>{
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:slack-capture:schema',0))");
+    await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_slack_scopes(namespace text NOT NULL,raw_prefix text NOT NULL,scope_hash text NOT NULL CHECK(scope_hash ~ '^[a-f0-9]{64}$'),PRIMARY KEY(namespace,raw_prefix));
+     CREATE TABLE IF NOT EXISTS opencrawl_slack_catalogs(namespace text NOT NULL,raw_prefix text NOT NULL,kind text NOT NULL CHECK(kind IN ('files-v1','messages-v1')),PRIMARY KEY(namespace,raw_prefix,kind));
+     CREATE TABLE IF NOT EXISTS opencrawl_slack_catalog_items(namespace text NOT NULL,raw_prefix text NOT NULL,kind text NOT NULL,item_kind text NOT NULL CHECK(item_kind IN ('channel','file','file-share')),item_key text NOT NULL,ordinal integer NOT NULL,value jsonb,PRIMARY KEY(namespace,raw_prefix,kind,item_kind,item_key));
+     CREATE TABLE IF NOT EXISTS opencrawl_slack_runs(namespace text NOT NULL,raw_prefix text NOT NULL,kind text NOT NULL CHECK(kind IN ('files-v1','messages-v1','message-references-v1')),run_id text NOT NULL,metadata jsonb NOT NULL CHECK(octet_length(metadata::text)<=65536),revision bigint NOT NULL DEFAULT 1,PRIMARY KEY(namespace,raw_prefix,kind,run_id));
+     CREATE TABLE IF NOT EXISTS opencrawl_slack_run_items(namespace text NOT NULL,raw_prefix text NOT NULL,kind text NOT NULL,run_id text NOT NULL,item_kind text NOT NULL CHECK(item_kind IN ('channels','threads','files','file-channel','file-comment','prior-channel','error')),item_key text NOT NULL,ordinal integer NOT NULL,value jsonb NOT NULL,PRIMARY KEY(namespace,raw_prefix,kind,run_id,item_kind,item_key));
+     CREATE TABLE IF NOT EXISTS opencrawl_slack_pacing(namespace text NOT NULL,raw_prefix text NOT NULL,method text NOT NULL,next_due bigint NOT NULL CHECK(next_due>=0),PRIMARY KEY(namespace,raw_prefix,method));`);
+   });})().catch(error=>{preparing=undefined;throw error;});await preparing;
+  },
+  readCatalog:<K extends SlackCatalogKind>(binding:ConnectorBinding,kind:K)=>readCatalog(bindingIdentity(binding),kind),
+  mergeCatalog:<K extends SlackCatalogKind>(binding:ConnectorBinding,kind:K,value:SlackCatalogs[K])=>mergeCatalog(bindingIdentity(binding),kind,value),
+  readCheckpoint:<K extends SlackCaptureKind>(binding:ConnectorBinding,kind:K,runId:string)=>readCheckpoint(bindingIdentity(binding),kind,runId),
+  saveCheckpoint:<K extends SlackCaptureKind>(binding:ConnectorBinding,kind:K,runId:string,value:SlackCheckpoints[K],revision:string|null)=>saveCheckpoint(bindingIdentity(binding),kind,runId,value,revision),
+  async reserve(binding:ConnectorBinding,method:string,now:number,interval:number){
+   const identity=bindingIdentity(binding);methodSchema.parse(method);integer.parse(now);integer.positive().parse(interval);integer.parse(now+interval);
+   return database.transaction(async client=>{await lock(client,identity);const {rows}=await client.query<{next_due:string}>('SELECT next_due::text FROM opencrawl_slack_pacing WHERE namespace=$1 AND raw_prefix=$2 AND method=$3',[...parameters(identity),method]);
+    const waitMs=Math.max(0,Number(rows[0]?.next_due||0)-now);if(waitMs)return {reserved:false,waitMs};
+    await client.query('INSERT INTO opencrawl_slack_pacing(namespace,raw_prefix,method,next_due) VALUES($1,$2,$3,$4) ON CONFLICT(namespace,raw_prefix,method) DO UPDATE SET next_due=excluded.next_due',[...parameters(identity),method,now+interval]);return {reserved:true,waitMs:0};});
+  },
+  defer:(binding:ConnectorBinding,method:string,due:number)=>defer(bindingIdentity(binding),method,due),
+  validateLegacy(key:string,bytes:Uint8Array){
+   const source=legacyIdentity(key),parsed:unknown=JSON.parse(Buffer.from(bytes).toString());
+   const value=source.catalog?catalogSchemas[source.kind as SlackCatalogKind].parse(parsed):validateCheckpoint(source.kind,parsed);
+   if(!source.catalog&&(value as FileCheckpoint|MessageCheckpoint|ReferenceCheckpoint).runId!==source.runId)throw scopeError();
+   return value;
+  },
+  async importLegacy(key:string,bytes:Uint8Array){
+   const source=legacyIdentity(key),value=api.validateLegacy(key,bytes),identity={prefix:source.prefix,scope:value.scope};
+   const prior=await api.exportLegacy(key);
+   if(prior!==null&&!isDeepStrictEqual(canonical(prior),canonical(value)))throw new Error('Legacy Slack capture state differs from initialized PostgreSQL state');
+   if(source.catalog){if(prior===null)await mergeCatalog(identity,source.kind as SlackCatalogKind,value as FileCatalog|MessageCatalog);}
+   else{
+    const checkpoint=value as FileCheckpoint|MessageCheckpoint|ReferenceCheckpoint;
+    if(prior===null)await saveCheckpoint(identity,source.kind,source.runId!,checkpoint,null);
+    if(typeof checkpoint.nextDue==='number')for(const method of ['conversations.list','files.list','files.info'])await defer(identity,method,checkpoint.nextDue);
+    else for(const [method,due] of Object.entries(checkpoint.nextDue))await defer(identity,method,due);
+   }
+   if(!isDeepStrictEqual(canonical(await api.exportLegacy(key)),canonical(value)))throw new Error('Slack capture import verification failed');
+  },
+  async exportLegacy(key:string):Promise<unknown>{
+   const source=legacyIdentity(key),{rows}=await database.pool.query<{scope_hash:string}>('SELECT scope_hash FROM opencrawl_slack_scopes WHERE namespace=$1 AND raw_prefix=$2',[database.namespace,source.prefix]);
+   if(!rows[0])return null;const identity={prefix:source.prefix,scope:rows[0].scope_hash};
+   if(source.catalog)return readCatalog(identity,source.kind as SlackCatalogKind);
+   return (await readCheckpoint(identity,source.kind,source.runId!))?.value??null;
+  },
+ };
+ return api;
+}

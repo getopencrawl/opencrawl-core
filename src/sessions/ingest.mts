@@ -1,10 +1,11 @@
+import type {ApplicationState} from '../state/types.mjs';
 import type {Principal, ObjectStore, EventIdentityStore, SessionBatch, Authenticate, HttpHandler} from './types.mjs';
 import {parseJson, isSessionHarness, SESSION_HARNESSES} from './types.mjs';
 import type {MemorySnapshot} from '../memories/types.mjs';
 import type {SearchAdapter} from '../search/types.mjs';
 import type {createCaptureCredentials} from './credentials.mjs';
 import type {IncomingMessage} from 'node:http';
-export interface SessionIngestOptions {store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; scheduleIndexing?: (key: string) => Promise<unknown>; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
+export interface SessionIngestOptions {state:ApplicationState;store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; scheduleIndexing?: (key: string) => Promise<unknown>; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
 export interface SessionBatchReceipt {harness: string; installationId: string; sessionId: string; batchId: string; userId?: string}
 import {serviceError} from './types.mjs';
 import {gzipSync, gunzipSync, gunzip} from 'node:zlib';
@@ -24,12 +25,12 @@ export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const MAX_STORED_BATCH_BYTES = MAX_BATCH_BYTES + 1024 * 1024;
 const decompressBatch = promisify(gunzip);
 
-export function createSessionIngest({store, eventIdentities, prefix = 'capture-v1', scheduleIndexing=undefined, onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
+export function createSessionIngest({state,store, eventIdentities, prefix = 'capture-v1', scheduleIndexing=undefined, onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = (principal: Principal) => `${prefix}/${sessionScope(principal)}`;
   // Existence checks must not download attachment bodies on every batch retry.
   const exists = (key: string, maxBytes: number) => store.has ? store.has(key, {maxBytes}) : store.get(key, {maxBytes}).then(Boolean);
-  const controls = createControls({store, prefix});
+  const controls = createControls({state});
   return {
     async putMemorySnapshot(principal: Principal,snapshot: MemorySnapshot) {
       const receipt=await createMemoryIngest({store,prefix,scheduleIndexing}).putSnapshot(principal,snapshot);
@@ -42,10 +43,10 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
       if (bytes.length > MAX_ATTACHMENT_BYTES) fail(413, 'Attachment exceeds limit');
       if (!/^[a-f0-9]{64}$/.test(hash) || digest(bytes) !== hash) fail(400, 'Attachment digest mismatch');
       if (!session || !isSessionHarness(session.harness) || !id(session.sessionId) || !id(session.installationId)) fail(409, 'Upgrade the capture client: attachments require a session identity');
-      const barrier = sessionWriteBarrier(store, prefix, principal, session.harness, session.sessionId);
+      const barrier = sessionWriteBarrier(state, prefix, principal, session.harness, session.sessionId);
       if ((await controls.read(principal, 'sessions', session.harness, session.sessionId))?.deletedAt || (await barrier.inspect()).closed) return {sha256: hash, size: bytes.length, discarded: 'session_deleted'};
       try {
-        await sessionWriteStore(store, prefix, principal, session.harness, session.sessionId).put(`${keyPrefix}/${session.harness}/${digest(session.installationId)}/${digest(session.sessionId)}/attachments/${hash}`, bytes, 'application/octet-stream');
+        await sessionWriteStore(store,state, prefix, principal, session.harness, session.sessionId).put(`${keyPrefix}/${session.harness}/${digest(session.installationId)}/${digest(session.sessionId)}/attachments/${hash}`, bytes, 'application/octet-stream');
       } catch (error) {if ((await barrier.inspect()).closed) return {sha256: hash, size: bytes.length, discarded: 'session_deleted'}; throw error;}
       return {sha256: hash, size: bytes.length};
     },
@@ -76,10 +77,10 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
       // The owner deleted this session. Accept the retry so clients stop sending
       // it, but never store or index it again.
       if ((await controls.read(principal, 'sessions', batch.harness, batch.sessionId))?.deletedAt) return {batchId: digest(serialized), eventCount: batch.events.length, stored: true, discarded: 'session_deleted'};
-      const barrier = sessionWriteBarrier(store, prefix, principal, batch.harness, batch.sessionId);
+      const barrier = sessionWriteBarrier(state, prefix, principal, batch.harness, batch.sessionId);
       const discarded = () => ({batchId: digest(serialized), eventCount: batch.events.length, stored: true, discarded: 'session_deleted'});
       if ((await barrier.inspect()).closed) return discarded();
-      const writes = sessionWriteStore(store, prefix, principal, batch.harness, batch.sessionId);
+      const writes = sessionWriteStore(store,state, prefix, principal, batch.harness, batch.sessionId);
       const attachmentKeys = new Map<string, string>();
       try {
       for (const hash of attachments) {

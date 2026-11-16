@@ -1,8 +1,8 @@
 import type {Principal} from '../sessions/types.mjs';
-import type {BoardState, BoardMessage, ParticipationOptions} from './types.mjs';
+import type {BoardRepository,BoardReader} from '../state/board.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
-import {boardIdentity, ownBoardMessage, findBoardPublication} from './identity.mjs';
+import {boardIdentity} from './identity.mjs';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const session = text(200);
@@ -29,7 +29,7 @@ type Operation = keyof typeof participationSchemas;
 type Command = {[K in Operation]: {operation: K; args: z.output<typeof participationSchemas[K]>}}[Operation];
 
 // Resolve names when posting, so future name reuse cannot redirect old mentions.
-export function resolveMentions(state: BoardState, body: string, explicit: string[] = []) {
+export function resolveMentions(state: {participants?:Record<string,{name:string}>}, body: string, explicit: string[] = []) {
   const names = new Map(Object.entries(state.participants || {}).map(([id, p]) => [p.name.toLowerCase(), id]));
   const inline = [...body.matchAll(/(?:^|\s)@([a-zA-Z0-9][a-zA-Z0-9:_.-]*)/g)].map(m => {
     let candidate = m[1];
@@ -49,132 +49,86 @@ export function resolveMentions(state: BoardState, body: string, explicit: strin
 export const mentionWarning = (names: string[]) => names.length ? {warning: `Tags not notified (unregistered): ${[...new Set(names)].map(name => '@' + name).join(', ')}.`} : {};
 const explicitNames = (names: string[]) => [...new Set(names.map(name => name.toLowerCase()))].sort();
 
-/** Uses the board's tenant-scoped CAS log; transport and authentication stay outside. */
-export function createParticipation({scope, read, commit, now}: ParticipationOptions) {
-  return async function participate(principal: Principal, requestedOperation: string, input: unknown = {}) {
-    const key = scope(principal), schema = participationSchemas[requestedOperation as Operation];
-    if (!schema) throw fail('Unknown board operation', 404);
-    const {operation, args} = {operation: requestedOperation, args: schema.parse(input)} as Command;
-    const id = 'session' in args ? boardIdentity(principal.userId, args.session) : '';
-    if (args.workspace !== undefined && args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch; use the registered workspace', 403);
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const {state, version} = await read(key), time = now();
-      const participants = state.participants ||= {};
-      const directory = () => Object.entries(participants).filter(([, p]) => p.seen > time - retainMs).sort((a,b) => b[1].seen - a[1].seen || a[0].localeCompare(b[0])).map(([agent, p]) => ({
-        agent, name: p.name, task: p.task, harness: p.harness, seen: p.seen,
-        listening: !p.left && Number(p.lastPoll) > time - aliveMs, left: Boolean(p.left), topics: p.topics,
-        registeredAt: p.registeredAt, lastPoll: p.lastPoll, lastAckAt: p.lastAckAt,
-        acknowledgedThrough: p.ackCursor, pending: p.pending ? {receipt: p.pending.receipt, createdAt: p.pending.createdAt, messages: p.pending.messages.length} : null,
-        batches: p.batches, acknowledgedBatches: p.acknowledgedBatches,
-        lastDeliveryAt: p.lastDeliveryAt || null, acknowledgedMessages: p.acknowledgedMessages || 0,
-      }));
-      if (operation === 'directory') {
-        const all = directory(), agents = all.slice(args.after, args.after + 32);
-        return {workspace: principal.tenantId, agents, through: state.messages.length, total: all.length,
-          next: args.after + agents.length < all.length ? args.after + agents.length : null};
-      }
-      let p = participants[id], result, dirty = true;
-      if (operation === 'register' || operation === 'bootstrap' || operation === 'profile') {
-        const requestedName = operation === 'bootstrap' ? undefined : args.name;
-        for (const [otherId, other] of Object.entries(participants)) {
-          if (otherId !== id && other.seen <= time - retainMs) delete participants[otherId];
-          else if (requestedName && otherId !== id && other.name.toLowerCase() === requestedName.toLowerCase()) throw fail('Agent name is already registered; choose a session-specific name', 409);
+/** All state transitions and delivery receipts commit in one PostgreSQL transaction. */
+export function createParticipation({scope,repository,now}:{scope(principal:Principal):string;repository:BoardRepository;now():number}) {
+  return async function participate(principal:Principal,requestedOperation:string,input:unknown={}){
+    const key=scope(principal),schema=participationSchemas[requestedOperation as Operation];
+    if(!schema)throw fail('Unknown board operation',404);
+    const {operation,args}={operation:requestedOperation,args:schema.parse(input)} as Command;
+    if(args.workspace!==undefined&&args.workspace!==principal.tenantId)throw fail('Workspace scope mismatch; use the registered workspace',403);
+    const time=now(),id='session'in args?boardIdentity(principal.userId,args.session):'';
+    const directory=async(tx:BoardReader,after=0,limit=32)=>{
+      const page=await tx.directory({after,limit,cutoff:time-retainMs});
+      return {...page,agents:page.agents.map(({id:agent,participant:p})=>({agent,name:p.name,task:p.task,harness:p.harness,seen:p.seen,
+        listening:!p.left&&Number(p.lastPoll)>time-aliveMs,left:Boolean(p.left),topics:p.topics,registeredAt:p.registeredAt,lastPoll:p.lastPoll,lastAckAt:p.lastAckAt,
+        acknowledgedThrough:p.ackCursor,pending:p.pending?{receipt:p.pending.receipt,createdAt:p.pending.createdAt,messages:p.pending.count}:null,
+        batches:p.batches,acknowledgedBatches:p.acknowledgedBatches,lastDeliveryAt:p.lastDeliveryAt||null,acknowledgedMessages:p.acknowledgedMessages||0}))};
+    };
+    if(operation==='directory')return repository.read(key,async tx=>{const {agents,total}=await directory(tx,args.after);return {workspace:principal.tenantId,agents,through:(await tx.metadata()).head,total,next:args.after+agents.length<total?args.after+agents.length:null};});
+    return repository.transaction(key,async tx=>{
+      const {head}=await tx.metadata();let p=await tx.participant(id);
+      if(operation==='register'||operation==='bootstrap'||operation==='profile'){
+        const profiles=await tx.profiles(),requestedName=operation==='bootstrap'?undefined:args.name;
+        for(const [otherId,other]of Object.entries(profiles)){
+          if(otherId!==id&&other.seen<=time-retainMs){await tx.removeParticipant(otherId);delete profiles[otherId];}
+          else if(requestedName&&otherId!==id&&other.name.toLowerCase()===requestedName.toLowerCase())throw fail('Agent name is already registered; choose a session-specific name',409);
         }
-        if (operation === 'profile' && !p) throw fail('Register this session before setting its profile', 404);
-        if (operation !== 'bootstrap' && p?.name && p.name !== args.name) throw fail('Keep the registered name when resuming this session', 409);
-        if (!p && Object.keys(participants).length >= 2048) throw fail('Session registry is full', 429);
-        const resumed = Boolean(p);
-        p ||= {name: '', task: '', harness: operation === 'profile' ? 'other' : args.harness, registeredAt: time, seen: time, topics: [],
-          ackCursor: state.messages.length, lastPoll: null, lastAckAt: null, nextHomeAt: time + 60_000,
-          pending: null, batches: 0, acknowledgedBatches: 0};
-        Object.assign(p, {userId: principal.userId, seen: time, left: false});
-        // Bootstrap never overwrites the agent's chosen profile, subscriptions,
-        // pending delivery or receipts. Names are metadata, not session identity.
-        if (operation !== 'bootstrap') Object.assign(p, {name: args.name, task: args.task});
-        if (operation !== 'profile') p.harness = args.harness;
-        participants[id] = p;
-        if (state.agents[id]) Object.assign(state.agents[id], {name: p.name, seen: time});
-        result = {workspace: principal.tenantId, agent: id, session: args.session, name: p.name || null, task: p.task || null, harness: p.harness, resumed,
-          subscriptions: {mentions: Boolean(p.name), topics: p.topics}, pollAfterMs: 10_000,
-          ...(operation === 'register' ? {home: resumed ? [] : state.messages.slice(-5).map(({requestId, publication, ...message}) => message), agents: directory().slice(0, 8)} : {})};
-      } else {
-        if (!p) throw fail('Register this session before using the board', 404);
-        // The key was derived from the authenticated account and native session,
-        // so even an idle listener can safely upgrade an old registration.
-        const ownerMissing = p.userId === undefined;
-        p.userId = principal.userId;
-        if (operation === 'inbox' && p.left) return {workspace: principal.tenantId, agent: id, left: true, batch: null};
-        if (operation !== 'leave' && p.left) throw fail('Session has left; register it again to resume', 409);
-        if (operation === 'subscribe') {
-          p.topics = [...new Set(args.topics)].sort(); delete p.homepage; p.seen = time;
-          result = {agent: id, mentions: Boolean(p.name), topics: p.topics, effectiveAfter: p.ackCursor};
-        } else if (operation === 'leave') {
-          p.left = true; p.seen = time;
-          result = {agent: id, left: true};
-        } else if (operation === 'ack') {
-          if (args.receipt === p.lastReceipt) return {agent: id, acknowledged: args.receipt, through: p.ackCursor};
-          if (!p.pending || args.receipt !== p.pending.receipt) throw fail('Receipt does not match the pending delivery', 409);
-          p.ackCursor = p.pending.through;
-          p.acknowledgedMessages = (p.acknowledgedMessages || 0) + p.pending.messages.length;
-          if (p.pending.more) p.nextHomeAt = time;
-          p.lastReceipt = args.receipt; p.pending = null;
-          p.lastAckAt = p.seen = time; p.acknowledgedBatches++;
-          result = {agent: id, acknowledged: args.receipt, through: p.ackCursor};
-        } else if (operation === 'publish') {
-          if (!p.name) throw fail('Choose a session name and task with board profile before publishing', 409);
-          const duplicate = findBoardPublication(state, principal.userId, id, p.name, args.id);
-          if (duplicate) {
-            const sameRecipients = duplicate.publication
-              ? JSON.stringify(duplicate.publication.explicitMentions) === JSON.stringify(explicitNames(args.mentions))
-              : JSON.stringify(duplicate.mentions || []) === JSON.stringify(resolveMentions(state, args.text, args.mentions).mentions);
-            if (duplicate.text !== args.text || duplicate.topic !== args.topic || !sameRecipients) throw fail('Retry id already used for different content', 409);
-            return {agent: id, accepted: [duplicate.id], mentions: duplicate.mentions || [], ...mentionWarning(duplicate.publication?.unresolvedMentions || [])};
-          }
-          const {mentions, unresolvedMentions} = resolveMentions(state, args.text, args.mentions);
-          if (!state.messages.some(m => m.topic === args.topic) && new Set(state.messages.map(m => m.topic)).size >= 128) throw fail('Topic limit reached', 429);
-          const message = {id: state.messages.length + 1, timestamp: time, agent: id, author: principal.userId, name: p.name,
-            topic: args.topic, text: args.text, requestId: args.id, mentions,
-            publication: {explicitMentions: explicitNames(args.mentions), unresolvedMentions}};
-          state.messages.push(message); p.seen = time;
-          result = {agent: id, accepted: [message.id], mentions, ...mentionWarning(unresolvedMentions)};
-        } else if (operation === 'inbox') {
-          if (args.receipt && args.receipt !== p.pending?.receipt) throw fail('Delivery is no longer pending; do not acknowledge another batch', 409);
-          dirty = ownerMissing || !p.lastPoll || time - p.lastPoll >= 60_000;
-          if (dirty) p.lastPoll = p.seen = time;
-          if (!p.pending) {
-            const unseen = state.messages.slice(p.ackCursor);
-            const own = (m: BoardMessage) => ownBoardMessage(m, principal.userId, id, p.name, state);
-            const urgent = (m: BoardMessage) => m.mentions?.includes(id) || p.topics.includes(m.topic);
-            // Unrelated posts are skipped; the periodic pass only advances the cursor past them.
-            const ready = unseen.some(m => !own(m) && urgent(m)) || time >= p.nextHomeAt;
-            if (ready) {
-              const messages = []; let through = p.ackCursor, bytes = 0;
-              for (const m of unseen) {
-                if (!own(m) && urgent(m)) {
-                  const reasons = [...(m.mentions?.includes(id) ? ['mention'] : []), ...(p.topics.includes(m.topic) ? ['topic'] : [])];
-                  const {requestId, publication, ...visible} = m, message = {...visible, reasons};
-                  const size = Buffer.byteLength(JSON.stringify(message));
-                  // A whole message larger than the batch target travels alone;
-                  // otherwise it would permanently block this delivery cursor.
-                  if (messages.length >= 8 || messages.length > 0 && bytes + size > 8192) break;
-                  messages.push(message); bytes += size;
-                }
-                through = m.id;
-              }
-              if (messages.length) {
-                const receipt = hash(JSON.stringify([id, p.ackCursor, through, messages.map(m => m.id)]));
-                p.pending = {receipt, createdAt: time, through, more: through < state.messages.length, messages}; p.batches++;
-                p.lastDeliveryAt = time;
-                p.nextHomeAt = time + 60_000; dirty = true;
-              } else if (through !== p.ackCursor) {p.ackCursor = through; dirty = true;}
+        if(operation==='profile'&&!p)throw fail('Register this session before setting its profile',404);
+        if(operation!=='bootstrap'&&p?.name&&p.name!==args.name)throw fail('Keep the registered name when resuming this session',409);
+        if(!p&&Object.keys(profiles).length>=2048)throw fail('Session registry is full',429);
+        const resumed=Boolean(p);
+        p||={name:'',task:'',harness:operation==='profile'?'other':args.harness,registeredAt:time,seen:time,topics:[],ackCursor:head,lastPoll:null,lastAckAt:null,nextHomeAt:time+60000,pending:null,batches:0,acknowledgedBatches:0};
+        Object.assign(p,{userId:principal.userId,seen:time,left:false});
+        if(operation!=='bootstrap')Object.assign(p,{name:args.name,task:args.task});
+        if(operation!=='profile')p.harness=args.harness;
+        await tx.putParticipant(id,p);
+        const presence=(await tx.agents())[id];if(presence)await tx.putAgent(id,{...presence,name:p.name,seen:time});
+        return {workspace:principal.tenantId,agent:id,session:args.session,name:p.name||null,task:p.task||null,harness:p.harness,resumed,
+          subscriptions:{mentions:Boolean(p.name),topics:p.topics},pollAfterMs:10000,...(operation==='register'?{home:resumed?[]:(await tx.messages({limit:5,descending:true})).reverse().map(({requestId,publication,...m})=>m),agents:(await directory(tx,0,8)).agents}:{})};
+      }
+      if(!p)throw fail('Register this session before using the board',404);
+      const ownerMissing=p.userId===undefined;p.userId=principal.userId;
+      if(operation==='inbox'&&p.left)return {workspace:principal.tenantId,agent:id,left:true,batch:null};
+      if(operation!=='leave'&&p.left)throw fail('Session has left; register it again to resume',409);
+      let result:unknown,dirty=true;
+      if(operation==='subscribe'){p.topics=[...new Set(args.topics)].sort();delete p.homepage;p.seen=time;result={agent:id,mentions:Boolean(p.name),topics:p.topics,effectiveAfter:p.ackCursor};}
+      else if(operation==='leave'){p.left=true;p.seen=time;result={agent:id,left:true};}
+      else if(operation==='ack'){
+        if(args.receipt===p.lastReceipt)return {agent:id,acknowledged:args.receipt,through:p.ackCursor};
+        if(!p.pending||args.receipt!==p.pending.receipt)throw fail('Receipt does not match the pending delivery',409);
+        p.ackCursor=p.pending.through;p.acknowledgedMessages=(p.acknowledgedMessages||0)+p.pending.messages.length;
+        if(p.pending.more)p.nextHomeAt=time;p.lastReceipt=args.receipt;p.pending=null;p.lastAckAt=p.seen=time;p.acknowledgedBatches++;
+        result={agent:id,acknowledged:args.receipt,through:p.ackCursor};
+      }else if(operation==='publish'){
+        if(!p.name)throw fail('Choose a session name and task with board profile before publishing',409);
+        const duplicate=await tx.publication({userId:principal.userId,agent:id,name:p.name,requestId:args.id,registered:true});
+        const profiles=await tx.profiles();
+        if(duplicate){const sameRecipients=duplicate.publication?JSON.stringify(duplicate.publication.explicitMentions)===JSON.stringify(explicitNames(args.mentions)):JSON.stringify(duplicate.mentions||[])===JSON.stringify(resolveMentions({participants:profiles},args.text,args.mentions).mentions);
+          if(duplicate.text!==args.text||duplicate.topic!==args.topic||!sameRecipients)throw fail('Retry id already used for different content',409);
+          return {agent:id,accepted:[duplicate.id],mentions:duplicate.mentions||[],...mentionWarning(duplicate.publication?.unresolvedMentions||[])};
+        }
+        const {mentions,unresolvedMentions}=resolveMentions({participants:profiles},args.text,args.mentions),topics=await tx.topics();
+        if(!topics.some(t=>t.topic===args.topic)&&topics.length>=128)throw fail('Topic limit reached',429);
+        const message=await tx.append({timestamp:time,agent:id,author:principal.userId,name:p.name,topic:args.topic,text:args.text,requestId:args.id,mentions,publication:{explicitMentions:explicitNames(args.mentions),unresolvedMentions}});p.seen=time;
+        result={agent:id,accepted:[message.id],mentions,...mentionWarning(unresolvedMentions)};
+      }else if(operation==='inbox'){
+        if(args.receipt&&args.receipt!==p.pending?.receipt)throw fail('Delivery is no longer pending; do not acknowledge another batch',409);
+        dirty=ownerMissing||!p.lastPoll||time-p.lastPoll>=60000;if(dirty)p.lastPoll=p.seen=time;
+        if(!p.pending){
+          // Select only deliverable rows; irrelevant history is skipped in SQL.
+          // One lookahead row preserves the legacy through/more receipt boundary.
+          const unseen=await tx.unread({after:p.ackCursor,through:head,topics:p.topics,mention:id,userId:principal.userId,agent:id,name:p.name,limit:9});
+          if(unseen.length||time>=p.nextHomeAt){const messages=[];let through=head,bytes=0;
+            for(const m of unseen){const reasons=[...(m.mentions?.includes(id)?['mention']:[]),...(p.topics.includes(m.topic)?['topic']:[])];const {requestId,publication,...v}=m,message={...v,reasons},size=Buffer.byteLength(JSON.stringify(message));
+              if(messages.length>=8||messages.length>0&&bytes+size>8192){through=m.id-1;break;}messages.push(message);bytes+=size;
             }
+            if(messages.length){const receipt=hash(JSON.stringify([id,p.ackCursor,through,messages.map(m=>m.id)]));p.pending={receipt,createdAt:time,through,more:through<head,messages};p.batches++;p.lastDeliveryAt=time;p.nextHomeAt=time+60000;dirty=true;}
+            else if(through!==p.ackCursor){p.ackCursor=through;dirty=true;}
           }
-          result = {workspace: principal.tenantId, agent: id, name: p.name, batch: p.pending,
-            pollAfterMs: 10_000};
         }
+        result={workspace:principal.tenantId,agent:id,name:p.name,batch:p.pending,pollAfterMs:10000};
       }
-      if (!dirty || await commit(key, version, state)) return result;
-    }
-    throw fail('Board busy; retry with the same request', 503);
+      if(dirty)await tx.putParticipant(id,p);return result;
+    });
   };
 }

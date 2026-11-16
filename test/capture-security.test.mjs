@@ -1,3 +1,4 @@
+import {withTestState,stateFor} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -13,7 +14,7 @@ const batch = attachments => ({schemaVersion: 1, owner, installationId: 'device'
 
 test('raw capture HTTP reads enforce private visibility and deletion even with a valid receipt', async t => {
   const store = memorySessionStore(), prefix = 'capture-v1';
-  const ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
+  const ingest = createSessionIngest(withTestState({store, prefix})), controls = createControls(withTestState({store, prefix}));
   const {batchId} = await ingest.putBatch(owner, batch([]));
   const reader = {...owner, userId: 'teammate'};
   const handler = createCaptureHandler({ingest, authenticate: async req => req.headers.authorization === 'Bearer owner' ? owner : reader});
@@ -36,7 +37,7 @@ test('raw capture HTTP reads enforce private visibility and deletion even with a
 
 test('raw batch reads recheck controls after storage and fail closed on unreadable controls', async () => {
   const store = memorySessionStore(), prefix = 'capture-v1';
-  const controls = createControls({store, prefix}), ingest = createSessionIngest({store, prefix});
+  const controls = createControls(withTestState({store, prefix})), ingest = createSessionIngest(withTestState({store, prefix}));
   const {batchId} = await ingest.putBatch(owner, batch([]));
   const receipt = {harness: 'codex', installationId: 'device', sessionId: 'session', batchId, userId: owner.userId};
   const reader = {...owner, userId: 'teammate'};
@@ -52,13 +53,13 @@ test('raw batch reads recheck controls after storage and fail closed on unreadab
   assert.equal(bodyReads, 1);
   assert.equal(await ingest.getBatch(reader, receipt), null);
   assert.equal(bodyReads, 1, 'private content must not be downloaded for an unauthorized reader');
-  store.readVersion = async () => {throw new Error('controls unavailable');};
+  stateFor(store).controls.read = async () => {throw new Error('controls unavailable');};
   await assert.rejects(ingest.getBatch(owner, receipt), /controls unavailable/);
   assert.equal(bodyReads, 1);
 });
 
 test('batch validation rejects malformed or oversized input before reading any stored objects', async () => {
-  const ingest = createSessionIngest({store: {get: async () => assert.fail('must validate before storage access'), put: async () => assert.fail()}});
+  const ingest = createSessionIngest(withTestState({store: {get: async () => assert.fail('must validate before storage access'), put: async () => assert.fail()}}));
   const captured = {status: 'captured', sha256: digest('fixture')};
   await assert.rejects(ingest.putBatch(owner, {...batch([captured]), extra: 'x'.repeat(MAX_BATCH_BYTES)}), {status: 413});
   await assert.rejects(ingest.putBatch(owner, batch([captured, null])), {status: 400});
@@ -67,12 +68,12 @@ test('batch validation rejects malformed or oversized input before reading any s
 
 test('repeated attachment references use one bounded metadata check and never download bodies', async () => {
   const calls = [], bytes = Buffer.from('fixture'), hash = digest(bytes);
-  const ingest = createSessionIngest({store: {
+  const ingest = createSessionIngest(withTestState({store: {
     ...memorySessionStore(),
     get: async () => assert.fail('metadata-capable stores must not download attachments'),
     has: async (key, options) => {calls.push({key, options}); return key.endsWith('/attachments/' + hash);},
     put: async () => {},
-  }});
+  }}));
   const value = batch(Array.from({length: 1000}, () => ({status: 'captured', sha256: hash})));
   assert.equal((await ingest.putBatch(owner, value)).stored, true);
   const attachments = calls.filter(call => call.key.includes('/attachments/'));
@@ -82,10 +83,10 @@ test('repeated attachment references use one bounded metadata check and never do
 
 test('get-only stores check each attachment once with a bound', async () => {
   const calls = [], bytes = Buffer.from('fixture'), hash = digest(bytes);
-  const ingest = createSessionIngest({store: {
+  const ingest = createSessionIngest(withTestState({store: {
     ...memorySessionStore(),
     get: async (key, options) => {calls.push({key, options}); return key.endsWith('/attachments/' + hash) ? bytes : null;}, put: async () => {},
-  }});
+  }}));
   await ingest.putBatch(owner, batch([{status: 'captured', sha256: hash}, {status: 'captured', sha256: hash}]));
   assert.equal(calls.filter(call => call.key.includes('/attachments/')).length, 1);
   assert.equal(calls[0].options.maxBytes, MAX_ATTACHMENT_BYTES);
@@ -95,8 +96,8 @@ test('get-only stores check each attachment once with a bound', async () => {
 test('upload-only principals cannot read batches or onboarding through direct core operations', async () => {
   const store = {get: async () => assert.fail('unauthorized reads must not reach storage'), put: async () => {}};
   const principal = {...owner, captureAccess: 'write'};
-  await assert.rejects(createSessionIngest({store}).getBatch(principal, {}), {status: 403});
-  await assert.rejects(createOnboardingStatus({store}).read(principal), {status: 403});
+  await assert.rejects(createSessionIngest(withTestState({store})).getBatch(principal, {}), {status: 403});
+  await assert.rejects(createOnboardingStatus(withTestState({store})).read(principal), {status: 403});
 });
 
 test('S3 metadata checks distinguish missing, bounded and oversized objects', async () => {
@@ -132,7 +133,7 @@ test('signed S3 requests do not follow redirects or disclose credential headers'
 
 test('unknown capture capabilities fail closed before upload or read storage access', async () => {
   const store = {get: async () => assert.fail('unknown capability must not read'), put: async () => assert.fail('unknown capability must not write')};
-  const ingest = createSessionIngest({store}), onboarding = createOnboardingStatus({store});
+  const ingest = createSessionIngest(withTestState({store})), onboarding = createOnboardingStatus(withTestState({store}));
   const bytes = Buffer.from('fixture');
   assert.equal(sessionScope({...owner, captureAccess: 'write'}), sessionScope(owner));
   for (const captureAccess of ['read', '', null, false, {}]) {

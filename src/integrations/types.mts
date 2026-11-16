@@ -17,6 +17,9 @@ export interface IntegrationRecord {
   githubRepositoryIds?: number[];
   provisionIntent?: ProvisionIntent | null; provisionProtocol?: number; provisionRun?: string;
   provisionVersion?: string; resourceVersion?: string; error?: string | null;
+  lifecycleCommandId?: string; lifecycleOperation?: 'provision' | 'disconnect' | 'sync';
+  cleanupResourceVersion?: string;
+  cleanupBlockedReason?: 'external-writer-proof-required' | null;
   disconnectedAt?: string; dataDeletedAt?: string | null; deletedObjects?: number;
   settings?: {folderId?: string | number};
 }

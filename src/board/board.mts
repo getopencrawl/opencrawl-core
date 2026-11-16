@@ -1,14 +1,12 @@
-import type {Principal, ConditionalStore, StoreVersion} from '../sessions/types.mjs';
-import {parseJson} from '../sessions/types.mjs';
-import type {BoardState, BoardMessage, VisibleMessage} from './types.mjs';
-import type {createBoardSearch} from './search.mjs';
+import type {Principal} from '../sessions/types.mjs';
+import type {ApplicationState} from '../state/types.mjs';
 import type {createRecentSessions} from '../sessions/recent.mjs';
 import {serviceError} from '../sessions/types.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {boardSearchSchema} from './search.mjs';
 import {createParticipation, resolveMentions, mentionWarning} from './participation.mjs';
-import {boardIdentity, ownBoardMessage, resolveBoardIdentity, findBoardPublication} from './identity.mjs';
+import {boardIdentity} from './identity.mjs';
 import {boardFetchSchema, preview, textPage} from './disclosure.mjs';
 export {boardFetchSchema} from './disclosure.mjs';
 
@@ -27,66 +25,26 @@ export const topicsSchema = z.strictObject({workspace: short(200).optional(), af
 export const boardReadSchema = z.strictObject({topic: topic.optional(), before: z.number().int().positive().optional()});
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const fail = (message: string, status = 400) => Object.assign(new Error(message), {status});
-const fresh = (): BoardState => ({schema: 1, messages: [], agents: {}, usage: {calls: 0, inputBytes: 0, outputBytes: 0}});
-const ttl = 15 * 60 * 1000;
-
-/** One bounded, conditionally replaced document per trusted tenant. No implicit scope. */
-export function createBoard({store, prefix, now = Date.now, search, recentSessions, sessionTimeoutMs = 15000}: {store: ConditionalStore; prefix: string; now?: () => number; search?: ReturnType<typeof createBoardSearch>; recentSessions?: ReturnType<typeof createRecentSessions>; sessionTimeoutMs?: number}) {
-  if (!store?.readVersion || !store?.compareAndSet || !prefix || /(^|\/)\.\.(\/|$)/.test(prefix)) throw new Error('Board requires a conditional store and prefix');
-  if (!Number.isInteger(sessionTimeoutMs) || sessionTimeoutMs < 1 || sessionTimeoutMs > 30000) throw new Error('Invalid session snapshot timeout');
-  function scope(principal: Principal) {
-    if (!principal || principal.captureAccess !== undefined || typeof principal.tenantId !== 'string' || !principal.tenantId || typeof principal.userId !== 'string' || !principal.userId) throw fail('Board scope required', 403);
-    return `${prefix}/tenants/${hash(principal.tenantId)}.json`;
-  }
-  async function read(key: string) {
-    const object = await store.readVersion(key, {maxBytes: 16 * 1024 * 1024});
-    const state = object.data ? parseJson<BoardState>(object.data) : fresh();
-    if (state.schema !== 1) throw fail('Unsupported board version', 503);
-    return {...object, state};
-  }
-  async function commit(key: string, version: StoreVersion | null, state: BoardState) {
-    const encoded = Buffer.from(JSON.stringify(state));
-    if (encoded.length > 16 * 1024 * 1024) throw fail('Board pilot storage limit reached; preserve history before starting a new board', 429);
-    return store.compareAndSet(key, version, encoded);
-  }
+const ttl=15*60*1000;
+/** Durable SQL state supplied independently of immutable capture objects. */
+export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=15000}:{state:ApplicationState;now?:()=>number;recentSessions?:ReturnType<typeof createRecentSessions>;sessionTimeoutMs?:number}){
+  if(!state?.board)throw fail('PostgreSQL board state is required',503);
+  if(!Number.isInteger(sessionTimeoutMs)||sessionTimeoutMs<1||sessionTimeoutMs>30000)throw fail('Invalid session snapshot timeout');
+  const repository=state.board;
+  function scope(principal:Principal){if(!principal||principal.captureAccess!==undefined||typeof principal.tenantId!=='string'||!principal.tenantId||typeof principal.userId!=='string'||!principal.userId)throw fail('Board scope required',403);return hash(principal.tenantId);}
   return {
-    participate: createParticipation({scope, read, commit, now}),
-    /** Browse the durable log without writing presence, usage or search indexes. */
-    async read(principal: Principal, input: unknown = {}) {
-      const key = scope(principal), args = boardReadSchema.parse(input);
-      const {state} = await read(key);
-      const summaries = new Map<string, {topic: string; posts: number; latest: {id: number; timestamp: number; name: string}}>();
-      for (const message of state.messages) {
-        const summary = summaries.get(message.topic) || {topic: message.topic, posts: 0, latest: {id: message.id, timestamp: message.timestamp, name: message.name || message.agent}};
-        summary.posts++;
-        summary.latest = {id: message.id, timestamp: message.timestamp, name: message.name || message.agent};
-        summaries.set(message.topic, summary);
-      }
-      const messages: VisibleMessage[] = [];
-      let more = false;
-      for (let i = state.messages.length - 1; i >= 0; i--) {
-        const message = state.messages[i];
-        if ((args.before !== undefined && message.id >= args.before) || (args.topic && message.topic !== args.topic)) continue;
-        if (messages.length === 20) {more = true; break;}
-        const {requestId, publication, ...visible} = message;
-        messages.push(visible);
-      }
-      return {topics: [...summaries.keys()].sort(),
-        topicSummaries: [...summaries.values()].sort((a, b) => b.latest.id - a.latest.id), messages,
-        next: more ? messages.at(-1)!.id : null};
-    },
-    ...(search ? {async search(principal: Principal, input: unknown) {
-      const key = scope(principal), args = boardSearchSchema.parse(input);
-      if (args.workspace !== undefined && args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
-      const {state} = await read(key);
-      return search.search(principal, state.messages, key, args);
-    }} : {}),
+    participate:createParticipation({scope,repository,now}),
+    async read(principal:Principal,input:unknown={}){const key=scope(principal),args=boardReadSchema.parse(input);return repository.read(key,async tx=>{
+      const summaries=await tx.topics(),messages=await tx.messages({before:args.before,topic:args.topic,limit:21,descending:true});
+      return {topics:summaries.map(t=>t.topic).sort(),topicSummaries:summaries.sort((a,b)=>b.latest.id-a.latest.id).map(({first,...summary})=>summary),messages:messages.slice(0,20).map(({requestId,publication,...m})=>m),next:messages.length>20?messages[19].id:null};
+    });},
+    async search(principal:Principal,input:unknown){const key=scope(principal),{workspace,...args}=boardSearchSchema.parse(input);if(workspace!==undefined&&workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);if(args.since&&args.until&&Date.parse(args.since)>Date.parse(args.until))throw fail('since must not be later than until');return repository.search(key,principal.userId,args,now());},
     async fetch(principal: Principal, input: unknown) {
       const key = scope(principal), args = boardFetchSchema.parse(input);
       if (args.workspace !== undefined && args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
       if (args.id.startsWith('message:')) {
         if (!/^message:[1-9]\d{0,15}$/.test(args.id)) throw fail('Invalid message reference');
-        const {state} = await read(key), source = state.messages[Number(args.id.slice(8)) - 1];
+        const source=await repository.read(key,tx=>tx.message(Number(args.id.slice(8))));
         if (!source) throw fail('Message not found', 404);
         const {requestId, publication, text, ...message} = source;
         return textPage(text, args, {id: args.id, kind: 'message', message});
@@ -109,100 +67,39 @@ export function createBoard({store, prefix, now = Date.now, search, recentSessio
           {id: args.id, field: args.field, messages});
       } finally {clearTimeout(timer);}
     },
-    async topics(principal: Principal, input: unknown = {}) {
-      const {after, workspace} = topicsSchema.parse(input);
-      scope(principal);
-      if (workspace !== undefined && workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
-      const {state} = await read(scope(principal));
-      const names = [...new Set(state.messages.map(m => m.topic))];
-      const time = now();
-      const topics = []; let bytes = 0;
-      for (const name of names.slice(after, after + 12)) {
-        const item = {
-        topic: name,
-        latest: state.messages.findLast(m => m.topic === name)?.id,
-        active: Object.entries(state.agents).filter(([, a]) => a.seen > time - ttl && a.topics.includes(name))
-          .slice(0, 4).map(([id, a]) => ({id, name: a.name, seen: a.seen})),
-        };
-        const size = Buffer.byteLength(JSON.stringify(item));
-        if (topics.length && bytes + size > 4096) break;
-        topics.push(item); bytes += size;
-      }
-      return {workspace: principal.tenantId, topics, next: after + topics.length < names.length ? after + topics.length : null};
+    async topics(principal:Principal,input:unknown={}){
+      const key=scope(principal),{after,workspace}=topicsSchema.parse(input);if(workspace!==undefined&&workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
+      return repository.read(key,async tx=>{const all=await tx.topics(),agents=await tx.agents(),time=now(),topics=[];let bytes=0;
+        for(const row of all.slice(after,after+12)){const item={topic:row.topic,latest:row.latest.id,active:Object.entries(agents).filter(([,a])=>a.seen>time-ttl&&a.topics.includes(row.topic)).slice(0,4).map(([id,a])=>({id,name:a.name,seen:a.seen}))};const size=Buffer.byteLength(JSON.stringify(item));if(topics.length&&bytes+size>4096)break;topics.push(item);bytes+=size;}
+        return {workspace:principal.tenantId,topics,next:after+topics.length<all.length?after+topics.length:null};
+      });
     },
-    async sync(principal: Principal, input: unknown) {
-      const key = scope(principal), args = syncSchema.parse(input);
-      if (args.workspace !== undefined && args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
-      const requestBytes = Buffer.byteLength(JSON.stringify(input));
-      let sessions: Awaited<ReturnType<ReturnType<typeof createRecentSessions>['list']>> = [], sessionState = recentSessions ? 'ready' : 'not_configured';
-      if (recentSessions) {
-        const controller = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
-        try { sessions = await Promise.race([recentSessions.list(principal, {signal: controller.signal}),
-          new Promise<never>((_, reject) => {timer = setTimeout(() => {controller.abort(); reject(new Error('Session snapshot timeout'));}, sessionTimeoutMs);})]); }
-        catch(caught){const error=serviceError(caught);
-          if (error.status === 403 || error.status === 401) throw error;
-          sessionState = 'unavailable';
-        } finally {clearTimeout(timer);}
+    async sync(principal:Principal,input:unknown){
+      const key=scope(principal),args=syncSchema.parse(input);if(args.workspace!==undefined&&args.workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
+      let sessions:Awaited<ReturnType<ReturnType<typeof createRecentSessions>['list']>>=[],sessionState=recentSessions?'ready':'not_configured';
+      if(recentSessions){const controller=new AbortController();let timer:ReturnType<typeof setTimeout>|undefined;
+        try{sessions=await Promise.race([recentSessions.list(principal,{signal:controller.signal}),new Promise<never>((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('Session snapshot timeout'));},sessionTimeoutMs);})]);}
+        catch(caught){const error=serviceError(caught);if(error.status===403||error.status===401)throw error;sessionState='unavailable';}finally{clearTimeout(timer);}
       }
-      let start = args.after;
-      for (let attempt = 0; attempt < 8; attempt++) {
-        const {state, version} = await read(key), time = now();
-        const {id: agentId, name: agentName} = resolveBoardIdentity(state, principal.userId, args.agent);
-        // Starting "now" is anchored to the first read. A CAS retry must still
-        // deliver messages that arrived while this call was trying to commit.
-        start ??= state.messages.length;
-        if (start > state.messages.length) throw fail('Cursor exceeds board history');
-        // Presence is a recent observation, never proof that an agent is still alive.
-        for (const [id, a] of Object.entries(state.agents)) if (a.seen <= time - ttl) delete state.agents[id];
-        // Retire only this account's name-derived presence, keeping immutable
-        // messages and delivery receipts intact across the upgrade.
-        if (state.participants?.[agentId]?.userId === principal.userId) {
-          for (const [id, a] of Object.entries(state.agents)) {
-            if (id !== agentId && a.name.toLowerCase() === agentName.toLowerCase()
-              && id === boardIdentity(principal.userId, a.name)) delete state.agents[id];
-          }
+      return repository.transaction(key,async tx=>{
+        const meta=await tx.metadata(),time=now(),profiles=await tx.profiles(),registered=Object.entries(profiles).find(([,p])=>p.userId===principal.userId&&p.name.toLowerCase()===args.agent.toLowerCase());
+        const agentId=registered?.[0]??boardIdentity(principal.userId,args.agent),agentName=registered?.[1].name??args.agent,start=args.after??meta.head;
+        if(start>meta.head)throw fail('Cursor exceeds board history');
+        const agents=await tx.agents();for(const [id,a]of Object.entries(agents))if(a.seen<=time-ttl||(registered&&id!==agentId&&a.name.toLowerCase()===agentName.toLowerCase()&&id===boardIdentity(principal.userId,a.name))){await tx.removeAgent(id);delete agents[id];}
+        if(args.leave)await tx.removeAgent(agentId);else{if(!agents[agentId]&&Object.keys(agents).length>=128)throw fail('Active agent limit reached',429);await tx.putAgent(agentId,{name:agentName,topics:args.topics,seen:time});}
+        const accepted:number[]=[],unresolvedMentions:string[]=[],topics=await tx.topics();let head=meta.head;
+        for(const post of args.posts){const duplicate=await tx.publication({userId:principal.userId,agent:agentId,name:agentName,requestId:post.id,registered:Boolean(registered)});
+          if(duplicate){if(duplicate.topic!==post.topic||duplicate.text!==post.text)throw fail('Retry id already used for different content',409);accepted.push(duplicate.id);unresolvedMentions.push(...duplicate.publication?.unresolvedMentions||[]);continue;}
+          if(!topics.some(t=>t.topic===post.topic)&&topics.length>=128)throw fail('Topic limit reached',429);
+          const resolution=resolveMentions({participants:profiles},post.text),message=await tx.append({timestamp:time,agent:agentId,author:principal.userId,name:agentName,topic:post.topic,text:post.text,requestId:post.id,publication:{explicitMentions:[],unresolvedMentions:resolution.unresolvedMentions},...(resolution.mentions.length?{mentions:resolution.mentions}:{})});
+          if(!topics.some(t=>t.topic===post.topic))topics.push({topic:post.topic,first:message.id,posts:1,latest:{id:message.id,timestamp:time,name:agentName}});
+          unresolvedMentions.push(...resolution.unresolvedMentions);accepted.push(message.id);head=message.id;
         }
-        if (args.leave) delete state.agents[agentId];
-        else {
-          if (!state.agents[agentId] && Object.keys(state.agents).length >= 128) throw fail('Active agent limit reached', 429);
-          state.agents[agentId] = {name: agentName, topics: args.topics, seen: time};
-        }
-        const accepted = [], unresolvedMentions: string[] = [];
-        for (const post of args.posts) {
-          const duplicate = findBoardPublication(state, principal.userId, agentId, agentName, post.id);
-          if (duplicate) {
-            if (duplicate.topic !== post.topic || duplicate.text !== post.text) throw fail('Retry id already used for different content', 409);
-            accepted.push(duplicate.id); unresolvedMentions.push(...duplicate.publication?.unresolvedMentions || []); continue;
-          }
-          if (!state.messages.some(m => m.topic === post.topic) && new Set(state.messages.map(m => m.topic)).size >= 128) throw fail('Topic limit reached', 429);
-          const message: BoardMessage = {id: state.messages.length + 1, timestamp: time, agent: agentId, author: principal.userId, name: agentName,
-            topic: post.topic, text: post.text, requestId: post.id};
-          const resolution = resolveMentions(state, post.text), {mentions} = resolution;
-          message.publication = {explicitMentions: [], unresolvedMentions: resolution.unresolvedMentions};
-          unresolvedMentions.push(...resolution.unresolvedMentions);
-          if (mentions.length) message.mentions = mentions;
-          state.messages.push(message); accepted.push(message.id);
-        }
-        const messages: Array<{id: number; ref: string; timestamp: number; name: string; topic: string; preview: string}> = []; let cursor = start, bytes = 0;
-        for (const m of state.messages.slice(start)) {
-          if (args.topics.includes(m.topic) && !ownBoardMessage(m, principal.userId, agentId, agentName, state)) {
-            const message = {id: m.id, ref: 'message:' + m.id, timestamp: m.timestamp, name: m.name, topic: m.topic, preview: preview(m.text, 160)};
-            const size = Buffer.byteLength(JSON.stringify(message));
-            if (messages.length >= 5 || bytes + size > 4096) break;
-            messages.push(message); bytes += size;
-          }
-          cursor = m.id;
-        }
-        const output = {agent: agentId, cursor, more: cursor < state.messages.length, accepted, messages, ...mentionWarning(unresolvedMentions),
-          recentSessions: sessions, recentSessionsStatus: {state: sessionState, limit: 10, order: 'lastActivityAt_desc', source: 'indexed_capture'}};
-        state.usage.calls++;
-        state.usage.inputBytes += requestBytes;
-        state.usage.outputBytes += Buffer.byteLength(JSON.stringify(output));
-        const encoded = Buffer.from(JSON.stringify(state));
-        if (encoded.length > 16 * 1024 * 1024) throw fail('Board pilot storage limit reached; preserve history before starting a new board', 429);
-        if (await store.compareAndSet(key, version, encoded)) return output;
-      }
-      throw fail('Board busy; retry at your next work boundary with the same post ids', 503);
+        const selected=await tx.unread({after:start,through:head,topics:args.topics,userId:principal.userId,agent:agentId,name:agentName,limit:6}),messages=[];let cursor=head,bytes=0;
+        for(const m of selected){const message={id:m.id,ref:'message:'+m.id,timestamp:m.timestamp,name:m.name,topic:m.topic,preview:preview(m.text,160)},size=Buffer.byteLength(JSON.stringify(message));if(messages.length>=5||bytes+size>4096){cursor=m.id-1;break;}messages.push(message);bytes+=size;}
+        const output={agent:agentId,cursor,more:cursor<head,accepted,messages,...mentionWarning(unresolvedMentions),recentSessions:sessions,recentSessionsStatus:{state:sessionState,limit:10,order:'lastActivityAt_desc',source:'indexed_capture'}};
+        await tx.addUsage(Buffer.byteLength(JSON.stringify(input)),Buffer.byteLength(JSON.stringify(output)));return output;
+      });
     },
   };
 }

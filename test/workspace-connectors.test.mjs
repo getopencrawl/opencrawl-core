@@ -1,3 +1,4 @@
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +23,7 @@ function harness(provider) {
     for (const item of items) docs.set(item.id, item.document);
     if (fail) {fail = false; throw new Error('crash after committed bulk');}
   }};
-  const pipeline = createConnectorPipeline({binding, store, search, checkActive: async () => {if (!active) throw new Error('revoked');}});
+  const pipeline = createConnectorPipeline(withTestState({binding, store, search, checkActive: async () => {if (!active) throw new Error('revoked');}}));
   return {binding, objects, docs, pipeline, fail: () => {fail = true;}, revoke: () => {active = false;},
     raw(stream, rows, name = '1', at = 2000) {const key = keyFor(binding, stream, name); objects.set(key, gzipSync(rows.map(d => JSON.stringify(env(d, at))).join('\n'))); return key;},
     async run() {const page = await pipeline.listPage(); const results = []; for (const key of page.keys) results.push(await pipeline.processObject({key})); return results;}};

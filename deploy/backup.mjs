@@ -1,48 +1,70 @@
-import {spawnSync} from 'node:child_process';
-import {createReadStream,readFileSync,writeFileSync,existsSync,mkdirSync,openSync,closeSync,renameSync} from 'node:fs';
-import {createHash} from 'node:crypto';
-import {resolve,join,dirname} from 'node:path';
-import {fileURLToPath} from 'node:url';
-const cwd=dirname(fileURLToPath(import.meta.url)),[action,destination]=process.argv.slice(2);
-if(!['create','restore'].includes(action)||!destination)throw new Error('Usage: node deploy/backup.mjs create|restore /absolute/backup-directory');
-const backup=resolve(destination),env=join(cwd,'.env');
-const leaveStopped=process.argv.includes('--leave-stopped');
-function compose(args,stdio='pipe') {
-  const result=spawnSync('docker',['compose',...args],{cwd,stdio,encoding:stdio==='pipe'?'utf8':undefined});
-  if(result.status!==0)throw new Error('Docker backup operation failed; preserve the backup and inspect the stopped stack.');
-  return result.stdout?.trim()||'';
-}
-async function digest(path){const hash=createHash('sha256');for await(const chunk of createReadStream(path))hash.update(chunk);return hash.digest('hex');}
-if(action==='create') {
-  if(existsSync(backup))throw new Error('Choose a new backup directory; existing backups are never overwritten.');
-  if(!compose(['ps','--status','running','-q']))throw new Error('Start the stack before creating an offline backup.');
-  mkdirSync(backup,{mode:0o700});
-  compose(['stop']);
-  try {
-    writeFileSync(join(backup,'environment'),readFileSync(env),{mode:0o600,flag:'wx'});
-    const partial=join(backup,'stores.tgz.partial'),fd=openSync(partial,'wx',0o600);
-    try{compose(['run','--rm','--no-deps','-T','backup','tar','-czf','-','-C','/data','.'],['ignore',fd,'inherit']);}
-    finally{closeSync(fd);}
-    renameSync(partial,join(backup,'stores.tgz'));
-    const revision=spawnSync('git',['rev-parse','HEAD'],{cwd,encoding:'utf8'});
-    if(revision.status!==0)throw new Error('Cannot record source revision.');
-    writeFileSync(join(backup,'manifest.json'),JSON.stringify({format:1,revision:revision.stdout.trim(),
-      storesSha256:await digest(join(backup,'stores.tgz')),environmentSha256:await digest(join(backup,'environment'))},null,2)+'\n',{mode:0o600,flag:'wx'});
-  }finally{if(!leaveStopped)compose(['up','-d','--wait','--wait-timeout','240'],'inherit');}
+import {existsSync,readFileSync} from 'node:fs';
+import {resolve,join} from 'node:path';
+import {setTimeout as delay} from 'node:timers/promises';
+import {installation,containers,lock,docker,run,root} from './installation.mjs';
+import {snapshot,saveRecoveryImages,saveRecovery} from './recovery.mjs';
+
+process.umask(0o077);
+const [action,destination,...options]=process.argv.slice(2);
+if(!['create','restore'].includes(action)||!destination||options.some(value=>value!=='--leave-stopped'))throw new Error('Usage: node deploy/backup.mjs create|restore /absolute/backup-directory [--leave-stopped]');
+const directory=resolve(destination);
+if(action==='restore') {
+  const manifest=JSON.parse(readFileSync(join(directory,'manifest.json'),'utf8'));
+  // Format 1 is read-only compatibility. All new backups use the same matched
+  // images/configuration/store engine as upgrades; never create a new format 1.
+  if(manifest.format===1) {
+    const {restoreLegacyBackup}=await import('./legacy-backup.mjs');
+    await restoreLegacyBackup(directory);
+  } else if(manifest.format===2)run(process.execPath,[join(root,'deploy/restore.mjs'),'--backup',directory],{capture:false});
+  else throw new Error('Unsupported backup format; retain the archive for review');
 } else {
-  const manifest=JSON.parse(readFileSync(join(backup,'manifest.json'),'utf8'));
-  const revision=spawnSync('git',['rev-parse','HEAD'],{cwd,encoding:'utf8'});
-  if(revision.status!==0||revision.stdout.trim()!==manifest.revision)throw new Error('Check out the source revision recorded in manifest.json before restoring.');
-  if(manifest.format!==1||await digest(join(backup,'stores.tgz'))!==manifest.storesSha256||await digest(join(backup,'environment'))!==manifest.environmentSha256)throw new Error('Backup integrity verification failed.');
-  const savedEnv=readFileSync(join(backup,'environment'));
-  if(existsSync(env)&&!readFileSync(env).equals(savedEnv))throw new Error('Current deployment credentials differ. Restore in a separate checkout with the backup environment.');
-  if(!existsSync(env))writeFileSync(env,savedEnv,{mode:0o600,flag:'wx'});
-  if(compose(['ps','--status','running','-q']))throw new Error('Stop the destination stack before restoring.');
-  const existing=compose(['run','--rm','--no-deps','-T','backup','find','/data','-mindepth','2','-print','-quit']);
-  if(existing)throw new Error('Restore requires empty destination volumes. Existing data is never removed.');
-  const fd=openSync(join(backup,'stores.tgz'),'r');
-  try{compose(['run','--rm','--no-deps','-T','backup','tar','-xzf','-','-C','/data'],[fd,'inherit','inherit']);}
-  finally{closeSync(fd);}
-  console.log('Restored stores. Start the recorded source revision and verify capture, search and board data.');
+  const current=installation('deploy');
+  if(!current)throw new Error('Configure the original deployment before backing it up');
+  const release=lock(join(current.stateDir,'upgrade.lock'));
+  try {
+    if(existsSync(directory))throw new Error('Choose a new backup directory; existing backups are never overwritten');
+    const inventory=containers(current.project),running=inventory.filter(c=>c.State.Running);
+    if(!running.some(c=>c.Config.Labels['com.docker.compose.service']==='app'))throw new Error('Start the original application before creating its offline backup');
+    const saved=snapshot(current,inventory);
+    await saveRecoveryImages(directory,saved);
+    const writers=running.filter(c=>['app','worker'].includes(c.Config.Labels['com.docker.compose.service']));
+    const dependencies=running.filter(c=>!writers.includes(c));
+    let stopped=false;
+    try {
+      // A partial stop can fail after stopping one writer. Recover every
+      // originally running container even when Docker returns nonzero.
+      stopped=true;
+      if(writers.length)docker(['stop',...writers.map(c=>c.Id)]);
+      if(dependencies.length)docker(['stop',...dependencies.map(c=>c.Id)]);
+      await saveRecovery(directory,saved);
+    } finally {
+      if(stopped&&!options.includes('--leave-stopped')) {
+        // Start the exact recorded containers, never rebuild/recreate through a
+        // possibly newer checkout's Compose file as a side effect of backup.
+        const byName=new Map(running.map(c=>[c.Config.Labels['com.docker.compose.service'],c]));
+        const started=new Set(),starting=new Set();
+        async function start(name) {
+          if(started.has(name))return;
+          if(starting.has(name))throw new Error('Saved service dependencies contain a cycle');
+          starting.add(name);
+          for(const dependency of Object.keys(saved.compose.services[name].depends_on||{}))await start(dependency);
+          // Completed init services still carry dependency edges. Traverse them
+          // to start the backing database/storage before the original app, but
+          // never rerun migrations as a side effect of making a backup.
+          if(!byName.has(name)){starting.delete(name);started.add(name);return;}
+          const container=byName.get(name);docker(['start',container.Id]);
+          const deadline=Date.now()+240000;
+          for(;;) {
+            const state=JSON.parse(docker(['inspect',container.Id]))[0].State;
+            if(state.Running&&(!state.Health||state.Health.Status==='healthy'))break;
+            if(!state.Running||Date.now()>=deadline)throw new Error('The original backup runtime did not become ready; inspect its retained containers');
+            await delay(1000);
+          }
+          starting.delete(name);started.add(name);
+        }
+        for(const name of byName.keys())await start(name);
+      }
+    }
+    console.log(JSON.stringify({backup:'complete',format:2,project:current.project,directory,leftStopped:options.includes('--leave-stopped')}));
+  } finally {release();}
 }
-console.log('Backup '+action+' complete: '+backup);

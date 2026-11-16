@@ -1,5 +1,5 @@
-import {DatabaseSync} from 'node:sqlite';
-import {chmodSync} from 'node:fs';
+import type {PoolClient} from 'pg';
+import type {ApplicationDatabase} from '../state/postgres.mjs';
 import {randomBytes} from 'node:crypto';
 import {betterAuth,type BetterAuthOptions} from 'better-auth';
 import {organization,jwt} from 'better-auth/plugins';
@@ -18,20 +18,18 @@ interface MemberRow {id:string;organizationId:string;userId:string;role:string}
 interface InvitationRow {id:string;organizationId:string;email:string;role:string;status:string;expiresAt:Date|string}
 interface SessionRow {id:string;userId:string;expiresAt:Date|string}
 
-export interface LocalIdentityOptions {url:string;secret:string;databasePath:string;organizationId:string}
+export interface LocalIdentityOptions {url:string;secret:string;database:ApplicationDatabase;organizationId:string}
 /**
  * Operator-free identity for one self-hosted organization: email/password accounts,
  * invitations, browser sessions, the CLI device grant and the MCP authorization
  * server all live in this installation's own database. Ids keep the `user_`/`org_`
  * shapes that storage scopes and authorization already validate.
  */
-export async function createLocalIdentity({url,secret,databasePath,organizationId}:LocalIdentityOptions){
+export async function identityOptions({url,secret,database,organizationId}:LocalIdentityOptions){
   if(!/^org_[A-Za-z0-9]+$/.test(organizationId))throw new Error('Configure one organization');
-  const resource=url+'/mcp',database=new DatabaseSync(databasePath);
-  if(databasePath!==':memory:')chmodSync(databasePath,0o600);
-  database.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
+  const resource=url+'/mcp';
   const options={
-    appName:'OpenCrawl',baseURL:url,basePath:'/api/auth',secret,database,
+    appName:'OpenCrawl',baseURL:url,basePath:'/api/auth',secret,database:database.identityPool,
     telemetry:{enabled:false},logger:{level:'error'},
     rateLimit:{enabled:true,storage:'database'},
     account:{accountLinking:{enabled:false}},
@@ -50,8 +48,36 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
       oauthDeviceAuthorization({verificationUri:'/device'}),
     ],
   } satisfies BetterAuthOptions;
-  try{await (await getMigrations(options)).runMigrations();}catch(error){database.close();throw error;}
-  const auth=betterAuth(options);
+  return options;
+}
+
+/** The provider schema and its extension tables live in the namespace-bound auth schema.
+ * This prepares an empty target for offline import; it never creates accounts or grants. */
+export async function ensureIdentitySchema(options:LocalIdentityOptions){
+  const config=await identityOptions(options),{database}=options;
+  await database.ready();
+  await database.transaction(async client=>{
+    // Native Kysely introspects every visible schema before selecting this one.
+    // Coordinate namespace retirement with that catalog read, too.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:identity-schema:maintenance',0))");
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[database.identitySchema+':schema']);
+    await (await getMigrations(config)).runMigrations();
+    await database.identityPool.query(`CREATE TABLE IF NOT EXISTS "opencrawlIdentityBinding" (singleton integer PRIMARY KEY CHECK(singleton=1), "organizationId" text NOT NULL);
+      CREATE TABLE IF NOT EXISTS "opencrawlIdentityState" ("organizationId" text PRIMARY KEY, initialized integer NOT NULL CHECK(initialized IN (0,1)));
+      CREATE TABLE IF NOT EXISTS "opencrawlAccountEpoch" ("userId" text PRIMARY KEY, "notBefore" bigint NOT NULL)`);
+  });
+  return config;
+}
+
+export async function createLocalIdentity(input:LocalIdentityOptions){
+  const {url,database,organizationId}=input,resource=url+'/mcp';
+  const options=await ensureIdentitySchema(input),auth=betterAuth(options);
+  async function transaction<T>(run:(client:PoolClient)=>Promise<T>):Promise<T>{
+    const client=await database.identityPool.connect();let broken=false;
+    try {await client.query('BEGIN');const result=await run(client);await client.query('COMMIT');return result;}
+    catch(error){await client.query('ROLLBACK').catch(()=>{broken=true;});throw error;}
+    finally {client.release(broken);}
+  }
   const adapter=async()=>(await auth.$context).adapter;
   const user=(row:UserRow):HostedUser=>{const [firstName,...rest]=row.name.trim().split(/\s+/);return {id:row.id,email:row.email,emailVerified:row.emailVerified===true,firstName:firstName||null,lastName:rest.join(' ')||null};};
   // Better Auth's owner role is this product's admin role; members never hold more.
@@ -84,16 +110,13 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
         return row?membership(row):fail(404,'Membership not found');
       },
       async deleteOrganizationMembership(id){
-        database.exec('BEGIN IMMEDIATE');
-        try{
-          const row=database.prepare('SELECT member.userId,user.email FROM member JOIN user ON member.userId=user.id WHERE member.id=? AND member.organizationId=?').get(id,organizationId);
-          if(!row||typeof row.userId!=='string')fail(404,'Membership not found');
-          const userId=String(row!.userId);
-          database.prepare('DELETE FROM member WHERE id=? AND organizationId=?').run(id,organizationId);
-          database.prepare("UPDATE invitation SET status='canceled' WHERE organizationId=? AND lower(email)=lower(?) AND status='pending'").run(organizationId,String(row!.email));
-          revokeLocalCredentials(userId);
-          database.exec('COMMIT');
-        }catch(error){database.exec('ROLLBACK');throw error;}
+        await transaction(async client=>{
+          const {rows}=await client.query<{userId:string;email:string}>('SELECT member."userId", "user".email FROM member JOIN "user" ON member."userId"="user".id WHERE member.id=$1 AND member."organizationId"=$2 FOR UPDATE OF member',[id,organizationId]);
+          const row=rows[0];if(!row)fail(404,'Membership not found');
+          await client.query('DELETE FROM member WHERE id=$1 AND "organizationId"=$2',[id,organizationId]);
+          await client.query(`UPDATE invitation SET status='canceled' WHERE "organizationId"=$1 AND lower(email)=lower($2) AND status='pending'`,[organizationId,row!.email]);
+          await revokeLocalCredentials(client,row!.userId);
+        });
       },
       async listInvitations({organizationId:org}){
         ownOrganization(org);
@@ -128,51 +151,50 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
 
   /** Schema migration and idempotent seed of the organization and CLI client. */
   async function ready(){
-    database.exec('CREATE TABLE IF NOT EXISTS opencrawlIdentityBinding (singleton INTEGER PRIMARY KEY CHECK(singleton=1), organizationId TEXT NOT NULL)');
-    database.prepare('INSERT OR IGNORE INTO opencrawlIdentityBinding (singleton,organizationId) VALUES (1,?)').run(organizationId);
-    if(database.prepare('SELECT organizationId FROM opencrawlIdentityBinding WHERE singleton=1').get()?.organizationId!==organizationId)
-      throw new Error('Identity database belongs to a different organization');
-    database.exec('CREATE TABLE IF NOT EXISTS opencrawlIdentityState (organizationId TEXT PRIMARY KEY, initialized INTEGER NOT NULL)');
-    database.exec('CREATE TABLE IF NOT EXISTS opencrawlAccountEpoch (userId TEXT PRIMARY KEY, notBefore INTEGER NOT NULL)');
-    const db=await adapter();
-    if(!await db.findOne({model:'organization',where:[{field:'id',value:organizationId}]}))
-      await db.create({model:'organization',data:{id:organizationId,name:'OpenCrawl',slug:organizationId.toLowerCase().replaceAll('_','-'),createdAt:new Date()},forceAllowId:true});
-    if(!await db.findOne({model:'oauthClient',where:[{field:'clientId',value:CLI_CLIENT_ID}]}))
-      await db.create({model:'oauthClient',data:{clientId:CLI_CLIENT_ID,name:'OpenCrawl CLI',tokenEndpointAuthMethod:'none',grantTypes:['urn:ietf:params:oauth:grant-type:device_code','refresh_token'],
-        responseTypes:[],redirectUris:[],scopes:['openid','profile','email','offline_access'],skipConsent:true,requirePKCE:false,disabled:false,createdAt:new Date(),updatedAt:new Date()}});
+    await database.transaction(async client=>{
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[database.identitySchema+':bootstrap']);
+      await database.identityPool.query('INSERT INTO "opencrawlIdentityBinding" (singleton,"organizationId") VALUES (1,$1) ON CONFLICT(singleton) DO NOTHING',[organizationId]);
+      const {rows}=await database.identityPool.query<{organizationId:string}>('SELECT "organizationId" FROM "opencrawlIdentityBinding" WHERE singleton=1');
+      if(rows[0]?.organizationId!==organizationId)throw new Error('Identity database belongs to a different organization');
+      const db=await adapter();
+      if(!await db.findOne({model:'organization',where:[{field:'id',value:organizationId}]}))
+        await db.create({model:'organization',data:{id:organizationId,name:'OpenCrawl',slug:organizationId.toLowerCase().replaceAll('_','-'),createdAt:new Date()},forceAllowId:true});
+      if(!await db.findOne({model:'oauthClient',where:[{field:'clientId',value:CLI_CLIENT_ID}]}))
+        await db.create({model:'oauthClient',data:{clientId:CLI_CLIENT_ID,name:'OpenCrawl CLI',tokenEndpointAuthMethod:'none',grantTypes:['urn:ietf:params:oauth:grant-type:device_code','refresh_token'],
+          responseTypes:[],redirectUris:[],scopes:['openid','profile','email','offline_access'],skipConsent:true,requirePKCE:false,disabled:false,createdAt:new Date(),updatedAt:new Date()}});
+    });
   }
-  /** First run: no member exists until the operator creates the first admin. */
-  async function setupRequired(){return !database.prepare('SELECT 1 FROM opencrawlIdentityState WHERE organizationId=? AND initialized=1').get(organizationId)&&
-    (await (await adapter()).count({model:'member',where:[{field:'organizationId',value:organizationId}]}))===0;}
+  /** The durable initialization marker prevents enrollment reopening after removal. */
+  async function setupRequired(){
+    const {rowCount}=await database.identityPool.query('SELECT 1 FROM "opencrawlIdentityState" WHERE "organizationId"=$1 AND initialized=1',[organizationId]);
+    return !rowCount&&(await (await adapter()).count({model:'member',where:[{field:'organizationId',value:organizationId}]}))===0;
+  }
   async function pendingInvitation(id:string){
     const row=await (await adapter()).findOne<InvitationRow>({model:'invitation',where:[{field:'id',value:id}]});
     return row&&row.organizationId===organizationId&&live(row)?row:null;
   }
   /** Operator-controlled enrollment authorizes a local account; it does not verify its mailbox. */
   async function admitAccount(userId:string,role:'admin'|'member',invitationId?:string,workspace?:string){
-    // This pinned adapter owns the SQLite mapping. A synchronous transaction
-    // makes consuming a grant and adding its member atomic across processes.
-    database.exec('BEGIN IMMEDIATE');
-    try {
-      const account=database.prepare('SELECT email FROM user WHERE id=?').get(userId);
+    await transaction(async client=>{
+      // Serialize first-admin and invitation consumption within this organization.
+      await client.query('SELECT id FROM organization WHERE id=$1 FOR UPDATE',[organizationId]);
+      const account=(await client.query<{email:string}>('SELECT email FROM "user" WHERE id=$1',[userId])).rows[0];
       if(!account)fail(404,'Account not found');
       if(invitationId){
-        const invite=database.prepare('SELECT * FROM invitation WHERE id=? AND organizationId=?').get(invitationId,organizationId);
-        const expiresAt=typeof invite?.expiresAt==='string'?Date.parse(invite.expiresAt):Number(invite?.expiresAt);
-        if(!invite||invite.status!=='pending'||!Number.isFinite(expiresAt)||expiresAt<=Date.now()||invite.email!==account!.email)fail(410,'Invitation unavailable');
+        const invite=(await client.query<InvitationRow>('SELECT * FROM invitation WHERE id=$1 AND "organizationId"=$2 FOR UPDATE',[invitationId,organizationId])).rows[0];
+        if(!invite||invite.status!=='pending'||!Number.isFinite(new Date(invite.expiresAt).getTime())||new Date(invite.expiresAt).getTime()<=Date.now()||invite.email!==account!.email)fail(410,'Invitation unavailable');
         role=invite!.role==='admin'?'admin':'member';
       }else{
-        if(database.prepare('SELECT 1 FROM opencrawlIdentityState WHERE organizationId=? AND initialized=1').get(organizationId)||
-          database.prepare('SELECT 1 FROM member WHERE organizationId=? LIMIT 1').get(organizationId))fail(403,'Workspace is already initialized');
-        database.prepare('INSERT INTO opencrawlIdentityState (organizationId,initialized) VALUES (?,1)').run(organizationId);
+        if((await client.query('SELECT 1 FROM "opencrawlIdentityState" WHERE "organizationId"=$1 AND initialized=1',[organizationId])).rowCount||
+          (await client.query('SELECT 1 FROM member WHERE "organizationId"=$1 LIMIT 1',[organizationId])).rowCount)fail(403,'Workspace is already initialized');
+        await client.query('INSERT INTO "opencrawlIdentityState" ("organizationId",initialized) VALUES ($1,1)',[organizationId]);
         role='admin';
-        if(workspace)database.prepare('UPDATE organization SET name=? WHERE id=?').run(workspace,organizationId);
+        if(workspace)await client.query('UPDATE organization SET name=$1 WHERE id=$2',[workspace,organizationId]);
       }
-      if(!database.prepare('SELECT 1 FROM member WHERE userId=? AND organizationId=?').get(userId,organizationId))
-        database.prepare('INSERT INTO member (id,organizationId,userId,role,createdAt) VALUES (?,?,?,?,?)').run('om_'+randomBytes(16).toString('hex'),organizationId,userId,role,Date.now());
-      if(invitationId)database.prepare("UPDATE invitation SET status='accepted' WHERE id=?").run(invitationId);
-      database.exec('COMMIT');
-    }catch(error){database.exec('ROLLBACK');throw error;}
+      if(!(await client.query('SELECT 1 FROM member WHERE "userId"=$1 AND "organizationId"=$2',[userId,organizationId])).rowCount)
+        await client.query('INSERT INTO member (id,"organizationId","userId",role,"createdAt") VALUES ($1,$2,$3,$4,$5)',['om_'+randomBytes(16).toString('hex'),organizationId,userId,role,new Date()]);
+      if(invitationId)await client.query(`UPDATE invitation SET status='accepted' WHERE id=$1`,[invitationId]);
+    });
   }
   /** Pending invitation links by email, for the admin-only Team view. */
   async function invitationLinks(){
@@ -181,35 +203,32 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
   }
   async function renameOrganization(name:string){await directory.organizations.updateOrganization({organization:organizationId,name});}
 
-  /** Called inside a transaction with the account or membership change. */
-  function revokeLocalCredentials(userId:string){
-    database.prepare('DELETE FROM session WHERE userId=?').run(userId);
-    database.prepare('DELETE FROM oauthAccessToken WHERE userId=?').run(userId);
-    database.prepare('DELETE FROM oauthRefreshToken WHERE userId=?').run(userId);
-    database.prepare('DELETE FROM deviceCode WHERE userId=?').run(userId);
-    database.prepare('DELETE FROM oauthConsent WHERE userId=?').run(userId);
-    database.prepare(`DELETE FROM verification WHERE CASE WHEN json_valid(value) THEN
-      json_extract(value,'$.type')='authorization_code'
-      AND json_extract(value,'$.userId')=? ELSE 0 END`).run(userId);
-    database.prepare('INSERT INTO opencrawlAccountEpoch (userId,notBefore) VALUES (?,?) ON CONFLICT(userId) DO UPDATE SET notBefore=excluded.notBefore').run(userId,Math.floor(Date.now()/1000)+1);
+  /** Account mutation and local credential invalidation commit together. */
+  async function revokeLocalCredentials(client:PoolClient,userId:string){
+    for(const table of ['session','oauthAccessToken','oauthRefreshToken','deviceCode','oauthConsent'])
+      await client.query(`DELETE FROM "${table}" WHERE "userId"=$1`,[userId]);
+    // Verification also holds non-JSON tokens. Parse only candidate authorization
+    // codes without ever casting malformed provider values inside SQL.
+    const {rows}=await client.query<{id:string;value:string}>('SELECT id,value FROM verification WHERE value LIKE $1',['%"authorization_code"%']);
+    const ids=rows.flatMap(row=>{try {const value=JSON.parse(row.value);return value?.type==='authorization_code'&&value.userId===userId?[row.id]:[];}catch{return [];}});
+    if(ids.length)await client.query('DELETE FROM verification WHERE id=ANY($1::text[])',[ids]);
+    await client.query('INSERT INTO "opencrawlAccountEpoch" ("userId","notBefore") VALUES ($1,$2) ON CONFLICT("userId") DO UPDATE SET "notBefore"=EXCLUDED."notBefore"',[userId,Math.floor(Date.now()/1000)+1]);
   }
 
   /** Operator-only recovery, never exposed as an HTTP route. Passwords stay off argv/logs. */
   async function recoverPassword(email:string,password:string){
     if(password.length<10||password.length>128)fail(400,'Use a password of 10 to 128 characters');
-    const row=database.prepare('SELECT user.id FROM user JOIN member ON member.userId=user.id WHERE lower(user.email)=? AND member.organizationId=?').get(email.trim().toLowerCase(),organizationId);
-    if(!row||typeof row.id!=='string')fail(404,'No enrolled account has that email');
-    const userId=String(row!.id),hash=await (await auth.$context).password.hash(password);
-    database.exec('BEGIN IMMEDIATE');
-    try {
-      const result=database.prepare("UPDATE account SET password=?, updatedAt=? WHERE userId=? AND providerId='credential'").run(hash,Date.now(),userId);
-      if(result.changes!==1)fail(409,'Expected one password account');
-      revokeLocalCredentials(userId);
-      database.exec('COMMIT');
-    }catch(error){database.exec('ROLLBACK');throw error;}
+    const hash=await (await auth.$context).password.hash(password);
+    await transaction(async client=>{
+      const row=(await client.query<{id:string}>('SELECT "user".id FROM "user" JOIN member ON member."userId"="user".id WHERE lower("user".email)=$1 AND member."organizationId"=$2 FOR UPDATE OF "user",member',[email.trim().toLowerCase(),organizationId])).rows[0];
+      if(!row)fail(404,'No enrolled account has that email');
+      const result=await client.query(`UPDATE account SET password=$1,"updatedAt"=$2 WHERE "userId"=$3 AND "providerId"='credential'`,[hash,new Date(),row!.id]);
+      if(result.rowCount!==1)fail(409,'Expected one password account');
+      await revokeLocalCredentials(client,row!.id);
+    });
   }
-  const tokenCurrent=(userId:string,issuedAt:number)=>{
-    const row=database.prepare('SELECT notBefore FROM opencrawlAccountEpoch WHERE userId=?').get(userId);
+  const tokenCurrent=async(userId:string,issuedAt:number)=>{
+    const row=(await database.identityPool.query<{notBefore:string}>('SELECT "notBefore" FROM "opencrawlAccountEpoch" WHERE "userId"=$1',[userId])).rows[0];
     return !row||issuedAt>=Number(row.notBefore);
   };
 
@@ -219,6 +238,6 @@ export async function createLocalIdentity({url,secret,databasePath,organizationI
     if(!keys||Date.now()-keys.at>300_000)keys={set:createLocalJWKSet(await auth.api.getJwks() as JSONWebKeySet),at:Date.now()};
     try{return await keys.set(header,token);}catch{keys={set:createLocalJWKSet(await auth.api.getJwks() as JSONWebKeySet),at:Date.now()};return keys.set(header,token);}
   };
-  return {auth,directory,close:()=>database.close(),ready,setupRequired,pendingInvitation,admitAccount,invitationLinks,renameOrganization,recoverPassword,tokenCurrent,keyResolver,resource,issuer:url+'/api/auth'};
+  return {auth,directory,close:()=>{},ready,setupRequired,pendingInvitation,admitAccount,invitationLinks,renameOrganization,recoverPassword,tokenCurrent,keyResolver,resource,issuer:url+'/api/auth'};
 }
 export type LocalIdentity=Awaited<ReturnType<typeof createLocalIdentity>>;

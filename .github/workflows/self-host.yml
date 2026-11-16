@@ -24,6 +24,12 @@ jobs:
           - {installation: dev, storage: legacy-json, from: 831eb9a89b34c2a2e04002f754f3d1e1e8e21bb6, sqlite: false}
           - {installation: dev, storage: dedicated-postgres, from: a1238901d505bb6f01f48d973ed3123f98ee20fd, sqlite: true}
           - {installation: deploy, storage: containerd-postgres, from: a1238901d505bb6f01f48d973ed3123f98ee20fd, sqlite: true, containerd: true}
+          # Published core v0.4.1: the installed version immediately before the
+          # application-state consolidation, not a synthetic predecessor.
+          - {installation: deploy, storage: v0.4.1-opensearch, from: fc748cbcba9da2c9830d842b38a2fcc19c340bd7, sqlite: false}
+          - {installation: deploy, storage: v0.4.1-sqlite, from: fc748cbcba9da2c9830d842b38a2fcc19c340bd7, sqlite: true}
+          - {installation: dev, storage: v0.4.1-opensearch, from: fc748cbcba9da2c9830d842b38a2fcc19c340bd7, sqlite: false}
+          - {installation: dev, storage: v0.4.1-sqlite, from: fc748cbcba9da2c9830d842b38a2fcc19c340bd7, sqlite: true}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
@@ -124,7 +130,7 @@ jobs:
           path: ${{ runner.temp }}/sqlite-seed/verification.json
       - name: Show SQLite installation diagnostics on failure
         if: failure()
-        run: docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml logs --tail 60 app worker storage-ready s3
+        run: docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.sqlite.yaml logs --tail 60 app worker app-state-ready s3
       - name: Remove only this job's disposable installation
         if: always()
         run: |
@@ -239,7 +245,6 @@ jobs:
         run: ./dev/up reset --yes
   full-airbyte-upgrade:
     name: Full application upgrade with retained Airbyte connector
-    if: github.event_name == 'workflow_dispatch' && inputs.full_airbyte
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
@@ -249,7 +254,7 @@ jobs:
           node-version: 24.22.2
       - name: Upgrade and restore the full default application with Airbyte
         env:
-          UPGRADE_FROM: 831eb9a89b34c2a2e04002f754f3d1e1e8e21bb6
+          UPGRADE_FROM: fc748cbcba9da2c9830d842b38a2fcc19c340bd7
           UPGRADE_TARGET: ${{ github.sha }}
           UPGRADE_INSTALLATION: dev
           UPGRADE_AIRBYTE: 'true'
@@ -265,7 +270,7 @@ jobs:
     # Preserve the required branch-protection check while replacing its coverage.
     name: Self-host smoke
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [full-application-upgrade, sqlite, application]
+    needs: [full-application-upgrade, full-airbyte-upgrade, sqlite, application]
     if: always() && !cancelled()
     steps:
       - name: Require full application installation and upgrade acceptance

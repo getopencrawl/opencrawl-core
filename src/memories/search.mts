@@ -1,3 +1,4 @@
+import type {ApplicationState} from '../state/types.mjs';
 import {lexicalQuery} from '../search/lexical.mjs';
 import type {Principal,ObjectStore} from '../sessions/types.mjs';
 import type {StoredMemorySnapshot} from './types.mjs';
@@ -13,9 +14,9 @@ import {authorizedMemoryDocuments} from './access.mjs';
 
 const f=(field: string)=>realmField('memory',field);
 function fail(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
-export function createMemorySearch(options: RealmOptions & {store?:ObjectStore;prefix?:string}) {
+export function createMemorySearch(options: RealmOptions & {state:ApplicationState;store?:ObjectStore;prefix?:string}) {
   const resolve=createRealmResolver(options);
-  const authoritativeControls=options.store&&options.prefix?createControls({store:options.store,prefix:options.prefix}):null;
+  const authoritativeControls=createControls({state:options.state});
   async function heads(principal: Principal) {
     const result=await resolve(principal).collection('memory').search(principal,{size:10000,track_total_hits:true,
       query:{term:{[f('kind')]:'snapshot'}},_source:MEMORY_HEAD_FIELDS});

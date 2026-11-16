@@ -1,4 +1,6 @@
+import type {ApplicationState} from '../state/types.mjs';
 /** Portable connector contracts. Provider payloads are validated by their adapters. */
+import type {SlackCaptureState} from '../state/slack-capture.mjs';
 export type Provider = 'slack' | 'granola' | 'circleback' | 'notion' | 'github' | 'googledrive';
 export interface ConnectorBinding {
   tenantId: string; connectionId: string; workspaceId: string; provider: Provider;
@@ -40,6 +42,7 @@ export interface ConnectorSearch {
   suppress?(principal: ConnectorPrincipal, binding: ConnectorBinding, identity: SuppressionIdentity): Promise<unknown>;
 }
 export interface PipelineOptions {
+  state:ApplicationState;
   binding: ConnectorBinding; store: ConnectorStore; search: ConnectorSearch;
   checkActive?: (binding: ConnectorBinding) => Promise<unknown>;
   heartbeat?: (progress: Record<string, number>) => void;
@@ -71,6 +74,7 @@ export interface SlackApiResponse { status: number; headers?: Record<string, str
 export type SlackRequest = (method: string, query: SlackQuery) => Promise<SlackApiResponse>;
 export interface SlackCaptureOptions {
   binding: ConnectorBinding; store: ConnectorStore; request: SlackRequest;
+  state:{readonly slackCapture:SlackCaptureState};
   checkActive?: (binding: ConnectorBinding) => Promise<unknown>; now?: () => number;
 }
 export type ErrorMetadata = Error & { code?: string; permanent?: boolean; status?: number; writeOutcome?: string };

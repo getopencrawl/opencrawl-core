@@ -1,3 +1,4 @@
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gunzipSync} from 'node:zlib';
@@ -9,8 +10,8 @@ const ok=data=>({status:200,data:{ok:true,...data}});
 function setup(handler){
  const objects=new Map(),calls=[];let clock=input.cutoff,active=true;
  const store={bucket:'fixture',get:async k=>objects.get(k),put:async(k,v)=>objects.set(k,Buffer.from(v))};
- const options={binding,store,now:()=>clock,checkActive:async()=>{if(!active)throw Error('revoked');},request:async(method,query)=>{calls.push({method,query});return handler(method,query);}};
- return {objects,calls,store,capture:createSlackMessageCapture(options),restart:()=>createSlackMessageCapture(options),advance:(ms=70000)=>clock+=ms,revoke:()=>active=false};
+ const options=withTestState({binding,store,now:()=>clock,checkActive:async()=>{if(!active)throw Error('revoked');},request:async(method,query)=>{calls.push({method,query});return handler(method,query);}});
+ return {objects,states:options.state.slackCapture.values,repository:options.state.slackCapture,calls,store,capture:createSlackMessageCapture(options),restart:()=>createSlackMessageCapture(options),advance:(ms=70000)=>clock+=ms,revoke:()=>active=false};
 }
 test('full history exhausts archived channels and old-parent reply cursors without a backfill cutoff',async()=>{
  const h=setup((method,q)=>{
@@ -25,7 +26,7 @@ test('full history exhausts archived channels and old-parent reply cursors witho
  const keys=[...h.objects.keys()].filter(k=>k.includes('stream=canonical_messages/'));
  const records=keys.flatMap(k=>gunzipSync(h.objects.get(k)).toString().trim().split('\n').map(JSON.parse));
  assert.ok(records.some(r=>r._airbyte_data.ts==='1.000001'));
- const writes=[],pipeline=createConnectorPipeline({binding,store:h.store,search:{identity:'fixture',putDocuments:async(_,__,docs)=>writes.push(...docs)}});
+ const writes=[],pipeline=createConnectorPipeline(withTestState({binding,store:h.store,search:{identity:'fixture',putDocuments:async(_,__,docs)=>writes.push(...docs)}}));
  for(const key of keys)await pipeline.processObject({key});
  assert.ok(writes.every(d=>d.document.sourceAuthority===1));assert.ok(writes.some(d=>d.document.text.includes('Full tail beyond preview')));
 });
@@ -94,10 +95,10 @@ test('message-only captures revoke missing public channels only after a complete
 test('a channel published before a failed checkpoint is still remembered for later revocation',async()=>{
  let channels=[{id:'C1',is_private:false}];
  const h=setup(()=>ok({channels}));
- const put=h.store.put;let saved=0;
- h.store.put=async(key,bytes)=>{
-  if(key.endsWith('/history/state.json')&&++saved===2)throw Error('checkpoint unavailable');
-  await put(key,bytes);
+ const save=h.repository.saveCheckpoint;let saved=0;
+ h.repository.saveCheckpoint=async(binding,kind,run,value,revision)=>{
+  if(run==='history'&&++saved===2)throw Error('checkpoint unavailable');
+  return save(binding,kind,run,value,revision);
  };
  await assert.rejects(h.capture.step(input),/checkpoint unavailable/);
  assert.ok([...h.objects.keys()].some(key=>key.includes('stream=channels/')));
@@ -110,14 +111,14 @@ test('a channel published before a failed checkpoint is still remembered for lat
 test('same-run retry preserves catalog-only channels after raw publication and a failed checkpoint',async()=>{
  let channels=[{id:'C1',is_private:false}];
  const h=setup(()=>ok({channels}));
- const put=h.store.put;let saved=0;
- h.store.put=async(key,bytes)=>{
-  if(key.endsWith('/history/state.json')&&++saved===2)throw Error('checkpoint unavailable');
-  await put(key,bytes);
+ const save=h.repository.saveCheckpoint;let saved=0;
+ h.repository.saveCheckpoint=async(binding,kind,run,value,revision)=>{
+  if(run==='history'&&++saved===2)throw Error('checkpoint unavailable');
+  return save(binding,kind,run,value,revision);
  };
  await assert.rejects(h.capture.step(input),/checkpoint unavailable/);
  channels=[];h.advance();await h.restart().step(input);
- assert.deepEqual(JSON.parse(h.objects.get(binding.rawPrefix+'capture/messages-v1/catalog.json')).channels,['C1']);
+ assert.deepEqual(JSON.parse(h.states.get(binding.rawPrefix+'capture/messages-v1/catalog.json')).channels,['C1']);
  const records=[...h.objects].filter(([key])=>key.includes('stream=channels/'))
   .flatMap(([,bytes])=>gunzipSync(bytes).toString().trim().split('\n').map(line=>JSON.parse(line)._airbyte_data));
  assert.deepEqual(records.map(channel=>[channel.id,channel.is_private]),[['C1',false],['C1',true]]);

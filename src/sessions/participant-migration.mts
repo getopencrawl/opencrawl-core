@@ -1,3 +1,4 @@
+import type {ApplicationState} from '../state/types.mjs';
 import type {TenantPrincipal, ObjectStore, JsonValue} from './types.mjs';
 import type {SearchRealm, DocumentItem, IndexHit} from '../search/types.mjs';
 import {createSessionIngest, digest} from './ingest.mjs';
@@ -9,15 +10,15 @@ import {participantProjection} from './participants.mjs';
 export interface ParticipantMigrationReport {events: number; skippedDeleted: number; after: JsonValue[] | null; complete: boolean}
 /** Add sender metadata to existing first passages. Raw data and ownership stay
  * intact. Atomic writes cannot recreate deleted documents or restore privacy. */
-export async function migrateSessionParticipants({realm, principal, store, prefix, dryRun = true, pageSize = 100, maxEvents = 1000, after = null, onPage = async () => {}}: {
-  realm: SearchRealm; principal: TenantPrincipal; store: ObjectStore; prefix: string;
+export async function migrateSessionParticipants({realm, principal, state, store, prefix, dryRun = true, pageSize = 100, maxEvents = 1000, after = null, onPage = async () => {}}: {
+  realm: SearchRealm; principal: TenantPrincipal; state:ApplicationState;store: ObjectStore; prefix: string;
   dryRun?: boolean; pageSize?: number; maxEvents?: number; after?: JsonValue[] | null;
   onPage?(report: ParticipantMigrationReport): Promise<unknown>;
 }): Promise<ParticipantMigrationReport> {
   if (!principal?.tenantId || principal.tenantId !== realm.tenantId || principal.captureAccess !== undefined) throw Object.assign(new Error('Realm scope denied'), {status: 403});
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 500 || !Number.isSafeInteger(maxEvents) || maxEvents < 1 || maxEvents > 1_000_000) throw new Error('Invalid participant migration bounds');
   if (!dryRun) await realm.ensureIndex();
-  const collection = realm.collection('session'), f = collection.field, ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
+  const collection = realm.collection('session'), f = collection.field, ingest = createSessionIngest({state,store, prefix}), controls = createControls({state});
   const report: ParticipantMigrationReport = {events: 0, skippedDeleted: 0, after, complete: false};
   for (;;) {
     const page = await collection.search(principal, {size: Math.min(pageSize, maxEvents - report.events - report.skippedDeleted),
@@ -56,7 +57,7 @@ export async function migrateSessionParticipants({realm, principal, store, prefi
       const results = await Promise.allSettled(sources.slice(offset, offset + 4).map(prepare));
       for (const result of results) if (result.status === 'rejected') throw result.reason;
     }
-    if (!dryRun && updates.length) await withSessionDocumentWrites({store, prefix, tenantId: principal.tenantId, documents: updates}, async () => {
+    if (!dryRun && updates.length) await withSessionDocumentWrites({state,store, prefix, tenantId: principal.tenantId, documents: updates}, async () => {
       await collection.bulk(principal, updates);
       const actual = await collection.mget(principal, updates.map(item => item.id));
       const byId = new Map(actual.docs.map(hit => [hit._id, hit]));

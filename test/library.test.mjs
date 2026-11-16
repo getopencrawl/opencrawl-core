@@ -1,3 +1,4 @@
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -61,7 +62,7 @@ test('Codex IDE and attached-file headers never become the prompt or title', () 
 
 test('library titles prefer verified native names, use original prompt text, and reject forged title scope', async () => {
   const principal={tenantId:'team',userId:'alice'}, store=memorySessionStore(), prefix='sessions/titles';
-  const ingest=createSessionIngest({store,prefix}), at='2026-11-09T10:00:00Z';
+  const ingest=createSessionIngest(withTestState({store,prefix})), at='2026-11-09T10:00:00Z';
   const batch={schemaVersion:1,owner:principal,installationId:'device',harness:'codex',sessionId:'session',origin:'desktop',attachments:[],events:[
     {id:'prompt',kind:'message',timestamp:at,sequence:1,data:{role:'user',channel:'user.text',id:'NATIVE-ID',content:[{type:'input_text',text:'Actual request'}]}},
     {id:'title',kind:'session_title',timestamp:at,sequence:2,data:{title:'A saved chat name'}},
@@ -72,7 +73,7 @@ test('library titles prefer verified native names, use original prompt text, and
   const hits=batchDocuments({prefix,key:sourceKey,batch:stored,principal}).map(({id,document})=>({_id:'session:'+id,_source:realmDocument('session',id,document)}));
   const records=values=>({records:{hits:{hits:values}}}), empty={hits:{total:{value:0,relation:'eq'},hits:[]},timed_out:false,_shards:{failed:0}};
   let mode='native', reads=0;
-  const library=createSessionLibrary({store,prefix,endpoint:'http://localhost:9200',fetch:async(_url,request)=>{
+  const library=createSessionLibrary(withTestState({store,prefix,endpoint:'http://localhost:9200',fetch:async(_url,request)=>{
     const body=JSON.parse(request.body);reads++;
     if(body.aggs.tokenCounts)return Response.json({...empty,aggregations:{tokenCounts:{buckets:[{key:['alice','codex','session'],doc_count:2,tokens:{value:2},counted:{value:2}}]}}});
     if(body.aggs.titles) {
@@ -82,7 +83,7 @@ test('library titles prefer verified native names, use original prompt text, and
       return Response.json({...empty,aggregations:{titles:{buckets:[{key:['alice','codex','session'],metadata:records(mode==='fallback'?[]:[title]),prompts:records([hits[0]])}]}}});
     }
     return Response.json({...empty,aggregations:{sessions:{buckets:[{key:['alice','codex','session'],doc_count:1,lastActivity:{value:Date.parse(at)},firstActivity:{value:Date.parse(at)},private:{doc_count:0},origin:{buckets:[]},host:{buckets:[]}}]}}});
-  }});
+  }}));
   assert.equal((await library.list(principal)).sessions[0].title,'A saved chat name');
   mode='fallback';assert.equal((await library.list(principal)).sessions[0].title,'Actual request');
   mode='forged';await assert.rejects(library.list(principal),/title scope/);

@@ -1,3 +1,4 @@
+import {stateFor} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -10,7 +11,7 @@ const org='org_oss',user='user_a',integrationId='int_'+'a'.repeat(26),url='https
 const scopes='channels:read,channels:history,search:read,users:read,team:read,emoji:read';
 async function fixture(t){
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-credential-test-'));t.after(()=>rm(dir,{recursive:true,force:true}));
-  const store=createLocalSessionStore(dir),key=Buffer.alloc(32,7),vault=credentialVault({store,key,prefix:'credentials',organizationId:org});
+  const store=createLocalSessionStore(dir),key=Buffer.alloc(32,7),vault=credentialVault({state:stateFor(store),key,prefix:'credentials',organizationId:org});
   const state={calls:[],now:Date.now(),exchangeGate:null,revoke:false,connectedAccountId:null};
   const record={tenantId:org,userId:user,integrationId,provider:'slack',status:'provisioning'};
   const registry={get:async()=>({...record,connectedAccountId:state.connectedAccountId})};
@@ -36,11 +37,11 @@ async function fixture(t){
 test('OAuth secrets are encrypted, scope-bound, and never included in Airbyte source settings',async t=>{
   const f=await fixture(t);assert.equal(await f.connect(),f.callbackUrl);
   const g=await f.vault.read(f.link.connected_account_id);
-  const bytes=await f.store.get(`credentials/${org}/${g.record.id}.enc`);
+  const bytes=(await stateFor(f.store).connectorSecrets.read({kind:'grant',organizationId:org,id:g.record.id},`credentials/${org}/${g.record.id}.enc`)).data;
   assert.ok(!bytes.includes(Buffer.from('access-secret')));assert.ok(!bytes.includes(Buffer.from('refresh-secret')));
   await assert.rejects(f.vault.write(g.record,null),{status:409});
-  await assert.rejects(credentialVault({store:f.store,key:Buffer.alloc(32,8),prefix:'credentials',organizationId:org}).read(g.record.id));
-  const other='grant_'+'b'.repeat(48);await f.store.put(`credentials/${org}/${other}.enc`,bytes);await assert.rejects(f.vault.read(other));
+  await assert.rejects(credentialVault({state:stateFor(f.store),key:Buffer.alloc(32,8),prefix:'credentials',organizationId:org}).read(g.record.id));
+  const other='grant_'+'b'.repeat(48);await stateFor(f.store).connectorSecrets.compareAndSet({kind:'grant',organizationId:org,id:other},`credentials/${org}/${other}.enc`,null,bytes);await assert.rejects(f.vault.read(other));
   const config=await f.service.sourceConfiguration({...f.record,connectedAccountId:g.record.id},{sourceConfiguration:()=>({start_date:'2026-01-01'})});
   assert.ok(config.credential_proxy_api_key);assert.doesNotMatch(JSON.stringify(config),/access-secret|refresh-secret|client-secret/);
 });

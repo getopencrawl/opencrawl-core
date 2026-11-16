@@ -49,20 +49,11 @@ test('refresh serves recent measurements, retries with backoff, expires stale da
   records.splice(0);assert.equal((await integrations.list(principal))[0].state,'disconnected');
 });
 
-test('durable counts remain readable while a slow recount runs, and scoped caches do not collide',async()=>{
-  const scans=gate(), saved=gzipSync(JSON.stringify({version:1,read:[],ids:{messages:['one','two']},full:{}}));
-  let reads=0,lists=0;
-  const buckets={read:async bucket=>{reads++;if(bucket==='other')throw Object.assign(Error('missing'),{status:404});return saved;},list:async()=>{lists++;return scans.promise;},write:async()=>{},stream:async()=>assert.fail('No objects')};
-  const counts=createRecordCounts({buckets,legacyBucket:'owned'});
-  // A live handle keeps this isolated test alive while the bounded, unrefed deadline runs.
-  const alive=setInterval(()=>{},1000);
-  try {
-    assert.deepEqual(await counts.get(record,provider,new Set([1]),{wait:10}),{messages:2});
-    const repeated=counts.get(record,provider,new Set([1]),{wait:1000});
-    assert.deepEqual(await repeated,{messages:2});assert.equal(reads,1);assert.equal(lists,1);
-    assert.equal(await counts.get({...record,tenantId:'org_b',s3Bucket:'other'},provider,new Set([1]),{wait:10}),null);
-    assert.equal(reads,2);assert.equal(lists,2);
-  } finally {scans.resolve([]);clearInterval(alive);await tick();}
+test('durable counts reads never scan raw data',async()=>{
+  let reads=0;
+  const counts=createRecordCounts({repository:{read:async input=>{reads++;return input.tenantId==='org_a'?{messages:2}:null;}},buckets:{list:async()=>assert.fail('API read cannot scan')},legacyBucket:'owned'});
+  assert.deepEqual(await counts.get(record),{messages:2});
+  assert.equal(await counts.get({...record,tenantId:'org_b'}),null);assert.equal(reads,2);
 });
 
 test('usage reports do not execute synthetic full-text latency probes',async()=>{
@@ -78,7 +69,7 @@ test('integration cards show durable measurements without waiting for a raw-data
   const integrations=createIntegrations({environment:'production',appUrl:'https://app.example',providers:{slack:provider},
     registry:{listTenant:async()=>[record]},oauth:{},destination:{},workspaceId:async()=>'workspace',legacyBucket:'owned',
     airbyte:{jobs:async()=>[{jobId:1,status:'succeeded'}],streamCounts:async()=>({messages:999})},
-    buckets:{read:async()=>saved,list:async()=>scan.promise,write:async()=>{},stream:async()=>assert.fail('No objects')}});
+    counts:{get:async()=>({messages:2})},buckets:{list:async()=>assert.fail('UI cannot scan')}});
   const alive=setInterval(()=>{},1000);t.after(()=>clearInterval(alive));
   // The scan remains unresolved until cleanup. The page must still return the durable count.
   await integrations.list(principal);await tick();
@@ -90,7 +81,7 @@ test('missing distinct counts stay unknown instead of reporting cumulative Airby
   const integrations=createIntegrations({environment:'production',appUrl:'https://app.example',providers:{slack:provider},
     registry:{listTenant:async()=>[record]},oauth:{},destination:{},workspaceId:async()=>'workspace',legacyBucket:'owned',
     airbyte:{jobs:async()=>[{jobId:1,status:'succeeded',rowsSynced:999}],streamCounts:async()=>({messages:999})},
-    buckets:{read:async()=>{throw Object.assign(Error('missing'),{status:404});},list:async()=>scan.promise,write:async()=>{},stream:async()=>assert.fail('No objects')}});
+    counts:{get:async()=>null},buckets:{list:async()=>assert.fail('UI cannot scan')}});
   const alive=setInterval(()=>{},1000);t.after(()=>clearInterval(alive));
   await integrations.list(principal);await tick();
   const card=(await integrations.list(principal))[0];assert.equal(card.state,'synced');assert.equal(card.synced,undefined);assert.deepEqual(card.rows,[]);

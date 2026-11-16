@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {withTestState} from './fixtures/memory-application-state.mjs';
 import assert from 'node:assert/strict';
 import {createSlackFileCapture} from '../dist/src/connectors/slack-source-files.mjs';
 import {createSlackMessageCapture} from '../dist/src/connectors/slack-source-messages.mjs';
@@ -13,21 +14,22 @@ function setup(family,next,{empty=true,multiple=false}={}) {
  const stateKey=binding.rawPrefix+`capture/${files?'files':'messages'}-v1/${input.runId}/state.json`;
  const store={get:async key=>objects.get(key),put:async(key,bytes)=>objects.set(key,Buffer.from(bytes))};
  const channels=multiple?['C1','C2']:['C1'];
- const options={binding,store,now:()=>clock,download:async()=>assert.fail('image fixture needs no download'),request:async(method,query)=>{
+ const options=withTestState({binding,store,now:()=>clock,download:async()=>assert.fail('image fixture needs no download'),request:async(method,query)=>{
   calls.push({method,query});
   if(method==='conversations.list')return ok({channels:family.endsWith('channels')&&empty?[]:channels.map(id=>({id,is_private:false})),response_metadata:{next_cursor:family.endsWith('channels')||multiple?next(query.cursor,method,query):''}});
   if(method==='files.list')return ok({files:(multiple?['F1','F2']:['F1']).map(id=>({id})),paging:{page:query.page,pages:1}});
   if(method==='files.info')return ok({file:{id:query.file,channels,mimetype:'image/png'},comments:empty?[]:[{id:'comment',comment:'same comment'}],response_metadata:{next_cursor:next(query.cursor,method,query)}});
   if(method==='conversations.history')return ok({messages:family==='messages-replies'||multiple?[{ts:'1.000001',reply_count:1}]:empty?[]:[{ts:'1.000001',text:'same message'}],response_metadata:{next_cursor:family==='messages-history'||multiple?next(query.cursor,method,query):''}});
   return ok({messages:empty?[]:[{ts:'2.000001',thread_ts:'1.000001',text:'same reply'}],response_metadata:{next_cursor:next(query.cursor,method,query)}});
- }};
+ }});
  const owner=state=>family==='files-info'?state.files.F1:family==='messages-history'?state.channels.C1:family==='messages-replies'?state.threads['C1:1.000001']:state;
- return {objects,calls,store,input,stateKey,owner,state:()=>JSON.parse(objects.get(stateKey)),step:async value=>{clock+=70000;return make(options).step(value||input);},rewrite:state=>objects.set(stateKey,Buffer.from(JSON.stringify(state))),rawCount:()=>[...objects.keys()].filter(key=>key.includes('/pages/')||key.includes('/stream=')).length};
+ const states=options.state.slackCapture.values;
+ return {objects,states,repository:options.state.slackCapture,calls,store,input,stateKey,owner,state:()=>JSON.parse(states.get(stateKey)),step:async value=>{clock+=70000;return make(options).step(value||input);},rewrite:state=>states.set(stateKey,Buffer.from(JSON.stringify(state))),rawCount:()=>[...objects.keys()].filter(key=>key.includes('/pages/')||key.includes('/stream=')).length};
 }
 const finite=current=>current==='B'?'':current==='A'?'B':'A';
 const cycle=current=>current==='OPAQUE_A'?'OPAQUE_B':'OPAQUE_A';
 async function focused(h){
- for(let step=0;step<20;step++){if(h.objects.has(h.stateKey)&&h.owner(h.state())?.cursor)return;assert.equal((await h.step()).done,false);}
+ for(let step=0;step<20;step++){if(h.states.has(h.stateKey)&&h.owner(h.state())?.cursor)return;assert.equal((await h.step()).done,false);}
  assert.fail('fixture did not reach its cursor owner within 20 steps');
 }
 
@@ -36,7 +38,7 @@ for(const family of families) {
   for(const empty of [true,false]) {
    const h=setup(family,cycle,{empty});let failure;
    for(let step=0;step<20;step++) {
-    const before=h.objects.has(h.stateKey)?h.state():null,raw=h.rawCount();
+    const before=h.states.has(h.stateKey)?h.state():null,raw=h.rawCount();
     try{assert.equal((await h.step()).done,false);}catch(error){
      failure=error;assert.equal(error.permanent,true);assert.match(error.message,/cursor/);assert.doesNotMatch(error.message,/OPAQUE/);
      assert.equal(h.rawCount(),raw);assert.equal(h.state().pages,before.pages);
@@ -88,8 +90,8 @@ test('identical finite tokens are independent across methods, files, channels, t
 
 test('accepted raw writes survive a failed checkpoint without double-advancing pagination on retry',async()=>{
  for(const family of ['files-channels','messages-channels']) {
-  const h=setup(family,finite,{empty:false}),put=h.store.put;let fail=true;
-  h.store.put=async(key,bytes)=>{if(key===h.stateKey&&JSON.parse(bytes).cursor==='A'&&fail){fail=false;throw Error('checkpoint unavailable');}await put(key,bytes);};
+  const h=setup(family,finite,{empty:false}),save=h.repository.saveCheckpoint;let fail=true;
+  h.repository.saveCheckpoint=async(binding,kind,run,value,revision)=>{if(value.cursor==='A'&&fail){fail=false;throw Error('checkpoint unavailable');}return save(binding,kind,run,value,revision);};
   await assert.rejects(h.step(),/checkpoint unavailable/);assert.ok(h.rawCount()>0);assert.equal(h.state().cursor,'');assert.equal(h.state().paginationProgress,undefined);
   await h.step();assert.equal(h.state().cursor,'A');assert.deepEqual(h.state().paginationProgress,{version:1,anchor:'A',window:'2',distance:'0'});
   let result;for(let step=0;step<12;step++){result=await h.step();if(result.done)break;}assert.equal(result.done,true);

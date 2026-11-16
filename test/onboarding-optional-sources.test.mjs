@@ -1,3 +1,4 @@
+import {stateFor} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createGuidedOnboarding} from '../dist/src/application/onboarding.mjs';
@@ -7,7 +8,7 @@ import {memorySessionStore} from './session-store-fixture.mjs';
 
 const principal={tenantId:'org_team',userId:'user_owner'};
 async function guidedFixture({agentSetup=true,cards=[]}={}) {
-  const store=memorySessionStore(),onboarding=createOnboardingStatus({store,prefix:'sessions/test/v1'}),events=[];
+  const store=memorySessionStore(),onboarding=createOnboardingStatus({state:stateFor(store)}),events=[];
   if(agentSetup){await onboarding.cli(principal);await onboarding.mcpTest(principal);await onboarding.session(principal,{harness:'codex',events:[{kind:'message'}]});}
   let outage=false;
   const guided=createGuidedOnboarding({onboarding,integrations:{list:async who=>{assert.deepEqual(who,principal);if(outage)throw new Error('private upstream');return cards;}},

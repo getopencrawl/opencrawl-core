@@ -1,3 +1,5 @@
+import {startConnectorIndexing} from '../../dist/src/connectors/temporal/client.mjs';
+import {withTestState,stateFor} from './memory-application-state.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
@@ -52,45 +54,30 @@ export function paginationFixture(provider, {list, maxLists = 40, failSearchAt} 
       } finally {searching--;}
     }};
   return {binding, store, search, reads, cursors, output, documents,
-    pipeline: createConnectorPipeline({binding, store, search}),
+    pipeline: createConnectorPipeline(withTestState({binding, store, search})),
     raw(stream, data, name = '1') {
       const key = `${binding.rawPrefix}stream=${stream}/date=2026-11-05/sync=1/${name}.jsonl.gz`;
       objects.set(key, {bytes: gzipSync(JSON.stringify({_airbyte_extracted_at: 2000, _airbyte_data: data})), etag: '"raw"'});
       return key;
     },
     summary() {return {lists, cursors, refreshes, reads, documents: documents.length, maxSearching,
-      receipts: [...objects].filter(([key]) => key.startsWith('derived/')).map(([, item]) => JSON.parse(item.bytes)), output};},
+      receipts: [...stateFor(store).receiptValues].filter(([key])=>key.startsWith('derived/')).map(([,value])=>value), output};},
   };
 }
 
-async function standalone(scenario) {
-  let keys;
-  const h = paginationFixture('github', {failSearchAt: scenario === 'fail-fast' ? 2 : undefined,
-    list: cursor => scenario === 'cycle' ? {keys: [], nextToken: cursor === 'A' ? 'B' : 'A'} :
-      scenario === 'fail-fast' ? {keys, nextToken: 'A'} :
-      cursor === null ? {keys: [], nextToken: 'A'} :
-      cursor === 'A' ? {keys: [h.binding.rawPrefix + 'ignored'], nextToken: 'B'} : {keys, nextToken: null}});
-  keys = [1, 2, 3].slice(0, scenario === 'fail-fast' ? 3 : 2).map(number => h.raw('issues',
-    {repository: 'team/repo', number, title: 'Fixture issue', body: 'Fixture text', updated_at: '2026-11-05T12:00:00Z'}, String(number)));
-  const context = vm.createContext({process: {argv: ['node', 'standalone.mjs', 'index', 'fixture.json']},
-    console: {log: value => h.output.push(JSON.parse(value))}});
-  const modules = {
-    './write-barrier.mjs': {guardConnectorWrites}, '../search/realm.mjs': {realmIndex: () => 'fixture-index'},
-    'node:fs/promises': {readFile: async () => JSON.stringify({binding: h.binding, s3: {}, search: {}})},
-    '../sessions/s3-store.mjs': {createObjectStore: () => h.store, awsCredentials: () => ({})},
-    './search.mjs': {createConnectorSearch: () => h.search}, './pipeline.mjs': {createConnectorPipeline},
-    './scope.mjs': {validateBinding}, './workflow.mjs': pagination,
+async function standalone() {
+  const output=[],requests=[];let closed=0;
+  const context=vm.createContext({process:{argv:['node','standalone.mjs','index','fixture.json']},console:{log:value=>output.push(JSON.parse(value))}});
+  const modules={
+    '../search/realm.mjs':{realmIndex:()=>assert.fail('Submission cannot access search')},
+    'node:fs/promises':{readFile:async()=>JSON.stringify({binding:{tenantId:'fixture-team',connectionId:'fixture-conn',secret:'PRIVATE_CONFIG'},s3:{secretAccessKey:'PRIVATE_CONFIG'},search:{password:'PRIVATE_CONFIG'},temporal:{address:'localhost:7233',namespace:'default',taskQueue:'indexing'}})},
+    './search.mjs':{createConnectorSearch:()=>assert.fail('Submission cannot access search')},
+    './scope.mjs':{validateBinding:()=>assert.fail('Worker owns full binding')},
+    './temporal/client.mjs':{startConnectorIndexing,connectorClient:async()=>({client:{workflow:{start:async(...args)=>{requests.push(args);}}},connection:{close:async()=>{closed++;}}})},
   };
-  const entry = new vm.SourceTextModule(await readFile(new URL('../../dist/src/connectors/standalone.mjs', import.meta.url), 'utf8'), {context});
-  await entry.link(specifier => {
-    const values = modules[specifier]; assert.ok(values, specifier);
-    return new vm.SyntheticModule(Object.keys(values), function () {
-      for (const [key, value] of Object.entries(values)) this.setExport(key, value);
-    }, {context});
-  });
-  let error;
-  try {await entry.evaluate();} catch (cause) {error = {name: cause.constructor.name, code: cause.code, message: cause.message};}
-  return {...h.summary(), keys, error};
+  const entry=new vm.SourceTextModule(await readFile(new URL('../../dist/src/connectors/standalone.mjs',import.meta.url),'utf8'),{context});
+  await entry.link(specifier=>{const values=modules[specifier];assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const [key,value]of Object.entries(values))this.setExport(key,value);},{context});});
+  await entry.evaluate();return {output,requests,closed};
 }
 
 if (process.argv[2] === '--standalone-fixture') console.log(JSON.stringify(await standalone(process.argv[3])));

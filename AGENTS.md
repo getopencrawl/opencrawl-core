@@ -103,7 +103,7 @@ Backend source under `src/` uses strict TypeScript (`.mts`, or `.cts` for Tempor
 ## Shared application seam
 
 The single-tenant product uses Better Auth with local accounts in an operator-owned
-SQLite database. Cloud continues to use WorkOS. Both adapters expose core-owned
+PostgreSQL application database. Cloud continues to use WorkOS. Both adapters expose core-owned
 identity directory facts; provider sessions and tokens stay at their runtime boundary.
 Reusable authentication, membership, role controls, UI, Airbyte and connector
 lifecycle implementations belong in core. Hosted multi-tenant selection and
@@ -111,6 +111,14 @@ provisioning, billing, fleet operation and internal administration belong in
 shell. Source SDK names do not determine ownership. Core requires no account
 or service operated by OpenCrawl. This contract supersedes earlier hosted-only
 classification of reusable identity, integrations and product UI.
+
+Mutable server application state belongs in explicit PostgreSQL repositories,
+supplied separately from raw object storage. Do not introduce SQLite, filesystem,
+object-store, or in-memory durability fallbacks. SQLite may serve only the optional
+derived search index or explicit offline legacy migration. Durable connector
+lifecycle and capture orchestration runs in Temporal. Existing installations must
+use the verified offline migration before new writers start; see
+`docs/app-state-migration.md`.
 
 Optional operator-owned connector OAuth, including Composio, belongs in core
 adapters. Core must work without our managed broker account. Keep unconfigured

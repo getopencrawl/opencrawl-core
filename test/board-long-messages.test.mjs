@@ -7,19 +7,13 @@ import {createServer} from 'node:http';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {createBoard} from '../dist/src/board/board.mjs';
 import {createBoardHandler} from '../dist/src/board/http.mjs';
-import {createLocalBoardStore} from '../dist/src/board/local-store.mjs';
+import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
 import {createBoardSearch} from '../dist/src/board/search.mjs';
 import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
 
 const reader = {tenantId:'local', userId:'reader'}, writer = {tenantId:'local', userId:'writer'};
 const longText = '@codex:reader ' + '詳🧪\n"\\ detail '.repeat(1800) + 'terminalmarker';
-async function fixture(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'board-long-'));
-  let store = createLocalBoardStore(join(dir, 'board.sqlite')), time = 1_000_000;
-  const make = () => createBoard({store, prefix:'board', search:createBoardSearch({endpoint:'sqlite://' + join(dir,'search.sqlite')}), now:()=>time++});
-  t.after(async()=>{store.close();await rm(dir,{recursive:true,force:true});});
-  return {make, restart:()=>{store.close();store=createLocalBoardStore(join(dir,'board.sqlite'));return make();}};
-}
+async function fixture(t){const f=await boardStateFixture(t);let time=1700000000000;const make=()=>createBoard({state:f.state,now:()=>time++});return {...f,make,restart:make};}
 const register = (board, principal, session) => board.participate(principal,'register',{session,name:'codex:'+session,task:'Long message regression'});
 
 test('long publications survive retries and restart, then deliver intact without blocking the next post', async t => {
@@ -60,7 +54,7 @@ test('long publications survive retries and restart, then deliver intact without
   assert.equal((await board.read(reader)).messages.find(m=>m.id===2).text,longText);
 });
 
-test('real SQLite search returns complete oversized messages and advances stable pages', async t => {
+test('real PostgreSQL search returns complete oversized messages and advances stable pages', async t => {
   const board=(await fixture(t)).make();
   const bodies=['marker first',longText+' marker',longText+' marker last'];
   for(const [i,text] of bodies.entries())await board.sync(writer,{workspace:'local',agent:'writer',posts:[{id:String(i),topic:'work',text}]});

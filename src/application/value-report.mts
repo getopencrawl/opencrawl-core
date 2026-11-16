@@ -1,12 +1,12 @@
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import type {ValueReport} from './reports.mjs';
+import type {ApplicationState} from '../state/types.mjs';
 
 // Agent alignment reports for the Usage page. A report is produced by the refresher from
 // a workspace's work captured live since install, then stored per tenant at
 // <prefix>/value/tenants/<sha256(tenantId)>.json. The page shows nothing until one exists,
 // and a malformed report is ignored rather than shown.
-interface ObjectReader {get(key: string, options?: {maxBytes?: number}): Promise<Buffer | null>}
 
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const amount = z.number().finite().min(0).max(1e12);
@@ -38,11 +38,10 @@ export function parseValueReport(raw: string): ValueReport | null {
   return parsed.success ? parsed.data : null;
 }
 
-export function valueReports({store, prefix}: {store: ObjectReader; prefix: string}) {
+export function valueReports({state}: {state:ApplicationState}) {
   return {
     async read(tenantId: string): Promise<ValueReport | null> {
-      const bytes = await store.get(valueReportKey(prefix, tenantId), {maxBytes: 64 * 1024});
-      return bytes ? parseValueReport(bytes.toString('utf8')) : null;
+      return state.valueReports.read(tenantId);
     },
   };
 }

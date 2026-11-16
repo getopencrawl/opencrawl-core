@@ -111,7 +111,20 @@ if(input.airbyteEnabled){
 if(verifyOnly)throw new Error('Read-only demo verification currently supports --no-airbyte');
 const workspaceId=required('AIRBYTE_WORKSPACE_ID'),organizationId=input.organization;
 const airbyte=createAirbyte({url:required('AIRBYTE_URL'),clientId:required('AIRBYTE_CLIENT_ID'),clientSecret:required('AIRBYTE_CLIENT_SECRET')});
-const registry=createSingleOrganizationRegistry({path:required('OPENCRAWL_REGISTRY_PATH'),organizationId});
+// This acceptance fixture is deliberately mounted into both published old
+// images and the candidate. Select the image's adapter, never fall back after a
+// connection failure. Product runtimes always require PostgreSQL.
+const stateModule=new URL('../dist/src/state/settings.mjs',import.meta.url);
+const database=existsSync(stateModule)?(await import(stateModule.href)).applicationDatabase():undefined;
+type SeedRegistry=Pick<ReturnType<typeof createSingleOrganizationRegistry>,'get'|'list'|'listTenant'|'create'|'update'|'close'>;
+async function legacyRegistry():Promise<SeedRegistry>{
+  // This branch runs only inside a published pre-PostgreSQL fixture image.
+  // Declare that historical adapter's contract independently of the new API.
+  const entrypoint=new URL('../dist/src/integrations/local-registry.mjs',import.meta.url).href;
+  const legacy:{createSingleOrganizationRegistry(options:{path:string;organizationId:string}):SeedRegistry}=await import(entrypoint);
+  return legacy.createSingleOrganizationRegistry({path:required('OPENCRAWL_REGISTRY_PATH'),organizationId});
+}
+const registry:SeedRegistry=database?createSingleOrganizationRegistry({database,organizationId}):await legacyRegistry();
 const destination=singleOrganizationDestination({organizationId,bucket:required('OPENCRAWL_LANDING_S3_BUCKET'),region:required('OPENCRAWL_LANDING_S3_REGION'),endpoint:required('OPENCRAWL_AIRBYTE_S3_ENDPOINT'),accessKeyId:required('OPENCRAWL_LANDING_S3_ACCESS_KEY_ID'),secretAccessKey:required('OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY')});
 const specification={type:'Spec',connection_specification:{$schema:'http://json-schema.org/draft-07/schema#',type:'object',required:['base_url'],properties:{base_url:{type:'string',title:'Development fixture URL'}}}};
 const manifest:ConnectorManifest={version:'7.28.2',type:'DeclarativeSource',check:{type:'CheckStream',stream_names:['notes']},
@@ -184,7 +197,7 @@ try{
   }finally{await scheduling.connection.close();}
   ingestion={airbyte:{workspaceId,connectionId,jobId:job.jobId,status:job.status,rows:job.rowsSynced},temporal:{workflowId}};
   expected='The lunar otter checks the ingestion pipeline';
-}finally{registry.close();}
+}finally{await registry.close();await database?.close();}
 }else{
   const scheduling=await connectorClient({address:required('TEMPORAL_ADDRESS'),namespace:required('TEMPORAL_NAMESPACE')});
   const workflowId='dev-capture-'+input.project+'-'+Date.now();
