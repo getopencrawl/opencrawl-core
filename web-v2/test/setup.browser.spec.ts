@@ -159,7 +159,7 @@ test('verified installations keep add-client setup available without asking to f
   await expect(page.getByRole('button',{name:'Continue with your agent',exact:true})).toHaveCount(0);
   await expect(page.getByText('Import needs attention',{exact:true})).toHaveCount(0);
   await expect(page.getByRole('heading',{name:'Add or update an installation'})).toBeVisible();
-  await expect(page.getByText('New setup is available for Claude Code and Codex on macOS. Choose plugins, future recording, and past sessions separately.',{exact:true})).toBeVisible();
+  await expect(page.getByText('New setup is available for Claude Code, Codex, and Cursor on macOS. Choose plugins, future recording, and past sessions separately.',{exact:true})).toBeVisible();
   await expect(page.getByLabel('Setup command',{exact:true})).toHaveValue(/opencrawl setup/);
 });
 

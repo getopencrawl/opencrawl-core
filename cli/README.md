@@ -24,7 +24,7 @@ npm install -g @getopencrawl/cli
 
 ## Set up on macOS
 
-Claude Code and Codex are the first clients available through the new setup flow:
+Set up Claude Code, Codex, and Cursor through the CLI:
 
 ```sh
 opencrawl setup
@@ -33,6 +33,8 @@ opencrawl setup
 The CLI signs you in, installs the plugins you choose, and asks separately which
 past sessions to import. Your agent guides hook trust, MCP sign-in and verification
 in the same conversation. History imports run in the background.
+Cursor supports its native plugin and new-session recording; its past-session
+history is not offered for import.
 
 Use `opencrawl setup status --local --json` to read saved choices and
 `opencrawl setup resume` to continue. Setup stays available in the workspace
