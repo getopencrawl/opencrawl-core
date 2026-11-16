@@ -11,7 +11,6 @@ export interface IntegrationRegistry {
   create(record: IntegrationRecord): Promise<IntegrationRecord>;
   createWithLifecycle?(record: IntegrationRecord, operation: IntegrationCommandOperation, secret?: IntegrationCommandSecret, requestedBy?: string): Promise<IntegrationCommandReference>;
   requestLifecycle?(record: Pick<IntegrationRecord, 'tenantId' | 'userId' | 'integrationId'>, operation: IntegrationCommandOperation, secret?: IntegrationCommandSecret, requestedBy?: string): Promise<IntegrationCommandReference>;
-  abandonWithLifecycle?(record: Pick<IntegrationRecord, 'tenantId' | 'userId' | 'integrationId'>, requestedBy?: string): Promise<IntegrationCommandReference>;
   update(record: Pick<IntegrationRecord, 'tenantId' | 'userId' | 'integrationId'>, fields: Partial<IntegrationRecord>, options?: UpdateOptions): Promise<IntegrationRecord>;
 }
 /** The runtime supplies existing storage, scoped to the admitted organization. */

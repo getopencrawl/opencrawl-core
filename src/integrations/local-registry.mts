@@ -76,9 +76,8 @@ export function createSingleOrganizationRegistry({database,organizationId,enviro
   function validateCommand(operation:IntegrationCommandOperation,secrets:IntegrationCommandSecret,requestedBy?:string){
     if(!commands)throw new Error('Integration workflow commands are not configured');
     if(!requestedBy||!/^user_[A-Za-z0-9]+$/.test(requestedBy))throw denied();
-    if(!['consent','provision','disconnect','sync'].includes(operation))throw new Error('Unknown integration operation');
+    if(!['provision','disconnect','sync'].includes(operation))throw new Error('Unknown integration operation');
     if(Object.keys(secrets).some(field=>field!=='apiKey')||secrets.apiKey!==undefined&&(typeof secrets.apiKey!=='string'||!secrets.apiKey||secrets.apiKey.length>65536))throw new Error('Invalid integration command secret');
-    if(operation!=='provision'&&secrets.apiKey!==undefined)throw new Error('Only provisioning accepts an API key');
     return {commands,requestedBy};
   }
   const registry:IntegrationRegistry={
@@ -107,14 +106,13 @@ export function createSingleOrganizationRegistry({database,organizationId,enviro
       const record=await locked(client,identity);if(!record)throw conflict();
       const reference=(commandId:string):IntegrationCommandReference=>({environment,tenantId:record!.tenantId,userId:record!.userId,integrationId:record!.integrationId,commandId});
       const prior=record!.lifecycleCommandId?await checked.commands.read(client,reference(record!.lifecycleCommandId)):null;
-      if(operation==='consent'&&record!.status!=='connecting')throw conflict();
       if(prior?.operation===operation&&prior.status==='pending')return prior.reference;
       if(operation==='disconnect'&&record!.status==='disconnected'&&prior?.operation==='disconnect')return prior.reference;
       if(record!.status==='disconnected'||record!.status==='disconnecting'&&operation!=='disconnect')throw conflict();
       if(operation==='provision'&&!(record!.status==='connecting'||record!.status==='provisioning'||record!.status==='error'&&['setup','recovery','reconnect'].includes(record!.error||'')))throw conflict();
       if(operation==='sync'&&(!record!.airbyte?.connectionId||!(record!.status==='active'||record!.status==='error'&&!['setup','recovery','reconnect'].includes(record!.error||''))))throw conflict();
       if(prior?.status==='pending'){
-        if(operation!=='disconnect'&&!(operation==='provision'&&prior.operation==='consent'))throw conflict();
+        if(operation!=='disconnect')throw conflict();
         await checked.commands.supersede(client,prior.reference);
       }
       if(operation==='provision')await claimProvider(client,record!);
@@ -126,30 +124,15 @@ export function createSingleOrganizationRegistry({database,organizationId,enviro
   }
   async function createWithLifecycle(record:IntegrationRecord,operation:IntegrationCommandOperation,secrets:IntegrationCommandSecret={},requestedBy?:string):Promise<IntegrationCommandReference>{
     validate(record);const checked=validateCommand(operation,secrets,requestedBy);
-    if(record.lifecycleCommandId||!(operation==='consent'&&record.status==='connecting'||operation==='provision'&&['connecting','provisioning'].includes(record.status)))throw conflict();
+    if(operation!=='provision'||record.lifecycleCommandId||!['connecting','provisioning'].includes(record.status))throw conflict();
     await ready();return database.transaction(async client=>{
-      if(operation==='provision')await claimProvider(client,record);
+      await claimProvider(client,record);
       const reference={environment,tenantId:record.tenantId,userId:record.userId,integrationId:record.integrationId,commandId:randomUUID()};
-      const next={...record,status:operation==='consent'?'connecting' as const:'provisioning' as const,lifecycleCommandId:reference.commandId,lifecycleOperation:operation,updatedAt:new Date().toISOString()};
+      const next={...record,status:'provisioning' as const,lifecycleCommandId:reference.commandId,lifecycleOperation:operation,updatedAt:new Date().toISOString()};
       const {rowCount}=await client.query('INSERT INTO opencrawl_integrations(namespace,environment,tenant_id,user_id,integration_id,provider,status,record) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT DO NOTHING',[...key(next),next.provider,next.status,JSON.stringify(next)]);
       if(!rowCount)throw conflict();
       await checked.commands.enqueue(client,reference,operation,secrets,checked.requestedBy);return reference;
     });
   }
-  async function abandonWithLifecycle(identity:Pick<IntegrationRecord,'tenantId'|'userId'|'integrationId'>,requestedBy?:string):Promise<IntegrationCommandReference>{
-    scope(identity.tenantId,identity.userId);const checked=validateCommand('disconnect',{},requestedBy);
-    await ready();return database.transaction(async client=>{
-      const record=await locked(client,identity);if(!record)throw conflict();
-      const consentError=record.status==='error'&&record.lifecycleOperation==='consent'&&!record.provisionIntent&&!Object.values(record.airbyte??{}).some(Boolean);
-      if(!['connecting','abandoned'].includes(record.status)&&!consentError)throw conflict();
-      const reference=(commandId:string):IntegrationCommandReference=>({environment,tenantId:record.tenantId,userId:record.userId,integrationId:record.integrationId,commandId});
-      const prior=record.lifecycleCommandId?await checked.commands.read(client,reference(record.lifecycleCommandId)):null;
-      if(record.status==='abandoned'&&prior?.operation==='disconnect'&&prior.status==='pending')return prior.reference;
-      if(prior?.status==='pending')await checked.commands.supersede(client,prior.reference);
-      const ref=reference(randomUUID());
-      await save(client,{...record,status:'abandoned',lifecycleCommandId:ref.commandId,lifecycleOperation:'disconnect'});
-      await checked.commands.enqueue(client,ref,'disconnect',{},checked.requestedBy);return ref;
-    });
-  }
-  return {...registry,requestLifecycle,createWithLifecycle,abandonWithLifecycle,ready,close:()=>{}};
+  return {...registry,requestLifecycle,createWithLifecycle,ready,close:()=>{}};
 }
