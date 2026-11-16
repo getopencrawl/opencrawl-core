@@ -15,6 +15,11 @@ for (const width of [1280, 390]) {
   test(`members never see integrations or fetch connectors through direct and legacy links at ${width}px`, async ({page}) => {
     await page.setViewportSize({width, height: 800});
     await membership(page, () => 'member');
+    await page.addInitScript(() => {
+      new MutationObserver(() => {
+        if (document.body?.textContent?.includes('Connector policy fixture')) document.documentElement.dataset.connectorPolicyExposed = 'true';
+      }).observe(document, {childList: true, subtree: true});
+    });
     let sourceReads = 0;
     page.on('request', request => {if (request.url().includes('/api/console/sources')) sourceReads++;});
     for (const path of ['/sources', '/integrations', '/data', '/onboarding/sources']) {
@@ -23,6 +28,7 @@ for (const width of [1280, 390]) {
       await expect(page.getByRole('heading', {level: 1, name: 'Usage'})).toBeVisible();
       await expect(page.getByRole('link', {name: 'Integrations', exact: true, includeHidden: true})).toHaveCount(0);
       await expect(page.getByRole('heading', {level: 1, name: 'Integrations'})).toHaveCount(0);
+      expect(await page.locator('html').getAttribute('data-connector-policy-exposed')).toBeNull();
     }
     expect(sourceReads).toBe(0);
   });
@@ -54,6 +60,7 @@ test('admin navigation works and losing admin access unmounts integrations', asy
   await page.getByRole('link', {name: 'Integrations', exact: true}).click();
   await expect(page.getByRole('heading', {level: 1, name: 'Integrations'})).toBeVisible();
   await expect(page.getByRole('button', {name: 'Connect Slack', exact: true})).toBeVisible();
+  await expect(page.getByText('Connector policy fixture', {exact: true})).toBeVisible();
   await page.evaluate(() => {document.body.dataset.accessNavigation = 'preserved';});
   role = 'member';
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));

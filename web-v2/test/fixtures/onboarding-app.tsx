@@ -99,4 +99,4 @@ function Fixture() {
 }
 const mount = document.getElementById('root');
 if (!mount) throw new Error('Fixture mount is missing');
-createRoot(mount).render(new URLSearchParams(window.location.search).has('full-app')?<OpenCrawlApp api={fullApi}/>:<AppRouter><Fixture /></AppRouter>);
+createRoot(mount).render(new URLSearchParams(window.location.search).has('full-app')?<OpenCrawlApp api={fullApi} extensions={{decorateRoute: route => route.path === '/sources' ? {...route, element:<>{route.element}<p>Connector policy fixture</p></>} : route}}/>:<AppRouter><Fixture /></AppRouter>);

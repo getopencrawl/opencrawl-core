@@ -97,7 +97,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     const sourcesPending = ['/sources', '/integrations', '/data', '/onboarding/sources'].includes(location.pathname);
     return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{sourcesPending ? <PendingPage title="Workspace">{feedback}</PendingPage> : route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
   }
-  const shown = extensions?.decorateRoute ? routes.map(route => extensions.decorateRoute!(route, data)) : routes;
+  const shown = extensions?.decorateRoute ? routes.map(route => route.path === '/sources' && !canConfigureSources ? route : extensions.decorateRoute!(route, data)) : routes;
   return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board topics' : undefined} navigation={boardNavigation ? closeNavigation => <BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/> : undefined}/></ConsoleDataProvider>;
 }
 /** One application composition for self-hosted and hosted deployments. */
