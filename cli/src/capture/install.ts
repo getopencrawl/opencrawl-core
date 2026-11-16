@@ -2,6 +2,7 @@ import {readFileSync, existsSync, mkdirSync, writeFileSync, copyFileSync, unlink
 import {join, dirname, resolve} from 'node:path';
 import {homedir} from 'node:os';
 import {removeLegacyService} from './legacy-service.ts';
+import {installCaptureDaemon,uninstallCaptureDaemon} from './daemon-service.ts';
 import {randomUUID} from 'node:crypto';
 import {HARNESSES, normalizeHarness, readsTranscript, type Harness, type TranscriptHarness} from './parse.ts';
 import {GROK_BOT_HOOK_EVENTS} from './grok-bot.ts';
@@ -124,7 +125,9 @@ function configureHooks(config:CaptureConfig,harnesses:Harness[]) {
   runner.write();
   const hook=(harness:Harness,...args:string[])=>{const invocation=runner.invocation(harness);return {...invocation,command:invocation.command+' collect hook '+args.map(quote).join(' ')};};
   const managed=(harness:Harness)=>()=>({...hook(harness,'--managed','--harness',harness),async:true,timeout:120});
-  if(harnesses.includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),
+  if(harnesses.includes('claude-code')&&config.claudeCapture==='daemon-v1')modifyHooks(join(config.roots['claude-code'],'settings.json'),
+    ['SessionStart','SessionEnd'],()=>({...hook('claude-code','--daemon','--harness','claude-code'),async:true,timeout:10}));
+  else if(harnesses.includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),
     ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','Stop','SubagentStop','SessionEnd'],managed('claude-code'));
   // Codex runs SessionEnd synchronously within 3s. Record its notice locally;
   // the next managed hook uploads it instead of delaying exit or being killed.
@@ -168,7 +171,7 @@ function defaultHarnesses(home:string):Harness[] {
   if(process.env.CLAUDE_CODE_REMOTE==='true')return ['claude-code'];
   return antigravityDetected(home)?['claude-code','codex','antigravity']:['claude-code','codex'];
 }
-export async function installCapture(api:string,{background=false,deferAuth=false,home=homedir(),command=commandForSelf(),harnesses:requestedHarnesses}:{background?:boolean;deferAuth?:boolean;home?:string;command?:string[];harnesses?:Harness[]}={}) {
+export async function installCapture(api:string,{background=false,deferAuth=false,daemon=false,daemonService=true,home=homedir(),command=commandForSelf(),harnesses:requestedHarnesses}:{background?:boolean;deferAuth?:boolean;daemon?:boolean;daemonService?:boolean;home?:string;command?:string[];harnesses?:Harness[]}={}) {
   let harnesses=(requestedHarnesses?requestedHarnesses.map(h=>normalizeHarness(h) as Harness):defaultHarnesses(home));
   workspaceIdentityEnabled(); // Reject mixed credentials even during image preparation.
   const receiverToken=environmentToken('OPENCRAWL_SESSIONS_TOKEN',api);
@@ -182,16 +185,16 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
     harnesses=harnesses.filter(h=>h!=='antigravity');
   }
   if(!principal?.tenantId || !principal?.userId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
-  return withSessionLock('capture:configuration',async()=>{
+  const installed=await withSessionLock('capture:configuration',async()=>{
   const previous=readCaptureConfig();
   // Re-running cloud preparation has no authenticated replacement identity.
   // Preserve a bound destination, including ownership of unprocessed notices.
   const preserveOwner=deferAuth && previous?.api===api && !previous.authPending;
   const authPending=deferAuth && !preserveOwner;
   const changed=previous && (previous.api!==api || !deferAuth && (previous.owner.userId!==principal.userId || previous.owner.tenantId!==principal.tenantId));
-  if(changed && ['queue','notices'].some(dir=>existsSync(join(captureDir(),dir)) && readdirSync(join(captureDir(),dir)).length))throw new CliError('CAPTURE_PENDING_DESTINATION','Pending capture belongs to the previous destination. Upload it there or uninstall and explicitly purge local pending data before changing destination.');
+  if(changed && ['queue','notices','daemon/inbox','daemon/sessions'].some(dir=>existsSync(join(captureDir(),dir)) && readdirSync(join(captureDir(),dir)).length))throw new CliError('CAPTURE_PENDING_DESTINATION','Pending capture belongs to the previous destination. Upload it there or uninstall and explicitly purge local pending data before changing destination.');
   for(const dir of ['', 'backups','queue','state','blobs'])mkdirSync(join(captureDir(),dir),{recursive:true,mode:0o700});
-  const config:CaptureConfig={schemaVersion:1,exclusions:previous?.exclusions,hookMode:HOOK_MODE,api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:preserveOwner?previous.owner:principal,...(authPending?{authPending:true}:{}),
+  const config:CaptureConfig={schemaVersion:1,exclusions:previous?.exclusions,hookMode:HOOK_MODE,...(daemon||previous?.claudeCapture==='daemon-v1'?{claudeCapture:'daemon-v1' as const}:{}),api,installationId:previous?.installationId??(deferAuth?'pending':randomUUID()),owner:preserveOwner?previous.owner:principal,...(authPending?{authPending:true}:{}),
     harnesses:[...new Set([...(previous?.harnesses??[]),...harnesses])],installedAt:previous?.installedAt??new Date().toISOString(),roots:{
       'claude-code':!harnesses.includes('claude-code')&&previous?.roots['claude-code']||process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),
       cursor:!harnesses.includes('cursor')&&previous?.roots.cursor||process.env.CURSOR_CONFIG_DIR||join(home,'.cursor'),
@@ -244,12 +247,19 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   return {notice:enrolled.includes('grok-bot')?captureNotice(api)+' '+grokBotNotice:captureNotice(api),exclusions:config.exclusions??{projects:[],sessions:[]},installationId:config.installationId,owner:config.authPending?null:config.owner,background:backgroundStatus,harnesses:config.harnesses,
     nextStep:steps.join(' ')};
   });
+  const configured=readCaptureConfig()!;
+  if(configured.claudeCapture==='daemon-v1'&&configured.harnesses?.includes('claude-code')){
+    const worker=await installCaptureDaemon(configured,{home,service:daemonService});
+    return {...installed,background:'daemon',worker};
+  }
+  return installed;
 }
 export async function uninstallCapture(home=homedir()) {
   return withSessionLock('capture:configuration',async()=>{
   const config=readCaptureConfig();if(!config)return {installed:false};
   // Disable first so an existing worker cannot start another capture pass.
   atomicJson(join(captureDir(),'config.json'),{...config,disabled:true});
+  uninstallCaptureDaemon(home);
   removeLegacyService(home);
   if((config.harnesses??['claude-code','codex']).includes('claude-code'))modifyHooks(join(config.roots['claude-code'],'settings.json'),[],null);
   if((config.harnesses??['claude-code','codex']).includes('codex'))modifyHooks(join(config.roots.codex,'hooks.json'),[],null);

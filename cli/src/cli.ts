@@ -52,6 +52,8 @@ Options:
 
 Capture controls:
   collect install [--yes]              Review recording scope before enabling
+  collect install --harness claude-code --daemon  Opt into the Claude worker pilot
+  collect daemon                      Run that worker under a supervisor
   collect install --harness cursor     Capture new Cursor conversations
   collect install --harness grok-bot   Capture Grok Bot; run on the Bot's cloud computer
   collect titles                      Refresh names of already captured sessions
@@ -218,14 +220,14 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {'current-session':{type:'string'},'include-current-session':{type:'boolean'},'include-tool-outputs':{type:'boolean'},organization:{type:'string'},'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},'retry-rejected':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, event: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {'current-session':{type:'string'},'include-current-session':{type:'boolean'},'include-tool-outputs':{type:'boolean'},organization:{type:'string'},'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},'retry-rejected':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, event: {type:'string'}, 'no-background': {type:'boolean'}, daemon:{type:'boolean'}, managed:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
     const localHook=command==='collect'&&parsed.positionals[1]==='hook'&&!parsed.values.managed;
     // Metadata-only recovery and a history preview must not start an unrelated
     // memory upload while the foreground operation is inspecting local state.
-    const localCollect=command==='collect'&&(['uninstall','titles'].includes(parsed.positionals[1]??'')||parsed.positionals[1]==='backfill'&&!parsed.values.yes);
+    const localCollect=command==='collect'&&(['uninstall','titles','daemon'].includes(parsed.positionals[1]??'')||parsed.positionals[1]==='backfill'&&!parsed.values.yes);
     const manyFetch=command==='fetch'||command==='board'&&parsed.positionals[1]==='fetch';
     if (parsed.positionals.length > (manyFetch ? command==='board'?42:41 : command === 'token' ? 3 : ['collect','search','board','skills'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     informational=Boolean(parsed.values.help||parsed.values.version||command==='help'||command==='board'&&!parsed.positionals[1]);
@@ -240,7 +242,7 @@ export async function main(args = process.argv.slice(2)) {
     if(command!=='install')await automaticNativeMigration();
     if(command==='install'){if(!compiled())throw new CliError('INSTALL_UNAVAILABLE','Run install from a released executable.');const data=await installBinary();await agentSkills('refresh',apiOrigin((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL??readCaptureConfig()?.api??DEFAULT_API_ORIGIN),{});emit(data,`Installed opencrawl ${data.version} at ${data.path}. Add its directory to PATH if needed.`);return 0;}
     if(command==='update'){const data=await updateCli();emit(data,data.updated?`Installed opencrawl ${data.version}. Your next invocation will use it.`:`opencrawl ${data.version} is current.`);return 0;}
-    updateJob=scheduleCliUpdate();
+    if(!(command==='collect'&&['hook','daemon'].includes(parsed.positionals[1]??'')))updateJob=scheduleCliUpdate();
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL
       ?? readCaptureConfig()?.api
       ?? DEFAULT_API_ORIGIN);

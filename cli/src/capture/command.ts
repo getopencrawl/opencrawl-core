@@ -1,6 +1,8 @@
 import {CliError} from '../oauth.ts';
 import {installCapture,uninstallCapture,upgradeCaptureHooks} from './install.ts';
-import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush,bindHookIdentity} from './runtime.ts';
+import {captureHook,captureAttentionNotice,ownedCaptureWorker,captureStatus,syncCaptures,flushCaptureWork,refreshCapturedTitles,recordError,hookFlush,bindHookIdentity,readCaptureConfig} from './runtime.ts';
+import {recordDaemonHook,runCaptureDaemon} from './daemon.ts';
+import {ensureCaptureDaemon} from './daemon-service.ts';
 import {exitAfterCredentialRotation} from '../session.ts';
 import {grokBotResponse} from './grok-bot.ts';
 import {normalizeHarness} from './parse.ts';
@@ -82,6 +84,7 @@ async function antigravityHook(api:string,eventFlag?:string) {
   return null;
 }
 export async function collectCommand(action:string,api:string,values:any) {
+  if(values.daemon&&(!['install','hook'].includes(action)||normalizeHarness(values.harness)!=='claude-code'))throw new CliError('INVALID_USAGE','Use --daemon with collect install or hook --harness claude-code.',64);
   if((values.backfill!==undefined || values['defer-auth']) && action!=='install' || values['dry-run'] && action!=='backfill' || values.yes && !['backfill','install','purge'].includes(action))throw new CliError('INVALID_USAGE','Use --backfill with install; --dry-run with backfill; --yes with install, backfill or purge.',64);
   if(values.event!==undefined && action!=='hook')throw new CliError('INVALID_USAGE','Use --event only with collect hook.',64);
   if(values.project!==undefined && action!=='exclude' || values['session-id']!==undefined && action!=='exclude')throw new CliError('INVALID_USAGE','Use --project or --session-id with collect exclude.',64);
@@ -96,7 +99,7 @@ export async function collectCommand(action:string,api:string,values:any) {
       if(!['ask','skip','all','claude-code','codex','antigravity'].includes(mode))throw new CliError('INVALID_USAGE','Use --backfill ask, skip, all, claude-code, codex, or antigravity.',64);
       const notice=captureNoticeFor(api,harness);
       if(!await approveCapture(values.yes===true,values.json,notice))return {status:'consent_required',notice,nextStep:'Confirm the destination and recording scope with the user, then run collect install --yes. This does not approve history import.'};
-      const installed=await installCapture(api,{deferAuth:values['defer-auth']===true,...(harness?{harnesses:[harness as any]}:{})});
+      const installed=await installCapture(api,{daemon:values.daemon===true,deferAuth:values['defer-auth']===true,...(harness?{harnesses:[harness as any]}:{})});
       // Detection is not consent to configure other clients. Grok Bot has no
       // supported skill directory; do not install another client's integration.
       const clients=(harness?[harness]:installed.harnesses??[]).filter(client=>client!=='grok-bot');
@@ -123,6 +126,12 @@ export async function collectCommand(action:string,api:string,values:any) {
     case 'titles': try{return await refreshCapturedTitles();}catch(e){recordError(e);throw e;}
     case 'flush': try{return await flushCaptureWork({retryRejected:values['retry-rejected']===true});}catch(e){recordError(e);throw e;}
     case 'worker': {try{await ownedCaptureWorker();}catch(e){try{recordError(e);}catch{}}return null;}
+    case 'daemon': {
+      const controller=new AbortController(),stop=()=>controller.abort();
+      process.once('SIGTERM',stop);process.once('SIGINT',stop);
+      try{await runCaptureDaemon({signal:controller.signal});}catch(error){recordError(error);throw error;}finally{process.removeListener('SIGTERM',stop);process.removeListener('SIGINT',stop);}
+      return null;
+    }
     case 'hook': {
       if(harness==='grok-bot'||harness==='cursor')return cursorFormatHook(harness,api);
       if(harness==='antigravity')return antigravityHook(api,values.event);
@@ -134,6 +143,9 @@ export async function collectCommand(action:string,api:string,values:any) {
         // files and wait on every hook. That is not a Claude Code or Codex
         // session: record nothing and never start the uploader there.
         if(typeof event?.cursor_version==='string')return null;
+        if(harness==='claude-code'&&readCaptureConfig()?.claudeCapture==='daemon-v1'){
+          recordDaemonHook(event);await ensureCaptureDaemon();return null;
+        }
         await refreshManagedSkills(api,{hook:true});
         await captureHook(harness as any,event);
         // Async Claude Code hooks deliver this JSON on the next turn, so a
