@@ -20,6 +20,16 @@ export function launchAgent(config:CaptureConfig) {
 export async function ensureCaptureDaemon(config=readCaptureConfig()) {
   if(!config||config.disabled||config.claudeCapture!=='daemon-v1'||!config.command.length)return;
   try{await withSessionLock('capture:daemon',async()=>{},0);}catch(error:any){if(error.code==='SESSION_BUSY')return;throw error;}
+  const serviceFile=join(directory(),'service.json');
+  if(process.platform==='darwin'&&existsSync(serviceFile)){
+    const service=JSON.parse(readFileSync(serviceFile,'utf8'));
+    if(service.kind==='launchd'&&service.label===label()){
+      // Let the supervisor own crash recovery. A detached replacement can win
+      // the singleton race and leave launchd repeatedly starting duplicates.
+      const child=spawn('launchctl',['kickstart','gui/'+process.getuid!()+'/'+label()],{detached:true,stdio:'ignore'});
+      child.on('error',()=>{});child.unref();return;
+    }
+  }
   const child=spawn(config.command[0]!,[...config.command.slice(1),'collect','daemon'],{detached:true,stdio:'ignore',env:{...process.env,OPENCRAWL_CONFIG_HOME:dirname(configDir()),OPENCRAWL_NO_UPDATE:'1'}});
   child.on('error',()=>{});child.unref();
 }
@@ -38,9 +48,11 @@ export async function installCaptureDaemon(config:CaptureConfig,{home=homedir(),
     const temporary=path+'.'+crypto.randomUUID()+'.tmp';
     try{const fd=openSync(temporary,'wx',0o600);try{writeFileSync(fd,launchAgent(config));fsyncSync(fd);}finally{closeSync(fd);}renameSync(temporary,path);syncDirectory(dirname(path));}
     finally{try{unlinkSync(temporary);}catch{}}
+    const service={kind:'launchd',label:label(),path},serviceFile=join(directory(),'service.json');
+    atomicJson(serviceFile,service);
     const result=spawnSync('launchctl',['bootstrap',domain,path],{stdio:'pipe',timeout:5000});
-    if(result.status!==0)throw Error('Could not install the capture LaunchAgent');
-    return {kind:'launchd',label:label(),path};
+    if(result.status!==0){unlinkSync(serviceFile);throw Error('Could not install the capture LaunchAgent');}
+    return service;
   }
   await ensureCaptureDaemon(config);
   return {kind:'process',command:[...config.command,'collect','daemon']};
@@ -54,4 +66,5 @@ export function uninstallCaptureDaemon(home=homedir()) {
   if(!existsSync(path)||!readFileSync(path,'utf8').includes(xml(dirname(configDir()))))return;
   spawnSync('launchctl',['bootout','gui/'+process.getuid!()+'/'+label()],{stdio:'ignore',timeout:5000});
   unlinkSync(path);
+  const serviceFile=join(directory(),'service.json');if(existsSync(serviceFile))unlinkSync(serviceFile);
 }

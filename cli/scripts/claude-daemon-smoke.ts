@@ -11,6 +11,7 @@ import {installCapture,uninstallCapture} from '../src/capture/install.ts';
 import {captureDir,readCaptureConfig} from '../src/capture/runtime.ts';
 import {atomicJson} from '../src/session.ts';
 import {hash} from '../src/capture/parse.ts';
+import {ensureCaptureDaemon} from '../src/capture/daemon-service.ts';
 
 if(process.platform!=='darwin')throw Error('This supervised smoke test requires macOS.');
 const output=process.argv[2];if(!output)throw Error('Supply a durable evidence output directory.');
@@ -41,7 +42,7 @@ const evidence:any={sessionId,marker,startedAt:new Date().toISOString(),runtime:
 let daemonPid:number|undefined;
 const save=()=>writeFileSync(join(output,'proof.json'),JSON.stringify(evidence,null,2)+'\n');
 try{
-  Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(scratch,'config'),OPENCRAWL_API_URL:api,OPENCRAWL_SESSIONS_TOKEN:'synthetic-daemon-smoke-token',OPENCRAWL_NO_UPDATE:'1',CLAUDE_CONFIG_DIR:join(scratch,'claude'),CODEX_HOME:join(scratch,'codex')});
+  Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(scratch,'config'),XDG_CACHE_HOME:join(scratch,'cache'),XDG_DATA_HOME:join(scratch,'data'),OPENCRAWL_API_URL:api,OPENCRAWL_SESSIONS_TOKEN:'synthetic-daemon-smoke-token',OPENCRAWL_NO_UPDATE:'1',CLAUDE_CONFIG_DIR:join(scratch,'claude'),CODEX_HOME:join(scratch,'codex')});
   const command=process.argv[3]?[resolve(process.argv[3])]:[process.execPath,join(root,'src/cli.ts')];
   if(process.argv[3])evidence.runtime='compiled native CLI';
   const installed=await installCapture(api,{home:scratch,command,harnesses:['claude-code'],daemon:true});
@@ -68,8 +69,14 @@ try{
   evidence.queuedWhileOffline=readdirSync(join(captureDir(),'queue')).filter(name=>name.endsWith('.json')).length;
   const first=received[0]!.raw;process.kill(daemonPid!,'SIGKILL');
   const killedAt=performance.now();
+  // A session hook arriving during restart must wake the supervisor rather
+  // than replace its worker with an unsupervised child.
+  await sleep(50);await ensureCaptureDaemon();
   await until(()=>{const current=JSON.parse(readFileSync(status,'utf8'));return current.state==='running'&&current.pid!==daemonPid;});
   daemonPid=JSON.parse(readFileSync(status,'utf8')).pid;
+  const supervisor=spawnSync('launchctl',['print','gui/'+process.getuid!()+'/'+(installed as any).worker.label],{encoding:'utf8'});
+  evidence.checks.supervisorOwnsRestart=supervisor.status===0&&supervisor.stdout.includes('pid = '+daemonPid);
+  if(!evidence.checks.supervisorOwnsRestart)throw Error('Restarted worker is not owned by launchd');
   evidence.checks.launchdRestart={pid:daemonPid,elapsedMs:performance.now()-killedAt};offline=false;
   await until(()=>received.some(item=>item.accepted&&item.raw===first));
   await until(()=>readdirSync(join(captureDir(),'queue')).filter(name=>name.endsWith('.json')).length===0);
