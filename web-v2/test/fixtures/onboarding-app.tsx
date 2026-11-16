@@ -2,7 +2,7 @@
 import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
 import {AgentOnboarding, AppRouter, AppShell, OpenCrawlApp, Button, ConsoleDataProvider, FocusedFrame, InviteOnboarding, Page, Route, Routes, SourcesOnboarding, SourcesPage, useLocation, useNavigate, type OnboardingAdapter} from '../../src/index.ts';
-import {CopyPromptButton} from '../../src/onboarding/copy.tsx';
+import {CopyInstallCommandButton} from '../../src/onboarding/copy.tsx';
 import type {TeamAdapter, SourcesAdapter, ProductApi, Bootstrap, SetupStatus} from '../../src/application/api.ts';
 import '../../src/styles.css';
 import {TeamPage} from '../../src/application/team.tsx';
@@ -77,7 +77,7 @@ function Fixture() {
       {path: '/workspace', label: 'Usage', icon: 'usage', end: true, element: <h1 tabIndex={-1} data-page-heading>Console home</h1>},
       {path: '/workspace/settings', label: 'Agent setup', icon: 'settings', element: <AgentOnboarding adapter={adapter} mcpUrl="https://app.getopencrawl.com/mcp" setupPrompt={setupPrompt} canInstallReplicas={!location.search.includes('role=member')} replicasSetupPrompt={location.search.includes('role=member') ? undefined : 'Install OpenCrawl in this Replicas environment for my team. Use workspace_identity and verify shared capture.'} presentation="workspace"/>},
       {path: '/workspace/team', label: 'Team', icon: 'team', group: 'manage', element: <h1 tabIndex={-1} data-page-heading>Console team</h1>},
-      {path: '/workspace/prompt', label: 'Usage', navigation: false, element: <Page title="Usage" description="Example workspace" actions={<CopyPromptButton text={setupPrompt} manualPath="/workspace/settings"/>}/>},
+      {path: '/workspace/prompt', label: 'Usage', navigation: false, element: <Page title="Usage" description="Example workspace" actions={<CopyInstallCommandButton mcpUrl="https://app.getopencrawl.com/mcp" manualPath="/workspace/settings"/>}/>},
     ]}
     footer={<Button variant="quiet" onClick={() => {void navigate('/away');}}>Sign out</Button>}
   />;

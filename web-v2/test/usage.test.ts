@@ -351,19 +351,11 @@ test('Agent sessions shows tokens captured when metered and OpenCrawl calls inst
   assert.match(render().replace(/<[^>]*>/g, ''), /Machines capturing: 2\. Last capture/);
 });
 
-test('Usage offers the onboarding prompt in its header only when the workspace supplies one', () => {
+test('Usage never restores the retired prompt CTA even when an older adapter supplies one', () => {
   const adapter: ConsoleDataAdapter = {usage: async () => report(), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
-  const prompt = 'Set up OpenCrawl across all coding agents and environments I use.';
-  const page = (setupPrompt?: string) => renderToStaticMarkup(createElement(MemoryRouter, null, createElement(UsagePage, {adapter, setupPrompt})));
-  const header = (html: string) => html.slice(html.indexOf('<header'), html.indexOf('</header>'));
-  const offered = header(page(prompt));
-  // One shared button to the right of the title, with a status region for the confirmation.
-  assert.match(offered, /<h1[^>]*>Usage<\/h1>.*<div class="actions"><button type="button" class="oc-button secondary[^"]*">(?:<svg.*?<\/svg>)?Copy onboarding prompt<\/button><span class="sr-only" role="status"><\/span><\/div>$/s);
-  // The prompt is copied on request; it is not printed into the page.
-  assert.doesNotMatch(page(prompt), /Set up OpenCrawl across/);
-  for (const html of [page(), page('')]) {
-    assert.match(header(html), /<h1[^>]*>Usage<\/h1>/);
-    assert.doesNotMatch(html, /Copy onboarding prompt|class="actions"/);
+  for(const setupPrompt of [undefined,'','Private obsolete agent prompt']) {
+    const html=renderToStaticMarkup(createElement(MemoryRouter,null,createElement(UsagePage,{adapter,setupPrompt})));
+    assert.match(html,/<h1[^>]*>Usage<\/h1>/);assert.doesNotMatch(html,/Private obsolete agent prompt|Copy onboarding prompt|class="actions"/);
   }
 });
 
