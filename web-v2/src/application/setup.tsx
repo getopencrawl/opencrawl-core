@@ -97,7 +97,7 @@ export function SetupPage({api,mcpUrl,setupStartCommand,setupCliCommand}: {api:P
   useEffect(()=>{if(!copied)return;const timer=setTimeout(()=>setCopied(false),2_000);return()=>clearTimeout(timer);},[copied]);
   useEffect(()=>{if(handoffOpen){const field=handoff.current?.querySelector('textarea');field?.focus();field?.select();}},[handoffOpen]);
   const continueWithAgent=async()=>{if(await copyText(commands.handoff))setCopied(true);else setHandoffOpen(true);};
-  const launch=<Section title={hasInstallations?'Add or update an installation':'Start setup'} description="New setup is available for Claude Code and Codex on macOS. Choose plugins, future recording, and past sessions separately.">
+  const launch=<Section title={hasInstallations?'Add or update an installation':'Start setup'} description="New setup is available for Claude Code, Codex, and Cursor on macOS. Choose plugins, future recording, and past sessions separately.">
         <div className="oc-form-measure stack-sm">
           <CopyField label="Install and set up" value={commands.start} multiline/>
           <details className="oc-disclosure"><summary>CLI already installed</summary><CopyField label="Setup command" value={commands.setup}/></details>
