@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
-import {createOnlineObjectPolicy,type OnlinePreservedEventIdentities} from './online-object-policy.mjs';
+import {createOnlineObjectPolicy,verifyOnlineNativeDeletionProof,type OnlinePreservedEventIdentities} from './online-object-policy.mjs';
 import {createOnlineProjection,onlineProjectionHash} from './online-projection.mjs';
 import {createOnlineRetirements} from './online-retirements.mjs';
 import {createOnlineShadow,type OnlineShadowListing,type OnlineShadowParticipant,type OnlineShadowSelection} from './online-shadow.mjs';
@@ -20,10 +20,14 @@ const compare=(a:string,b:string)=>Buffer.compare(Buffer.from(a),Buffer.from(b))
  * Completed background parity is an observation, not final fenced admission.
  * Baseline coverage receipts and compact incremental final proof remain separate
  * composition work; this factory cannot mark an installation ready. */
-export function createOnlineTypedShadow({binding:inputBinding,journal,external,physicalListing,assertCurrent,retireDerived,coverage:coveragePolicy,sourceRegistration,preservedEventIdentities,...input}:ProjectionOptions&{
- binding:OnlineMigrationBinding;journal:ReturnType<typeof createOnlineJournal>;external:OnlineExternalStore;
- physicalListing:OnlineShadowListing;assertCurrent:(signal:AbortSignal)=>Promise<void>;retireDerived?:true;coverage?:OnlineCoveragePolicy;sourceRegistration?:OnlineSourceRegistration;preservedEventIdentities?:OnlinePreservedEventIdentities;
-}){
+export type OnlineObjectParticipantOptions=ProjectionOptions&{
+ binding:OnlineMigrationBinding;journal:ReturnType<typeof createOnlineJournal>;
+ retireDerived?:true;coverage?:OnlineCoveragePolicy;preservedEventIdentities?:OnlinePreservedEventIdentities;
+};
+/** The typed object participant only. Compose it with other source participants
+ * under ONE journal/coverage coordinator. The host must include verifyNative in
+ * its current-source assertion; this participant never grants admission. */
+export function createOnlineObjectParticipant({binding:inputBinding,journal,retireDerived,coverage:coveragePolicy,preservedEventIdentities,...input}:OnlineObjectParticipantOptions){
  const binding=Object.freeze({...inputBinding});
  if(retireDerived!==undefined&&retireDerived!==true)fail('INVALID_RETIREMENT_POLICY');
  if(!input.store.bucket||!Array.isArray(input.registryRecords)||input.registryRecords.length>100000)fail('INVALID_SOURCE_BINDING');
@@ -32,8 +36,8 @@ export function createOnlineTypedShadow({binding:inputBinding,journal,external,p
  const options={...input,tenantIds:[...input.tenantIds],retiredTenantHashes:[...(input.retiredTenantHashes??[])],registryRecords};
  const projection=createOnlineProjection({...options,epoch:binding.epoch,sourceId:binding.sourceId,journalBinding:journal.binding});
  const classifier=createOnlineObjectPolicy({prefix:options.prefix,credentialPurpose:options.credentialPurpose,agentPrefix:options.agentPrefix,preservedEventIdentities:preservedEventIdentities?.binding});
- const native=classifier.preservedEventIdentities,verifyNativeMetadata=preservedEventIdentities?.verify;let nativeVerified=false;
- if(native&&(!coveragePolicy||native.applicationNamespace!==options.database.namespace||native.bucket!==options.store.bucket||typeof verifyNativeMetadata!=='function'))fail('INVALID_NATIVE_BINDING');
+ const native=classifier.preservedEventIdentities,verifyNativeMetadata=preservedEventIdentities?.verify,readNativeDeletion=preservedEventIdentities?.readDeletionProof;let nativeVerified=false;
+ if(native&&(!coveragePolicy||native.applicationNamespace!==options.database.namespace||native.bucket!==options.store.bucket||typeof verifyNativeMetadata!=='function'||native.deletionProofVersion===1&&typeof readNativeDeletion!=='function'||native.deletionProofVersion!==1&&readNativeDeletion!==undefined))fail('INVALID_NATIVE_BINDING');
  async function verifyNative(){
   if(!native)return;nativeVerified=false;
   const proof=await verifyNativeMetadata!();
@@ -66,11 +70,25 @@ export function createOnlineTypedShadow({binding:inputBinding,journal,external,p
    if((await client.query('SELECT 1 FROM opencrawl_online_migration_journal WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4 LIMIT 1',[options.database.namespace,binding.epoch,binding.sourceId,key])).rows.length)fail('NATIVE_MARKER_MUTATED');
    return {nativeBindingHash:classifier.nativeBindingHash!};
   },
+  async inspectNativeAbsenceIn(client,key,selected,signal){
+   signal.throwIfAborted();if(!native||native.deletionProofVersion!==1||!readNativeDeletion)return false;
+   await participant.inspectNativeIn!(client,key,selected);signal.throwIfAborted();
+   const suffix='event-identities-v1.json';if(!key.endsWith('/'+suffix))fail('INVALID_NATIVE_MARKER');
+   const source=key.slice(0,-suffix.length),proof=await readNativeDeletion({prefix:options.prefix,source,signal});signal.throwIfAborted();
+   return verifyOnlineNativeDeletionProof(proof,{binding:native,prefix:options.prefix,source});
+  },
   async keysPageIn(client:PoolClient,input:{after:string;limit:number}){
    const a=await projection.keysPageIn(client,input),b=retirements?await retirements.keysPageIn(client,input):[];
    return [...new Set([...a,...b])].sort(compare).slice(0,input.limit);
   },
  });
+ return {binding,participant,objectPolicy:classifier,disposition,verifyNative,enrollTenant:projection.enrollTenant,inspectReplicasReferencesPageIn:projection.inspectReplicasReferencesPageIn};
+}
+/** Backward-compatible single-participant convenience factory. */
+export function createOnlineTypedShadow({external,physicalListing,assertCurrent,sourceRegistration,...options}:OnlineObjectParticipantOptions&{
+ external:OnlineExternalStore;physicalListing:OnlineShadowListing;assertCurrent:(signal:AbortSignal)=>Promise<void>;sourceRegistration?:OnlineSourceRegistration;
+}){
+ const {binding,participant,objectPolicy:classifier,disposition,verifyNative,enrollTenant,inspectReplicasReferencesPageIn}=createOnlineObjectParticipant(options),journal=options.journal,coveragePolicy=options.coverage;
  const shadow=createOnlineShadow({database:options.database,binding,journal,external,listing:physicalListing,roots:classifier.roots,classify:classifier.classify,assertCurrent:async signal=>{await assertCurrent(signal);await verifyNative();},participant,coveragePolicy,sourceRegistration});
  const adapter={...shadow.adapter,
   async backfillPage(request:Parameters<typeof shadow.adapter.backfillPage>[0]){await verifyNative();return shadow.adapter.backfillPage(request);},
@@ -81,5 +99,5 @@ export function createOnlineTypedShadow({binding:inputBinding,journal,external,p
   if(request.cursor===null)for(let shard=0;shard<binding.shards;shard++){request.signal.throwIfAborted();const checkpoint=await journal.replayCheckpoint(shadow.bindingId+'-'+shard);if(checkpoint===null||BigInt(checkpoint)<BigInt(request.through))return {cursor:null,processed:0,mismatches:0,drift:true};}
   return shadow.adapter.parityPage(request);
  }};
- return {...shadow,adapter,async backfill(key:string){await verifyNative();return shadow.backfill(key);},objectPolicy:classifier,mode:'background-observation-only' as const,disposition,enrollTenant:projection.enrollTenant,inspectReplicasReferencesPageIn:projection.inspectReplicasReferencesPageIn};
+ return {...shadow,adapter,async backfill(key:string){await verifyNative();return shadow.backfill(key);},objectPolicy:classifier,mode:'background-observation-only' as const,disposition,enrollTenant,inspectReplicasReferencesPageIn};
 }

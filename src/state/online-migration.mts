@@ -11,7 +11,7 @@ export type {LegacyObjectClassification} from './legacy-object-classification.mj
 export {createOnlineObjectPolicy} from './online-object-policy.mjs';
 export type {OnlineObjectRoute, OnlineObjectClassification, OnlinePreservedEventIdentityBinding, OnlinePreservedEventIdentityProof, OnlinePreservedEventIdentities} from './online-object-policy.mjs';
 export {createOnlineShadow} from './online-shadow.mjs';
-export {createOnlineTypedShadow} from './online-typed-shadow.mjs';
+export {createOnlineObjectParticipant, createOnlineTypedShadow} from './online-typed-shadow.mjs';
 export type {OnlineTypedDisposition} from './online-typed-shadow.mjs';
 export type {OnlineCoverageAuthority, OnlineCoveragePolicy} from './online-coverage.mjs';
 export {validateOnlineIndexingHandoff, onlineIndexingHandoffHash} from './online-indexing-handoff.mjs';

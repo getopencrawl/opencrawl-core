@@ -19,6 +19,7 @@ export interface OnlineShadowParticipant {
  inspectIn(client:PoolClient,key:string,snapshot:OnlineExternalSnapshot):Promise<boolean>;
  inspectRetiredIn(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'retired'}>):Promise<boolean>;
  inspectNativeIn?(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'preserved-native'}>):Promise<{nativeBindingHash:string}>;
+ inspectNativeAbsenceIn?(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'preserved-native'}>,signal:AbortSignal):Promise<boolean>;
  keysPageIn(client:PoolClient,input:{after:string;limit:number}):Promise<string[]>;
 }
 export type OnlineShadowClassifier=(key:string)=>{maxBytes:number;preservedNative?:true}|null;
@@ -163,7 +164,7 @@ export function createOnlineShadow({database,binding:input,journal,external,list
    return [...new Set([...mirror,...additional,...seen,...native])].sort(ordered).slice(0,limit);
   }catch(error){failed=true;throw error;}finally{client.release(failed);}
  }
- async function compare(key:string,through:string,passId:string|null,fromSource:boolean){
+ async function compare(key:string,through:string,passId:string|null,fromSource:boolean,signal:AbortSignal){
   const choice=selected(key);if(choice.kind==='immutable')return {drift:false,mismatch:false};
   const observation=await journal.observeKey({key,through,read:async client=>{
    if(choice.kind==='retired'||choice.kind==='preserved-native'){
@@ -173,7 +174,11 @@ export function createOnlineShadow({database,binding:input,journal,external,list
     if((await client.query('SELECT 1 FROM opencrawl_online_shadow_objects WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4',[...scope,key])).rows.length)unsafe();
     if(fromSource)await client.query(`INSERT INTO opencrawl_online_shadow_seen_retirements VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(namespace,epoch,source_id,source_key) DO UPDATE SET participant_identity=EXCLUDED.participant_identity,pass_id=EXCLUDED.pass_id,through_sequence=EXCLUDED.through_sequence`,[...scope,key,participantIdentity,passId,through]);
     const seen=(await client.query('SELECT participant_identity,pass_id,through_sequence::text FROM opencrawl_online_shadow_seen_retirements WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4',[...scope,key])).rows[0];
-    return seen?.participant_identity===participantIdentity&&seen.pass_id===passId&&seen.through_sequence===through;
+    if(seen?.participant_identity===participantIdentity&&seen.pass_id===passId&&seen.through_sequence===through)return true;
+    // A complete source traversal did not see this previously certified native
+    // marker. Only the versioned current SQL deletion proof may explain it.
+    signal.throwIfAborted();
+    return !fromSource&&choice.kind==='preserved-native'&&participant!.inspectNativeAbsenceIn!==undefined&&await participant!.inspectNativeAbsenceIn(client,key,choice,signal);
    }
    const actual=await read(client,key),observed=snapshot(await external.read(key,{maxBytes:choice.maxBytes}),choice.maxBytes);
    if(!actual||BigInt(actual.sequence)>BigInt(through))return false;
@@ -217,7 +222,7 @@ export function createOnlineShadow({database,binding:input,journal,external,list
     keys=await targetKeys(position.after,input.limit);
     next=keys.length===input.limit?{stage:'shadow',after:keys.at(-1)!}:null;
    }
-   let mismatches=0,changed=false;for(const key of keys!){input.signal.throwIfAborted();if(selected(key).kind!=='immutable'&&shard(key)===input.shard){const result=await compare(key,input.through,parsed.passId,fromSource&&position.stage==='source');if(result.mismatch)mismatches++;changed ||= result.drift;}}
+   let mismatches=0,changed=false;for(const key of keys!){input.signal.throwIfAborted();if(selected(key).kind!=='immutable'&&shard(key)===input.shard){const result=await compare(key,input.through,parsed.passId,fromSource&&position.stage==='source',input.signal);if(result.mismatch)mismatches++;changed ||= result.drift;}}
    changed ||= await drift(input.through);return {cursor:parityCursor(next!,input.through,input.shard,parsed.passId),processed:keys!.length,mismatches,drift:changed};
   },
  };

@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
-import {createOnlineObjectPolicy} from '../dist/src/state/online-object-policy.mjs';
+import {createOnlineObjectPolicy,verifyOnlineNativeDeletionProof} from '../dist/src/state/online-object-policy.mjs';
 import {createBoundObjectMigration} from '../dist/src/state/object-migration.mjs';
 import {createOnlineMigrationObjectStore} from '../dist/src/state/online-object-store.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex'),prefix='sessions/production/v1',agentPrefix=prefix+'/_agent-access';
@@ -44,4 +44,14 @@ test('native marker is optional true only and raw immutable methods remain uncha
  const bad=createOnlineMigrationObjectStore({raw,external:{},sourceId:'source',classify:()=>({maxBytes:1,preservedNative:false})});await assert.rejects(bad.get('key'),/INVALID_CLASSIFICATION/);
  const good=createOnlineMigrationObjectStore({raw,external:{},sourceId:'source',classify:createOnlineObjectPolicy({prefix,preservedEventIdentities:native()}).classify});
  const rawKey=prefix+'/'+scope+'/attachments/'+hash('attachment');assert.equal((await good.get(rawKey)).toString(),'raw');await good.put(rawKey,Buffer.from('same'));assert.equal(writes,1);
+});
+
+test('native absence capability is policy-bound and only exact current tombstone metadata explains erasure',()=>{
+ const binding=native(),source=marker.slice(0,-'event-identities-v1.json'.length),policy=createOnlineObjectPolicy({prefix,preservedEventIdentities:binding});
+ const versioned={...binding,deletionProofVersion:1},enabled=createOnlineObjectPolicy({prefix,preservedEventIdentities:versioned});assert.notEqual(enabled.policyHash,policy.policyHash);assert.notEqual(enabled.nativeBindingHash,policy.nativeBindingHash);
+ const resource=source.replace(/\/[a-f0-9]{64}\/([a-f0-9]{64})\/$/,'/$1/');
+ const proof={format:1,kind:'native-event-identity-deletion',databaseId:binding.databaseId,namespace:binding.namespace,source,resource,deleted:true,sessionsAbsent:true,metadataOnly:true,eventRowsRead:false};
+ assert.equal(verifyOnlineNativeDeletionProof(null,{binding:versioned,prefix,source}),false);assert.equal(verifyOnlineNativeDeletionProof(proof,{binding:versioned,prefix,source}),true);
+ for(const change of [{databaseId:randomUUID()},{namespace:'foreign'},{source:source+'foreign/'},{resource:resource+'other/'},{deleted:false},{sessionsAbsent:false},{metadataOnly:false},{eventRowsRead:true},{format:2},{kind:'anything'},{bodyHash:hash('invented')}])assert.throws(()=>verifyOnlineNativeDeletionProof({...proof,...change},{binding:versioned,prefix,source}),/invalid native deletion proof/);
+ assert.throws(()=>verifyOnlineNativeDeletionProof(proof,{binding,prefix,source}),/invalid native deletion proof/);assert.throws(()=>createOnlineObjectPolicy({prefix,preservedEventIdentities:{...binding,deletionProofVersion:2}}),/invalid native binding/);
 });

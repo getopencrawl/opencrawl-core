@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
 import {createOnlineJournal} from '../dist/src/state/online-journal.mjs';
-import {createOnlineTypedShadow} from '../dist/src/state/online-typed-shadow.mjs';
+import {createOnlineTypedShadow,createOnlineObjectParticipant} from '../dist/src/state/online-typed-shadow.mjs';
 import {createOnlineMigrationController} from '../dist/src/state/online-temporal/controller.mjs';
 import {onlineMigrationReference} from '../dist/src/state/online-temporal/binding.mjs';
 import {createValueReports} from '../dist/src/state/value-reports.mjs';
@@ -42,9 +42,9 @@ test('typed replay refuses unexpected raw journal entries before source or typed
  assert.equal(committed,false);assert.equal(f.source.reads.length,0);
 });
 const live=(name,run)=>test(name,{skip:!postgresUrl},run);
-async function fixture(t,{retireDerived=false,shards=1,preserveNative=false}={}){
+async function fixture(t,{retireDerived=false,shards=1,preserveNative=false,nativeDeletion}={}){
  const database=await applicationDatabaseFixture(t,{max:8}),b={...binding(),shards},source=external(),journal=createOnlineJournal({database,epoch:b.epoch,sourceId:b.sourceId}),config={...options(database,b,journal,source),...(retireDerived?{retireDerived:true}:{})};
- if(preserveNative){const nativeBinding={applicationNamespace:database.namespace,databaseId:randomUUID(),namespace:'synthetic',bucket:'synthetic',sourceContractHash:hash('native source contract'),verifierId:'native-metadata-fixture'};config.preservedEventIdentities={binding:nativeBinding,verify:async()=>({binding:{...nativeBinding},metadataOnly:true,historicalBodiesRead:false,eventRowsCounted:false,rowsWritten:false})};config.coverage={authority:{namespace:database.namespace,epoch:b.epoch,protocol:'envelope-v1',enrollmentReceiptHash:hash('source enrollment')},policyHash:hash('explicit native policy')};}
+ if(preserveNative){const nativeBinding={applicationNamespace:database.namespace,databaseId:randomUUID(),namespace:'synthetic',bucket:'synthetic',sourceContractHash:hash('native source contract'),verifierId:'native-metadata-fixture',...(nativeDeletion?{deletionProofVersion:1}:{})};config.preservedEventIdentities={binding:nativeBinding,...(nativeDeletion?{readDeletionProof:nativeDeletion}:{}),verify:async()=>({binding:{...nativeBinding},metadataOnly:true,historicalBodiesRead:false,eventRowsCounted:false,rowsWritten:false})};config.coverage={authority:{namespace:database.namespace,epoch:b.epoch,protocol:'envelope-v1',enrollmentReceiptHash:hash('source enrollment')},policyHash:hash('explicit native policy')};}
  const shadow=createOnlineTypedShadow(config);await shadow.ready();
  const put=(key,value)=>journal.mutate({operationId:randomUUID(),key,mutation:{kind:'put',bytes:Buffer.isBuffer(value)?value:encode(value),contentType:'application/json'}},source.store),del=key=>journal.mutate({operationId:randomUUID(),key,mutation:{kind:'delete'}},source.store);
  const replay=async(through)=>{through??=await journal.closedFrontier();for(let shard=0;shard<b.shards;shard++)for(let n=0;n<100;n++){const page=await shadow.adapter.replayPage({consumer:shadow.bindingId+'-'+shard,shard,shards:b.shards,through,limit:64,signal:signal()});if(page.checkpoint===through)break;if(n===99)assert.fail('replay did not finish');}return through;};
@@ -128,4 +128,24 @@ live('unexpected native marker mutation is rejected by typed replay and pending 
  await assert.rejects(f.replay(),{code:'ONLINE_MIGRATION_UNSAFE'});assert.equal(await f.journal.replayCheckpoint(f.shadow.bindingId+'-0'),'0');assert.equal(f.source.reads.length,0);
  const other=marker.replace(hash('session'),hash('pending-session')),original=f.source.store.putIfVersion;f.source.store.putIfVersion=async()=>{throw Error('uncertain provider response');};await assert.rejects(f.put(other,{}));f.source.store.putIfVersion=original;f.source.reads.length=0;
  await assert.rejects(f.shadow.adapter.reconcilePending({cursor:null,limit:1,signal:signal()}),{code:'ONLINE_MIGRATION_UNSAFE'});assert.equal(f.source.reads.length,0);
+});
+
+live('missing native markers require a fresh matching permanent tombstone and cancellation remains effective',async t=>{
+ let current=null,reads=0;const f=await fixture(t,{preserveNative:true,nativeDeletion:async input=>{reads++;input.signal.throwIfAborted();return current&&{...current,source:input.source};}}),marker=nativeMarker(tenant);
+ f.source.seed(marker,'opaque');await backfillAll(f);await f.replay('0');assert.deepEqual(await parityAll(f,'0'),{mismatches:0,drift:false});assert.equal(reads,0);
+ f.source.objects.delete(marker);assert.ok((await parityAll(f,'0')).mismatches>0);
+ const source=marker.slice(0,-'event-identities-v1.json'.length),binding=f.config.preservedEventIdentities.binding;
+ current={format:1,kind:'native-event-identity-deletion',databaseId:binding.databaseId,namespace:binding.namespace,source,resource:source.replace(/\/[a-f0-9]{64}\/([a-f0-9]{64})\/$/,'/$1/'),deleted:true,sessionsAbsent:true,metadataOnly:true,eventRowsRead:false};
+ assert.deepEqual(await parityAll(f,'0'),{mismatches:0,drift:false});assert.equal(f.source.reads.length,0);assert.equal(await f.mirror(marker),null);
+ const saved=current;for(const change of [{databaseId:randomUUID()},{namespace:'wrong'},{resource:current.resource+'other'},{sessionsAbsent:false}]){current={...saved,...change};await assert.rejects(parityAll(f,'0'),/invalid native deletion proof/);}current=saved;
+ const cancelled=new AbortController();cancelled.abort(Error('operator cancellation'));await assert.rejects(f.shadow.adapter.parityPage({shard:0,shards:1,cursor:null,through:'0',limit:2,signal:cancelled.signal}),/operator cancellation/);
+ current=null;assert.ok((await parityAll(f,'0')).mismatches>0,'no cached deletion authorization across passes');
+ const certificate=(await f.database.pool.query('SELECT source_hash,source_bytes,target_key,target_hash,absent,deleted FROM opencrawl_online_coverage_certificates WHERE namespace=$1 AND source_key=$2',[f.database.namespace,marker])).rows[0];assert.deepEqual(certificate,{source_hash:null,source_bytes:null,target_key:null,target_hash:null,absent:false,deleted:false});
+});
+
+test('object participant composition retains the exact standalone policy and never creates another shadow',()=>{
+ const f=pure(true),object=createOnlineObjectParticipant(f.config),standalone=createOnlineTypedShadow(f.config);
+ for(const sourceKey of [key,derived,raw])assert.deepEqual(object.participant.select(sourceKey),standalone.disposition(sourceKey));
+ assert.equal(object.objectPolicy.policyHash,standalone.objectPolicy.policyHash);assert.equal(object.binding.epoch,f.b.epoch);assert.equal(object.participant.binding.namespace,f.config.database.namespace);
+ assert.equal('adapter' in object,false);assert.equal('coverage' in object,false);assert.equal('ready' in object,false);assert.equal(typeof object.participant.ready,'function');assert.equal(typeof object.verifyNative,'function');
 });

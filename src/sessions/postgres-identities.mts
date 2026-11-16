@@ -15,6 +15,17 @@ type Legacy={schemaVersion:1;identity:string;events:Record<string,string>};
  * across source inventories, and never a substitute for a first import's reads. */
 export interface ObservedEventIdentityMarker {source:string;bytes:Uint8Array}
 const resource=(source:string)=>source.replace(/\/[a-f0-9]{64}\/([a-f0-9]{64})\/$/,'/$1/');
+/** Canonical, installation-independent native deletion resource. */
+export function eventIdentityResource({prefix,source}:{prefix:string;source:string}):string {
+ if(typeof prefix!=='string'||!prefix||Buffer.byteLength(prefix)>2048||prefix.includes('\0')||prefix.split('/').some(part=>!part||part==='.'||part==='..')||
+  typeof source!=='string'||Buffer.byteLength(source)>8192||!sourceBatchIdentity(prefix,source+'0'.repeat(64)+'.json.gz'))invalid('Invalid event identity source scope');
+ return resource(source);
+}
+export interface EventIdentityDeletionProof {
+ format:1;kind:'native-event-identity-deletion';databaseId:string;namespace:string;
+ source:string;resource:string;deleted:true;sessionsAbsent:true;metadataOnly:true;eventRowsRead:false;
+}
+
 
 /** One row per immutable event. namespace must identify this object-store source
  * (for example a stable bucket identity), independently of credentials/URLs.
@@ -237,6 +248,27 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
      await client.query('COMMIT');
     }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}
    });
+  },
+  /** Read current permanent tombstone metadata only. Does not call ready(),
+   * create schema, inspect markers, or count/read immutable event rows. */
+  async readDeletionProof(options:{prefix:string;source:string}):Promise<EventIdentityDeletionProof|null>{
+   const prefix=options.prefix,source=options.source,scoped=eventIdentityResource({prefix,source});
+   const client=await pool.connect();let failed=false;
+   try{
+    await client.query('BEGIN READ ONLY');
+    await client.query("SET LOCAL statement_timeout='5s'");
+    const rows=(await client.query<{version:number;database_id:string;deleted:boolean;sessions_present:boolean}>(
+     `SELECT version,database_id,
+       EXISTS(SELECT 1 FROM opencrawl_event_identity_deletions WHERE namespace=$1 AND resource=$2) AS deleted,
+       EXISTS(SELECT 1 FROM opencrawl_event_identity_sessions WHERE namespace=$1 AND resource=$2) AS sessions_present
+      FROM opencrawl_event_identity_schema WHERE singleton`,[namespace,scoped])).rows;
+    const row=rows[0];
+    if(rows.length!==1||row?.version!==1||typeof row.database_id!=='string'||!/^([a-f0-9]{8}-)([a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(row.database_id))unavailable('Unsupported event identity database schema');
+    if(row.deleted&&row.sessions_present)unavailable('Deleted event identity resource is inconsistent');
+    await client.query('COMMIT');
+    return row.deleted?Object.freeze({format:1 as const,kind:'native-event-identity-deletion' as const,databaseId:row.database_id,namespace,source,resource:scoped,deleted:true as const,sessionsAbsent:true as const,metadataOnly:true as const,eventRowsRead:false as const}):null;
+   }catch(error){failed=true;throw serviceError(error).status?error:Object.assign(new Error('Event identity deletion proof unavailable'),{status:503});}
+   finally{client.release(failed);}
   },
   async close(){await pool.end();},
  } satisfies EventIdentityStore & Record<string,unknown>;
