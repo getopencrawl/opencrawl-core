@@ -37,3 +37,19 @@ test('raw connector hits retain search fields but never expose private or unknow
   forged = true;
   await assert.rejects(search.search({tenantId: 'tenant'}, [binding], {query: 'hello', raw: true}), /scope/);
 });
+
+// The browser inspector uses the same principal-scoped retrieval as agent search.
+import {diagnosticRequest} from '../dist/src/application/diagnostics.mjs';
+import {Readable} from 'node:stream';
+for (const operation of ['board','search']) test(`browser ${operation} permits members and withholds results after access revocation`, async () => {
+  const principal={tenantId:'org_member',userId:'user_member'},calls=[];
+  let allowed=200,response;
+  const options={principal,admin:false,revalidate:async()=>allowed,respond:(status,body)=>{response={status,body};},
+    board:{read:async(scope)=>{assert.deepEqual(scope,principal);calls.push('board');return {messages:[{text:'scoped result'}]};}},
+    search:{search:async(scope)=>{assert.deepEqual(scope,principal);calls.push('search');return {hits:{hits:[{_source:{text:'scoped result'}}]}};}}};
+  const run=()=>diagnosticRequest(Readable.from([Buffer.from(JSON.stringify({query:'example'}))]),new URL('https://app.example/api/debug/'+operation),{name:'debug-'+operation},options);
+  await run();assert.equal(response.status,200);assert.match(response.body,/scoped result/);
+  allowed=403;await run();assert.equal(response.status,403);assert.doesNotMatch(response.body,/scoped result/);
+  allowed=503;await run();assert.equal(response.status,503);assert.doesNotMatch(response.body,/scoped result/);
+  const count=calls.length;options.principal=null;await run();assert.equal(response.status,403);assert.equal(calls.length,count);
+});

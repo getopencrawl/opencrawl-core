@@ -1,9 +1,10 @@
 /** Browser-test fixture only. It is never a product entrypoint or published asset. */
+import {OpenCrawlApp} from '../../src/application/app.tsx';
 import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
 import {AgentOnboarding, AppRouter, AppShell, Button, ConsoleDataProvider, FocusedFrame, InviteOnboarding, Page, Route, Routes, SourcesOnboarding, SourcesPage, useLocation, useNavigate, type OnboardingAdapter} from '../../src/index.ts';
 import {CopyPromptButton} from '../../src/onboarding/copy.tsx';
-import type {TeamAdapter, SourcesAdapter} from '../../src/application/api.ts';
+import type {TeamAdapter, SourcesAdapter, ProductApi, Bootstrap} from '../../src/application/api.ts';
 import '../../src/styles.css';
 import {TeamPage} from '../../src/application/team.tsx';
 import {ConsoleApiError} from '../../src/application/errors.ts';
@@ -38,7 +39,7 @@ const adapter: OnboardingAdapter = {
 };
 const never = new AbortController().signal;
 const usageAdapter: ConsoleDataAdapter = {usage: signal => request('/api/console/usage', signal), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
-const diagnosticsAdapter: ConsoleDataAdapter = {...usageAdapter, board: (input, signal) => request('/api/console/board?' + new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)])), signal)};
+const diagnosticsAdapter: ConsoleDataAdapter = {...usageAdapter, search:(query,signal)=>request('/api/debug/search',signal,{query}), board: (input, signal) => request('/api/console/board?' + new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)])), signal)};
 const selfhostSetup = new URLSearchParams(window.location.search).has('selfhost');
 const libraryAdapter: LibraryAdapter = (operation, input, signal) => request('/api/library/' + operation, signal, input);
 /** The Integrations page against the same fixture state as the onboarding step. */
@@ -49,6 +50,12 @@ const sourcesAdapter: SourcesAdapter = {
   saveCredential: (id, value, signal) => request(`/api/integrations/credentials/${encodeURIComponent(id)}`, signal ?? never, {value}),
 };
 const teamAdapter: TeamAdapter = {team: signal => request('/api/console/team', signal ?? never), invite: (email,signal) => request('/api/console/team/invite',signal ?? never,{email}), changeRole: async (userId,role) => ({ok:true,userId,role}), renameOrganization: async name => ({ok:true,name}), removeMember: (userId,signal) => request('/api/console/team/remove',signal ?? never,{userId})};
+const fullApi: ProductApi = {
+  ...sourcesAdapter,...teamAdapter,...diagnosticsAdapter,library:libraryAdapter,
+  bootstrap:signal=>request<Bootstrap>('/api/console/bootstrap',signal??never),
+  onboardingStatus:async signal=>({data:await adapter.status(signal??never)}),
+  onboardingSources:adapter.sources,onboardingInvitations:adapter.invitations,onboardingInvite:adapter.invite,finishOnboarding:adapter.finish,
+};
 export const setupPrompt = 'Set up OpenCrawl across all coding agents and environments I use. Inspect existing setup, reuse valid configuration and authentication, and complete what is missing. Keep credentials out of chats and repositories. Confirm recording and history import consent, then verify a newly recorded session.';
 const account = <form className="header-account" method="post" action="/auth/logout"><Button variant="quiet" type="submit">Sign out</Button></form>;
 
@@ -85,11 +92,11 @@ function Fixture() {
     <Route path="/onboarding" element={<FocusedFrame footer={account}><AgentOnboarding adapter={adapter} mcpUrl="https://app.getopencrawl.com/mcp" setupPrompt={setupPrompt} canInstallReplicas={!location.search.includes('role=member')} replicasSetupPrompt={location.search.includes('role=member') ? undefined : 'Install OpenCrawl in this Replicas environment for my team. Use workspace_identity and verify shared capture.'} canInviteBeforeSetup={selfhostSetup} /></FocusedFrame>} />
     <Route path="/onboarding/sources" element={<FocusedFrame footer={account}><SourcesOnboarding adapter={adapter} canConfigure={!location.search.includes('role=member')} /></FocusedFrame>} />
 
-    <Route path="/onboarding/invite" element={<FocusedFrame footer={account}><InviteOnboarding adapter={adapter} canInvite returnToAgent={selfhostSetup} invitationDelivery={selfhostSetup?'link':'email'} /></FocusedFrame>} />
+    <Route path="/onboarding/invite" element={<FocusedFrame footer={account}><InviteOnboarding adapter={adapter} canInvite={!location.search.includes('role=member')} returnToAgent={selfhostSetup} invitationDelivery={selfhostSetup?'link':'email'} /></FocusedFrame>} />
     <Route path="/" element={<h1>Workspace overview</h1>} />
     <Route path="/away" element={<h1>Different route</h1>} />
   </Routes>;
 }
 const mount = document.getElementById('root');
 if (!mount) throw new Error('Fixture mount is missing');
-createRoot(mount).render(<AppRouter><Fixture /></AppRouter>);
+createRoot(mount).render(new URLSearchParams(window.location.search).has('full-app') ? <OpenCrawlApp api={fullApi}/> : <AppRouter><Fixture /></AppRouter>);

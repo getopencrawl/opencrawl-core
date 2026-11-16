@@ -75,16 +75,16 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   };
   const onboarding = location.pathname.startsWith('/onboarding');
   const boardQuery = new URLSearchParams(location.search);
-  const boardNavigation = location.pathname === '/diagnostics' && boardQuery.get('nav') !== 'workspace' && boardQuery.get('view') !== 'search' && data?.workspace.role === 'admin';
+  const boardNavigation = location.pathname === '/diagnostics' && boardQuery.get('nav') !== 'workspace' && boardQuery.get('view') !== 'search';
   const boardTopic = boardQuery.get('view') === 'stream' ? '' : (boardQuery.get('channel')??boardQuery.get('topic'))?.trim() || '';
   const routes: ConsoleRoute[] = [
     {path:'/',label:'Usage',icon:'usage',element:<UsagePage adapter={dataAdapter} setupPrompt={data?.setupPrompt}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them.">{feedback}</PendingPage>},
-    {path:'/sources',label:'Integrations',icon:'sources',element:<SourcesPage adapter={api} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
+    {path:'/sources',label:'Integrations',icon:'sources',navigation:data?.workspace.role === 'admin',element:<SourcesPage adapter={api} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
-    {path:'/diagnostics',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All channels'}>{feedback}</PendingPage>},
-    {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
+    {path:'/diagnostics',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All channels'}>{feedback}</PendingPage>},
+    {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
     {path:'/agent-setup',label:'Agent setup',icon:'terminal',element:data ? <AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
     {path:'/settings/team',label:'Team',icon:'team',group:'settings',element:<TeamPage embedded adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={name => setData(current => current ? {...current, workspace: {...current.workspace, name}} : current)}/>,pending:feedback => <TeamLoadingPage embedded>{feedback}</TeamLoadingPage>},
     ...(extensions?.routes?.({data, activated}) ?? []),
@@ -101,6 +101,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
   }
   if (!data.onboarding.completed && !onboarding) return <Navigate to={data.onboarding.next} replace/>;
+  if (onboarding && data.workspace.role !== 'admin' && location.pathname !== '/onboarding') return data.onboarding.completed ? <Navigate to="/" replace/> : <FinishMemberOnboarding api={api} onComplete={async () => {await refresh();navigate('/');}}/>;
   if (onboarding) return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><FocusedFrame footer={<SignOut/>}><Routes>
     <Route path="/onboarding" element={<AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} canInviteBeforeSetup={data.canInvite && data.invitationPolicy?.beforeAgentSetup}/>}/>
     <Route path="/onboarding/sources" element={<SourcesOnboarding adapter={onboardingAdapter} canConfigure={data.workspace.role === 'admin'}/>}/>
@@ -108,6 +109,17 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   </Routes></FocusedFrame></ConsoleDataProvider>;
   const shown = extensions?.decorateRoute ? routes.map(route => extensions.decorateRoute!(route, data)) : routes;
   return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board channels' : undefined} navigation={boardNavigation ? closeNavigation => <BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/> : undefined}/></ConsoleDataProvider>;
+}
+/** Members finish their personal setup without entering workspace administration. */
+function FinishMemberOnboarding({api,onComplete}:{api:Pick<ProductApi,'finishOnboarding'>;onComplete:()=>Promise<void>}) {
+  const [attempt,setAttempt]=useState(0),[error,setError]=useState('');
+  const complete=useRef(onComplete);complete.current=onComplete;
+  useEffect(()=>{
+    const controller=new AbortController();setError('');
+    void api.finishOnboarding(controller.signal).then(async()=>{if(!controller.signal.aborted)await complete.current();}).catch(failure=>{if(!controller.signal.aborted)setError(failure instanceof Error?failure.message:'Setup could not finish. Try again.');});
+    return()=>controller.abort();
+  },[api,attempt]);
+  return <FocusedFrame footer={<SignOut/>}>{error ? <><Notice tone="danger">{error}</Notice><Button onClick={()=>setAttempt(value=>value+1)}>Try again</Button></> : <LoadingState label="Opening your workspace"/>}</FocusedFrame>;
 }
 /** One application composition for self-hosted and hosted deployments. */
 export function OpenCrawlApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>; extensions?: ConsoleExtensions<B>}) {

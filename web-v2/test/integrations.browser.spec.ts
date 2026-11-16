@@ -54,8 +54,9 @@ test('recovery dialogs preserve sign-in, sync and removal actions and member per
   await page.getByRole('button',{name:'Fix connection Sync failed'}).click();
   await expect(dialog.getByRole('button',{name:'Retry sync'})).toBeVisible();
   await page.keyboard.press('Escape');
-  await page.getByRole('button',{name:'Fix connection Removal failed'}).click();
-  await expect(dialog.getByRole('button',{name:'Retry removal'})).toBeVisible();
+  await page.getByRole('button',{name:'Details Removal failed'}).click();
+  await expect(dialog.getByRole('button',{name:/Retry removal|Disconnect/})).toHaveCount(0);
+  await expect(page.getByRole('article',{name:'Removal failed'})).toContainText('Removing');
   await expect(dialog.getByRole('button',{name:'Retry sync'})).toHaveCount(0);
   await page.goto('/integrations-fixture?role=member');
   await page.getByRole('button',{name:'Details Expired'}).click();

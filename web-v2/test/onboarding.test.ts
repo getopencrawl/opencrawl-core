@@ -90,12 +90,12 @@ test('a tool receipt proves MCP sign-in but does not fabricate CLI or recording 
 });
 
 test('sources are optional: a started OAuth only offers Skip for now, a confirmed connection offers Next, and small catalogs hide search', () => {
-  const pending = render(createElement(SourcesOnboarding, {adapter, initialSources: [{id: 'source', name: 'Source', state: 'connecting'}]}));
+  const pending = render(createElement(SourcesOnboarding, {adapter, canConfigure:true, initialSources: [{id: 'source', name: 'Source', state: 'connecting'}]}));
   assert.match(pending, /id="next-step"[^>]*class="[^"]*onboarding-skip[^"]*"[^>]*href="\/onboarding\/invite"[^>]*><span>Skip for now<\/span>/);
   assert.doesNotMatch(pending, />Next</);
   assert.match(pending, /You can also add one later\./);
   assert.match(pending, /class="connector-search" hidden=""/);
-  const connected = render(createElement(SourcesOnboarding, {adapter, initialSources: [{id: 'source', name: 'Source', state: 'syncing'}]}));
+  const connected = render(createElement(SourcesOnboarding, {adapter, canConfigure:true, initialSources: [{id: 'source', name: 'Source', state: 'syncing'}]}));
   assert.match(connected, /id="next-step"[^>]*href="\/onboarding\/invite"[^>]*><span>Next<\/span>/);
   assert.doesNotMatch(connected, /onboarding-skip|Skip for now/);
   assert.match(connected, /aria-label="Connected to Source"/);
@@ -103,8 +103,7 @@ test('sources are optional: a started OAuth only offers Skip for now, a confirme
 
 test('members can finish without invitation access and invitation text is escaped', () => {
   const member = render(createElement(InviteOnboarding, {adapter, canInvite: false}));
-  assert.match(member, /Your workspace admin can invite teammates/);
-  assert.match(member, /Skip for now/);
+  assert.equal(member, '', 'members redirect without rendering the invitation step');
   assert.doesNotMatch(member, /id="invite-emails"/);
   const admin = render(createElement(InviteOnboarding, {adapter, canInvite: true, initialInvitations: {items: [{email: '<script>@example.com'}]}}));
   assert.match(admin, /&lt;script&gt;@example.com/);

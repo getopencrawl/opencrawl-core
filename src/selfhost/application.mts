@@ -210,7 +210,7 @@ export function selfhostApplication({settings,store,boardState,eventIdentities,p
         }
         if(guided.handles(selected.name))return guided.handle(request,{route:selected,principal,identity:{user},member,respond:reply});
         if(selected.name==='/api/onboarding')return reply(200,JSON.stringify({data:{...await onboarding.read(principal),displayName:user.firstName?.trim()||null}}),'application/json');
-        if(['debug-search','debug-board'].includes(selected.name))return diagnosticRequest(request,target,selected,{search,connectors,board,principal,admin:isAdmin(member),revalidate:async()=>rpc||await revalidate()?200:403,respond:reply});
+        if(['debug-search','debug-board'].includes(selected.name))return diagnosticRequest(request,target,selected,{search,connectors,board,principal,revalidate:async()=>rpc||await revalidate()?200:403,respond:reply});
         if(selected.name==='integration-credential'){
           const refuse=(status:number,code:string,text:string)=>reply(status,JSON.stringify({error:{code,message:text}}),'application/json');
           if(!connectorSettings)return refuse(503,'INTEGRATIONS_NOT_CONFIGURED','Integrations aren’t available yet.');

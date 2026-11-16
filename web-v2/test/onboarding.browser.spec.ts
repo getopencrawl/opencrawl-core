@@ -143,14 +143,12 @@ test('an admin adds the operator key from the Sources step and continues into si
   expect(state.sources.filter(source=>source.setup).map(source=>source.id)).toEqual(['github']);
 });
 
-test('a member is told to ask an admin instead of being shown the key form',async({page,request})=>{
+test('a member skips operator key setup without seeing an admin notice',async({page,request})=>{
   await request.post('/__test/state',{data:{status:complete,sources:locked}});
   await page.goto('/onboarding/sources?role=member');
-  await page.getByRole('button',{name:'Set up Notion',exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:'Set up Notion'});
-  await expect(dialog).toContainText('Ask a workspace admin to add the Composio key.');
-  await expect(dialog.getByRole('textbox')).toHaveCount(0);
-  await expect(dialog.getByRole('button',{name:/Save key/})).toHaveCount(0);
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByText(/Ask a workspace admin/)).toHaveCount(0);
+  await expect(page.getByLabel('Composio API key')).toHaveCount(0);
   expect(((await (await request.get('/__test/state')).json()) as {requests:{credential:number}}).requests.credential).toBe(0);
 });
 
@@ -180,12 +178,14 @@ test('members can inspect shared integrations without mutation controls',async({
     {id:'granola',name:'Granola',scope:'team',state:'error',auth:'api-key'},
   ]}});
   await page.goto('/integrations-fixture?role=member');
-  await expect(page.getByText('Workspace admins manage shared integrations.',{exact:true})).toBeVisible();
-  await expect(page.getByRole('article',{name:'Slack'})).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('heading',{name:'Workspace overview'})).toBeVisible();
+  await expect(page.getByRole('article',{name:'Slack'})).toHaveCount(0);
+
   await expect(page.getByRole('button',{name:/Disconnect|Connect Notion|Retry sync/})).toHaveCount(0);
   await page.goto('/onboarding/sources?role=member');
-  await expect(page.getByRole('button',{name:'Connect Notion',exact:true})).toHaveAttribute('aria-disabled','true');
-  await expect(page.getByRole('link',{name:'Next',exact:true})).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('button',{name:'Connect Notion',exact:true})).toHaveCount(0);
   expect(((await (await request.get('/__test/state')).json()) as {requests:{connect:number}}).requests.connect).toBe(0);
 });
 
@@ -721,4 +721,14 @@ for (const width of [1280,390]) test(`shared Replicas setup also offers independ
  await page.getByRole('button',{name:'Back to shared setup'}).click();
  await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+for (const step of ['sources','invite']) test(`members skip the legacy ${step} onboarding step without fetching its data`,async({page})=>{
+  let reads=0;
+  await page.route(`**/api/onboarding/${step==='invite'?'invites':'sources'}`,route=>{reads++;return route.fulfill({json:{items:[]}});});
+  await page.goto(`/onboarding/${step}?role=member`);
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('heading',{name:'Workspace overview'})).toBeVisible();
+  await expect(page.getByText(/workspace admin|admins manage/i)).toHaveCount(0);
+  expect(reads).toBe(0);
 });
