@@ -1,6 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
 import type {Pool,PoolClient} from 'pg';
-import {ONLINE_MAX_PAYLOAD_BYTES,type OnlineExternalSnapshot,type OnlineExternalStore,type OnlineIntent,type createOnlineJournal} from './online-journal.mjs';
+import {createOnlineCoverage,type OnlineCoveragePolicy,type OnlineCoverageTarget,type OnlineCoverageEntry,type OnlineCoverageEvidence} from './online-coverage.mjs';
+import {ONLINE_MAX_PAYLOAD_BYTES,type OnlineExternalSnapshot,type OnlineExternalStore,type OnlineIntent,type OnlineSourceRegistration,type createOnlineJournal} from './online-journal.mjs';
 import {onlineMigrationBindingId} from './online-temporal/binding.mjs';
 import type {OnlineMigrationAdapter,OnlineMigrationBinding} from './online-temporal/types.mjs';
 type Journal=ReturnType<typeof createOnlineJournal>;
@@ -12,9 +13,9 @@ export interface OnlineShadowParticipant {
  binding:Readonly<{namespace:string;epoch:string;sourceId:string;targetId:string;identity:string}>;
  select(key:string):OnlineShadowSelection;
  ready():Promise<void>;
- backfillIn(client:PoolClient,key:string,snapshot:OnlineExternalSnapshot):Promise<void>;
- backfillRetiredIn(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'retired'}>):Promise<void>;
- applyIn(client:PoolClient,intent:OnlineIntent,selection:Exclude<OnlineShadowSelection,{kind:'immutable'}>):Promise<void>;
+ backfillIn(client:PoolClient,key:string,snapshot:OnlineExternalSnapshot):Promise<OnlineCoverageTarget>;
+ backfillRetiredIn(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'retired'}>):Promise<OnlineCoverageTarget>;
+ applyIn(client:PoolClient,intent:OnlineIntent,selection:Exclude<OnlineShadowSelection,{kind:'immutable'}>):Promise<OnlineCoverageTarget>;
  inspectIn(client:PoolClient,key:string,snapshot:OnlineExternalSnapshot):Promise<boolean>;
  inspectRetiredIn(client:PoolClient,key:string,selection:Extract<OnlineShadowSelection,{kind:'retired'}>):Promise<boolean>;
  keysPageIn(client:PoolClient,input:{after:string;limit:number}):Promise<string[]>;
@@ -32,12 +33,17 @@ const ordered=(a:string,b:string)=>Buffer.compare(Buffer.from(a),Buffer.from(b))
 /** A migration mirror only. It neither implements ApplicationState nor marks an
  * installation ready. The caller supplies reviewed roots/classification and a
  * trusted live source/target check; Workflow callers cannot choose them. */
-export function createOnlineShadow({database,binding:input,journal,external,listing,roots:inputRoots,classify,assertCurrent,participant}:{database:{pool:Pool;namespace:string};binding:OnlineMigrationBinding;journal:Journal;external:OnlineExternalStore;listing:OnlineShadowListing;roots:readonly string[];classify:OnlineShadowClassifier;assertCurrent:(signal:AbortSignal)=>Promise<void>;participant?:OnlineShadowParticipant}){
+export function createOnlineShadow({database,binding:input,journal,external,listing,roots:inputRoots,classify,assertCurrent,participant,coveragePolicy,sourceRegistration:inputRegistration}:{database:{pool:Pool;namespace:string};binding:OnlineMigrationBinding;journal:Journal;external:OnlineExternalStore;listing:OnlineShadowListing;roots:readonly string[];classify:OnlineShadowClassifier;assertCurrent:(signal:AbortSignal)=>Promise<void>;participant?:OnlineShadowParticipant;coveragePolicy?:OnlineCoveragePolicy;sourceRegistration?:OnlineSourceRegistration}){
  const binding=Object.freeze({...input}),bindingId=onlineMigrationBindingId(binding);const namespace=database.namespace,roots=Object.freeze([...inputRoots]),scope=[namespace,binding.epoch,binding.sourceId];
  if(!text(namespace,2048)||roots.length<1||roots.length>32||roots.some(root=>!text(root,4096))||roots.some((root,i)=>roots.some((other,j)=>i!==j&&(root.startsWith(other)||other.startsWith(root)))))unsafe();
  if(!journal.binding||journal.binding.namespace!==namespace||journal.binding.epoch!==binding.epoch||journal.binding.sourceId!==binding.sourceId)unsafe();
  if(participant&&(!participant.binding||participant.binding.namespace!==namespace||participant.binding.epoch!==binding.epoch||participant.binding.sourceId!==binding.sourceId||participant.binding.targetId!==binding.targetId||!/^[a-f0-9]{64}$/.test(participant.binding.identity)))unsafe();
- const participantIdentity=hash(JSON.stringify([bindingId,roots,participant?.binding.identity??'byte-mirror-only-v1']));
+ const sourceRegistration=inputRegistration?Object.freeze({...inputRegistration}):undefined;
+ if(sourceRegistration&&(!/^[a-f0-9]{64}$/.test(sourceRegistration.bindingHash)||!/^[a-f0-9]{64}$/.test(sourceRegistration.enrollmentReceiptHash)||Object.keys(sourceRegistration).sort().join(',')!=='bindingHash,enrollmentReceiptHash'))unsafe();
+ const baseIdentity=hash(JSON.stringify([bindingId,roots,participant?.binding.identity??'byte-mirror-only-v1',sourceRegistration??null]));
+ if(coveragePolicy&&!participant)unsafe();
+ const coverage=coveragePolicy?createOnlineCoverage({database,epoch:binding.epoch,sourceId:binding.sourceId,targetId:binding.targetId,shards:binding.shards,roots,participantIdentity:baseIdentity,policy:coveragePolicy}):undefined;
+ const participantIdentity=coverage?hash(JSON.stringify([baseIdentity,coverage.identity])):baseIdentity;
  let preparing:Promise<void>|undefined;
  function bound(key:string){if(!text(key,8192)||!roots.some(root=>key.startsWith(root)))unsafe();const value=classify(key);if(value===null)return null;if(!value||!Number.isSafeInteger(value.maxBytes)||value.maxBytes<1||value.maxBytes>ONLINE_MAX_PAYLOAD_BYTES)unsafe();return value;}
  function selected(key:string):OnlineShadowSelection{
@@ -57,7 +63,7 @@ export function createOnlineShadow({database,binding:input,journal,external,list
  }
  function encodeCursor(value:Cursor|null){if(value===null)return null;const encoded=JSON.stringify(value);if(Buffer.byteLength(encoded)>8192)unsafe();return encoded;}
  async function ready(){preparing??=(async()=>{
-  await journal.ready();await participant?.ready();const client=await database.pool.connect();try{await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:online-shadow:schema',0))");
+  if(sourceRegistration)await journal.attachSource(sourceRegistration);else await journal.ready();await participant?.ready();await coverage?.ready();const client=await database.pool.connect();try{await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:online-shadow:schema',0))");
    await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_online_shadow_objects(
     namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,source_key text COLLATE "C" NOT NULL,target_id text NOT NULL,
     logical_deleted boolean NOT NULL,payload bytea,payload_hash text,content_type text,revision bigint NOT NULL CHECK(revision>=0),operation_id uuid,
@@ -92,16 +98,20 @@ export function createOnlineShadow({database,binding:input,journal,external,list
  const equal=(a:Mirror,b:Mirror)=>a.deleted===b.deleted&&a.hash===b.hash&&a.contentType===b.contentType&&a.revision===b.revision&&a.operationId===b.operationId&&a.sequence===b.sequence&&a.sourceVersion===b.sourceVersion&&(a.bytes===null?b.bytes===null:b.bytes!==null&&a.bytes.equals(b.bytes));
  const values=(key:string,value:Mirror)=>[...scope,key,binding.targetId,value.deleted,value.bytes,value.hash,value.contentType,value.revision,value.operationId,value.sequence,value.sourceVersion];
  async function insert(client:PoolClient,key:string,value:Mirror){await client.query('INSERT INTO opencrawl_online_shadow_objects(namespace,epoch,source_id,source_key,target_id,logical_deleted,payload,payload_hash,content_type,revision,operation_id,source_sequence,source_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING',values(key,value));}
+ function coverageEntry(key:string,choice:OnlineShadowSelection):OnlineCoverageEntry{return {key,kind:choice.kind,domain:choice.kind==='immutable'?null:choice.domain,scopeHash:choice.kind==='retired'?choice.scopeHash:null};}
+ async function certifyIn(client:PoolClient,key:string,choice:Exclude<OnlineShadowSelection,{kind:'immutable'}>,source:Pick<OnlineCoverageEvidence,'revision'|'sequence'|'operationId'|'sourceVersion'|'sourceHash'|'sourceBytes'|'deleted'|'absent'>,target?:OnlineCoverageTarget){
+  if(!coverage)return;await coverage.recordIn(client,{...coverageEntry(key,choice),...source,targetKey:target?.targetKey??null,targetHash:target?.targetHash??null});
+ }
  async function backfill(key:string){const choice=selected(key);if(choice.kind==='immutable')return {applied:false};return journal.backfillIfUnchanged({key,apply:async client=>{
-  if(choice.kind==='retired'){await participant!.backfillRetiredIn(client,key,choice);return;}
+  if(choice.kind==='retired'){const target=await participant!.backfillRetiredIn(client,key,choice);await certifyIn(client,key,choice,{revision:'0',sequence:'0',operationId:null,sourceVersion:null,sourceHash:null,sourceBytes:null,deleted:false,absent:false},target);return;}
   const observed=snapshot(await external.read(key,{maxBytes:choice.maxBytes}),choice.maxBytes);
   if(observed.operationId!==null||observed.revision!==null)unsafe();
   // A stale listing may outlive a pre-enrollment physical delete. Absence has
   // no authority to clear an existing mirror or typed target.
-  if(observed.version===null){if(await read(client,key))unsafe();return;}
+  if(observed.version===null){if(await read(client,key))unsafe();await certifyIn(client,key,choice,{revision:'0',sequence:'0',operationId:null,sourceVersion:null,sourceHash:null,sourceBytes:null,deleted:true,absent:true});return;}
   const expected:Mirror={deleted:observed.deleted,bytes:observed.bytes,contentType:observed.contentType,hash:observed.bytes===null?null:hash(observed.bytes),revision:'0',operationId:null,sequence:'0',sourceVersion:observed.version};
   await insert(client,key,expected);const actual=await read(client,key);if(!actual||!equal(actual,expected))unsafe();
-  await participant?.backfillIn(client,key,observed);
+  const target=await participant?.backfillIn(client,key,observed);await certifyIn(client,key,choice,{revision:'0',sequence:'0',operationId:null,sourceVersion:observed.version,sourceHash:expected.hash,sourceBytes:observed.bytes?.length??null,deleted:observed.deleted,absent:false},target);
  }});}
  async function applyJournal(client:PoolClient,intent:OnlineIntent){
   if(!intent||intent.namespace!==namespace||intent.epoch!==binding.epoch||intent.sourceId!==binding.sourceId||intent.state!=='applied'||!uuid(intent.operationId)||!decimal(intent.revision)||intent.revision==='0'||!decimal(intent.sequence)||intent.sequence==='0'||!text(intent.resultVersion,2048))unsafe();
@@ -109,14 +119,15 @@ export function createOnlineShadow({database,binding:input,journal,external,list
   const mutation=intent.mutation;if(mutation.kind!=='put'&&mutation.kind!=='delete')unsafe();
   if(mutation.kind==='put'&&(!Buffer.isBuffer(mutation.bytes)||mutation.bytes.length>cap.maxBytes||!text(mutation.contentType,256)||/[\r\n]/.test(mutation.contentType)))unsafe();
   intent={...intent,mutation:mutation.kind==='put'?{...mutation,bytes:Buffer.from(mutation.bytes)}:{kind:'delete'}};
-  if(choice.kind==='retired'){await participant!.applyIn(client,intent,choice);return true;}
+  const certify=async(target?:OnlineCoverageTarget)=>certifyIn(client,intent.key,choice,{revision:intent.revision,sequence:intent.sequence,operationId:intent.operationId,sourceVersion:intent.resultVersion,sourceHash:intent.mutation.kind==='put'?hash(intent.mutation.bytes):null,sourceBytes:intent.mutation.kind==='put'?intent.mutation.bytes.length:null,deleted:intent.mutation.kind==='delete',absent:false},target);
+  if(choice.kind==='retired'){await certify(await participant!.applyIn(client,intent,choice));return true;}
   const bytes=mutation.kind==='put'?Buffer.from(mutation.bytes):null;
   const expected:Mirror={deleted:mutation.kind==='delete',bytes,hash:bytes===null?null:hash(bytes),contentType:mutation.kind==='put'?mutation.contentType:null,revision:intent.revision,operationId:intent.operationId,sequence:intent.sequence,sourceVersion:intent.resultVersion};
   const prior=await read(client,intent.key);
-  if(prior){if(BigInt(prior.revision)>BigInt(expected.revision)||prior.revision===expected.revision&&!equal(prior,expected)||BigInt(prior.sequence)>BigInt(expected.sequence))unsafe();if(equal(prior,expected)){await participant?.applyIn(client,intent,choice);return true;}}
+  if(prior){if(BigInt(prior.revision)>BigInt(expected.revision)||prior.revision===expected.revision&&!equal(prior,expected)||BigInt(prior.sequence)>BigInt(expected.sequence))unsafe();if(equal(prior,expected)){await certify(await participant?.applyIn(client,intent,choice));return true;}}
   await insert(client,intent.key,expected);
   if(prior){const changed=await client.query('UPDATE opencrawl_online_shadow_objects SET logical_deleted=$6,payload=$7,payload_hash=$8,content_type=$9,revision=$10,operation_id=$11,source_sequence=$12,source_version=$13 WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND source_key=$4 AND target_id=$5 AND revision=$14', [...values(intent.key,expected),prior.revision]);if(changed.rowCount!==1)unsafe();}
-  const actual=await read(client,intent.key);if(!actual||!equal(actual,expected))unsafe();await participant?.applyIn(client,intent,choice);return true;
+  const actual=await read(client,intent.key);if(!actual||!equal(actual,expected))unsafe();await certify(await participant?.applyIn(client,intent,choice));return true;
  }
  async function sourcePage(position:SourceCursor,limit:number,signal:AbortSignal){
   let current=position;
@@ -178,10 +189,17 @@ export function createOnlineShadow({database,binding:input,journal,external,list
     catch(error){if(error&&typeof error==='object'&&'code' in error&&['ONLINE_MIGRATION_EXTERNAL_OUTCOME_UNCERTAIN','ONLINE_MIGRATION_UNRESOLVED_INTENT'].includes(String(error.code)))pending++;else throw error;}
     processed++;after=entry.sequence;
    }
+   if(coverage&&performance.now()-started<30000){input.signal.throwIfAborted();const key=await coverage.nextDeferred();if(key!==null)await backfill(key);}
    return {cursor:exhausted?after:page.next,processed,pending,settled,budgetExhausted:exhausted||performance.now()-started>=30000};
   },
-  async backfillPage(input){pageInput(input);const position=parseCursor(input.cursor);if(position.stage!=='source')unsafe();const page=await sourcePage(position,input.limit,input.signal);
-   for(const key of page.keys){input.signal.throwIfAborted();if(selected(key).kind!=='immutable'&&shard(key)===input.shard)await backfill(key);}return {cursor:encodeCursor(page.next),processed:page.keys.length};},
+  async backfillPage(input){pageInput(input);const position=parseCursor(input.cursor);if(position.stage!=='source')unsafe();
+   if(coverage){
+    let page=await coverage.getPage({shard:input.shard,cursor:input.cursor,limit:input.limit});
+    if(!page){const observed=await sourcePage(position,input.limit,input.signal);input.signal.throwIfAborted();page=await coverage.stagePage({shard:input.shard,cursor:input.cursor,next:encodeCursor(observed.next),limit:input.limit,entries:observed.keys.map(key=>coverageEntry(key,selected(key)))});}
+    if(!page.complete){for(const v of page.entries){input.signal.throwIfAborted();const choice=selected(v.key);if(JSON.stringify(coverageEntry(v.key,choice))!==JSON.stringify(v))unsafe();if(choice.kind!=='immutable'&&shard(v.key)===input.shard){const result=await backfill(v.key);if(!result.applied)await coverage.defer(v.key);}}input.signal.throwIfAborted();page=await coverage.completePage(page);}
+    return {cursor:page.next,processed:page.entries.length};
+   }
+   const page=await sourcePage(position,input.limit,input.signal);for(const key of page.keys){input.signal.throwIfAborted();if(selected(key).kind!=='immutable'&&shard(key)===input.shard)await backfill(key);}return {cursor:encodeCursor(page.next),processed:page.keys.length};},
   closedFrontier:()=>journal.closedFrontier(),
   async replayPage(input){pageInput(input);if(input.consumer!==bindingId+'-'+input.shard)unsafe();const result=await journal.replayPage({consumer:input.consumer,through:input.through,limit:input.limit,apply:async(client,intent)=>{input.signal.throwIfAborted();const choice=selected(intent.key);if(participant&&choice.kind==='immutable')unsafe();if(choice.kind!=='immutable'&&shard(intent.key)===input.shard)await applyJournal(client,intent);}});return {checkpoint:result.checkpoint,processed:result.applied+result.notApplied,blocked:result.pending};},
   async parityPage(input){pageInput(input);if(!decimal(input.through))unsafe();const checkpoint=await journal.replayCheckpoint(bindingId+'-'+input.shard);if(checkpoint===null||BigInt(checkpoint)<BigInt(input.through))unsafe();if(BigInt(checkpoint)>BigInt(input.through))return {cursor:null,processed:0,mismatches:0,drift:true};if(await drift(input.through))return {cursor:null,processed:0,mismatches:0,drift:true};const parsed=parityPosition(input.cursor,input.through,input.shard);let position=parsed.position,keys:string[],next:Cursor|null;const fromSource=position.stage==='source';
@@ -197,5 +215,5 @@ export function createOnlineShadow({database,binding:input,journal,external,list
    changed ||= await drift(input.through);return {cursor:parityCursor(next!,input.through,input.shard,parsed.passId),processed:keys!.length,mismatches,drift:changed};
   },
  };
- return {bindingId,participantIdentity,ready,backfill,applyJournal,adapter};
+ return {bindingId,participantIdentity,ready,backfill,applyJournal,adapter,coverage:coverage?Object.freeze({identity:coverage.identity,status:coverage.status}):undefined};
 }

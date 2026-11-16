@@ -51,15 +51,23 @@ unchanged. Unsupported domains fail closed.
 and replay. The byte mirror, typed readback and replay checkpoint share one
 PostgreSQL transaction. Background parity inspects typed state independently
 and detects projection heads missing from the byte mirror. Its physical source
-listing must include retained deletion tombstones. It reports observations only;
-it does not certify complete baseline coverage or grant runtime admission.
+listing must include retained deletion tombstones. Optional coverage tracking
+retains each physical page before applying it and advances its cursor only after
+accounting for that page's keys. A retry reuses the recorded page. Verified target
+evidence commits with backfill or replay, including journal-only keys that were
+created behind the listing cursor. Deferred keys whose write was not applied
+must receive a real baseline read. Complete traversal and unresolved work remain
+separate from final parity and runtime admission.
 
 An explicit derived-state retirement policy records old session scheduling,
 indexing, cutover markers, connector indexing and count-cache obligations without
 reading their historical bodies. These records require current Temporal catchup
 or a rebuild; they never assert that indexing is complete or an unknown count is
-zero. Connecting those obligations to the online workflow handoff remains a
-release requirement.
+zero. The connector catchup operation accepts a trusted final online handoff
+separately from offline migration receipts and waits for the actual current
+workflow results. Session producers and workers derive a fresh generation from
+that same handoff. Historical generations can finish only their own markers.
+The hosted handoff provider and runtime admission still require integration.
 
 Replicas aliases never publish or delete canonical connections. Their separate
 bounded reference inspection must run during final typed parity after replay
@@ -86,6 +94,12 @@ must be separate from callback pools to avoid nested connection starvation.
 New object-store adapters require this authority for mutable writes; compatible
 readers work independently, and immutable raw object operations remain unchanged.
 
+Journal schema preparation is an explicit operator step. A runtime source
+registers its immutable resource binding and enrollment receipt atomically with
+the owning catalog, then attaches through read-only metadata checks after a
+restart. Request handlers do not create schemas or adopt an unbound source.
+The low-level `ready()` helper remains for explicitly unbound migration tooling.
+
 A legacy operation records its dispatch before external I/O. If its outcome or
 gate connection becomes uncertain, that durable record blocks later same-key
 writes and activation even after a process restart. Only a definitive adapter
@@ -101,8 +115,8 @@ reads and capture intake available, and route or durably queue mutations during
 the fence. A live parity observation alone is not a cutover receipt. Cancel the
 migration worker only after the completed authority switch or an explicit abort.
 
-The current components do not implement fleet enrollment, durable baseline
-coverage seals, the final mutation-routing fence, full registry and workflow
+The current components do not implement fleet enrollment, the compact final
+typed parity proof, the final mutation-routing fence, full registry and workflow
 projection, a final readiness receipt, or a
 one-command online upgrade. Those remain release gates. Existing-installation
 traffic, signup, capture, restart, deletion and rollback rehearsals must verify

@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {createBoundObjectMigration,onlineProjectionValue,type BoundObjectMigrationOptions,type OnlineObjectProjection} from './object-migration.mjs';
 import type {OnlineIntent} from './online-journal.mjs';
+import type {OnlineCoverageTarget} from './online-coverage.mjs';
 
 /** Typed shadow projection only. This module never makes an installation ready.
  * Its caller supplies the journal/backfill transaction's real PoolClient. */
@@ -123,7 +124,7 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
   }
   return {processed:page.length,matched:page.length-mismatches,mismatches,next:rows.length>limit?String(page[page.length-1].target_key):null};
  }
- async function project(client:PoolClient,input:{key:string;bytes:Buffer|null;revision:string;operationId:string|null;version:string}){
+ async function project(client:PoolClient,input:{key:string;bytes:Buffer|null;revision:string;operationId:string|null;version:string}):Promise<OnlineCoverageTarget>{
   bounded(input.key,8192);bounded(input.version,2048);revision(input.revision);
   if(input.revision==='0'?input.operationId!==null:input.operationId===null||!uuid.test(input.operationId))fail('invalid source operation');
   // Freeze decode input before the first SQL await; callbacks cannot redirect it.
@@ -138,14 +139,14 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
    if(prior.deleted&&bytes!==null&&['capture-credentials','connector-grants','replicas-connections','replicas-setup'].includes(decoded.domain))fail('deleted security identity cannot be reused');
    revision(prior.revision);if(currentHash!==prior.target_hash)fail('typed target changed outside its source projection');
    if(BigInt(prior.revision)>BigInt(rev))fail('stale projection revision');
-   if(prior.revision===rev){if(prior.operation_id!==operationId||prior.source_version!==version||prior.content_hash!==contentHash||prior.target_hash!==targetHash||prior.deleted!==(bytes===null))fail('source revision was reused');return;}
+   if(prior.revision===rev){if(prior.operation_id!==operationId||prior.source_version!==version||prior.content_hash!==contentHash||prior.target_hash!==targetHash||prior.deleted!==(bytes===null))fail('source revision was reused');return {targetKey,targetHash};}
   }else if(current!==null&&currentHash!==targetHash)fail('initial typed target conflicts with source');
   // Domain owners retain privacy/revocation/held-operation invariants even when
   // the current target is absent. Unsupported deletions never silently pass.
   await writeTargetIn(client,decoded,targetKey,key);
   if(onlineProjectionHash(await readTargetIn(client,decoded,targetKey,key))!==targetHash)fail('typed readback differs from source');
   await client.query(`INSERT INTO opencrawl_online_projection_heads(namespace,epoch,target_key,source_id,source_key,domain,revision,operation_id,source_version,content_hash,target_hash,deleted) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-    ON CONFLICT(namespace,epoch,target_key) DO UPDATE SET revision=EXCLUDED.revision,operation_id=EXCLUDED.operation_id,source_version=EXCLUDED.source_version,content_hash=EXCLUDED.content_hash,target_hash=EXCLUDED.target_hash,deleted=EXCLUDED.deleted`,[namespace,epoch,targetKey,sourceId,key,decoded.domain,rev,operationId,version,contentHash,targetHash,bytes===null]);
+    ON CONFLICT(namespace,epoch,target_key) DO UPDATE SET revision=EXCLUDED.revision,operation_id=EXCLUDED.operation_id,source_version=EXCLUDED.source_version,content_hash=EXCLUDED.content_hash,target_hash=EXCLUDED.target_hash,deleted=EXCLUDED.deleted`,[namespace,epoch,targetKey,sourceId,key,decoded.domain,rev,operationId,version,contentHash,targetHash,bytes===null]);  return {targetKey,targetHash};
  }
  /** Independent target inspection on the caller's key-gated snapshot. No
   * source I/O, repair, row locks or transaction boundaries are introduced. */
@@ -171,8 +172,8 @@ export function createOnlineProjection({epoch,sourceId,journalBinding,enrollment
  async function apply(client:PoolClient,intent:OnlineIntent){
   if(intent.namespace!==namespace||intent.epoch!==epoch||intent.sourceId!==sourceId||intent.state!=='applied'||!intent.resultVersion)fail('journal intent is not applied in this source binding');
   if(intent.revision==='0')fail('journal revision cannot be baseline');
-  await project(client,{key:intent.key,bytes:intent.mutation.kind==='put'?intent.mutation.bytes:null,revision:intent.revision,operationId:intent.operationId,version:intent.resultVersion});
+  return project(client,{key:intent.key,bytes:intent.mutation.kind==='put'?intent.mutation.bytes:null,revision:intent.revision,operationId:intent.operationId,version:intent.resultVersion});
  }
- async function backfill(client:PoolClient,input:{key:string;bytes:Buffer;version:string}){await project(client,{...input,revision:'0',operationId:null});}
+ async function backfill(client:PoolClient,input:{key:string;bytes:Buffer;version:string}){return project(client,{...input,revision:'0',operationId:null});}
  return {binding:Object.freeze({namespace,epoch,sourceId,bindingHash}),ready,apply,backfill,enrollTenant,inspectReplicasReferencesPageIn,inspectIn,keysPageIn};
 }

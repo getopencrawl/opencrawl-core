@@ -228,7 +228,7 @@ test('exact published core428 adapter composes with gated journal writes and Pos
       await pool?.end(); await authorityPool?.end();
       if (schema) {
         const client = await admin.connect();
-        try {await client.query('BEGIN'); await client.query("SELECT pg_advisory_xact_lock(hashtext('identity-schema:maintenance'))"); await client.query('DROP SCHEMA ' + schema + ' CASCADE'); await client.query('COMMIT');}
+        try {await client.query('BEGIN'); await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:identity-schema:maintenance',0))"); await client.query('DROP SCHEMA ' + schema + ' CASCADE'); await client.query('COMMIT');}
         catch (error) {await client.query('ROLLBACK'); throw error;} finally {client.release();}
       }
       await admin?.end(); cleanupComplete = true;

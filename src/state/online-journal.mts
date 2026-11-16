@@ -4,7 +4,9 @@ import type {Pool,PoolClient} from 'pg';
 /** Explicit online migration tooling. This is never a runtime storage fallback. */
 export const ONLINE_MAX_PAYLOAD_BYTES=64*1024*1024,ONLINE_MAX_PAGE_BYTES=64*1024*1024;
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-const decimal=/^(0|[1-9][0-9]*)$/;
+const decimal=/^(0|[1-9][0-9]*)$/,sha=/^[a-f0-9]{64}$/;
+export interface OnlineSourceRegistration {bindingHash:string;enrollmentReceiptHash:string}
+export interface OnlineSourceAttachment extends OnlineSourceRegistration {namespace:string;epoch:string;sourceId:string}
 export interface OnlineExternalSnapshot {
  version:string|null;operationId:string|null;revision:string|null;deleted:boolean;bytes:Buffer|null;contentType:string|null;
 }
@@ -80,7 +82,7 @@ function decode(row:Record<string,any>):OnlineIntent{
 export function createOnlineJournal({database,epoch,sourceId}:{database:{pool:Pool;namespace:string};epoch:string;sourceId:string}){
  text(database.namespace,2048,'NAMESPACE');text(sourceId,2048,'SOURCE');if(!uuid.test(epoch))fail('INVALID_EPOCH');
  const scope=[database.namespace,epoch,sourceId],epochLock=JSON.stringify(['online-migration',database.namespace,epoch]);
- const keyLock=(key:string)=>JSON.stringify([...scope,key]);let preparing:Promise<void>|undefined;
+ const keyLock=(key:string)=>JSON.stringify([...scope,key]);let preparing:Promise<void>|undefined,schemaPreparing:Promise<void>|undefined;
  async function transaction<T>(client:PoolClient,run:()=>Promise<T>){await client.query('BEGIN');try{const result=await run();await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}}
  async function locked<T>(key:string|undefined,exclusive:boolean,run:(client:PoolClient)=>Promise<T>):Promise<T>{
   if(key!==undefined)text(key,8192,'KEY');const client=await database.pool.connect();let heldEpoch=false,heldKey=false,destroy=false,broken=false;
@@ -96,11 +98,13 @@ export function createOnlineJournal({database,epoch,sourceId}:{database:{pool:Po
   }
  }
  async function active(client:PoolClient){const row=(await client.query('SELECT state FROM opencrawl_online_migration_epochs WHERE namespace=$1 AND epoch=$2',scope.slice(0,2))).rows[0];if(row?.state!=='active')fail('EPOCH_NOT_ACTIVE');}
- async function ready(){
-  preparing??=(async()=>{const client=await database.pool.connect();try{await transaction(client,async()=>{
+ /** Operator-only schema preparation. Registration and attachment never call it. */
+ async function prepareSchema(){
+  schemaPreparing??=(async()=>{const client=await database.pool.connect();try{await transaction(client,async()=>{
    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:online-migration:schema',0))");
    await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_online_migration_epochs(namespace text NOT NULL,epoch uuid NOT NULL,state text NOT NULL CHECK(state IN ('active','fenced')),PRIMARY KEY(namespace,epoch));
     CREATE TABLE IF NOT EXISTS opencrawl_online_migration_sources(namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,sequence bigint NOT NULL DEFAULT 0 CHECK(sequence>=0),PRIMARY KEY(namespace,epoch,source_id));
+    CREATE TABLE IF NOT EXISTS opencrawl_online_migration_source_bindings(namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,binding_hash text NOT NULL CHECK(binding_hash~'^[a-f0-9]{64}$'),enrollment_receipt_hash text NOT NULL CHECK(enrollment_receipt_hash~'^[a-f0-9]{64}$'),PRIMARY KEY(namespace,epoch,source_id));
     CREATE TABLE IF NOT EXISTS opencrawl_online_migration_heads(namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,source_key text COLLATE "C" NOT NULL,revision bigint NOT NULL CHECK(revision>0),pending_operation uuid,PRIMARY KEY(namespace,epoch,source_id,source_key));
     CREATE TABLE IF NOT EXISTS opencrawl_online_migration_journal(namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,sequence bigint NOT NULL CHECK(sequence>0),operation_id uuid NOT NULL,source_key text COLLATE "C" NOT NULL,revision bigint NOT NULL CHECK(revision>0),expected_version text,kind text NOT NULL CHECK(kind IN ('put','delete')),payload bytea,content_type text,payload_hash text,state text NOT NULL CHECK(state IN ('pending','applied','notApplied')),dispatched boolean NOT NULL DEFAULT false,result_version text,request_hash text NOT NULL CHECK(request_hash~'^[a-f0-9]{64}$'),
      PRIMARY KEY(namespace,epoch,source_id,sequence),UNIQUE(namespace,epoch,source_id,operation_id),UNIQUE(namespace,epoch,source_id,source_key,revision),
@@ -108,9 +112,47 @@ export function createOnlineJournal({database,epoch,sourceId}:{database:{pool:Po
     CREATE TABLE IF NOT EXISTS opencrawl_online_migration_checkpoints(namespace text NOT NULL,epoch uuid NOT NULL,source_id text NOT NULL,consumer text NOT NULL,sequence bigint NOT NULL DEFAULT 0 CHECK(sequence>=0),PRIMARY KEY(namespace,epoch,source_id,consumer));`);
    const {ensureSchemaIndex}=await import('./postgres.mjs');
    await ensureSchemaIndex(client,{table:'opencrawl_online_migration_journal',name:'opencrawl_online_migration_pending',keys:['namespace','epoch','source_id','sequence'],predicate:{column:'state',equals:'pending'}});
-  });}finally{client.release();}
-  await locked(undefined,false,client=>transaction(client,async()=>{await client.query("INSERT INTO opencrawl_online_migration_epochs(namespace,epoch,state) VALUES($1,$2,'active') ON CONFLICT DO NOTHING",scope.slice(0,2));await active(client);await client.query('INSERT INTO opencrawl_online_migration_sources(namespace,epoch,source_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',scope);}));})();
-  try{await preparing;}catch(error){preparing=undefined;throw error;}
+  });}finally{client.release();}})();
+  try{await schemaPreparing;}catch(error){schemaPreparing=undefined;throw error;}
+ }
+ function registration(value:OnlineSourceRegistration){if(!value||!sha.test(value.bindingHash)||!sha.test(value.enrollmentReceiptHash))fail('INVALID_SOURCE_BINDING');return Object.freeze({bindingHash:value.bindingHash,enrollmentReceiptHash:value.enrollmentReceiptHash});}
+ const registrationLock=JSON.stringify(['online-source-registration',...scope]);
+ /** Caller owns BEGIN/COMMIT. This DML-only seam lets its descriptor and the
+  * source row commit atomically. No schema preparation or external IO occurs. */
+ async function registerSourceIn(client:PoolClient,input:OnlineSourceRegistration):Promise<OnlineSourceAttachment>{
+  const expected=registration(input);
+  await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[epochLock]);
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[registrationLock]);
+  await client.query("INSERT INTO opencrawl_online_migration_epochs(namespace,epoch,state) VALUES($1,$2,'active') ON CONFLICT DO NOTHING",scope.slice(0,2));await active(client);
+  const existing=(await client.query('SELECT sequence FROM opencrawl_online_migration_sources WHERE namespace=$1 AND epoch=$2 AND source_id=$3',scope)).rows[0];
+  const bound=(await client.query('SELECT binding_hash,enrollment_receipt_hash FROM opencrawl_online_migration_source_bindings WHERE namespace=$1 AND epoch=$2 AND source_id=$3',scope)).rows[0];
+  if(existing&&!bound)fail('UNBOUND_SOURCE_CANNOT_BE_ADOPTED');
+  if(bound){if(!existing||bound.binding_hash!==expected.bindingHash||bound.enrollment_receipt_hash!==expected.enrollmentReceiptHash)fail('SOURCE_BINDING_CHANGED');}
+  else {
+   await client.query('INSERT INTO opencrawl_online_migration_sources(namespace,epoch,source_id) VALUES($1,$2,$3)',scope);
+   await client.query('INSERT INTO opencrawl_online_migration_source_bindings(namespace,epoch,source_id,binding_hash,enrollment_receipt_hash) VALUES($1,$2,$3,$4,$5)',[...scope,expected.bindingHash,expected.enrollmentReceiptHash]);
+  }
+  return {namespace:scope[0]!,epoch,sourceId,...expected};
+ }
+ /** Metadata-only read; safe in a caller-owned READ ONLY transaction. */
+ async function attachSourceIn(client:PoolClient,input:OnlineSourceRegistration):Promise<OnlineSourceAttachment>{
+  const expected=registration(input);await active(client);
+  const row=(await client.query('SELECT s.sequence,b.binding_hash,b.enrollment_receipt_hash FROM opencrawl_online_migration_sources s JOIN opencrawl_online_migration_source_bindings b USING(namespace,epoch,source_id) WHERE s.namespace=$1 AND s.epoch=$2 AND s.source_id=$3',scope)).rows[0];
+  if(!row)fail('SOURCE_NOT_REGISTERED');sequence(row.sequence);
+  if(row.binding_hash!==expected.bindingHash||row.enrollment_receipt_hash!==expected.enrollmentReceiptHash)fail('SOURCE_BINDING_CHANGED');
+  return {namespace:scope[0]!,epoch,sourceId,...expected};
+ }
+ async function registerSource(input:OnlineSourceRegistration){const frozen=registration(input);return locked(undefined,false,client=>transaction(client,()=>registerSourceIn(client,frozen)));}
+ async function attachSource(input:OnlineSourceRegistration){const frozen=registration(input),client=await database.pool.connect();let destroy=false;try{await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const result=await attachSourceIn(client,frozen);await client.query('COMMIT');return result;}catch(error){destroy=true;await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release(destroy);}}
+ /** Low-level operator/tool compatibility: explicitly creates an UNBOUND
+  * source. Hosted factories must enroll exact descriptors instead. An existing
+  * bound source cannot be downgraded or adopted through this method. */
+ async function ready(){
+  preparing??=(async()=>{await prepareSchema();await locked(undefined,false,client=>transaction(client,async()=>{
+   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[registrationLock]);
+   if((await client.query('SELECT 1 FROM opencrawl_online_migration_source_bindings WHERE namespace=$1 AND epoch=$2 AND source_id=$3',scope)).rows.length)fail('BOUND_SOURCE_REQUIRES_ATTACHMENT');
+   await client.query("INSERT INTO opencrawl_online_migration_epochs(namespace,epoch,state) VALUES($1,$2,'active') ON CONFLICT DO NOTHING",scope.slice(0,2));await active(client);await client.query('INSERT INTO opencrawl_online_migration_sources(namespace,epoch,source_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',scope);
+  }));})();try{await preparing;}catch(error){preparing=undefined;throw error;}
  }
  async function get(client:PoolClient,operationId:string){const row=(await client.query(`SELECT ${columns} FROM opencrawl_online_migration_journal WHERE namespace=$1 AND epoch=$2 AND source_id=$3 AND operation_id=$4`,[...scope,operationId])).rows[0];return row?decode(row):null;}
  async function finish(client:PoolClient,intent:OnlineIntent,state:'applied'|'notApplied',resultVersion:string|null){return transaction(client,async()=>{
@@ -179,5 +221,5 @@ export function createOnlineJournal({database,epoch,sourceId}:{database:{pool:Po
   const pending=(await client.query("SELECT 1 FROM opencrawl_online_migration_journal WHERE namespace=$1 AND epoch=$2 AND state='pending' LIMIT 1",scope.slice(0,2))).rows.length;if(pending)fail('EPOCH_HAS_PENDING_INTENTS');
   const result=await client.query("UPDATE opencrawl_online_migration_epochs SET state='fenced' WHERE namespace=$1 AND epoch=$2",scope.slice(0,2));if(result.rowCount!==1)fail('EPOCH_NOT_PREPARED');return {frontier:await frontier(client),fenced:true as const};
  }));}
- return {binding:Object.freeze({namespace:scope[0]!,epoch,sourceId}),ready,mutate,reconcile,closedFrontier,frontierState,replayCheckpoint,pendingPage,replayPage,backfillIfUnchanged,observeKey,fence};
+ return {binding:Object.freeze({namespace:scope[0]!,epoch,sourceId}),prepareSchema,registerSourceIn,attachSourceIn,registerSource,attachSource,ready,mutate,reconcile,closedFrontier,frontierState,replayCheckpoint,pendingPage,replayPage,backfillIfUnchanged,observeKey,fence};
 }

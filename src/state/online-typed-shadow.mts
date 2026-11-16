@@ -4,8 +4,9 @@ import {createLegacyObjectClassifier} from './legacy-object-classification.mjs';
 import {createOnlineProjection,onlineProjectionHash} from './online-projection.mjs';
 import {createOnlineRetirements} from './online-retirements.mjs';
 import {createOnlineShadow,type OnlineShadowListing,type OnlineShadowParticipant,type OnlineShadowSelection} from './online-shadow.mjs';
-import type {OnlineExternalStore,createOnlineJournal} from './online-journal.mjs';
+import type {OnlineExternalStore,OnlineSourceRegistration,createOnlineJournal} from './online-journal.mjs';
 import type {OnlineMigrationBinding} from './online-temporal/types.mjs';
+import type {OnlineCoveragePolicy} from './online-coverage.mjs';
 
 type ProjectionOptions=Omit<Parameters<typeof createOnlineProjection>[0],'epoch'|'sourceId'|'journalBinding'>;
 export type OnlineTypedDisposition=OnlineShadowSelection|{kind:'blocked';domain:string;maxBytes:number};
@@ -19,9 +20,9 @@ const compare=(a:string,b:string)=>Buffer.compare(Buffer.from(a),Buffer.from(b))
  * Completed background parity is an observation, not final fenced admission.
  * Baseline coverage receipts and compact incremental final proof remain separate
  * composition work; this factory cannot mark an installation ready. */
-export function createOnlineTypedShadow({binding:inputBinding,journal,external,physicalListing,assertCurrent,retireDerived,...input}:ProjectionOptions&{
+export function createOnlineTypedShadow({binding:inputBinding,journal,external,physicalListing,assertCurrent,retireDerived,coverage:coveragePolicy,sourceRegistration,...input}:ProjectionOptions&{
  binding:OnlineMigrationBinding;journal:ReturnType<typeof createOnlineJournal>;external:OnlineExternalStore;
- physicalListing:OnlineShadowListing;assertCurrent:(signal:AbortSignal)=>Promise<void>;retireDerived?:true;
+ physicalListing:OnlineShadowListing;assertCurrent:(signal:AbortSignal)=>Promise<void>;retireDerived?:true;coverage?:OnlineCoveragePolicy;sourceRegistration?:OnlineSourceRegistration;
 }){
  const binding=Object.freeze({...inputBinding});
  if(retireDerived!==undefined&&retireDerived!==true)fail('INVALID_RETIREMENT_POLICY');
@@ -44,9 +45,9 @@ export function createOnlineTypedShadow({binding:inputBinding,journal,external,p
   binding:Object.freeze({namespace:options.database.namespace,epoch:binding.epoch,sourceId:binding.sourceId,targetId:binding.targetId,identity}),
   select(key:string){const selected=disposition(key);if(selected.kind==='blocked')fail('UNSUPPORTED_DOMAIN_'+selected.domain);return selected;},
   async ready(){await projection.ready();await retirements?.ready();},
-  async backfillIn(client:PoolClient,key:string,value){if(value.deleted||value.bytes===null||value.version===null||value.operationId!==null||value.revision!==null)fail('INVALID_BASELINE');await projection.backfill(client,{key,bytes:value.bytes,version:value.version});},
-  async backfillRetiredIn(client:PoolClient,key:string,selected){if(!retirements)fail('RETIREMENT_POLICY_REQUIRED');await retirements.backfillIn(client,{key,domain:selected.domain,scopeHash:selected.scopeHash});},
-  async applyIn(client:PoolClient,intent,selected){if(selected.kind==='retained')await projection.apply(client,intent);else{if(!retirements)fail('RETIREMENT_POLICY_REQUIRED');await retirements.applyIn(client,intent,{domain:selected.domain,scopeHash:selected.scopeHash});}},
+  async backfillIn(client:PoolClient,key:string,value){if(value.deleted||value.bytes===null||value.version===null||value.operationId!==null||value.revision!==null)fail('INVALID_BASELINE');return projection.backfill(client,{key,bytes:value.bytes,version:value.version});},
+  async backfillRetiredIn(client:PoolClient,key:string,selected){if(!retirements)fail('RETIREMENT_POLICY_REQUIRED');const scope={key,domain:selected.domain,scopeHash:selected.scopeHash};await retirements.backfillIn(client,scope);const value=await retirements.readIn(client,scope);if(!value)fail('MISSING_RETIREMENT_READBACK');return {targetKey:JSON.stringify(['retirement',selected.domain,key]),targetHash:onlineProjectionHash(value)};},
+  async applyIn(client:PoolClient,intent,selected){if(selected.kind==='retained')return projection.apply(client,intent);if(!retirements)fail('RETIREMENT_POLICY_REQUIRED');const scope={key:intent.key,domain:selected.domain,scopeHash:selected.scopeHash};await retirements.applyIn(client,intent,scope);const value=await retirements.readIn(client,scope);if(!value)fail('MISSING_RETIREMENT_READBACK');return {targetKey:JSON.stringify(['retirement',selected.domain,intent.key]),targetHash:onlineProjectionHash(value)};},
   async inspectIn(client:PoolClient,key:string,value){if(value.version===null)return false;return projection.inspectIn(client,{key,bytes:value.bytes,version:value.version,operationId:value.operationId,revision:value.revision??'0'});},
   async inspectRetiredIn(client:PoolClient,key:string,selected){if(!retirements)fail('RETIREMENT_POLICY_REQUIRED');return retirements.inspectIn(client,{key,domain:selected.domain,scopeHash:selected.scopeHash});},
   async keysPageIn(client:PoolClient,input:{after:string;limit:number}){
@@ -54,7 +55,7 @@ export function createOnlineTypedShadow({binding:inputBinding,journal,external,p
    return [...new Set([...a,...b])].sort(compare).slice(0,input.limit);
   },
  });
- const shadow=createOnlineShadow({database:options.database,binding,journal,external,listing:physicalListing,roots:classifier.roots,classify:classifier.classify,assertCurrent,participant});
+ const shadow=createOnlineShadow({database:options.database,binding,journal,external,listing:physicalListing,roots:classifier.roots,classify:classifier.classify,assertCurrent,participant,coveragePolicy,sourceRegistration});
  const adapter={...shadow.adapter,async parityPage(request:Parameters<typeof shadow.adapter.parityPage>[0]){
   if(request.cursor===null)for(let shard=0;shard<binding.shards;shard++){request.signal.throwIfAborted();const checkpoint=await journal.replayCheckpoint(shadow.bindingId+'-'+shard);if(checkpoint===null||BigInt(checkpoint)<BigInt(request.through))return {cursor:null,processed:0,mismatches:0,drift:true};}
   return shadow.adapter.parityPage(request);

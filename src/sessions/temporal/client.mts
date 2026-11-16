@@ -6,8 +6,9 @@ import {connectorClient} from '../../connectors/temporal/client.mjs';
 import {serviceError,type ObjectStore} from '../types.mjs';
 import {ScheduleAlreadyRunning,ScheduleOverlapPolicy} from '@temporalio/client';
 import {digest} from '../ingest.mjs';
-import {indexingBinding,sessionCatchupMarker,type SessionIndexingBinding} from './handoff.mjs';
-export {sessionIndexingGeneration,type SessionIndexingBinding} from './handoff.mjs';
+import {indexingBinding,sessionCatchupMarker,sessionIndexingGeneration,type SessionIndexingBinding} from './handoff.mjs';
+import {validateOnlineIndexingHandoff,onlineIndexingHandoffHash,type OnlineIndexingHandoffReader} from '../../state/online-indexing-handoff.mjs';
+export {sessionIndexingGeneration,type SessionIndexingBinding,type OnlineIndexingHandoff,type OnlineIndexingHandoffReader} from './handoff.mjs';
 export {connectorClient as sessionClient} from '../../connectors/temporal/client.mjs';
 export async function ensureSessionSchedule(client: Client,{sourceId,taskQueue}: {sourceId: string; taskQueue: string}) {
   if(!/^[A-Za-z0-9_-]{1,80}$/.test(sourceId||'')||!taskQueue)throw new Error('Invalid session schedule');
@@ -117,9 +118,20 @@ export function sessionIndexingScheduler(config:SessionIndexingBinding & {addres
 /** Run only after every producer durably submits new objects and compatible
  * workers are running. Unless completed is true, await the returned workflow.
  * Its final Activity stores the completion marker durably, beyond retention. */
-export async function activateSessionIndexing(client:Client,input:SessionIndexingBinding & {state:ApplicationState;store:ObjectStore;prefix:string}) {
+export async function activateSessionIndexing(client:Client,input:SessionIndexingBinding & {state:ApplicationState;store:ObjectStore;prefix:string;onlineHandoff?:OnlineIndexingHandoffReader & {searchIdentity:string;jobId:string}}) {
   indexingBinding(input);
   const {sourceId,taskQueue,generation,state}=input;
+  const onlineReader=input.onlineHandoff;
+  if(onlineReader!==undefined&&(!onlineReader||typeof onlineReader.read!=='function'))throw new Error('Explicit online session handoff reader required');
+  const readHandoff=onlineReader?.read.bind(onlineReader),searchIdentity=onlineReader?.searchIdentity,jobId=onlineReader?.jobId;
+  const readOnline=async()=>{
+    if(!readHandoff||!searchIdentity||!jobId)throw new Error('Explicit online session handoff reader required');
+    const handoff=validateOnlineIndexingHandoff(await readHandoff(),state.namespace);
+    if(generation!==sessionIndexingGeneration(searchIdentity,jobId,handoff))throw new Error('Session online handoff generation differs');
+    return onlineIndexingHandoffHash(handoff);
+  };
+  const onlineHash=onlineReader?await readOnline():undefined;
+  const verifyOnline=async()=>{if(onlineReader&&await readOnline()!==onlineHash)throw new Error('Session online handoff changed during activation');};
   const {workflowId,markerKey,marker:expected}=sessionCatchupMarker(input);
   const scheduleId='sessions-'+digest(sourceId),schedule=client.schedule.getHandle(scheduleId);
   try {
@@ -131,8 +143,10 @@ export async function activateSessionIndexing(client:Client,input:SessionIndexin
   if(saved){
     const marker=saved;
     if(!isDeepStrictEqual(marker,expected))throw new Error('Session cutover marker mismatch');
+    await verifyOnline();
     return {scheduleId,workflowId,markerKey,completed:true};
   }
+  await verifyOnline();
   try {
     await client.workflow.start('reconcileSessionsV2',{workflowId,taskQueue,args:[{sourceId,generation}],workflowIdConflictPolicy:'USE_EXISTING',workflowIdReusePolicy:WorkflowIdReusePolicy.ALLOW_DUPLICATE});
   } catch(error) {if(!(error instanceof WorkflowExecutionAlreadyStartedError))throw error;}
