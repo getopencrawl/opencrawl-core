@@ -28,6 +28,7 @@ import {createConnectorCounts} from './connector-counts.mjs';
 import {createPostgresBoardState,validateLegacyBoard} from './board.mjs';
 import {createConnectorCacheRetirements,type ConnectorCacheRetirement} from './connector-cache-retirements.mjs';
 import {createSchedulerRetirements,type SchedulerRetirement} from './scheduler-retirements.mjs';
+import {createRetiredSessionReceipts,retiredSessionProofSchema,retiredSessionLocations,failedSessionReceiptSchema,type RetiredSessionProof,type RetiredSessionReceipt} from './retired-session-receipts.mjs';
 
 const H='[a-f0-9]{64}',U='[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}';
 const hash=z.string().regex(/^[a-f0-9]{64}$/),number=z.number().int().nonnegative().safe();
@@ -58,7 +59,7 @@ export interface ObjectMigrationOptions {
 export interface TenantObjectMigrationOptions extends Omit<ObjectMigrationOptions,'organizationId'> {
   tenantId:string;credentialPurpose?:'capture'|'agent';
 }
-export interface BoundObjectMigrationOptions extends Omit<TenantObjectMigrationOptions,'tenantId'> {tenantIds:readonly string[];retiredTenantHashes?:readonly string[]}
+export interface BoundObjectMigrationOptions extends Omit<TenantObjectMigrationOptions,'tenantId'> {tenantIds:readonly string[];retiredTenantHashes?:readonly string[];retiredSessionProofs?:readonly RetiredSessionProof[]}
 
 /** Self-host migration pins exactly one organization. The portable per-tenant
  * importer below is also used by explicitly bound multi-tenant runtimes. */
@@ -75,14 +76,19 @@ export function createTenantObjectMigration({tenantId,...options}:TenantObjectMi
 /** The runtime supplies a finite reviewed source binding. Scoped records must
  * match that set exactly; installation-level markers remain bound to this
  * bucket and prefix and never borrow an arbitrary tenant identity. */
-export function createBoundObjectMigration({database,prefix,tenantIds,store,registryRecords,connectorKey,eventIdentities,credentialPurpose='capture',retiredTenantHashes=[]}:BoundObjectMigrationOptions){
+export function createBoundObjectMigration({database,prefix,tenantIds,store,registryRecords,connectorKey,eventIdentities,credentialPurpose='capture',retiredTenantHashes=[],retiredSessionProofs=[]}:BoundObjectMigrationOptions){
   if(!prefix||prefix.split('/').some(value=>!value||value==='.'||value==='..')||!tenantIds.length||tenantIds.length>100000||tenantIds.some(value=>!/^(?:org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(value))||!['capture','agent'].includes(credentialPurpose)||!store.bucket)fail('Invalid object migration scope');
   const tenants=new Set(tenantIds),tenantHashes=new Set(tenantIds.map(digest)),retiredHashes=new Set(retiredTenantHashes);
   if(retiredHashes.size!==retiredTenantHashes.length||retiredTenantHashes.length>100000||retiredTenantHashes.some(value=>!hash.safeParse(value).success||tenantHashes.has(value)))fail('Invalid retired tenant evidence binding');
   if(tenants.size!==tenantIds.length||tenantHashes.size!==tenants.size)fail('Ambiguous object migration tenant binding');
+  if(retiredSessionProofs.length>100000)fail('Retired session evidence exceeds its reviewed bound');
+  const retiredSessions=new Map<string,RetiredSessionProof>();
+  for(const input of retiredSessionProofs){const proof=retiredSessionProofSchema.parse(input),scope=retiredSessionLocations(prefix,proof),key=JSON.stringify([scope.tenantHash,scope.userHash,proof.harness,scope.sessionHash]);
+    if(!retiredHashes.has(scope.tenantHash)||retiredSessions.has(key))fail('Retired session proof is unknown, active or duplicated');retiredSessions.set(key,proof);
+  }
   const roots=credentialPurpose==='agent'?[prefix+'/']:[prefix+'/', 'control/connectors/write-barriers/v1/','connector-credentials/v1/','connector-settings/v1/','derived/indexing/','raw/v1/source=slack/','_opencrawl/counts/'];
   const controls=createPostgresControls(database),deletions=createPostgresDeletionRequests(database,prefix),accounts=createAccountState(database),secrets=createConnectorSecrets(database),
-    replicas=createReplicasState(database),reports=createValueReports(database),receipts=createPostgresIndexingReceipts(database),slack=createPostgresSlackCapture(database),counts=createConnectorCounts({database,legacyBucket:store.bucket}),board=createPostgresBoardState(database),retirements=createSchedulerRetirements(database),connectorRetirements=createConnectorCacheRetirements(database);
+    replicas=createReplicasState(database),reports=createValueReports(database),receipts=createPostgresIndexingReceipts(database),slack=createPostgresSlackCapture(database),counts=createConnectorCounts({database,legacyBucket:store.bucket}),board=createPostgresBoardState(database),retirements=createSchedulerRetirements(database),connectorRetirements=createConnectorCacheRetirements(database),retiredReceipts=createRetiredSessionReceipts(database);
   const preparations=new Map<string,Promise<void>>();
   async function prepare(name:string,run:()=>Promise<void>){let pending=preparations.get(name);if(!pending){pending=run();preparations.set(name,pending);}await pending;}
   // Missing domain tables mean an uninitialized target. Every other SQL error
@@ -141,7 +147,21 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
     const raw=json(bytes);if(raw&&typeof raw==='object'&&'status' in raw&&raw.status==='failed')return null;
     const value=sessionIndexingReceiptSchema.parse(raw),identity=sourceBatchIdentity(prefix,value.sourceKey)??memorySourceIdentity(prefix,value.sourceKey);
     if(!identity||digest(value.sourceKey)!==found.parts[0])fail('Session indexing receipt identity mismatch');
+    if(retiredHashes.has(identity.tenantHash))return null;
     tenantDigest(identity.tenantHash);return {key,value};
+  }
+  async function retireSessionReceipt(key:string,bytes:Buffer,receipt:RetiredSessionReceipt['receipt'],write:boolean){
+    const identity=sourceBatchIdentity(prefix,receipt.sourceKey);if(!identity||!retiredHashes.has(identity.tenantHash)||digest(receipt.sourceKey)!==classify(key)?.parts[0])fail('Retired receipt source identity mismatch');
+    const proof=retiredSessions.get(JSON.stringify([identity.tenantHash,identity.userHash,identity.harness,identity.sessionHash]));if(!proof)fail('Retired receipt requires exact reviewed session owner evidence');
+    const scope=retiredSessionLocations(prefix,proof),controlBytes=await store.get(scope.controlKey,{maxBytes:65536});if(!controlBytes)fail('Retired receipt requires its original deletion control');
+    const control=controlSchema.parse(json(controlBytes));if(!control.deletedAt||control.deletion&&(control.deletion.sessionId!==proof.sessionId||control.deletion.state!=='complete'))fail('Retired receipt deletion control is not complete for this resource');
+    const fenceBytes=await store.get(scope.fenceKey,{maxBytes:16*1024*1024});if(!fenceBytes)fail('Retired receipt requires its exact original closed write fence');
+    const fence=fenceSchema.parse(json(fenceBytes));if(fence.namespace!=='sessions'||fence.tenantId!==scope.tenantHash||fence.connectionId!==scope.connectionId||fence.closedAt===null||fence.writers.length)fail('Retired receipt fence is open, unsettled or bound to another resource');
+    if(await store.get(receipt.sourceKey,{maxBytes:17*1024*1024})!==null)fail('Retired receipt still has captured source bytes');
+    const value:RetiredSessionReceipt={version:1,disposition:'deleted-retired-owner',bucket:store.bucket!,prefix,key,sourceHash:digest(bytes),sourceBytesBase64:bytes.toString('base64'),receipt,proof,
+      evidence:{controlKey:scope.controlKey,controlHash:digest(controlBytes),deletedAt:control.deletedAt,fenceKey:scope.fenceKey,fenceHash:digest(fenceBytes),closedAt:fence.closedAt}};
+    if(write){await prepare('retired-session-receipts',retiredReceipts.ready);await retiredReceipts.importRetirement(value);}
+    return {source:value,target:await retiredReceipts.exportRetirement(store.bucket!,key),rows:1};
   }
   async function retirementDisposition(sourceKey:string):Promise<'full-temporal-catchup'|'deleted'>{
     const identity=sourceBatchIdentity(prefix,sourceKey);if(!identity)fail('Legacy scheduler source is not a captured session');tenantDigest(identity.tenantHash);
@@ -271,11 +291,14 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
         const raw=json(bytes);
         if(domain==='session-indexing'){
           if(raw&&typeof raw==='object'&&'status' in raw&&raw.status==='failed'){
-            const value=z.strictObject({status:z.literal('failed'),sourceKey:z.string().min(1).max(8192),attempts:number.min(1),lastAttempt:date,nextAttempt:number,error:z.literal('INDEXING_FAILED')}).parse(raw);
+            const value=failedSessionReceiptSchema.parse(raw);
             if(!sourceBatchIdentity(prefix,value.sourceKey)||digest(value.sourceKey)!==parts[0])fail('Legacy retry receipt identity mismatch');
+            if(retiredHashes.has(sourceBatchIdentity(prefix,value.sourceKey)!.tenantHash))return retireSessionReceipt(key,bytes,value,write);
             const {status,...details}=value;
             return retire(key,{kind:'failed',...details,disposition:await retirementDisposition(value.sourceKey),generation:'postgres-app-state-v1'},write);
           }
+          const parsed=sessionIndexingReceiptSchema.parse(raw),identity=sourceBatchIdentity(prefix,parsed.sourceKey)??memorySourceIdentity(prefix,parsed.sourceKey);
+          if(identity&&retiredHashes.has(identity.tenantHash))return retireSessionReceipt(key,bytes,parsed,write);
           const validated=sessionReceipt(key,bytes);if(!validated)fail('Session indexing receipt is not a completed receipt');source=validated.value;
         }else if(domain==='temporal-cutover'){
           const value=z.strictObject({schemaVersion:z.literal(1),sourceId:z.string(),taskQueue:z.string(),generation:z.string(),workflowId:z.string(),completed:z.literal(true)}).parse(raw);
