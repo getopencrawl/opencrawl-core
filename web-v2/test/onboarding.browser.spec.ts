@@ -590,11 +590,12 @@ test('React OAuth return renders the Claude native callback and a manual continu
   await expect(page.getByRole('link',{name:'Continue',exact:true})).toHaveAttribute('href','claude://claude.ai/mcp-auth-callback/sdk?code=example&state=bound');
 });
 
-for (const width of [1280,390]) test(`shared setup does not ask each member to install at width ${width}`,async({page,request})=>{
- await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'env',name:'Replicas',owner:'shared'}}}});
+for (const provider of ['Replicas','Devin Cloud']) for (const width of [1280,390]) test(`shared ${provider} setup does not ask each member to install at width ${width}`,async({page,request})=>{
+ await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'env',name:provider,owner:'shared'}}}});
  await page.setViewportSize({width,height:844});
  await page.goto('/onboarding');
- await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:`Your team’s ${provider} setup is ready`})).toBeVisible();
+ if (provider === 'Devin Cloud') await expect(page.getByText(/Replicas/)).toHaveCount(0);
  await expect(page.getByRole('link',{name:'Open workspace',exact:true})).toBeVisible();
  await expect(page.getByText('Waiting for CLI sign-in',{exact:true})).toHaveCount(0);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -709,14 +710,14 @@ test('completion dismisses manual setup even when receipts arrive together',asyn
   await expect(page.getByRole('link',{name:'Next',exact:true})).toBeInViewport({ratio:1});
 });
 
-for (const width of [1280,390]) test(`shared Replicas setup also offers independent personal-machine setup at ${width}px`,async({page,request})=>{
- await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'env',name:'Replicas',owner:'shared'}}}});
+for (const provider of ['Replicas','Devin Cloud']) for (const width of [1280,390]) test(`shared ${provider} setup also offers independent personal-machine setup at ${width}px`,async({page,request})=>{
+ await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'env',name:provider,owner:'shared'}}}});
  await page.setViewportSize({width,height:844});await page.goto('/onboarding?role=member');
  await page.getByRole('button',{name:'Set up a personal computer'}).click();
  await expect(page.getByRole('heading',{name:'Install OpenCrawl'})).toBeVisible();
  await expect(page.getByText('Waiting for CLI sign-in',{exact:true})).toBeVisible();
  await expect(page.getByRole('button',{name:'Install on Replicas'})).toHaveCount(0);
  await page.getByRole('button',{name:'Back to shared setup'}).click();
- await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:`Your team’s ${provider} setup is ready`})).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

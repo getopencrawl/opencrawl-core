@@ -43,6 +43,26 @@ test('self-host admin connects Devin once; fresh cloud sessions use CLI, capture
   assert.equal((await adminRequest({tenantId:'org_other'})).status,400);
   const approved=await adminRequest({});assert.equal(approved.status,200);
   const setup=await approved.json();assert.match(setup.code,/^[a-f0-9]{64}$/);
+  // Issue through the real CLI device grant, with no hosted account or tokens.
+  const form=(path,body,headers={})=>fetch(url+path,{method:'POST',redirect:'manual',headers:{'content-type':'application/x-www-form-urlencoded',...headers},body:new URLSearchParams(body)});
+  const device=await(await form('/api/cli/device',{client_id:'opencrawl-cli'})).json();
+  assert.equal((await form('/device',{user_code:device.user_code,decision:'approve'},{origin:url,cookie})).status,200);
+  const login=await form('/api/cli/token',{client_id:'opencrawl-cli',grant_type:'urn:ietf:params:oauth:grant-type:device_code',device_code:device.device_code});
+  assert.equal(login.status,200);const human=(await login.json()).access_token;
+  const approvalPath='/api/cli/workloads/devin/approval';
+  const cliApproval=await request(approvalPath,{},human);assert.equal(cliApproval.status,200);assert.equal(cliApproval.headers.get('cache-control'),'no-store');
+  const cliSetup=(await cliApproval.json()).data;assert.match(cliSetup.code,/^[a-f0-9]{64}$/);assert.equal(cliSetup.workspaceId,organizationId);
+  for(const [path,body,auth,headers,status] of [
+    [approvalPath,{},token,{},403],[approvalPath,{},'invalid',{},401],
+    [approvalPath,{},human,{origin:url},403],[approvalPath+'?tenant=other',{},human,{},403],
+    [approvalPath,{tenantId:'org_other'},human,{},400],[approvalPath,[],human,{},400],
+    [approvalPath,undefined,human,{},405],
+  ])assert.equal((await request(path,body,auth,headers)).status,status);
+  for(const body of ['not-json','',JSON.stringify({large:'x'.repeat(4100)})]){
+    const malformed=await fetch(url+approvalPath,{method:'POST',headers:{authorization:'Bearer '+human},body});
+    assert.equal(malformed.status,400);
+  }
+  assert.equal((await request('/api/devin/connect',{code:cliSetup.code})).status,200);
   for(const [path,body,auth,headers,expected] of [
     ['/api/devin/connect',{code:setup.code},token,{origin:url},403],
     ['/api/devin/connect?tenant=other',{code:setup.code},token,{},403],
@@ -85,13 +105,16 @@ test('self-host admin connects Devin once; fresh cloud sessions use CLI, capture
   assert.equal(documents.length,1);assert.equal(documents[0].document.text,'Devin self-host fixture');
   assert.equal(documents[0].document.userId,principal.userId);assert.equal(documents[0].document.tenantId,organizationId);
   for(const owner of [{...principal,tenantId:'org_other'},{...principal,userId:'workload_devin_forged'}])await assert.rejects(resolved.resolvePrincipal({batch:{owner}}),/scope denied/);
-  const ingest=createSessionIngest({state,store,eventIdentities,prefix}),human={tenantId:organizationId,userId:'human'};
-  const humanReceipt=await ingest.putBatch(human,{...batch,owner:human});
-  await createControls({state}).update(human,'sessions','devin','cloud-one',()=>({visibility:'private',deletedAt:null}));
+  const ingest=createSessionIngest({state,store,eventIdentities,prefix}),humanOwner={tenantId:organizationId,userId:'human'};
+  const humanReceipt=await ingest.putBatch(humanOwner,{...batch,owner:humanOwner});
+  await createControls({state}).update(humanOwner,'sessions','devin','cloud-one',()=>({visibility:'private',deletedAt:null}));
   assert.equal(await ingest.getBatch({...principal,captureAccess:undefined},{...humanReceipt,harness:'devin',installationId:'fixture',sessionId:'cloud-one',userId:'human'}),null);
   const [member]=(await identity.directory.userManagement.listOrganizationMemberships({organizationId})).data;
   const connections=createDevinConnections({state,verify:createDevinVerifier({audience:url,key:async()=>publicKey}),isAdmin:async p=>p.userId===member.userId});
   const admin={tenantId:organizationId,userId:member.userId};
+  await identity.directory.userManagement.updateOrganizationMembership(member.id,{roleSlug:'member'});
+  assert.equal((await request(approvalPath,{},human)).status,403,'an existing CLI login loses approval authority when demoted');
+  await identity.directory.userManagement.updateOrganizationMembership(member.id,{roleSlug:'admin'});
   assert.equal((await connections.sharedInstallations(admin))[0].name,'Devin Cloud');
   await connections.revoke(admin,org);
   assert.equal((await request('/api/cli/me')).status,403);assert.equal((await request('/api/cli/me',undefined,fresh)).status,403);
