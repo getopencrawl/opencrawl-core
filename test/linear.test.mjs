@@ -33,7 +33,7 @@ function fixture(){
     if(state.errors)return {status:200,data:{data:{},errors:[{message:'provider error'}]}};
     const q=input.body.query;
     const data=q.includes('OpenCrawlOrganization')?{organization:{id:state.organization}}:q.includes('OpenCrawlAccount')?{organization:{id:state.organization,name:'Example'}}:
-      q.includes('OpenCrawlResource')?{[q.includes('comment(id:')?'comment':'issue']:q.includes('comment(id:')?state.comment:state.issue}:
+      q.includes('OpenCrawlResource')?{resource:{nodes:[q.includes('comments(')?state.comment:state.issue].filter(Boolean)}}:
       {[q.includes('comments(')?'comments':'issues']:{nodes:[q.includes('comments(')?state.comment:state.issue],pageInfo:{hasNextPage:false,endCursor:null}}};
     return {status:200,data:{data}};
   };
@@ -60,6 +60,8 @@ test('Linear excludes private, restricted, unknown, foreign and trashed issues a
     const f=fixture();change(f.state.issue);assert.deepEqual((await f.source.read({endpoint:'opencrawl://linear/issues'})).data.documents,[]);
   }
   const f=fixture();f.state.organization='other';await assert.rejects(f.source.read({endpoint:'opencrawl://linear/issues'}),/workspace changed/);
+  const deleted=fixture();deleted.state.issue=null;deleted.state.comment=null;
+  assert.equal(await deleted.source.inspect('issue:'+issueId),false);assert.equal(await deleted.source.inspect('comment:'+commentId),false);
 });
 test('Linear rejects arbitrary GraphQL, partial errors and invalid pagination; continues past excluded pages',async()=>{
   const f=fixture();

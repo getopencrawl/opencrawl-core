@@ -83,9 +83,12 @@ export function createLinearSource({tenantId, connectionId, workspaceId, request
       if (extra !== undefined || !['issue', 'comment'].includes(kind)) return false;
       linearId(id);
       await organization();
-      const result = await linearQuery<Record<string, (IssueAccess & {issue?: IssueAccess | null}) | null>>(request,
-        `query OpenCrawlResource($id: String!) { ${kind}(id: $id) { ${kind === 'issue' ? accessFields : `id issue { ${accessFields} }`} } }`, {id});
-      const value = result[kind];
+      // Filtered collections return an empty set for deleted/inaccessible IDs;
+      // singular lookups instead raise GraphQL errors that would poison search.
+      const result = await linearQuery<{resource: {nodes: Array<IssueAccess & {issue?: IssueAccess | null}>}}>(request,
+        `query OpenCrawlResource($id: ID!) { resource: ${kind === 'issue' ? 'issues' : 'comments'}(first: 1, includeArchived: true, filter: {id: {eq: $id}}) { nodes { ${kind === 'issue' ? accessFields : `id issue { ${accessFields} }`} } } }`, {id});
+      if (!Array.isArray(result.resource?.nodes) || result.resource.nodes.length > 1) throw new Error('Invalid Linear access response');
+      const value = result.resource.nodes[0];
       if (!value || value.id !== id) return false;
       return publicIssue(kind === 'issue' ? value : value.issue ?? null, workspaceId);
     },
