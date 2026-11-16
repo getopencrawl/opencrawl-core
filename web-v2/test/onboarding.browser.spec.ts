@@ -526,7 +526,7 @@ for (const width of [1280,390]) test(`Team removal confirms revocation before re
   await expect(dialog.getByRole('button',{name:'Remove teammate',exact:true})).toBeDisabled();await page.keyboard.press('Escape');await expect(dialog).toBeVisible();
   await page.screenshot({path:testInfo.outputPath(`team-removal-${width}.png`),fullPage:true});
   release();await expect(dialog).not.toBeVisible();await expect(page.getByRole('list',{name:'Workspace members'})).not.toContainText('bob@example.com');
-  await expect(page.getByLabel('Teammate’s email',{exact:true})).toBeFocused();expect(writes).toBe(1);
+  await expect(page.getByLabel('Email address',{exact:true})).toBeFocused();expect(writes).toBe(1);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
@@ -575,7 +575,7 @@ test('Team preserves a newly created private invitation link when refresh fails'
   let created=false;
   await page.route('**/api/console/team',route=>created?route.fulfill({status:503,json:{error:'Unavailable'}}):route.fulfill({json:report}));
   await page.route('**/api/console/team/invite',route=>{created=true;return route.fulfill({json:{ok:true,inviteUrl:'https://oss.example/auth/signup?invitation=private-grant'}});});
-  await page.goto('/team-fixture');await page.getByLabel('Teammate’s email',{exact:true}).fill('teammate@example.com');await page.getByRole('button',{name:'Invite',exact:true}).click();
+  await page.goto('/team-fixture');await page.getByLabel('Email address',{exact:true}).fill('teammate@example.com');await page.getByRole('button',{name:'Invite',exact:true}).click();
   await expect(page.getByText('Invitation created for teammate@example.com. Share the private link with them. No email was sent.')).toBeVisible();
   await expect(page.getByLabel('Private invitation link',{exact:true})).toHaveValue('https://oss.example/auth/signup?invitation=private-grant');
   await expect(page.getByText(/Team information couldn’t update/)).toBeVisible();

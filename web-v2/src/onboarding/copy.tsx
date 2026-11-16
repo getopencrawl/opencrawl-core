@@ -13,7 +13,7 @@ export async function copyText(text: string, clipboard: Pick<Clipboard, 'writeTe
 }
 
 /** The setup prompt from a page header. Agent setup keeps the manual copy path for browsers that cannot copy. */
-export function CopyPromptButton({text, label = 'Copy onboarding prompt', manualPath = '/settings'}: {text: string; label?: string; manualPath?: string}) {
+export function CopyPromptButton({text, label = 'Copy onboarding prompt', manualPath = '/agent-setup'}: {text: string; label?: string; manualPath?: string}) {
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);

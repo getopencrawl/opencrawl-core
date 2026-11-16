@@ -5,6 +5,8 @@ export interface IdentitySettings {clientId: string; url: string; authOrigin: st
 /** Core-owned account facts. Local enrollment is distinct from proving mailbox ownership. */
 export interface HostedUser {
   id:string; email:string; firstName?:string|null; lastName?:string|null; emailVerified?:boolean;
+  /** Optional display image supplied by the identity adapter; grants no authority. */
+  avatarUrl?:string|null;
   /** Set only by an identity adapter after operator-controlled local enrollment. */
   locallyEnrolled?:boolean;
 }
