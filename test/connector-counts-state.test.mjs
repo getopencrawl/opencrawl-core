@@ -27,6 +27,15 @@ test('full refresh counts select one sync while incremental hashes deduplicate a
  await repository.processObject(record,object('users',3,1,true),keys());await repository.publish(record,{users:3});assert.deepEqual(await repository.read(record),{users:0});
 });
 
+test('imported newer full summaries skip obsolete unseen snapshots without retaining their IDs',{skip:!postgresUrl},async t=>{
+ const {repository}=await fixture(t);
+ await repository.importLegacyCounts(record,{version:1,read:[],ids:{},full:{users:{sync:5,count:10}}});
+ await repository.processObject(record,object('users',4,1,true),(async function*(){assert.fail('obsolete full snapshot must not stream');})());
+ assert.deepEqual(await repository.verify(record),{counts:{users:10},records:0,objects:0,pending:0});
+ await repository.processObject(record,object('users',6,1,true),keys('new'));await repository.publish(record,{users:6});
+ assert.deepEqual(await repository.read(record),{users:1});
+});
+
 test('removal tombstone rejects paused or new measurement writes and scopes isolate IDs',{skip:!postgresUrl},async t=>{
  const {repository}=await fixture(t),paused=Promise.withResolvers(),release=Promise.withResolvers();
  const writing=repository.processObject(record,object(),(async function*(){yield*keys('first');paused.resolve();await release.promise;yield*keys('second');})());await paused.promise;

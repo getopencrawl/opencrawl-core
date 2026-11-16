@@ -98,6 +98,13 @@ export function createConnectorCounts({database, legacyBucket}: {database: Appli
       const keyHash = digest(object.key), generation = object.fullRefresh ? String(object.sync) : 'incremental';
       const admitted = await database.transaction(async client => {
         const params = await lock(client,record);
+        if (object.fullRefresh) {
+          const summary = await client.query(`SELECT generation FROM opencrawl_count_summaries WHERE ${where} AND stream=$6`,[...params,object.stream]);
+          const published = summary.rows[0]?.generation;
+          // An imported/published newer snapshot makes older unseen objects
+          // irrelevant. Do not reread and retain their obsolete full-refresh IDs.
+          if (typeof published === 'string' && /^\d+$/.test(published) && Number(published) > object.sync) return false;
+        }
         await client.query(`INSERT INTO opencrawl_count_objects(${fields},object_hash,object_key,stream,generation) VALUES(${slots},$6,$7,$8,$9) ON CONFLICT DO NOTHING`,[...params,keyHash,object.key,object.stream,generation]);
         const {rows} = await client.query(`SELECT object_key,stream,generation,complete FROM opencrawl_count_objects WHERE ${where} AND object_hash=$6`,[...params,keyHash]);
         if (rows[0].object_key!==object.key || rows[0].stream!==object.stream || rows[0].generation!==generation) throw denied();

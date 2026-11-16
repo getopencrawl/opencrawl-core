@@ -97,9 +97,10 @@ after all indexing segments succeed: it reads one inventory and job snapshot and
 publishes totals once. Full-refresh totals require every expected object of the
 selected successful sync; newly arrived, unprocessed objects keep that snapshot
 unpublished. Publication never reads raw bodies. Incomplete or failed sweeps retain
-the last published totals until a successful retry. Historical full-refresh objects
-may need a one-time count read when first encountered; completed count receipts
-avoid rereading them. There is no SQL schema change or authorization cache.
+the last published totals until a successful retry. A newer published full-refresh
+summary skips obsolete unseen snapshots, including after legacy import. Otherwise
+an object needs at most one completed count read; durable receipts avoid rereading
+it. There is no SQL schema change or authorization cache.
 
 Upgrade connector workers together before admitting new workflow executions.
 The `connector-counts-after-sweep-v1` Temporal patch lets the new worker replay
