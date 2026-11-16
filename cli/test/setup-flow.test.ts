@@ -182,6 +182,41 @@ test('setup plans, handoffs and sign-in keep the selected launcher and saved sea
  expect(login.humanTasks[0].instruction).toContain(formatSetupCommand(['setup','--api',api,'--json'],command));
 }));
 
+test('prepared plugin handoff reconciles only selected activations with ready supervision',async()=>{
+ for(const scenario of ['prepared','already-active','unselected','worker-pending'] as const)await fixture(async(api,dir,observations)=>{
+  const command=[join(dir,"private install's bin",process.platform==='win32'?'opencrawl.cmd':'opencrawl')];
+  let status:'prepared'|'unchanged'=scenario==='already-active'?'unchanged':'prepared',installs=0;
+  const client=scenario==='unselected'?'claude-code' as const:'codex' as const;
+  const dependencies={...setupCodex,command,installPlugins:async()=>{installs++;return {results:[{client,status}],humanTasks:[]};},...(scenario==='worker-pending'?{installDaemon:async()=>({kind:'external',status:'required',supervised:false,command:['/owned/worker'],reason:'No systemd user manager'})}:{})};
+  const applied=await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'none',history:'none'},dependencies);
+  if(!applied||!('agentPrompt' in applied))throw Error('Expected an agent handoff');
+  const resumeCommand=formatSetupCommand(['setup','resume','--api',api,'--json'],command);
+  expect(applied.agentPrompt.includes('`'+resumeCommand+'` once')).toBe(scenario==='prepared');
+  expect(installs).toBe(1);
+  const saved=readSetupState({api,tenantId:'tenant',userId:'user'});
+  expect(saved?.selections).toMatchObject({plugins:{codex:true,'claude-code':false},forward:{codex:false},history:{codex:false}});
+  expect(readCaptureConfig()?.harnesses).toEqual([]);
+  if(scenario==='prepared'){
+   expect(applied.agentPrompt).toContain("After this plugin's native startup or reload has run");
+   expect(applied.agentPrompt).toContain('CLI network access is normally authorized');
+   expect(applied.agentPrompt).toContain('If access is denied or unavailable, leave installation pending');
+   expect(applied.agentPrompt).toContain('do not repeat requests or bypass permissions');
+   const before=observations.at(-1) as {clients:{client:string;installed:boolean;pluginState?:string}[]};
+   expect(before.clients.find(row=>row.client==='codex')).toMatchObject({installed:false,pluginState:'prepared'});
+   // A handoff is not activation: only the normal explicit resume publishes the new observation.
+   status='unchanged';
+   const resumed=await setupCommand('resume',api,{json:true},{...dependencies,choose:async()=>{throw Error('Unexpected questionnaire');}});
+   if(!resumed||!('agentPrompt' in resumed))throw Error('Expected an agent handoff');
+   expect(resumed.agentPrompt).not.toContain('`'+resumeCommand+'` once');
+   expect(installs).toBe(2);
+   const after=observations.at(-1) as {clients:{client:string;installed:boolean;pluginState?:string}[]};
+   expect(after.clients.find(row=>row.client==='codex')).toMatchObject({installed:true,pluginState:'installed'});
+   expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.selections).toEqual(saved?.selections);
+   expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.historyJob).toEqual(saved?.historyJob);
+  }
+ },true);
+});
+
 test('explicit recording without its plugin fails before any setup mutation',()=>fixture(async(api,dir,observations)=>{
  let installed=false;
  await expect(setupCommand('apply',api,{yes:true,plugins:'none',forward:'codex',history:'codex'},{installPlugins:async()=>{installed=true;return {results:[],humanTasks:[]};}})).rejects.toMatchObject({code:'SETUP_PLUGIN_REQUIRED'});
