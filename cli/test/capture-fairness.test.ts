@@ -94,7 +94,9 @@ test('a hook arriving during a large flush reaches the receiver before the old b
  await captureHook('claude-code',{session_id:'fresh',transcript_path:path,hook_event_name:'Stop'});
  held.forEach(r=>r());await working;
  const position=f.payloads.findIndex((p:string)=>JSON.parse(p).events.some((e:any)=>e.nativeId==='fresh-event'));
- expect(position).toBeGreaterThanOrEqual(32);expect(position).toBeLessThan(40);
+ // Fresh work follows requests that were already in flight, but a bounded
+ // initial wave may now admit it before the old 32-upload background pass.
+ expect(position).toBeGreaterThanOrEqual(held.length);expect(position).toBeLessThan(40);
  expect(readdirSync(join(captureDir(),'queue'))).toHaveLength(0);
  expect(new Set(f.payloads).size).toBe(f.payloads.length);
 }));
