@@ -14,10 +14,12 @@ export interface RecordCountRepository {
 }
 export interface RecordCounts {
   get(record: IntegrationRecord): Promise<Record<string, number> | null>;
-  /** Stage one indexed object without scanning inventory or publishing totals. */
-  process(record: IntegrationRecord, provider: Provider, key: string, check?: () => void): Promise<void>;
   refresh(record: IntegrationRecord, provider: Provider, succeeded: Set<number>, options?: {key?: string; check?: () => void; publishOnly?: boolean}): Promise<void>;
   remove(record: IntegrationRecord): Promise<void>;
+}
+export interface ObjectRecordCounts extends RecordCounts {
+  /** Stage one indexed object without scanning inventory or publishing totals. */
+  process(record: IntegrationRecord, provider: Provider, key: string, check?: () => void): Promise<void>;
 }
 const PATH = /\/stream=([^/]+)\/date=[^/]+\/sync=(\d+)\//;
 // Preserve the original hash protocol so imported historical IDs deduplicate.
@@ -38,7 +40,7 @@ export function recordKey(data: Record<string, unknown> | undefined, key?: strin
 
 /** Reads never enqueue or scan. Object activities stage IDs; a
  * reauthorized sweep-completion activity selects complete snapshots and publishes. */
-export function createRecordCounts({buckets, legacyBucket, repository}: {buckets: IntegrationStorage; legacyBucket: string; repository: RecordCountRepository}): RecordCounts {
+export function createRecordCounts({buckets, legacyBucket, repository}: {buckets: IntegrationStorage; legacyBucket: string; repository: RecordCountRepository}): ObjectRecordCounts {
   async function* ids(bucket: string, object: CountObject, keys: string[] | undefined, check: () => void) {
     const source = await buckets.stream(bucket, object.key), unzip = createGunzip();
     const lines = createInterface({input: source.pipe(unzip), crlfDelay: Infinity});
@@ -97,7 +99,7 @@ export function createRecordCounts({buckets, legacyBucket, repository}: {buckets
 /** Shared self-host/cloud orchestration. Resolve current authority for every
  * activity; no authorization, inventory or provider-result cache crosses calls. */
 export function createCountMeasurement({counts, resolve, jobs}: {
-  counts: RecordCounts;
+  counts: ObjectRecordCounts;
   resolve(): Promise<{record: IntegrationRecord; provider: Provider}>;
   jobs(connectionId: string, limit: number): Promise<Array<{status?: string; jobId: string | number}>>;
 }) {
