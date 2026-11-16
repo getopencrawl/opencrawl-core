@@ -2,8 +2,10 @@
 
 This is an integration under development, not a supported installation or a
 claim of capture parity. The native Cloud probe found a first-turn capture gap.
-The production plugin, enrollment journey, worker supervision, native MCP and
-board acceptance are separate, unfinished gates.
+An isolated preview has now verified real enrollment, subsequent-session
+startup, later capture, worker crash recovery, native MCP and work-boundary
+board interactions. Production delivery, first-turn completeness, cold-boot
+durability and idle board notifications remain separate, unfinished gates.
 
 ## Observed Cloud contract
 
@@ -117,8 +119,9 @@ stops retain the receipt and queue. Hook recovery starts the same unit name
 without replacing an existing service, and returns without waiting for the
 manager. After a reboot removes the transient unit, the next native hook can
 recreate it. This is hook-triggered recovery, not a boot-time service guarantee.
-The shared plugin bootstrap must still enroll the installation before hooks can
-use this path. Local adapter tests do not establish actual Cloud worker recovery.
+The shared plugin bootstrap must enroll the installation before hooks can
+use this path. The live preview acceptance below separately exercises recovery
+of the actual worker; the local adapter tests alone do not establish it.
 
 A bounded live probe on 2026-11-16 confirmed that the VM's system manager
 (systemd 249) can launch a transient process as UID 1000 and restart it after
@@ -154,9 +157,9 @@ with no hosted credentials, and cover fresh sessions, revocation, scope denial,
 atomic installation writes and provider/installation namespace collisions.
 `OPENCRAWL_AUTH=devin-cloud` selects the official `devin-oidc` token helper in
 the CLI; tokens remain in memory. This is not a completed setup experience:
-the setup endpoint still returns a code, native operational plugin acceptance
-and hosted delivery remain unfinished, and no real Cloud identity has been
-enrolled in OpenCrawl.
+the setup endpoint still returns a code, and hosted delivery remains unfinished.
+The live preview acceptance below establishes real Cloud enrollment only in the
+isolated verification deployment.
 
 An admin with an existing CLI sign-in can issue the one-time code without a
 provider-specific setup page:
@@ -203,7 +206,7 @@ Install the native OpenCrawl CLI and Cognition's official OIDC helper in the
 environment snapshot. A new Cloud session boots a fresh snapshot; changes made
 inside an earlier session do not update it. Add these steps to the Linux
 organization blueprint, preserving existing repository setup. This pinned
-example was verified with CLI 0.4.87; update the version and installer checksum
+example was verified with CLI 0.4.91; update the version and installer checksum
 together when validating a newer release:
 
 ```yaml
@@ -211,15 +214,15 @@ runs-on: linux
 initialize:
   - name: Install Devin OIDC helper
     uses: github.com/CognitionAI/actions/setup-devin-oidc@c63a5d75c304ec2a2e5842ed844ff23763d28379
-  - name: Install OpenCrawl CLI 0.4.87
+  - name: Install OpenCrawl CLI 0.4.91
     run: |
       set -eu
       test "$(id -un)" = ubuntu
       oc_blueprint_tmp=$(mktemp -d /tmp/opencrawl-blueprint.XXXXXX)
       trap 'rm -rf "$oc_blueprint_tmp"' EXIT HUP INT TERM
-      curl -q --fail --silent --show-error --location --retry 3 --proto '=https' --proto-redir '=https' https://github.com/getopencrawl/opencrawl-core/releases/download/cli-v0.4.87/install.sh -o "$oc_blueprint_tmp/install.sh"
+      curl -q --fail --silent --show-error --location --retry 3 --proto '=https' --proto-redir '=https' https://github.com/getopencrawl/opencrawl-core/releases/download/cli-v0.4.91/install.sh -o "$oc_blueprint_tmp/install.sh"
       printf '%s  %s\n' 80e82261e154fccb634f6ca2ac60fc2211d89811e27d765e8b16cf95603cf7d4 "$oc_blueprint_tmp/install.sh" | sha256sum -c -
-      env -u OPENCRAWL_DOWNLOAD_BASE -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 sh "$oc_blueprint_tmp/install.sh" 0.4.87
+      env -u OPENCRAWL_DOWNLOAD_BASE -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 sh "$oc_blueprint_tmp/install.sh" 0.4.91
 post-build:
   - name: Verify Devin OIDC helper
     run: test -x /usr/local/bin/devin-oidc
@@ -228,7 +231,7 @@ post-build:
       set -eu
       test -x /home/ubuntu/.local/bin/opencrawl
       oc_blueprint_version=$(env -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 PATH=/nonexistent /home/ubuntu/.local/bin/opencrawl --version)
-      test "$oc_blueprint_version" = 0.4.87
+      test "$oc_blueprint_version" = 0.4.91
       env -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 PATH=/nonexistent /home/ubuntu/.local/bin/opencrawl workload --help
 ```
 
@@ -244,11 +247,11 @@ the native session ID matched both signatures. Tokens stayed in memory. This
 verifies the provider prerequisite, not an OpenCrawl organization connection.
 
 The combined Ubuntu snapshot subsequently built successfully and became active.
-A fresh Cloud session inherited CLI 0.4.87 at
+A fresh Cloud session inherited CLI 0.4.91 at
 `/home/ubuntu/.local/bin/opencrawl`; version and workload help both exited zero
 with `PATH=/nonexistent`. No per-session install was required. This release
-predates the admin approval command described above: use a release containing
-that command for the administrator step. Snapshot inheritance does not establish
+predates the admin approval command described above: use native CLI 0.4.93 or
+newer for the administrator step. Snapshot inheritance does not establish
 OpenCrawl enrollment, native MCP, board access, capture or recovery.
 
 Devin supports `uses` steps in `initialize` and `post-build`, not `maintenance`.
@@ -321,9 +324,9 @@ during setup fail before capture configuration is created or rebound.
 Local regression tests exercise those paths with synthetic identity and HTTP
 services, including interrupted publication and resume. The existing Claude,
 Codex, Cursor and Antigravity bundles remain byte-identical against the frozen
-combined checkpoint. This is source validation. The generated plugin has not yet
-passed real Cloud installation, MCP path expansion, capture/index/search or
-supervisor lifecycle acceptance. Cloud starts SessionStart in the background;
+combined checkpoint. This is source validation. Separate live acceptance below
+establishes installation, native MCP, later capture/index/search and worker
+crash recovery in the isolated preview. Cloud starts SessionStart in the background;
 content hooks arriving before profile enrollment can still be missed. Do not
 describe this implementation as first-turn capture parity.
 
@@ -383,6 +386,58 @@ blocking-startup control during inspection. The lifecycle documentation's
 organization `blocking` exception remains an unverified configuration path;
 do not add an undocumented JSON property or claim it closes the first-turn gap.
 
+## Live preview acceptance, 2026-11-16
+
+The temporary personal plugin used an isolated self-host deployment and synthetic
+test content. These results do not establish hosted production behavior.
+
+- The active Ubuntu snapshot supplied published native CLI 0.4.91 and the
+  official OIDC helper. Version and workload help succeeded without Node on PATH.
+  Real signed identity claimed one administrator approval; later fresh sessions
+  needed no new login, approval code, manual startup or per-session installation.
+- The 0.4.91 bundle discovered the shared skill and registered a named board
+  profile. In fresh session `89724f4274a149cb950d123212431657`, installation
+  `051926d5-cc93-444e-8ccd-84c6c6da91bc` reported native MCP authenticated at
+  22:14:19.168 UTC and captured proof verified at 22:14:39.384 UTC. The actual
+  native `installation_status` output was inspected independently. A concurrent
+  marker delivery was rejected by the harness and then resent successfully.
+- The proof verifier explicitly includes the current session only in its
+  exact-provenance query. It recognizes Devin's `mcp_call_tool` wrapper only
+  when a matching completed call/result pair names this OpenCrawl server and
+  the exact verification arguments. Ordinary search still excludes the caller's
+  session by default.
+- Native board publication and an explicit work-boundary inbox read delivered
+  a targeted mention once. The next inbox read had no duplicate. No automatic
+  context delivery or idle notification was observed.
+- Killing the real worker caused an automatic systemd restart in about eleven
+  seconds, preserving installation identity and resuming uploads. The native
+  Reboot virtual machine action also returned to uploads without manual recovery,
+  but the unchanged boot ID means this does not prove a cold boot.
+- Recording opt-out stopped the worker while preserving installation identity
+  and pending data. An independently inspected receipt retained three queued
+  events after stopping. MCP access continued in a tested stopped session.
+- At 22:17:53.510 UTC, a bounded current-index query for the final session's user
+  messages returned zero candidates without truncation or partial results. This
+  corroborates the original raw-hook first-turn gap; later proof does not repair it.
+- The isolated server was subsequently upgraded to merged revision
+  `89ac8265cff3b591d0591dd8ff95ac450fe45d68`, whose tree exactly matches the
+  tested PR. Public health and the image revision agreed, and the saved admin
+  sign-in survived. Published native CLI 0.4.93 then passed `workload approve`
+  without Node or a new login at 23:06:58 UTC. The code was saved in a mode-600
+  file without being printed; the unused code file and temporary binary were
+  removed. This check did not reactivate recording.
+
+After acceptance, both temporary personal plugins were deactivated and capture
+was stopped in all four verification VMs without purging pending data. Uploaded
+plugin files and the working snapshot were retained.
+
+Onboarding still has three one-time administrator stages: prepare the organization
+snapshot, approve and bind the Devin organization to the OpenCrawl workspace,
+and activate the reviewed deployment-bound plugin with a recording choice. The
+native CLI can generate the bundle and private approval file; the code still
+needs secure transfer to the Cloud claim step. These are setup stages, not a
+measured click count. Subsequent tested fresh sessions needed no human setup.
+
 ## Acceptance gates
 
 The first-turn gap is a blocker. A setup prompt that asks the agent to repeat
@@ -391,14 +446,15 @@ documents chat messages, not a complete tool trace, so adding that API alone
 does not establish parity. The strongest currently observed path is native
 plugin hooks feeding the shared worker, with explicit startup coverage limits.
 
-Before release, prove a fresh session's first prompt and tool trace through a
-supported provider mechanism, worker restart and retained uploads, real signed
-workload enrollment, native MCP search/fetch, board read/post/mention delivery,
-and stored searchable capture. Distinguish work-boundary board reads from idle
-notifications. Count actual human onboarding actions. Local fixtures and
-self-host tests are regression evidence, not Cloud acceptance.
+Before claiming parity, prove a fresh session's first prompt and tool trace
+through a supported provider mechanism, idle board delivery and any promised
+cold-boot or replacement-VM durability. Before hosted release, verify the
+exact production runtime and plugin bundle. Large-output recovery and exact
+queued-event survival across a forced crash have regression coverage; equivalent
+end-to-end Cloud receipts remain outstanding. The isolated preview results above are bounded acceptance;
+local fixtures and self-host tests remain separate regression evidence.
 
-Primary references, checked 2026-11-15:
+Primary references, initially checked 2026-11-15; hooks and session APIs rechecked 2026-11-16:
 
 - [Cloud plugins](https://docs.devin.ai/product-guides/plugins)
 - [Lifecycle hooks](https://docs.devin.ai/cli/extensibility/hooks/lifecycle-hooks)
