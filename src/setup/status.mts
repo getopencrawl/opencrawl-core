@@ -226,7 +226,8 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
       if(!evidence?.capture)return publicClient(initial);
       // These are the same authorized read operations used by native agents and CLI.
       // Exact provenance binds the result to this user, installation, harness and event.
-      const result=await search.search(principal,{query:evidence.proof.marker,source:'sessions',match:'all',sessionId:evidence.capture.sessionId,filters:{authors:[principal.userId],harnesses:[selection.client]},limit:40,groupBy:'none',dedupe:false,select:['text','provenance'],excerptChars:2000});
+      // A workload principal can infer the current session; this proof must include it.
+      const result=await search.search(principal,{query:evidence.proof.marker,source:'sessions',match:'all',sessionId:evidence.capture.sessionId,includeCurrentSession:true,filters:{authors:[principal.userId],harnesses:[selection.client]},limit:40,groupBy:'none',dedupe:false,select:['text','provenance'],excerptChars:2000});
       const hit=result.results.find(row=>matches(row,principal,selection,evidence));
       let passageId:string|undefined;
       if(hit&&typeof hit.id==='string') {

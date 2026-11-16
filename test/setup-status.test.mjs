@@ -437,23 +437,25 @@ test('portable setup HTTP authenticates scope, rejects browser writes and does n
   assert.equal((await fetch(url+'/api/setup',{headers})).status,403,'a scope change during the read withholds private setup status');
 });
 
-test('self-contained native ingestion → SQLite search/fetch → authenticated MCP result capture proves one client',async t=>{
+for(const harness of ['codex','devin'])test(`self-contained ${harness} ingestion → SQLite search/fetch → authenticated MCP result capture proves one client`,async t=>{
+  const sessionId='real-native-session',selection={installationId:'machine-installation',client:harness};
+  const owner={tenantId:'org_setup',userId:harness==='devin'?'workload_devin_test':'alice',...(harness==='devin'?{owner:{kind:'shared',provider:'devin',organizationId:'org-11111111111141118111111111111111',sessionId}}:{})};
   const directory=await mkdtemp(join(tmpdir(),'opencrawl-setup-proof-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const endpoint=pathToFileURL(join(directory,'search.sqlite')).href.replace('file:','sqlite:'),store=memorySessionStore(),prefix='sessions/setup';
   const sessions=createSessionSearch({state:stateFor(store),eventIdentities:stateFor(store).eventIdentities,endpoint,store,prefix}),search=createWorkspaceSearch({sessions});
   const setup=createSetupStatus({state:stateFor(store),search}),pipeline=createSessionPipeline({state:stateFor(store),eventIdentities:stateFor(store).eventIdentities,store,prefix,search:sessions,resolvePrincipal:async({batch})=>batch.owner});
   const ingest=createSessionIngest({state:stateFor(store),eventIdentities:stateFor(store).eventIdentities,store,prefix,onStored:setup.session,scheduleIndexing:async key=>{await pipeline.processObject({key});await sessions.refresh(owner);}});
-  await setup.installation(owner,registration());const proof=(await setup.verify(owner,selection)).proof;
-  const native={schemaVersion:1,installationId:selection.installationId,sessionId:'real-native-session',harness:'codex',origin:'cli',captureMode:'live',owner,events:[{id:'native-answer',kind:'message',timestamp:new Date().toISOString(),data:{role:'assistant',content:`The requested result is ready. ${proof.marker}`}}],attachments:[]};
+  await setup.installation(owner,registration([observation(harness)]));const proof=(await setup.verify(owner,selection)).proof;
+  const native={schemaVersion:1,installationId:selection.installationId,sessionId,harness,origin:'cli',captureMode:'live',owner,events:[{id:'native-answer',kind:'message',timestamp:new Date().toISOString(),data:{role:'assistant',content:`The requested result is ready. ${proof.marker}`}}],attachments:[]};
   await ingest.putBatch(owner,native);
-  const markerSearch={query:proof.marker,source:'sessions',match:'all',currentSession:{harness:'codex',sessionId:native.sessionId}};
+  const markerSearch={query:proof.marker,source:'sessions',match:'all',...(harness==='devin'?{}:{currentSession:{harness,sessionId}})};
   assert.equal((await search.search(owner,markerSearch)).results.length,0,'ordinary search excludes its known current chat');
   assert.ok((await search.search(owner,{...markerSearch,includeCurrentSession:true})).results.length);
   assert.equal((await setup.verify(owner,selection)).proof.state,'verified','internal exact provenance verification is not an ordinary current-chat search');
   let mcp;const server=createServer((req,res)=>mcp(req,res));await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin='http://127.0.0.1:'+server.address().port;
   mcp=createOpenCrawlMcp({origin,setup,search,authenticate:async req=>req.headers.authorization==='Bearer local-test'?owner:null});
-  const client=new Client({name:'codex',version:'test'});
+  const client=new Client({name:harness,version:'test'});
   t.after(async()=>{await client.close();await mcp.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));});
   await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers:{authorization:'Bearer local-test'}}}));
   await client.callTool({name:'test_connection',arguments:{}});assert.equal((await setup.read(owner)).installations[0].clients[0].mcp.state,'pending');
@@ -464,7 +466,7 @@ test('self-contained native ingestion → SQLite search/fetch → authenticated 
   ]});
   const receiptSearch={query:result.structuredContent.receipt,source:'sessions',match:'all'};
   assert.equal((await search.search(owner,receiptSearch)).results.length,0,'ordinary search still excludes tool-result receipts');
-  assert.ok((await search.search(owner,{...receiptSearch,includeToolOutputs:true})).results.length);
+  assert.ok((await search.search(owner,{...receiptSearch,includeToolOutputs:true,includeCurrentSession:true})).results.length);
   const checked=await setup.verify(owner,selection);assert.equal(checked.proof.state,'verified');assert.equal(checked.mcp.state,'authenticated','native receipt attribution uses the scoped captured batch, not broader search defaults');
   assert.equal((await setup.read({...owner,tenantId:'foreign'})).firstWin,null);
 });
