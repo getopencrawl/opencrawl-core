@@ -8,26 +8,27 @@ import {spawnSync} from 'node:child_process';
 
 function fixture(options={}){
  const root=mkdtempSync(join(tmpdir(),'opencrawl-full-upgrade-')),deploy=join(root,'deploy'),bin=join(root,'bin');mkdirSync(deploy);mkdirSync(bin);
- for(const file of ['upgrade.mjs','installation.mjs','recovery.mjs','backup.mjs','legacy-backup.mjs'])copyFileSync(new URL('../deploy/'+file,import.meta.url),join(deploy,file));
+ for(const file of ['upgrade.mjs','activation.mjs','installation.mjs','recovery.mjs','backup.mjs','legacy-backup.mjs'])copyFileSync(new URL('../deploy/'+file,import.meta.url),join(deploy,file));
  const before='COMPOSE_PROJECT_NAME=existing\nOPENCRAWL_S3_SECRET_ACCESS_KEY=private-fixture-secret\n';writeFileSync(join(deploy,'.env'),before);
  const names=options.stateInit?['app','worker','app-state-ready','database-ready','s3','temporal-db']:['app','worker','temporal-db'];
  const dependencies={app:'app-state-ready:service_completed_successfully',worker:'app:service_healthy','app-state-ready':'database-ready:service_completed_successfully,s3:service_started','database-ready':'temporal-db:service_healthy'};
- const containers=names.map(name=>({Id:name,Image:'sha256:fixture',Config:{Labels:{'com.docker.compose.service':name,'com.docker.compose.oneoff':'False',...(options.stateInit&&dependencies[name]?{'com.docker.compose.depends_on':dependencies[name]}:{})},Cmd:['true'],Env:['SECRET=private-fixture-secret']},HostConfig:{RestartPolicy:{Name:'unless-stopped'}},Mounts:[],State:{Running:!name.endsWith('-ready')}}));
+ const containers=names.map(name=>({Id:name,Image:'sha256:fixture',Config:{Labels:{'com.docker.compose.service':name,'com.docker.compose.project':'existing','com.docker.compose.oneoff':'False',...(options.stateInit&&dependencies[name]?{'com.docker.compose.depends_on':dependencies[name]}:{})},Cmd:['true'],Env:['SECRET=private-fixture-secret']},HostConfig:{RestartPolicy:{Name:'unless-stopped'}},Mounts:[],State:{Running:!name.endsWith('-ready'),Health:{Status:'healthy'}}}));
  writeFileSync(join(bin,'git'),'#!/bin/sh\nprintf "%040d\\n" 1\n',{mode:0o700});
  writeFileSync(join(bin,'docker'),'#!/usr/bin/env node\n'+`
  const fs=require('node:fs'),a=process.argv.slice(2),stateFile=process.env.CALLS+'.state';fs.appendFileSync(process.env.CALLS,JSON.stringify(a)+'\\n');
  const options=JSON.parse(process.env.OPTIONS),state=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):{oldAvailable:true,tags:{},newRunning:false};
  const save=()=>fs.writeFileSync(stateFile,JSON.stringify(state));
  if(a[0]==='ps')console.log(${JSON.stringify(names.join('\n'))});
- else if(a[0]==='inspect'){const rows=${JSON.stringify(containers)};if(state.newRunning)for(const row of rows)if(['app','worker'].includes(row.Id))row.Image='sha256:new';console.log(JSON.stringify(rows));}
+ else if(a[0]==='inspect'){const rows=${JSON.stringify(containers)};if(state.newRunning)for(const row of rows)if(['app','worker'].includes(row.Id)){row.Image='sha256:'+'a'.repeat(64);row.Config.Labels['org.opencontainers.image.revision']=options.wrongRevision?'f'.repeat(40):'0'.repeat(39)+'1';if(options.unhealthyWorker&&row.Id==='worker')row.State.Health.Status='unhealthy';if(options.foreignWorker&&row.Id==='worker')row.Config.Labels['com.docker.compose.project']='foreign';}console.log(JSON.stringify(rows));}
  else if(a[0]==='image'&&a[1]==='tag'){if(!state.oldAvailable)process.exit(125);state.tags[a[3]]=a[2];save();}
+ else if(a[0]==='image'&&a[1]==='inspect'&&!a.includes('--format'))console.log(JSON.stringify(a.slice(2).map(Id=>({Id,Config:{Labels:{'org.opencontainers.image.revision':options.wrongImageRevision?'f'.repeat(40):'0'.repeat(39)+'1'}}}))));
  else if(a[0]==='image'&&a[1]==='inspect'){const ref=a.at(-1);if(!state.oldAvailable)process.exit(125);console.log(state.tags[ref]||ref);}
  else if(a[0]==='image'&&a[1]==='save'){if(options.failImageSave)process.exit(18);if(!state.oldAvailable)process.exit(125);console.log(JSON.stringify({tags:Object.fromEntries(a.slice(2).map(tag=>[tag,state.tags[tag]]))}));}
  else if(a[0]==='image'&&a[1]==='load'){if(options.failImageLoad)process.exit(125);Object.assign(state.tags,JSON.parse(fs.readFileSync(0,'utf8')).tags);state.oldAvailable=true;save();}
  else if(a.includes('build')){if(options.failBuild!==false)process.exit(17);if(options.loseImagesAfterBuild)state.oldAvailable=false;save();}
  else if(a[0]==='stop'||a[0]==='start'){if(a[0]==='stop'&&options.failStop)process.exit(95);}
  else if(a[0]==='run'){if(!state.oldAvailable)process.exit(125);if(options.failStoreArchive)process.exit(96);console.log('cold-store-archive');}
- else if(a[0]==='compose'){if(a.includes('dist/src/sessions/identity-migration.mjs')&&options.failMigration)process.exit(97);if(a.includes('dist/src/state/migrate.mjs')&&a.includes(options.failStateOperation))process.exit(98);if(a.includes('up')&&a.includes('app')){state.newRunning=true;save();}}
+ else if(a[0]==='compose'){if(a.includes('dist/src/selfhost/activate.mjs')){if(options.failCatchup)process.exit(99);console.log(JSON.stringify({connectorCatchup:{required:false,completed:true,connections:0}}));}if(a.includes('dist/src/sessions/identity-migration.mjs')&&options.failMigration)process.exit(97);if(a.includes('dist/src/state/migrate.mjs')&&a.includes(options.failStateOperation))process.exit(98);if(a.includes('up')&&a.includes('app')){state.newRunning=true;save();}}
  else process.exit(19);
  `,{mode:0o700});
  const runScript=(name,args)=>spawnSync(process.execPath,[join(deploy,name),...args],{encoding:'utf8',env:{PATH:bin+':'+process.env.PATH,CALLS:join(root,'calls'),OPTIONS:JSON.stringify(options)}});
@@ -255,4 +256,29 @@ test('restore refuses a same-named empty volume owned by another project',async(
   assert.notEqual(result.status,0);assert.match(result.stderr,/volume ownership mismatch/);
   assert.ok(!readFileSync(join(root,'calls'),'utf8').includes('"run"'),'No helper may read or write the foreign volume');
  }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test('connector activation failure keeps upgrade incomplete and stops the new writers',()=>{
+ const f=fixture({failBuild:false,failCatchup:true});try{
+  const result=f.run([]);assert.equal(result.status,1);const journal=JSON.parse(readFileSync(join(f.deploy,'.upgrade/upgrade.json'),'utf8'));assert.equal(journal.phase,'healthy');assert.equal(journal.connectorCatchup,undefined);
+  const calls=readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').map(JSON.parse);const gate=calls.findIndex(a=>a.includes('dist/src/selfhost/activate.mjs'));assert.ok(gate>0);assert.ok(calls.slice(gate+1).some(a=>a[0]==='stop'&&a.includes('app')&&a.includes('worker')));assert.ok(!result.stdout.includes('"upgrade":"complete"'));
+ }finally{f.cleanup();}
+});
+
+test('record-startup cannot retain a prior completion after connector revalidation fails',()=>{
+ const options={failBuild:false},f=fixture(options);try{
+  assert.equal(f.run([]).status,0);options.failCatchup=true;
+  const failed=f.run(['--record-startup']);assert.equal(failed.status,1);assert.equal(JSON.parse(readFileSync(join(f.deploy,'.upgrade/upgrade.json'),'utf8')).phase,'healthy');
+  options.failCatchup=false;const resumed=f.run(['--record-startup']);assert.equal(resumed.status,0,resumed.stderr);assert.equal(JSON.parse(readFileSync(join(f.deploy,'.upgrade/upgrade.json'),'utf8')).connectorCatchup.completed,true);
+ }finally{f.cleanup();}
+});
+
+test('record-startup rejects another target and unproven runtime before activation or stopping writers',()=>{
+ for(const field of ['wrongImageRevision','unhealthyWorker','foreignWorker','otherTarget']){
+  const options={failBuild:false},f=fixture(options);try{
+   assert.equal(f.run([]).status,0);const before=readFileSync(join(f.root,'calls'),'utf8');
+   if(field==='otherTarget'){const file=join(f.deploy,'.upgrade/upgrade.json'),journal=JSON.parse(readFileSync(file,'utf8'));journal.target='f'.repeat(40);writeFileSync(file,JSON.stringify(journal));}else options[field]=true;
+   const result=f.run(['--record-startup']);assert.equal(result.status,1);const added=readFileSync(join(f.root,'calls'),'utf8').slice(before.length);assert.ok(!added.includes('dist/src/selfhost/activate.mjs'));assert.ok(!added.includes('"stop"'));
+  }finally{f.cleanup();}
+ }
 });

@@ -2,20 +2,20 @@
   "format": 1,
   "sourceRelease": "v0.4.1",
   "sourceRevision": "fc748cbcba9da2c9830d842b38a2fcc19c340bd7",
-  "verifiedCandidate": "bdd9e2cadf7d8fe32cb5740593cb48edccef9b21",
-  "run": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503",
+  "verifiedCandidate": "1b3005de4cca55db623a409a633f400344243ed3",
+  "run": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43787128760",
   "event": "push",
-  "status": "published-version matrix passed; full release gate failed",
-  "scope": "Actual Docker upgrades from the unchanged published source. This evidence applies only to the exact candidate above, not later migration-engine or recovery changes. Every later candidate must repeat the gate.",
+  "status": "published-version matrix and retained-Airbyte upgrade/restore passed",
+  "scope": "Actual Docker upgrades from the unchanged published source. This evidence applies only to the exact candidate above; later source changes must repeat the gate.",
   "publishedVersionMatrix": [
     {
       "installation": "deploy",
       "search": "opensearch",
       "conclusion": "success",
-      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/job/133031269016",
-      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/artifacts/14190635674",
-      "artifactSha256": "be8ef8ac316bf02e84ddafa858294025b7848f5020d2e2ea6ad6c4384e8315fe",
-      "receiptSha256": "20fff3637d1b6824a59557181ee4e33c091ce880451a89a4755585af9a435e23",
+      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43787128760/job/133037167365",
+      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43787128760/artifacts/14190903308",
+      "artifactSha256": "607c507df5e98ac3c0196e028c9b095017cee9764252dd631bd0d627340af2cb",
+      "receiptSha256": "f663f7c5f738891c53dc9cfb141f402844627fbebc82b75a92da83394aabd9b7",
       "retainedMutableObjects": 35,
       "checks": [
         "interrupted migration resumed",
@@ -26,16 +26,16 @@
         "subsequent upgrade preserves new writes",
         "matched old-version restoration verified"
       ],
-      "backupManifestSha256": "3c9b7aae97610e6a01fb47b57dd106ac11f4a4c833450145c318e0472c545b27"
+      "backupManifestSha256": "8ddb552bba685de4e4eda5cbf487ace80d1523c866c0bce01b7e2685be44910c"
     },
     {
       "installation": "deploy",
       "search": "sqlite",
       "conclusion": "success",
-      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/job/133031268982",
-      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/artifacts/14190316457",
-      "artifactSha256": "b8a3b04858ef12cfd1c243aefa936cbd97e8acd305023528cb5ad92a21cfa226",
-      "receiptSha256": "11f306bd622d92b8e3ebcb240b17ec9c783570398d62144c0e46a686e1e0613a",
+      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43787128760/job/133037167255",
+      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43787128760/artifacts/14191340241",
+      "artifactSha256": "a297ac90cdeb812e3d6cfc0fab940689b6f2cb82c0d49291c48866503c2f79ec",
+      "receiptSha256": "83943426b6930f5dca165408a880e60fa61d14fad8214c20d5bfc3f84b53ec7f",
       "retainedMutableObjects": 35,
       "checks": [
         "interrupted migration resumed",
@@ -46,16 +46,16 @@
         "subsequent upgrade preserves new writes",
         "matched old-version restoration verified"
       ],
-      "backupManifestSha256": "065c089f78390671229163aeb6e7858ac3c2b022d6b80f28b9dd907a4f190762"
+      "backupManifestSha256": "ce7a3fd7f0fd0dc08036ae7d65586288d8e063c3dc1f9d60e646fb3a5e960964"
     },
     {
       "installation": "dev",
       "search": "opensearch",
       "conclusion": "success",
-      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/job/133031269145",
-      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/artifacts/14190034247",
-      "artifactSha256": "cededef98e80c34785cd11fd122c89d23ee2c25e2711ca4eea3639a8305fb9ca",
-      "receiptSha256": "5054858cd560181d93dd5d1448148b994a223b11c440c340d699543195e0910e",
+      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43787128760/job/133037167244",
+      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43787128760/artifacts/14190704300",
+      "artifactSha256": "9070c35054d2d081ae926d610ed51b3e077aae6298c6a21131164ce2038a67fa",
+      "receiptSha256": "cbe42636c42bff69b9373d54ba010e5b8aed33590d7272bdcd9e433826b0853b",
       "retainedMutableObjects": 35,
       "checks": [
         "interrupted migration resumed",
@@ -66,16 +66,16 @@
         "subsequent upgrade preserves new writes",
         "matched old-version restoration verified"
       ],
-      "backupManifestSha256": "6a87173a5792b6372e3f1352ef20df1223b24e83b3c29eddea7a1e4a6818e0e9"
+      "backupManifestSha256": "452bf8ec9ad45c68381d71645ce8ae46f835a06d9e219e5582b4db6a56574ae9"
     },
     {
       "installation": "dev",
       "search": "sqlite",
       "conclusion": "success",
-      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/job/133031269066",
-      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/artifacts/14190470495",
-      "artifactSha256": "c4f6ec67b1d50ce5af13ddc1abb4dc41631d1fbad7fcc4f129f9b2af4ed997a3",
-      "receiptSha256": "62d5d70665219cbd42cb10f4712f2c0616dba3929f4b0b8a528f01a30520e63e",
+      "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43787128760/job/133037167121",
+      "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43787128760/artifacts/14190509429",
+      "artifactSha256": "a19c9231eb39723c6a20ebbc0b9de7ed739461e677fd720c740dc373c939850c",
+      "receiptSha256": "b2aa0f68e56dcfbb28cf6a7beb45b2d93b3814b4583eec13a6dea551583ce300",
       "retainedMutableObjects": 35,
       "checks": [
         "interrupted migration resumed",
@@ -86,19 +86,25 @@
         "subsequent upgrade preserves new writes",
         "matched old-version restoration verified"
       ],
-      "backupManifestSha256": "6172de9491a974bedbd9f3c92b476b29f2e9c9343e0ed4deea785009887f4b17"
+      "backupManifestSha256": "60615a6fe6e85c41b1d02cf8294c42b93d46e630735d628cf9bfb1bcfc7f76b9"
     }
   ],
   "retainedAirbyte": {
+    "conclusion": "success",
+    "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43787128760/job/133037167101",
+    "artifact": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43787128760/artifacts/14190933368",
+    "artifactSha256": "11ee5356ad6c5f7ed659a07e77a085cdc376ad3c829840fe3321574314708449",
+    "receiptSha256": "3ef8aad6b8f8746981e52f36500a9b65ddaa4a6f1ae48d64716a4b95efc6c551",
+    "backupManifestSha256": "d0903130a56ec202fa5143ba8dca605f76c6951d80246e52a2943b61997f79e0",
+    "freshAirbyteSyncAfterUpgradeAndRestore": true,
+    "matchedOldVersionRestore": true,
+    "retainedMutableObjects": 35,
+    "recoveryNetworkReservationVerified": true
+  },
+  "priorRetainedAirbyteFailure": {
+    "candidate": "bdd9e2cadf7d8fe32cb5740593cb48edccef9b21",
+    "run": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503",
     "conclusion": "failure",
-    "job": "https://github.com/getopencrawl/opencrawl-core/actions/runs/43785233503/job/133031268761",
-    "stage": "matched old-version restore",
-    "reason": "Docker networking failed with Address already in use while starting restored Temporal; completed initialization jobs had no reserved address.",
-    "observedBeforeFailure": [
-      "app-state migration and independent verification",
-      "new application writes",
-      "subsequent upgrade"
-    ],
-    "correctedGate": "pending; no successful retained-Airbyte restore receipt yet"
+    "reason": "Docker networking failed with Address already in use while starting restored Temporal; completed initialization jobs had no reserved address."
   }
 }

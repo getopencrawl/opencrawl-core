@@ -23,8 +23,10 @@ import {replicasConnectionSchema,replicasChallengeSchema} from '../identity/repl
 import {createValueReports} from './value-reports.mjs';
 import {createPostgresIndexingReceipts} from './indexing-receipts.mjs';
 import {createPostgresSlackCapture} from './slack-capture.mjs';
+import {digest as connectorBindingHash,validateBinding} from '../connectors/scope.mjs';
 import {createConnectorCounts} from './connector-counts.mjs';
 import {createPostgresBoardState,validateLegacyBoard} from './board.mjs';
+import {createConnectorCacheRetirements,type ConnectorCacheRetirement} from './connector-cache-retirements.mjs';
 import {createSchedulerRetirements,type SchedulerRetirement} from './scheduler-retirements.mjs';
 
 const H='[a-f0-9]{64}',U='[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}';
@@ -56,7 +58,7 @@ export interface ObjectMigrationOptions {
 export interface TenantObjectMigrationOptions extends Omit<ObjectMigrationOptions,'organizationId'> {
   tenantId:string;credentialPurpose?:'capture'|'agent';
 }
-export interface BoundObjectMigrationOptions extends Omit<TenantObjectMigrationOptions,'tenantId'> {tenantIds:readonly string[]}
+export interface BoundObjectMigrationOptions extends Omit<TenantObjectMigrationOptions,'tenantId'> {tenantIds:readonly string[];retiredTenantHashes?:readonly string[]}
 
 /** Self-host migration pins exactly one organization. The portable per-tenant
  * importer below is also used by explicitly bound multi-tenant runtimes. */
@@ -73,13 +75,14 @@ export function createTenantObjectMigration({tenantId,...options}:TenantObjectMi
 /** The runtime supplies a finite reviewed source binding. Scoped records must
  * match that set exactly; installation-level markers remain bound to this
  * bucket and prefix and never borrow an arbitrary tenant identity. */
-export function createBoundObjectMigration({database,prefix,tenantIds,store,registryRecords,connectorKey,eventIdentities,credentialPurpose='capture'}:BoundObjectMigrationOptions){
+export function createBoundObjectMigration({database,prefix,tenantIds,store,registryRecords,connectorKey,eventIdentities,credentialPurpose='capture',retiredTenantHashes=[]}:BoundObjectMigrationOptions){
   if(!prefix||prefix.split('/').some(value=>!value||value==='.'||value==='..')||!tenantIds.length||tenantIds.length>100000||tenantIds.some(value=>!/^(?:org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(value))||!['capture','agent'].includes(credentialPurpose)||!store.bucket)fail('Invalid object migration scope');
-  const tenants=new Set(tenantIds),tenantHashes=new Set(tenantIds.map(digest));
+  const tenants=new Set(tenantIds),tenantHashes=new Set(tenantIds.map(digest)),retiredHashes=new Set(retiredTenantHashes);
+  if(retiredHashes.size!==retiredTenantHashes.length||retiredTenantHashes.length>100000||retiredTenantHashes.some(value=>!hash.safeParse(value).success||tenantHashes.has(value)))fail('Invalid retired tenant evidence binding');
   if(tenants.size!==tenantIds.length||tenantHashes.size!==tenants.size)fail('Ambiguous object migration tenant binding');
   const roots=credentialPurpose==='agent'?[prefix+'/']:[prefix+'/', 'control/connectors/write-barriers/v1/','connector-credentials/v1/','connector-settings/v1/','derived/indexing/','raw/v1/source=slack/','_opencrawl/counts/'];
   const controls=createPostgresControls(database),deletions=createPostgresDeletionRequests(database,prefix),accounts=createAccountState(database),secrets=createConnectorSecrets(database),
-    replicas=createReplicasState(database),reports=createValueReports(database),receipts=createPostgresIndexingReceipts(database),slack=createPostgresSlackCapture(database),counts=createConnectorCounts({database,legacyBucket:store.bucket}),board=createPostgresBoardState(database),retirements=createSchedulerRetirements(database);
+    replicas=createReplicasState(database),reports=createValueReports(database),receipts=createPostgresIndexingReceipts(database),slack=createPostgresSlackCapture(database),counts=createConnectorCounts({database,legacyBucket:store.bucket}),board=createPostgresBoardState(database),retirements=createSchedulerRetirements(database),connectorRetirements=createConnectorCacheRetirements(database);
   const preparations=new Map<string,Promise<void>>();
   async function prepare(name:string,run:()=>Promise<void>){let pending=preparations.get(name);if(!pending){pending=run();preparations.set(name,pending);}await pending;}
   // Missing domain tables mean an uninitialized target. Every other SQL error
@@ -155,18 +158,18 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
     const {domain,parts}=found;let source:unknown,target:unknown|null=null,rows=1;
     switch(domain){
       case 'resource-controls':{
-        const [tenantHash,userHash,kind,harness,resourceHash]=parts;tenantDigest(tenantHash);if(!isSessionHarness(harness))fail('Unknown control harness');
-        const value=controlSchema.parse(json(bytes));if(value.deletion&&(!value.deletedAt||kind!=='sessions'||digest(value.deletion.sessionId)!==resourceHash))fail('Deletion control identity mismatch');
+        const [tenantHash,userHash,kind,harness,resourceHash]=parts;if(!retiredHashes.has(tenantHash))tenantDigest(tenantHash);if(!isSessionHarness(harness))fail('Unknown control harness');
+        const value=controlSchema.parse(json(bytes));if(retiredHashes.has(tenantHash)&&!value.deletedAt)fail('Retired tenant scope allows only deletion tombstones');if(value.deletion&&(!value.deletedAt||kind!=='sessions'||digest(value.deletion.sessionId)!==resourceHash))fail('Deletion control identity mismatch');
         const identity={tenantHash,userHash,kind:kind as 'sessions'|'memories',harness,resourceHash};source=value;
         if(write){await prepare('controls',controls.ready);await controls.importControl(identity,value);}target=await read(()=>controls.readIdentity(identity));break;
       }
       case 'session-write-fences':case 'connector-write-fences':{
         const value=fenceSchema.parse(json(bytes));
-        if(domain==='session-write-fences'){tenantDigest(value.tenantId);if(value.namespace!=='sessions'||value.tenantId!==parts[0]||!hash.safeParse(value.connectionId).success)fail('Session write fence owner mismatch');}
+        if(domain==='session-write-fences'){if(retiredHashes.has(value.tenantId)){if(value.closedAt===null)fail('Retired tenant scope requires a closed deletion fence');}else tenantDigest(value.tenantId);if(value.namespace!=='sessions'||value.tenantId!==parts[0]||!hash.safeParse(value.connectionId).success)fail('Session write fence owner mismatch');}
         else tenant(value.tenantId);
         if(new Set(value.writers.map(writer=>writer.id)).size!==value.writers.length||value.writers.some(writer=>writer.phase==='settled'&&writer.settledAt===undefined))fail('Invalid legacy writer receipts');
         const controlPrefix=key.slice(0,key.lastIndexOf('/')+1);
-        if(domain==='session-write-fences')tenantDigest(parts[0]);
+        if(domain==='session-write-fences'&&!retiredHashes.has(parts[0]))tenantDigest(parts[0]);
         const fence=createPostgresWriteBarrier({database,namespace:value.namespace,tenantId:value.tenantId,connectionId:value.connectionId,controlPrefix});
         if(fence.key!==key)fail('Legacy write fence key does not match its scope');
         source={...value,writers:[...value.writers].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)};rows=1+value.writers.length;
@@ -222,7 +225,12 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
         if(write){await prepare('reports',reports.ready);await reports.importReport(parts[0],source);}target=await read(()=>reports.exportReport(parts[0]));break;
       }
       case 'slack-capture':{
-        const value=slack.validateLegacy(key,bytes),scope=hash.parse((value as {scope:unknown}).scope);source=value;
+        const value=slack.validateLegacy(key,bytes),scope=hash.parse((value as {scope:unknown}).scope);
+        const matches=registryRecords.filter(record=>record.provider==='slack'&&record.s3Prefix&&key.startsWith(record.s3Prefix+'/capture/')&&(record.s3Bucket||store.bucket)===store.bucket);
+        if(matches.length!==1)fail('Slack capture requires exactly one matching original integration record');
+        const record=matches[0];tenant(record.tenantId);
+        const binding=validateBinding({tenantId:record.tenantId,connectionId:record.integrationId,workspaceId:record.workspace as string,provider:'slack',access:'team-public',rawPrefix:record.s3Prefix+'/'});
+        if(scope!==connectorBindingHash(binding))fail('Slack capture scope differs from its original integration binding');source=value;
         if(write){await prepare('slack',slack.ready);await slack.importLegacy(key,bytes);}target=await read(()=>slack.exportLegacy(key,scope));break;
       }
       case 'record-counts':{
@@ -265,10 +273,17 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
           const marker=sessionCatchupMarker({...value,prefix});if(marker.markerKey!==key||!isDeepStrictEqual(marker.marker,value))fail('Temporal catch-up receipt identity mismatch');source=value;
         }else if(domain==='connector-indexing'){
           const value=z.strictObject({pipeline:z.string(),key:z.string().max(8192),sha256:hash,sourceRecords:number,records:number}).parse(raw);
-          if(value.pipeline!==parts[0]||digest(value.key)!==parts[1]||!/^raw\/v1\/source=/.test(value.key))fail('Connector indexing receipt identity mismatch');source=value;
+          if(value.pipeline!==parts[0]||digest(value.key)!==parts[1]||!/^raw\/v1\/source=/.test(value.key))fail('Connector indexing receipt identity mismatch');
+          const matches=registryRecords.filter(record=>record.s3Prefix&&value.key.startsWith(record.s3Prefix+'/')&&(record.s3Bucket||store.bucket)===store.bucket);
+          if(matches.length!==1)fail('Connector indexing receipt has no unique original source binding');tenant(matches[0].tenantId);source=value;
         }else{
           const value=z.strictObject({pipeline:z.string(),fingerprint:hash,checksum:hash.optional(),sourceRecords:number.optional(),records:number,objects:number,ignored:number.optional()}).parse(raw);
           if(value.pipeline!==parts[0]||value.fingerprint!==parts[1])fail('Connector snapshot receipt identity mismatch');source=value;
+        }
+        if(domain==='connector-indexing'||domain==='connector-snapshots'){
+          const retired:ConnectorCacheRetirement={version:1,kind:domain==='connector-indexing'?'object':'snapshot',bucket:store.bucket!,key,sourceHash:digest(bytes),disposition:'full-temporal-connector-catchup',receipt:source as ConnectorCacheRetirement['receipt']};
+          if(write){await prepare('connector-retirements',connectorRetirements.ready);await connectorRetirements.importRetirement(retired);}
+          return {source:retired,target:await connectorRetirements.exportRetirement(store.bucket!,key),rows:1};
         }
         if(write){await prepare('receipts',receipts.ready);await receipts.importReceipt(key,source as JsonObject);}target=await read(()=>receipts.read(key));break;
       }

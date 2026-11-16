@@ -17,8 +17,6 @@ export interface IntegrationRegistry {
 /** The runtime supplies existing storage, scoped to the admitted organization. */
 export interface IntegrationStorage {
   get(tenantId: string): Promise<string | null>;
-  read(bucket: string, key: string): Promise<Buffer>;
-  write(bucket: string, key: string, body: Buffer): Promise<unknown>;
   stream(bucket: string, key: string): Promise<Readable>;
   list(bucket: string, prefix: string): Promise<Array<{key: string; size: number}>>;
   deletePrefix(bucket: string, prefix: string): Promise<number>;

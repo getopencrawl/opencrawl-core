@@ -30,13 +30,14 @@ export async function ensureConnectorSchedule(client: Client, {reference, taskQu
 }
 
 /** Manual submitter uses the same reference-only workflow as scheduled indexing. */
-export async function startConnectorIndexing(client:Client,{reference,taskQueue,generation='v1'}:{reference:ConnectionReference;taskQueue:string;generation?:string}):Promise<{workflowId:string;submitted:boolean}> {
+export async function startConnectorIndexing(client:Client,{reference,taskQueue,generation='v1',requestId}:{reference:ConnectionReference;taskQueue:string;generation?:string;requestId?:string}):Promise<{workflowId:string;submitted:boolean}> {
   if(!reference||![reference.tenantId,reference.connectionId].every(value=>typeof value==='string'&&/^[A-Za-z0-9_:-]{1,200}$/.test(value))||!taskQueue||!/^v[1-9][0-9]*$/.test(generation))throw new Error('Invalid connector indexing request');
-  const workflowId='connector-manual-v1-'+digest([reference.tenantId,reference.connectionId,generation]);
+  if(requestId!==undefined&&!/^[a-f0-9]{64}$/.test(requestId))throw new Error('Invalid durable connector request');
+  const workflowId=requestId?'connector-catchup-v1-'+requestId:'connector-manual-v1-'+digest([reference.tenantId,reference.connectionId,generation]);
   // Copy only trusted reference fields; configuration and secrets remain worker-side.
   if(reference.userId!==undefined&&!/^[A-Za-z0-9_:-]{1,200}$/.test(reference.userId))throw new Error('Invalid connector owner reference');
   const input={tenantId:reference.tenantId,connectionId:reference.connectionId,...(reference.userId?{userId:reference.userId}:{}),generation};
-  try {await client.workflow.start('indexConnectorV1',{workflowId,taskQueue,args:[input],workflowIdReusePolicy:WorkflowIdReusePolicy.ALLOW_DUPLICATE});}
+  try {await client.workflow.start('indexConnectorV1',{workflowId,taskQueue,args:[input],workflowIdReusePolicy:requestId?WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY:WorkflowIdReusePolicy.ALLOW_DUPLICATE});}
   catch(error){if(!(error instanceof WorkflowExecutionAlreadyStartedError))throw error;return {workflowId,submitted:false};}
   return {workflowId,submitted:true};
 }

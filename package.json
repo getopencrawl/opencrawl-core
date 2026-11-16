@@ -124,7 +124,9 @@
     "./integrations/temporal-types": "./dist/src/integrations/temporal/types.mjs",
     "./connectors/slack-source-client": "./dist/src/connectors/temporal/source-client.mjs",
     "./state/search-context-jobs": "./dist/src/state/search-context-jobs.mjs",
-    "./state/lifecycle-migration": "./dist/src/state/lifecycle-migration.mjs"
+    "./state/lifecycle-migration": "./dist/src/state/lifecycle-migration.mjs",
+    "./state/connector-cache-retirements": "./dist/src/state/connector-cache-retirements.mjs",
+    "./connectors/temporal-catchup": "./dist/src/connectors/temporal/catchup.mjs"
   },
   "files": [
     "dist/src",

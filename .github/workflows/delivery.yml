@@ -70,6 +70,21 @@ jobs:
         run: |
           set -euo pipefail
           npm publish --access restricted --tag continuous-pending
+      - name: Retain the published artifact and registry integrity
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir published-artifact
+          npm view "@getopencrawl/opencrawl-core@$VERSION" version dist --json > published-artifact/package-metadata.json
+          npm pack "@getopencrawl/opencrawl-core@$VERSION" --ignore-scripts --json --pack-destination published-artifact > published-artifact/package-artifact.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: steps.gate.outputs.ready == 'true'
+        with:
+          name: core-package-${{ env.SOURCE_REVISION }}
+          path: published-artifact/
+          retention-days: 14
       - name: Recheck main before advancing the continuous channel
         if: steps.gate.outputs.ready == 'true'
         id: promote

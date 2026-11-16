@@ -20,4 +20,6 @@ COPY --chown=node:node deploy/database-init.mjs deploy/database-transfer.mjs dep
 COPY --chown=node:node LICENSE ./LICENSE
 # Named volumes copy this ownership on first mount (search index and retained migration sources).
 RUN mkdir -p /data && chown node:node /data
+ARG OPENCRAWL_SOURCE_REVISION=development
+LABEL org.opencontainers.image.revision=$OPENCRAWL_SOURCE_REVISION
 USER node

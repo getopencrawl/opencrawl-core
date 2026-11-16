@@ -15,6 +15,7 @@ import {migrateIdentitySqlite} from './identity-migration.mjs';
 import {migrateRegistrySqlite} from './registry-migration.mjs';
 import {canonical,openLegacySqlite,type ImportMode} from './sqlite-import.mjs';
 import {createObjectMigration} from './object-migration.mjs';
+import {createConnectorCacheRetirements} from './connector-cache-retirements.mjs';
 import {createIntegrationCommands} from './integration-commands.mjs';
 import {ensureWriteBarrierSchema} from './write-barriers.mjs';
 import {finalizeIntegrationLifecycles} from './lifecycle-migration.mjs';
@@ -46,9 +47,9 @@ async function registryRecords(path:string,exists:boolean):Promise<IntegrationRe
 }
 /** Strict single-organization adapter over the common migration engine. */
 export async function migrateApplicationState(options:ApplicationMigrationOptions){
-  const {database,source,store}=options;
+  const {database,source,store}=options,connectorCaches=new Set<string>();
   if(source.organizationId!==options.organizationId||!/^org_[A-Za-z0-9]+$/.test(options.organizationId))fail('Invalid application migration scope');
-  return migrateApplicationSources({...options,checkAccess:()=>store.checkAccess(),sources:async()=>{
+  const result=await migrateApplicationSources({...options,checkAccess:()=>store.checkAccess(),sources:async()=>{
     const identity=await sqliteSource(options.identityPath,'identity'),registry=await sqliteSource(options.registryPath,'registry');
     const identityOptions={database,path:options.identityPath,organizationId:options.organizationId,url:options.url,secret:options.secret};
     const registryOptions={database,path:options.registryPath,organizationId:options.organizationId};
@@ -64,7 +65,8 @@ export async function migrateApplicationState(options:ApplicationMigrationOption
         rows:report.tables.reduce((total,table)=>total+(table.target?.rows??0),0)};
     }
     async function objectRead(key:string){
-      const classification=objects.classify(key);if(!classification)fail('Mutable source no longer has a migration classification');
+      const classification=objects.classify(key);
+      if(classification&&['connector-indexing','connector-snapshots'].includes(classification.domain))connectorCaches.add(key);if(!classification)fail('Mutable source no longer has a migration classification');
       const raw=await store.readVersion(key,{maxBytes:classification.maxBytes});if(!raw.data)fail('Source object disappeared during migration inventory');
       const bytes=raw.data;
       return {entry:{key,domain:classification.domain,version:raw.version===null?null:String(raw.version),hash:sha(bytes),bytes:bytes.length},readback:await objects.process(key,bytes,{write:false}),migrate:()=>objects.process(key,bytes,{write:true})};
@@ -102,6 +104,7 @@ export async function migrateApplicationState(options:ApplicationMigrationOption
       },
     };
   }});
+  return {...result,connectorCatchupRequired:Math.max(connectorCaches.size,(await createConnectorCacheRetirements(database).required()).receipts)};
 }
 
 async function main(){

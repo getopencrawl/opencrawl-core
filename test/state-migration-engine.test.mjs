@@ -64,3 +64,15 @@ live('shared engine requires the complete immutable inventory and rolls back lif
   const saved=(await failed.database.pool.query('SELECT state,verified_at FROM opencrawl_application_installations WHERE namespace=$1',[failed.database.namespace])).rows[0];
   assert.deepEqual(saved,{state:'importing',verified_at:null});await assert.rejects(requireApplicationStateReady(failed.database));
 });
+
+
+live('expected backup manifest rejects source drift before any installation row and stays bound after readiness',async t=>{
+ const f=await fixture(t),checked=await f.run('check');
+ await assert.rejects(f.run('migrate',{writersStopped:true,expectedManifest:'not-a-sha256'}),/Invalid expected migration manifest/);
+ await assert.rejects(f.run('migrate',{writersStopped:true,expectedManifest:migrationHash('different snapshot')}),/differs from the retained backup/);
+ assert.equal(f.writes(),0);
+ assert.equal((await f.database.pool.query('SELECT count(*)::int n FROM opencrawl_application_installations WHERE namespace=$1',[f.database.namespace])).rows[0].n,0);
+ await f.run('migrate',{writersStopped:true,expectedManifest:checked.manifest});
+ assert.equal((await f.run('verify',{expectedManifest:checked.manifest})).alreadyReady,true);
+ await assert.rejects(f.run('verify',{expectedManifest:migrationHash('changed recovery point')}),/differs from the retained backup/);
+});

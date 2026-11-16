@@ -23,7 +23,7 @@ export interface MigrationSources<Result extends object> {
 }
 export interface ApplicationMigrationEngineOptions<Result extends object> {
   database:ApplicationDatabase;source:ApplicationSourceIdentity;mode:ImportMode;
-  writersStopped?:boolean;expectExisting?:boolean;
+  writersStopped?:boolean;expectExisting?:boolean;expectedManifest?:string;
   /** Reviewed adapter inputs whose exact hashes must also match on ready reruns. */
   boundInputs?:readonly {key:string;hash:string}[];
   checkAccess():Promise<void>;
@@ -85,6 +85,7 @@ export async function migrateApplicationSources<Result extends object>(options:A
   const {database,source,mode}=options,ns=database.namespace,inputs=options.boundInputs??[];
   if(!['check','migrate','verify'].includes(mode)||source.version!==1)fail('Invalid application migration scope');
   if(database.sourceIdentity&&!isDeepStrictEqual(database.sourceIdentity,source))fail('Database and migration source bindings differ');
+  if(options.expectedManifest!==undefined&&!/^[a-f0-9]{64}$/.test(options.expectedManifest))fail('Invalid expected migration manifest');
   if(new Set(inputs.map(value=>value.key)).size!==inputs.length||inputs.some(value=>!value.key||!/^[a-f0-9]{64}$/.test(value.hash)))fail('Invalid reviewed migration input binding');
   await options.checkAccess();await database.ready();
   const client=await database.pool.connect();let locked=false;
@@ -93,7 +94,9 @@ export async function migrateApplicationSources<Result extends object>(options:A
     const {rows}=await client.query('SELECT * FROM opencrawl_application_installations WHERE namespace=$1',[ns]);const existing=rows[0];
     if(existing&&!isDeepStrictEqual(existing.source_identity,source))fail('This application namespace is already bound to another source');
     if(existing?.state==='ready'){
-      const receipt=await readyReceipt(client,ns,source);await boundInputsMatch(client,ns,inputs);
+      const receipt=await readyReceipt(client,ns,source);
+      if(options.expectedManifest&&receipt.manifest!==options.expectedManifest)fail('Migration manifest differs from the retained backup');
+      await boundInputsMatch(client,ns,inputs);
       return {mode,...receipt,alreadyReady:true};
     }
     if(!existing)await assertUnboundTargetEmpty(client,database);
@@ -109,6 +112,7 @@ export async function migrateApplicationSources<Result extends object>(options:A
       if(item.mutableObject)mutableObjects++;
     }
     const initial=await manifestHash(client,ns,true),initialKeys=listedKeys.digest('hex');
+    if(options.expectedManifest&&initial.hash!==options.expectedManifest)fail('Migration manifest differs from the retained backup');
     if(existing?.inventory_complete){const saved=await manifestHash(client,ns);if(saved.hash!==initial.hash||saved.hash!==existing.source_manifest_hash)fail('Legacy source changed after migration started; restore the retained recovery point');}
     if(fresh&&options.expectExisting)fail('Expected an existing installation but its retained databases and objects are missing; verify mounts and restore the matched backup');
     await sources.validateInventory(fresh);

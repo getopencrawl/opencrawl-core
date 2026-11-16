@@ -181,6 +181,12 @@ if(phase==='seed'){
     assert.deepEqual(await retirements.exportRetirement(item.key),item.retired);
     assert.equal(await state.indexingReceipts.read(item.key),null,'Retired scheduler instruction became a completion receipt');
    }
+   const {createConnectorCacheRetirements}=await import('../dist/src/state/connector-cache-retirements.mjs');
+   const cacheAudit=createConnectorCacheRetirements(database);
+   for(const object of manifest.objects.filter(item=>item.key.startsWith('derived/indexing/'))){
+    const audit=await cacheAudit.exportRetirement(raw.bucket,object.key);assert.equal(audit.sourceHash,object.sha256);assert.equal(audit.disposition,'full-temporal-connector-catchup');
+    assert.deepEqual(audit.receipt,JSON.parse((await raw.get(object.key)).toString()));assert.equal(await state.indexingReceipts.read(object.key),null,'Old connector cache became live skip authority');
+   }
    await verifyRepositories({state,prefix});
    assert.deepEqual(await state.deletionRequests(prefix).readFor(owner,{harness:'codex',sessionId:'upgrade-deleted'}),{schemaVersion:1,owner,harness:'codex',sessionId:'upgrade-deleted'});
    await assert.rejects(state.accounts.roles.acquire(owner.tenantId,owner.userId,owner.userId,'member'),error=>error.status===409);

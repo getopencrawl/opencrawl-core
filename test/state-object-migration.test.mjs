@@ -21,7 +21,7 @@ async function setup(t){
   readVersion:async key=>({data:objects.get(key)??null,version:objects.has(key)?digest(objects.get(key)):null}),
   listPage:async start=>({keys:[...objects.keys()].filter(key=>key.startsWith(start)).sort(),nextToken:null}),
   put:async()=>assert.fail('Migration modified an original object'),compareAndSet:async()=>assert.fail('Migration replaced an original object')};
- const record={integrationId:'int_'+'1'.repeat(26),tenantId:organizationId,userId:owner.userId,environment:'selfhost',provider:'slack',scope:'team',status:'disconnected',createdAt:date,startDate:date,s3Bucket:store.bucket,s3Prefix:'raw/v1/source=slack/workspace=T123/connection=fixture'};
+ const record={integrationId:'int_'+'1'.repeat(26),tenantId:organizationId,userId:owner.userId,environment:'selfhost',provider:'slack',scope:'team',status:'disconnected',createdAt:date,startDate:date,s3Bucket:store.bucket,workspace:'T123',s3Prefix:'raw/v1/source=slack/workspace=T123/connection=int_'+'1'.repeat(26)};
  const options={database,prefix,organizationId,store,eventIdentities,connectorKey,registryRecords:[record]};
  return {database,objects,store,record,connectorKey,eventIdentities,options,migration:createObjectMigration(options)};
 }
@@ -50,7 +50,7 @@ function sources({record,connectorKey}){
  entries.push([grantKey,sealedEnvelope(connectorKey).seal(grantKey,encode(grant))]);
  const settingsKey='connector-settings/v1/'+organizationId+'/settings.enc';entries.push([settingsKey,sealedEnvelope(connectorKey).seal(settingsKey,encode({version:1,organizationId,broker:{apiKey:'synthetic',savedAt:date,savedBy:owner.userId}}))]);
  add(prefix+'/value/tenants/'+tenantHash+'.json',{schema:3,measuredAt:date,retainedOldReport:true});
- const scope=digest('old-binding');
+ const scope=objectDigest({tenantId:record.tenantId,connectionId:record.integrationId,workspaceId:record.workspace,provider:record.provider,access:'team-public',rawPrefix:raw});
  add(raw+'capture/messages-v1/catalog.json',{scope,channels:['COLD','C1']});
  add(raw+'capture/files-v1/catalog.json',{scope,channels:['COLD','C1'],files:{F1:['C1','COLD']}});
  add(raw+'capture/messages-v1/pending/state.json',{version:1,scope,runId:'pending',cutoff:123,cursor:'',channels:{C1:{id:'C1',cursor:'next',done:false}},threads:{},priorChannels:['COLD'],listed:true,nextDue:{'conversations.history':65000},pages:1,emitted:1,errors:[]});
@@ -82,6 +82,9 @@ test('legacy state migration validates, imports, and independently reads every m
  for(const [key,value]of entries){const result=await restarted.process(key,value,{write:true});assert.deepEqual(result.target,result.source,key);assert.ok(result.rows>=0);}
  for(const [key,value]of entries){const result=await restarted.process(key,value,{write:false});assert.deepEqual(result.target,result.source,key);assert.equal(digest(objects.get(key)),before.get(key));}
  const state=await createApplicationState({database});
+ const {createConnectorCacheRetirements}=await import('../dist/src/state/connector-cache-retirements.mjs');
+ const cacheAudit=createConnectorCacheRetirements(database);assert.deepEqual(await cacheAudit.required(),{receipts:2,buckets:[fixture.store.bucket]});
+ for(const [key,bytes]of entries.filter(([key])=>key.startsWith('derived/indexing/'))){const audit=await cacheAudit.exportRetirement(fixture.store.bucket,key);assert.equal(audit.sourceHash,digest(bytes));assert.equal(audit.disposition,'full-temporal-connector-catchup');assert.deepEqual(audit.receipt,JSON.parse(bytes));assert.equal(await state.indexingReceipts.read(key),null,'Unprovable connector cache became live skip authority');}
  assert.equal((await state.controls.read(owner,'sessions','codex','deleted')).deletion.state,'pending');
  assert.equal((await state.controls.read(owner,'memories','codex','private.md')).visibility,'private');
  assert.equal(await state.controls.read({...owner,userId:'user_foreign'},'sessions','codex','deleted'),null);
@@ -101,6 +104,8 @@ test('migration rejects unknown mutable paths, fields, mismatched owners, lost k
  const secret=entries.find(([key])=>key.startsWith('connector-credentials/'));
  await assert.rejects(createObjectMigration({...fixture.options,connectorKey:undefined}).process(...secret,{write:false}),/original connector encryption key/);
  await assert.rejects(createObjectMigration({...fixture.options,connectorKey:randomBytes(32)}).process(...secret,{write:false}));
+ const receipt=entries.find(([key])=>key.startsWith('derived/indexing/')&&!key.includes('/snapshot-'));
+ await assert.rejects(createObjectMigration({...fixture.options,registryRecords:[]}).process(...receipt,{write:false}),/original source binding/);
  const count=entries.find(([key])=>key.startsWith('_opencrawl/'));
  await assert.rejects(createObjectMigration({...fixture.options,registryRecords:[]}).process(...count,{write:false}),/matching original integration/);
  await assert.rejects(createObjectMigration({...fixture.options,registryRecords:[{...fixture.record,s3Bucket:'another-source-bucket'}]}).ready(),/multi-store migration/);

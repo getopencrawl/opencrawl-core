@@ -12,8 +12,6 @@ export function singleOrganizationStorage(organizationId:string,store:ReturnType
   };
   return {
     async get(id){return id===organizationId?store.bucket:null;},
-    async read(bucket,key){check(bucket,key);const body=await store.get(key,{maxBytes:32*1024*1024});if(!body)throw Object.assign(new Error('Object not found'),{status:404});return body;},
-    async write(bucket,key,body){check(bucket,key);await store.put(key,body);},
     async stream(bucket,key){check(bucket,key);return Readable.from(store.read(key));},
     async list(bucket,prefix){check(bucket,prefix);return (await store.list(prefix)).keys.map(key=>({key,size:0}));},
     async deletePrefix(bucket,prefix){

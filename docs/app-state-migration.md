@@ -168,3 +168,20 @@ Actual Docker upgrade evidence is indexed in
 is bound to an exact candidate revision and artifact. Earlier success does not
 validate later importer changes; retained-Airbyte acceptance remains incomplete
 until its complete upgrade and matched-restore gate passes.
+
+
+## Unprovable historical connector caches
+
+Old connector object/snapshot receipt paths hash the tenant, connection and search
+identity, but do not retain that search identity in their payload. Migration
+preserves their exact source hashes and normalized typed audit rows in
+`opencrawl_connector_cache_retirements`, scoped by installation, donor bucket and
+original key. They never become PostgreSQL indexing skip receipts. Object receipts
+must still match exactly one original integration landing prefix in their donor.
+
+`connectorCatchupRequired` reports how many historical caches require the release
+catch-up gate. Import readiness proves retained application state, not connector
+catch-up. Activate full scans of current authorized connector references using the
+existing Temporal generation and await their actual completion before claiming
+catch-up. The completion gate records separate migration/reference-bound evidence;
+it never changes the immutable retirement audit or marks an old cache as current.
