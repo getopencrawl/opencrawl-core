@@ -16,7 +16,10 @@ import { readFile } from 'node:fs/promises';
  * which S3-compatible stores expect. credentials is {accessKeyId, secretAccessKey, sessionToken?}
  * or an async function returning that (see awsCredentials).
  */
-export function createObjectStore({endpoint, region = 'us-east-1', bucket, credentials, fetch: fetchImpl = globalThis.fetch}: {endpoint?: string; region?: string; bucket: string; credentials: AwsCredentials | CredentialProvider; fetch?: typeof globalThis.fetch}) {
+export interface S3StoreOptions {endpoint?: string; region?: string; bucket: string; credentials: AwsCredentials | CredentialProvider; fetch?: typeof globalThis.fetch}
+
+/** Shared signed transport for raw objects and explicit legacy migration tools. */
+export function createS3Request({endpoint, region = 'us-east-1', bucket, credentials, fetch: fetchImpl = globalThis.fetch}: S3StoreOptions) {
   if (!bucket) throw new Error('S3 bucket is required');
   if (!credentials) throw new Error('S3 credentials are required');
   const resolve = typeof credentials === 'function' ? credentials : async () => credentials;
@@ -24,7 +27,7 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
     ? `${endpoint.replace(/\/+$/, '')}/${bucket}`
     : bucket.includes('.') ? `https://s3.${region}.amazonaws.com/${bucket}` : `https://${bucket}.s3.${region}.amazonaws.com`;
 
-  async function request(method: string, key?: string, {query = {}, body, headers = {}}: {query?: Record<string, string | null | undefined>; body?: Uint8Array; headers?: Record<string, string>} = {}) {
+  return async function request(method: string, key?: string, {query = {}, body, headers = {}, signal}: {query?: Record<string, string | null | undefined>; body?: Uint8Array; headers?: Record<string, string>; signal?: AbortSignal} = {}) {
     let url, signed;
     try {
       url = new URL(`${root}/${key === undefined ? '' : key.split('/').map(encode).join('/')}`);
@@ -37,7 +40,7 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
     } catch(caught){const error=serviceError(caught);throw Object.assign(serviceError(error), method === 'PUT' ? {writeOutcome: 'not-applied'} : {});}
     // A signed request is bound to this origin. In particular, fetch retains the
     // security-token header on cross-origin redirects even when it strips Authorization.
-    const res = await fetchImpl(url, {method, headers: signed, body: body as BodyInit | undefined, redirect: 'error'});
+    const res = await fetchImpl(url, {method, headers: signed, body: body as BodyInit | undefined, redirect: 'error', ...(signal ? {signal} : {})});
     if (!res.ok && !(res.status === 404 && method !== 'PUT')) {
       const error = await storeError(res, `${method} ${key ?? bucket}`);
       // One atomic PutObject was positively refused. Do not generalize to
@@ -50,7 +53,11 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
       throw error;
     }
     return res;
-  }
+  };
+}
+
+export function createObjectStore({endpoint, region = 'us-east-1', bucket, credentials, fetch: fetchImpl = globalThis.fetch}: S3StoreOptions) {
+  const request = createS3Request({endpoint, region, bucket, credentials, fetch: fetchImpl});
 
   async function listPage(prefix: string, {delimiter, continuationToken, maxKeys=1000}: ListOptions = {}) {
     if(!Number.isInteger(maxKeys)||maxKeys<1||maxKeys>1000)throw new Error('Invalid S3 page size');

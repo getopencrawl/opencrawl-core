@@ -1,3 +1,4 @@
+import type {PoolClient} from 'pg';
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {ensureSchemaIndex,type ApplicationDatabase} from './postgres.mjs';
@@ -15,7 +16,12 @@ const checkOrg=(value:string)=>{if(!uuid.test(value))throw new Error('Invalid Re
 const checkCode=(value:string)=>{if(!/^[a-f0-9]{64}$/.test(value))throw new Error('Invalid Replicas setup hash');};
 /** Organization ownership and its installations commit together. Tenant lists use
  * a database index, so no independently written index can become authoritative. */
-export function createReplicasState(database:ApplicationDatabase):ReplicasState&{ready():Promise<void>;importConnection(value:unknown):Promise<ReplicasConnection>;importSetup(codeHash:string,value:unknown):Promise<ReplicasChallenge>}{
+export function createReplicasState(database:ApplicationDatabase):ReplicasState&{ready():Promise<void>;
+  readConnectionIn(client:PoolClient,organizationId:string):Promise<Versioned<ReplicasConnection>>;
+  readSetupIn(client:PoolClient,codeHash:string):Promise<Versioned<ReplicasChallenge>>;
+  projectConnectionIn(client:PoolClient,organizationId:string,value:ReplicasConnection|null):Promise<void>;
+  projectSetupIn(client:PoolClient,codeHash:string,value:ReplicasChallenge|null):Promise<void>;
+  importConnection(value:unknown):Promise<ReplicasConnection>;importSetup(codeHash:string,value:unknown):Promise<ReplicasChallenge>}{
   const ns=database.namespace;let preparing:Promise<void>|undefined;
   const query=(sql:string,args:unknown[])=>database.pool.query(sql,args);
   async function connection(client:Pick<typeof database.pool,'query'>,org:string):Promise<Versioned<ReplicasConnection>>{
@@ -36,7 +42,7 @@ export function createReplicasState(database:ApplicationDatabase):ReplicasState&
       return true;
     });
   }
-  async function readSetup(codeHash:string):Promise<Versioned<ReplicasChallenge>>{checkCode(codeHash);const {rows}=await query('SELECT record,revision FROM opencrawl_replicas_setup WHERE namespace=$1 AND code_hash=$2',[ns,codeHash]);return rows[0]?{record:replicasChallengeSchema.parse(rows[0].record),version:rows[0].revision}:{record:null,version:null};}
+  async function readSetup(codeHash:string,client:Pick<PoolClient,'query'>=database.pool):Promise<Versioned<ReplicasChallenge>>{checkCode(codeHash);const {rows}=await client.query('SELECT record,revision FROM opencrawl_replicas_setup WHERE namespace=$1 AND code_hash=$2',[ns,codeHash]);return rows[0]?{record:replicasChallengeSchema.parse(rows[0].record),version:rows[0].revision}:{record:null,version:null};}
   async function saveSetup(codeHash:string,version:string|null,input:ReplicasChallenge){checkCode(codeHash);const record=replicasChallengeSchema.parse(input),params=[ns,codeHash,JSON.stringify(record),randomUUID()];
     const {rowCount}=version===null?await query('INSERT INTO opencrawl_replicas_setup(namespace,code_hash,record,revision) VALUES($1,$2,$3::jsonb,$4) ON CONFLICT DO NOTHING',params):await query('UPDATE opencrawl_replicas_setup SET record=$3::jsonb,revision=$4 WHERE namespace=$1 AND code_hash=$2 AND revision=$5',[...params,version]);return rowCount===1;}
   return {
@@ -46,6 +52,20 @@ export function createReplicasState(database:ApplicationDatabase):ReplicasState&
       await ensureSchemaIndex(client,{table:'opencrawl_replicas_connections',name:'opencrawl_replicas_connections_tenant',keys:['namespace','tenant_id','organization_id']});
       });})().catch(error=>{preparing=undefined;throw error;});await preparing;},
     readConnection,saveConnection,readSetup,saveSetup,
+    readConnectionIn:connection,readSetupIn:(client,key)=>readSetup(key,client),
+    async projectConnectionIn(client,org,input){checkOrg(org);const current=(await connection(client,org)).record;
+      if(input===null){await client.query('DELETE FROM opencrawl_replicas_connections WHERE namespace=$1 AND organization_id=$2',[ns,org]);return;}
+      const value=replicasConnectionSchema.parse(input);if(value.organizationId!==org||value.installations.some(i=>i.tenantId!==value.tenantId)||current&&current.tenantId!==value.tenantId)throw new Error('Invalid Replicas connection scope');
+      if(current?.revokedAt&&value.revokedAt===null&&Date.parse(value.approvedAt)<=Date.parse(current.revokedAt))throw new Error('Replicas reapproval must follow the original revocation');
+      const {installations,...record}=value;await client.query('INSERT INTO opencrawl_replicas_connections(namespace,organization_id,tenant_id,record,revision) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT(namespace,organization_id) DO UPDATE SET record=EXCLUDED.record,revision=EXCLUDED.revision',[ns,org,value.tenantId,JSON.stringify(record),randomUUID()]);
+      await client.query('DELETE FROM opencrawl_replicas_installations WHERE namespace=$1 AND organization_id=$2',[ns,org]);
+      for(const [index,item] of installations.entries())await client.query('INSERT INTO opencrawl_replicas_installations(namespace,organization_id,user_id,ordinal,record) VALUES($1,$2,$3,$4,$5::jsonb)',[ns,org,item.userId,index,JSON.stringify(item)]);
+    },
+    async projectSetupIn(client,key,input){checkCode(key);const current=(await readSetup(key,client)).record;
+      if(input===null){await client.query('DELETE FROM opencrawl_replicas_setup WHERE namespace=$1 AND code_hash=$2',[ns,key]);return;}
+      const value=replicasChallengeSchema.parse(input);if(current&&(current.tenantId!==value.tenantId||current.userId!==value.userId||current.issuedAt!==value.issuedAt||current.expiresAt!==value.expiresAt||current.claim!==null&&!isDeepStrictEqual(current.claim,value.claim)))throw new Error('Invalid Replicas setup scope');
+      await client.query('INSERT INTO opencrawl_replicas_setup(namespace,code_hash,record,revision) VALUES($1,$2,$3::jsonb,$4) ON CONFLICT(namespace,code_hash) DO UPDATE SET record=EXCLUDED.record,revision=EXCLUDED.revision',[ns,key,JSON.stringify(value),randomUUID()]);
+    },
     async listConnections(tenant){if(!/^[A-Za-z0-9_.:-]{1,200}$/.test(tenant))throw new Error('Invalid workspace');const {rows}=await query(`SELECT c.record,COALESCE((SELECT jsonb_agg(i.record ORDER BY i.ordinal) FROM opencrawl_replicas_installations i WHERE i.namespace=c.namespace AND i.organization_id=c.organization_id),'[]'::jsonb) AS installations FROM opencrawl_replicas_connections c WHERE namespace=$1 AND tenant_id=$2 ORDER BY organization_id`,[ns,tenant]);return rows.map(row=>replicasConnectionSchema.parse({...row.record,installations:row.installations}));},
     async importConnection(input){const value=replicasConnectionSchema.parse(input);await saveConnection(value.organizationId,null,value);const actual=(await readConnection(value.organizationId)).record;if(!isDeepStrictEqual(value,actual))throw new Error('Replicas connection import conflicts with existing data');return actual!;},
     async importSetup(codeHash,input){const value=replicasChallengeSchema.parse(input);await saveSetup(codeHash,null,value);const actual=(await readSetup(codeHash)).record;if(!isDeepStrictEqual(value,actual))throw new Error('Replicas setup import conflicts with existing data');return actual!;},

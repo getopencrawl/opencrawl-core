@@ -1,3 +1,4 @@
+import type {PoolClient} from 'pg';
 import type {Principal} from '../sessions/types.mjs';
 import {isSessionHarness} from '../sessions/types.mjs';
 import {digest,sessionScope} from '../sessions/event-identity.mjs';
@@ -18,7 +19,7 @@ export async function ensureDeletionRequestSchema(database:ApplicationDatabase){
     await ensureByteOrderIndex(client,'opencrawl_session_deletions','opencrawl_session_deletions_byte_order',['namespace','source_prefix','request_key']);
   });
 }
-export function createPostgresDeletionRequests(database:ApplicationDatabase,prefix:string):SessionDeletionRequests&{importRequest(key:string,request:SessionDeletionRequest):Promise<void>}{
+export function createPostgresDeletionRequests(database:ApplicationDatabase,prefix:string):SessionDeletionRequests&{importRequest(key:string,request:SessionDeletionRequest):Promise<void>;readIn(client:PoolClient,key:string):Promise<SessionDeletionRequest|null>;projectIn(client:PoolClient,key:string,value:SessionDeletionRequest|null):Promise<void>}{
   if(!prefix||prefix.split('/').some(p=>!p||p==='.'||p==='..'))throw new Error('Invalid deletion source prefix');
   const root=prefix+'/_deletions/v1/';
   const checkKey=(key:string)=>{if(typeof key!=='string'||!key.startsWith(root)||!/^[a-f0-9]{64}\.json$/.test(key.slice(root.length)))throw Object.assign(new Error('Session deletion scope denied'),{permanent:true});};
@@ -27,14 +28,14 @@ export function createPostgresDeletionRequests(database:ApplicationDatabase,pref
     sessionScope(request.owner);return root+digest(JSON.stringify([prefix,request.owner.tenantId,request.owner.userId,request.harness,request.sessionId]))+'.json';
   }
   const request=(owner:Pick<Principal,'tenantId'|'userId'>,session:{harness:string;sessionId:string}):SessionDeletionRequest=>({schemaVersion:1,owner:{tenantId:owner.tenantId,userId:owner.userId},harness:session.harness,sessionId:session.sessionId});
-  async function read(key:string){checkKey(key);const {rows}=await database.pool.query('SELECT tenant_id,owner_id,harness,session_id FROM opencrawl_session_deletions WHERE namespace=$1 AND source_prefix=$2 AND request_key=$3',[database.namespace,prefix,key]);
+  async function read(key:string,client:Pick<PoolClient,'query'>=database.pool){checkKey(key);const {rows}=await client.query('SELECT tenant_id,owner_id,harness,session_id FROM opencrawl_session_deletions WHERE namespace=$1 AND source_prefix=$2 AND request_key=$3',[database.namespace,prefix,key]);
     if(!rows[0])return null;const value=request({tenantId:rows[0].tenant_id,userId:rows[0].owner_id},{harness:rows[0].harness,sessionId:rows[0].session_id});if(identity(value)!==key)throw new Error('Session deletion identity mismatch');return value;}
-  async function insert(key:string,value:SessionDeletionRequest){
+  async function insert(key:string,value:SessionDeletionRequest,client:Pick<PoolClient,'query'>=database.pool){
     checkKey(key);if(identity(value)!==key)throw new Error('Session deletion migration identity mismatch');
-    await database.pool.query('INSERT INTO opencrawl_session_deletions(namespace,request_key,source_prefix,tenant_id,owner_id,harness,session_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',[database.namespace,key,prefix,value.owner.tenantId,value.owner.userId,value.harness,value.sessionId]);
-    if(!await read(key))throw new Error('Session deletion intent did not persist');
+    await client.query('INSERT INTO opencrawl_session_deletions(namespace,request_key,source_prefix,tenant_id,owner_id,harness,session_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',[database.namespace,key,prefix,value.owner.tenantId,value.owner.userId,value.harness,value.sessionId]);
+    if(!await read(key,client))throw new Error('Session deletion intent did not persist');
   }
-  return {read,readFor:(owner,session)=>read(identity(request(owner,session))),
+  return {read,readIn:(client,key)=>read(key,client),async projectIn(client,key,value){checkKey(key);if(value===null){await client.query('DELETE FROM opencrawl_session_deletions WHERE namespace=$1 AND source_prefix=$2 AND request_key=$3',[database.namespace,prefix,key]);return;}await insert(key,value,client);},readFor:(owner,session)=>read(identity(request(owner,session))),
     async put(owner,session){if(owner.captureAccess!==undefined)throw Object.assign(new Error('Deletion requires owner access'),{status:403});const value=request(owner,session),key=identity(value);await insert(key,value);return key;},
     async list(cursor){if(cursor)checkKey(cursor);const {rows}=await database.pool.query('SELECT request_key FROM opencrawl_session_deletions WHERE namespace=$1 AND source_prefix=$2 AND request_key COLLATE "C">$3 ORDER BY request_key COLLATE "C" LIMIT 51',[database.namespace,prefix,cursor??'']);const keys=rows.slice(0,50).map(row=>String(row.request_key));for(const key of keys)checkKey(key);return {keys,cursor:rows.length>50?keys.at(-1)!:null};},
     async remove(key){checkKey(key);await database.pool.query('DELETE FROM opencrawl_session_deletions WHERE namespace=$1 AND source_prefix=$2 AND request_key=$3',[database.namespace,prefix,key]);},

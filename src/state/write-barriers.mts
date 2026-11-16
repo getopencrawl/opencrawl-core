@@ -44,20 +44,18 @@ export async function ensureWriteBarrierSchema(database:ApplicationDatabase){
 export function createPostgresWriteBarrier({database,namespace='selfhost',tenantId,connectionId,
   controlPrefix='control/connectors/write-barriers/v1/',now=Date.now}: {
   database:ApplicationDatabase;namespace?:string;tenantId:string;connectionId:string;controlPrefix?:string;now?:()=>number;
-}):ResourceWriteBarrier&{importFence(fence:LegacyWriteFence):Promise<void>;exportFence():Promise<LegacyWriteFence|null>} {
+}):ResourceWriteBarrier&{importFence(fence:LegacyWriteFence):Promise<void>;exportFence():Promise<LegacyWriteFence|null>;exportFenceIn(client:PoolClient):Promise<LegacyWriteFence|null>;projectFenceIn(client:PoolClient,fence:LegacyWriteFence):Promise<void>} {
   if(![namespace,tenantId,connectionId].every(identifier)||!controlPrefix.endsWith('/')
     ||controlPrefix.slice(0,-1).split('/').some(part=>!part||part==='.'||part==='..'))throw new Error('Explicit write-fence scope is required');
   const key=controlPrefix+digest([namespace,tenantId,connectionId])+'.json',params=[database.namespace,key];
   const time=()=>{const value=now();if(!Number.isSafeInteger(value)||value<0)throw pending('Invalid write-fence clock');return value;};
-  async function locked<T>(run:(client:PoolClient)=>Promise<T>):Promise<T>{
-    return database.transaction(async client=>{
+  async function lockIn(client:PoolClient){
       await client.query(`INSERT INTO opencrawl_write_fences(namespace,fence_key,barrier_namespace,tenant_id,resource_id)
         VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,[...params,namespace,tenantId,connectionId]);
       const {rows}=await client.query('SELECT barrier_namespace,tenant_id,resource_id FROM opencrawl_write_fences WHERE namespace=$1 AND fence_key=$2 FOR UPDATE',params);
       const row=rows[0];if(!row||row.barrier_namespace!==namespace||row.tenant_id!==tenantId||row.resource_id!==connectionId)throw pending('Write-fence scope mismatch');
-      return run(client);
-    });
   }
+  async function locked<T>(run:(client:PoolClient)=>Promise<T>):Promise<T>{return database.transaction(async client=>{await lockIn(client);return run(client);});}
   async function snapshot(client:Pick<PoolClient,'query'>):Promise<WriteFenceSnapshot>{
     const {rows}=await client.query(`SELECT f.closed_at,w.writer_id,w.operation,w.phase,w.started_at,w.settled_at,w.instance,w.target
       FROM opencrawl_write_fences f LEFT JOIN opencrawl_resource_writers w USING(namespace,fence_key)
@@ -74,16 +72,35 @@ export function createPostgresWriteBarrier({database,namespace='selfhost',tenant
     }
     throw failure;
   }
+  async function exportFenceIn(client:Pick<PoolClient,'query'>):Promise<LegacyWriteFence|null>{
+      const {rows}=await client.query('SELECT barrier_namespace,tenant_id,resource_id FROM opencrawl_write_fences WHERE namespace=$1 AND fence_key=$2',params);
+      if(!rows[0])return null;
+      if(rows[0].barrier_namespace!==namespace||rows[0].tenant_id!==tenantId||rows[0].resource_id!==connectionId)throw pending('Write-fence scope mismatch');
+      const value=await snapshot(client);return {version:1,namespace,tenantId,connectionId,closedAt:value.closedAt,writers:value.writers};
+  }
+  function validateFence(fence:LegacyWriteFence){
+      if(fence.version!==1||fence.namespace!==namespace||fence.tenantId!==tenantId||fence.connectionId!==connectionId
+        ||fence.closedAt!==null&&(!Number.isSafeInteger(fence.closedAt)||fence.closedAt<0)||!Array.isArray(fence.writers)
+        ||new Set(fence.writers.map(w=>w.id)).size!==fence.writers.length)throw pending('Invalid migration write fence');
+      for(const writer of fence.writers)if(!/^[A-Za-z0-9_-]{1,100}$/.test(writer.id)||!['object-put','search-write'].includes(writer.operation)
+        ||!['writing','settled'].includes(writer.phase)||!Number.isSafeInteger(writer.startedAt)||writer.startedAt<0
+        ||typeof writer.instance!=='string'||writer.instance.length>100||typeof writer.target!=='string'||writer.target.length>8192
+        ||writer.phase==='settled'&&(!Number.isSafeInteger(writer.settledAt)||writer.settledAt!<0))throw pending('Invalid migration writer receipt');
+  }
+  async function projectFenceIn(client:PoolClient,fence:LegacyWriteFence){
+    validateFence(fence);await lockIn(client);const before=await snapshot(client);
+    if(before.closedAt!==null&&before.closedAt!==fence.closedAt)throw pending('Online projection cannot reopen or change a closed fence');
+    await client.query('UPDATE opencrawl_write_fences SET closed_at=$3 WHERE namespace=$1 AND fence_key=$2',[...params,fence.closedAt]);
+    // Every authoritative legacy CAS is journaled. This is a shadow snapshot,
+    // never admission for new PG writers while legacy writers remain active.
+    await client.query('DELETE FROM opencrawl_resource_writers WHERE namespace=$1 AND fence_key=$2',params);
+    for(const writer of fence.writers)await client.query('INSERT INTO opencrawl_resource_writers(namespace,fence_key,writer_id,operation,phase,started_at,settled_at,instance,target) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[...params,writer.id,writer.operation,writer.phase,writer.startedAt,writer.settledAt??null,writer.instance,writer.target]);
+  }
   const reap=(client:PoolClient)=>client.query("DELETE FROM opencrawl_resource_writers WHERE namespace=$1 AND fence_key=$2 AND phase='settled'",params);
   return {
     key,scope:Object.freeze({namespace,tenantId,connectionId}),
     inspect:()=>snapshot(database.pool),
-    async exportFence(){
-      const {rows}=await database.pool.query('SELECT barrier_namespace,tenant_id,resource_id FROM opencrawl_write_fences WHERE namespace=$1 AND fence_key=$2',params);
-      if(!rows[0])return null;
-      if(rows[0].barrier_namespace!==namespace||rows[0].tenant_id!==tenantId||rows[0].resource_id!==connectionId)throw pending('Write-fence scope mismatch');
-      const value=await snapshot(database.pool);return {version:1,namespace,tenantId,connectionId,closedAt:value.closedAt,writers:value.writers};
-    },
+    exportFence:()=>exportFenceIn(database.pool),exportFenceIn,projectFenceIn,
     close:()=>locked(async client=>{
       await client.query('UPDATE opencrawl_write_fences SET closed_at=COALESCE(closed_at,$3) WHERE namespace=$1 AND fence_key=$2',[...params,time()]);
       await reap(client);return snapshot(client);
@@ -121,13 +138,7 @@ export function createPostgresWriteBarrier({database,namespace='selfhost',tenant
       if(rejection)throw rejection;return result;
     },
     async importFence(fence){
-      if(fence.version!==1||fence.namespace!==namespace||fence.tenantId!==tenantId||fence.connectionId!==connectionId
-        ||fence.closedAt!==null&&(!Number.isSafeInteger(fence.closedAt)||fence.closedAt<0)||!Array.isArray(fence.writers)
-        ||new Set(fence.writers.map(w=>w.id)).size!==fence.writers.length)throw pending('Invalid migration write fence');
-      for(const writer of fence.writers)if(!/^[A-Za-z0-9_-]{1,100}$/.test(writer.id)||!['object-put','search-write'].includes(writer.operation)
-        ||!['writing','settled'].includes(writer.phase)||!Number.isSafeInteger(writer.startedAt)||writer.startedAt<0
-        ||typeof writer.instance!=='string'||writer.instance.length>100||typeof writer.target!=='string'||writer.target.length>8192
-        ||writer.phase==='settled'&&(!Number.isSafeInteger(writer.settledAt)||writer.settledAt!<0))throw pending('Invalid migration writer receipt');
+      validateFence(fence);
       await locked(async client=>{
         const before=await snapshot(client);
         if(before.closedAt!==null&&before.closedAt!==fence.closedAt)throw pending('Migrated write fence differs from target');

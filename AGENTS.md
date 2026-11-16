@@ -116,9 +116,13 @@ Mutable server application state belongs in explicit PostgreSQL repositories,
 supplied separately from raw object storage. Do not introduce SQLite, filesystem,
 object-store, or in-memory durability fallbacks. SQLite may serve only the optional
 derived search index or explicit offline legacy migration. Durable connector
-lifecycle and capture orchestration runs in Temporal. Existing installations must
-use the verified offline migration before new writers start; see
-`docs/app-state-migration.md`.
+lifecycle and capture orchestration runs in Temporal. The supported default upgrade
+uses the verified offline migration before new writers start; see
+`docs/app-state-migration.md`. Explicit online compatibility tools may instrument
+enrolled legacy writers with a PostgreSQL journal and Temporal backfill. Keep this
+temporary migration path separate from runtime repositories; it cannot admit new
+writers until the old authority is fenced and typed target parity is verified.
+See `docs/online-app-state-migration.md` for current implementation limits.
 
 Optional operator-owned connector OAuth, including Composio, belongs in core
 adapters. Core must work without our managed broker account. Keep unconfigured

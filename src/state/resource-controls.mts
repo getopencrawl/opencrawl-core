@@ -33,6 +33,8 @@ export function resourceControlIdentity(owner:Principal,kind:ControlKind,harness
  * be reverse-mapped to original IDs, and migration must never invent those IDs. */
 export function createPostgresControls(database:ApplicationDatabase):ResourceControls&{
   ready():Promise<void>; importControl(identity:ResourceControlIdentity,value:ResourceControl):Promise<void>;
+  readIn(client:PoolClient,identity:ResourceControlIdentity):Promise<ResourceControl|null>;
+  projectIn(client:PoolClient,identity:ResourceControlIdentity,value:ResourceControl|null):Promise<void>;
 } {
   let preparing:Promise<void>|undefined;
   function args(identity:ResourceControlIdentity){
@@ -76,6 +78,16 @@ export function createPostgresControls(database:ApplicationDatabase):ResourceCon
           revision bigint NOT NULL DEFAULT 1,PRIMARY KEY(namespace,tenant_hash,owner_hash,kind,harness,resource_hash),
           CHECK((deletion_session_id IS NULL AND deletion_state IS NULL) OR (deletion_session_id IS NOT NULL AND deletion_state IS NOT NULL AND deleted_at IS NOT NULL)))`);
       });})().catch(error=>{preparing=undefined;throw error;});await preparing;
+    },
+    readIn:read,
+    async projectIn(client,identity,value){
+      // Only the migration projector calls this with its caller-owned transaction.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify(['resource-control',...args(identity)])]);
+      if(value===null)return fail('Online projection cannot erase a privacy control',409);
+      checked(value);const previous=await read(client,identity);
+      if(previous?.deletedAt&&value.deletedAt!==previous.deletedAt)fail('A deleted resource cannot be restored by changing its control',403);
+      if(previous?.deletion?.state==='complete'&&value.deletion?.state!=='complete')fail('A completed deletion cannot return to pending',403);
+      await write(client,identity,value);
     },
     readIdentity:identity=>read(database.pool,identity),
     read:(owner,kind,harness,name)=>read(database.pool,resourceControlIdentity(owner,kind,harness,name)),

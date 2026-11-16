@@ -1,3 +1,4 @@
+import type {PoolClient} from 'pg';
 import {randomUUID} from 'node:crypto';
 import type {ApplicationDatabase} from './postgres.mjs';
 import type {StoreVersion} from '../sessions/types.mjs';
@@ -8,7 +9,7 @@ export interface ConnectorSecrets {
 }
 /** Each grant/configuration has its own row. Existing ciphertext and AAD survive
  * import byte-for-byte; a database move never silently decrypts saved secrets. */
-export function createConnectorSecrets(database:ApplicationDatabase):ConnectorSecrets&{ready():Promise<void>;importSecret(scope:ConnectorSecretScope,aad:string,bytes:Buffer):Promise<Buffer>}{
+export function createConnectorSecrets(database:ApplicationDatabase):ConnectorSecrets&{ready():Promise<void>;readIn(client:PoolClient,scope:ConnectorSecretScope,aad:string):Promise<{version:StoreVersion|null;data:Buffer|null}>;projectIn(client:PoolClient,scope:ConnectorSecretScope,aad:string,bytes:Buffer|null):Promise<void>;importSecret(scope:ConnectorSecretScope,aad:string,bytes:Buffer):Promise<Buffer>}{
   let preparing:Promise<void>|undefined;
   function values(scope:ConnectorSecretScope,aad:string){
     if(!/^org_[A-Za-z0-9]+$/.test(scope.organizationId)||!['grant','settings'].includes(scope.kind)||
@@ -17,11 +18,16 @@ export function createConnectorSecrets(database:ApplicationDatabase):ConnectorSe
     return [database.namespace,scope.kind,scope.organizationId,scope.id,aad];
   }
   function validate(bytes:Uint8Array){if(bytes.length<30||bytes.length>262144||bytes[0]!==1)throw new Error('Invalid connector secret envelope');}
-  async function read(scope:ConnectorSecretScope,aad:string){const params=values(scope,aad);const {rows}=await database.pool.query('SELECT aad,ciphertext,revision FROM opencrawl_connector_secrets WHERE namespace=$1 AND kind=$2 AND organization_id=$3 AND secret_id=$4',params.slice(0,4));
+  async function read(scope:ConnectorSecretScope,aad:string,client:Pick<PoolClient,'query'>=database.pool){const params=values(scope,aad);const {rows}=await client.query('SELECT aad,ciphertext,revision FROM opencrawl_connector_secrets WHERE namespace=$1 AND kind=$2 AND organization_id=$3 AND secret_id=$4',params.slice(0,4));
     if(!rows[0])return {data:null,version:null};if(rows[0].aad!==aad)throw new Error('Connector secret binding mismatch');return {data:Buffer.from(rows[0].ciphertext),version:rows[0].revision as string};}
   return {
     async ready(){preparing??=(async()=>{await database.ready();await database.transaction(async client=>{await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:connector-secrets:schema',0))");await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_connector_secrets(namespace text NOT NULL,kind text NOT NULL CHECK(kind IN ('grant','settings')),organization_id text NOT NULL,secret_id text NOT NULL,aad text NOT NULL,ciphertext bytea NOT NULL,revision uuid NOT NULL,PRIMARY KEY(namespace,kind,organization_id,secret_id))`);});})().catch(error=>{preparing=undefined;throw error;});await preparing;},
     read,
+    readIn:(client,scope,aad)=>read(scope,aad,client),
+    async projectIn(client,scope,aad,bytes){const params=values(scope,aad);await read(scope,aad,client);
+      if(bytes===null){await client.query('DELETE FROM opencrawl_connector_secrets WHERE namespace=$1 AND kind=$2 AND organization_id=$3 AND secret_id=$4 AND aad=$5',params);return;}
+      validate(bytes);await client.query('INSERT INTO opencrawl_connector_secrets(namespace,kind,organization_id,secret_id,aad,ciphertext,revision) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(namespace,kind,organization_id,secret_id) DO UPDATE SET ciphertext=EXCLUDED.ciphertext,revision=EXCLUDED.revision',[...params,bytes,randomUUID()]);
+    },
     async compareAndSet(scope,aad,version,data){const params=values(scope,aad);validate(data);const next=randomUUID();
       if(version===null){const {rowCount}=await database.pool.query('INSERT INTO opencrawl_connector_secrets(namespace,kind,organization_id,secret_id,aad,ciphertext,revision) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',[...params,Buffer.from(data),next]);return rowCount===1;}
       if(typeof version!=='string'||!/^[a-f0-9-]{36}$/.test(version))return false;

@@ -115,13 +115,25 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
   async function read<T>(key:string,run:(tx:BoardReader)=>Promise<T>):Promise<T>{return database.transaction(async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');return run(accessor(client,key));});}
   async function exportIn(client:PoolClient,key:string):Promise<BoardState|null>{const tx=accessor(client,key);const exists=(await client.query('SELECT 1 FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash=$2',[namespace,key])).rowCount;if(!exists)return null;const meta=await tx.metadata(),messages:BoardMessage[]=[];for(let after=0;;){const page=await tx.messages({after,limit:250});if(!page.length)break;messages.push(...page);after=page.at(-1)!.id;}return {schema:1,messages,agents:await tx.agents(),usage:meta.usage,...(meta.participantsPresent?{participants:await tx.participants()}: {})};}
   async function exportLegacy(key:string){return database.transaction(async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');return exportIn(client,tenant(key));});}
-  async function importLegacy(key:string,state:BoardState){validateLegacyBoard(state);await database.transaction(async client=>{
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify(['board-import',namespace,tenant(key)])]);
-    const existing=await exportIn(client,key);if(existing){if(!isDeepStrictEqual(existing,state))throw fail('Conflicting PostgreSQL board state',409);return;}
+  async function insertLegacyIn(client:PoolClient,key:string,state:BoardState){
     await initialize(client,key);const tx=accessor(client,key);for(const message of state.messages){const {id,...input}=message;const result=await tx.append(input);if(result.id!==id)throw fail('Board import sequence mismatch');}
     for(const [id,value]of Object.entries(state.agents))await tx.putAgent(id,value);
     for(const [id,value]of Object.entries(state.participants??{}))await tx.putParticipant(id,value);
     await client.query('UPDATE opencrawl_board_heads SET usage=$3,participants_present=$4 WHERE namespace=$1 AND tenant_hash=$2',[namespace,key,state.usage,state.participants!==undefined]);
+  }
+  async function projectIn(client:PoolClient,key:string,state:BoardState|null){
+    tenant(key);if(state!==null)validateLegacyBoard(state);
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify(['board-import',namespace,key])]);
+    // Migration-only shadow replacement; parent/children and delivery receipts
+    // are rebuilt in the replay transaction, never visible half-written.
+    await client.query('DELETE FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash=$2',[namespace,key]);
+    if(state!==null)await insertLegacyIn(client,key,state);
+    if(!isDeepStrictEqual(await exportIn(client,key),state))throw fail('Board projection verification failed');
+  }
+  async function importLegacy(key:string,state:BoardState){validateLegacyBoard(state);await database.transaction(async client=>{
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify(['board-import',namespace,tenant(key)])]);
+    const existing=await exportIn(client,key);if(existing){if(!isDeepStrictEqual(existing,state))throw fail('Conflicting PostgreSQL board state',409);return;}
+    await insertLegacyIn(client,key,state);
     if(!isDeepStrictEqual(await exportIn(client,key),state))throw fail('Board migration verification failed');
   });}
   async function search(key:string,userId:string,args:BoardSearchInput,time:number){
@@ -152,7 +164,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       return output;
     });
   }
-  return {ready,read,transaction,search,importLegacy,exportLegacy};
+  return {ready,read,transaction,search,importLegacy,exportLegacy,readIn:exportIn,projectIn};
 }
 
 /** Validate before any DDL/import. Unknown fields fail instead of disappearing. */

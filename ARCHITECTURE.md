@@ -146,9 +146,17 @@ schedules recover committed work after process failure. Cancellation or elapsed
 time alone never proves an external writer has stopped.
 
 Application startup requires a verified source/database migration binding.
-Migration imports only while old writers are stopped, retains immutable recovery
+The supported offline importer requires stopped writers, retains immutable recovery
 sources, verifies targets before readiness, and never recopies stale sources after
-cutover. See `docs/app-state-migration.md` for the supported upgrade and restore.
+cutover. Explicit online compatibility tooling instead journals every enrolled
+legacy mutation in PostgreSQL and uses Temporal for background backfill and replay.
+Its legacy envelopes and shadow mirror are migration artifacts, never runtime
+fallbacks. All legacy writers must be enrolled before change capture starts;
+runtime authority changes only after draining accepted mutations and verifying
+typed target parity at a closed journal frontier. Core owns these portable
+protocols; the hosted shell owns fleet enrollment, rollout and request routing.
+See `docs/app-state-migration.md` for the supported offline upgrade and restore,
+and `docs/online-app-state-migration.md` for online tooling and remaining gates.
 
 ## React document seam
 

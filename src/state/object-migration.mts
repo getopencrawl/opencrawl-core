@@ -1,14 +1,23 @@
+import type {LegacyWriteFence} from './write-barriers.mjs';
+import type {SessionDeletionRequest} from '../sessions/deletion-requests.mjs';
+import type {PoolClient} from 'pg';
+import type {OnlineAccountProjection} from './account-state.mjs';
+import type {ResourceControlIdentity} from './resource-controls.mjs';
+import type {ResourceControl} from '../sessions/controls.mjs';
+import type {ConnectorSecretScope} from './connector-secrets.mjs';
+import type {ReplicasConnection,ReplicasChallenge} from '../identity/replicas-connections.mjs';
+import {createLegacyObjectClassifier} from './legacy-object-classification.mjs';
 import {gunzipSync} from 'node:zlib';
 import {isDeepStrictEqual} from 'node:util';
 import {z} from 'zod';
 import type {ApplicationDatabase} from './postgres.mjs';
 import type {ObjectStore,JsonObject} from '../sessions/types.mjs';
-import {SESSION_HARNESSES,isSessionHarness} from '../sessions/types.mjs';
+import {isSessionHarness} from '../sessions/types.mjs';
 import type {IntegrationRecord} from '../integrations/types.mjs';
 import type {OnboardingKind} from '../onboarding-status.mjs';
 import type {BoardState} from '../board/types.mjs';
 import type {createPostgresEventIdentities} from '../sessions/postgres-identities.mjs';
-import {sourceBatchIdentity,digest,MAX_EVENT_LEDGER_BYTES} from '../sessions/event-identity.mjs';
+import {sourceBatchIdentity,digest} from '../sessions/event-identity.mjs';
 import {memorySourceIdentity} from '../memories/snapshot.mjs';
 import {sessionCatchupMarker} from '../sessions/temporal/handoff.mjs';
 import {createPostgresControls} from './resource-controls.mjs';
@@ -30,7 +39,7 @@ import {LEGACY_UNCOUNTED_CONNECTOR_PIPELINES,createConnectorCacheRetirements,typ
 import {createSchedulerRetirements,type SchedulerRetirement} from './scheduler-retirements.mjs';
 import {createRetiredSessionReceipts,retiredSessionProofSchema,retiredSessionLocations,failedSessionReceiptSchema,type RetiredSessionProof,type RetiredSessionReceipt} from './retired-session-receipts.mjs';
 
-const H='[a-f0-9]{64}',U='[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}';
+const U='[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}';
 const hash=z.string().regex(/^[a-f0-9]{64}$/),number=z.number().int().nonnegative().safe();
 const identifier=z.string().regex(/^[A-Za-z0-9_.:-]{1,200}$/);
 const date=z.string().refine(value=>Number.isFinite(Date.parse(value)));
@@ -50,7 +59,16 @@ const eventSchema=z.discriminatedUnion('schemaVersion',[
 ]);
 const normalizeCounts=(value:z.infer<typeof countSchema>)=>({version:1 as const,read:[...new Set(value.read)].sort(),
   ids:Object.fromEntries(Object.entries(value.ids).map(([stream,ids])=>[stream,[...new Set(ids)].sort()])),full:value.full??{}});
-interface Classification {domain:string;maxBytes:number;parts:string[]}
+export type OnlineObjectProjection=
+ |{kind:'fence';domain:'session-write-fences'|'connector-write-fences';identity:string[];controlPrefix:string;value:LegacyWriteFence}
+ |{kind:'deletion';domain:'deletion-requests';identity:string[];key:string;value:SessionDeletionRequest|null}
+ |{kind:'control';domain:'resource-controls';identity:string[];scope:ResourceControlIdentity;value:ResourceControl|null}
+ |{kind:'account';domain:'capture-credentials'|'credential-generations'|'onboarding'|'role-writes';identity:string[];record:OnlineAccountProjection}
+ |{kind:'secret';domain:'connector-grants'|'connector-settings';identity:string[];scope:ConnectorSecretScope;aad:string;value:Buffer|null}
+ |{kind:'replicas-connection';domain:'replicas-connections';identity:string[];organizationId:string;value:ReplicasConnection|null}
+ |{kind:'replicas-setup';domain:'replicas-setup';identity:string[];codeHash:string;value:ReplicasChallenge|null}
+ |{kind:'board';domain:'board';identity:string[];tenantHash:string;value:BoardState|null};
+export function onlineProjectionValue(value:OnlineObjectProjection):unknown{return value.kind==='account'?value.record.value:value.value;}
 export interface ObjectMigrationOptions {
   database:ApplicationDatabase;prefix:string;organizationId:string;store:ObjectStore;registryRecords:IntegrationRecord[];
   connectorKey?:Uint8Array;eventIdentities:ReturnType<typeof createPostgresEventIdentities>;
@@ -86,7 +104,6 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
   for(const input of retiredSessionProofs){const proof=retiredSessionProofSchema.parse(input),scope=retiredSessionLocations(prefix,proof),key=JSON.stringify([scope.tenantHash,scope.userHash,proof.harness,scope.sessionHash]);
     if(!retiredHashes.has(scope.tenantHash)||retiredSessions.has(key))fail('Retired session proof is unknown, active or duplicated');retiredSessions.set(key,proof);
   }
-  const roots=credentialPurpose==='agent'?[prefix+'/']:[prefix+'/', 'control/connectors/write-barriers/v1/','connector-credentials/v1/','connector-settings/v1/','derived/indexing/','raw/v1/source=slack/','_opencrawl/counts/'];
   const controls=createPostgresControls(database),deletions=createPostgresDeletionRequests(database,prefix),accounts=createAccountState(database),secrets=createConnectorSecrets(database),
     replicas=createReplicasState(database),reports=createValueReports(database),receipts=createPostgresIndexingReceipts(database),slack=createPostgresSlackCapture(database),counts=createConnectorCounts({database,legacyBucket:store.bucket}),board=createPostgresBoardState(database),retirements=createSchedulerRetirements(database),connectorRetirements=createConnectorCacheRetirements(database),retiredReceipts=createRetiredSessionReceipts(database);
   const preparations=new Map<string,Promise<void>>();
@@ -96,49 +113,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
   async function read<T>(run:()=>Promise<T>):Promise<T|null>{try{return await run();}catch(error){if((error as {code?:string}).code==='42P01')return null;throw error;}}
   const tenant=(value:string)=>{if(!tenants.has(value))fail('Legacy object belongs to another installation organization');};
   const tenantDigest=(value:string)=>{if(!tenantHashes.has(value))fail('Legacy object owner hash differs from the installation organization');};
-  function classify(key:string):Classification|null {
-    if(typeof key!=='string'||key.length>8192||key.split('/').some(part=>!part||part==='.'||part==='..'))fail('Invalid object migration key');
-    const match=(pattern:RegExp,domain:string,maxBytes=65536):Classification|null=>{const value=pattern.exec(key.startsWith(prefix+'/')?key.slice(prefix.length+1):key);return value?{domain,maxBytes,parts:value.slice(1)}:null;};
-    if(key.startsWith(prefix+'/')){
-      const raw=key.slice(prefix.length+1);
-      if(credentialPurpose==='agent'&&!new RegExp(`^(?:_credentials/${H}|_credential-generations/tenants/${H}/users/${H})\\.json$`).test(raw))fail('Agent credential source contains unrelated application state');
-      const source=sourceBatchIdentity(prefix,key)??memorySourceIdentity(prefix,key);
-      if(source){tenantDigest(source.tenantHash);return null;}
-      const attachment=new RegExp(`^tenants/(${H})/users/${H}/(?:(?:${SESSION_HARNESSES.join('|')})/${H}/${H}/)?attachments/${H}$`).exec(raw);
-      if(attachment){tenantDigest(attachment[1]);return null;}
-      const found=match(new RegExp(`^board/tenants/(${H})\\.json$`),'board',16*1024*1024)
-        ??match(new RegExp(`^tenants/(${H})/users/(${H})/controls/(sessions|memories)/([^/]+)/(${H})\\.json$`),'resource-controls')
-        ??match(new RegExp(`^tenants/(${H})/users/(${H})/controls/write-barriers/(${H})\\.json$`),'session-write-fences',16*1024*1024)
-        ??match(new RegExp(`^_deletions/v1/(${H})\\.json$`),'deletion-requests')
-        ??match(new RegExp(`^_credentials/(${H})\\.json$`),'capture-credentials')
-        ??match(new RegExp(`^_credential-generations/(tenants/(${H})/users/${H})\\.json$`),'credential-generations')
-        ??match(/^organization-role-writes\/(org_[A-Za-z0-9]+)\.json$/,'role-writes')
-        ??match(new RegExp(`^identity/replicas-v1/organizations/(${U})\\.json$`),'replicas-connections')
-        ??match(new RegExp(`^identity/replicas-v1/tenants/(${H})/(${U})\\.json$`),'replicas-index')
-        ??match(new RegExp(`^identity/replicas-v1/setup/(${H})\\.json$`),'replicas-setup')
-        ??match(new RegExp(`^(tenants/(${H})/users/${H})/onboarding/(cli|mcp|mcpTest|session|history|completed)\\.json$`),'onboarding')
-        ??match(new RegExp(`^value/tenants/(${H})\\.json$`),'value-reports')
-        ??match(new RegExp(`^index-pending/tenants/(${H})/users/(${H})/(${H})\\.json$`),'session-scheduler-retirement',32768)
-        ??match(new RegExp(`^_index/${H}/${H}/(cursor|reconcile)\\.json$`),'session-scheduler-retirement',32768)
-        ??match(new RegExp(`^_index/${H}/${H}/batches/(${H})\\.json$`),'session-indexing',32768)
-        ??match(new RegExp(`^_index/temporal-cutover/(${H})\\.json$`),'temporal-cutover',32768)
-        ??match(new RegExp(`^tenants/(${H})/users/${H}/(?:${SESSION_HARNESSES.join('|')})/${H}/${H}/event-identities-v1\\.json$`),'event-identities',MAX_EVENT_LEDGER_BYTES);
-      if(found){if(credentialPurpose==='agent'&&!['capture-credentials','credential-generations'].includes(found.domain))fail('Agent credential source contains unrelated application state');return found;}
-      fail('Unrecognized object under the application source prefix; retain it and add a reviewed migration');
-    }
-    if(credentialPurpose==='agent')fail('Agent credential source escaped its bound prefix');
-    const found=match(new RegExp(`^control/connectors/write-barriers/v1/(${H})\\.json$`),'connector-write-fences',16*1024*1024)
-      ??match(/^connector-credentials\/v1\/(org_[A-Za-z0-9]+)\/(grant_[a-f0-9]{48})\.enc$/,'connector-grants')
-      ??match(/^connector-settings\/v1\/(org_[A-Za-z0-9]+)\/settings\.enc$/,'connector-settings')
-      ??match(new RegExp(`^derived/indexing/([A-Za-z0-9_-]+)/${H}/(${H})\\.json$`),'connector-indexing',32768)
-      ??match(new RegExp(`^derived/indexing/([A-Za-z0-9_-]+)/${H}/snapshot-(${H})\\.json$`),'connector-snapshots',32768)
-      ??match(/^_opencrawl\/counts\/connection=(int_[a-f0-9]{26})\.json\.gz$/,'record-counts',64*1024*1024)
-      ??match(/^raw\/v1\/source=slack\/workspace=[A-Za-z0-9_:-]{1,200}\/connection=[A-Za-z0-9_:-]{1,200}\/capture\/(files-v1|messages-v1|message-references-v1)\/(?:catalog\.json|[A-Za-z0-9_-]{1,150}\/state\.json)$/,'slack-capture',16*1024*1024);
-    if(found)return found;
-    if(/^raw\/v1\/source=slack\/workspace=[A-Za-z0-9_:-]{1,200}\/connection=[A-Za-z0-9_:-]{1,200}\/(?:stream=[A-Za-z0-9_-]+\/date=\d{4}-\d{2}-\d{2}\/sync=[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+\.jsonl\.gz|files\/sha256\/[a-f0-9]{64}\.bin|capture\/(?:files-v1|messages-v1|message-references-v1)\/[A-Za-z0-9_-]{1,150}\/pages\/[a-f0-9]{64}\.json)$/.test(key))return null;
-    if(roots.some(root=>key.startsWith(root)))fail('Unrecognized object under a mutable state namespace; retain it and add a reviewed migration');
-    return null;
-  }
+  const {roots,classify}=createLegacyObjectClassifier({prefix,credentialPurpose,validateRawTenantHash:tenantDigest});
   /** Pure classification for the only batchable migration domain. Failed
    * receipts retain their existing raw-source/deletion-proof retirement path. */
   function sessionReceipt(key:string,bytes:Buffer):SessionReceiptImport|null{
@@ -182,18 +157,29 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
     if(write){await prepare('scheduler-retirements',retirements.ready);await retirements.importRetirement(key,value);}
     return {source:value,target:await read(()=>retirements.exportRetirement(key)),rows:1};
   }
-  async function process(key:string,bytes:Buffer,{write}:{write:boolean}):Promise<{source:unknown|Buffer;target:unknown|Buffer|null;rows:number}>{
-    const found=classify(key);if(!found)fail('Immutable source objects do not use application-state import');
-    if(bytes.length>found.maxBytes)fail('Legacy state object exceeds its supported migration limit');
-    const {domain,parts}=found;let source:unknown,target:unknown|null=null,rows=1;
+  /** Decode without target SQL, schema changes or dependency reads. Unsupported
+   * domains (including Replicas aliases) never become competing publishers. */
+  function decodeOnline(key:string,bytes:Buffer|null,onlineTenantIds?:readonly string[]):OnlineObjectProjection{
+    // Only the explicit online projector supplies its verified PG enrollment.
+    // Offline process() never overrides the original finite reviewed set.
+    const enrolled=onlineTenantIds??tenantIds;
+    if(!enrolled.length||enrolled.length>100000||enrolled.some(value=>!/^(?:org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(value)))fail('Invalid online tenant enrollment');
+    const allowed=new Set(enrolled),allowedHashes=new Set(enrolled.map(digest));if(allowed.size!==enrolled.length||allowedHashes.size!==allowed.size||[...allowedHashes].some(value=>retiredHashes.has(value)))fail('Ambiguous online tenant enrollment');
+    const tenant=(value:string)=>{if(!allowed.has(value))fail('Legacy object belongs to another installation organization');};
+    const tenantDigest=(value:string)=>{if(!allowedHashes.has(value))fail('Legacy object owner hash differs from the installation organization');};
+    const found=classify(key);if(!found)fail('Immutable source does not have a typed online projection');
+    if(bytes!==null&&bytes.length>found.maxBytes)fail('Legacy state object exceeds its supported migration limit');
+    const {domain,parts}=found;
     switch(domain){
       case 'resource-controls':{
         const [tenantHash,userHash,kind,harness,resourceHash]=parts;if(!retiredHashes.has(tenantHash))tenantDigest(tenantHash);if(!isSessionHarness(harness))fail('Unknown control harness');
-        const value=controlSchema.parse(json(bytes));if(retiredHashes.has(tenantHash)&&!value.deletedAt)fail('Retired tenant scope allows only deletion tombstones');if(value.deletion&&(!value.deletedAt||kind!=='sessions'||digest(value.deletion.sessionId)!==resourceHash))fail('Deletion control identity mismatch');
-        const identity={tenantHash,userHash,kind:kind as 'sessions'|'memories',harness,resourceHash};source=value;
-        if(write){await prepare('controls',controls.ready);await controls.importControl(identity,value);}target=await read(()=>controls.readIdentity(identity));break;
+        const value=bytes===null?null:controlSchema.parse(json(bytes));
+        if(value&&retiredHashes.has(tenantHash)&&!value.deletedAt)fail('Retired tenant scope allows only deletion tombstones');
+        if(value?.deletion&&(!value.deletedAt||kind!=='sessions'||digest(value.deletion.sessionId)!==resourceHash))fail('Deletion control identity mismatch');
+        return {kind:'control',domain,identity:[tenantHash,userHash,kind,harness,resourceHash],scope:{tenantHash,userHash,kind:kind as 'sessions'|'memories',harness,resourceHash},value};
       }
       case 'session-write-fences':case 'connector-write-fences':{
+        if(bytes===null)fail('Online projection cannot erase a write fence');
         const value=fenceSchema.parse(json(bytes));
         if(domain==='session-write-fences'){if(retiredHashes.has(value.tenantId)){if(value.closedAt===null)fail('Retired tenant scope requires a closed deletion fence');}else tenantDigest(value.tenantId);if(value.namespace!=='sessions'||value.tenantId!==parts[0]||!hash.safeParse(value.connectionId).success)fail('Session write fence owner mismatch');}
         else tenant(value.tenantId);
@@ -202,44 +188,122 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
         if(domain==='session-write-fences'&&!retiredHashes.has(parts[0]))tenantDigest(parts[0]);
         const fence=createPostgresWriteBarrier({database,namespace:value.namespace,tenantId:value.tenantId,connectionId:value.connectionId,controlPrefix});
         if(fence.key!==key)fail('Legacy write fence key does not match its scope');
+        return {kind:'fence',domain,identity:[key],controlPrefix,value:{...value,writers:[...value.writers].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)}};
+      }
+      case 'deletion-requests':{
+        const value=bytes===null?null:deletionSchema.parse(json(bytes));if(value){tenant(value.owner.tenantId);
+          if(prefix+'/_deletions/v1/'+digest(JSON.stringify([prefix,value.owner.tenantId,value.owner.userId,value.harness,value.sessionId]))+'.json'!==key)fail('Deletion request key differs from its identity');}
+        return {kind:'deletion',domain,identity:[prefix,key],key,value};
+      }
+      case 'capture-credentials':{
+        const value=bytes===null?null:captureCredentialSchema.parse(json(bytes));if(value){tenant(value.principal.tenantId);if(value.id!==parts[0])fail('Capture credential key mismatch');}
+        return {kind:'account',domain,identity:[credentialPurpose,parts[0]],record:{kind:'credential',id:parts[0],purpose:credentialPurpose,value}};
+      }
+      case 'credential-generations':{
+        tenantDigest(parts[1]);const value=bytes===null?null:z.strictObject({generation:hash}).parse(json(bytes));
+        return {kind:'account',domain,identity:[credentialPurpose,parts[0]],record:{kind:'generation',owner:parts[0],purpose:credentialPurpose,value}};
+      }
+      case 'onboarding':{
+        tenantDigest(parts[1]);const value=bytes===null?null:onboardingReceiptSchema.parse(json(bytes));
+        return {kind:'account',domain,identity:[parts[0],parts[2]],record:{kind:'onboarding',owner:parts[0],receiptKind:parts[2] as OnboardingKind,value}};
+      }
+      case 'role-writes':{
+        tenant(parts[0]);const value=bytes===null?null:roleWriteSchema.parse(json(bytes));if(value?.state==='held'&&value.organizationId!==parts[0])fail('Role write organization differs from its source key');
+        return {kind:'account',domain,identity:[parts[0]],record:{kind:'role',organizationId:parts[0],value}};
+      }
+      case 'connector-grants':case 'connector-settings':{
+        tenant(parts[0]);if(bytes!==null){if(!connectorKey||connectorKey.length!==32)fail('The original connector encryption key is required to verify saved connector credentials');
+          const plain=json(sealedEnvelope(connectorKey).open(key,bytes));
+          if(domain==='connector-grants'){const grant=connectorGrantSchema.parse(plain);if(grant.organizationId!==parts[0])fail('Connector grant organization differs from its source key');if(grant.id!==parts[1])fail('Connector grant identity mismatch');}
+          else if(connectorSettingsSchema.parse(plain).organizationId!==parts[0])fail('Connector settings organization differs from its source key');}
+        const scope={kind:domain==='connector-grants'?'grant' as const:'settings' as const,organizationId:parts[0],id:parts[1]??'settings'};
+        return {kind:'secret',domain,identity:[scope.kind,scope.organizationId,scope.id],scope,aad:key,value:bytes};
+      }
+      case 'replicas-connections':{
+        const value=bytes===null?null:replicasConnectionSchema.parse(json(bytes));if(value){tenant(value.tenantId);if(value.organizationId!==parts[0]||value.installations.some(item=>item.tenantId!==value.tenantId))fail('Replicas connection key mismatch');}
+        return {kind:'replicas-connection',domain,identity:[parts[0]],organizationId:parts[0],value};
+      }
+      case 'replicas-setup':{
+        const value=bytes===null?null:replicasChallengeSchema.parse(json(bytes));if(value)tenant(value.tenantId);
+        return {kind:'replicas-setup',domain,identity:[parts[0]],codeHash:parts[0],value};
+      }
+      case 'board':{
+        tenantDigest(parts[0]);const value=bytes===null?null:json(bytes);if(value!==null)validateLegacyBoard(value);
+        return {kind:'board',domain,identity:[parts[0]],tenantHash:parts[0],value};
+      }
+      default:fail('No typed online projection is registered for this legacy state domain');
+    }
+  }
+  async function readOnlineIn(client:PoolClient,value:OnlineObjectProjection):Promise<unknown>{
+    switch(value.kind){
+      case 'fence':return createPostgresWriteBarrier({database,namespace:value.value.namespace,tenantId:value.value.tenantId,connectionId:value.value.connectionId,controlPrefix:value.controlPrefix}).exportFenceIn(client);
+      case 'deletion':return deletions.readIn(client,value.key);
+      case 'control':return controls.readIn(client,value.scope);
+      case 'account':return accounts.readIn(client,value.record);
+      case 'secret':return (await secrets.readIn(client,value.scope,value.aad)).data;
+      case 'replicas-connection':return (await replicas.readConnectionIn(client,value.organizationId)).record;
+      case 'replicas-setup':return (await replicas.readSetupIn(client,value.codeHash)).record;
+      case 'board':return board.readIn(client,value.tenantHash);
+    }
+  }
+  async function projectOnlineIn(client:PoolClient,value:OnlineObjectProjection){
+    switch(value.kind){
+      case 'fence':return createPostgresWriteBarrier({database,namespace:value.value.namespace,tenantId:value.value.tenantId,connectionId:value.value.connectionId,controlPrefix:value.controlPrefix}).projectFenceIn(client,value.value);
+      case 'deletion':return deletions.projectIn(client,value.key,value.value);
+      case 'control':return controls.projectIn(client,value.scope,value.value);
+      case 'account':return accounts.projectIn(client,value.record);
+      case 'secret':return secrets.projectIn(client,value.scope,value.aad,value.value);
+      case 'replicas-connection':return replicas.projectConnectionIn(client,value.organizationId,value.value);
+      case 'replicas-setup':return replicas.projectSetupIn(client,value.codeHash,value.value);
+      case 'board':return board.projectIn(client,value.tenantHash,value.value);
+    }
+  }
+  async function prepareOnline(){for(const run of [controls.ready,accounts.ready,secrets.ready,replicas.ready,board.ready,()=>ensureWriteBarrierSchema(database),()=>ensureDeletionRequestSchema(database)])await run();}
+  async function process(key:string,bytes:Buffer,{write}:{write:boolean}):Promise<{source:unknown|Buffer;target:unknown|Buffer|null;rows:number}>{
+    const found=classify(key);if(!found)fail('Immutable source objects do not use application-state import');
+    if(bytes.length>found.maxBytes)fail('Legacy state object exceeds its supported migration limit');
+    const {domain,parts}=found;let source:unknown,target:unknown|null=null,rows=1;
+    switch(domain){
+      case 'resource-controls':{
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='control'||!decoded.value)fail('Invalid control projection');const {scope:identity,value}=decoded;source=value;
+        if(write){await prepare('controls',controls.ready);await controls.importControl(identity,value);}target=await read(()=>controls.readIdentity(identity));break;
+      }
+      case 'session-write-fences':case 'connector-write-fences':{
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='fence')fail('Invalid fence projection');const {value,controlPrefix}=decoded;
+        const fence=createPostgresWriteBarrier({database,namespace:value.namespace,tenantId:value.tenantId,connectionId:value.connectionId,controlPrefix});
         source={...value,writers:[...value.writers].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)};rows=1+value.writers.length;
         if(write){await prepare('fences',()=>ensureWriteBarrierSchema(database));await fence.importFence(value);}target=await read(()=>fence.exportFence());break;
       }
       case 'deletion-requests':{
-        const value=deletionSchema.parse(json(bytes));tenant(value.owner.tenantId);
-        if(prefix+'/_deletions/v1/'+digest(JSON.stringify([prefix,value.owner.tenantId,value.owner.userId,value.harness,value.sessionId]))+'.json'!==key)fail('Deletion request key differs from its identity');
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='deletion'||!decoded.value)fail('Invalid deletion projection');const value=decoded.value;
         source=value;if(write){await prepare('deletions',()=>ensureDeletionRequestSchema(database));await deletions.importRequest(key,value);}target=await read(()=>deletions.read(key));break;
       }
       case 'capture-credentials':{
-        const value=captureCredentialSchema.parse(json(bytes));tenant(value.principal.tenantId);if(value.id!==parts[0])fail('Capture credential key mismatch');source=value;
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='account'||decoded.record.kind!=='credential'||!decoded.record.value)fail('Invalid credential projection');const value=decoded.record.value;source=value;
         if(write){await prepare('accounts',accounts.ready);await accounts.importCredential(value,credentialPurpose);}target=await read(()=>accounts.exportCredential(parts[0],credentialPurpose));break;
       }
       case 'credential-generations':{
-        tenantDigest(parts[1]);source=z.strictObject({generation:hash}).parse(json(bytes));
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='account'||decoded.record.kind!=='generation')fail('Invalid generation projection');source=decoded.record.value;
         if(write){await prepare('accounts',accounts.ready);await accounts.importGeneration(parts[0],source,credentialPurpose);}target=await read(()=>accounts.exportGeneration(parts[0],credentialPurpose));break;
       }
       case 'onboarding':{
-        tenantDigest(parts[1]);source=onboardingReceiptSchema.parse(json(bytes));const kind=parts[2] as OnboardingKind;
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='account'||decoded.record.kind!=='onboarding')fail('Invalid onboarding projection');source=decoded.record.value;const kind=decoded.record.receiptKind;
         if(write){await prepare('accounts',accounts.ready);await accounts.importReceipt(parts[0],kind,source);}target=await read(()=>accounts.onboarding.read(parts[0],kind));break;
       }
       case 'role-writes':{
-        tenant(parts[0]);const value=roleWriteSchema.parse(json(bytes));if(value.state==='held'&&value.organizationId!==parts[0])fail('Role write organization differs from its source key');source=value;
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='account'||decoded.record.kind!=='role')fail('Invalid role projection');source=decoded.record.value;
         if(write){await prepare('accounts',accounts.ready);await accounts.importRole(parts[0],source);}target=await read(()=>accounts.exportRole(parts[0]));break;
       }
       case 'connector-grants':case 'connector-settings':{
-        tenant(parts[0]);if(!connectorKey||connectorKey.length!==32)fail('The original connector encryption key is required to verify saved connector credentials');
-        const plain=json(sealedEnvelope(connectorKey).open(key,bytes));
-        if(domain==='connector-grants'){const grant=connectorGrantSchema.parse(plain);if(grant.organizationId!==parts[0])fail('Connector grant organization differs from its source key');if(grant.id!==parts[1])fail('Connector grant identity mismatch');}
-        else if(connectorSettingsSchema.parse(plain).organizationId!==parts[0])fail('Connector settings organization differs from its source key');
-        const scope={kind:domain==='connector-grants'?'grant' as const:'settings' as const,organizationId:parts[0],id:parts[1]??'settings'};source=bytes;
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='secret')fail('Invalid secret projection');const scope=decoded.scope;source=bytes;
         if(write){await prepare('secrets',secrets.ready);await secrets.importSecret(scope,key,bytes);}target=await read(async()=>(await secrets.read(scope,key)).data);break;
       }
       case 'replicas-connections':{
-        const value=replicasConnectionSchema.parse(json(bytes));tenant(value.tenantId);if(value.organizationId!==parts[0]||value.installations.some(item=>item.tenantId!==value.tenantId))fail('Replicas connection key mismatch');source=value;rows=1+value.installations.length;
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='replicas-connection'||!decoded.value)fail('Invalid Replicas projection');const value=decoded.value;source=value;rows=1+value.installations.length;
         if(write){await prepare('replicas',replicas.ready);await replicas.importConnection(value);}target=await read(async()=>(await replicas.readConnection(parts[0])).record);break;
       }
       case 'replicas-setup':{
-        const value=replicasChallengeSchema.parse(json(bytes));tenant(value.tenantId);source=value;
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='replicas-setup'||!decoded.value)fail('Invalid Replicas setup projection');const value=decoded.value;source=value;
         if(write){await prepare('replicas',replicas.ready);await replicas.importSetup(parts[0],value);}target=await read(async()=>(await replicas.readSetup(parts[0])).record);break;
       }
       case 'replicas-index':{
@@ -324,7 +388,7 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
         if(write){await prepare('receipts',receipts.ready);await receipts.importReceipt(key,source as JsonObject);}target=await read(()=>receipts.read(key));break;
       }
       case 'board':{
-        tenantDigest(parts[0]);const value=json(bytes) as BoardState;validateLegacyBoard(value);source=value;rows=value.messages.length+Object.keys(value.agents).length+Object.keys(value.participants??{}).length+1;
+        const decoded=decodeOnline(key,bytes);if(decoded.kind!=='board'||!decoded.value)fail('Invalid board projection');const value=decoded.value;source=value;rows=value.messages.length+Object.keys(value.agents).length+Object.keys(value.participants??{}).length+1;
         if(write){await prepare('board',board.ready);await board.importLegacy(parts[0],value);}target=await read(()=>board.exportLegacy(parts[0]));break;
       }
       default:fail('No typed migration is registered for this legacy state domain');
@@ -336,5 +400,5 @@ export function createBoundObjectMigration({database,prefix,tenantIds,store,regi
       tenant(record.tenantId);
       if(record.s3Bucket&&record.s3Bucket!==store.bucket)fail('Legacy integration state uses another bucket; a reviewed multi-store migration is required');
     }
-  },classify,process,sessionReceipt};
+  },classify,process,sessionReceipt,decodeOnline,readOnlineIn,projectOnlineIn,prepareOnline};
 }

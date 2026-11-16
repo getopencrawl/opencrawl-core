@@ -1,0 +1,68 @@
+# Online application-state migration components
+
+The online migration tools support an explicit compatibility release that keeps
+the old application serving while PostgreSQL catches up. They are not yet a
+complete operator upgrade command. The supported self-host upgrade remains the
+[offline migration](app-state-migration.md); the new runtime still requires its
+verified application-state admission record.
+
+The `state/online-migration` export provides a durable PostgreSQL write journal,
+an S3 adapter, a legacy ObjectStore wrapper, shared source classification, a
+migration-only PostgreSQL shadow mirror, and a background controller. Separate
+`state/online-migration-worker` and `state/online-migration-client` exports use
+operator-owned Temporal infrastructure. None selects a hosted account or changes
+the application's storage authority automatically.
+
+## Write and replay protocol
+
+Each mutation receives a unique operation ID and increasing per-key revision.
+The journal commits its intent before external I/O. Session advisory locks span
+the intent commit, conditional external write and reconciliation. A lost response
+leaves a pending intent that blocks a newer operation on that key. Retrying the
+same operation can recover exact applied evidence. A timeout, elapsed lease or
+old source read does not prove that the operation failed.
+
+S3 values carry a source-bound envelope with the operation ID in the body, so
+writing equal logical bytes still changes the physical version. Deletion writes
+a retained tombstone. Together these prevent a delayed conditional request from
+replacing a newer value or recreating deleted state. Raw captures, attachments
+and immutable connector pages retain their existing bytes and paths.
+
+Backfill reads and applies an unchanged key under the writer's key gate. Keys
+with accepted mutation history belong to journal replay. Replay advances a
+contiguous closed frontier and commits its projection and checkpoint together;
+it cannot skip a pending intent. The worker reconciles quiet pending keys in
+bounded passes and continues replaying after observing parity. Worker restart
+and continue-as-new retain progress in PostgreSQL; source payloads and credentials
+do not enter Temporal history.
+
+The byte mirror is temporary migration evidence, not an implementation of
+`ApplicationState`. The typed projector currently covers account credentials and
+revocations, onboarding, role operations, privacy controls, connector secrets,
+Replicas records, board state, write fences and deletion requests. It binds one
+epoch to a target namespace and checks source ownership, revisions and independent
+typed readback in the replay transaction. New tenant enrollment requires an
+explicit trusted verifier and append-only receipt; offline owner bounds remain
+unchanged. Unsupported domains fail closed.
+
+## Release and switch requirements
+
+A compatibility rollout must deploy readers that understand both formats to
+every API and worker before enabling journaled writes. It must inventory and
+drain old in-flight writers. Reader compatibility and write activation need
+separate rollout control; the low-level adapters do not prove fleet enrollment.
+After envelopes exist, application rollback must retain compatible readers and
+the journal. The original uninstrumented application image cannot read them.
+
+Before switching runtime authority, complete the remaining typed domains and
+workflow handoff, finish replay, fence legacy mutation admission, drain accepted
+operations, and verify typed parity at the resulting closed frontier. Keep auth,
+reads and capture intake available, and route or durably queue mutations during
+the fence. A live parity observation alone is not a cutover receipt. Cancel the
+migration worker only after the completed authority switch or an explicit abort.
+
+The current components do not implement fleet enrollment, the mutation-routing
+fence, full registry and workflow projection, a final readiness receipt, or a
+one-command online upgrade. Those remain release gates. Existing-installation
+traffic, signup, capture, restart, deletion and rollback rehearsals must verify
+the composed release before production activation.
