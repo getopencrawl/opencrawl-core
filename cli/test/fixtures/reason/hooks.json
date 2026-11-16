@@ -1,0 +1,46 @@
+[
+ {
+  "args": [
+   "collect",
+   "hook",
+   "--harness",
+   "reason",
+   "--managed"
+  ],
+  "payload": {
+   "hook_event_name": "SessionStart",
+   "session_id": "01a1e63c-499f-719d-b503-3c66f563f3a3",
+   "transcript_path": "/home/runner/pi-probe/run/agent/sessions/--home-runner-pi-probe-run-proj--/2026-11-16T21-21-13-120Z_01a1e63c-499f-719d-b503-3c66f563f3a3.jsonl",
+   "cwd": "/home/runner/pi-probe/run/proj"
+  }
+ },
+ {
+  "args": [
+   "collect",
+   "hook",
+   "--harness",
+   "reason",
+   "--managed"
+  ],
+  "payload": {
+   "hook_event_name": "Stop",
+   "session_id": "01a1e63c-499f-719d-b503-3c66f563f3a3",
+   "transcript_path": "/home/runner/pi-probe/run/agent/sessions/--home-runner-pi-probe-run-proj--/2026-11-16T21-21-13-120Z_01a1e63c-499f-719d-b503-3c66f563f3a3.jsonl",
+   "cwd": "/home/runner/pi-probe/run/proj"
+  }
+ },
+ {
+  "args": [
+   "collect",
+   "hook",
+   "--harness",
+   "reason"
+  ],
+  "payload": {
+   "hook_event_name": "SessionEnd",
+   "session_id": "01a1e63c-499f-719d-b503-3c66f563f3a3",
+   "transcript_path": "/home/runner/pi-probe/run/agent/sessions/--home-runner-pi-probe-run-proj--/2026-11-16T21-21-13-120Z_01a1e63c-499f-719d-b503-3c66f563f3a3.jsonl",
+   "cwd": "/home/runner/pi-probe/run/proj"
+  }
+ }
+]

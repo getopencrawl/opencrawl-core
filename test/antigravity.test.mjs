@@ -42,7 +42,7 @@ const batch={
 };
 
 test('Antigravity is a first-class session harness with fail-closed scope and owner controls',async()=>{
- assert.deepEqual([...SESSION_HARNESSES],['claude-code','codex','cursor','grok-bot','antigravity','devin']);
+ assert.deepEqual([...SESSION_HARNESSES],['claude-code','codex','cursor','grok-bot','antigravity','devin','reason']);
  assert.equal(isSessionHarness('antigravity'),true);
  // agy is a CLI convenience alias only; wire and storage contracts require canonical antigravity.
  for(const value of ['agy','ANTIGRAVITY','gemini-cli','',null,undefined,['antigravity']])assert.equal(isSessionHarness(value),false);

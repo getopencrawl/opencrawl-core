@@ -64,6 +64,7 @@ Capture controls:
   collect install [--yes]              Review recording scope before enabling
   collect install --harness cursor     Capture new Cursor conversations
   collect install --harness grok-bot   Capture Grok Bot; run on the Bot's cloud computer
+  collect install --harness reason     Capture Reason sessions from the agent directory
   collect titles                      Refresh names of already captured sessions
   collect exclude --project /path     Block a project and its subdirectories
   collect exclude --session-id ID     Block a session and its subagents
@@ -77,7 +78,7 @@ History import (optional, asks during collect install):
   collect flush --retry-rejected       Retry held HTTP 413 batches after fixing the receiver limit
   collect backfill --dry-run --json     Preview local transcript counts; no upload
   collect backfill --harness all --yes  Import after the user approves
-  --harness claude-code|codex|antigravity|all  Limit the history import to chosen sources
+  --harness claude-code|codex|antigravity|reason|all  Limit the history import to chosen sources
   --concurrency 1..4                    History upload workers (default: 4)
   --batch-delay-ms 0..60000              Minimum gap between batch starts (default: 0)
   collect install --backfill claude-code|codex|antigravity|all  Explicit setup import choice

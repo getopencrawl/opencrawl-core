@@ -2,7 +2,7 @@
 
 Read [capture privacy and controls](capture-privacy.md) before enabling collection.
 
-The CLI installs capture for local Claude Code, Codex and [Antigravity](#antigravity) sessions, including sessions run by their desktop apps and IDEs, and for [Grok Bot](#grok-bot) on a Bot's cloud computer. Run `opencrawl login`, then `opencrawl collect install`. Codex requires reviewing/trusting the installed commands in `/hooks` or desktop Settings > Hooks. Existing sessions may need a restart.
+The CLI installs capture for local Claude Code, Codex and [Antigravity](#antigravity) sessions, including sessions run by their desktop apps and IDEs, and for [Grok Bot](#grok-bot) on a Bot's cloud computer. [Reason](#reason) is enrolled explicitly with `--harness reason`. Run `opencrawl login`, then `opencrawl collect install`. Codex requires reviewing/trusting the installed commands in `/hooks` or desktop Settings > Hooks. Existing sessions may need a restart.
 
 Capture uses command hooks and incremental reads of native JSONL transcripts. The harness supervises asynchronous hooks. Each hook durably saves its event, then attempts a nonblocking uploader lock; the winner uploads in that same process, and competing hooks exit. Unix dispatch uses exec to preserve the harness-owned PID. Capture never starts detached children. Each uploader has a 90-second process deadline and exits on detected parent loss (checked every second), including while waiting for locks or network responses. Durable unacknowledged bytes remain for the next hook. Foreground flush/backfill is unaffected. If the harness itself dies, reaping adopted children remains the host’s responsibility. The same mechanism runs on macOS, Linux and Windows without an init service. Legacy OpenCrawl LaunchAgents/user timers are removed during installation. The installer preserves existing hook groups, backs up changed files, and rolls back configuration writes if installation fails. It uses absolute executable paths so desktop launch environments do not need the interactive shell's PATH.
 
@@ -45,6 +45,83 @@ Failures are searchable and appear as Error notes in the transcript. Native
 unchanged steps deduplicate, while richer content remains an immutable revision.
 This is normalized session capture, not a raw transcript archive or native model
 token-usage export. Rules such as `GEMINI.md` are not collected as memory.
+
+## Reason
+
+`opencrawl collect install --harness reason` captures sessions of the Reason
+agent harness from its agent directory, which uses the Pi agent layout:
+`PI_CODING_AGENT_DIR`, or `~/.pi/agent` when that is unset. Reason is never
+enrolled by a plain `collect install`; it is selected explicitly.
+
+```sh
+opencrawl login
+opencrawl collect install --harness reason
+```
+
+The installer writes one file, `<agent dir>/extensions/opencrawl-capture.ts`,
+and changes nothing else there: settings, other extensions and session logs are
+left as they are. The file starts with an ownership line. Installation refuses
+to replace a same-named file that lacks it, a reinstall rewrites only that file,
+and `collect uninstall` removes only that file. Start a new session, or run
+`/reload` in an open one, so the extension loads.
+
+The extension is the hook. On `session_start`, `agent_end`, `session_compact`
+and `session_shutdown` it starts the capture runner without a shell and writes
+one JSON object to its standard input:
+
+```json
+{"hook_event_name":"Stop","session_id":"<id>","transcript_path":"<agent dir>/sessions/--<cwd>--/<timestamp>_<id>.jsonl","cwd":"<cwd>"}
+```
+
+The event names sent are `SessionStart`, `Stop`, `PostCompact` and `SessionEnd`.
+The extension never reads the conversation, never returns a value to the agent
+and does not wait for the runner; a runner that cannot start is ignored. A
+session that is not saved to a file sends nothing. Every hook except `SessionEnd`
+is a managed hook: it records a local notice and may upload, and it ends when
+the agent ends. `SessionEnd` only records its notice. A one-shot run that exits
+before the ten-second live window keeps its events queued; the next session's
+hook, `collect sync` or `collect flush` uploads them.
+
+Capture reads the session log named by the hook, incrementally, from
+`<agent dir>/sessions/--<cwd>--/<timestamp>_<session id>.jsonl`. A file outside
+`sessions/`, a symlink out of it, or a file whose header names another session
+is refused. Sessions relocated with `PI_CODING_AGENT_SESSION_DIR`, `--session-dir`
+or the `sessionDir` setting are outside the enrolled directory and are not read.
+
+| Session log entry | Captured as |
+| - | - |
+| `session` header | `session_metadata` (id, version, cwd, parent session of a fork); sets the session ID and project directory |
+| `message`, role `user` | `message` with text and image blocks; images go through the attachment pipeline |
+| `message`, role `assistant` | `message` with `text`, `thinking` and `tool_use` blocks (from `toolCall`), plus model, provider, stop reason, error and usage |
+| `message`, role `toolResult` | `tool_result` with the call ID, tool name, text output, returned images and the error flag |
+| `message`, role `bashExecution` | `exec_command_end` marked `user_shell_command`: a command the person ran directly |
+| `custom_message` | `automation_message` attributed to its extension |
+| `compaction`, `branch_summary` | `compaction` with the summary only |
+| `session_info` | `session_title` (a name the person set) |
+| `model_change`, `thinking_level_change` | `turn_metadata` |
+
+System messages are not captured: they repeat the prompt and tool declarations,
+including the copy inside a compaction entry. Usage records, labels, context
+edits, extension state (`custom`), tool `details` and provider signatures on
+text and thinking are not captured either; redacted thinking has no text and is
+dropped. Events keep the entry's ISO timestamp, its `id` and `parentId`, and are
+ordered by byte offset in the log. An abandoned branch stays in the log and is
+captured as it was written; the tree is not flattened. The log does not say
+which surface started the agent, so the origin is `unknown`.
+
+`collect backfill --harness reason` imports existing session logs after explicit
+approval, like other transcript harnesses. `--harness reason` on install never
+starts an import. There is no skill or MCP installation for Reason yet, and
+native memory files are not collected.
+
+What was verified: the parser, installer and hook path against a session a real
+Pi 1.5.2 agent wrote with this extension installed
+(`cli/test/fixtures/reason/session.jsonl` and `hooks.json`; only the model
+endpoint was a local stub), and the remaining entry types against the published
+[session format](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/session-format.md).
+Not verified: a session produced by a Reason-hosted deployment, whose agent
+directory location may differ and is then set with `PI_CODING_AGENT_DIR`, and
+the Windows runner invocation.
 
 ## Grok Bot
 

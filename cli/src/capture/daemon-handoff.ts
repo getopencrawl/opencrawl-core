@@ -7,7 +7,7 @@ import {captureDir,readCaptureConfig,captureDaemonEnabled,harnessRoot,antigravit
 import {captureExcluded} from './policy.ts';
 import {cursorSession} from './cursor.ts';
 import {grokBotSession,grokBotUnsupported,GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
-import {type Harness} from './parse.ts';
+import {reasonTranscriptName,type Harness} from './parse.ts';
 import {devinSession,devinUnsupported,DEVIN_MAX_HOOK_BYTES} from './devin.ts';
 import {codexNativeSession} from './codex-session.ts';
 
@@ -22,6 +22,7 @@ export function daemonPathAllowed(config:CaptureConfig,harness:Harness,sessionId
   const root=resolve(harnessRoot(config,harness)),path=resolve(file),parts=relative(root,path).split(sep);
   if(harness==='claude-code')return parts[0]==='projects'&&parts.length===3&&basename(path)===sessionId+'.jsonl';
   if(harness==='codex')return ['sessions','archived_sessions'].includes(parts[0]??'')&&path.endsWith('.jsonl')&&basename(path).endsWith('-'+sessionId+'.jsonl');
+  if(harness==='reason')return parts.length===3&&parts[0]==='sessions'&&reasonTranscriptName(basename(path),sessionId);
   if(harness==='cursor')return parts.length===5&&parts[0]==='projects'&&parts[2]==='agent-transcripts'&&parts[3]===sessionId&&parts[4]===sessionId+'.jsonl';
   if(harness==='antigravity')return antigravityBrainDirs(root).some(({dir})=>{
     const segments=relative(dir,path).split(sep);return segments.length===4&&segments[0]===sessionId&&segments[1]==='.system_generated'&&segments[2]==='logs'&&['transcript.jsonl','transcript_full.jsonl'].includes(segments[3]!);

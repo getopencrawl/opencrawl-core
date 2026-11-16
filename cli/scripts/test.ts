@@ -7,7 +7,7 @@ import {join,resolve} from 'node:path';
 const home=mkdtempSync(join(tmpdir(),'opencrawl-cli-test-home-'));
 const env:NodeJS.ProcessEnv={...process.env};
 for(const key of Object.keys(env))if(key.startsWith('OPENCRAWL_')&&!key.startsWith('OPENCRAWL_TEST_'))delete env[key];
-Object.assign(env,{HOME:home,USERPROFILE:home,XDG_CONFIG_HOME:join(home,'xdg-config'),XDG_CACHE_HOME:join(home,'cache'),XDG_DATA_HOME:join(home,'data'),OPENCRAWL_CONFIG_HOME:join(home,'config'),OPENCRAWL_NO_UPDATE:'1',CLAUDE_CONFIG_DIR:join(home,'claude'),CLAUDE_DESKTOP_CONFIG_DIR:join(home,'claude-desktop'),CODEX_HOME:join(home,'codex'),CURSOR_CONFIG_DIR:join(home,'cursor'),ANTIGRAVITY_HOME:join(home,'antigravity')});
+Object.assign(env,{HOME:home,USERPROFILE:home,XDG_CONFIG_HOME:join(home,'xdg-config'),XDG_CACHE_HOME:join(home,'cache'),XDG_DATA_HOME:join(home,'data'),OPENCRAWL_CONFIG_HOME:join(home,'config'),OPENCRAWL_NO_UPDATE:'1',CLAUDE_CONFIG_DIR:join(home,'claude'),CLAUDE_DESKTOP_CONFIG_DIR:join(home,'claude-desktop'),CODEX_HOME:join(home,'codex'),CURSOR_CONFIG_DIR:join(home,'cursor'),ANTIGRAVITY_HOME:join(home,'antigravity'),PI_CODING_AGENT_DIR:join(home,'pi-agent')});
 const child=Bun.spawn([process.execPath,'test',...process.argv.slice(2)],{cwd:resolve(import.meta.dir,'..'),env,stdin:'inherit',stdout:'inherit',stderr:'inherit'});
 const stop=()=>child.kill('SIGTERM');process.once('SIGINT',stop);process.once('SIGTERM',stop);
 try{process.exitCode=await child.exited;}

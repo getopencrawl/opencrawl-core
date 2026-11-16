@@ -9,7 +9,7 @@ import {failureMessage, failureStatus, useLibraryMutation, useResource} from './
 import {consoleResourceKey, useConsoleAccessFailure, useConsoleModel} from '../data.tsx';
 
 const PAGE = 50, MAX = 500;
-const harnessOf = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'cursor' || value === 'grok-bot' || value === 'antigravity' ? value : null;
+const harnessOf = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'cursor' || value === 'grok-bot' || value === 'antigravity' || value === 'reason' ? value : null;
 export function sessionPath({userId, harness, sessionId}: SessionRef) {
   return '/sessions?' + new URLSearchParams({user: userId, harness, id: sessionId}).toString();
 }

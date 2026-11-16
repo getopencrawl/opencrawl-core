@@ -109,16 +109,16 @@ export async function collectCommand(action:string,api:string,values:any) {
   const harness=normalizeHarness(values.harness);
   switch(action) {
     case 'install': {
-      // Grok Bot keeps no local history to import.
+      // Grok Bot keeps no local history to import. Reason history is imported only by an explicit backfill.
       const backfillChoice=normalizeHarness(values.backfill);
-      const mode=backfillChoice??(process.env.CLAUDE_CODE_REMOTE==='true'||['grok-bot','cursor'].includes(harness??'')?'skip':'ask');
-      if(!['ask','skip','all','claude-code','codex','antigravity'].includes(mode))throw new CliError('INVALID_USAGE','Use --backfill ask, skip, all, claude-code, codex, or antigravity.',64);
+      const mode=backfillChoice??(process.env.CLAUDE_CODE_REMOTE==='true'||['grok-bot','cursor','reason'].includes(harness??'')?'skip':'ask');
+      if(!['ask','skip','all','claude-code','codex','antigravity','reason'].includes(mode))throw new CliError('INVALID_USAGE','Use --backfill ask, skip, all, claude-code, codex, antigravity, or reason.',64);
       const notice=captureNoticeFor(api,harness);
       if(!await approveCapture(values.yes===true,values.json,notice))return {status:'consent_required',notice,nextStep:'Confirm the destination and recording scope with the user, then run collect install --yes. This does not approve history import.'};
       const installed=await installCapture(api,{deferAuth:values['defer-auth']===true,daemon:values.daemon===true,...(harness?{harnesses:[harness as any]}:{})});
       // Detection is not consent to configure other clients. Grok Bot has no
       // supported skill directory; do not install another client's integration.
-      const clients=(harness?[harness]:installed.harnesses??[]).filter(client=>client!=='grok-bot');
+      const clients=(harness?[harness]:installed.harnesses??[]).filter(client=>client!=='grok-bot'&&client!=='reason');
       // Skill setup must not undo working capture or hide its installed state.
       const skills=clients.length?await agentSkills('install',api,{clients}).catch(()=>({status:'error',nextStep:`Capture is installed. Run opencrawl skills install ${clients.map(client=>'--client '+client).join(' ')} --api ${api} with approved access to agent skill directories.`}))
         :{results:[],message:'This client does not support automatic skill installation. Use opencrawl board instructions for setup guidance.'};
@@ -177,7 +177,7 @@ export async function collectCommand(action:string,api:string,values:any) {
       if(harness==='antigravity')return antigravityHook(api,values.event,plugin);
       // Only harness-managed async hooks may upload. Legacy sync hooks stay local.
       try {
-        if(!['claude-code','codex'].includes(harness??''))throw new Error('Invalid harness');
+        if(!['claude-code','codex','reason'].includes(harness??''))throw new Error('Invalid harness');
         const event=await hookInput();
         // Cursor-format runtimes, Grok Bot included, also load Claude Code hook
         // files and wait on every hook. That is not a Claude Code or Codex
