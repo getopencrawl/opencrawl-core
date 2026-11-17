@@ -2,7 +2,7 @@ import {createHmac,timingSafeEqual} from 'node:crypto';
 import type {ConnectorOAuth,IntegrationRegistry} from './ports.mjs';
 import type {ProxyRequest,ProxyResponse,ProviderData} from './types.mjs';
 import {fail,slackPublicRead} from './slack-proxy-policy.mjs';
-import {createLinearSource} from './linear-source.mjs';
+import {createLinearAccess} from './linear-access.mjs';
 import {createGoogleDriveSource} from './google-drive-source.mjs';
 import type {DriveAudience} from './google-drive-access.mjs';
 
@@ -80,7 +80,7 @@ export function createComposioOAuth({apiKey,organizationId,proxyUrl,proxyKey,reg
       const record=await bound(id,userId);
       let result:ProxyResponse<unknown>;
       if(record.provider==='linear'){
-        result=await createLinearSource({tenantId:organizationId,connectionId:record.integrationId,workspaceId:record.workspace||'',
+        result=await createLinearAccess({tenantId:organizationId,connectionId:record.integrationId,workspaceId:record.workspace||'',
           request:input=>proxy({...input,connectedAccountId:id,userId})}).read({endpoint,method,query,headers,body});
       }else if(record.provider==='googledrive'){
         if(!driveAudience)fail(503,'Drive workspace membership is unavailable');

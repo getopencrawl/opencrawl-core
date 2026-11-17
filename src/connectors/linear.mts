@@ -1,17 +1,37 @@
 import type {AirbyteEnvelope, ConnectorBinding} from './types.mjs';
-import {LINEAR_POLICY, linearId, linearUrl, type LinearDocument} from '../integrations/linear-source.mjs';
-import {digest, invalidRecord} from './scope.mjs';
+import {linearId, linearUrl, type LinearContext} from '../integrations/linear-access.mjs';
+import {LINEAR_KINDS} from '../integrations/linear-upstream.mjs';
+import {invalidRecord} from './scope.mjs';
 import {resource, text, time} from './documents.mjs';
 
-export function normalizeLinear(binding: ConnectorBinding, stream: string, envelope: AirbyteEnvelope<LinearDocument>, key: string) {
-  const data = envelope._airbyte_data, access = data?.access;
-  if (binding.provider !== 'linear' || !['issues', 'comments'].includes(stream) || data?.kind !== (stream === 'issues' ? 'issue' : 'comment') || !data.id?.startsWith(data.kind + ':')) invalidRecord('Invalid Linear stream or identity');
-  linearId(data.id.slice(data.kind.length + 1));
-  if (typeof data.updatedAt !== 'string' || !Number.isFinite(Date.parse(data.updatedAt)) || typeof data.title !== 'string' || typeof data.text !== 'string') invalidRecord('Invalid Linear content');
-  if (!access || access.policy !== LINEAR_POLICY || access.tenantId !== binding.tenantId || access.connectionId !== binding.connectionId || access.workspaceId !== binding.workspaceId ||
-    !Number.isSafeInteger(access.checkedAt) || access.checkedAt < 0 || access.checkedAt > envelope._airbyte_extracted_at + 60000 ||
-    access.contentHash !== digest({id: data.id, kind: data.kind, title: data.title, text: data.text, url: data.url, updatedAt: data.updatedAt})) invalidRecord('Invalid Linear public-team receipt');
-  linearId(access.teamId);
-  return resource(binding, {kind: data.kind, sourceId: data.id, title: text(data.title), body: text(data.text), extractedAt: access.checkedAt, sourceKey: key,
-    metadata: {url: linearUrl(data.url), versionAt: time(data.updatedAt, access.checkedAt), normalizerVersion: 1}});
+export function linearResourceId(stream: string, data: Record<string, unknown>): string {
+  const kind = LINEAR_KINDS[stream];
+  if (!kind) invalidRecord('Invalid Linear stream');
+  linearId(data.id);
+  if (stream === 'issue_history') {linearId(data.issueId); return `${kind}:${data.issueId}:${data.id}`;}
+  return `${kind}:${data.id}`;
+}
+const opaque = new Set(['descriptionState', 'contentState', 'bodyData']);
+const prose = new Set(['description', 'content', 'body']);
+const label = (key: string) => key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').replace(/^./, letter => letter.toUpperCase());
+
+/** Airbyte records stay intact in raw storage; only live-authorized resources enter search. */
+export function normalizeLinear(binding: ConnectorBinding, stream: string, envelope: AirbyteEnvelope, key: string, context: LinearContext) {
+  if (binding.provider !== 'linear' || !context || !Array.isArray(context.lines)) invalidRecord('Linear access proof required');
+  const data = envelope._airbyte_data, sourceId = linearResourceId(stream, data), kind = LINEAR_KINDS[stream];
+  const title = [typeof data.identifier === 'string' ? data.identifier : '', typeof data.title === 'string' ? data.title : typeof data.name === 'string' ? data.name : ''].filter(Boolean).join(': ') || context.title || label(kind);
+  const lines = [...context.lines];
+  for (const [field, value] of Object.entries(data)) {
+    if (value === null || value === undefined || opaque.has(field) || ['title', 'name', 'identifier', 'url'].includes(field)) continue;
+    if (prose.has(field)) {lines.push(text(value)); continue;}
+    if (typeof value === 'object' && !Object.keys(value).length) continue;
+    const rendered = typeof value === 'string' ? value : JSON.stringify(value);
+    if (rendered) lines.push(`${label(field)}: ${text(rendered)}`);
+  }
+  const url = context.url || (typeof data.url === 'string' ? data.url : '');
+  return resource(binding, {kind, sourceId, title: text(title), body: text(lines.filter(Boolean).join('\n')),
+    extractedAt: envelope._airbyte_extracted_at, sourceKey: key,
+    metadata: {url: url ? linearUrl(url) : '', versionAt: time(typeof data.updatedAt === 'string' ? data.updatedAt : typeof data.createdAt === 'string' ? data.createdAt : undefined, envelope._airbyte_extracted_at), normalizerVersion: 2,
+      authorId: typeof data.userId === 'string' ? data.userId : typeof data.actorId === 'string' ? data.actorId : typeof data.creatorId === 'string' ? data.creatorId : '',
+      linearStream: stream}});
 }

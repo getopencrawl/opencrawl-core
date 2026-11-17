@@ -1,4 +1,5 @@
-import {linearId, linearQuery} from './linear-source.mjs';
+import {linearId, linearQuery} from './linear-access.mjs';
+import {LINEAR_STREAMS, linearStreamSettings} from './linear-upstream.mjs';
 import type {Proxy, ProviderCatalog, ConnectorDefinition} from './types.mjs';
 const DRIVE = 'https://www.googleapis.com/drive/v3';
 const SLACK = 'https://slack.com/api';
@@ -224,17 +225,17 @@ const providers:ProviderCatalog = {
   },
   linear: {
     id: 'linear', name: 'Linear', primaryMetric: 'Issues',
-    description: 'Issues and comments from public teams.',
+    description: 'Issues, projects, planning and customer context from Linear.',
     ...(!linearPublicAccess ? {unavailableReason: 'Linear requires the public-team permission adapter. Upgrade the application runtime to enable this source.'} : {}),
     toolkit: 'linear', scope: 'team', teamOnly: true,
-    help: 'An administrator connects Linear for the whole workspace. Imports issues and comments from public Linear teams, including archived issues. Private teams, projects, documents and attachment bodies are excluded. Current access is checked again for search.',
+    help: 'An administrator shares Linear workspace records and public-team content. Uses the full Airbyte Linear connector, including projects, updates, cycles, relationships, history and customer requests. Private teams and private initiatives remain unavailable in search. Current access is checked again when indexing and retrieving.',
     owner: record => `workspace=${record.workspace}`,
-    authConfig: {name: 'OpenCrawl Linear read', credentials: {scopes: 'read'}},
+    authConfig: {name: 'OpenCrawl Linear full read', credentials: {scopes: 'read,customer:read,initiative:read'}},
     connector: connectors.linear,
-    streams: [{name: 'issues', syncMode: 'full_refresh_append'}, {name: 'comments', syncMode: 'full_refresh_append'}],
+    streams: linearStreamSettings(),
     progressStream: ['issues'], progress: [{stream: 'issues', label: 'Issues'}, {stream: 'comments', label: 'Comments'}],
-    keys: {issues: ['id'], comments: ['id']}, units: ['issue', 'issues'],
-    sourceConfiguration: () => ({}),
+    keys: Object.fromEntries(LINEAR_STREAMS.map(name => [name, name === 'issue_history' ? ['issueId', 'id'] : ['id']])), units: ['issue', 'issues'],
+    sourceConfiguration: () => ({start_date: '1970-01-01T00:00:00Z', num_workers: 4, credentials: {auth_type: 'OAuth2.0'}}),
     async account(proxy) {
       const result = await linearQuery<{organization: {id: string; name: string}}>(proxy, 'query OpenCrawlAccount { organization { id name } }');
       linearId(result.organization?.id);

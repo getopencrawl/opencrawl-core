@@ -14,7 +14,7 @@ import {connectorManifest} from '../integrations/manifests.mjs';
 import {createConnectorResolver} from '../integrations/resolver.mjs';
 import {createConnectorSearch} from '../connectors/search.mjs';
 import {singleOrganizationStorage,singleOrganizationDestination} from '../integrations/single-organization-storage.mjs';
-import {createLinearSource} from '../integrations/linear-source.mjs';
+import {createLinearAccess} from '../integrations/linear-access.mjs';
 import {createGitHubApp,githubAppSettings} from '../integrations/github.mjs';
 import {credentialVault} from '../integrations/credential-vault.mjs';
 import {createSlackOAuth,slackOAuthManifest} from '../integrations/slack-oauth.mjs';
@@ -133,7 +133,7 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
     },
   };
   const connectors=createConnectorResolver({environment:'selfhost',generation:'v1',registry,
-    linearAccess:record=>createLinearSource({tenantId:record.tenantId,connectionId:record.integrationId,workspaceId:record.workspace||'',request:input=>authorization.proxy({...input,connectedAccountId:record.connectedAccountId||'',userId:`selfhost:${record.tenantId}:${record.userId}`})}),
+    linearAccess:record=>createLinearAccess({tenantId:record.tenantId,connectionId:record.integrationId,workspaceId:record.workspace||'',request:input=>authorization.proxy({...input,connectedAccountId:record.connectedAccountId||'',userId:`selfhost:${record.tenantId}:${record.userId}`})}),
     ...(driveAudience?{driveAccess:(record:import('../integrations/types.mjs').IntegrationRecord)=>createDriveAccess({audience:driveAudience,request:input=>authorization.proxy({...input,connectedAccountId:record.connectedAccountId||'',userId:`selfhost:${record.tenantId}:${record.userId}`})})}:{}),
     async storage(record){destination.validate(record);return store;},search:tenantId=>{if(tenantId!==settings.organizationId)throw new Error('Workspace scope denied');return createConnectorSearch(settings.search);}});
   async function recover(){

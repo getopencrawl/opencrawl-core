@@ -96,11 +96,13 @@
     "./state/postgres": "./dist/src/state/postgres.mjs",
     "./state/board": "./dist/src/state/board.mjs",
     "./state/initialize": "./dist/src/state/initialize.mjs",
-    "./integrations/linear-source": "./dist/src/integrations/linear-source.mjs",
+    "./integrations/linear-access": "./dist/src/integrations/linear-access.mjs",
     "./context/suggestion-events": "./dist/src/search/suggestion-events.mjs",
     "./selfhost/context-suggestions": "./dist/src/selfhost/context-suggestions.mjs",
     "./search/check": "./dist/src/search/check.mjs",
-    "./search/check-http": "./dist/src/search/check-http.mjs"
+    "./search/check-http": "./dist/src/search/check-http.mjs",
+    "./integrations/linear-upstream": "./dist/src/integrations/linear-upstream.mjs",
+    "./integrations/linear-source": "./dist/src/integrations/linear-access.mjs"
   },
   "files": [
     "dist/src",

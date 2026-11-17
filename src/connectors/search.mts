@@ -9,7 +9,7 @@ import {connectorMapping} from '../search/mapping.mjs';
 export {connectorMapping};
 // Atomic comparison at the destination protects against retries and concurrent,
 // out-of-order files. Suppressions persist across source replay.
-export const SEARCHABLE_KINDS = ['message', 'channel', 'file', 'file_chunk', 'meeting', 'transcript', 'page', 'passage', 'database', 'comment', 'commit', 'pull_request', 'issue', 'review', 'issue_comment', 'review_comment', 'commit_comment', 'release'];
+export const SEARCHABLE_KINDS = ['message', 'channel', 'file', 'file_chunk', 'meeting', 'transcript', 'page', 'passage', 'database', 'comment', 'commit', 'pull_request', 'issue', 'review', 'issue_comment', 'review_comment', 'commit_comment', 'release', 'project', 'project_update', 'project_milestone', 'project_status', 'user', 'team', 'cycle', 'issue_label', 'workflow_state', 'attachment', 'issue_relation', 'issue_history', 'customer', 'customer_need', 'customer_status', 'customer_tier', 'initiative', 'initiative_to_project'];
 
 
 export function createConnectorSearch(options: RealmOptions & {tenantId: string}) {

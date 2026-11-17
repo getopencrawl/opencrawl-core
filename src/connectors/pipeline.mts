@@ -3,8 +3,7 @@ import {authorize, objectStream, receiptKey, selectedObject, validateBinding} fr
 import {normalizeSlackFile} from './slack-files.mjs';
 import {normalizeSlack} from './slack.mjs';
 import {normalizeGitHub} from './github.mjs';
-import {normalizeLinear} from './linear.mjs';
-import type {LinearDocument} from '../integrations/linear-source.mjs';
+import {normalizeLinear, linearResourceId} from './linear.mjs';
 import {normalizeGoogleDrive} from './google-drive.mjs';
 import type {DriveDocumentRecord} from '../integrations/google-drive-source.mjs';
 import {readRecords} from './records.mjs';
@@ -13,8 +12,9 @@ import {pipelineVersion} from './scope.mjs';
 
 
 /** One fixed authorized connection, one scoped bucket adapter, one scoped index. */
-export function createConnectorPipeline({binding, store, search, checkActive = async () => {}, heartbeat = () => {}}: PipelineOptions) {
+export function createConnectorPipeline({binding, store, search, linear, checkActive = async () => {}, heartbeat = () => {}}: PipelineOptions) {
   validateBinding(binding);
+  if(binding.provider==='linear'&&!linear)throw new Error('Linear permission adapter required for indexing');
   if (['granola', 'circleback', 'notion'].includes(binding.provider)) return createWorkspacePipeline({binding, store, search, checkActive, heartbeat});
   const principal = {tenantId: binding.tenantId};
   async function active() { authorize(principal, binding); await checkActive(binding); }
@@ -31,6 +31,7 @@ export function createConnectorPipeline({binding, store, search, checkActive = a
       const receipt = receiptKey(binding, search.identity, key);
       if (await store.get(receipt, {maxBytes: 8192})) return {status: 'already-indexed', records: 0};
       let batch: DocumentItem[] = []; let records = 0, batchBytes = 0;
+      let linearRows: AirbyteEnvelope[] = [], linearBytes = 0;
       async function flush() {
         if (!batch.length) return;
         await active();
@@ -38,7 +39,27 @@ export function createConnectorPipeline({binding, store, search, checkActive = a
         records += batch.length; batch = []; batchBytes = 0;
         heartbeat({records});
       }
+      async function flushLinear() {
+        if(!linearRows.length)return;
+        await active();
+        const contexts=await linear!.describeMany(linearRows.map(envelope=>linearResourceId(stream,envelope._airbyte_data)));
+        for(const envelope of linearRows){
+          const id=linearResourceId(stream,envelope._airbyte_data),context=contexts.get(id);
+          if(!context)continue;
+          const documents=normalizeLinear(binding,stream,envelope,key,context);
+          for(let offset=0;offset<documents.length-1;offset+=100){await active();await search.putDocuments(principal,binding,documents.slice(offset,Math.min(offset+100,documents.length-1)));}
+          await active();await search.putDocuments(principal,binding,documents.slice(-1));
+          records+=documents.length;heartbeat({records});
+        }
+        linearRows=[];linearBytes=0;
+      }
       const result = await readRecords(store, key, async envelope => {
+        if(binding.provider==='linear'){
+          linearResourceId(stream,envelope._airbyte_data);
+          const bytes=Buffer.byteLength(JSON.stringify(envelope));
+          if(linearRows.length>=100||linearBytes+bytes>1024*1024)await flushLinear();
+          linearRows.push(envelope);linearBytes+=bytes;return;
+        }
         if (binding.provider === 'googledrive') {
           // Source receipts prove collection-time permission. Retrieval separately
           // checks current ACLs; replaying an old object never grants live access.
@@ -63,7 +84,7 @@ export function createConnectorPipeline({binding, store, search, checkActive = a
           await active();await search.putDocuments(principal,binding,[file.manifest]);
           records++;heartbeat({records});return;
         }
-        const documents = binding.provider === 'slack' ? [normalizeSlack(binding, stream, envelope as AirbyteEnvelope<SlackRecord>, key)] : binding.provider === 'linear' ? normalizeLinear(binding, stream, envelope as AirbyteEnvelope<LinearDocument>, key) : normalizeGitHub(binding, stream, envelope as AirbyteEnvelope<GitHubRecord>, key);
+        const documents = binding.provider === 'slack' ? [normalizeSlack(binding, stream, envelope as AirbyteEnvelope<SlackRecord>, key)] : normalizeGitHub(binding, stream, envelope as AirbyteEnvelope<GitHubRecord>, key);
         for (const normalized of documents) {
           const bytes = Buffer.byteLength(JSON.stringify(normalized));
           if (batch.length >= 100 || batchBytes + bytes > 1024 * 1024) await flush();
@@ -72,6 +93,7 @@ export function createConnectorPipeline({binding, store, search, checkActive = a
         }
       }, {heartbeat, maxExpanded: (binding.provider === 'github' ? 2 : 1) * 1024 * 1024 * 1024});
       await flush();
+      await flushLinear();
       await active();
       // Only acknowledge after every bulk item succeeded. Partial writes replay safely.
       await store.put(receipt, Buffer.from(JSON.stringify({pipeline: pipelineVersion(binding), key, sha256: result.sha256, sourceRecords: result.records, records})), 'application/json');

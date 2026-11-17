@@ -91,7 +91,8 @@ authentication for network exposure, a meaningful product operation, persistence
 across restart, backup/restore,
 resource limits and support boundaries. Public source and install artifacts must
 not require private GitHub Packages access. The repository is public. Core and CLI are
-Apache-2.0; plugins remain MIT. See docs/self-host.md for the supported preview.
+Apache-2.0; plugins remain MIT. Vendored Airbyte source manifests retain their
+own licenses (see `src/integrations/upstream/linear/LICENSE`). See docs/self-host.md for the supported preview.
 
 Session capture uses the authenticated full application. Both it and the
 hosted shell land immutable gzip batches and attachment blobs through the same
