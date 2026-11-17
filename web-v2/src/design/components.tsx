@@ -138,7 +138,7 @@ export function IntegrationCard({name, icon, compact = false, status, metrics, m
           </li>)}</ul> : emptyMessage && <p className="oc-integration-empty">{emptyMessage}</p>}
         </div>
       </div>
-      <footer className="oc-integration-footer"><p className="oc-integration-meta">{metadata}</p>{action}</footer>
+      <footer className="oc-integration-footer"><p className="oc-integration-meta" data-tone={status?.tone}>{metadata}</p>{action}</footer>
     </>}
   </article>;
 }

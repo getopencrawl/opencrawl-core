@@ -18,7 +18,7 @@ function UsageSourceCard({source, now}: {source: UsageSource; now: number}) {
   return <IntegrationCard name={source.name} icon={source.icon} status={sourceStatus(source.state)}
     metrics={source.indexedSpecies?.map(item => ({label: speciesLabel(item.name), count: item.count}))}
     emptyMessage={source.indexedSpecies ? 'No content yet.' : 'Content breakdown unavailable.'}
-    metadata={<><span>{source.lastSyncedAt ? `Synced ${ago(source.lastSyncedAt, now)}` : 'Not synced yet'}</span>{source.connectedBy && <span>Connected by {source.connectedBy}</span>}</>}/>;
+    metadata={<span>{source.lastSyncedAt ? `Synced ${ago(source.lastSyncedAt, now)}` : 'Not synced yet'}</span>}/>;
 }
 
 /** Three cards of things OpenCrawl did for this workspace's agents; each counts something that happened. */

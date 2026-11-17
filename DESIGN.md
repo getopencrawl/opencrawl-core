@@ -727,7 +727,8 @@ connector logo, name and Connect button; unavailable providers retain their Deta
 Connect starts OAuth immediately, or opens the required API-key/setup form.
 Connected cards use the shared IntegrationCard from Usage: a framed logo, connector
 name and status pill, a fixed-height scrollable metrics breakdown, and an anchored
-footer for sync metadata and Manage. There is no subtitle under the connector name
+footer for a sync timestamp with a status dot and Manage. Connected-by attribution
+appears only in Manage. There is no subtitle under the connector name
 or collapsed N more state. Keep real zero counts, per-stream completion, stale
 measurement labels, and measured progress. Account/scope details remain inside Manage.
 Unconnected sources use the compact variant of the same component with a primary

@@ -310,7 +310,7 @@ img { max-width: 100%; }
 @media(max-width:600px){.report-metric-value{font-size:var(--report-metric-compact)}.report-panel{padding:var(--space-5)}.report-bars li{grid-template-columns:96px 1fr 48px}}
 
 .oc-status-pill { gap: 6px; padding: 2px var(--space-2); border: 1px solid var(--line-strong); border-radius: 999px; line-height: var(--leading-ui); background: transparent; }
-.oc-status-pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.oc-status-pill::before { content: ''; flex:0 0 8px; width:8px; height:8px; border-radius:50%; background:currentColor; }
 .oc-status-pill.oc-badge-success { background: var(--success-wash); border-color: color-mix(in srgb, var(--success) 30%, transparent); }
 .oc-status-pill.oc-badge-warning { background: var(--pending-wash); border-color: color-mix(in srgb, var(--pending) 30%, transparent); }
 .oc-status-pill.oc-badge-danger { background: var(--danger-wash); border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
@@ -365,7 +365,11 @@ img { max-width: 100%; }
 .oc-integration-empty { margin:0; color:var(--quiet); font-size:var(--text-sm); }
 .oc-integration-breakdown .oc-source-message { margin:0 0 var(--space-3); }
 .oc-integration-footer { display:flex; align-items:center; justify-content:space-between; flex-shrink:0; min-height:var(--space-12); gap:var(--space-3); padding-top:var(--space-3); border-top:1px solid var(--line); }
-.oc-integration-meta { display:flex; flex-direction:column; min-width:0; gap:var(--space-1); margin:0; color:var(--quiet); font-size:var(--text-xs); }
+.oc-integration-meta { display:flex; align-items:center; min-width:0; gap:var(--space-2); margin:0; color:var(--quiet); font-size:var(--text-xs); }
+.oc-integration-meta::before { content:''; flex:0 0 8px; width:8px; height:8px; border-radius:50%; background:currentColor; }
+.oc-integration-meta[data-tone=success]::before { background:var(--success); }
+.oc-integration-meta[data-tone=warning]::before { background:var(--pending); }
+.oc-integration-meta[data-tone=danger]::before { background:var(--danger); }
 .oc-integration-meta span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .oc-integration-footer .oc-button { flex-shrink:0; min-height:32px; padding:var(--space-1) var(--space-2); font-size:var(--text-xs); gap:var(--space-1); }
 .oc-integration-footer .oc-button.quiet { margin-right:calc(-1 * var(--space-2)); }
