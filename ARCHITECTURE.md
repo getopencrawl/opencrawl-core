@@ -106,7 +106,9 @@ its authorized scope resolver. See `docs/session-indexing.md`.
 
 Publish tested immutable core runtime versions. The hosted consumer advances its
 package version, integrity lock and Git source pin together; it verifies embedded
-source revision. Documentation/test-only changes need no runtime publication.
+source revision. Protected main publishes immutable development revisions after
+its required checks. Stable tagged distributions retain independent release
+gates; see [continuous delivery](docs/continuous-delivery.md).
 
 ## Organization search realm
 
