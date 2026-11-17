@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {checksPassed,gates,selectRelease,versionedChart,versionParts,artifactNames,checksums,verifyArtifactBytes,publishDraft,verifyPublic,type Run,type Release,type GitHub,type Plan} from './release.mts';
+import {stableCandidate,checksPassed,gates,selectRelease,versionedChart,versionParts,artifactNames,checksums,verifyArtifactBytes,publishDraft,verifyPublic,type Run,type Release,type GitHub,type Plan} from './release.mts';
 
 const repo='getopencrawl/opencrawl-core',a='a'.repeat(40),b='b'.repeat(40),c='c'.repeat(40),unrelated='d'.repeat(40);
 const ancestor=(x:string,y:string)=>[a,b,c].includes(x)&&[a,b,c].includes(y)&&[a,b,c].indexOf(x)<=[a,b,c].indexOf(y);
@@ -112,4 +112,13 @@ test('the final verifier fetches every artifact anonymously and rejects inaccess
   await verifyPublic(plan,repo,download);assert.equal(urls.length,4);
   assert.ok(urls.every(url=>url.startsWith('https://github.com/'+repo+'/releases/download/helm-v0.1.1/')));
   await assert.rejects(verifyPublic(plan,repo,async()=>new Response(null,{status:404})),/Anonymous/);
+});
+
+test('weekly stable selection uses the newest fully checked mainline candidate while main advances',async()=>{
+  const old={...runs()[1]!,head_sha:a,id:1},latest={...old,head_sha:b,id:2},foreign={...old,head_sha:c,id:3,head_repository:{full_name:'stranger/fork'}};
+  assert.equal(await stableCandidate([old,latest,foreign],repo,()=>true,async revision=>revision===a),a);
+  assert.equal(await stableCandidate([old,latest],repo,()=>true,async()=>true),b);
+  assert.equal(await stableCandidate([old,latest],repo,revision=>revision===a,async()=>true),a);
+  await assert.rejects(stableCandidate([old,latest],repo,()=>true,async()=>false),/No mainline candidate/);
+  await assert.rejects(stableCandidate([{...old,event:'pull_request'},foreign],repo,()=>true,async()=>true),/No mainline candidate/);
 });

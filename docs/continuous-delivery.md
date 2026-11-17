@@ -20,8 +20,10 @@ identity. The `continuous` dist-tag advances only after rechecking current main
 and its gates. This is the unstable development channel. Consumers keep immutable versions,
 never a floating source checkout. Stable self-host kits are tagged `helm-v*`
 from tested commits on main every Monday, or earlier by explicit release dispatch.
-Their full installation, historical upgrade/restore, architecture and image
-checks remain mandatory. A failed stable gate fails the release rather than
+The weekly cut selects the newest mainline candidate that has passed every
+distribution gate, even when newer main commits are still being checked. Full
+installation, historical upgrade/restore, architecture and image checks remain
+mandatory. A failed stable gate fails the release rather than
 labeling the development build stable; it does not pause cloud delivery.
 Manual stable private-package publication also requires a matching `v<version>`
 tag on that mainline commit and the full distribution gates. An untagged main

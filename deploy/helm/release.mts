@@ -24,6 +24,13 @@ export function checksPassed(runs:Run[],revision:string,repository:string):boole
     return latest?.status==='completed'&&latest.conclusion==='success';
   });
 }
+/** Fast main may still be validating at the weekly release tick. Select a
+ * completed mainline candidate rather than depending on an idle branch head. */
+export async function stableCandidate(runs:Run[],repository:string,isMainline:(revision:string)=>boolean,passed:(revision:string)=>Promise<boolean>):Promise<string>{
+  const candidates=runs.filter(r=>r.path==='.github/workflows/self-host.yml'&&r.event==='push'&&r.head_branch==='main'&&r.head_repository?.full_name===repository&&r.status==='completed'&&r.conclusion==='success'&&sha.test(r.head_sha)).sort((a,b)=>b.id-a.id);
+  for(const run of candidates)if(isMainline(run.head_sha)&&await passed(run.head_sha))return run.head_sha;
+  throw Error('No mainline candidate has passed every stable distribution gate');
+}
 export interface Asset {id:number;name:string;size:number;digest:string|null;browser_download_url:string}
 export interface Release {id:number;tag_name:string;target_commitish:string;draft:boolean;prerelease:boolean;body?:string;assets:Asset[]}
 export interface Plan {action:'publish'|'verify'|'skip';revision:string;version?:string;reason?:string}
@@ -153,7 +160,8 @@ if(import.meta.main){
   const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH!,'utf8'));
   const manual=process.env.GITHUB_EVENT_NAME==='workflow_dispatch';
   if(process.env.GITHUB_REF!=='refs/heads/main'||!['workflow_dispatch','schedule'].includes(process.env.GITHUB_EVENT_NAME!))throw Error('Only scheduled or manual mainline events may publish stable Helm releases');
-  const revision=manual?event.inputs?.revision:process.env.GITHUB_SHA;
+  const candidates=manual?undefined:await api.request<{workflow_runs:Run[]}>('actions/workflows/self-host.yml/runs?event=push&branch=main&status=success&per_page=100');
+  const revision=manual?event.inputs?.revision:await stableCandidate(candidates!.workflow_runs,repository,r=>ancestor(r,'origin/main'),r=>ready(api,r,repository));
   const requested=manual?event.inputs?.version:undefined;
   if(!sha.test(revision||'')||manual&&!requested)throw Error('A full source SHA and an explicit manual version are required');
   if(!ancestor(revision,'origin/main'))throw Error('Release source is not on main');
