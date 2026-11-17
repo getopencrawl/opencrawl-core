@@ -15,10 +15,11 @@ export function useUsage(adapter: ConsoleDataAdapter) {
 }
 
 function UsageSourceCard({source, now}: {source: UsageSource; now: number}) {
-  return <IntegrationCard name={source.name} icon={source.icon} status={sourceStatus(source.state)}
+  const status = sourceStatus(source.state);
+  return <IntegrationCard name={source.name} icon={source.icon} status={status}
     metrics={source.indexedSpecies?.map(item => ({label: speciesLabel(item.name), count: item.count}))}
     emptyMessage={source.indexedSpecies ? 'No content yet.' : 'Content breakdown unavailable.'}
-    metadata={<span>{source.lastSyncedAt ? `Synced ${ago(source.lastSyncedAt, now)}` : 'Not synced yet'}</span>}/>;
+    metadata={<span>{source.state === 'synced' && source.lastSyncedAt ? `Synced ${ago(source.lastSyncedAt, now)}` : status.label}</span>}/>;
 }
 
 /** Three cards of things OpenCrawl did for this workspace's agents; each counts something that happened. */

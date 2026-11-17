@@ -127,7 +127,6 @@ export function IntegrationCard({name, icon, compact = false, status, metrics, m
   return <article className={`oc-integration-card${compact ? ' oc-integration-compact' : ''}`} aria-label={name}>
     <header className="oc-integration-header">
       <IntegrationLogo src={icon}/><h3 title={name}>{name}</h3>
-      {!compact && status && <StatusBadge variant="pill" tone={status.tone}>{status.label}</StatusBadge>}
     </header>
     {compact ? action : <>
       <div ref={ref} className="oc-integration-breakdown" role={overflow ? 'region' : undefined} aria-label={overflow ? metricsLabel : undefined} tabIndex={overflow ? 0 : undefined}>

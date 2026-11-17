@@ -726,8 +726,9 @@ Each section uses an alphabetical, responsive grid. Available tiles show the
 connector logo, name and Connect button; unavailable providers retain their Details action.
 Connect starts OAuth immediately, or opens the required API-key/setup form.
 Connected cards use the shared IntegrationCard from Usage: a framed logo, connector
-name and status pill, a fixed-height scrollable metrics breakdown, and an anchored
-footer for a sync timestamp with a status dot and Manage. Connected-by attribution
+name, a fixed-height scrollable metrics breakdown, and an anchored footer for the
+only sync status: a timestamp or current state with a status dot, and a secondary
+Manage button. Connected-by attribution
 appears only in Manage. There is no subtitle under the connector name
 or collapsed N more state. Keep real zero counts, per-stream completion, stale
 measurement labels, and measured progress. Account/scope details remain inside Manage.

@@ -35,7 +35,8 @@ for(const width of [1440,600,390,320]) test(`available tiles precede connected c
   await expect(cards).toHaveCount(24);
   await expect(page.getByRole('tablist')).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  await expect(connectedCards.locator('.oc-status-pill')).toHaveCount(18);
+  await expect(connectedCards.locator('.oc-status-pill')).toHaveCount(0);
+  await expect(connectedCards.locator('footer .oc-button.secondary')).toHaveCount(18);
 });
 
 test('small catalogs use only sections and hidden search cannot keep filtering',async({page})=>{
