@@ -1,4 +1,4 @@
-import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
+import {scanTargetInventoryIn,targetInventoryFailure,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import {randomUUID,createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {isDeepStrictEqual} from 'node:util';

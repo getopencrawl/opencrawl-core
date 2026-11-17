@@ -1,4 +1,4 @@
-import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
+import {scanTargetInventoryIn,targetInventoryFailure,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {z} from 'zod';
