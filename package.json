@@ -113,7 +113,8 @@
     "./state/integration-commands": "./dist/src/state/integration-commands.mjs",
     "./state/integration-resources": "./dist/src/state/integration-resources.mjs",
     "./integrations/temporal-types": "./dist/src/integrations/temporal/types.mjs",
-    "./state/migration": "./dist/src/state/migrate.mjs"
+    "./state/migration": "./dist/src/state/migrate.mjs",
+    "./board/announcements": "./dist/src/board/announcements.mjs"
   },
   "files": [
     "dist/src",

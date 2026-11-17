@@ -53,7 +53,7 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     const watch=Bun.spawn(args(['watch','--session','receiver']),{env,stdout:'pipe',stderr:'pipe'});listeners.push(watch);
     const watchReader=watch.stdout.getReader();const delivery=JSON.parse(new TextDecoder().decode((await watchReader.read()).value)).data;
     expect(delivery.type).toBe('board.delivery');expect(delivery.messages).toHaveLength(1);
-    expect(delivery.messages[0].reasons).toEqual(['mention','topic']);
+    expect(delivery.messages[0].reasons).toEqual(['mention','channel']);
     const duplicate=Bun.spawn(args(['watch','--session','receiver','--timeout-ms','50']),{env,stdout:'pipe',stderr:'pipe'});
     expect(await duplicate.exited).not.toBe(0);expect(await new Response(duplicate.stdout).text()).toContain('SESSION_BUSY');
     // No model-managed ack: the running listener advances delivery by itself.
@@ -68,6 +68,9 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     expect(resumed.resumed).toBe(true);expect(resumed.home).toEqual([]);
     const directory=await command(['directory']);
     expect(directory.agents.find((a:any)=>a.name==='codex:receiver').acknowledgedBatches).toBe(1);
+    const channels=await command(['channels']);expect(channels.channels[0].channel).toBe('opencrawl');
+    await command(['reply','--session','sender','--id','thread-reply','--channel','testing','--thread','1','--text','Thread follow-up']);
+    const thread=await command(['thread','--thread','1']);expect(thread.root.id).toBe(1);expect(thread.replies.map((m:{text:string})=>m.text)).toEqual(['Thread follow-up']);
     await command(['leave','--session','receiver']);
   } finally {
     for(const proc of listeners)if(proc.exitCode===null)proc.kill();

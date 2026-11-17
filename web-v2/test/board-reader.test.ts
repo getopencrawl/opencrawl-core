@@ -13,7 +13,7 @@ function fixture(count: number) {
   const adapter: Pick<ConsoleDataAdapter, 'board'> = {async board(input, signal) {
     assert.equal(signal.aborted, false); source.calls.push(input);
     if (source.failure) throw source.failure;
-    const matching = source.messages.filter(message => (!input.topic || message.topic === input.topic) && (input.before === undefined || message.id < input.before)).reverse();
+    const matching = source.messages.filter(message => (!input.channel || message.topic === input.channel) && (input.before === undefined || message.id < input.before)).reverse();
     return {messages: matching.slice(0, 20), next: matching.length > 20 ? matching[19]!.id : null,
       topicSummaries: [{topic: 'release', posts: source.messages.length, latest: {timestamp: source.messages.at(-1)?.timestamp ?? 0, name: 'codex:release'}}]};
   }};
@@ -24,7 +24,7 @@ function ids(reader: BoardReader) {return reader.snapshot().report?.messages.map
 test('a permalink opens an old message in one scoped read and retains normal pagination and refresh', async () => {
   const {source, adapter} = fixture(5000), reader = new BoardReader(adapter, 'release', false, () => {}, 30);
   await reader.refresh();
-  assert.deepEqual(source.calls, [{topic: 'release', before: 31}]);
+  assert.deepEqual(source.calls, [{channel: 'release', rootsOnly:true, before: 31}]);
   assert.deepEqual(ids(reader), Array.from({length: 20}, (_, i) => 30 - i));
   await reader.older();
   assert.equal(ids(reader).at(-1), 1);
@@ -122,8 +122,8 @@ test('the conversation renders through a pure core adapter with encoded links an
   const report = reader.snapshot().report; assert.ok(report);
   const markup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(BoardContent, {report, stream: true})));
   assert.match(markup, /oc-board-author-line/); assert.match(markup, /oc-board-post-header/); assert.match(markup, /#2/);
-  assert.match(markup, /topic=caf%C3%A9%20%26%20notes%2F%3F/);
-  assert.match(markup, /href="\/diagnostics\?view=board&amp;topic=caf%C3%A9%20%26%20notes%2F%3F&amp;message=2"/);
+  assert.match(markup, /channel=caf%C3%A9%20%26%20notes%2F%3F/);
+  assert.match(markup, /href="\/diagnostics\?view=board&amp;channel=caf%C3%A9%20%26%20notes%2F%3F&amp;message=2"/);
   assert.match(markup, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/); assert.match(markup, /Second paragraph/);
   assert.doesNotMatch(markup, /<script>|Refresh|WorkOS/);
 });
@@ -169,4 +169,19 @@ test('load older validates its overlap and never appends a replacement board to 
   assert.equal(source.calls.length - beforeRecovery, 2, 'one checked older page plus one fresh head');
   assert.deepEqual(ids(reader), Array.from({length: 20}, (_, i) => 30 - i));
   assert.ok(reader.snapshot().report?.messages.every(message => message.text.startsWith('Replacement')));
+});
+
+test('thread readers retain an explicit root, paginate replies and clear on mismatched thread data',async()=>{
+ const root={...post(1,'opencrawl'),system:true as const,threadId:1};
+ const replies=Array.from({length:25},(_,i)=>({...post(i+2,'opencrawl'),threadId:1}));
+ let wrong=false;
+ const adapter:Pick<ConsoleDataAdapter,'board'>={async board(input){
+  assert.equal(input.channel,'opencrawl');assert.equal(input.threadId,1);assert.equal(input.rootsOnly,false);
+  const matching=replies.filter(m=>m.id<(input.before??Infinity)).toReversed();
+  return {threadRoot:wrong?{...root,id:99}:root,messages:matching.slice(0,20),next:matching.length>20?matching[19]!.id:null,topicSummaries:[]};
+ }};
+ const reader=new BoardReader(adapter,'opencrawl',false,()=>{},undefined,1);
+ await reader.refresh();assert.equal(reader.snapshot().report?.threadRoot?.id,1);assert.equal(ids(reader).length,20);
+ await reader.older();assert.deepEqual(ids(reader),replies.toReversed().map(m=>m.id));
+ wrong=true;await reader.refresh();assert.equal(reader.snapshot().report,null);assert.match(reader.snapshot().error,/thread/);
 });

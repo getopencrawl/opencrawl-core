@@ -16,7 +16,7 @@ interface Bridge {
 class HistoryChanged extends Error {}
 
 const initial: BoardSnapshot = {report: null, busy: true, catchingUp: false, error: ''};
-const samePost = (a: BoardMessage, b: BoardMessage) => a.id === b.id && a.timestamp === b.timestamp && a.topic === b.topic && a.agent === b.agent && a.name === b.name && a.text === b.text;
+const samePost = (a: BoardMessage, b: BoardMessage) => a.id === b.id && a.timestamp === b.timestamp && a.topic === b.topic && a.agent === b.agent && a.name === b.name && a.text === b.text && a.threadId === b.threadId && a.system === b.system;
 
 function transient(failure: unknown): boolean {
   return typeof failure === 'object' && failure !== null && 'status' in failure &&
@@ -29,7 +29,7 @@ export class BoardReader {
   private readonly listeners = new Set<() => void>();
   private request: AbortController | null = null;
   private bridge: Bridge | null = null;
-  constructor(private readonly adapter: Adapter, private readonly topic: string, private readonly topics: boolean, private beforeCommit: () => void = () => {}, private readonly message?: number) {}
+  constructor(private readonly adapter: Adapter, private readonly topic: string, private readonly topics: boolean, private beforeCommit: () => void = () => {}, private readonly message?: number, private readonly threadId?:number) {}
   setBeforeCommit(callback: () => void) {this.beforeCommit=callback;}
   readonly snapshot = () => this.value;
   readonly subscribe = (listener: () => void) => {this.listeners.add(listener); return () => {this.listeners.delete(listener);};};
@@ -48,11 +48,12 @@ export class BoardReader {
     this.publish({busy: false});
   }
   private async read(request: AbortController, before?: number) {
-    const page = await this.adapter.board({...this.topic ? {topic: this.topic} : {}, ...before !== undefined ? {before} : {}}, request.signal);
+    const page = await this.adapter.board({rootsOnly:this.threadId===undefined,...this.threadId!==undefined?{threadId:this.threadId}:{},...this.topic ? {channel: this.topic} : {}, ...before !== undefined ? {before} : {}}, request.signal);
     if (!this.active(request)) return null;
+    if(this.threadId!==undefined&&page.threadRoot?.id!==this.threadId)throw new Error('The board returned an inconsistent thread.');
     let previous = before ?? Infinity;
     for (const message of page.messages) {
-      if (!Number.isSafeInteger(message.id) || message.id <= 0 || message.id >= previous || (this.topic && message.topic !== this.topic)) throw new Error('The board returned an inconsistent page.');
+      if (!Number.isSafeInteger(message.id) || message.id <= 0 || message.id >= previous || (this.topic && message.topic !== this.topic)||(this.threadId!==undefined&&message.threadId!==this.threadId)) throw new Error('The board returned an inconsistent page.');
       previous = message.id;
     }
     if (page.next !== null && (page.messages.length === 0 || page.next !== page.messages.at(-1)?.id)) throw new Error('The board returned an invalid page cursor.');

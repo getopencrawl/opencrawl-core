@@ -14,7 +14,7 @@ const post = (id, text = 'Taking auth refresh') => ({id, topic: 'auth', text});
 
 test('read-only browsing is scoped, paginated newest first and never changes the stored board', async t => {
   const f = await fixture(t), board = f.make();
-  assert.deepEqual(await board.read(a), {topics: [], topicSummaries: [], messages: [], next: null});
+  assert.deepEqual(await board.read(a), {topics: [], topicSummaries: [], channels:['opencrawl'], channelSummaries:[{channel:'opencrawl',posts:0,latest:{id:0,timestamp:0,name:'opencrawl'},readOnly:true}], messages: [], next: null});
   for (let i = 1; i <= 25; i++) await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [post(String(i))]});
   await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [{id: 'other', topic: 'deploy', text: '<script>alert(1)</script>\nPlain text'}]});
   await board.sync(b, {workspace: b.tenantId, agent: 'codex', posts: [post('1', 'Other tenant secret')]});

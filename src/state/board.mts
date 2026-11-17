@@ -5,6 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {ensureSchemaIndex,type ApplicationDatabase} from './postgres.mjs';
 import type {BoardState,BoardMessage,Participant,Delivery} from '../board/types.mjs';
+import {systemIdentity,announcementChannel} from '../board/channels.mjs';
 import {boardIdentity} from '../board/identity.mjs';
 
 const fail=(message:string,status=503)=>Object.assign(new Error(message),{status});
@@ -15,7 +16,7 @@ export type BoardProfile=Omit<Participant,'pending'>&{pending:(Omit<Delivery,'me
 export interface BoardReader {
   metadata():Promise<BoardMetadata>;
   message(id:number):Promise<BoardMessage|null>;
-  messages(input:{before?:number;after?:number;through?:number;topic?:string;limit:number;descending?:boolean}):Promise<BoardMessage[]>;
+  messages(input:{before?:number;after?:number;through?:number;topic?:string;threadId?:number;rootsOnly?:boolean;limit:number;descending?:boolean}):Promise<BoardMessage[]>;
   participant(id:string):Promise<Participant|null>;
   participants():Promise<Record<string,Participant>>;
   profiles():Promise<Record<string,Omit<Participant,'pending'>>>;
@@ -72,6 +73,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     CREATE TABLE IF NOT EXISTS opencrawl_board_search_pages(namespace text NOT NULL,token uuid NOT NULL,offset_value bigint NOT NULL,boundary jsonb NOT NULL,PRIMARY KEY(namespace,token,offset_value),FOREIGN KEY(namespace,token) REFERENCES opencrawl_board_search_snapshots ON DELETE CASCADE);
   `);
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_topic',keys:['namespace','tenant_hash','topic','id']});
+    await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_thread',keys:['namespace','tenant_hash',"(((record ->> 'threadId'::text))::bigint)",'id'],jsonKey:{column:'record',key:'threadId'}});
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_publication',keys:['namespace','tenant_hash','author','request_id','agent','id']});
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_mentions',method:'gin',keys:["((record -> 'mentions'::text))"]});
     await ensureSchemaIndex(client,{table:'opencrawl_board_search_chunks',name:'opencrawl_board_search_words',method:'gin',keys:['words']});
@@ -106,7 +108,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     }
     return {metadata,
       async message(id){return (await query('SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND id=$3',[id])).rows[0]?.record??null;},
-      async messages({before,after,through,topic,limit,descending=false}){if(!Number.isSafeInteger(limit)||limit<1||limit>250)throw fail('Invalid board page');return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND ($3::bigint IS NULL OR id<$3) AND ($4::bigint IS NULL OR id>$4) AND ($5::bigint IS NULL OR id<=$5) AND ($6::text IS NULL OR topic=$6) ORDER BY id ${descending?'DESC':'ASC'} LIMIT $7`,[before??null,after??null,through??null,topic??null,limit])).rows.map(row=>row.record);},
+      async messages({before,after,through,topic,threadId,rootsOnly=false,limit,descending=false}){if(!Number.isSafeInteger(limit)||limit<1||limit>250)throw fail('Invalid board page');return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND ($3::bigint IS NULL OR id<$3) AND ($4::bigint IS NULL OR id>$4) AND ($5::bigint IS NULL OR id<=$5) AND ($6::text IS NULL OR topic=$6) ${threadId!==undefined?"AND record ? 'threadId'":''} AND ($8::bigint IS NULL OR (record->>'threadId')::bigint=$8) AND (NOT $9::boolean OR NOT record ? 'threadId') ORDER BY id ${descending?'DESC':'ASC'} LIMIT $7`,[before??null,after??null,through??null,topic??null,limit,threadId??null,rootsOnly])).rows.map(row=>row.record);},
       async participant(id){const row=(await query('SELECT record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id])).rows[0];return row?{...row.record,pending:await pending(id)}:null;},
       async participants(){
         const rows=(await query('SELECT agent,record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 ORDER BY agent')).rows;
@@ -118,7 +120,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       async directory({after,limit,cutoff}){const total=Number((await query('SELECT count(*) count FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND seen>$3',[cutoff])).rows[0].count);const rows=(await query(`SELECT p.agent,p.record,d.record delivery,(SELECT count(*) FROM opencrawl_board_delivery_messages dm WHERE dm.namespace=p.namespace AND dm.tenant_hash=p.tenant_hash AND dm.agent=p.agent) delivery_count FROM opencrawl_board_participants p LEFT JOIN opencrawl_board_deliveries d USING(namespace,tenant_hash,agent) WHERE p.namespace=$1 AND p.tenant_hash=$2 AND p.seen>$3 ORDER BY p.seen DESC,p.agent LIMIT $4 OFFSET $5`,[cutoff,limit,after])).rows;return {total,agents:rows.map(row=>({id:row.agent,participant:{...row.record,pending:row.delivery?{...row.delivery,count:Number(row.delivery_count)}:null}}))};},
       async agents(){return Object.fromEntries((await query('SELECT agent,record FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2 ORDER BY position,agent')).rows.map(row=>[row.agent,row.record]));},
       async topics(){return (await query('SELECT topic,first_id,posts,latest FROM opencrawl_board_topics WHERE namespace=$1 AND tenant_hash=$2 ORDER BY first_id')).rows.map(row=>({topic:row.topic,first:Number(row.first_id),posts:Number(row.posts),latest:row.latest}));},
-      async unread({after,through,topics,mention,userId,agent,name,limit}){return (await query(`SELECT m.record FROM opencrawl_board_messages m WHERE m.namespace=$1 AND m.tenant_hash=$2 AND m.id>$3 AND m.id<=$4 AND (m.topic=ANY($5::text[]) OR m.record->'mentions' ? $6) AND NOT(m.author=$7 AND(m.agent=$8 OR(lower(m.name)=lower($9) AND(m.legacy_agent OR EXISTS(SELECT 1 FROM opencrawl_board_participants p WHERE p.namespace=m.namespace AND p.tenant_hash=m.tenant_hash AND p.agent=m.agent AND lower(p.name)=lower($9)))))) ORDER BY m.id LIMIT $10`,[after,through,topics,mention??'',userId,agent,name,limit])).rows.map(row=>row.record);},
+      async unread({after,through,topics,mention,userId,agent,name,limit}){return (await query(`SELECT m.record FROM opencrawl_board_messages m WHERE m.namespace=$1 AND m.tenant_hash=$2 AND m.id>$3 AND m.id<=$4 AND (m.topic=ANY($5::text[]) OR m.record->'mentions' ? $6 OR (m.topic='opencrawl' AND m.record->>'system'='true' AND NOT m.record ? 'threadId')) AND NOT(m.author=$7 AND(m.agent=$8 OR(lower(m.name)=lower($9) AND(m.legacy_agent OR EXISTS(SELECT 1 FROM opencrawl_board_participants p WHERE p.namespace=m.namespace AND p.tenant_hash=m.tenant_hash AND p.agent=m.agent AND lower(p.name)=lower($9)))))) ORDER BY m.id LIMIT $10`,[after,through,topics,mention??'',userId,agent,name,limit])).rows.map(row=>row.record);},
       async publication({userId,agent,name,requestId,registered}){return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND author=$3 AND request_id=$4 AND(agent=$5 OR($6 AND lower(name)=lower($7) AND legacy_agent)) ORDER BY (agent=$5) DESC,id LIMIT 1`,[userId,requestId,agent,registered,name])).rows[0]?.record??null;},
       putParticipant,
       async removeParticipant(id){await query('DELETE FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id]);},
@@ -221,7 +223,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
 
 /** Validate before any DDL/import. Unknown fields fail instead of disappearing. */
 const integer=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const messageFields={id:integer.min(1),timestamp:integer,agent:z.string(),author:z.string(),name:z.string(),topic:z.string(),text:z.string()};
+const messageFields={id:integer.min(1),timestamp:integer,agent:z.string(),author:z.string(),name:z.string(),topic:z.string(),text:z.string(),threadId:integer.min(1).optional(),system:z.literal(true).optional()};
 const publication=z.strictObject({explicitMentions:z.array(z.string()),unresolvedMentions:z.array(z.string())});
 const messageSchema=z.strictObject({...messageFields,requestId:z.string(),mentions:z.array(z.string()).optional(),publication:publication.optional()});
 const deliverySchema=z.strictObject({receipt:z.string().regex(/^[a-f0-9]{64}$/),createdAt:integer,through:integer,more:z.boolean(),messages:z.array(z.strictObject({...messageFields,mentions:z.array(z.string()).optional(),reasons:z.array(z.string())}))});
@@ -230,7 +232,12 @@ const boardSchema=z.strictObject({schema:z.literal(1),messages:z.array(messageSc
 export function validateLegacyBoard(value:unknown):asserts value is BoardState{
   const parsed=boardSchema.safeParse(value);if(!parsed.success)throw fail('Invalid or unsupported legacy board fields');
   const state=parsed.data;
-  for(let index=0;index<state.messages.length;index++)if(state.messages[index].id!==index+1)throw fail('Invalid legacy board message sequence');
+  for(let index=0;index<state.messages.length;index++){
+    const message=state.messages[index];
+    if(message.id!==index+1)throw fail('Invalid legacy board message sequence');
+    if(message.system&&(message.topic!==announcementChannel||message.threadId!==undefined||message.agent!==systemIdentity.agent||message.author!==systemIdentity.author||message.name!==systemIdentity.name))throw fail('Invalid board system identity');
+    if(message.threadId!==undefined){const root=state.messages[message.threadId-1];if(message.threadId>=message.id||!root||root.threadId!==undefined||root.topic!==message.topic||message.topic===announcementChannel&&!root.system)throw fail('Invalid board thread root');}
+  }
   for(const p of Object.values(state.participants??{})){
     if(p.ackCursor>state.messages.length||p.acknowledgedBatches>p.batches)throw fail('Invalid legacy board participant cursor');
     if(p.pending){if(p.pending.through<p.ackCursor||p.pending.through>state.messages.length)throw fail('Invalid legacy board delivery cursor');let previous=p.ackCursor;

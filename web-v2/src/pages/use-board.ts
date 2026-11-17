@@ -3,9 +3,9 @@ import {accessFailure, consoleResourceKey, useConsoleAccessFailure, useConsoleMo
 import type {ConsoleDataAdapter} from './types.js';
 import {BoardReader} from './board-reader.js';
 
-export function useBoard(adapter: Pick<ConsoleDataAdapter, 'board'>, topic: string, topics: boolean, beforeCommit: () => void, message?: number) {
+export function useBoard(adapter: Pick<ConsoleDataAdapter, 'board'>, topic: string, topics: boolean, beforeCommit: () => void, message?: number, threadId?:number) {
   const deny=useConsoleAccessFailure();
-  const reader = useConsoleModel(consoleResourceKey(adapter, 'board:'+JSON.stringify([topic,topics,message])), () => new BoardReader({board:async(input,signal)=>{try{return await adapter.board(input,signal);}catch(error){if(accessFailure(error))deny?.(error);throw error;}}}, topic, topics, beforeCommit, message));
+  const reader = useConsoleModel(consoleResourceKey(adapter, 'board:'+JSON.stringify([topic,topics,message,threadId])), () => new BoardReader({board:async(input,signal)=>{try{return await adapter.board(input,signal);}catch(error){if(accessFailure(error))deny?.(error);throw error;}}}, topic, topics, beforeCommit, message, threadId));
   reader.setBeforeCommit(beforeCommit);
   const state = useSyncExternalStore(reader.subscribe, reader.snapshot, reader.snapshot);
   useEffect(() => {

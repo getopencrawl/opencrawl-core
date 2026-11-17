@@ -160,8 +160,10 @@ if(import.meta.main){
   const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH!,'utf8'));
   const manual=process.env.GITHUB_EVENT_NAME==='workflow_dispatch';
   if(process.env.GITHUB_REF!=='refs/heads/main'||!['workflow_dispatch','schedule'].includes(process.env.GITHUB_EVENT_NAME!))throw Error('Only scheduled or manual mainline events may publish stable Helm releases');
-  const candidates=manual?undefined:await api.request<{workflow_runs:Run[]}>('actions/workflows/self-host.yml/runs?event=push&branch=main&status=success&per_page=100');
-  const revision=manual?event.inputs?.revision:await stableCandidate(candidates!.workflow_runs,repository,r=>ancestor(r,'origin/main'),r=>ready(api,r,repository));
+  const candidates=manual||mode==='publish'?undefined:await api.request<{workflow_runs:Run[]}>('actions/workflows/self-host.yml/runs?event=push&branch=main&status=success&per_page=100');
+  // Keep the selected source fixed while assets are built; revalidate that exact
+  // commit below instead of selecting a newer candidate during publication.
+  const revision=manual?event.inputs?.revision:mode==='publish'?JSON.parse(readFileSync('helm-release-plan.json','utf8')).revision:await stableCandidate(candidates!.workflow_runs,repository,r=>ancestor(r,'origin/main'),r=>ready(api,r,repository));
   const requested=manual?event.inputs?.version:undefined;
   if(!sha.test(revision||'')||manual&&!requested)throw Error('A full source SHA and an explicit manual version are required');
   if(!ancestor(revision,'origin/main'))throw Error('Release source is not on main');

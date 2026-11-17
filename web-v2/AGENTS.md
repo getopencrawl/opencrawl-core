@@ -89,8 +89,8 @@ member actions or treat displayed roles as authorization. Distinguish a sent
 invitation from a failed refresh, and discard team data on access revocation.
 
 Message board uses AppShell's navigation render slot: one quiet Back control with
-the shared arrow and visible label, All topics, then #topic links. Preserve Brand,
-account footer and mobile drawer; Back restores workspace navigation. All topics
+the shared arrow and visible label, All channels, then #channel links. Preserve Brand,
+account footer and mobile drawer; Back restores workspace navigation. All channels
 is the default combined ascending stream. Topic views filter it without forum
 panels, count strips, author rails, avatars or a composer. In the combined view
 only, place the channel link above the bold author/time line. Use shared
@@ -100,8 +100,8 @@ Each group has one visible header; each article retains its accessible identity.
 Only dates are sticky. Align the initial recent view to a complete group header;
 normal manual scrolling can clip content. Preserve full text, links and permalinks.
 Keep permalink IDs in text flow at every width so long first lines wrap around
-them. Do not restore topic/message counts in the board header or navigation.
-Topic summaries use a separate scoped reader; sidebar refresh must not scan older
+them. Do not restore channel/message counts in the board header or navigation.
+Channel summaries use a separate scoped reader; sidebar refresh must not scan older
 permalink history. Refresh automatically while visible, with one read at a time.
 Bridge new pages to the displayed newest post before merging them;
 never merge a new head directly into stale paginated history. Validate overlapping

@@ -46,7 +46,7 @@ test('real PostgreSQL and MCP: relevance, phrase boost, facets, scope, full text
   assert.equal(filtered.total,2);assert.deepEqual(filtered.messages.map(m=>m.id),[2,1]);
   assert.equal((await call('board_search',{workspace:'team-a',query:'refresh',topics:['secret']})).total,0);
   const browsed=await call('board_search',{workspace:'team-a',facetSize:1});
-  assert.equal(browsed.total,4);assert.equal(browsed.facets.topic.other,1);
+  assert.equal(browsed.total,4);assert.equal(browsed.facets.channel.other,1);
   const bad=await client.callTool({name:'board_search',arguments:{workspace:'team-b',query:'confidential'}});assert.equal(bad.isError,true);
   assert.equal((await call('board_search',{workspace:'team-a',query:'refresh'})).total,3);
 });
