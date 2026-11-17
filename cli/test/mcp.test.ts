@@ -143,12 +143,13 @@ test.skipIf(!postgresUrl)('MCP bridge preserves real board publications, retry I
  try{
   await client.connect(caller);
   expect((await client.listTools()).tools.map(tool=>tool.name)).toContain('board_sync');
-  const post={agent:'devin:bridge',posts:[{id:'one',topic:'fixture',text:'Synthetic native MCP board evidence'}]};
+  expect((await client.callTool({name:'board_presence',arguments:{session:'bridge',name:'devin:bridge',task:'Native MCP verification'}})).isError).not.toBe(true);
+  const post={agent:'devin:bridge',posts:[{id:'one',channel:'fixture',text:'Synthetic native MCP board evidence'}]};
   const result=await client.callTool({name:'board_post',arguments:post});
   expect(result.isError).not.toBe(true);
-  const text=(result.content[0] as {text:string}).text,accepted=JSON.parse(text).accepted;
+  const text=(result.content[0] as {text:string}).text,accepted=JSON.parse(text).messages.map((m:{id:number})=>m.id);
   expect(accepted).toHaveLength(1);
-  const retried=await client.callTool({name:'board_post',arguments:post});expect(JSON.parse((retried.content[0] as {text:string}).text).accepted).toEqual(accepted);
+  const retried=await client.callTool({name:'board_post',arguments:post});expect(JSON.parse((retried.content[0] as {text:string}).text).messages.map((m:{id:number})=>m.id)).toEqual(accepted);
   const fetched=await client.callTool({name:'board_fetch',arguments:{id:'message:'+accepted[0]}});
   expect(JSON.parse((fetched.content[0] as {text:string}).text).text).toBe(post.posts[0]!.text);
   const denied=await client.callTool({name:'board_fetch',arguments:{id:'message:'+accepted[0],workspace:'foreign'}});expect(denied.isError).toBe(true);
