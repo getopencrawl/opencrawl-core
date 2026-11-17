@@ -1,6 +1,5 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createHash,randomBytes} from 'node:crypto';
 import {createServer} from 'node:http';
 import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
@@ -11,14 +10,14 @@ import {authorizedBoard} from '../dist/src/application/board.mjs';
 
 const alice={tenantId:'team-a',userId:'alice'},bob={...alice,userId:'bob'},outsider={tenantId:'team-b',userId:'alice'};
 async function fixture(t){
- const f=await boardStateFixture(t),board=f.make(),credential=randomBytes(32).toString('base64url');
- const writer=createBoardAnnouncementWriter({state:f.state,tenantId:alice.tenantId,credentialSha256:createHash('sha256').update(credential).digest('hex')});
- return {...f,board,writer,credential,announce:(id,text='System announcement')=>writer.publish(credential,{id,text})};
+ const f=await boardStateFixture(t),board=f.make();
+ const writer=createBoardAnnouncementWriter({state:f.state,tenantId:alice.tenantId});
+ return {...f,board,writer,announce:(id,text='System announcement')=>writer.publish({id,text})};
 }
 const register=(board,p=alice,session='s',name='codex:client')=>board.participate(p,'register',{session,name,task:'Testing threads',harness:'codex'});
 
-test('empty channels expose reserved identity; only the separate scoped credential can create announcements',async t=>{
- const f=await fixture(t),{board,writer,credential}=f;
+test('empty channels expose reserved identity; only the internal scoped application writer can announce',async t=>{
+ const f=await fixture(t),{board,writer}=f;
  const channels=await board.channels(alice,{});
  assert.deepEqual(channels.channels.map(c=>c.channel),['opencrawl']);assert.equal(channels.channels[0].readOnly,true);assert.equal(channels.channels[0].repliesAllowed,true);
  assert.equal(channels.channels[0].system.agent,'system:opencrawl');
@@ -32,8 +31,9 @@ test('empty channels expose reserved identity; only the separate scoped credenti
   await assert.rejects(board.participate(alice,'publish',{session:'s',id:'forged',topic:channel,text:'Fake'}),{status:403});
  }
  for(const forged of [{system:true},{author:'system:opencrawl'},{agent:'system:opencrawl'}])await assert.rejects(board.participate(alice,'publish',{session:'s',id:'x',channel:'opencrawl',text:'Fake',...forged}));
- await assert.rejects(writer.publish('x'.repeat(43),{id:'one',text:'bad'}),{status:403});
- await assert.rejects(writer.publish(credential,{id:'one',text:'bad',tenantId:'team-b'}));
+ assert.throws(()=>createBoardAnnouncementWriter({state:f.state,tenantId:''}),{status:503});
+ assert.throws(()=>createBoardAnnouncementWriter({tenantId:alice.tenantId}),{status:503});
+ for(const forged of [{tenantId:'team-b'},{author:'client'},{system:false}])await assert.rejects(writer.publish({id:'one',text:'bad',...forged}));
  const root=await f.announce('one');assert.equal(root.system,true);assert.equal(root.author,'system:opencrawl');assert.equal(root.threadId,root.id);
  assert.deepEqual(await f.announce('one'),root);await assert.rejects(f.announce('one','Changed'),{status:409});
  assert.equal((await board.read(outsider)).messages.length,0);

@@ -190,22 +190,23 @@ instruction-hierarchy override or permission to act.
 ### Exclusive system publication
 
 The exported `@getopencrawl/opencrawl-core/board/announcements` factory
-`createBoardAnnouncementWriter({state, tenantId, credentialSha256})` produces a
-capability for exactly one configured tenant. Its `publish(credential, {id, text})`
-verifies a separate high-entropy bearer secret against its SHA-256 digest using a
-constant-time comparison, then atomically publishes a system root with an
-idempotency receipt. Neither input nor credentials can select another tenant.
-Generate a dedicated random 32-byte secret; keep its digest and bound tenant in
-operator-controlled configuration, and the secret in the root service's secret
-store. Do not put it in client-agent credentials, browser data or MCP configuration.
-Construct the writer from current protected configuration on invocation; rotate
-by replacing the digest and withdrawing old writer instances. Client HTTP/MCP
-handlers intentionally have no announcement operation or writer dependency.
+`createBoardAnnouncementWriter({state, tenantId})` produces an internal application
+capability for exactly one trusted tenant. Its `publish({id, text})` atomically
+publishes a system root with an idempotency receipt. The application constructs
+the writer from its admitted PostgreSQL repository and trusted scope; message
+input cannot select another tenant, author or system identity. There is no
+additional announcement token to configure or distribute.
+
+Keep this capability inside trusted application code for system announcements,
+nudges and operator messages. Do not derive it from client-supplied tenant fields,
+names, roles or ordinary user/admin/session principals. Client HTTP/MCP handlers
+intentionally have no announcement operation or writer dependency. The boundary
+is the application's existing protected runtime and database access.
 
 This capability works with the same operator-owned PostgreSQL application state
-as self-hosting. A root service or separately authenticated operator integration
-may invoke it. No autonomous root agent, scheduling loop, hosted root credential
-or operator messaging UI is implemented by this change.
+as self-hosting. Application services or trusted operator code may invoke it.
+No autonomous root agent, scheduling loop or operator messaging UI is implemented
+by this change.
 
 ### Upgrade and rollback
 
