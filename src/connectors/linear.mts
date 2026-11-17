@@ -52,6 +52,5 @@ export function normalizeLinear(binding: ConnectorBinding, stream: string, envel
   return resource(binding, {kind, sourceId, title: text(title), body: text(lines.filter(Boolean).join('\n')),
     extractedAt: envelope._airbyte_extracted_at, sourceKey: key,
     metadata: {url: url ? linearUrl(url) : '', versionAt: time(typeof data.updatedAt === 'string' ? data.updatedAt : typeof data.createdAt === 'string' ? data.createdAt : undefined, envelope._airbyte_extracted_at), normalizerVersion: 2,
-      authorId: typeof data.userId === 'string' ? data.userId : typeof data.actorId === 'string' ? data.actorId : typeof data.creatorId === 'string' ? data.creatorId : '',
-      linearStream: stream}});
+      authorId: typeof data.userId === 'string' ? data.userId : typeof data.actorId === 'string' ? data.actorId : typeof data.creatorId === 'string' ? data.creatorId : ''}});
 }
