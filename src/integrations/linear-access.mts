@@ -135,8 +135,15 @@ export function createLinearAccess({tenantId, connectionId, workspaceId, request
       if (item.historyId) {const ids = histories.get(item.id) || new Set<string>(); ids.add(item.historyId); histories.set(item.id, ids); return [];}
       return [{...item, sourceId}];
     });
-    for (let offset = 0; offset < ordinary.length; offset += 20) {
-      const batch = ordinary.slice(offset, offset + 20), variables = Object.fromEntries(batch.map((item, i) => ['id' + i, item.id]));
+    // Project visibility expands up to 250 teams. Twelve project aliases exceeded
+    // Linear's live query-complexity limit; keep at most five in one request while
+    // retaining twenty aliases for inexpensive reads and checking every team.
+    const cost = (kind: string) => ['project', 'project_update', 'project_milestone', 'customer_need', 'initiative_to_project'].includes(kind) ? 4 : 1;
+    for (let offset = 0; offset < ordinary.length;) {
+      let end = offset, budget = 0;
+      while (end < ordinary.length && budget + cost(ordinary[end].kind) <= 20) budget += cost(ordinary[end++].kind);
+      const batch = ordinary.slice(offset, end), variables = Object.fromEntries(batch.map((item, i) => ['id' + i, item.id]));
+      offset = end;
       const query = `query OpenCrawlAccess(${batch.map((_, i) => `$id${i}: String!`).join(', ')}) { ${batch.map((item, i) => `r${i}: ${fields[item.kind].query}(id: $id${i}) { ${fields[item.kind].select} }`).join(' ')} }`;
       const response = await request<GraphResponse<Record<string, Row | null>>>({endpoint: LINEAR_API, method: 'POST', headers: {'Content-Type': 'application/json'}, body: {query, variables}});
       if (response.status !== 200) throw new Error('Linear access failed');

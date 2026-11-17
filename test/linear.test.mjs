@@ -113,6 +113,16 @@ test('private, restricted, foreign, deleted and ambiguous resources fail closed 
   f.state.organization=uuid(999);await assert.rejects(f.access.inspect('issue:'+issueId),/workspace changed/);
 });
 
+test('project permission reads fit Linear complexity limits without truncating team visibility',async()=>{
+  const f=fixture(),ids=[];
+  for(let i=0;i<12;i++){const id=uuid(300+i);f.state.rows['project'+i]={...f.state.rows.projects,id};ids.push('project:'+id);}
+  const proof=await f.access.describeMany(ids);
+  assert.equal(proof.size,12);
+  const batches=f.calls.filter(c=>c.body.query.includes('OpenCrawlAccess'));
+  assert.deepEqual(batches.map(c=>Object.keys(c.body.variables).length),[5,5,2]);
+  for(const call of batches)assert.match(call.body.query,/teams\(first: 250, includeArchived: true\)/);
+});
+
 test('historical raw records retain identity and require valid scope receipts plus fresh access',async()=>{
   const f=fixture(),raw={id:'issue:'+issueId,kind:'issue',title:'ENG-42: Shared issue',text:'Historical complete body',url:f.state.rows.issues.url,updatedAt:new Date(at).toISOString()};
   const data={...raw,access:{policy:'linear-public-team-v1',tenantId,connectionId,workspaceId,teamId,checkedAt:at,contentHash:digest(raw)}};
