@@ -12,4 +12,6 @@ fi
 # Tells the CLI which installed plugin copy ran this hook.
 OPENCRAWL_SESSIONS_PLUGIN_ROOT=$(CDPATH= cd -- "${0%/*}/.." && pwd -P) || exit 0
 export OPENCRAWL_SESSIONS_PLUGIN_ROOT
+# Hooks use the credentials setup saved, never a token from the session shell.
+unset OPENCRAWL_TOKEN OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_AUTH
 exec "$cli" "$@"

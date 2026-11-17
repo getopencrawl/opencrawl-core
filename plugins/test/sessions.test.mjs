@@ -57,7 +57,9 @@ for (const [host, expected] of Object.entries(hosts)) {
     const runner = readFileSync(join(directory, 'scripts/opencrawl-hook.sh'), 'utf8');
     assert(runner.startsWith('#!/bin/sh\n'));
     assert(runner.includes('[ -n "$cli" ] || exit 0'));
-    assert.doesNotMatch(runner, /https?:|TOKEN/);
+    assert.doesNotMatch(runner, /https?:/);
+    // A token in the session shell never replaces the credentials setup saved.
+    assert(runner.includes('\nunset OPENCRAWL_TOKEN OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_AUTH\nexec "$cli" "$@"\n'));
     assert(lstatSync(join(directory, 'scripts/opencrawl-hook.sh')).mode & 0o100, 'Runner must be executable');
   });
 }

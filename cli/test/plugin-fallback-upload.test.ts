@@ -16,7 +16,7 @@ import {prepareFallbackPlugins,proveOnlinePluginFallback} from '../scripts/plugi
  }});
  try{
   for(const key of Object.keys(process.env))if(key.startsWith('OPENCRAWL_'))delete process.env[key];
-  Object.assign(process.env,{HOME:root,USERPROFILE:root,OPENCRAWL_CONFIG_HOME:join(root,'profile'),OPENCRAWL_NO_UPDATE:'1',CLAUDE_CONFIG_DIR:join(root,'claude'),CODEX_HOME:join(root,'codex'),CURSOR_CONFIG_DIR:join(root,'cursor')});
+  Object.assign(process.env,{HOME:root,USERPROFILE:root,OPENCRAWL_CONFIG_HOME:join(root,'profile'),OPENCRAWL_NO_UPDATE:'1',OPENCRAWL_SESSIONS_TOKEN:'session-shell-token',CLAUDE_CONFIG_DIR:join(root,'claude'),CODEX_HOME:join(root,'codex'),CURSOR_CONFIG_DIR:join(root,'cursor')});
   const command=[process.execPath,resolve(import.meta.dir,'../src/cli.ts')];
   const config:CaptureConfig={schemaVersion:1,api:receiver.url.origin,installationId:'fallback-install',owner:{tenantId:'fixture',userId:'fixture'},installedAt:new Date().toISOString(),harnesses:['claude-code','codex','cursor'],historyHarnesses:[],roots:{'claude-code':join(root,'claude'),codex:join(root,'codex'),cursor:join(root,'cursor')},command,hookOwnership:'plugin',backgroundStartup:false,daemonRequested:{backgroundStartup:true}};
   atomicJson(join(captureDir(),'config.json'),config);atomicJson(join(captureDir(),'receiver-token.json'),{api:config.api,token:'synthetic-fallback-upload-token'});

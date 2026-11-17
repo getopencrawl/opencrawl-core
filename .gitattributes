@@ -1,0 +1,3 @@
+# The CLI embeds the plugin skill and harnesses run the hook script as checked
+# out, so these files keep the same line endings on every platform.
+plugins/opencrawl-sessions/** text=auto eol=lf
