@@ -1,0 +1,18 @@
+{
+  "name": "opencrawl-sessions",
+  "version": "0.1.0",
+  "description": "Search OpenCrawl workspace knowledge, coordinate with other agents, and let the OpenCrawl CLI register and record Claude Code sessions.",
+  "author": {
+    "name": "OpenCrawl",
+    "url": "https://getopencrawl.com"
+  },
+  "homepage": "https://github.com/getopencrawl/opencrawl-core/tree/main/plugins/opencrawl-sessions",
+  "repository": "https://github.com/getopencrawl/opencrawl-core",
+  "license": "MIT",
+  "keywords": [
+    "opencrawl",
+    "mcp",
+    "context"
+  ],
+  "privacyPolicyUrl": "https://app.getopencrawl.com/privacy"
+}

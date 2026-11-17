@@ -1,24 +1,28 @@
-/** Real generated-hook delivery with a healthy synthetic receiver. Native client
- * admission is fixture-owned; callers separately verify desktop trust and MCP. */
+/** Real plugin-hook delivery with a healthy synthetic receiver. Claude Code and
+ * Codex run the repository plugin's own files; Cursor runs its generated hooks.
+ * Native client admission is fixture-owned; callers separately verify desktop
+ * trust and MCP. */
 import assert from 'node:assert/strict';
-import {readFileSync,writeFileSync,mkdirSync,existsSync,readdirSync} from 'node:fs';
-import {join,dirname} from 'node:path';
-import {installSetupPlugins,setupPluginIdentity} from '../src/setup/plugins.ts';
-import {atomicJson,configDir} from '../src/session.ts';
+import {readFileSync,writeFileSync,mkdirSync,existsSync,readdirSync,cpSync,chmodSync} from 'node:fs';
+import {join,dirname,delimiter} from 'node:path';
+import {installSetupPlugins} from '../src/setup/plugins.ts';
 import {captureDir,readCaptureConfig,type CaptureConfig} from '../src/capture/runtime.ts';
+const shellQuote=(value:string)=>"'"+value.replaceAll("'","'\\''")+"'";
 export async function prepareFallbackPlugins(command:string[],config:CaptureConfig,root:string){
  const pluginRoots=new Map<string,string>();
-    const plugins=await installSetupPlugins(config.api,['claude-code','codex','cursor'],{home:root,command,which:()=>null});
-    // Fixture-owned native admission receipts: this checks compiled generated
-    // hook execution, not real assistant marketplace/trust acceptance.
-    for(const row of plugins.results){
-      assert(row.directory);pluginRoots.set(row.client,row.directory);
-      if(row.client!=='cursor'){const marker=JSON.parse(readFileSync(join(row.directory,'.opencrawl-setup-plugin.json'),'utf8'));atomicJson(join(configDir(),'setup-plugins',row.client,setupPluginIdentity(config.api).key,'installed.json'),{schemaVersion:2,api:config.api,client:row.client,pluginName:marker.pluginName,digest:marker.digest,nativeRoot:row.directory});}
+    const plugins=await installSetupPlugins(config.api,['cursor'],{home:root,command,which:()=>null});
+    for(const row of plugins.results){assert(row.directory);pluginRoots.set(row.client,row.directory);}
+    // The repository plugin finds the CLI on PATH, so the fixture provides the
+    // CLI under test there instead of a marketplace install.
+    const launcher=join(root,'sessions-plugins/bin/opencrawl');mkdirSync(dirname(launcher),{recursive:true});
+    writeFileSync(launcher,'#!/bin/sh\nexec '+command.map(shellQuote).join(' ')+' "$@"\n');chmodSync(launcher,0o755);
+    for(const client of ['claude-code','codex']){
+      const directory=join(root,'sessions-plugins',client);cpSync(join(import.meta.dir,'../../plugins/opencrawl-sessions',client),directory,{recursive:true});pluginRoots.set(client,directory);
     }
  return pluginRoots;
 }
 export async function proveOnlinePluginFallback(config:CaptureConfig,pluginRoots:Map<string,string>,batches:unknown[]){
- const until=async(check:()=>boolean,ms:number)=>{const end=Date.now()+ms;while(!check()){if(Date.now()>end)throw Error('Generated fallback hooks did not upload final answers');await Bun.sleep(50);}};
+ const until=async(check:()=>boolean,ms:number)=>{const end=Date.now()+ms;while(!check()){if(Date.now()>end)throw Error('Plugin fallback hooks did not upload final answers');await Bun.sleep(50);}};
     const children:ReturnType<typeof Bun.spawn>[]=[],outputs:Promise<string>[]=[];
     try{
       for(const harness of ['claude-code','codex','cursor'] as const){
@@ -33,7 +37,7 @@ export async function proveOnlinePluginFallback(config:CaptureConfig,pluginRoots
         const directory=pluginRoots.get(harness)!,hooks=JSON.parse(readFileSync(harness==='cursor'?join(config.roots.cursor!,'hooks.json'):join(directory,'hooks/hooks.json'),'utf8')).hooks;
         const entries=hooks[harness==='cursor'?'afterAgentResponse':'Stop'].flatMap((row:any)=>row.hooks??[row]);
         const hook=entries.find((row:any)=>row.command.includes('collect hook'));assert(hook);if(harness!=='cursor')assert.equal(hook.async,true);
-        const env={...process.env,CLAUDE_PLUGIN_ROOT:directory,PLUGIN_ROOT:directory,CURSOR_PLUGIN_ROOT:directory};
+        const env={...process.env,CLAUDE_PLUGIN_ROOT:directory,PLUGIN_ROOT:directory,CURSOR_PLUGIN_ROOT:directory,...(harness==='cursor'?{}:{PATH:join(dirname(directory),'bin')+delimiter+(process.env.PATH??'')})};
         const child=Bun.spawn(['/bin/sh','-c','exec '+hook.command],{env,stdin:new Blob([JSON.stringify(payload)]),stdout:'pipe',stderr:'pipe'});children.push(child);outputs.push(new Response(child.stdout).text(),new Response(child.stderr).text());
         await until(()=>batches.some((batch:any)=>batch.harness===harness&&batch.events?.some((event:any)=>event.kind==='message'&&event.data?.role==='assistant'&&event.data.content?.some((part:any)=>part.type===(harness==='codex'?'output_text':'text')&&part.text===text))),25_000).catch(error=>{throw Error(harness+': '+error.message+'; received harnesses '+JSON.stringify(batches.map((batch:any)=>batch.harness))+'; local '+(existsSync(join(captureDir(),'last-error.json'))?readFileSync(join(captureDir(),'last-error.json'),'utf8'):'none'));});
         await until(()=>readdirSync(join(captureDir(),'queue')).every(name=>!name.endsWith('.json')),5000);

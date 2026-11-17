@@ -1,7 +1,10 @@
 import {test,expect} from 'bun:test';
 import {setupAgentGuide} from '../src/setup/agent-guide.ts';
 import {configDir} from '../src/session.ts';
-import {dirname} from 'node:path';
+import {dirname,join} from 'node:path';
+import {readFileSync,readdirSync} from 'node:fs';
+import {retrievalInstruction} from '../src/retrieval-instruction.ts';
+import {participationInstructions} from '../src/board.ts';
 import {profileSetupCommand,setupCommandForSelf,formatSetupCommand} from '../src/setup/invocation.ts';
 import {skillFiles} from '../src/skills.ts';
 import {setupPluginFiles,setupPluginIdentity} from '../src/setup/plugins.ts';
@@ -32,11 +35,14 @@ test('setup guides preserve the actual invocation and quote client/server argume
  }
 });
 
-test('the condensed general skill points to native setup without embedding a checkout-bound guide',()=>{
+test('the general skill is the repository plugin skill and continues setup without a checkout-bound guide',()=>{
  const files=skillFiles(),skill=files['SKILL.md'];
  expect(Object.keys(files)).toEqual(['SKILL.md']);
+ // One copy: the CLI embeds the Claude Code plugin's skill, and the Codex plugin ships the same bytes.
+ for(const client of ['claude-code','codex'])expect(readFileSync(join(import.meta.dir,'../../plugins/opencrawl-sessions',client,'skills/opencrawl/SKILL.md'),'utf8')).toBe(skill);
+ expect(skill).toContain(retrievalInstruction);expect(skill).toContain(participationInstructions());
  expect(skill).toContain('this same conversation');
- expect(skill).toContain("native plugin's opencrawl-setup skill");
+ expect(skill).toContain('opencrawl setup status --local --json');
  expect(skill).toContain('bound CLI command, profile and server');
  expect(skill).toContain('saved plugin, future-recording and history choices');
  expect(skill).toContain('preserve opt-outs and do not repeat the questionnaire');
@@ -45,28 +51,19 @@ test('the condensed general skill points to native setup without embedding a che
  expect(skill).not.toContain(import.meta.dir);
 });
 
-test('every native plugin retains its client-bound setup guide beside the single-file general skill',()=>{
- const api='https://selected.example',command=profileSetupCommand(setupCommandForSelf(),dirname(configDir()));
- for(const client of ['claude-code','codex','cursor','antigravity'] as const){
+test('every generated plugin retains its client-bound setup guide beside the single-file general skill',()=>{
+ const api='https://selected.example',command=profileSetupCommand(setupCommandForSelf(),dirname(configDir())),identity=setupPluginIdentity(api);
+ for(const client of ['cursor','antigravity'] as const){
   const files=setupPluginFiles(client,api),guide=files['skills/opencrawl-setup/SKILL.md'];
-  expect(guide).toStartWith(setupAgentGuide(client,api,command,process.platform,client==='codex'?{name:setupPluginIdentity(api).name,url:api+'/mcp'}:undefined));
-  expect(guide).toContain(setupPluginIdentity(api).name);
+  expect(guide).toBe(setupAgentGuide(client,api,command)+`\nThis plugin is \`${identity.name}\`, bound to ${api}. Use this plugin's native MCP namespace for setup and search; preserve other OpenCrawl deployments.\n`);
   expect(Object.keys(files).filter(name=>name.startsWith('skills/opencrawl/'))).toEqual(['skills/opencrawl/SKILL.md']);
   expect(files['skills/opencrawl/SKILL.md']).toBe(skillFiles()['SKILL.md']);
   expect(guide).toContain('`'+formatSetupCommand(['verify-installation','--client',client,'--json','--api',api],command)+'`');
   expect(guide).not.toMatch(/`opencrawl (setup|verify-installation)/);
-  const hookCommand='`'+formatSetupCommand(['setup','hooks','--json','--api',api],command)+'`';
-  if(client==='codex')expect(guide).toContain(hookCommand);else expect(guide).not.toContain(hookCommand);
+  expect(guide).not.toContain('`'+formatSetupCommand(['setup','hooks','--json','--api',api],command)+'`');
  }
 });
 
-test('Codex names the exact deployment MCP connection without changing other harness guides',()=>{
- const api='https://selected.example',identity=setupPluginIdentity(api);
- const codex=setupPluginFiles('codex',api)['skills/opencrawl-setup/SKILL.md'];
- expect(codex).toContain('Use native MCP server `'+identity.name+'` at `'+api+'/mcp`');
- expect(codex).toContain('A manual `opencrawl` server or another deployment');
- expect(codex).toContain('do not use it for this installation');
- for(const client of ['claude-code','cursor','antigravity'] as const){
-  expect(setupPluginFiles(client,api)['skills/opencrawl-setup/SKILL.md']).toBe(setupAgentGuide(client,api,profileSetupCommand(setupCommandForSelf(),dirname(configDir())))+`\nThis plugin is \`${identity.name}\`, bound to ${api}. Use this plugin's native MCP namespace for setup and search; preserve other OpenCrawl deployments.\n`);
- }
+test('the repository plugins ship no deployment-bound setup guide',()=>{
+ for(const client of ['claude-code','codex'])expect(readdirSync(join(import.meta.dir,'../../plugins/opencrawl-sessions',client,'skills'))).toEqual(['opencrawl']);
 });

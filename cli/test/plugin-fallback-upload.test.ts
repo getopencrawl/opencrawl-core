@@ -8,7 +8,7 @@ import {captureDir,type CaptureConfig} from '../src/capture/runtime.ts';
 import {upgradeCaptureDaemon} from '../src/capture/daemon-upgrade.ts';
 import {prepareFallbackPlugins,proveOnlinePluginFallback} from '../scripts/plugin-fallback-proof.ts';
 
-(process.platform==='win32'?test.skip:test)('generated Claude, Codex and Cursor hooks upload final answers with failed daemon bootstrap',async()=>{
+(process.platform==='win32'?test.skip:test)('Claude, Codex and Cursor plugin hooks upload final answers with failed daemon bootstrap',async()=>{
  const root=mkdtempSync(join(tmpdir(),'opencrawl-plugin-fallback-')),before={...process.env},batches:unknown[]=[];
  const receiver=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
   if(new URL(request.url).pathname==='/api/sessions/identity')return Response.json({data:{principal:{tenantId:'fixture',userId:'fixture'},capabilities:{harnesses:['claude-code','codex','cursor']}}});

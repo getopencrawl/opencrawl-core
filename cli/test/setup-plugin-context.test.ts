@@ -1,17 +1,18 @@
 import {test,expect} from 'bun:test';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,existsSync,rmSync,realpathSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,existsSync,rmSync,realpathSync,symlinkSync,cpSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
-import {setupPluginFiles,setupPluginIdentity} from '../src/setup/plugins.ts';
-import {pluginHookContext,recordPluginActivation,pluginActivationMatches,verifyPluginBundle,type PluginHookClient} from '../src/setup/plugin-context.ts';
+import {setupPluginFiles,setupPluginIdentity,type GeneratedPluginClient} from '../src/setup/plugins.ts';
+import {pluginHookContext,recordPluginActivation,pluginActivationMatches,verifyPluginBundle,sessionsPlugin,sessionsActivationMatches,type SessionsClient} from '../src/setup/plugin-context.ts';
 import {sessionFile} from '../src/session.ts';
 
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 const json=(value:unknown)=>JSON.stringify(value,null,2)+'\n';
-const clients:PluginHookClient[]=['codex','claude-code','cursor','antigravity'];
+// Generated, deployment-bound bundles remain for Cursor and Antigravity only.
+const clients:GeneratedPluginClient[]=['cursor','antigravity'];
 const cli=resolve(import.meta.dir,'../src/cli.ts');
-function fixture(client:PluginHookClient='codex',api='https://candidate.example'){
+function fixture(client:GeneratedPluginClient='cursor',api='https://candidate.example'){
  const temporary=mkdtempSync(join(tmpdir(),'opencrawl-plugin-context-')),home=realpathSync(temporary),configHome=join(home,'profile'),previous=process.env.OPENCRAWL_CONFIG_HOME;
  process.env.OPENCRAWL_CONFIG_HOME=configHome;
  const identity=setupPluginIdentity(api),nativeRoot=join(home,'native-cache',identity.name),configFile=join(configHome,'opencrawl/capture/config.json'),receiptRoot=join(configHome,'opencrawl/setup-plugins',client,identity.key),installed=join(receiptRoot,'installed.json'),activation=join(receiptRoot,'activation.json');
@@ -46,47 +47,30 @@ test('native plugin activation works for every search-only client without collec
 
 test('endpoint, client, installation, owner, profile and native source changes invalidate activation',()=>{
  const f=fixture();try{
-  const context=pluginHookContext(f.binding.api,'codex',f.env)!;recordPluginActivation(context,f.event);
-  for(const env of [{...f.env,OPENCRAWL_PLUGIN_API:'https://another.example'},{...f.env,OPENCRAWL_PLUGIN_CLIENT:'cursor'},{...f.env,OPENCRAWL_CONFIG_HOME:join(f.home,'another-profile')},{...f.env,OPENCRAWL_PLUGIN_ROOT:join(f.home,'another-cache')},{...f.env,OPENCRAWL_PLUGIN_NAME:'opencrawl-foreign'}])expect(()=>pluginHookContext(f.binding.api,'codex',env)).toThrow();
+  const context=pluginHookContext(f.binding.api,'cursor',f.env)!;recordPluginActivation(context,f.event);
+  for(const env of [{...f.env,OPENCRAWL_PLUGIN_API:'https://another.example'},{...f.env,OPENCRAWL_PLUGIN_CLIENT:'antigravity'},{...f.env,OPENCRAWL_CONFIG_HOME:join(f.home,'another-profile')},{...f.env,OPENCRAWL_PLUGIN_ROOT:join(f.home,'another-cache')},{...f.env,OPENCRAWL_PLUGIN_NAME:'opencrawl-foreign'}])expect(()=>pluginHookContext(f.binding.api,'cursor',env)).toThrow();
   for(const config of [{...f.config,installationId:'another-installation'},{...f.config,owner:{...f.config.owner,userId:'another-user'}},{...f.config,authPending:true},{...f.config,hookOwnership:'global'},{...f.config,api:'https://another.example'}]){
    f.write(f.configFile,config);expect(pluginActivationMatches({...f.binding,digest:f.digest})).toBe(false);expect(()=>recordPluginActivation(context,f.event)).toThrow();
   }
   f.write(f.configFile,f.config);expect(pluginActivationMatches({...f.binding,digest:f.digest})).toBe(true);
-  f.write(f.installed,{schemaVersion:2,...f.binding,digest:f.digest,nativeRoot:f.home});expect(()=>pluginHookContext(f.binding.api,'codex',f.env)).toThrow();
+  f.write(f.installed,{schemaVersion:2,...f.binding,digest:f.digest,nativeRoot:f.home});expect(()=>pluginHookContext(f.binding.api,'cursor',f.env)).toThrow();
  }finally{f.close();}
 });
 
 test('modified assets and symlinked bundle files never count as the installed plugin',()=>{
  const f=fixture();try{
-  const context=pluginHookContext(f.binding.api,'codex',f.env)!;recordPluginActivation(context,f.event);
-  f.write(join(f.binding.nativeRoot,'.mcp.json'),json({mcpServers:{opencrawl:{url:'https://another.example/mcp'}}}));
+  const context=pluginHookContext(f.binding.api,'cursor',f.env)!;recordPluginActivation(context,f.event);
+  f.write(join(f.binding.nativeRoot,'mcp.json'),json({mcpServers:{opencrawl:{url:'https://another.example/mcp'}}}));
   expect(()=>verifyPluginBundle(f.binding)).toThrow();expect(pluginActivationMatches({...f.binding,digest:f.digest})).toBe(false);
-  f.seal();const target=join(f.binding.nativeRoot,'.mcp.json'),outside=join(f.home,'external-mcp.json');f.write(outside,f.files['.mcp.json']);rmSync(target);symlinkSync(outside,target);
+  f.seal();const target=join(f.binding.nativeRoot,'mcp.json'),outside=join(f.home,'external-mcp.json');f.write(outside,f.files['mcp.json']);rmSync(target);symlinkSync(outside,target);
   expect(()=>verifyPluginBundle(f.binding)).toThrow();expect(pluginActivationMatches({...f.binding,digest:f.digest})).toBe(false);
- }finally{f.close();}
-});
-
-test('Codex activation rejects owned generic, wrong-name and wrong-endpoint MCP bundles but permits migration ownership',()=>{
- const f=fixture();try{
-  for(const servers of [
-   {opencrawl:{type:'http',url:f.binding.api+'/mcp'}},
-   {'opencrawl-000000000000':{type:'http',url:f.binding.api+'/mcp'}},
-   {[f.binding.pluginName]:{type:'http',url:'https://another.example/mcp'}},
-   {[f.binding.pluginName]:{type:'http',url:f.binding.api+'/mcp'},opencrawl:{type:'http',url:f.binding.api+'/mcp'}},
-  ]){
-   f.files['.mcp.json']=json({mcpServers:servers});const digest=f.seal();
-   expect(verifyPluginBundle(f.binding).digest).toBe(digest);
-   expect(()=>pluginHookContext(f.binding.api,'codex',f.env)).toThrow();
-   expect(pluginActivationMatches({...f.binding,digest})).toBe(false);
-   expect(existsSync(f.activation)).toBe(false);
-  }
  }finally{f.close();}
 });
 
 test('invalid or cross-client native events cannot confirm activation',()=>{
  const f=fixture();try{
-  const context=pluginHookContext(f.binding.api,'codex',f.env)!;
-  for(const event of [{},{...f.event,session_id:'bad\nidentity'},{...f.event,source:'invented'},{...f.event,cursor_version:'cross-loaded'},{...f.event,hook_event_name:'invented'}])recordPluginActivation(context,event);
+  const context=pluginHookContext(f.binding.api,'cursor',f.env)!;
+  for(const event of [{},{...f.event,session_id:'bad\nidentity'},{hookEventName:'SessionStart',conversationId:'native-session'},{...f.event,hook_event_name:'invented'}])recordPluginActivation(context,event);
   expect(existsSync(f.activation)).toBe(false);recordPluginActivation(context,f.event);expect(existsSync(f.activation)).toBe(true);
  }finally{f.close();}
 });
@@ -94,7 +78,7 @@ test('invalid or cross-client native events cannot confirm activation',()=>{
 test('generated API arguments cannot rebind inherited tokens or workload authentication',()=>{
  const f=fixture();try{
   for(const key of ['OPENCRAWL_TOKEN','OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_AUTH']){
-   expect(()=>pluginHookContext(f.binding.api,'codex',{...f.env,[key]:'sentinel-must-not-be-used'})).toThrow();
+   expect(()=>pluginHookContext(f.binding.api,'cursor',{...f.env,[key]:'sentinel-must-not-be-used'})).toThrow();
   }
   expect(existsSync(f.activation)).toBe(false);
  }finally{f.close();}
@@ -122,7 +106,7 @@ test('legacy callbacks into plugin-owned profiles exit silently without waiting 
  }finally{f.close();}
 },10_000);
 
-test('imported Cursor startup hooks stay silent while native plugin startup still registers',async()=>{
+test('Cursor plugin startup registers and rejects an invalid native identity',async()=>{
  const requests:string[]=[];
  const server=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
   expect(new URL(request.url).pathname).toBe('/api/board/bootstrap');
@@ -130,7 +114,7 @@ test('imported Cursor startup hooks stay silent while native plugin startup stil
   const input=await request.json();requests.push(input.harness);
   return Response.json({schemaVersion:1,data:{session:input.session,workspace:'test-tenant',agent:'a'.repeat(64),name:null,task:null}});
  }});
- try{for(const client of ['claude-code','codex','cursor'] as const){
+ try{for(const client of ['cursor'] as const){
   const f=fixture(client,`http://127.0.0.1:${server.port}`);try{
    const credentials=sessionFile(f.binding.api);
    f.write(credentials,{auth:{clientId:'fixture',tokenEndpoint:f.binding.api+'/unused-token'},accessToken:'disposable-test-token',refreshToken:'not-used',expiresAt:Date.now()+60_000});
@@ -143,16 +127,6 @@ test('imported Cursor startup hooks stay silent while native plugin startup stil
      expect(code).toBe(0);expect(err).toBe('');return out;
     }finally{clearTimeout(timer);}
    };
-   if(client!=='cursor'){
-    // Cursor runs imported hooks with its native payload. Even an otherwise
-    // valid standard event must not register as the imported plugin's client.
-    for(const payload of [{hook_event_name:'sessionStart',session_id:'native-session',cursor_version:'fixture'},{...f.event,cursor_version:'fixture'}])
-     expect(await run(payload)).toBe('');
-    expect(requests).toHaveLength(before);expect(existsSync(f.activation)).toBe(false);
-    expect(readdirSync(f.configHome,{recursive:true}).sort()).toEqual(savedPaths);
-    expect(readFileSync(credentials,'utf8')).toBe(savedCredentials);
-    expect(readFileSync(f.configFile,'utf8')).toBe(json(f.config));
-   }
    // Do not silence genuinely invalid native inputs or suppress Cursor itself.
    expect(await run({...f.event,session_id:'invalid\nidentity'})).toContain('did not supply a valid native session identity');
    expect(requests).toHaveLength(before);expect(existsSync(f.activation)).toBe(false);
@@ -167,7 +141,7 @@ test('imported Cursor startup hooks stay silent while native plugin startup stil
 test('bad plugin binding is rejected by real CLI before capture consumes stdin or writes state',async()=>{
  const f=fixture();try{
   const env={...f.env,OPENCRAWL_PLUGIN_API:'https://another.example'};
-  const child=Bun.spawn([process.execPath,cli,'collect','hook','--managed','--harness','codex','--api',f.binding.api,'--json'],{env,stdin:'pipe',stdout:'pipe',stderr:'pipe'});
+  const child=Bun.spawn([process.execPath,cli,'collect','hook','--managed','--harness','cursor','--api',f.binding.api,'--json'],{env,stdin:'pipe',stdout:'pipe',stderr:'pipe'});
   const timer=setTimeout(()=>child.kill(),3000);
   try{const [code,out,err]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);expect(code).not.toBe(0);expect(out+err).toContain('PLUGIN_CONTEXT_INVALID');}finally{clearTimeout(timer);child.stdin.end();}
   expect(existsSync(f.activation)).toBe(false);expect(existsSync(join(f.configHome,'opencrawl/capture/queue'))).toBe(false);expect(existsSync(join(f.configHome,'opencrawl/capture/last-error.json'))).toBe(false);
@@ -218,7 +192,7 @@ test('search-only plugin carrier validates its current deployment before stdin a
   const input={query:'isolated native identity',currentSession:{harness:'other',sessionId:'stale'},includeToolOutputs:true};
   const native=client==='cursor'?{hook_event_name:'preToolUse',conversation_id:'selected-chat',tool_name:'MCP:opencrawl_search_v1',tool_input:input}
    :client==='antigravity'?{hookEventName:'PreToolUse',conversationId:'selected-chat',toolCall:{name:'call_mcp_tool',args:{ServerName:f.binding.pluginName+'_opencrawl',ToolName:'opencrawl_search_v1',Arguments:input}}}
-   :{hook_event_name:'PreToolUse',session_id:'selected-chat',tool_name:client==='codex'?`mcp__${f.binding.pluginName}__opencrawl_search_v1`:`mcp__plugin_${f.binding.pluginName}_opencrawl__opencrawl_search_v1`,tool_input:input};
+   :{hook_event_name:'PreToolUse',session_id:'selected-chat',tool_name:`mcp__plugin_${f.binding.pluginName}_opencrawl__opencrawl_search_v1`,tool_input:input};
   const before=readFileSync(f.configFile,'utf8');
   const run=async(env:NodeJS.ProcessEnv,payload?:unknown)=>{
    const child=Bun.spawn([process.execPath,cli,...args],{env,stdin:payload===undefined?'pipe':new Blob([JSON.stringify(payload)]),stdout:'pipe',stderr:'pipe'});
@@ -233,4 +207,89 @@ test('search-only plugin carrier validates its current deployment before stdin a
   expect(readFileSync(f.configFile,'utf8')).toBe(before);expect(existsSync(f.activation)).toBe(false);
   for(const name of ['queue','notices','daemon','last-error.json'])expect(existsSync(join(f.configHome,'opencrawl/capture',name))).toBe(false);
  }finally{f.close();}}
+},15_000);
+
+// Claude Code and Codex run the repository plugin. Its hooks carry no deployment
+// binding: the runner only names the installed copy, and the profile decides.
+function sessionsFixture(client:SessionsClient,api:string,changes:Record<string,unknown>={}){
+ const temporary=mkdtempSync(join(tmpdir(),'opencrawl-sessions-plugin-')),home=realpathSync(temporary),configHome=join(home,'profile');
+ const root=join(home,'native-cache',sessionsPlugin.name,'0.1.0'),configFile=join(configHome,'opencrawl/capture/config.json'),activation=join(configHome,'opencrawl/setup-plugins',client,'sessions-activation.json');
+ cpSync(join(import.meta.dir,'../../plugins/opencrawl-sessions',client),root,{recursive:true});
+ const write=(path:string,value:unknown)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,typeof value==='string'?value:json(value));};
+ const config={schemaVersion:1,hookOwnership:'plugin',api,installationId:'test-installation',owner:{tenantId:'test-tenant',userId:'test-user'},harnesses:[],historyHarnesses:[],roots:{codex:join(home,'codex'),'claude-code':join(home,'claude')},installedAt:new Date().toISOString(),command:[process.execPath,cli],...changes};
+ write(configFile,config);
+ const env:NodeJS.ProcessEnv={...process.env,HOME:home,USERPROFILE:home,CODEX_HOME:join(home,'codex'),CLAUDE_CONFIG_DIR:join(home,'claude'),OPENCRAWL_CONFIG_HOME:configHome,OPENCRAWL_SESSIONS_PLUGIN_ROOT:root};
+ for(const name of Object.keys(env))if(name.startsWith('OPENCRAWL_PLUGIN_')||['OPENCRAWL_TOKEN','OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_API_URL','OPENCRAWL_AUTH'].includes(name))delete env[name];
+ const run=async(args:string[],payload:unknown,overrides:NodeJS.ProcessEnv={})=>{
+  const child=Bun.spawn([process.execPath,cli,...args,'--harness',client],{env:{...env,...overrides},stdin:new Blob([JSON.stringify(payload)]),stdout:'pipe',stderr:'pipe'});
+  const timer=setTimeout(()=>child.kill(),3000);
+  try{const [code,out,err]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);expect(code).toBe(0);expect(err).toBe('');return out;}finally{clearTimeout(timer);}
+ };
+ const previous=process.env.OPENCRAWL_CONFIG_HOME;process.env.OPENCRAWL_CONFIG_HOME=configHome;
+ return {home,configHome,root,config,configFile,activation,write,run,event:{hook_event_name:'SessionStart',session_id:'native-session',source:'startup'},close:()=>{if(previous===undefined)delete process.env.OPENCRAWL_CONFIG_HOME;else process.env.OPENCRAWL_CONFIG_HOME=previous;rmSync(temporary,{recursive:true,force:true});}};
+}
+
+test('the repository plugin startup hook registers Claude Code and Codex with the profile server and confirms activation',async()=>{
+ const requests:string[]=[];
+ const server=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
+  expect(new URL(request.url).pathname).toBe('/api/board/bootstrap');expect(request.headers.get('authorization')).toBe('Bearer disposable-test-token');
+  const input=await request.json();requests.push(input.harness);
+  return Response.json({schemaVersion:1,data:{session:input.session,workspace:'test-tenant',agent:'a'.repeat(64),name:null,task:null}});
+ }});
+ try{for(const client of ['claude-code','codex'] as const){
+  const api=`http://127.0.0.1:${server.port}`,f=sessionsFixture(client,api);try{
+   f.write(sessionFile(api),{auth:{clientId:'fixture',tokenEndpoint:api+'/unused-token'},accessToken:'disposable-test-token',refreshToken:'not-used',expiresAt:Date.now()+60_000});
+   const before=requests.length;
+   // Cursor also runs imported Claude Code and Codex hooks; those must not register.
+   expect(await f.run(['session','start'],{...f.event,cursor_version:'fixture'})).toBe('');
+   // Another directory, or another plugin there, is not the installed plugin.
+   expect(await f.run(['session','start'],f.event,{OPENCRAWL_SESSIONS_PLUGIN_ROOT:f.home})).not.toContain('registered with');
+   expect(requests).toHaveLength(before);expect(existsSync(f.activation)).toBe(false);
+   // The hook passes no server address: the saved profile selects it.
+   expect(await f.run(['session','start'],f.event)).toContain('OpenCrawl: registered with');
+   expect(requests.slice(before)).toEqual([client]);
+   expect(JSON.parse(readFileSync(f.activation,'utf8'))).toMatchObject({client,pluginId:sessionsPlugin.id,nativeRoot:f.root,event:'SessionStart'});
+   expect(sessionsActivationMatches(client,f.root)).toBe(true);expect(sessionsActivationMatches(client,f.home)).toBe(false);
+   expect(readFileSync(f.configFile,'utf8')).toBe(json(f.config));
+  }finally{f.close();}
+ }}finally{server.stop(true);}
+},15_000);
+
+test('repository plugin capture hooks do nothing until setup saved a recording choice for that harness',async()=>{
+ for(const client of ['claude-code','codex'] as const){const f=sessionsFixture(client,'https://candidate.example');try{
+  for(const event of [f.event,{hook_event_name:'Stop',session_id:'native-session',transcript_path:join(f.home,'must-not-read.jsonl')}]){
+   const out=await f.run(['collect','hook'],event);expect(out).not.toContain('paused');expect(out).not.toContain('unavailable');
+  }
+  expect(sessionsActivationMatches(client,f.root)).toBe(true);
+  for(const name of ['queue','notices','last-error.json','worker.lock','daemon'])expect(existsSync(join(f.configHome,'opencrawl/capture',name))).toBe(false);
+  expect(readFileSync(f.configFile,'utf8')).toBe(json(f.config));
+ }finally{f.close();}}
+},15_000);
+
+test('repository plugin hooks stand aside for a profile whose own global hooks capture',async()=>{
+ const f=sessionsFixture('codex','https://candidate.example',{hookOwnership:'global',harnesses:['codex']});try{
+  for(const args of [['session','start'],['collect','hook']])expect(await f.run(args,f.event)).toBe('');
+  expect(existsSync(f.activation)).toBe(false);expect(existsSync(join(f.configHome,'opencrawl/capture/queue'))).toBe(false);
+ }finally{f.close();}
+},10_000);
+
+test('hooks of a retired generated Claude Code or Codex bundle exit silently',async()=>{
+ for(const client of ['claude-code','codex'] as const){const f=sessionsFixture(client,'https://candidate.example',{harnesses:[client]});try{
+  const retired={OPENCRAWL_SESSIONS_PLUGIN_ROOT:undefined,OPENCRAWL_PLUGIN_API:'https://candidate.example',OPENCRAWL_PLUGIN_CLIENT:client,OPENCRAWL_PLUGIN_NAME:setupPluginIdentity('https://candidate.example').name,OPENCRAWL_PLUGIN_ROOT:f.root};
+  for(const args of [['session','start','--api','https://candidate.example'],['collect','hook','--api','https://candidate.example'],['search-context','--api','https://candidate.example']])expect(await f.run(args,f.event,retired)).toBe('');
+  expect(existsSync(f.activation)).toBe(false);expect(existsSync(join(f.configHome,'opencrawl/capture/queue'))).toBe(false);
+ }finally{f.close();}}
+},15_000);
+
+test('repository plugin search context attaches the calling session under each native tool name',async()=>{
+ const input={query:'isolated native identity',currentSession:{harness:'other',sessionId:'stale'}};
+ for(const [client,tool] of [['codex','mcp__opencrawl__opencrawl_search_v1'],['claude-code','mcp__plugin_opencrawl-sessions_opencrawl__opencrawl_search_v1'],['claude-code','mcp__opencrawl__opencrawl_search']] as const){
+  const f=sessionsFixture(client,'https://candidate.example');try{
+   const hooks=JSON.parse(readFileSync(join(f.root,'hooks/hooks.json'),'utf8')).hooks.PreToolUse as {matcher?:string}[];
+   expect(hooks.some(group=>group.matcher!==undefined&&new RegExp(group.matcher).test(tool))).toBe(true);
+   const output=JSON.parse(await f.run(['search-context'],{hook_event_name:'PreToolUse',session_id:'selected-chat',tool_name:tool,tool_input:input}));
+   expect(output.hookSpecificOutput.updatedInput).toEqual({...input,currentSession:{harness:client,sessionId:'selected-chat'}});
+   expect(existsSync(f.activation)).toBe(false);
+  }finally{f.close();}
+ }
 },15_000);

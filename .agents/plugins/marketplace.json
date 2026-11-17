@@ -1,0 +1,20 @@
+{
+  "name": "opencrawl-core",
+  "interface": {
+    "displayName": "OpenCrawl"
+  },
+  "plugins": [
+    {
+      "name": "opencrawl-sessions",
+      "source": {
+        "source": "local",
+        "path": "./plugins/opencrawl-sessions/codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

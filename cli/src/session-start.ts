@@ -9,7 +9,7 @@ import {readCaptureConfig,captureDaemonEnabled} from './capture/runtime.ts';
 import {normalizeHarness} from './capture/parse.ts';
 import {withEnvironmentTokenOrigin} from './environment-token.ts';
 import {parseArgs} from 'node:util';
-import {hasPluginContext, pluginHookContext, recordPluginActivation} from './setup/plugin-context.ts';
+import {hasPluginContext, pluginHookContext, recordPluginActivation, hasSessionsPluginContext, isSessionsClient, sessionsPluginRoot, sessionsHookSuperseded, recordSessionsActivation} from './setup/plugin-context.ts';
 import {refreshManagedSkills} from './skill-activation.ts';
 import {retrievalInstruction} from './retrieval-instruction.ts';
 import {enqueueSessionStart,startupBindingKey,startupObservation} from './session-start-task.ts';
@@ -152,11 +152,16 @@ export async function sessionStartCommand(args: string[], input: Readable = proc
   try {
     // A retained legacy definition may be needed to preserve another hook's
     // native trust key. Plugin-owned profiles must not execute that old path.
-    if(!hasPluginContext()&&readCaptureConfig()?.hookOwnership==='plugin')return 0;
+    if(!hasPluginContext()&&!hasSessionsPluginContext()&&readCaptureConfig()?.hookOwnership==='plugin')return 0;
     const parsed = parseArgs({args, options: {api: {type: 'string'}, harness: {type: 'string'}, 'after-tool': {type:'boolean'}}});
     harness = normalizeHarness(parsed.values.harness ?? '');
     if (parsed.values['after-tool'] && harness !== 'cursor') throw new Error('Unsupported hook');
     const api = apiOrigin(parsed.values.api ?? process.env.OPENCRAWL_API_URL ?? readCaptureConfig()?.api ?? DEFAULT_API_ORIGIN);
+    // Hooks of a retired generated Claude Code or Codex bundle stay silent, and
+    // the repository plugin stands aside for a profile that owns global hooks.
+    if(hasPluginContext()&&isSessionsClient(harness))return 0;
+    const sessions=sessionsPluginRoot(harness)!==null;
+    if(sessions&&sessionsHookSuperseded())return 0;
     const plugin=pluginHookContext(api,harness);
     const event = await readStartEvent(input, 1000, parsed.values['after-tool'] ? 8 * 1024 * 1024 : 16_384);
     // Cursor also runs imported hooks. Its own plugin owns startup; do not
@@ -164,7 +169,8 @@ export async function sessionStartCommand(args: string[], input: Readable = proc
     if ((harness === 'claude-code' || harness === 'codex') && event !== null && typeof event === 'object' &&
         'cursor_version' in event && typeof event.cursor_version === 'string') return 0;
     recordPluginActivation(plugin,event);
-    const activation=!plugin&&!captureDaemonEnabled()&&!readCaptureConfig()?.backgroundStartup?await refreshManagedSkills(api,{hook:true}):undefined;
+    if(sessions)recordSessionsActivation(harness,event);
+    const activation=!plugin&&!sessions&&!captureDaemonEnabled()&&!readCaptureConfig()?.backgroundStartup?await refreshManagedSkills(api,{hook:true}):undefined;
     result = await withEnvironmentTokenOrigin(parsed.values.api ?? process.env.OPENCRAWL_API_URL,
       () => parsed.values['after-tool'] ? cursorToolContext(api, event) : sessionStart(api, harness, event));
     if(harness==='claude-code'&&activation?.updated&&'hookSpecificOutput' in result)result.hookSpecificOutput.reloadSkills=true;

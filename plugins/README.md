@@ -16,6 +16,7 @@ To run OpenCrawl yourself instead, see
 either repository.
 
 - [Install and use the plugin](opencrawl/README.md)
+- [Session plugins installed by the OpenCrawl CLI](opencrawl-sessions/README.md)
 - [Authentication and devices](docs/authentication.md)
 - [Directory publication](docs/directories.md)
 

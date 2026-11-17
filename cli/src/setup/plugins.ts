@@ -4,7 +4,7 @@ import {homedir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {atomicFile, atomicJson, withSessionLock} from '../session.ts';
-import {apiOrigin, CliError} from '../oauth.ts';
+import {apiOrigin, CliError, DEFAULT_API_ORIGIN} from '../oauth.ts';
 import {version} from '../distribution.ts';
 import {setupAgentGuide} from './agent-guide.ts';
 import {skillFiles} from '../skills.ts';
@@ -12,9 +12,11 @@ import {retrievalInstruction} from '../retrieval-instruction.ts';
 import {setupCommandForSelf,profileSetupCommand} from './invocation.ts';
 import {reconcileCursorNativeHooks} from './cursor-native-hooks.ts';
 import {pluginHookFiles} from './plugin-hooks.ts';
-import {pluginActivationMatches,verifyPluginBundle} from './plugin-context.ts';
+import {pluginActivationMatches,verifyPluginBundle,sessionsPlugin,sessionsPluginRoot,sessionsActivationMatches,writeSessionsReceipt,isSessionsClient,type SessionsClient} from './plugin-context.ts';
 
 export type PluginClient = 'claude-code' | 'codex' | 'cursor' | 'antigravity' | 'devin';
+/** Claude Code and Codex install plugins/opencrawl-sessions natively; these clients still get a generated bundle. */
+export type GeneratedPluginClient = Exclude<PluginClient,SessionsClient>;
 export type PluginHumanTask = {id:string;kind:'mcp_auth'|'restart'|'plugin_install';client:PluginClient;title:string;instruction:string;url?:string};
 export type PluginResult = {client:PluginClient;status:'installed'|'unchanged'|'prepared'|'pending'|'error';message?:string;pluginId?:string;directory?:string};
 type CommandResult = {code:number;stdout?:string};
@@ -42,24 +44,15 @@ export function setupPluginIdentity(api:string) {
   return {api:origin,key,name:'opencrawl-'+key,marketplace:'opencrawl-cli-'+key};
 }
 type BundleOptions={command?:string[];configHome?:string;env?:NodeJS.ProcessEnv;recording?:boolean};
-/** Bundled in the executable: native plugins own hooks, MCP and agent guidance. */
-export function setupPluginFiles(client:PluginClient,api:string,options:BundleOptions={}):Record<string,string> {
+/** Bundled in the executable: these plugins own hooks, MCP and agent guidance. */
+export function setupPluginFiles(client:GeneratedPluginClient,api:string,options:BundleOptions={}):Record<string,string> {
   const identity=setupPluginIdentity(api),origin=identity.api,url=origin+'/mcp';
   const command=options.command??setupCommandForSelf(),configHome=(client==='devin'?posix: {resolve}).resolve(options.configHome??process.env.OPENCRAWL_CONFIG_HOME??process.env.XDG_CONFIG_HOME??join(homedir(),'.config'));
   const base={name:identity.name,version,description:'Search knowledge and finish OpenCrawl setup at '+origin+'.',author:{name:'OpenCrawl'},license:'MIT'};
   const guideCommand=client==='devin'?['/usr/bin/env','OPENCRAWL_AUTH=devin-cloud','OPENCRAWL_CONFIG_HOME='+configHome,'OPENCRAWL_API_URL='+origin,'PATH=/usr/local/bin:/usr/bin:/bin',...command]:profileSetupCommand(command,configHome,options.env);
-  const guide=setupAgentGuide(client,origin,guideCommand,client==='devin'?'linux':process.platform,['codex','devin'].includes(client)?{name:identity.name,url}:undefined)+`\nThis plugin is \`${identity.name}\`, bound to ${origin}. Use this plugin's native MCP namespace for setup and search; preserve other OpenCrawl deployments.\n`;
+  const guide=setupAgentGuide(client,origin,guideCommand,client==='devin'?'linux':process.platform,client==='devin'?{name:identity.name,url}:undefined)+`\nThis plugin is \`${identity.name}\`, bound to ${origin}. Use this plugin's native MCP namespace for setup and search; preserve other OpenCrawl deployments.\n`;
   const files:Record<string,string>={...Object.fromEntries(Object.entries(skillFiles()).map(([name,content])=>['skills/opencrawl/'+name,content])),'skills/opencrawl-setup/SKILL.md':guide,'README.md':'# OpenCrawl\n\nContinue setup at '+origin+' with this plugin. The CLI owns saved choices and history workers; native startup and capture use this deployment’s owned hooks.\n'};
-  if(client==='codex') {
-    // Codex 0.166 discovers both MCP and hooks through its supported compatibility layout.
-    // A portable root without its schema silently loads skills but drops MCP.
-    files['.codex-plugin/plugin.json']=json({...base,skills:'./skills/',mcpServers:'./.mcp.json',hooks:'./hooks/hooks.json',onboardingSkill:'./skills/opencrawl-setup/SKILL.md',interface:{displayName:'OpenCrawl ('+new URL(origin).host+')',shortDescription:'Search knowledge and finish setup',defaultPrompt:['Continue my OpenCrawl setup at '+origin+'.']}});
-    // Codex merges MCP servers by this inner key, even across distinct plugins.
-    files['.mcp.json']=json({mcpServers:{[identity.name]:{type:'http',url}}});
-  } else if(client==='claude-code') {
-    files['.claude-plugin/plugin.json']=json(base);
-    files['.mcp.json']=json({mcpServers:{opencrawl:{type:'http',url}}});
-  } else if(client==='cursor') {
+  if(client==='cursor') {
     files['.cursor-plugin/plugin.json']=json(base);
     files['mcp.json']=json({mcpServers:{opencrawl:{url}}});
     files['rules/opencrawl.mdc']=`---
@@ -164,43 +157,99 @@ function pluginRows(output:string):Record<string,unknown>[]|null {
   return Array.isArray(rows)?rows.filter((row):row is Record<string,unknown>=>Boolean(row&&typeof row==='object')):null;
 }
 function matchesName(row:Record<string,unknown>,name:string) {return row.name===name||[row.id,row.pluginId].some(id=>typeof id==='string'&&(id===name||id.startsWith(name+'@')));}
-function isManaged(row:Record<string,unknown>,client:PluginClient,identity:ReturnType<typeof setupPluginIdentity>) {return client==='antigravity'?row.name===identity.name:[row.id,row.pluginId].includes(identity.name+'@'+identity.marketplace);}
-function nativeRoot(row:Record<string,unknown>,client:PluginClient,cachePath?:string):string|undefined {
-  const value=client==='codex'?row.installedPath??row.installPath??cachePath:client==='claude-code'?row.readFromFolder??row.installPath:row.path;
-  return typeof value==='string'?resolve(value):undefined;
+function isManaged(row:Record<string,unknown>,identity:ReturnType<typeof setupPluginIdentity>) {return row.name===identity.name;}
+function nativeRoot(row:Record<string,unknown>):string|undefined {
+  return typeof row.path==='string'?resolve(row.path):undefined;
 }
-function nativeProfileMatches(row:Record<string,unknown>,client:PluginClient,api:string,pluginName:string,configHome:string) {
+function nativeProfileMatches(row:Record<string,unknown>,client:GeneratedPluginClient,api:string,pluginName:string,configHome:string) {
   // The current native source is authoritative. A saved receipt can outlive a
   // different CLI profile taking ownership of this deployment-specific plugin.
-  const roots:string[]=[];
-  if(client==='codex'){
-    const source=row.source as {source?:unknown;path?:unknown}|undefined;
-    if(source?.source!=='local'||typeof source.path!=='string')return false;
-    roots.push(resolve(source.path));
-    const installed=row.installedPath??row.installPath;
-    if(installed!==undefined){if(typeof installed!=='string')return false;roots.push(resolve(installed));}
-  }else{const root=nativeRoot(row,client);if(!root)return false;roots.push(root);}
-  try{for(const nativeRoot of roots)verifyPluginBundle({api,client,pluginName,configHome,nativeRoot});return true;}catch{return false;}
-
+  const root=nativeRoot(row);if(!root)return false;
+  try{verifyPluginBundle({api,client,pluginName,configHome,nativeRoot:root});return true;}catch{return false;}
 }
-function nativeBindingMatches(row:Record<string,unknown>,client:PluginClient,directory:string,api:string,name:string,digest:string,configHome:string,root?:string) {
+function nativeBindingMatches(client:GeneratedPluginClient,api:string,name:string,digest:string,configHome:string,root?:string) {
   if(!root)return false;
-  if(client==='codex') {
-    const source=row.source as {source?:unknown;path?:unknown}|undefined;
-    if(source?.source!=='local'||typeof source.path!=='string'||resolve(source.path)!==resolve(directory))return false;
-  }
   try{if(verifyPluginBundle({api,client,pluginName:name,configHome,nativeRoot:root}).digest!==digest)return false;}catch{return false;}
-  const file=client==='claude-code'||client==='codex'?'.mcp.json':client==='antigravity'?'mcp_config.json':'mcp.json';
-  const servers=read(join(root,file))?.mcpServers,server=servers?.[client==='codex'?name:'opencrawl'];
-  return server?.url===api+'/mcp'&&(client!=='codex'||Object.keys(servers).length===1&&server.type==='http');
+  return read(join(root,client==='antigravity'?'mcp_config.json':'mcp.json'))?.mcpServers?.opencrawl?.url===api+'/mcp';
 }
-function bundleMatches(directory:string,bundle:Record<string,string>,digest:string,client:PluginClient,api:string,pluginName:string,configHome:string) {
+function bundleMatches(directory:string,bundle:Record<string,string>,digest:string,client:GeneratedPluginClient,api:string,pluginName:string,configHome:string) {
   try {
     const existing=stat(directory);
     if(!existing?.isDirectory()||existing.isSymbolicLink())return false;
     return verifyPluginBundle({api,client,pluginName,configHome,nativeRoot:directory}).digest===digest&&Object.entries(bundle).every(([name,text])=>readFileSync(join(directory,name),'utf8')===text);
   }catch{return false;}
 }
+
+type Outcome={result:PluginResult;humanTasks:PluginHumanTask[]};
+type SessionsInstall={client:SessionsClient;origin:string;home:string;env:NodeJS.ProcessEnv;binary:string|null;run:(args:string[])=>Promise<CommandResult>};
+const sessionsSparse:Record<SessionsClient,string[]>={'claude-code':['--sparse','.claude-plugin','plugins/opencrawl-sessions'],codex:['--sparse','.agents/plugins','--sparse','plugins/opencrawl-sessions']};
+/** Both harnesses install this repository's plugin directory through their own
+ * marketplace commands. OPENCRAWL_PLUGIN_SOURCE names another checkout, fork or
+ * pinned ref; a local path is read in place and needs no sparse checkout. */
+export function sessionsMarketplaceArgs(client:SessionsClient,env:NodeJS.ProcessEnv):string[] {
+  const source=env.OPENCRAWL_PLUGIN_SOURCE||'getopencrawl/opencrawl-core';
+  return ['plugin','marketplace','add',source,...(isAbsolute(source)?[]:sessionsSparse[client]),'--json'];
+}
+function sessionsRow(output:string|undefined):Record<string,unknown>|undefined {
+  return pluginRows(output??'')?.find(row=>[row.id,row.pluginId].includes(sessionsPlugin.id)&&row.installed!==false);
+}
+function sessionsRoot(row:Record<string,unknown>,{client,home,env}:SessionsInstall):string|null {
+  // Claude Code reads a local marketplace in place. Codex always runs its cached copy.
+  const candidates=client==='claude-code'?[row.readFromFolder,row.installPath]
+    :[row.installedPath,typeof row.version==='string'?join(env.CODEX_HOME||join(home,'.codex'),'plugins','cache',sessionsPlugin.marketplace,sessionsPlugin.name,row.version):undefined];
+  for(const candidate of candidates){
+    const root=typeof candidate==='string'?sessionsPluginRoot(client,resolve(candidate)):null;
+    if(root&&read(join(root,'.mcp.json'))?.mcpServers?.opencrawl?.url===DEFAULT_API_ORIGIN+'/mcp')return root;
+  }
+  return null;
+}
+/** The plugin always names the cloud address. Another server gets its own
+ * user-level entry called opencrawl; nothing else in the client is rewritten. */
+async function selfHostedMcp({client,origin,home,env,run}:SessionsInstall):Promise<boolean> {
+  const url=origin+'/mcp';
+  if(client==='codex'){
+    // Codex resolves servers by name: this entry replaces the plugin's. Its
+    // per-plugin switch also keeps the cloud entry off if the name ever differs.
+    if((await run(['mcp','add','opencrawl','--url',url])).code!==0)return false;
+    const file=join(env.CODEX_HOME||join(home,'.codex'),'config.toml'),header=`[plugins."${sessionsPlugin.id}".mcp_servers.opencrawl]`;
+    const text=existsSync(file)?readFileSync(file,'utf8'):'';
+    if(!text.includes(header))atomicFile(file,text+(text&&!text.endsWith('\n')?'\n':'')+'\n'+header+'\nenabled = false\n');
+    return true;
+  }
+  // Claude Code refuses to replace an existing name, so the saved address decides.
+  const saved=()=>read(join(env.CLAUDE_CONFIG_DIR||home,'.claude.json'))?.mcpServers?.opencrawl?.url===url;
+  if(saved())return true;
+  await run(['mcp','add','--transport','http','--scope','user','opencrawl',url]);
+  return saved();
+}
+async function installSessionsPlugin(install:SessionsInstall):Promise<Outcome> {
+  const {client,origin,binary,run}=install,label=labels[client],pluginId=sessionsPlugin.id;
+  const pending=(message:string,title:string,instruction:string,status:'pending'|'error'='pending'):Outcome=>({result:{client,status,message},humanTasks:[{id:client+':plugin_install',kind:'plugin_install',client,title,instruction}]});
+  if(!binary)return pending(label+"'s native plugin installer is unavailable.",'Install '+label+' plugin support','Install or update the native client CLI, then resume setup. Preserve existing plugins and authentication.');
+  const listing=await run(['plugin','list','--json']);
+  if(listing.code!==0||!pluginRows(listing.stdout??''))return pending('The client could not report its plugin state. Resolve its sign-in, version or policy before retrying.','Check '+label+' plugin access','Inspect the native client plugin inventory and its reported policy or sign-in issue. Resume setup after it can report its installed plugins.');
+  let native=sessionsRow(listing.stdout);const present=Boolean(native);
+  if(native?.enabled===false)return pending('The OpenCrawl plugin is disabled. Its native choice was preserved.','Review the OpenCrawl plugin','Use native controls to review this plugin’s disabled state. Preserve policy and the user’s choice before resuming.');
+  if(!native){
+    for(const args of [sessionsMarketplaceArgs(client,install.env),client==='codex'?['plugin','add',pluginId,'--json']:['plugin','install',pluginId,'--scope','user','--json']])
+      if((await run(args)).code!==0)return pending(label+' did not confirm plugin installation.','Finish '+label+' plugin installation','Review the native installation error and resolve its policy, access or sign-in requirement before resuming.','error');
+    const confirmed=await run(['plugin','list','--json']);
+    native=confirmed.code===0?sessionsRow(confirmed.stdout):undefined;
+  }
+  const root=native&&native.enabled!==false?sessionsRoot(native,install):null;
+  if(!root)return pending('The client has not confirmed this enabled plugin at its expected source and endpoint.','Confirm '+label+' plugin source','Inspect the native plugin source and endpoint. Preserve unrelated plugins and finish the reported policy or installation step before resuming.');
+  const selfHosted=origin!==DEFAULT_API_ORIGIN;
+  if(selfHosted&&!await selfHostedMcp(install))return pending(label+' did not confirm an opencrawl MCP server for '+origin+'.','Add the '+origin+' MCP server in '+label,`Add a user-level MCP server named opencrawl for ${origin}/mcp with native controls. If another server already uses that name, have the user rename or remove it first, then resume setup.`);
+  writeSessionsReceipt(client,origin,root);
+  const active=sessionsActivationMatches(client,root),humanTasks:PluginHumanTask[]=[];
+  if(!active)humanTasks.push({id:client+':restart',kind:'restart',client,title:'Load OpenCrawl in '+label,instruction:`Open or reload ${label} so it loads the ${sessionsPlugin.name} plugin. ${client==='codex'?'Review its hooks once in /hooks (or desktop Settings > Hooks); installing does not grant hook trust. ':''}Resume setup after its native startup hook runs. Do not use a session-only --plugin-dir override as installation proof.`});
+  const connect=!selfHosted?`Use the ${sessionsPlugin.name} plugin's native connection flow for ${origin}.`
+    :client==='codex'?`Connect the user-level opencrawl MCP server for ${origin}. It replaces the plugin's cloud entry, which setup turned off.`
+    :`Connect the user-level opencrawl MCP server for ${origin}. The plugin also lists the OpenCrawl cloud server as plugin:${sessionsPlugin.name}:opencrawl; Claude Code can only turn that one off per project, in /mcp, so disable it there and leave it signed out.`;
+  humanTasks.push({id:client+':mcp_auth',kind:'mcp_auth',client,title:'Connect OpenCrawl in '+label,instruction:connect+' Complete requested MCP authentication in this client and run its native verification. Preserve other deployments and never copy CLI credentials.',url:origin+'/mcp'});
+  return {result:{client,status:active?(present?'unchanged':'installed'):'prepared',pluginId,directory:root,...(!active?{message:'Plugin prepared; waiting for its native startup hook to confirm activation.'}:{})},humanTasks};
+}
+
 export async function installSetupPlugins(api:string,selected:string[],options:PluginOptions={}) {
   if(selected.some(client=>!clients.includes(client as PluginClient)))throw new CliError('INVALID_USAGE','Choose a supported client from setup inventory.',64);
   const identity=setupPluginIdentity(api),origin=identity.api,{home,env,which}=context(options),runner=options.runner??run;
@@ -213,23 +262,31 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
         const result=await (await import('./devin-plugin.ts')).adoptDevinPlugin(origin,{configHome,env});
         results.push(result);continue;
       }
+      if(isSessionsClient(client)){
+        try {
+          const binary=which(client==='claude-code'?'claude':client);
+          const outcome=await installSessionsPlugin({client,origin,home,env,binary,run:args=>runner(binary!,args,{...env,HOME:home,USERPROFILE:home})});
+          results.push(outcome.result);humanTasks.push(...outcome.humanTasks);
+        }catch(error){results.push({client,status:'error',message:error instanceof CliError?error.message:'Could not install the plugin. Check native access and retry.'});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Resolve '+labels[client]+' plugin installation',instruction:'Read the reported installation error, preserve existing configuration, and resolve only the required access or conflict before retrying.'});}
+        continue;
+      }
       const bundle=setupPluginFiles(client,origin,{command,configHome,env});
       const marketRoot=join(root,client,identity.key),pathRoot=client==='cursor'?resolve(env.CURSOR_CONFIG_DIR||join(home,'.cursor')):configHome;
       const directory=client==='cursor'?join(pathRoot,'plugins','local',identity.name):join(marketRoot,identity.name);
       const receipt=join(marketRoot,'installed.json'),digest=hash(json(bundle)),saved=read(receipt);
       const prior=saved?.schemaVersion===2&&saved.api===origin&&saved.client===client&&saved.pluginName===identity.name&&saved.directory===directory?saved:null;
-      const pluginId=client==='codex'||client==='claude-code'?identity.name+'@'+identity.marketplace:identity.name;
+      const pluginId=identity.name;
       try {
-        const binary=client==='cursor'?null:which(client==='claude-code'?'claude':client==='antigravity'?'agy':client);
-        let native:Record<string,unknown>|undefined,loadedRoot:string|undefined,cachePath=typeof prior?.cachePath==='string'?prior.cachePath:undefined;
+        const binary=client==='cursor'?null:which('agy');
+        let native:Record<string,unknown>|undefined,loadedRoot:string|undefined;
         if(binary){
           const listing=await runner(binary,['plugin','list','--json'],{...env,HOME:home,USERPROFILE:home});
           const rows=listing.code===0?pluginRows(listing.stdout??''):null;
           if(!rows){results.push({client,status:'pending',message:'The client could not report its plugin state. Resolve its sign-in, version or policy before retrying.'});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Check '+labels[client]+' plugin access',instruction:'Inspect the native client plugin inventory and its reported policy or sign-in issue. Resume setup after it can report its installed plugins.'});continue;}
-          const matches=rows.filter(row=>matchesName(row,identity.name));native=matches.find(row=>isManaged(row,client,identity));
+          const matches=rows.filter(row=>matchesName(row,identity.name));native=matches.find(row=>isManaged(row,identity));
           const ownedSource=read(join(directory,marker));
           const managedSource=ownedSource?.schemaVersion===2&&ownedSource.api===origin&&ownedSource.client===client&&ownedSource.pluginName===identity.name&&ownedSource.configHome===configHome;
-          if(matches.some(row=>!isManaged(row,client,identity))||native&&!prior&&!managedSource){
+          if(matches.some(row=>!isManaged(row,identity))||native&&!prior&&!managedSource){
             results.push({client,status:'pending',message:'Another installation owns this deployment-specific plugin. It was preserved.'});
             humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Review this deployment plugin',instruction:'Inspect the existing deployment-specific plugin and source in native controls. Preserve it until the user chooses to repair or replace that installation; unrelated OpenCrawl plugins can remain enabled.'});continue;
           }
@@ -238,7 +295,7 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
             results.push({client,status:'pending',message:'The native plugin belongs to another CLI profile or its current source could not be verified. It was preserved.'});
             humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Review the active OpenCrawl profile',instruction:'Inspect this deployment plugin’s current native source and CLI profile. Continue setup with the owning profile, or have the user explicitly resolve that conflict before retrying; an older installation receipt cannot replace it.'});continue;
           }
-          if(native)loadedRoot=nativeRoot(native,client,cachePath);
+          if(native)loadedRoot=nativeRoot(native);
         }
         const unchanged=bundleMatches(directory,bundle,digest,client,origin,identity.name,configHome);
         if(client==='cursor')await reconcileCursorNativeHooks(pathRoot,directory,join(marketRoot,'native-hooks.json'),bundle['scripts/cursor-native-hooks.json'],true);
@@ -251,24 +308,16 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
           loadedRoot=directory;
         } else {
           if(!binary){results.push({client,status:'pending',message:labels[client]+"'s native plugin installer is unavailable.",directory});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Install '+labels[client]+' plugin support',instruction:'Install or update the native client CLI, then resume setup. Preserve existing plugins and authentication.'});continue;}
-          if(!native||!unchanged||!nativeBindingMatches(native,client,directory,origin,identity.name,digest,configHome,loadedRoot)) {
-            let commands:string[][]=[];
-            if(client==='codex'||client==='claude-code') {
-              const file=client==='codex'?'.agents/plugins/marketplace.json':'.claude-plugin/marketplace.json';
-              const entry=client==='codex'?{name:identity.name,source:{source:'local',path:'./'+identity.name},policy:{installation:'AVAILABLE',authentication:'ON_USE'},category:'Productivity'}:{name:identity.name,source:'./'+identity.name};
-              safeDirectory(dirname(join(marketRoot,file)),configHome);atomicJson(join(marketRoot,file),{name:identity.marketplace,owner:{name:'OpenCrawl'},plugins:[entry]});
-              commands=client==='codex'?[['plugin','marketplace','add',marketRoot,'--json'],['plugin','add',pluginId,'--json']]:[['plugin','marketplace','add',marketRoot,'--json'],['plugin','install',pluginId,'--scope','user','--json']];
-            } else commands=[['plugin','install',directory]];
-            let success=true;
-            for(const args of commands){const result=await runner(binary,args,{...env,HOME:home,USERPROFILE:home});if(result.code!==0){success=false;break;}if(client==='codex'&&args[1]==='add')try{const installed=JSON.parse(result.stdout??'');if(typeof installed.installedPath==='string')cachePath=installed.installedPath;}catch{}}
-            if(!success){results.push({client,status:'error',message:labels[client]+' did not confirm plugin installation.',directory});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Finish '+labels[client]+' plugin installation',instruction:'Review the native installation error and resolve its policy, access or sign-in requirement before resuming.'});continue;}
+          if(!native||!unchanged||!nativeBindingMatches(client,origin,identity.name,digest,configHome,loadedRoot)) {
+            const result=await runner(binary,['plugin','install',directory],{...env,HOME:home,USERPROFILE:home});
+            if(result.code!==0){results.push({client,status:'error',message:labels[client]+' did not confirm plugin installation.',directory});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Finish '+labels[client]+' plugin installation',instruction:'Review the native installation error and resolve its policy, access or sign-in requirement before resuming.'});continue;}
             const confirmed=await runner(binary,['plugin','list','--json'],{...env,HOME:home,USERPROFILE:home});
-            native=confirmed.code===0?pluginRows(confirmed.stdout??'')?.find(row=>isManaged(row,client,identity)):undefined;
-            loadedRoot=native?nativeRoot(native,client,cachePath):undefined;
-            if(!native||native.enabled===false||native.installed===false||!nativeBindingMatches(native,client,directory,origin,identity.name,digest,configHome,loadedRoot)) {results.push({client,status:'pending',message:'The client has not confirmed this enabled plugin at the selected source and endpoint.',directory});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Confirm '+labels[client]+' plugin source',instruction:'Inspect the native plugin source and endpoint. Preserve unrelated plugins and finish the reported policy or installation step before resuming.'});continue;}
+            native=confirmed.code===0?pluginRows(confirmed.stdout??'')?.find(row=>isManaged(row,identity)):undefined;
+            loadedRoot=native?nativeRoot(native):undefined;
+            if(!native||native.enabled===false||native.installed===false||!nativeBindingMatches(client,origin,identity.name,digest,configHome,loadedRoot)) {results.push({client,status:'pending',message:'The client has not confirmed this enabled plugin at the selected source and endpoint.',directory});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Confirm '+labels[client]+' plugin source',instruction:'Inspect the native plugin source and endpoint. Preserve unrelated plugins and finish the reported policy or installation step before resuming.'});continue;}
           }
         }
-        safeDirectory(dirname(receipt),configHome);atomicJson(receipt,{schemaVersion:2,api:origin,client,pluginName:identity.name,configHome,digest,pluginId,directory,nativeRoot:loadedRoot,...(client==='codex'&&loadedRoot?{cachePath:loadedRoot}:{})});
+        safeDirectory(dirname(receipt),configHome);atomicJson(receipt,{schemaVersion:2,api:origin,client,pluginName:identity.name,configHome,digest,pluginId,directory,nativeRoot:loadedRoot});
         const active=Boolean(loadedRoot&&pluginActivationMatches({api:origin,client,pluginName:identity.name,digest,nativeRoot:loadedRoot,configHome}));
         results.push({client,status:active?(unchanged?'unchanged':'installed'):'prepared',pluginId,directory,...(!active?{message:'Plugin prepared; waiting for its native startup hook to confirm activation.'}:{})});
         if(!active)humanTasks.push({id:client+':restart',kind:'restart',client,title:'Load OpenCrawl in '+labels[client],instruction:`Open or reload ${labels[client]} and select the ${identity.name} plugin for ${origin}. Review any native plugin-hook trust request. ${client==='cursor'?'In Customize or /plugin list, confirm this deployment-specific local plugin loads; if local imports are blocked, ask the administrator to allow it. ':''}Resume setup after its native startup hook runs. Do not use a session-only --plugin-dir override as installation proof.`});
