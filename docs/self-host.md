@@ -23,8 +23,15 @@ OpenCrawl hosted service.
 This branch is a candidate. [Acceptance status](seam-acceptance.md) distinguishes
 unit/regression checks from a clean-server install and real provider verification.
 
-Existing installations: follow the [PostgreSQL application-state upgrade](app-state-migration.md)
-before deploying this version. The application database is included in Compose
+**Breaking change in core 0.5.0:** Better Auth uses the PostgreSQL application
+database configured by `OPENCRAWL_DATABASE_URL`; SQLite authentication is no
+longer supported. Existing SQLite installations need a separate migration before
+starting the new runtime. Ask your agent to inspect your installation and follow
+the [PostgreSQL application-state upgrade](app-state-migration.md). The runtime
+does not read `identity.sqlite` or fall back to it; `OPENCRAWL_IDENTITY_PATH` is
+only an input to the legacy import tooling. See the [release notes](releases/0.5.0.md).
+
+The application database is included in Compose
 and cold backups. Mutable state, including board history, privacy controls and
 connector progress, lives in PostgreSQL. Object storage retains immutable source
 captures and attachments. Temporal runs durable capture and connector workflows.
@@ -276,8 +283,9 @@ Do not delete the identity database to recover a password.
 
 ## Persistence, deletion, and backup
 
-Named volumes preserve S3 objects, OpenSearch indexes, the identity database and application registry,
-and Temporal's PostgreSQL data. The registry refuses to reopen under a different
+Named volumes preserve S3 objects, OpenSearch indexes, the PostgreSQL application
+database (including Better Auth and the integration registry), and Temporal's
+separate PostgreSQL databases. The registry refuses to reopen under a different
 organization. Workers rediscover active connections and captured objects after
 restarting; pending Airbyte creation intents are reconciled before any retry.
 

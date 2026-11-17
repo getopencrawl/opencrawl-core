@@ -5,6 +5,20 @@ S3-compatible storage and Airbyte are included by default. This is a durable
 single-instance installation, with downtime during upgrades; it does not provide HA.
 It operates independently of OpenCrawl Cloud.
 
+## Breaking change in 0.2.0
+
+Core 0.5.0 stores self-hosted Better Auth accounts, sessions and OAuth grants in
+the application PostgreSQL database configured by `OPENCRAWL_DATABASE_URL`.
+There is no SQLite authentication backend or fallback. `databases.app` serves
+both authentication and application state; no separate auth database is needed.
+
+Existing SQLite installations need a separate migration before starting this
+runtime. Ask your agent to inspect the installation, preserve a matched backup,
+and follow the [application-state upgrade guide](https://github.com/getopencrawl/opencrawl-core/blob/v0.5.0/docs/app-state-migration.md).
+This release does not migrate an installed deployment when downloaded. Keep the
+previous runtime and its complete backup for rollback; do not point old binaries
+at the new database. See the [core 0.5.0 release notes](https://github.com/getopencrawl/opencrawl-core/releases/tag/v0.5.0).
+
 ## Agent installation
 
 Use the latest stable `helm-v*` [release](https://github.com/getopencrawl/opencrawl-core/releases)
