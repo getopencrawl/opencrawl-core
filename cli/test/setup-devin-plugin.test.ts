@@ -1,5 +1,5 @@
 import {test,expect} from 'bun:test';
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync,readdirSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync,readdirSync,rmSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
@@ -64,9 +64,9 @@ test('Cloud bundle exports on any host with Linux target paths and public config
  for(const [name,content] of Object.entries(files))expect(readFileSync(join(bundle,name),'utf8')).toBe(content);
  expect(JSON.parse(files['.opencrawl-devin.json']!)).toEqual({schemaVersion:1,api,...options});
  expect(JSON.parse(files['.devin-plugin/plugin.json']!).platforms).toEqual(['cloud']);
- expect(JSON.parse(files['.mcp.json']!).mcpServers[setupPluginIdentity(api).name]).toEqual({command:'/bin/sh',args:['${PLUGIN_ROOT}/scripts/opencrawl-hook.sh','mcp','--api',api]});
+ expect(JSON.parse(files['.mcp.json']!).mcpServers[setupPluginIdentity(api).name]).toEqual({command:'/bin/sh',args:['${PLUGIN_ROOT}/scripts/opencrawl-hook.sh','mcp']});
  const hooks=JSON.parse(files['hooks.json']!);expect(Object.keys(hooks).sort()).toEqual(['PostCompaction','PostToolUse','SessionStart','Stop','UserPromptSubmit']);
- expect(hooks.SessionStart[0].hooks[0].command).toContain('workload start');
+ expect(hooks.SessionStart[0].hooks[0].command).toEndWith(' workload');
  expect(JSON.stringify(files)).not.toContain('fixture-tenant');expect(JSON.stringify(files)).not.toContain('workload_devin_fixture');
  expect(readdirSync(dir)).toEqual(['bundle']);
  }finally{rmSync(dir,{recursive:true,force:true});}
@@ -77,14 +77,10 @@ cloudRuntimeTest('Cloud bundle validation creates no local-client installation s
  expect(existsSync(join(f.dir,'codex'))).toBe(false);expect(existsSync(join(f.dir,'claude'))).toBe(false);
 }));
 
-cloudRuntimeTest('Cloud runner uses the exact executable without Node on PATH and rejects ambient human credentials',()=>fixture(async f=>{
- writeFileSync(join(f.dir,'opencrawl'),'#!/bin/sh\nprintf "%s\\n" "$OPENCRAWL_AUTH" "$OPENCRAWL_CONFIG_HOME" "$OPENCRAWL_PLUGIN_API" "$PATH" "$@"\n',{mode:0o700});
- const run=async(extra:NodeJS.ProcessEnv={})=>{
-  const child=Bun.spawn(['/bin/sh',join(f.bundle,'scripts/opencrawl-hook.sh'),'mcp','--api',f.api],{env:{HOME:f.dir,...extra},stdout:'pipe',stderr:'pipe'});
-  return {code:await child.exited,output:await new Response(child.stdout).text(),error:await new Response(child.stderr).text()};
- };
- expect(await run()).toEqual({code:0,output:['devin-cloud',f.profile,f.api,'/usr/local/bin:/usr/bin:/bin','mcp','--api',f.api,''].join('\n'),error:''});
- for(const extra of [{OPENCRAWL_TOKEN:'must-not-use'},{OPENCRAWL_SESSIONS_TOKEN:'must-not-use'},{OPENCRAWL_AUTH:'replicas-workspace'}])expect(await run(extra)).toEqual({code:1,output:'',error:''});
+cloudRuntimeTest('Cloud canonical runner invokes the pinned native CLI without ambient profile fallback',()=>fixture(async f=>{
+ writeFileSync(join(f.dir,'opencrawl'),'#!/bin/sh\nprintf "%s\\n" "$@"\n',{mode:0o700});
+ const child=Bun.spawn(['/bin/sh',join(f.bundle,'scripts/opencrawl-hook.sh'),'mcp'],{env:{HOME:f.dir,PATH:'/no-node'},stdout:'pipe',stderr:'pipe'});
+ expect(await child.exited).toBe(0);expect(await new Response(child.stdout).text()).toBe(['plugin-hook','--root',realpathSync(f.bundle),'--action','mcp',''].join('\n'));expect(await new Response(child.stderr).text()).toBe('');
 }));
 
 cloudRuntimeTest('fresh Cloud startup binds the verified native owner through shared setup, capture and durable registration',()=>fixture(async f=>{

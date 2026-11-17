@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" start",
+        "timeout": 7
+      },
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+        "timeout": 30
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+        "timeout": 30
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+        "timeout": 30
+      },
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" suggest",
+        "timeout": 3
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+        "timeout": 30
+      }
+    ],
+    "afterAgentThought": [
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+        "timeout": 30
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" start-after-tool",
+        "timeout": 7
+      },
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+        "timeout": 30
+      },
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" suggest",
+        "timeout": 3
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+        "timeout": 30
+      },
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" suggest",
+        "timeout": 3
+      }
+    ],
+    "preCompact": [
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+        "timeout": 30
+      }
+    ],
+    "stop": [
+      {
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+        "timeout": 30
+      }
+    ],
+    "preToolUse": [
+      {
+        "matcher": "^(?:MCP:opencrawl_search|MCP:opencrawl_search_v1)$",
+        "command": "/bin/sh \"$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" search",
+        "timeout": 2
+      }
+    ]
+  }
+}

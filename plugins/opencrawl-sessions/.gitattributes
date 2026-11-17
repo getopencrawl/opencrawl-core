@@ -1,0 +1,2 @@
+# Embedded canonical assets must retain identical bytes on every build host.
+* text eol=lf

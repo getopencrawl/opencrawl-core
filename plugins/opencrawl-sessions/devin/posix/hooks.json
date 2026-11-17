@@ -1,0 +1,75 @@
+{
+  "SessionStart": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "/bin/sh \"$PLUGIN_ROOT/scripts/opencrawl-hook.sh\" workload",
+          "timeout": 120
+        }
+      ]
+    }
+  ],
+  "UserPromptSubmit": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "/bin/sh \"$PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+          "timeout": 5
+        }
+      ]
+    },
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "/bin/sh \"$PLUGIN_ROOT/scripts/opencrawl-hook.sh\" suggest",
+          "timeout": 3
+        }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "/bin/sh \"$PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+          "timeout": 5
+        }
+      ]
+    },
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "/bin/sh \"$PLUGIN_ROOT/scripts/opencrawl-hook.sh\" suggest",
+          "timeout": 3
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "/bin/sh \"$PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
+  "PostCompaction": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "/bin/sh \"$PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
+          "timeout": 5
+        }
+      ]
+    }
+  ]
+}

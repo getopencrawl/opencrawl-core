@@ -1,0 +1,12 @@
+{
+  "name": "opencrawl-sessions",
+  "version": "1.0.0",
+  "description": "Workspace knowledge, lifecycle capture and context suggestions.",
+  "author": {
+    "name": "OpenCrawl"
+  },
+  "license": "MIT",
+  "platforms": [
+    "cloud"
+  ]
+}

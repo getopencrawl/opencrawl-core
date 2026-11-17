@@ -1,6 +1,6 @@
-# Automatic prompt context
+# Context suggestions
 
-Context checks are optional. They send a redacted, bounded human prompt and recent
+Context suggestions are optional. They send a redacted, bounded human prompt and recent
 prompt context to the selected deployment, then offer up to five historical
 snippets to the coding agent. They use that deployment's credit policy. Installing
 or updating OpenCrawl does not enable them or change recording consent.
@@ -8,14 +8,14 @@ or updating OpenCrawl does not enable them or change recording consent.
 After installing the native OpenCrawl plugin:
 
 ```sh
-opencrawl context-check enable --harness codex --harness claude-code
+opencrawl context-suggestions enable --harness codex --harness claude-code
 opencrawl setup resume
-opencrawl context-check status
+opencrawl context-suggestions status
 ```
 
 Complete any native hook trust review and start a fresh session. `enable` records
 the choice; it does not bypass the harness's review or prove that a hook ran.
-`opencrawl context-check disable` stops future work and withholds pending output.
+`opencrawl context-suggestions disable` stops future work and withholds pending output.
 Pass `--harness NAME` to disable just one client, or `--api ORIGIN` for self-host.
 The self-hosted application uses its own reference judgment adapter and has no
 cloud credit dependency.
@@ -30,7 +30,7 @@ cloud credit dependency.
 | Antigravity | `PreInvocation`, latest explicit human transcript record | Background process; transient context on a subsequent `PreInvocation` |
 | Devin Cloud | `UserPromptSubmit`, native prompt ID | Background process; one result on a subsequent `PostToolUse` |
 
-Generated runners support the native macOS, Linux and Windows distributions;
+Canonical plugin runners support the native macOS, Linux and Windows distributions;
 Devin Cloud uses Linux. This does not expand setup availability: new personal
 setup currently offers Codex, Claude Code and Cursor on macOS. Other saved
 installations retain their existing availability and native policy controls.
@@ -83,3 +83,26 @@ References: [Codex hooks](https://learn.chatgpt.com/docs/hooks),
 [Cursor hooks](https://cursor.com/docs/hooks),
 [Antigravity hooks](https://antigravity.google/docs/hooks),
 [Devin hook output](https://docs.devin.ai/cli/extensibility/hooks/overview).
+
+## Instrumentation and feedback
+
+Eligible opted-in hooks queue bounded lifecycle metadata for the selected
+deployment: observed, skipped, requested, received, handoff and dropped. The
+private outbox holds at most 512 events for 24 hours; each flush sends at most 24
+and has a 1,500 ms deadline. Failed sends retry on a later eligible hook, with
+stable IDs. No extra model call or credit is used for telemetry.
+
+A handoff means the CLI wrote context to the harness; it does not establish model
+consumption or usefulness. Missing callbacks, disabled/excluded hooks, expired
+outbox records and interrupted processes leave unknown coverage. Model relevance
+scores remain separate from explicit user/agent labels. To assess a receipt:
+
+```sh
+opencrawl context-suggestions feedback --harness claude-code --check UUID --rating useful --source user
+```
+
+Use `--source agent` for an agent assessment and optionally `--result 0` for the
+first snippet. Other ratings: irrelevant, distracting, stale, duplicate. Feedback
+uses no inference. The command reports submitted, queued or rejected honestly.
+Self-host extensions and optional observability are documented in
+[the extension guide](../../docs/CONTEXT-SUGGESTIONS.md).
