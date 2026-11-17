@@ -76,10 +76,6 @@ if [ "$compose_no_build" = true ]; then
   fi
   compose_build=false
 fi
-runtime_node=$(../dev/up --node-runtime)
-# Retain an explicitly selected disabled integration mode across later upgrades.
-# Persist only after the upgrader has captured the original configuration.
-"$runtime_node" upgrade.mjs --automatic
 compose_build_flag=--build=false
 if [ "$compose_build" = true ]; then
   source_revision=$(git -C .. rev-parse HEAD)
@@ -89,7 +85,6 @@ elif [ "$compose_no_build" = true ]; then
   compose_build_flag=--no-build
 fi
 docker compose up -d "$compose_build_flag" --wait --wait-timeout 600 "$@"
-"$runtime_node" upgrade.mjs --record-startup
 echo "OpenCrawl is running at the OPENCRAWL_URL configured in deploy/.env."
 # The bootstrap grant is consumed once. Keep this URL private.
 docker compose exec -T app node -e "console.log('Private first-run setup link: '+process.env.OPENCRAWL_URL+'/auth/signup?setup='+encodeURIComponent(process.env.OPENCRAWL_SETUP_TOKEN))"

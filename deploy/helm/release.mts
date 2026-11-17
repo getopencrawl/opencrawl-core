@@ -137,7 +137,7 @@ export async function publishDraft(api:GitHub,plan:Plan,files:Map<string,Buffer>
   if(draft&&(!draft.draft||draft.prerelease||draft.tag_name!==tag||draft.target_commitish!==plan.revision||!draft.body?.includes(marker(version,plan.revision))))throw Error('Refusing to mutate an existing release with a different identity');
   if(!draft)draft=await api.request<Release>('releases','POST',{
     tag_name:tag,target_commitish:plan.revision,name:'OpenCrawl Helm '+version,draft:true,prerelease:false,make_latest:'false',
-    body:`${marker(version,plan.revision)}\n\nOpenCrawl Helm ${version}, from tested source \`${plan.revision}\`.\n\nDownload the self-host kit and SHA256SUMS, verify the archive checksum, and follow its README. Public amd64/arm64 images are recorded in release.json; no application build is required.\n\nThe bundled, mixed and external configurations remain available. Existing installations upgrade explicitly. This release does not deploy OpenCrawl Cloud.`,
+    body:`${marker(version,plan.revision)}\n\nOpenCrawl Helm ${version}, from tested source \`${plan.revision}\`.\n\nDownload the self-host kit and SHA256SUMS, verify the archive checksum, and follow its README. Public amd64/arm64 images are recorded in release.json; no application build is required.\n\nThe bundled, mixed and external configurations remain available. Check the bundled README for installation requirements and compatibility. This release does not deploy OpenCrawl Cloud.`,
   });
   const names=artifactNames(version);
   if(draft.assets.some(a=>!names.includes(a.name)))throw Error('Unexpected assets in the reserved draft');

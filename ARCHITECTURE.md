@@ -139,9 +139,10 @@ existing domains individually with their own tested cutover and recovery plan.
 Temporal continues to run session indexing/deletion and connector indexing.
 The unfinished connector-lifecycle rewrite and online whole-state migration
 have been retired. Preserve current authorization and idempotency behavior.
-Self-host startup admits only a verified auth/registry/board import; an existing
-whole-state installation must retain its release or restore its matched recovery
-point before adopting this baseline. See `docs/app-state-migration.md`.
+Self-host startup initializes and verifies an empty application database
+(`src/state/initialize.mts`). There is no upgrade path from older versions
+during alpha; an older installation keeps its release or starts from an empty
+install.
 
 ## React document seam
 
