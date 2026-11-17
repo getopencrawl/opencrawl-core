@@ -230,7 +230,9 @@ const providers:ProviderCatalog = {
     toolkit: 'linear', scope: 'team', teamOnly: true,
     help: 'An administrator shares Linear workspace records and public-team content. Uses the full Airbyte Linear connector, including projects, updates, cycles, relationships, history and customer requests. Private teams and private initiatives remain unavailable in search. Current access is checked again when indexing and retrieving.',
     owner: record => `workspace=${record.workspace}`,
-    authConfig: {name: 'OpenCrawl Linear full read', credentials: {scopes: 'read,customer:read,initiative:read'}},
+    // Composio authorizes as the consenting user. Linear's customer/initiative scopes
+    // are app-actor-only; user-mode read inherits that user's resource permissions.
+    authConfig: {name: 'OpenCrawl Linear full user read', credentials: {scopes: 'read'}},
     connector: connectors.linear,
     streams: linearStreamSettings(),
     progressStream: ['issues'], progress: [{stream: 'issues', label: 'Issues'}, {stream: 'comments', label: 'Comments'}],

@@ -75,7 +75,7 @@ test('all upstream streams and operations survive the OAuth transport adapter',a
   const provider=createProviderCatalog({linear:{name:'Linear',manifest}},{linearPublicAccess:true}).linear;
   assert.equal(provider.streams.filter(s=>s.syncMode==='incremental_append').length,14);
   assert.deepEqual(provider.streams.map(s=>s.name),LINEAR_STREAMS);
-  assert.match(provider.authConfig.credentials.scopes,/customer:read/);assert.match(provider.authConfig.credentials.scopes,/initiative:read/);
+  assert.equal(provider.authConfig.credentials.scopes,'read');assert.equal(provider.authConfig.name,'OpenCrawl Linear full user read');
 });
 
 test('all twenty record types have real access policies and retain their content',async()=>{

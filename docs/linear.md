@@ -14,7 +14,9 @@ Airbyte's exact pinned manifest is distributed with its own Elastic License 2.0.
 The OpenCrawl transport and permission adapters are Apache-2.0.
 
 An administrator connects an operator-owned Composio project using Linear's
-`read`, `customer:read` and `initiative:read` scopes. The broker owns OAuth tokens;
+user-mode `read` scope, which inherits the consenting user's resource access.
+The upstream app-mode OAuth flow uses `customer:read` and `initiative:read`;
+those scopes are invalid for Composio's user-mode authorization. The broker owns OAuth tokens;
 Airbyte receives a revocable capability restricted to one connection's upstream
 read queries. Customer streams also require Linear's Customer Requests feature.
 Unsupported or revoked permissions fail the sync visibly; they are never
