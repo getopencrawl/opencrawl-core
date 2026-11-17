@@ -10,14 +10,16 @@ import {createSessionSearch} from '../dist/src/sessions/search.mjs';
 import {createWorkspaceSearch, workspaceFetchSchema} from '../dist/src/search/workspace.mjs';
 import {sessionDocumentId} from '../dist/src/sessions/indexer.mjs';
 import {sessionScope} from '../dist/src/sessions/event-identity.mjs';
-import {memoryApplicationState} from './fixtures/memory-application-state.mjs';
+import {createControls} from '../dist/src/sessions/controls.mjs';
+import {memorySessionStore} from './session-store-fixture.mjs';
 
 for (const backend of ['sqlite', 'opensearch']) {
   test(`${backend}: event-centered reads preserve the anchor, chronology, boundaries and authorization`, {skip: backend === 'opensearch' && !process.env.OPENCRAWL_TEST_OPENSEARCH_URL}, async t => {
     const directory = await mkdtemp(join(tmpdir(), 'event-context-'));
     const endpoint = backend === 'sqlite' ? pathToFileURL(join(directory, 'index.sqlite')).href.replace('file:', 'sqlite:') : process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
     const principal = {tenantId: 'context-' + randomUUID(), userId: 'alice'}, owner = {...principal, userId: 'bob'};
-    const state = memoryApplicationState(), options = {endpoint, environment: 'test', state};
+    const store = memorySessionStore(), options = {endpoint, environment: 'test', store, prefix: 'test'};
+    const controls = createControls(options);
     const realm = createRealm({...options, tenantId: principal.tenantId});
     t.after(async () => {if (backend === 'opensearch') await fetch(endpoint + '/' + realm.index, {method: 'DELETE'});await rm(directory, {recursive: true, force: true});});
     await realm.ensureIndex();
@@ -68,23 +70,35 @@ for (const backend of ['sqlite', 'opensearch']) {
     assert.equal((await workspace.fetch(principal, {id: anchor})).context, undefined);
     await assert.rejects(workspace.fetch({...principal, captureAccess: 'write'}, {id: anchor, context: true}), /credentials/);
     await assert.rejects(workspace.fetch({...principal, tenantId: 'foreign'}, {id: anchor, context: true}));
-    await state.controls.update(owner, 'sessions', 'codex', 'same', () => ({visibility: 'private', deletedAt: null}));
+    await controls.update(owner, 'sessions', 'codex', 'same', () => ({visibility: 'private', deletedAt: null}));
     await assert.rejects(workspace.fetch(principal, {id: anchor, context: true}), error => error.status === 404);
     assert.equal((await workspace.fetch(owner, {id: anchor, context: true})).text, result.text);
-    await state.controls.update(owner, 'sessions', 'codex', 'same', () => ({visibility: 'team', deletedAt: null}));
+    await controls.update(owner, 'sessions', 'codex', 'same', () => ({visibility: 'team', deletedAt: null}));
     // Revocation after all index queries must suppress both anchor and context.
-    const read = state.controls.read.bind(state.controls);let reads = 0;
+    const read = store.readVersion.bind(store);let reads = 0;
     const racing = createWorkspaceSearch({sessions: {...sessions, context: async (...args) => {
-      state.controls.read = async (...readArgs) => {
-        if (++reads === 2) await state.controls.update(owner, 'sessions', 'codex', 'same', () => ({visibility: 'private', deletedAt: null}));
+      store.readVersion = async (...readArgs) => {
+        if (++reads === 2) await controls.update(owner, 'sessions', 'codex', 'same', () => ({visibility: 'private', deletedAt: null}));
         return read(...readArgs);
       };
       return sessions.context(...args);
     }}});
     await assert.rejects(racing.fetch(principal, {id: anchor, context: true}), error => error.status === 404);
-    state.controls.read = read;
-    await state.controls.update(owner, 'sessions', 'codex', 'same', () => ({visibility: 'team', deletedAt: new Date().toISOString()}));
+    store.readVersion = read;
+    await controls.update(owner, 'sessions', 'codex', 'same', () => ({visibility: 'team', deletedAt: null}));
+    reads = 0;
+    const unavailable = createWorkspaceSearch({sessions: {...sessions, context: async (...args) => {
+      store.readVersion = async (...readArgs) => {
+        if (++reads === 2) throw new Error('Control authority unavailable');
+        return read(...readArgs);
+      };
+      return sessions.context(...args);
+    }}});
+    await assert.rejects(unavailable.fetch(principal, {id: anchor, context: true}), /Control authority unavailable/);
+    store.readVersion = read;
+    await controls.update(owner, 'sessions', 'codex', 'same', () => ({visibility: 'team', deletedAt: new Date().toISOString()}));
     await assert.rejects(workspace.fetch(owner, {id: anchor, context: true}), error => error.status === 404);
+    await assert.rejects(createSessionSearch({endpoint}).context(principal, documents[0].document, {before: 1, after: 1, includeToolOutputs: false}), /authoritative resource controls/);
   });
 }
 

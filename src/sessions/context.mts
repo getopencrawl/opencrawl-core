@@ -15,16 +15,18 @@ function fail(status: number, message: string): never {throw Object.assign(new E
  * event. Each direction obtains its own native sort tuple: missing timestamps
  * have different OpenSearch sentinels in ascending and descending order.
  */
-export async function sessionContext(collection: SearchCollection, controls: ReturnType<typeof createControls>, principal: Principal,
+export async function sessionContext(collection: SearchCollection, controls: ReturnType<typeof createControls> | null, principal: Principal,
   anchor: Passage, input: SessionContextInput): Promise<SessionContextResult> {
   sessionScope(principal);
   if (principal.captureAccess !== undefined) fail(403, 'Session read access required');
+  if (!controls) fail(503, 'Session context requires authoritative resource controls');
+  const authority = controls;
   if (anchor.tenantId !== principal.tenantId || !anchor.userId || !anchor.harness || !anchor.sessionId || !anchor.eventId || !anchor.id)
     fail(400, 'Invalid context anchor');
   if (![input.before, input.after].every(n => Number.isInteger(n) && n >= 0 && n <= 10) || typeof input.includeToolOutputs !== 'boolean')
     fail(400, 'Invalid event context window');
   async function authorize() {
-    const control = await controls.read({...principal, userId: anchor.userId!}, 'sessions', anchor.harness!, anchor.sessionId!);
+    const control = await authority.read({...principal, userId: anchor.userId!}, 'sessions', anchor.harness!, anchor.sessionId!);
     if (control?.deletedAt || control?.visibility === 'private' && anchor.userId !== principal.userId)
       fail(404, 'Session not found or no longer available.');
   }
