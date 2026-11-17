@@ -91,6 +91,57 @@ export function Notice({tone = 'info', title, children, className = ''}: {tone?:
 export function StatusBadge({tone = 'neutral', children, className = '', variant = 'default'}: {tone?: 'neutral' | 'success' | 'warning' | 'danger'; children: ReactNode; className?: string; variant?: 'default' | 'pill'}) {
   return <span className={`oc-badge oc-badge-${tone}${variant === 'pill' ? ' oc-status-pill' : ''} ${className}`}>{children}</span>;
 }
+export function IntegrationLogo({src}: {src: string}) {
+  const [failed, setFailed] = useState<string | null>(null);
+  return <span className="oc-integration-logo" aria-hidden="true">{failed === src
+    ? <Icon name="sources" size={22}/>
+    : <img src={src} alt="" width={32} height={32} onError={() => setFailed(src)}/>}</span>;
+}
+export interface IntegrationMetric {label: string; count: number; hint?: string; pending?: boolean;}
+export interface IntegrationCardProps {
+  name: string;
+  icon: string;
+  compact?: boolean;
+  status?: {label: string; tone: 'neutral' | 'success' | 'warning' | 'danger'};
+  metrics?: readonly IntegrationMetric[];
+  metricsLabel?: string;
+  emptyMessage?: string;
+  note?: ReactNode;
+  metadata?: ReactNode;
+  action?: ReactNode;
+}
+/** One card for Usage and Integrations; callers retain their own measurement semantics. */
+export function IntegrationCard({name, icon, compact = false, status, metrics, metricsLabel = `Content in ${name}`, emptyMessage, note, metadata, action}: IntegrationCardProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [overflow, setOverflow] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const update = () => setOverflow(element.scrollHeight > element.clientHeight + 1);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    if (element.firstElementChild) observer.observe(element.firstElementChild);
+    return () => observer.disconnect();
+  }, [compact, metrics, note, emptyMessage]);
+  return <article className={`oc-integration-card${compact ? ' oc-integration-compact' : ''}`} aria-label={name}>
+    <header className="oc-integration-header">
+      <IntegrationLogo src={icon}/><h3 title={name}>{name}</h3>
+      {!compact && status && <StatusBadge variant="pill" tone={status.tone}>{status.label}</StatusBadge>}
+    </header>
+    {compact ? action : <>
+      <div ref={ref} className="oc-integration-breakdown" role={overflow ? 'region' : undefined} aria-label={overflow ? metricsLabel : undefined} tabIndex={overflow ? 0 : undefined}>
+        <div>
+          {note}
+          {metrics?.length ? <ul className="oc-integration-metrics" aria-label={metricsLabel}>{metrics.map(metric => <li key={metric.label}>
+            <span>{metric.label}{metric.hint && <span className="sr-only">: {metric.hint}</span>}{metric.pending && <Icon name="loader" className="oc-spin" size={12}/>}</span><span>{metric.count.toLocaleString('en-US')}</span>
+          </li>)}</ul> : emptyMessage && <p className="oc-integration-empty">{emptyMessage}</p>}
+        </div>
+      </div>
+      <footer className="oc-integration-footer"><p className="oc-integration-meta">{metadata}</p>{action}</footer>
+    </>}
+  </article>;
+}
 export function EmptyState({title, description, action, actions}: {title: string; description?: ReactNode; action?: ReactNode; actions?: ReactNode}) {
   return <div className="oc-empty"><h3>{title}</h3>{description && <p>{description}</p>}{(action || actions) && <div className="actions">{action || actions}</div>}</div>;
 }

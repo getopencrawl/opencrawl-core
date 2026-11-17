@@ -131,6 +131,8 @@ test('Usage opens on its sections, without a summary sentence about imports or i
 
 test('source tiles show only content-type counts without import details or technical labels', () => {
   const html = render(), slack = sourceCard(html, 'Slack');
+  assert.doesNotMatch(slack, /Example|report-source-header/);
+  assert.match(html, /class="oc-integration-card"/);
   for (const name of ['Slack', 'Notion', 'GitHub']) {
     assert.doesNotMatch(sourceCard(html, name), /report-source-count|report-source-label|report-source-imported|Imported|Indexed|indexed documents?/);
   }
@@ -169,7 +171,7 @@ test('missing species remain unavailable even with an indexed total; empty and m
   let html = sourceCard(render(data), 'Slack');
   assert.doesNotMatch(html, /report-source-count|indexed documents?/);
   assert.match(html, /Content breakdown unavailable/);
-  assert.doesNotMatch(html, /report-indexed-species/);
+  assert.doesNotMatch(html, /oc-integration-metrics/);
   source.indexed = null;
   html = sourceCard(render(data), 'Slack');
   assert.match(html, /Content breakdown unavailable/);

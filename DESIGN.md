@@ -725,26 +725,27 @@ Integrations separates Available and Connected sections, with Available first.
 Each section uses an alphabetical, responsive grid. Available tiles show the
 connector logo, name and Connect button; unavailable providers retain their Details action.
 Connect starts OAuth immediately, or opens the required API-key/setup form.
-Connected cards show their complete imported-data breakdown by default, including
-when the first counts arrive in the background. Show the catalog-selected key metric,
-or the highest valid count when no key metric is available. Show less collapses the
-breakdown; the N more caret restores it. Keep real zero counts, per-stream
-completion, and measured progress. Use 8px solid status dots without glow and
-unframed provider icons. Keep account/scope details inside Manage, not beneath
-the card title. Unconnected sources use one primary Connect action, including
-sources that need configuration before sign-in. Sections are the only grouping;
-there are no duplicate state tabs or toolbar divider. Show search only for catalogs
-of 15 or more connectors, matching onboarding. Hiding search also disables any prior query.
-Shared dialogs retain required setup, sign-in recovery, sync retries and confirmed deletion.
+Connected cards use the shared IntegrationCard from Usage: a framed logo, connector
+name and status pill, a fixed-height scrollable metrics breakdown, and an anchored
+footer for sync metadata and Manage. There is no subtitle under the connector name
+or collapsed N more state. Keep real zero counts, per-stream completion, stale
+measurement labels, and measured progress. Account/scope details remain inside Manage.
+Unconnected sources use the compact variant of the same component with a primary
+Connect action, including sources that need configuration before sign-in.
+Sections are the only grouping; there are no duplicate state tabs or toolbar divider.
+Show search only for catalogs of 15 or more connectors, matching onboarding.
+Hiding search also disables any prior query. Shared dialogs retain required setup,
+sign-in recovery, sync retries and confirmed deletion.
 
-The shared `oc-connector-*` patterns own compact available tiles, connected cards with a 226px collapsed summary, and their
-3/2/1-column grid. Expanding a card never stretches neighboring cards. The same
-32px logos and 16px connector names align within both sections, with 20px side
-insets on desktop and 16px on mobile. Section headings sit 16px above their grids;
-separate sections by 40px on desktop and 32px on mobile. The same
-core component and shared Button, Dialog and Icon primitives serve hosted and
-self-hosted adapters. Imported stats describe ingest progress, not Usage indexed
-document counts. `/sources` and its `/integrations` alias share one page.
+The shared IntegrationCard and oc-integration-* styles are the sole card implementation
+for both pages. Full cards are 18rem tall, in two columns (one below 650px pane width).
+Only the breakdown scrolls, with keyboard focus when it overflows. Available tiles
+use a 3/2/1-column grid. Both variants have 20px side insets on desktop, 16px on mobile.
+Section headings sit 16px above their grids; separate sections by 40px on desktop and
+32px on mobile. Hosted and self-hosted adapters use the same component and shared
+Button, Dialog and Icon primitives. Integrations supplies imported measurements;
+Usage supplies indexed content-type counts. Never substitute one for the other.
+`/sources` and its `/integrations` alias share one page.
 
 ## Team management
 

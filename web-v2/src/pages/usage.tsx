@@ -1,6 +1,6 @@
 import {consoleResourceKey, useConsoleResource} from '../data.tsx';
 import type {MetricItem} from '../design/components.js';
-import {ActivityChart, BarList, Button, DailyLineChart, EmptyState, LoadingState, MetricGrid, Notice, Page, Section, StatusBadge, Table} from '../design/components.js';
+import {ActivityChart, BarList, Button, DailyLineChart, EmptyState, LoadingState, MetricGrid, Notice, Page, Section, IntegrationCard, Table} from '../design/components.js';
 import {Link} from '../router.js';
 import {CopyPromptButton} from '../onboarding/copy.tsx';
 import type {ConsoleDataAdapter, UsageReport, ValueReport} from './types.js';
@@ -14,28 +14,11 @@ export function useUsage(adapter: ConsoleDataAdapter) {
   return {...resource, refresh: resource.reload};
 }
 
-function SourceCard({source, now}: {source: UsageSource; now: number}) {
-  const status = sourceStatus(source.state);
-  const species = source.indexedSpecies;
-
-  return (
-    <article className="report-source-card" aria-label={source.name}>
-      <header className="report-source-header">
-        <img src={source.icon} alt="" width={28} height={28}/>
-        <div className="report-source-identity"><h3>{source.name}</h3>{source.account && <p>{source.account}</p>}</div>
-        <StatusBadge variant="pill" tone={status.tone}>{status.label}</StatusBadge>
-      </header>
-      {species ? species.length ? (
-        <ul className="report-source-rows report-indexed-species" aria-label={`Content in ${source.name}`}>
-          {species.map(item => <li key={item.name}><span>{speciesLabel(item.name)}</span><span>{count(item.count)}</span></li>)}
-        </ul>
-      ) : <p className="report-note">No content yet.</p> : <p className="report-note">Content breakdown unavailable.</p>}
-      <p className="report-source-meta">
-        <span>{source.lastSyncedAt ? `Synced ${ago(source.lastSyncedAt, now)}` : 'Not synced yet'}</span>
-        {source.connectedBy && <span>Connected by {source.connectedBy}</span>}
-      </p>
-    </article>
-  );
+function UsageSourceCard({source, now}: {source: UsageSource; now: number}) {
+  return <IntegrationCard name={source.name} icon={source.icon} status={sourceStatus(source.state)}
+    metrics={source.indexedSpecies?.map(item => ({label: speciesLabel(item.name), count: item.count}))}
+    emptyMessage={source.indexedSpecies ? 'No content yet.' : 'Content breakdown unavailable.'}
+    metadata={<><span>{source.lastSyncedAt ? `Synced ${ago(source.lastSyncedAt, now)}` : 'Not synced yet'}</span>{source.connectedBy && <span>Connected by {source.connectedBy}</span>}</>}/>;
 }
 
 /** Three cards of things OpenCrawl did for this workspace's agents; each counts something that happened. */
@@ -65,8 +48,8 @@ function DataSourcesReport({report, now, retry}: {report: UsageReport; now: numb
     <Section className="report-section" title="Data sources">
       <MeasurementStatus report={report} section="ingestion" label="Source counts" now={now} retry={retry}/>
       {!data ? (usageSectionFailed(report, 'ingestion') ? null : <EmptyState title="Source reporting isn’t available on this deployment."/>) : data.sources.length ? (
-        <div className="report-source-grid">
-          {data.sources.map((source, index) => <SourceCard key={`${source.name}:${source.account || index}`} source={source} now={now}/>)}
+        <div className="oc-integration-grid">
+          {data.sources.map((source, index) => <UsageSourceCard key={`${source.name}:${source.account || index}`} source={source} now={now}/>)}
         </div>
       ) : <EmptyState title="No sources connected" actions={<Link to="/sources">Connect a source to start ingesting.</Link>}/>}
     </Section>

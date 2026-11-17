@@ -19,6 +19,7 @@
   --console-page-bottom: var(--space-16);
   --console-page-header-gap: var(--space-8);
   --console-metric: 1.5rem;
+  --console-source-card-height: 18rem;
   --console-dialog-width: 520px;
   --console-focus-ring: 2px solid var(--accent);
   --console-focus-offset: 3px;

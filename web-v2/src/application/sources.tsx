@@ -143,7 +143,7 @@ function AdminSourcesPage({adapter}:{adapter:SourcesAdapter}) {
     {!data ? loading ? <LoadingState label="Loading integrations" /> : <EmptyState title="Integrations couldn’t load" description="Try again to see your connections." action={<Button onClick={() => void reload()}>Try again</Button>} /> : <>
       {showSearch && <div className="oc-source-toolbar"><div className="oc-source-search"><Icon name="search" size={16}/><Input type="search" aria-label="Search integrations" placeholder="Search integrations" value={query} onChange={event=>setQuery(event.target.value)}/></div></div>}
       {groups.filter(group=>group.items.length>0).map(group=><Section key={group.title} title={group.title} className="oc-source-section">
-        <div className="oc-source-grid">
+        <div className={group.title === 'Available' ? 'oc-source-grid' : 'oc-integration-grid'}>
           {group.items.map(source => <SourceRow key={source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? `${source.name} removal completed and its imported data deleted.` : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
         </div>
       </Section>)}
@@ -179,7 +179,7 @@ export function SourceRow({source, canManage = false, pending, active, connect, 
     setOpen(true);
   }
   return <>
-    <ConnectorCard source={source} primaryMetric={source.primaryMetric} action={action} pending={pending} busy={active} onAction={show}/>
+    <ConnectorCard source={source} action={action} pending={pending} busy={active} onAction={show}/>
     <Dialog open={open} onClose={()=>{if(!pending)setOpen(false);}} title={`${action} ${source.name}`} description={source.help ?? source.description} actions={canManage ? <>
       {sourceDeletable(source) && <Button variant="danger" aria-label={`Disconnect ${source.name}`} disabled={pending} onClick={()=>invoke(disconnect)}>Disconnect</Button>}
       {['connected','synced'].includes(source.state) && <Button disabled={pending} onClick={()=>invoke(retry)}>Sync now</Button>}
