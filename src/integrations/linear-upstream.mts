@@ -47,6 +47,8 @@ export function linearQueryStream(query: unknown): string | undefined {
  */
 export function linearManifest(): ConnectorManifest {
   const manifest = structuredClone(upstream);
+  // Airbyte stores the definition description in a 255-character database field.
+  manifest.description = 'Linear workspace data via Airbyte source-linear ' + LINEAR_VERSION + '.';
   const defs = object(manifest.definitions), requester = object(defs.base_requester);
   requester.url_base = "{{ config['credential_proxy_base_url'] }}";
   requester.authenticator = {type: 'ApiKeyAuthenticator', api_token: "{{ config['credential_proxy_api_key'] }}",
