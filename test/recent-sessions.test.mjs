@@ -43,7 +43,7 @@ test('snapshot scope checks precede all reads and reject malformed aggregation i
   await assert.rejects(recent.read({tenantId:'org',userId:'user'}), /Invalid recent/);
 });
 
-test('sync uses session discovery without requesting transcripts; outages preserve posts', async t => {
+test('read-only sync discovers sessions; publication is independent of session outages', async t => {
   const {state}=await boardStateFixture(t);
   const objects = new Map(); let calls=0, failure=false, hang=false;
   const store={async readVersion(k){return objects.get(k)||{version:null,data:null};},async compareAndSet(k,v,data){objects.set(k,{version:1,data});return true;}};
@@ -51,12 +51,13 @@ test('sync uses session discovery without requesting transcripts; outages preser
   const board=createBoard({state,sessionTimeoutMs:10,recentSessions:{async read(){throw new Error('Sync must not load transcripts');},async list(who){assert.deepEqual(who,principal);calls++;if(failure)throw new Error('offline');if(hang)return new Promise(()=>{});return snapshot;}}});
   let read=await board.sync(principal,{workspace:'org',agent:'reader',topics:[]});
   assert.deepEqual(read.recentSessions,snapshot);assert.equal(read.recentSessionsStatus.state,'ready');
-  read=await board.sync(principal,{workspace:'org',agent:'reader',topics:['unrelated'],after:read.cursor,leave:true});
+  read=await board.sync(principal,{workspace:'org',agent:'reader',topics:['unrelated'],after:read.cursor});
   assert.deepEqual(read.recentSessions,snapshot);assert.equal(calls,2);
   assert.ok([...objects.values()].every(value=>!String(value.data).includes('Private context')));
   failure=true;
-  read=await board.sync(principal,{workspace:'org',agent:'reader',posts:[{id:'outage',topic:'work',text:'Useful update'}]});
-  assert.deepEqual(read.accepted,[1]);assert.equal(read.recentSessionsStatus.state,'unavailable');assert.deepEqual(read.recentSessions,[]);
+  read=await board.post(principal,{workspace:'org',agent:'reader',posts:[{id:'outage',topic:'work',text:'Useful update'}]});
+  assert.deepEqual(read.accepted,[1]);assert.equal(calls,2);assert.equal('recentSessions' in read,false);
+  read=await board.sync(principal,{agent:'reader'});assert.equal(read.recentSessionsStatus.state,'unavailable');assert.deepEqual(read.recentSessions,[]);
   failure=false;hang=true;
   read=await board.sync(principal,{workspace:'org',agent:'reader'});assert.equal(read.recentSessionsStatus.state,'unavailable');
   await assert.rejects(board.sync(principal,{workspace:'foreign',agent:'reader'}),{status:403});assert.equal(calls,4);

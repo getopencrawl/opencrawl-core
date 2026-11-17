@@ -25,12 +25,12 @@ test('real PostgreSQL and MCP: relevance, phrase boost, facets, scope, full text
   const call=async(name,args)=>{const result=await client.callTool({name,arguments:args});assert.ok(!result.isError,JSON.stringify(result));return JSON.parse(result.content[0].text);};
   assert.ok((await client.listTools()).tools.some(t=>t.name==='board_search'));
   const post=(id,topic,text)=>({id,topic,text});
-  await call('board_sync',{workspace:'team-a',agent:'codex',topics:['auth'],posts:[
+  await call('board_post',{workspace:'team-a',agent:'codex',posts:[
     post('1','auth','OAuth refresh token rotation fixed; tests pass. Evidence: https://example.test/pr/1'),
     post('2','auth','Investigating a refresh timeout while the cache token expires'),
     post('3','storage','Archive upload verified'),
   ]});
-  await board.sync({tenantId:'team-b',userId:'mallory'},{workspace:'team-b',agent:'outsider',posts:[post('1','secret','refresh token confidential')]});
+  await board.post({tenantId:'team-b',userId:'mallory'},{workspace:'team-b',agent:'outsider',posts:[post('1','secret','refresh token confidential')]});
   const args={workspace:'team-a',query:'refresh token',limit:1,facets:['topic','agent','author','day']};
   const first=await call('board_search',args);
   assert.equal(first.total,2);assert.equal(first.messages[0].id,1); // Exact phrase beats the separated terms.
@@ -39,7 +39,7 @@ test('real PostgreSQL and MCP: relevance, phrase boost, facets, scope, full text
   assert.deepEqual(first.facets.day.values,[{value:'2026-11-01',count:2}]);
   assert.equal(first.facets.agent.values[0].name,'codex');
   assert.ok(Buffer.byteLength(JSON.stringify(first))<=8192);
-  await call('board_sync',{workspace:'team-a',agent:'claude',posts:[post('4','auth','refresh token refresh token refresh token')]});
+  await call('board_post',{workspace:'team-a',agent:'claude',posts:[post('4','auth','refresh token refresh token refresh token')]});
   const next=await call('board_search',{...args,cursor:first.next});
   assert.equal(next.total,2);assert.equal(next.messages[0].id,2);assert.equal(next.next,null);
   const filtered=await call('board_search',{workspace:'team-a',query:'refresh',agents:[first.messages[0].agent],topics:['auth'],authors:['alice'],since:'2026-10-31T00:00:00Z',until:'2026-11-02T00:00:00Z',sort:'newest'});
@@ -59,7 +59,7 @@ test('more than 10000 messages remain searchable with exact facets and exhaustiv
   const args={workspace:principal.tenantId,query:'marker',limit:10,facets:['topic']};
   let page=await search.search(principal,args);
   assert.equal(page.total,10005);assert.deepEqual(page.facets.topic.values,[{value:'work',count:10005}]);
-  const seen=new Set();await f.make().sync(principal,{agent:'writer',posts:[{id:'concurrent',topic:'work',text:'marker concurrent'}]});
+  const seen=new Set();await f.make().post(principal,{agent:'writer',posts:[{id:'concurrent',topic:'work',text:'marker concurrent'}]});
   for(;;){
     assert.ok(Buffer.byteLength(JSON.stringify(page))<=8192);
     for(const m of page.messages){assert.ok(!seen.has(m.id));seen.add(m.id);assert.equal(m.text,messages[m.id-1].text);}

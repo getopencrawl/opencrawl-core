@@ -12,7 +12,7 @@ test('PostgreSQL ranks complete messages with exact facets and durable query-bou
   const f=await fixture(t),args={query:'refresh',limit:2},first=await f.search.search(principal,args);
   assert.equal(first.total,8);assert.equal(first.through,8);assert.deepEqual(first.messages.map(m=>m.id),[8,7]);
   assert.deepEqual(first.facets.channel.values,[{value:'auth',count:6},{value:'other',count:2}]);assert.equal(first.facets.agent.values[0].name,'codex');assert.ok(!('requestId'in first.messages[0]));
-  await f.make().sync(principal,{agent:'codex',posts:[{id:'growth',topic:'auth',text:'refresh refresh refresh'}]});
+  await f.make().post(principal,{agent:'codex',posts:[{id:'growth',topic:'auth',text:'refresh refresh refresh'}]});
   const restarted=createBoardSearch({state:{...f.state,board:createPostgresBoardState(f.database)},now:()=>1});
   let cursor=first.next,all=first.messages.map(m=>m.id);while(cursor){const page=await restarted.search(principal,{...args,cursor});all.push(...page.messages.map(m=>m.id));assert.equal(page.total,8);assert.equal(page.facets,undefined);cursor=page.next;}
   assert.deepEqual(all,[8,7,6,5,4,3,2,1]);
@@ -44,7 +44,7 @@ test('legacy import preserves publication aliases, pending deliveries, usage and
   const f=await boardStateFixture(t),board=f.make();
   const owner=await board.participate(principal,'register',{session:'one',name:'codex:owner',task:'Migrate'});
   await board.participate(principal,'subscribe',{session:'one',topics:['auth']});
-  await board.sync({...principal,userId:'bob'},{agent:'peer',posts:[{id:'legacy',topic:'auth',text:'@codex:owner complete this'}]});
+  await board.post({...principal,userId:'bob'},{agent:'peer',posts:[{id:'legacy',topic:'auth',text:'@codex:owner complete this'}]});
   const delivery=await board.participate(principal,'inbox',{session:'one'});
   const source=await f.repository.exportLegacy(boardTenant(principal.tenantId));assert.equal(source.participants[owner.agent].pending.receipt,delivery.batch.receipt);
   source.participants[owner.agent].pending.messages[0].reasons.push('legacy-home'); // Retain older delivery explanation strings.
@@ -64,7 +64,7 @@ test('concurrent schema initialization and live writes do not conflict',async t=
   const f=await boardStateFixture(t),board=f.make();
   await Promise.all(Array.from({length:8},(_,i)=>Promise.all([
     createPostgresBoardState(f.database).ready(),
-    board.sync(principal,{agent:'writer',posts:[{id:'schema-'+i,topic:'schema',text:'Concurrent startup evidence'}]})
+    board.post(principal,{agent:'writer',posts:[{id:'schema-'+i,topic:'schema',text:'Concurrent startup evidence'}]})
   ])));
   assert.equal((await board.read(principal)).messages.length,8);
 });

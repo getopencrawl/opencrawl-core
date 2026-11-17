@@ -154,6 +154,32 @@ test('background refresh retains pagination focus without accepting overlapping 
   } finally {release();}
 });
 
+for(const width of [1440,390])test(`thread pane preserves combined channel history and scroll at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});
+ await page.route('**/api/console/board?*',async route=>{
+  const q=new URL(route.request().url()).searchParams;
+  if(!q.has('threadId'))return route.fallback();
+  const root={...messages[29]!,threadId:30,replyCount:1};
+  return route.fulfill({json:{threadRoot:root,messages:[{...root,id:61,text:'Reply in the side pane'}],next:null,topicSummaries:[]}});
+ });
+ await page.goto('/diagnostics?view=board');
+ await page.getByRole('button',{name:'Load older messages'}).click();
+ const channel=page.locator('.oc-board-channel'),scroll=channel.getByLabel('Messages',{exact:true});
+ await expect(channel.locator('.oc-board-post')).toHaveCount(39);
+ const root=channel.locator('[data-board-anchor="post:30"]');await root.scrollIntoViewIfNeeded();
+ const trigger=root.getByRole('link',{name:'Show thread for message #30',exact:true});await trigger.focus();
+ const before=await scroll.evaluate(node=>node.scrollTop),element=await root.elementHandle();
+ await page.keyboard.press('Enter');await expect(page).toHaveURL('/diagnostics?view=board&thread=30');
+ await expect(page.getByRole('complementary',{name:'Thread',exact:true})).toBeVisible();
+ expect(await element!.evaluate(node=>node.isConnected)).toBe(true);
+ await expect(channel.locator('.oc-board-post')).toHaveCount(39);
+ if(width>1100){const left=(await channel.boundingBox())!,right=(await page.locator('#board-thread').boundingBox())!;expect(right.x).toBeGreaterThan(left.x+left.width);}
+ await page.getByRole('button',{name:'Close thread',exact:true}).click();
+ await expect(trigger).toBeFocused();expect(await scroll.evaluate(node=>node.scrollTop)).toBeCloseTo(before,0);
+ await page.goBack();await expect(page.locator('#board-thread')).toBeVisible();
+ await page.goForward();await expect(page.locator('#board-thread')).toHaveCount(0);
+});
+
 test('a focused permalink leaves room for long text at the desktop breakpoint', async ({page}, info) => {
   await page.setViewportSize({width: 801, height: 900});
   await page.route('**/api/console/board?*', route => route.fulfill({json: {messages: [{...messages[0]!, text: 'A long first line must stay readable beside its message permalink. '.repeat(12)}], next: null, topicSummaries: [{topic, posts: 1, latest: {name: messages[0]!.name, timestamp: messages[0]!.timestamp}}]}}));
@@ -171,7 +197,7 @@ test('a focused permalink leaves room for long text at the desktop breakpoint', 
 
 for(const width of [1440,390])test(`system announcement thread navigation and reply permalink at ${width}px`,async({page},info)=>{
  await page.setViewportSize({width,height:900});
- const root:BoardMessage={id:101,topic:'opencrawl',channel:'opencrawl',threadId:101,system:true,agent:'system:opencrawl',name:'opencrawl',timestamp:1_800_000_000_000,text:'An operator announcement'};
+ const root:BoardMessage={id:101,topic:'opencrawl',channel:'opencrawl',threadId:101,replyCount:1,system:true,agent:'system:opencrawl',name:'opencrawl',timestamp:1_800_000_000_000,text:'An operator announcement'};
  const reply:BoardMessage={id:102,topic:'opencrawl',channel:'opencrawl',threadId:101,agent:'client',name:'codex:client',timestamp:1_800_000_001_000,text:'Agent thread reply'};
  await page.route('**/api/console/board?*',route=>{
   const q=new URL(route.request().url()).searchParams;
@@ -181,9 +207,13 @@ for(const width of [1440,390])test(`system announcement thread navigation and re
  await expect(page.getByText('System announcements. Agents can reply in threads.')).toBeVisible();
  await expect(page.getByText('Agent thread reply',{exact:true})).toHaveCount(0);
  let documents=0;page.on('request',r=>{if(r.isNavigationRequest()&&r.frame()===page.mainFrame())documents++;});
- const link=page.getByRole('link',{name:'View thread',exact:true});await link.focus();await page.keyboard.press('Enter');
+ const link=page.getByRole('link',{name:'1 reply',exact:true});await link.focus();await page.keyboard.press('Enter');
  await expect(page).toHaveURL(/channel=opencrawl&thread=101$/);
- await expect(page.getByText('An operator announcement',{exact:true})).toBeVisible();await expect(page.getByText('Agent thread reply',{exact:true})).toBeVisible();
+ const pane=page.getByRole('complementary',{name:'Thread',exact:true});
+ await expect(pane.getByText('An operator announcement',{exact:true})).toBeVisible();await expect(pane.getByText('Agent thread reply',{exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Close thread',exact:true})).toBeFocused();
+ await page.keyboard.press('Escape');await expect(pane).toHaveCount(0);await expect(link).toBeFocused();
+ await page.keyboard.press('Enter');await expect(pane).toBeVisible();
  await page.getByRole('link',{name:'Permalink to message #102',exact:true}).click();await expect(page.locator('[data-board-anchor="post:102"]')).toBeFocused();
  await page.goBack();await page.goBack();await expect(page.getByText('Agent thread reply',{exact:true})).toHaveCount(0);
  await page.goForward();await expect(page.getByText('Agent thread reply',{exact:true})).toBeVisible();expect(documents).toBe(0);

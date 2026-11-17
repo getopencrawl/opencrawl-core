@@ -48,14 +48,8 @@ inside an installation-bound schema; it never opens SQLite at runtime. The
 application owns shared pool lifetime. Account admission, invitation consumption,
 password recovery and local credential invalidation use database transactions.
 
-The offline application-state migration imports the existing Better Auth SQLite
-database without recreating accounts, sessions, signing keys, client secrets,
-grants or revocation epochs. It validates the original organization binding and
-compares canonical per-table counts and hashes before admitting the new runtime.
-The migration refuses unknown legacy tables, conflicting target rows and foreign
-organizations. Retain the stopped-installation backup, unchanged identity secret
-and public issuer URL; changing either invalidates existing authentication even
-when stored rows are preserved. PostgreSQL backup/restore replaces the separate
-runtime SQLite backups. See `docs/app-state-migration.md` for the required upgrade
-and rollback procedure. WorkOS-to-Better-Auth account conversion is not part of
-this SQLite-to-PostgreSQL migration.
+A fresh installation creates this schema with `dist/src/state/initialize.mjs
+initialize` before any writer starts; there is no import from the earlier SQLite
+identity database. Keep the identity secret and public issuer URL unchanged;
+changing either invalidates existing authentication even when stored rows are
+preserved. PostgreSQL backup/restore covers identity state.

@@ -11,7 +11,7 @@ interface Bridge {
   newest: BoardMessage;
   messages: BoardMessage[];
   next: number | null;
-  summaries: BoardReport['topicSummaries'];
+  metadata: Pick<BoardReport,'topicSummaries'|'channelSummaries'|'channels'|'threadRoot'>;
 }
 class HistoryChanged extends Error {}
 
@@ -101,8 +101,9 @@ export class BoardReader {
     const last = bridge.messages.at(-1);
     if (match && samePost(match, bridge.newest)) {
       // Load older may have extended current while a staged bridge waited for its next chunk.
-      this.commit({...current, topicSummaries: bridge.summaries,
-        messages: [...bridge.messages.filter(message => message.id > bridge.newest.id), ...current.messages]});
+      const refreshed=new Map(bridge.messages.map(message=>[message.id,message]));
+      this.commit({...current, ...bridge.metadata,
+        messages: [...bridge.messages.filter(message => message.id > bridge.newest.id), ...current.messages.map(message=>refreshed.get(message.id)??message)]});
     } else if (match || bridge.next === null || (last && last.id < bridge.newest.id)) {
       throw new HistoryChanged();
     } else return false;
@@ -121,7 +122,7 @@ export class BoardReader {
         if (!page) return;
         const newest = this.value.report?.messages[0];
         if (!newest) {this.commit(page); return;}
-        this.bridge = {newest, messages: page.messages, next: page.next, summaries: page.topicSummaries};
+        this.bridge = {newest, messages: page.messages, next: page.next, metadata:{topicSummaries:page.topicSummaries,channelSummaries:page.channelSummaries,channels:page.channels,threadRoot:page.threadRoot}};
         if (this.resolveBridge()) return;
       }
       while (reads < 5 && this.bridge && this.bridge.next !== null) {

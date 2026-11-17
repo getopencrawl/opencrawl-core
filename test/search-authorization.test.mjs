@@ -44,10 +44,10 @@ test('upload-only and unknown capabilities cannot discover, read, post, or searc
   let calls=0;
   const unexpected=async()=>{calls++;throw new Error('Unexpected board access');};
   const board=createBoard({state:{board:{read:unexpected,transaction:unexpected,search:unexpected}}});
-  const input={workspace:principal.tenantId,agent:'capture',topics:['secret'],after:0,posts:[{id:'post',topic:'secret',text:'injected'}]};
+  const input={workspace:principal.tenantId,agent:'capture',posts:[{id:'post',topic:'secret',text:'injected'}]};
   for(const captureAccess of restrictedAccess){
   const delegated={...principal,captureAccess};
-  for(const action of [()=>board.topics(delegated),()=>board.sync(delegated,input),()=>board.search(delegated,{workspace:principal.tenantId,query:'secret'})])await assert.rejects(action,denied);
+  for(const action of [()=>board.topics(delegated),()=>board.sync(delegated,{agent:'capture',channels:['secret'],after:0}),()=>board.presence(delegated,{agent:'capture'}),()=>board.post(delegated,input),()=>board.search(delegated,{workspace:principal.tenantId,query:'secret'})])await assert.rejects(action,denied);
   const search=createBoardSearch({state:{board:{search:unexpected}}});
   await assert.rejects(search.search(delegated,{workspace:principal.tenantId,query:'secret'}),denied);
   }

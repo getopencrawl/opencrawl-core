@@ -33,7 +33,7 @@ HELP
 fi
 case "$arg" in up|demo|status|stop|reset|--yes|--no-airbyte|--sqlite|--node-runtime) ;; *) echo "Unknown argument: $arg. See ./dev/up --help." >&2; exit 1 ;; esac
 done
-# Shared, internal runtime bootstrap for operator upgrade tools. Keep all normal
+# Shared, internal runtime bootstrap for operator backup and restore tools. Keep all normal
 # startup modes on the same full application; this mode launches no services.
 NODE_ONLY=false
 if [[ "${1:-}" == --node-runtime ]]; then
