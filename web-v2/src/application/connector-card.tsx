@@ -35,7 +35,7 @@ export function SourceProgress({source}: {source: SourceCard}) {
 
 /** Compact connection tiles above detailed cards for existing connections. */
 export function ConnectorCard({source, primaryMetric, action, pending = false, busy = false, onAction}: ConnectorCardProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const statsId = useId();
   const titleId = useId();
   if (!sourceConnected(source)) return <article className="oc-connector-card oc-connector-available" aria-label={source.name} data-state={source.state}>

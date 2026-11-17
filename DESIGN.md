@@ -725,9 +725,10 @@ Integrations separates Available and Connected sections, with Available first.
 Each section uses an alphabetical, responsive grid. Available tiles show the
 connector logo, name and Connect button; unavailable providers retain their Details action.
 Connect starts OAuth immediately, or opens the required API-key/setup form.
-Connected cards occupy the same collapsed space. Show the catalog-selected key metric,
-or the highest valid count when no key metric is available, with an N more caret
-button that expands the full list of stats. Keep real zero counts, per-stream
+Connected cards show their complete imported-data breakdown by default, including
+when the first counts arrive in the background. Show the catalog-selected key metric,
+or the highest valid count when no key metric is available. Show less collapses the
+breakdown; the N more caret restores it. Keep real zero counts, per-stream
 completion, and measured progress. Use 8px solid status dots without glow and
 unframed provider icons. Keep account/scope details inside Manage, not beneath
 the card title. Unconnected sources use one primary Connect action, including
@@ -736,7 +737,7 @@ there are no duplicate state tabs or toolbar divider. Show search only for catal
 of 15 or more connectors, matching onboarding. Hiding search also disables any prior query.
 Shared dialogs retain required setup, sign-in recovery, sync retries and confirmed deletion.
 
-The shared `oc-connector-*` patterns own compact available tiles, 226px connected cards and their
+The shared `oc-connector-*` patterns own compact available tiles, connected cards with a 226px collapsed summary, and their
 3/2/1-column grid. Expanding a card never stretches neighboring cards. The same
 32px logos and 16px connector names align within both sections, with 20px side
 insets on desktop and 16px on mobile. Section headings sit 16px above their grids;

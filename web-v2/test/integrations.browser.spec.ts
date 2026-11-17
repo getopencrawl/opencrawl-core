@@ -21,7 +21,9 @@ for(const width of [1440,600,390,320]) test(`available tiles precede connected c
   await expect(available.getByRole('article').locator('p, footer, dl')).toHaveCount(0);
   await expect(available.getByRole('article').locator('.oc-connector-icon, .oc-connector-placeholder')).toHaveCount(6);
   expect(await available.getByRole('article').evaluateAll(es=>es.every(e=>e.getBoundingClientRect().height<120))).toBe(true);
-  expect(await connectedCards.evaluateAll(es=>[...new Set(es.map(e=>e.getBoundingClientRect().height))])).toEqual([226]);
+  const expandedHeight=await connectedCards.first().evaluate(e=>e.getBoundingClientRect().height);
+  expect(expandedHeight).toBeGreaterThan(226);
+  expect(await connectedCards.evaluateAll(es=>[...new Set(es.map(e=>e.getBoundingClientRect().height))])).toEqual([expandedHeight]);
   if(width<=600) {
     const footers=await cards.locator('.oc-connector-footer').evaluateAll(elements=>elements.map(footer=>{
       const action=footer.querySelector('button')!.getBoundingClientRect();
@@ -39,14 +41,19 @@ for(const width of [1440,600,390,320]) test(`available tiles precede connected c
   const first=connectedCards.first();
   await expect(first.locator('.oc-connector-headline')).toContainText('100');
   const more=first.locator('.oc-connector-more');
-  await more.focus();
-  await more.press('Enter');
   await expect(more).toHaveAttribute('aria-expanded','true');
+  await expect(more).toHaveText('Show less');
   await expect(first.locator('.oc-source-counts')).toBeVisible();
   await expect(first.locator('.oc-source-counts dd')).toHaveText(['100','150','0']);
-  expect(await connectedCards.nth(1).evaluate(e=>e.getBoundingClientRect().height)).toBe(226);
-  await more.press('Space');
+  await more.focus();
+  await more.press('Enter');
   await expect(more).toHaveAttribute('aria-expanded','false');
+  await expect(first.locator('.oc-source-counts')).toBeHidden();
+  expect(await first.evaluate(e=>e.getBoundingClientRect().height)).toBe(226);
+  expect(await connectedCards.nth(1).evaluate(e=>e.getBoundingClientRect().height)).toBe(expandedHeight);
+  await more.press('Space');
+  await expect(more).toHaveAttribute('aria-expanded','true');
+  await expect(first.locator('.oc-source-counts')).toBeVisible();
   await expect(more).toBeFocused();
   await page.getByRole('searchbox',{name:'Search integrations'}).fill('connector 19');
   await expect(cards).toHaveCount(1);
@@ -170,7 +177,8 @@ test('cold status stays unknown and failed refreshes label retained measurements
   await expect(stale).toContainText('Status unavailable');
   await expect(stale.locator('.oc-connector-footer')).not.toContainText('Synced');
   await expect(stale.locator('.oc-connector-headline')).toContainText('200');
-  await stale.getByRole('button',{name:'Show 2 more stats for Delayed refresh'}).click();
+  await expect(stale.getByRole('button',{name:'Show fewer stats for Delayed refresh'})).toHaveAttribute('aria-expanded','true');
+  await expect(stale.locator('.oc-source-counts')).toBeVisible();
   await expect(stale.locator('.oc-source-counts')).toContainText('Last measured');
   await page.getByRole('button',{name:'Manage Delayed refresh'}).click();
   await expect(page.getByRole('dialog')).toContainText('Showing the last measurement.');
@@ -186,5 +194,6 @@ test('the first background measurement appears without waiting for the normal po
   const card=page.getByRole('article',{name:'Example connector 01'});
   await expect(card).toContainText('Checking sync status…');
   await expect(card.locator('.oc-connector-headline')).toContainText('100',{timeout:5000});
+  await expect(card.locator('.oc-source-counts')).toBeVisible();
   expect(reads).toBe(2);
 });
