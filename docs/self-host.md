@@ -186,10 +186,14 @@ connection options.
 
 ## Connect sources
 
-The UI shows Slack, Notion, Circleback, Granola, Linear, and GitHub. Google Drive is
-visible with an explicit unavailable notice: its source adapter exists, but its
-indexing path is not supported yet, so new connections are disabled. A
-connection that is waiting for operator setup says what it needs and cannot
+The UI shows Slack, Notion, Circleback, Granola, GitHub, Linear, and Google Drive.
+The supported self-host runtime ships the permission-enforcing Drive and Linear
+source adapters, so both are available for new connections. Drive indexes only
+files that every current workspace member can access; it needs your identity
+directory to provide verified member emails, as described in
+[Google Drive workspace content](google-drive.md). Older runtime adapters show
+an explicit unavailable notice for those two sources instead of enabling them.
+A connection that is waiting for operator setup says what it needs and cannot
 start authorization until that is in place. Onboarding does not require a
 connected source: the Sources step can be skipped and the workspace opens on
 agent capture alone.
