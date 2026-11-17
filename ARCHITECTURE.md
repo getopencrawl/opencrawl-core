@@ -64,8 +64,7 @@ its uploader. Visibility changes and deletion are owner-only operations in core
 constrain storage and execution to the same scope. Missing/mismatched scope fails
 closed, with no implicit fallback tenant. The self-host runtime binds a configured
 single scope and supplies local authentication/access policy; it uses the same
-operation checks. An unauthenticated loopback smoke runner is not a network-safe
-self-host server.
+operation checks.
 
 Carry scope through reads/writes, listings, object keys, cache keys, search/vector
 indexes, jobs/retries, idempotency, exports, deletion and audit events. Avoid global
@@ -89,11 +88,9 @@ calls or authorization defects; review data/control flow as well.
 
 Before claiming a supported self-host distribution, verify clean installation,
 authentication for network exposure, a meaningful product operation, persistence
-across restart, backup/restore, migration/upgrade and rollback expectations,
+across restart, backup/restore,
 resource limits and support boundaries. Public source and install artifacts must
-not require private GitHub Packages access. Select a public license explicitly,
-review asset/dependency rights, and document security/contribution policies before
-calling this open source. The repository remains private while preparing release. Core and CLI are
+not require private GitHub Packages access. The repository is public. Core and CLI are
 Apache-2.0; plugins remain MIT. See docs/self-host.md for the supported preview.
 
 Session capture uses the authenticated full application. Both it and the
@@ -111,7 +108,7 @@ Publish tested immutable core runtime versions. The hosted consumer advances its
 package version, integrity lock and Git source pin together; it verifies embedded
 source revision. Documentation/test-only changes need no runtime publication.
 
-## Organization search organization
+## Organization search realm
 
 A tenant's connector documents, session histories and memories share one
 organization search realm per environment. Board storage and search use PostgreSQL;
