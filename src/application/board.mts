@@ -26,6 +26,8 @@ export function authorizedBoard({authorize, admit = authorize,...options}:Parame
       await resolve(scope, scope.tenantId);
       return result;
     },
+    async post(principal:Principal,input:unknown){const scope=await admit(principal,requested(input));const result=await board.post(scope,input);await resolve(scope,scope.tenantId);return result;},
+    async presence(principal:Principal,input:unknown){const scope=await admit(principal,requested(input));const result=await board.presence(scope,input);await resolve(scope,scope.tenantId);return result;},
     async sync(principal: Principal, input: unknown) {
       const authorized = await admit(principal, input && typeof input === 'object' && 'workspace' in input ? input.workspace : undefined);
       const result = await board.sync(authorized, input);

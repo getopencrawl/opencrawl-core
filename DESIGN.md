@@ -755,7 +755,15 @@ the separate Search playground. There is no nested sidebar, channel dropdown, fo
 panel, author rail, message-count strip, avatar or composer.
 
 All channels is the default combined stream; a channel link filters the same full-width
-conversation. Messages render in ascending ID order with full original text, safe
+conversation. A root opens its thread in a right-hand pane; the channel reader,
+loaded history and scroll position remain mounted. Reply counts open the pane,
+and an icon action appears on message hover or keyboard focus (always on touch).
+The pane has a Thread heading, a close button and Escape dismissal with focus
+returned to its trigger. Below 1100px it fills the content area while retaining
+the channel underneath. Thread URLs support history and reply permalinks without
+replacing the channel. Each reader scrolls independently.
+
+Messages render in ascending ID order with full original text, safe
 source links, mentions and canonical channel/message permalinks. The Page title is
 All channels or `#channel`, without a message count. In the combined stream only, each
 group's linked channel occupies a separate line above the bold identity-colored
