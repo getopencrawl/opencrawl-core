@@ -1,4 +1,5 @@
 import type {ReplicasIdentityKey} from '../identity/replicas.mjs';
+import type {ReplicasImport} from '../integrations/replicas-import.mjs';
 import {createReplicasConnections} from '../identity/replicas-connections.mjs';
 import {replicasConnectionHandler} from '../identity/replicas-http.mjs';
 import type {EventIdentityStore} from '../sessions/types.mjs';
@@ -8,7 +9,7 @@ import {connectorProxyHandler,type SourceCredentialProxy} from '../integrations/
 import type {IncomingMessage,ServerResponse} from 'node:http';
 import type {Principal} from '../identity/types.mjs';
 import type {SelfhostSettings} from './settings.mjs';
-import type {createObjectStore} from '../sessions/s3-store.mjs';
+import type {ObjectStore} from '../sessions/types.mjs';
 import type {Integrations} from '../integrations/service.mjs';
 import type {ProviderCatalog} from '../integrations/types.mjs';
 import type {createConnectorResolver} from '../integrations/resolver.mjs';
@@ -52,8 +53,9 @@ import {createCaptureCredentials,isCaptureCredential} from '../sessions/credenti
 import {createSessionIngest,createCaptureHandler} from '../sessions/ingest.mjs';
 import {errorInfo} from '../errors.mjs';
 import type {Log} from '../integrations/ports.mjs';
-type Store=ReturnType<typeof createObjectStore>;
+type Store=ObjectStore;
 export interface SelfhostApplicationOptions {
+  replicasImport?:ReplicasImport;
   log?: Log;
   settings:SelfhostSettings;boardState:ApplicationState;store:Store;eventIdentities?:EventIdentityStore;prefix:string;identity:LocalIdentity;
   integrations?:Integrations;providers?:ProviderCatalog;connectors?:ReturnType<typeof createConnectorResolver>;
@@ -67,7 +69,7 @@ export interface SelfhostApplicationOptions {
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,boardState,eventIdentities,prefix,identity,integrations,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
+export function selfhostApplication({settings,store,boardState,eventIdentities,prefix,identity,integrations,replicasImport,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
 }:SelfhostApplicationOptions) {
@@ -196,7 +198,7 @@ export function selfhostApplication({settings,store,boardState,eventIdentities,p
       const {principal,user,member,cacheScope}=current,activeIdentity=browser;
       if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
-      const sources=(p:Principal)=>integrations?integrations.list(p):Promise.resolve([]);
+      const sources=async(p:Principal)=>[...await (integrations?.list(p)??Promise.resolve([])),...replicasImport?[await replicasImport.source(p)]:[]];
       const consoleApi=createConsoleApi({log,replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),removeMember:(u,id,target)=>organizations.removeMember(u,id,target),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
         usage:p=>usageReport({principal:p,directory,integrations,search,connectors,onboarding,values,log}),progress:guided.progress,next:guided.next,library,libraryFailure});
@@ -222,7 +224,7 @@ export function selfhostApplication({settings,store,boardState,eventIdentities,p
           try{const {value}=await smallJson(request,8192);await connectorSettings.save(selected.provider||'',value,principal);return reply(200,JSON.stringify({ok:true}),'application/json');}
           catch(error){const info=errorInfo(error);return info.expose?refuse(info.status||400,'CREDENTIAL_NOT_SAVED',info.message):refuse(503,'INTEGRATION_UNAVAILABLE','We couldn’t save that. Please try again.');}
         }
-        if(selected.name.startsWith('integration-')||selected.name.startsWith('/api/integrations'))return integrationRequest(request,target,selected,{integrations,providers,principal,member,onboarding,guided,respond:reply,message,document});
+        if(selected.name.startsWith('integration-')||selected.name.startsWith('/api/integrations'))return integrationRequest(request,target,selected,{integrations,replicasImport,providers,principal,member,onboarding,guided,respond:reply,message,document});
         if(selected.name==='cloud-capture'||selected.name==='cloud-capture-revoke'){
           let credential,revoked=false;
           if(request.method==='POST'){

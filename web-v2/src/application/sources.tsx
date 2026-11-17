@@ -8,6 +8,7 @@ import {ConnectorSetupDialog} from './connector-setup.tsx';
 import {ConnectorCard, ProviderIcon, SourceStats, SourceProgress} from './connector-card.tsx';
 import {alphabeticalSources, sourceConnected} from './connector-card-model.ts';
 import {listPhrase} from '../onboarding/model.ts';
+import {ReplicasHistoryDialog} from './replicas-history-dialog.tsx';
 
 // Pick up the first background snapshot promptly, then return to normal polling.
 const refreshInterval = (data: {items: SourceCard[]} | undefined) => data?.items.some(source => source.statusUpdatedAt === null && source.statusRefreshing && !source.statusUnavailable) ? 1000 : 30_000;
@@ -26,6 +27,7 @@ function AdminSourcesPage({adapter}:{adapter:SourcesAdapter}) {
   const [keySource, setKeySource] = useState<SourceCard | null>(null);
   const [setupSource, setSetupSource] = useState<SourceCard | null>(null);
   const [apiKey, setApiKey] = useState('');
+  const [replicasSource,setReplicasSource]=useState<SourceCard|null>(null);
   const popup = useRef<Window | null>(null);
   const mutation = useRef<AbortController | null>(null);
   const mounted = useRef(false);
@@ -43,7 +45,7 @@ function AdminSourcesPage({adapter}:{adapter:SourcesAdapter}) {
     return () => window.removeEventListener('message', receive);
   }, [reload]);
   useEffect(() => {
-    if (!data && !loading && error) {setConfirmation(null); setKeySource(null); setSetupSource(null); setApiKey('');}
+    if (!data && !loading && error) {setConfirmation(null); setKeySource(null); setSetupSource(null); setReplicasSource(null); setApiKey('');}
   }, [data, loading, error]);
 
   const current = (request: AbortController) => mounted.current && mutation.current === request && !request.signal.aborted;
@@ -144,12 +146,13 @@ function AdminSourcesPage({adapter}:{adapter:SourcesAdapter}) {
       {showSearch && <div className="oc-source-toolbar"><div className="oc-source-search"><Icon name="search" size={16}/><Input type="search" aria-label="Search integrations" placeholder="Search integrations" value={query} onChange={event=>setQuery(event.target.value)}/></div></div>}
       {groups.filter(group=>group.items.length>0).map(group=><Section key={group.title} title={group.title} className="oc-source-section">
         <div className={group.title === 'Available' ? 'oc-source-grid' : 'oc-integration-grid'}>
-          {group.items.map(source => <SourceRow key={source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? `${source.name} removal completed and its imported data deleted.` : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
+          {group.items.map(source => source.provider==='replicas'&&adapter.replicasHistory?<ConnectorCard key={source.provider} source={source} primaryMetric={source.primaryMetric} action={source.history?'View import':'Import history'} pending={pending!==null} busy={false} onAction={()=>setReplicasSource(source)}/>:<SourceRow key={source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? `${source.name} removal completed and its imported data deleted.` : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
         </div>
       </Section>)}
       {sources.length > 0 && !visible.length && <EmptyState title="No matching integrations" description="Try another name or clear your search." action={<Button onClick={()=>setQuery('')}>Clear search</Button>}/>}
       {!data.items.length && <EmptyState title="No integrations available" description="Available connections will appear here." />}
     </>}
+    {replicasSource&&<ReplicasHistoryDialog adapter={adapter} initial={replicasSource.history} onClose={()=>setReplicasSource(null)} onChange={()=>void reload()}/>}
     <Dialog open={confirmation !== null} onClose={() => {if (!pending) setConfirmation(null);}} title={`Disconnect ${confirmation?.name ?? 'source'}?`} description={confirmation ? disconnectDescription(confirmation) : undefined} actions={<><Button disabled={pending !== null} onClick={() => setConfirmation(null)}>Cancel</Button><Button variant="danger" disabled={pending !== null} onClick={remove}>{pending ? 'Disconnecting…' : 'Disconnect and delete'}</Button></>}>
       {actionError && <Notice tone="danger">{actionError}</Notice>}
     </Dialog>

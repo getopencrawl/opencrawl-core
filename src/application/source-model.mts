@@ -8,6 +8,7 @@ export function disconnectDescription(source: SourceCard): string {
 }
 
 export function sourceStatus(source: SourceCard): {label: string; tone: 'neutral' | 'success' | 'warning' | 'danger'} {
+  if(source.history)return {label:source.history.phase==='complete'?(source.history.imported===0?'No history imported':source.history.skipped?'Imported with skips':'History imported'):source.history.phase==='disconnected'?'Key removed':source.history.phase==='preview'?'Ready to import':'Import in progress',tone:source.history.phase==='complete'?(source.history.imported>0&&!source.history.skipped?'success':'warning'):'neutral'};
   if (source.statusUnavailable) return {label:'Status unavailable',tone:'warning'};
   switch (source.state) {
     case 'synced': case 'connected': return {label: 'Connected', tone: 'success'};
@@ -21,6 +22,7 @@ export function sourceStatus(source: SourceCard): {label: string; tone: 'neutral
 }
 
 export function sourceProgress(source: SourceCard): string {
+  if(source.history)return `${source.history.imported.toLocaleString()} chats imported, ${source.history.skipped.toLocaleString()} skipped`;
   if (source.statusUnavailable) return source.synced !== undefined ? 'Sync status is temporarily unavailable. Showing the last measurement.' : 'Sync status is temporarily unavailable. We’ll check again automatically.';
   if (source.statusUpdatedAt === null && source.statusRefreshing) return 'Checking sync status…';
   if(source.state==='setup-required')return source.setup?.requirement ? `${source.setup.requirement}.` : 'Your instance administrator needs to configure this connection.';

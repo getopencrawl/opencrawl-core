@@ -44,6 +44,7 @@ const selfhostSetup = new URLSearchParams(window.location.search).has('selfhost'
 const libraryAdapter: LibraryAdapter = (operation, input, signal) => request('/api/library/' + operation, signal, input);
 /** The Integrations page against the same fixture state as the onboarding step. */
 const sourcesAdapter: SourcesAdapter = {
+  replicasHistory:(input,signal)=>request('/api/integrations/replicas/history',signal??never,input),
   sources: signal => request('/api/console/sources', signal ?? never),
   connect: (provider, apiKey, signal) => request(`/api/integrations/${encodeURIComponent(provider)}/connect`, signal ?? never, {apiKey}),
   retry: async () => ({ok: true}), disconnect: async () => ({ok: true}),

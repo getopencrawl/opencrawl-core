@@ -17,6 +17,7 @@ export function productRoute(method: string, path: string): Route | null {
   if (path === '/capture/cloud/revoke') return only('POST',{name:'cloud-capture-revoke'});
   if (path === '/auth/logout') return only('POST', {name: path});
   if (path === '/api/integrations/disconnect-all') return only('POST', {name: path});
+  if (path === '/api/integrations/replicas/history') return only('POST', {name:'integration-replicas-history'});
   let match = /^\/api\/integrations\/credentials\/([a-z0-9-]{1,40})$/.exec(path);
   if (match) return only('POST', {name: 'integration-credential', provider: match[1]});
   match = /^\/api\/integrations\/([a-z0-9-]{1,40})\/(connect|retry|disconnect)$/.exec(path);

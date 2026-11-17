@@ -59,6 +59,7 @@
     "./application/console": "./dist/src/application/console.mjs",
     "./application/rpc": "./dist/src/application/rpc.mjs",
     "./web-v2/application/*": "./web-v2/src/application/*.ts",
+    "./integrations/replicas-import": "./dist/src/integrations/replicas-import.mjs",
     "./integrations/airbyte": "./dist/src/integrations/airbyte.mjs",
     "./integrations/types": "./dist/src/integrations/types.mjs",
     "./integrations/provisioning": "./dist/src/integrations/provisioning.mjs",

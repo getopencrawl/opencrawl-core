@@ -5,6 +5,7 @@ import type {OnboardingAdapter, OnboardingStatus} from '../onboarding/types.ts';
 export type {Bootstrap, SourceCard, TeamReport, WorkspaceRole} from '../../../src/application/types.mjs';
 
 export interface SourcesAdapter {
+  replicasHistory?(input:import('../../../src/integrations/replicas-import.mjs').ReplicasImportInput,signal?:AbortSignal):Promise<import('../../../src/integrations/replicas-import.mjs').ReplicasImportStatus>;
   sources(signal?: AbortSignal): Promise<{items: SourceCard[]}>;
   connect(provider: string, apiKey?: string, signal?: AbortSignal): Promise<{ok?: boolean; redirectUrl?: string}>;
   retry(provider: string, signal?: AbortSignal): Promise<{ok: true}>;

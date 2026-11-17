@@ -16,6 +16,7 @@ const libraryOperations: {[O in LibraryOperation]: (input: LibraryContract[O]['i
 };
 const library: LibraryAdapter = (operation,input,signal) => libraryOperations[operation](input,signal);
 return {
+  replicasHistory:(input:import('../../../src/integrations/replicas-import.mjs').ReplicasImportInput,signal?:AbortSignal)=>write(()=>webRpc.integrations.replicasHistory.mutate(input,{signal}),signal),
   library,
   bootstrap:(signal?:AbortSignal)=>read(()=>webRpc.console.bootstrap.query(undefined,{signal}),signal),
   usage:(signal?:AbortSignal)=>read(()=>webRpc.console.usage.query(undefined,{signal}),signal),

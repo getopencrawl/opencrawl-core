@@ -10,9 +10,11 @@ import {errorInfo} from '../errors.mjs';
 import {hasCompletedOnboarding} from '../onboarding-state.mjs';
 import {callbackPage} from './integration-callback.mjs';
 import {smallJson} from './http.mjs';
+import {replicasImportRequest} from './replicas-import-http.mjs';
+import type {ReplicasImport} from '../integrations/replicas-import.mjs';
 export async function integrationRequest(req: IncomingMessage,url: URL,route: Route, {
-  integrations,providers,principal,member,onboarding,guided,respond,message,document,track=()=>{},log=()=>{},
-}: {integrations?: Integrations | null; providers:ProviderCatalog;principal:Principal;member:DirectoryMembership;
+  integrations,replicasImport,providers,principal,member,onboarding,guided,respond,message,document,track=()=>{},log=()=>{},
+}: {integrations?: Integrations | null; replicasImport?:ReplicasImport;providers:ProviderCatalog;principal:Principal;member:DirectoryMembership;
   onboarding:ReturnType<typeof createOnboardingStatus>|null;guided:ReturnType<typeof createGuidedOnboarding>;
   respond(status:number,body:string,type?:string):void;
   message(status:number,heading:string,detail:string,href?:string,action?:string):void;
@@ -21,6 +23,7 @@ export async function integrationRequest(req: IncomingMessage,url: URL,route: Ro
   log?(event:string,detail:Record<string,unknown>):void}) {
       if (route.name.startsWith('/integrations') || route.name.startsWith('/api/integrations') || route.name.startsWith('integration-')) {
         const json = (status: number, body: unknown) => respond(status, JSON.stringify(body), 'application/json');
+        if(route.name==='integration-replicas-history'){const result=await replicasImportRequest(req,{imports:replicasImport,principal,member});return json(result.status,result.body);}
         if (!integrations) return url.pathname.startsWith('/api/') ? json(503, {error: {code: 'INTEGRATIONS_NOT_CONFIGURED', message: 'Integrations aren’t available yet.'}}) : message(503, 'Integrations aren’t available yet', 'Check back soon.', '/', 'Open OpenCrawl');
         if (!principal) return message(403, 'This account doesn’t have access', 'Your organization membership could not be verified. Sign in again to continue.');
         // Runtime adapters pass the current, verified membership. A role from a

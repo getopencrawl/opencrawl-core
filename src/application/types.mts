@@ -3,6 +3,7 @@ export type WorkspaceRole = 'admin' | 'member';
 import type {SourceSetup} from './onboarding-types.mjs';
 
 export interface SourceCard {
+  history?: import('../integrations/replicas-import.mjs').ReplicasImportStatus;
   provider: string;
   name: string;
   description?: string;
