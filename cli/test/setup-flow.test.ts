@@ -10,8 +10,7 @@ import {type CodexHookReview} from '../src/capture/codex-hooks.ts';
 import {setupCommand as realSetupCommand,formatSetupOutput,formatSetupCommand} from '../src/setup/command.ts';
 import {readSetupState,updateSetupState,historyBenefit,type SetupState} from '../src/setup/state.ts';
 import {readCaptureConfig,captureDir,captureTranscript} from '../src/capture/runtime.ts';
-import {installCapture,uninstallCapture} from '../src/capture/install.ts';
-import {hookRunner} from '../src/hook-runner.ts';
+import {uninstallCapture} from '../src/capture/install.ts';
 import {atomicJson,withSessionLock} from '../src/session.ts';
 import {hash} from '../src/capture/parse.ts';
 import {validTranscriptIdentity} from '../src/capture/transcript-checkpoint.ts';
@@ -224,26 +223,6 @@ test('explicit recording without its plugin fails before any setup mutation',()=
  expect(installed).toBe(false);expect(readCaptureConfig()).toBeNull();expect(readSetupState({api,tenantId:'tenant',userId:'user'})).toBeNull();expect(observations).toHaveLength(0);
 }));
 
-test('legacy ownership survives pending plugins, switches only after preparation, and retires definitions after activation',()=>fixture(async(api,dir)=>{
- await installCapture(api,{home:dir,harnesses:['codex'],command:['legacy-cli']});
- const original=readCaptureConfig()!,file=join(dir,'codex','hooks.json'),hooks=readFileSync(file,'utf8'),runner=hookRunner('capture',['legacy-cli']);
- let phase:'pending'|'prepared'|'installed'='pending',installs=0;
- const dependencies={...setupCodex,installPlugins:async()=>{installs++;expect(readCaptureConfig()?.hookOwnership).toBe(phase==='installed'?'plugin':'global');return {results:[{client:'codex' as const,status:phase}],humanTasks:[]};}};
- expect(await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none'},dependencies)).toMatchObject({status:'needs_attention'});
- expect(readCaptureConfig()).toMatchObject({hookOwnership:'global',installationId:original.installationId});expect(readFileSync(runner.file,'utf8')).toBe(runner.script);expect(readFileSync(file,'utf8')).toBe(hooks);
- phase='prepared';expect(await setupCommand('resume',api,{json:true},dependencies)).toMatchObject({status:'needs_attention'});
- expect(readCaptureConfig()).toMatchObject({hookOwnership:'plugin',installationId:original.installationId});expect(readFileSync(file,'utf8')).toBe(hooks);expect(readFileSync(runner.file,'utf8')).toBe(hookRunner('capture',readCaptureConfig()!.command).script);
- phase='installed';expect(await setupCommand('resume',api,{json:true},dependencies)).toMatchObject({status:'configured'});
- expect(installs).toBe(3);expect(JSON.parse(readFileSync(file,'utf8')).hooks).toEqual({});
-}));
-
-test('an unknown legacy runner blocks setup before recording choices or plugin state mutate',()=>fixture(async(api,dir)=>{
- await installCapture(api,{home:dir,harnesses:['codex'],command:['legacy-cli']});
- const before=readFileSync(join(captureDir(),'config.json'),'utf8'),runner=hookRunner('capture',['legacy-cli']);writeFileSync(runner.file,'unrecognized existing runner');
- let installs=0;await expect(setupCommand('apply',api,{yes:true,plugins:'codex',forward:'none',history:'none'},{...setupCodex,installPlugins:async()=>{installs++;return {results:[],humanTasks:[]};}})).rejects.toMatchObject({code:'PLUGIN_HOOK_MIGRATION_INVALID'});
- expect(installs).toBe(0);expect(readSetupState({api,tenantId:'tenant',userId:'user'})).toBeNull();expect(readFileSync(join(captureDir(),'config.json'),'utf8')).toBe(before);expect(readFileSync(runner.file,'utf8')).toBe('unrecognized existing runner');
-}));
-
 test('prepared native load guidance survives independent MCP or capture proof',()=>fixture(async(api,_dir,_observations,setCodex)=>{
  const dependencies={...setupCodex,installPlugins:async()=>({results:[{client:'codex' as const,status:'prepared' as const}],humanTasks:[{id:'codex-load',kind:'restart' as const,client:'codex' as const,title:'Load native plugin',instruction:'Review native plugin trust and reload.'}]})};
  await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'none',history:'none'},dependencies);
@@ -314,19 +293,6 @@ test('one pending plugin does not block another plugin worker in an existing plu
   expect(saved.selections.forward).toMatchObject({'claude-code':true,codex:true});expect(saved.selections.history.codex).toBe(false);
   expect(saved.pluginResults).toContainEqual({client:'codex',status:stalledStatus});
  }
-}));
-
-test('partial plugin preparation cannot activate legacy global ownership or replace its worker',async()=>fixture(async(api,dir)=>{
- await installCapture(api,{home:dir,harnesses:['codex'],command:['legacy-cli']});
- const original=readCaptureConfig()!,file=join(dir,'codex','hooks.json'),hooks=readFileSync(file,'utf8'),runner=hookRunner('capture',['legacy-cli']);
- let launches=0;
- await setupCommand('apply',api,{yes:true,plugins:'claude-code,codex',forward:'claude-code,codex',history:'none'},{
-  inspectHooks:nativeUnknown,launchHistory:()=>({state:'not_started'}),
-  installPlugins:async()=>({results:[{client:'claude-code',status:'prepared'},{client:'codex',status:'pending'}],humanTasks:[]}),
-  installDaemon:async()=>{launches++;throw Error('Legacy ownership must remain unchanged');}
- });
- expect(launches).toBe(0);expect(readCaptureConfig()).toMatchObject({hookOwnership:'global',installationId:original.installationId});
- expect(readFileSync(file,'utf8')).toBe(hooks);expect(readFileSync(runner.file,'utf8')).toBe(runner.script);
 }));
 
 test('pending plugins defer the service while selected search plugins enable only their supported lanes',async()=>fixture(async api=>{

@@ -31,11 +31,10 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
   an executable. Recommend the native installer on a person's own machine and
   npm for cloud agents and locked-down sandboxes, with Node used only at install time.
   Keep commands, capture/startup hooks, version selection and updates Node-free.
-  Preserve the legacy launcher bridge and existing credentials, owners, queues and
-  cursors during migration. Keep the npm archive compatible with published legacy
-  updater allowlists, and migrate only verified owned command shims automatically.
-  Verify upgrades from a real published old executable, packaged installs and hooks on
-  macOS, Linux and Windows, including execution without Node on PATH.
+  Preserve existing credentials, owners, queues and cursors across updates. Keep
+  `cli/bin/opencrawl.cjs` in the npm archive: it is the npm install step and the
+  updater requires it. Verify packaged installs, updates and hooks on macOS, Linux
+  and Windows, including execution without Node on PATH.
 - Run `npm test` for core changes; for CLI changes also follow `cli/package.json`
   and its CI checks. Keep dependencies deliberate and review the import graph.
   The source guard is a regression aid, not a sandbox or isolation proof.

@@ -37,8 +37,6 @@ jobs:
       - name: Allocate the automatic CLI release version
         id: version
         run: node tools/delivery.mts cli-version
-      - name: Verify the legacy upgrade fixture transport
-        run: bun cli/scripts/legacy-upgrade-smoke.ts --transport-only
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Start disposable PostgreSQL for the core test suite
         run: |
@@ -106,10 +104,6 @@ jobs:
       - run: tar -xzf cli-dist.tgz -C cli
       - run: bun cli/scripts/smoke.ts
       - run: bun cli/scripts/update-smoke.ts
-      - name: Migrate the real published legacy installation automatically
-        run: bun cli/scripts/legacy-upgrade-smoke.ts
-      - name: Migrate the original bootstrap with its previously updated cache
-        run: bun cli/scripts/legacy-upgrade-smoke.ts --bootstrap-version=0.2.0
       - run: bun cli/scripts/native-install-smoke.ts
       - name: Prepare the ephemeral Linux runner user supervisor
         if: runner.os == 'Linux'

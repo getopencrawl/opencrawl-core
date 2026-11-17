@@ -17,7 +17,6 @@ import type {Harness,TranscriptHarness} from '../capture/parse.ts';
 import {setupInventory} from './inventory.ts';
 import {assertSetupAvailability,newSetupClientAvailable,selectOfferedGroup,setupAvailabilityMessage} from './availability.ts';
 import {installSetupPlugins} from './plugins.ts';
-import {retireLegacySetupHooks,prepareLegacyPluginMigration,activatePluginOwnership} from './legacy-hooks.ts';
 import {chosen,defaultSelections,historyBenefit,readSetupState,readStateKey,scopeKey,selectionDigest,updateSetupState,type SetupScope,type SetupState,type SetupWorker,type SetupHumanTask,type SetupSelections} from './state.ts';
 import {readServerSetup,serverScope,publishSetup,type SetupServerStatus} from './api.ts';
 import {historyJob,startHistoryWorker,runHistoryWorker} from './history-worker.ts';
@@ -108,24 +107,19 @@ async function applyClients(scope:SetupScope,selections:SetupSelections,installP
  assertPluginSelection(selections);
  await confirmScope(scope);
  const previous=readSetupState(scope),existing=readCaptureConfig();
- const migration=prepareLegacyPluginMigration(scope,existing,command);
  // Saving the first confirmation independently makes interruption before the
  // history screen safe: it cannot create consent or a job for new history.
  await updateSetupState(scope,old=>({...old,schemaVersion:1,scope,selections,acceptedAt:new Date().toISOString(),pluginResults:[...(old?.pluginResults??[]).filter(row=>!selections.plugins[row.client]),...chosen(selections,'plugins').map(client=>({client,status:'pending'}))]}));
  const forward=chosen(selections,'forward');
- const capture=await installCapture(scope.api,{harnesses:forward as Harness[],historyHarnesses:chosen(selections,'history') as TranscriptHarness[],selectionMode:'replace',daemon:true,stagedDaemon:stageDaemon,daemonService:false,backgroundStartup:chosen(selections,'plugins').length>0,expectedOwner:scope,expectedConfig:existing,validatePrincipal,hookOwnership:'plugin',deferPluginOwnership:Boolean(migration),command});
+ const capture=await installCapture(scope.api,{harnesses:forward as Harness[],historyHarnesses:chosen(selections,'history') as TranscriptHarness[],selectionMode:'replace',daemon:true,stagedDaemon:stageDaemon,daemonService:false,backgroundStartup:chosen(selections,'plugins').length>0,expectedOwner:scope,expectedConfig:existing,validatePrincipal,hookOwnership:'plugin',command});
  if(!selections.plugins.cursor)await removeCursorSetupHooks(scope.api,existing?.roots.cursor);
  const plugins=await installPlugins(scope.api,chosen(selections,'plugins'),{command});
  await confirmScope(scope);
  const ready=chosen(selections,'plugins').every(client=>plugins.results.some(row=>row.client===client&&['installed','unchanged','prepared'].includes(row.status)));
- if(ready)await activatePluginOwnership(scope,migration);
- const migrated=[...plugins.results.filter(row=>['installed','unchanged'].includes(row.status)).map(row=>row.client),...Object.keys(selections.plugins).filter(client=>!selections.plugins[client])];
- if(readCaptureConfig()?.hookOwnership==='plugin')await retireLegacySetupHooks(scope,existing,migrated);
  const configured=readCaptureConfig();
  if(!configured||configured.api!==scope.api||configured.installationId!==capture.installationId||configured.owner.tenantId!==scope.tenantId||configured.owner.userId!==scope.userId||JSON.stringify([...(configured.harnesses??[])].sort())!==JSON.stringify(forward)||(configured.daemonRequested?.backgroundStartup??configured.backgroundStartup)!==(chosen(selections,'plugins').length>0))throw new CliError('SETUP_SCOPE_CHANGED','The local installation changed before starting its capture worker.');
  const daemonHarnesses=captureDaemonHarnesses(configured);
- // Plugin-owned clients can make progress independently. Legacy ownership
- // still switches only after every selected bundle is ready above.
+ // Plugin-owned clients can make progress independently.
  const preparedClient=plugins.results.some(row=>selections.plugins[row.client]&&['installed','unchanged','prepared'].includes(row.status));
  let worker:SetupWorker|undefined;
  if((ready||preparedClient)&&configured.hookOwnership==='plugin'){
