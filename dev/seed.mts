@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {randomBytes} from 'node:crypto';
 import {chownSync,existsSync,readFileSync,statSync,writeFileSync} from 'node:fs';
 import {setTimeout as delay} from 'node:timers/promises';
-import {createAirbyte,createAirbyteTransport} from '../dist/src/integrations/airbyte.mjs';
+import {createAirbyte} from '../dist/src/integrations/airbyte.mjs';
 import {createProvisioning,provisioningLabel} from '../dist/src/integrations/provisioning.mjs';
 import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-registry.mjs';
 import {singleOrganizationDestination} from '../dist/src/integrations/single-organization-storage.mjs';
@@ -84,24 +84,6 @@ const sessionText='The lunar otter checks agent capture. Synthetic OpenCrawl dev
 const batch={schemaVersion:1,owner:principal,harness:'codex',origin:'cli',installationId:input.project,sessionId:input.project+'-sample',events:[{id:input.project+'-sample-message',kind:'message',data:{role:'user',content:sessionText}}],attachments:[]};
 if(!verifyOnly){const captured=await protocol('/api/sessions/batches',{method:'POST',headers:{...bearer(),'content-type':'application/json'},body:JSON.stringify(batch)});assert.equal(captured.status,200);}
 assert.ok((await json<{data:{cli?:{observedAt:string};mcpTest?:{observedAt:string};session?:{observedAt:string}}}>('/api/onboarding')).data.session?.observedAt);
-// Full-application upgrade acceptance stores only synthetic fixture credentials.
-// These private files are never included in uploaded verification artifacts.
-if(process.env.OPENCRAWL_UPGRADE_FIXTURE==='true') {
-  const path='/dev-state/upgrade-fixture.json';
-  if(existsSync(path)) {
-    const saved=JSON.parse(readFileSync(path,'utf8')) as {refreshToken:string;batch:typeof batch};
-    const oldGrant=await tokenForm({grant_type:'refresh_token',refresh_token:saved.refreshToken});
-    assert.ok(oldGrant.access_token&&oldGrant.refresh_token,'Pre-upgrade OAuth grant was lost');
-    const headers={authorization:'Bearer '+oldGrant.access_token,'content-type':'application/json'};
-    const retry=await protocol('/api/sessions/batches',{method:'POST',headers,body:JSON.stringify(saved.batch)});
-    assert.equal(retry.status,200,'Pre-upgrade event retry failed');
-    const conflict=structuredClone(saved.batch);conflict.events[0]!.data.content+=' changed';
-    assert.equal((await protocol('/api/sessions/batches',{method:'POST',headers,body:JSON.stringify(conflict)})).status,409,'Pre-upgrade event identity changed');
-    const next=structuredClone(saved.batch);next.events[0]!.id+='-after-upgrade';next.events[0]!.data.content+=' after upgrade';
-    assert.equal((await protocol('/api/sessions/batches',{method:'POST',headers,body:JSON.stringify(next)})).status,200,'New event write failed');
-    saved.refreshToken=oldGrant.refresh_token!;writeState(path,saved);
-  }
-}
 const denied=await fetch(input.connectOrigin+'/api/console/team',{redirect:'manual',headers:{host:new URL(input.origin).host}});
 assert.ok([401,302,303].includes(denied.status),'Anonymous team access was accepted');
 
@@ -162,24 +144,11 @@ try{
     record=await registry.update(record,{status:'active'},{whenStatus:['provisioning'],whenFields:{provisionVersion:record.provisionVersion}});
   }
   const connectionId=record.airbyte?.connectionId;if(!connectionId)throw new Error('Sample Airbyte connection is incomplete');
-  if(process.env.OPENCRAWL_UPGRADE_FIXTURE==='true'&&process.env.OPENCRAWL_UPGRADE_FRESH_SYNC==='true'){
-    const transport=createAirbyteTransport({url:required('AIRBYTE_URL'),clientId:required('AIRBYTE_CLIENT_ID'),clientSecret:required('AIRBYTE_CLIENT_SECRET')});
-    const destination=await transport.request<{configuration:{s3_endpoint?:string}}>('GET','/destinations/'+record.airbyte!.destinationId);
-    const source=await transport.request<{configuration:{base_url?:string}}>('GET','/sources/'+record.airbyte!.sourceId);
-    console.log(JSON.stringify({upgradeRoutes:{storedS3:destination.configuration.s3_endpoint,currentS3:process.env.OPENCRAWL_AIRBYTE_S3_ENDPOINT,storedFixture:source.configuration.base_url,currentFixture:process.env.OPENCRAWL_UPGRADE_FIXTURE_ACTUAL_URL}}));
-  }
   const jobs=await airbyte.jobs(connectionId);let job=jobs.find(j=>String(j.jobId)===String(seed.jobId))||jobs[0];
-  if(!job||process.env.OPENCRAWL_UPGRADE_FRESH_SYNC==='true'){job=await airbyte.sync(connectionId);seed.jobId=job.jobId;save();}
+  if(!job){job=await airbyte.sync(connectionId);seed.jobId=job.jobId;save();}
   const deadline=Date.now()+20*60_000;
   while(job.status!=='succeeded'){
     if(['failed','cancelled'].includes(job.status)){
-      if(process.env.OPENCRAWL_UPGRADE_FIXTURE==='true'){
-        const transport=createAirbyteTransport({url:required('AIRBYTE_URL'),clientId:required('AIRBYTE_CLIENT_ID'),clientSecret:required('AIRBYTE_CLIENT_SECRET')});
-        const details=await transport.config<{attempts?:Array<{attempt?:{failureSummary?:unknown};failureSummary?:unknown}>}>('/jobs/get',{id:Number(job.jobId)});
-        let summary=JSON.stringify(details.attempts?.map(a=>a.attempt?.failureSummary??a.failureSummary??null))||'[]';
-        for(const [key,value] of Object.entries(process.env))if(/secret|password|token|key|credential/i.test(key)&&value&&value.length>=8)summary=summary.replaceAll(value,'[redacted]');
-        console.log('Synthetic Airbyte failure summary: '+summary.slice(0,6000));
-      }
       throw new Error(`Sample Airbyte job ${job.jobId} ${job.status}; inspect its logs in Airbyte`);
     }
     if(Date.now()>deadline)throw new Error('Timed out waiting for the sample Airbyte sync');
@@ -232,7 +201,6 @@ try{
   assert.equal(forged.status,400,'Search accepted a caller-supplied tenant');
   const badOrigin=await request('/api/debug/search',{method:'POST',headers:{origin:'https://invalid.example','content-type':'application/json'},body:JSON.stringify({query:marker})});
   assert.equal(badOrigin.status,403,'Search accepted a foreign browser Origin');
-  if(process.env.OPENCRAWL_UPGRADE_FIXTURE==='true'&&!existsSync('/dev-state/upgrade-fixture.json'))writeState('/dev-state/upgrade-fixture.json',{refreshToken:grant.refresh_token,batch});
   const report={ok:true,checkedAt:new Date().toISOString(),project:input.project,organization:input.organization,syntheticFixture:true,verifyOnly,identity:'better-auth-local',
     ...ingestion,retrieval:{query:marker,authenticated:true,found:true,mcp:true},board:true,onboardingCompleted:true,deviceGrant:true,refreshGrant:true,anonymousDenied:true,forgedScopeDenied:true,foreignOriginDenied:true};
   writeState('/dev-state/verification.json',report);console.log(JSON.stringify(report));
