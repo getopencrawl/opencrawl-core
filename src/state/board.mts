@@ -49,6 +49,14 @@ function boardMessageChunks(message:Pick<BoardMessage,'topic'|'text'>){
  while(start<body.length){let end=Math.min(start+32768,body.length);while(end<body.length&&!/\s/.test(body[end]))end++;chunks.push(body.slice(start,end));start=end;}return chunks;
 }
 
+// Bound both parameter bytes and rows. A single already-validated large
+// publication can exceed the byte target; never split its JSON record.
+function* boardBatches<T>(rows:Iterable<T>):Generator<T[]>{
+ let batch:T[]=[],bytes=0;
+ for(const row of rows){const size=Buffer.byteLength(JSON.stringify(row));if(batch.length&&(batch.length>=128||bytes+size>256*1024)){yield batch;batch=[];bytes=0;}batch.push(row);bytes+=size;}
+ if(batch.length)yield batch;
+}
+
 export function createPostgresBoardState(database:ApplicationDatabase) {
   const {namespace}=database;
   async function ready(){await database.ready();await database.transaction(async client=>{await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl-board-schema-v1',0))");await client.query(`
@@ -100,7 +108,12 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       async message(id){return (await query('SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND id=$3',[id])).rows[0]?.record??null;},
       async messages({before,after,through,topic,limit,descending=false}){if(!Number.isSafeInteger(limit)||limit<1||limit>250)throw fail('Invalid board page');return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND ($3::bigint IS NULL OR id<$3) AND ($4::bigint IS NULL OR id>$4) AND ($5::bigint IS NULL OR id<=$5) AND ($6::text IS NULL OR topic=$6) ORDER BY id ${descending?'DESC':'ASC'} LIMIT $7`,[before??null,after??null,through??null,topic??null,limit])).rows.map(row=>row.record);},
       async participant(id){const row=(await query('SELECT record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id])).rows[0];return row?{...row.record,pending:await pending(id)}:null;},
-      async participants(){const rows=(await query('SELECT agent,record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 ORDER BY agent')).rows;const result:Record<string,Participant>={};for(const row of rows)result[row.agent]={...row.record,pending:await pending(row.agent)};return result;},
+      async participants(){
+        const rows=(await query('SELECT agent,record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 ORDER BY agent')).rows;
+        const deliveries=new Map<string,Delivery>((await query('SELECT agent,record FROM opencrawl_board_deliveries WHERE namespace=$1 AND tenant_hash=$2')).rows.map(row=>[row.agent,{...row.record,messages:[]}]));
+        for(const row of (await query('SELECT agent,record FROM opencrawl_board_delivery_messages WHERE namespace=$1 AND tenant_hash=$2 ORDER BY agent,ordinal')).rows)deliveries.get(row.agent)?.messages.push(row.record);
+        return Object.fromEntries(rows.map(row=>[row.agent,{...row.record,pending:deliveries.get(row.agent)??null}]));
+      },
       async profiles(){return Object.fromEntries((await query('SELECT agent,record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 ORDER BY agent')).rows.map(row=>[row.agent,row.record]));},
       async directory({after,limit,cutoff}){const total=Number((await query('SELECT count(*) count FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND seen>$3',[cutoff])).rows[0].count);const rows=(await query(`SELECT p.agent,p.record,d.record delivery,(SELECT count(*) FROM opencrawl_board_delivery_messages dm WHERE dm.namespace=p.namespace AND dm.tenant_hash=p.tenant_hash AND dm.agent=p.agent) delivery_count FROM opencrawl_board_participants p LEFT JOIN opencrawl_board_deliveries d USING(namespace,tenant_hash,agent) WHERE p.namespace=$1 AND p.tenant_hash=$2 AND p.seen>$3 ORDER BY p.seen DESC,p.agent LIMIT $4 OFFSET $5`,[cutoff,limit,after])).rows;return {total,agents:rows.map(row=>({id:row.agent,participant:{...row.record,pending:row.delivery?{...row.delivery,count:Number(row.delivery_count)}:null}}))};},
       async agents(){return Object.fromEntries((await query('SELECT agent,record FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2 ORDER BY position,agent')).rows.map(row=>[row.agent,row.record]));},
@@ -120,19 +133,53 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
   async function read<T>(key:string,run:(tx:BoardReader)=>Promise<T>):Promise<T>{return database.transaction(async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');return run(accessor(client,key));});}
   async function exportIn(client:PoolClient,key:string):Promise<BoardState|null>{const tx=accessor(client,key);const exists=(await client.query('SELECT 1 FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash=$2',[namespace,key])).rowCount;if(!exists)return null;const meta=await tx.metadata(),messages:BoardMessage[]=[];for(let after=0;;){const page=await tx.messages({after,limit:250});if(!page.length)break;messages.push(...page);after=page.at(-1)!.id;}return {schema:1,messages,agents:await tx.agents(),usage:meta.usage,...(meta.participantsPresent?{participants:await tx.participants()}: {})};}
   async function exportLegacy(key:string){return database.transaction(async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');return exportIn(client,tenant(key));});}
+  async function insertMessagesIn(client:PoolClient,key:string,messages:BoardMessage[]){
+    for(const batch of boardBatches(messages)){
+      await client.query(`INSERT INTO opencrawl_board_messages(namespace,tenant_hash,id,stamp,agent,author,name,topic,request_id,legacy_agent,record)
+        SELECT $1,$2,(record->>'id')::bigint,(record->>'timestamp')::bigint,record->>'agent',record->>'author',record->>'name',record->>'topic',record->>'requestId',legacy_agent,record
+        FROM jsonb_to_recordset($3::jsonb) AS x(record jsonb,legacy_agent boolean)`,[namespace,key,JSON.stringify(batch.map(record=>({record,legacy_agent:record.agent===boardIdentity(record.author,record.name)})))]);
+      function* chunks(){for(const message of batch){let ordinal=0;for(const text of boardMessageChunks(message))yield {id:message.id,ordinal:ordinal++,text};}}
+      for(const chunkBatch of boardBatches(chunks()))await client.query(`INSERT INTO opencrawl_board_search_chunks(namespace,tenant_hash,message_id,ordinal,words)
+        SELECT $1,$2,id,ordinal,to_tsvector('simple',text) FROM jsonb_to_recordset($3::jsonb) AS x(id bigint,ordinal integer,text text)`,[namespace,key,JSON.stringify(chunkBatch)]);
+      const topics=new Map<string,{topic:string;first:number;posts:number;latest:{id:number;timestamp:number;name:string}}>();
+      for(const message of batch){const previous=topics.get(message.topic);topics.set(message.topic,{topic:message.topic,first:previous?.first??message.id,posts:(previous?.posts??0)+1,latest:{id:message.id,timestamp:message.timestamp,name:message.name||message.agent}});}
+      await client.query(`INSERT INTO opencrawl_board_topics(namespace,tenant_hash,topic,first_id,posts,latest)
+        SELECT $1,$2,topic,first,posts,latest FROM jsonb_to_recordset($3::jsonb) AS x(topic text,first bigint,posts bigint,latest jsonb)
+        ON CONFLICT(namespace,tenant_hash,topic) DO UPDATE SET posts=opencrawl_board_topics.posts+EXCLUDED.posts,latest=EXCLUDED.latest`,[namespace,key,JSON.stringify([...topics.values()])]);
+    }
+  }
   async function insertLegacyIn(client:PoolClient,key:string,state:BoardState){
-    await initialize(client,key);const tx=accessor(client,key);for(const message of state.messages){const {id,...input}=message;const result=await tx.append(input);if(result.id!==id)throw fail('Board import sequence mismatch');}
+    await initialize(client,key);const tx=accessor(client,key);await insertMessagesIn(client,key,state.messages);
     for(const [id,value]of Object.entries(state.agents))await tx.putAgent(id,value);
     for(const [id,value]of Object.entries(state.participants??{}))await tx.putParticipant(id,value);
-    await client.query('UPDATE opencrawl_board_heads SET usage=$3,participants_present=$4 WHERE namespace=$1 AND tenant_hash=$2',[namespace,key,state.usage,state.participants!==undefined]);
+    await client.query('UPDATE opencrawl_board_heads SET usage=$3,participants_present=$4,head=$5 WHERE namespace=$1 AND tenant_hash=$2',[namespace,key,state.usage,state.participants!==undefined,state.messages.length]);
   }
   async function projectIn(client:PoolClient,key:string,state:BoardState|null){
     tenant(key);if(state!==null)validateLegacyBoard(state);
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify(['board-import',namespace,key])]);
-    // Migration-only shadow replacement; parent/children and delivery receipts
-    // are rebuilt in the replay transaction, never visible half-written.
-    await client.query('DELETE FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash=$2',[namespace,key]);
-    if(state!==null)await insertLegacyIn(client,key,state);
+    await client.query('SELECT head FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash=$2 FOR UPDATE',[namespace,key]);
+    const prior=await exportIn(client,key);
+    // Legacy publications are append-only. Replay heartbeats, acknowledgments,
+    // subscriptions and new publications without rewriting unchanged history.
+    // An arbitrary replacement/deletion still has the original exact semantics.
+    if(state&&prior&&prior.messages.length<=state.messages.length&&prior.messages.every((message,index)=>isDeepStrictEqual(message,state.messages[index]))){
+      await insertMessagesIn(client,key,state.messages.slice(prior.messages.length));
+      const tx=accessor(client,key);
+      if(!isDeepStrictEqual(Object.entries(prior.agents),Object.entries(state.agents))){
+        await client.query('DELETE FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2',[namespace,key]);
+        for(const [id,value]of Object.entries(state.agents))await tx.putAgent(id,value);
+      }
+      for(const id of new Set([...Object.keys(prior.participants??{}),...Object.keys(state.participants??{})])){
+        const before=prior.participants?.[id],after=state.participants?.[id];if(isDeepStrictEqual(before,after))continue;
+        // Replace only this participant's delivery, even if a legacy snapshot
+        // reused its receipt with different contents; final readback is exact.
+        if(before)await tx.removeParticipant(id);if(after)await tx.putParticipant(id,after);
+      }
+      await client.query('UPDATE opencrawl_board_heads SET usage=$3,participants_present=$4,head=$5 WHERE namespace=$1 AND tenant_hash=$2',[namespace,key,state.usage,state.participants!==undefined,state.messages.length]);
+    }else{
+      await client.query('DELETE FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash=$2',[namespace,key]);
+      if(state!==null)await insertLegacyIn(client,key,state);
+    }
     if(!isDeepStrictEqual(await exportIn(client,key),state))throw fail('Board projection verification failed');
   }
   async function importLegacy(key:string,state:BoardState){validateLegacyBoard(state);await database.transaction(async client=>{
@@ -207,10 +254,15 @@ export async function* inventoryBoardTargetsIn(database:ApplicationDatabase,clie
   const topics=new Map<string,{first:number;posts:number;latest:{id:number;timestamp:number;name:string}}>();
   for await(const m of scanTargetInventoryIn(client,'SELECT id,stamp,agent,author,name,topic,request_id,legacy_agent,record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 ORDER BY id',[ns,key])){
    const message=value.messages[Number(m.id)-1];if(!message||!isDeepStrictEqual(m.record,message)||String(m.id)!==String(message.id)||String(m.stamp)!==String(message.timestamp)||m.agent!==message.agent||m.author!==message.author||m.name!==message.name||m.topic!==message.topic||m.request_id!==message.requestId||m.legacy_agent!==(message.agent===boardIdentity(message.author,message.name)))targetInventoryFailure('board message lookup differs');
-   const chunks=boardMessageChunks(message),actual=(await client.query('SELECT ordinal,words::text words FROM opencrawl_board_search_chunks WHERE namespace=$1 AND tenant_hash=$2 AND message_id=$3 ORDER BY ordinal',[ns,key,message.id])).rows;
-   const expected=(await client.query<{words:string}>("SELECT to_tsvector('simple',text)::text words FROM unnest($1::text[]) WITH ORDINALITY AS x(text,ordinal) ORDER BY ordinal",[chunks])).rows;
-   if(actual.length!==expected.length||actual.some((c,i)=>c.ordinal!==i||c.words!==expected[i].words))targetInventoryFailure('board derived search chunks differ');
    const prior=topics.get(message.topic);topics.set(message.topic,{first:prior?.first??message.id,posts:(prior?.posts??0)+1,latest:{id:message.id,timestamp:message.timestamp,name:message.name||message.agent}});
+  }
+  for(const batch of boardBatches(value.messages)){
+   const inputs=batch.map(message=>({id:message.id,chunks:boardMessageChunks(message)}));
+   const mismatch=(await client.query(`WITH input AS (SELECT * FROM jsonb_to_recordset($3::jsonb) AS x(id bigint,chunks jsonb)),
+    expected AS (SELECT id,ordinal-1 AS ordinal,to_tsvector('simple',text) AS words FROM input CROSS JOIN LATERAL jsonb_array_elements_text(chunks) WITH ORDINALITY AS c(text,ordinal)),
+    actual AS (SELECT message_id AS id,ordinal,words FROM opencrawl_board_search_chunks WHERE namespace=$1 AND tenant_hash=$2 AND message_id IN (SELECT id FROM input))
+    SELECT 1 FROM expected FULL JOIN actual USING(id,ordinal) WHERE expected.words IS DISTINCT FROM actual.words LIMIT 1`,[ns,key,JSON.stringify(inputs)])).rows;
+   if(mismatch.length)targetInventoryFailure('board derived search chunks differ');
   }
   // These joins are necessary even with normal foreign keys: malformed test or
   // restored schemas must not hide a row that owning export does not visit.

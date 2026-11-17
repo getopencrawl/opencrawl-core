@@ -115,6 +115,7 @@
     "./state": "./dist/src/state/application.mjs",
     "./state/types": "./dist/src/state/types.mjs",
     "./state/postgres": "./dist/src/state/postgres.mjs",
+    "./state/board": "./dist/src/state/board.mjs",
     "./state/settings": "./dist/src/state/settings.mjs",
     "./state/migration": "./dist/src/state/migrate.mjs",
     "./state/migration-engine": "./dist/src/state/migration-engine.mjs",

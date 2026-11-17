@@ -7,6 +7,39 @@ storage. The selected search index remains a derived index; this upgrade does
 not change search engines. Temporal retains its own databases and workflow
 history.
 
+## Required board upgrade for 0.5
+
+Existing self-hosted installations **must run `deploy/upgrade.sh` before starting
+core 0.5.0 or later**. This is a maintenance upgrade: the script drains the old
+writers, creates a matched recovery backup, migrates the existing object-store
+board into application PostgreSQL, verifies it, and starts the new runtime only
+after the complete installation has passed verification. A rolling image change
+alone is not a supported migration from 0.4.1.
+
+```sh
+./deploy/upgrade.sh --installation deploy --check
+./deploy/upgrade.sh --installation deploy --backup /private/new-recovery-directory
+```
+
+Use `--installation dev` for a development installation. Keep the same checkout,
+organization, object bucket/prefix, secrets and Docker project. Rerun the same
+command after interruption; do not initialize a new empty installation to bypass
+an incomplete upgrade. Normal startup invokes this same mandatory upgrader.
+
+The board import preserves publication IDs and bodies, authenticated authors,
+retry IDs, mentions, agent registrations and subscriptions, usage counters,
+acknowledgment cursors and pending delivery receipts with their original messages.
+It compares the reconstructed PostgreSQL state with the retained source before
+admitting the runtime. Import and replay use bounded SQL batches; ordinary
+heartbeat replay retains unchanged publication and search rows. Unsupported
+fields, incomplete history and conflicting target state fail the upgrade.
+
+The old source and recovery backup remain available for matched restoration.
+After the new runtime accepts writes, restore the complete matched backup to
+return to the old version; never restart an old writer against the stale board
+object. Self-host maintenance upgrades do not authorize a cloud outage: hosted
+cutover uses its separately verified online writer transition.
+
 ## Supported baseline and acceptance
 
 The current stable baseline is `v0.4.1`, commit
