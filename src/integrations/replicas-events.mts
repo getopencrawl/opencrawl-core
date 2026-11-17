@@ -16,11 +16,13 @@ export function replicasEvents(conversation:ReplicasConversation,history:Replica
   const result=new Map<string,SessionEvent>();
   for(const source of history.events){
     const payload=source.payload;let data:Record<string,unknown>|undefined;
+    let nativeId=typeof payload.uuid==='string'?payload.uuid:null;
     if(conversation.provider==='claude'&&['claude-user','claude-assistant'].includes(source.type)&&!payload.isMeta){
       const message=record(payload.message);if(message&&['user','assistant'].includes(String(message.role)))data=message;
     }
     if(conversation.provider==='codex'&&source.type==='codex-item'){
       const item=record(payload.item);
+      if(typeof item?.id==='string')nativeId=item.id;
       if(item?.type==='userMessage'&&(typeof item.content==='string'||Array.isArray(item.content)))data={role:'user',content:typeof item.content==='string'?[{type:'text',text:item.content}]:item.content};
       if(item?.type==='agentMessage'&&typeof item.text==='string')data={role:'assistant',content:[{type:'text',text:item.text}]};
     }
@@ -32,8 +34,8 @@ export function replicasEvents(conversation:ReplicasConversation,history:Replica
     if(!content.length)continue;
     data={role:data.role,content};
     const timestamp=source.timestamp??null;
-    const id='replicas-v1:'+replicasDigest(canonical({chat:conversation.chat_id,type:source.type,timestamp,data}));
-    result.set(id,{id,kind:'message',data,timestamp});
+    const id='replicas-v1:'+replicasDigest(canonical({chat:conversation.chat_id,type:source.type,timestamp,nativeId,data}));
+    result.set(id,{id,kind:'message',data,timestamp,...(nativeId?{nativeId}:{})});
   }
   return [...result.values()];
 }

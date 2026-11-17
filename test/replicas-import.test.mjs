@@ -78,6 +78,8 @@ test('decoder preserves message content and timestamps, ignores duplicate Codex 
   const history={events:[{type:'event_msg',payload:{type:'user_message',message:'same'}},{type:'codex-item',timestamp:'2026-10-01',payload:{item:{type:'userMessage',id:'x',content:[{type:'text',text:'same'}]}}},{type:'codex-item',timestamp:'2026-10-02',payload:{item:{type:'agentMessage',id:'y',text:'answer'}}}],before_cursor:null};
   const events=replicasEvents({...chat,provider:'codex'},history);assert.equal(events.length,2);assert.equal(events[0].data.role,'user');assert.equal(events[1].data.content[0].text,'answer');assert.equal(events[0].timestamp,'2026-10-01');assert.deepEqual(replicasEvents({...chat,provider:'codex'},history),events);
   const native=structuredClone(history);native.events[1].payload.item.content='same';assert.deepEqual(replicasEvents({...chat,provider:'codex'},native),events,'native retained Codex uses string userMessage content');
+  const repeated=structuredClone(native.events[1]);repeated.payload.item.id='another-native-message';native.events.push(repeated);
+  assert.equal(replicasEvents({...chat,provider:'codex'},native).length,3,'distinct native messages survive even with identical text and timestamps');
 });
 test('export pagination continues past unavailable retained entries and reports coverage honestly',async t=>{
   const second={...chat,chat_id:randomUUID(),workspace_id:randomUUID()},unsupported={...chat,chat_id:randomUUID(),provider:'muse'};
