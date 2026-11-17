@@ -30,7 +30,7 @@ test('Airbyte opt-out needs no connector credentials and exposes setup guidance 
     OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:undefined,OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:undefined,OPENCRAWL_CONNECTOR_KEY:undefined,
     GITHUB_APP:'invalid unused configuration',SLACK_CLIENT_ID:'incomplete-unused-configuration'});
   const cards=await service.integrations.list(principal);
-  assert.deepEqual(cards.map(c=>c.provider).sort(),['circleback','github','googledrive','granola','notion','slack']);
+  assert.deepEqual(cards.map(c=>c.provider).sort(),['circleback','github','googledrive','granola','linear','notion','slack']);
   assert.ok(cards.every(card=>card.state==='setup-required'&&card.setup.requirement==='Airbyte disabled'&&!card.setup.credential));
   assert.equal(service.connectors,undefined);assert.equal(service.sourceCredentials,undefined);assert.equal(service.oauth,undefined);assert.equal(service.connectorSettings,undefined);
   await assert.rejects(service.integrations.list({...principal,tenantId:'org_other'}),error=>error.status===403);
@@ -48,7 +48,7 @@ test('Airbyte is enabled by default and invalid opt-out values fail closed',()=>
 test('fresh OSS exposes every supported connector and explains missing setup without starting a connection',async t=>{
   const service=await fixture(t);
   const cards=await service.integrations.list(principal);
-  assert.deepEqual(cards.map(c=>c.provider).sort(),['circleback','github','googledrive','granola','notion','slack']);
+  assert.deepEqual(cards.map(c=>c.provider).sort(),['circleback','github','googledrive','granola','linear','notion','slack']);
   assert.equal(cards.find(c=>c.provider==='granola').state,'disconnected');
   for(const card of cards.filter(c=>c.provider!=='granola')){assert.equal(card.state,'setup-required');assert.ok(card.setup.body);}
   await assert.rejects(service.integrations.connect(principal,'notion'),error=>error.status===503);
@@ -90,7 +90,7 @@ test('operator OAuth binds requests and source configuration to its single organ
 });
 
 const OPERATOR_KEY='operator-private-key',APP_FOR_AIRBYTE='http://app.internal:8092';
-const brokered=['googledrive','notion','circleback','slack'];
+const brokered=['googledrive','notion','circleback','slack','linear'];
 /** The operator broker with a real registry and a recorded stand-in for the Composio API. */
 async function broker(t,respond=()=>({status:200,data:{ok:true},headers:{}})){
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-broker-'));
@@ -266,7 +266,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
   const composio=await brokerService(t),f=await installation(t,{COMPOSIO_BASE_URL:composio.url}),service=f.open();
   const before=await service.integrations.list(principal),notion=before.find(card=>card.provider==='notion');
   assert.equal(notion.state,'setup-required');assert.equal(notion.setup.requirement,'Needs a Composio key');
-  assert.deepEqual({id:notion.setup.credential.id,unlocks:notion.setup.credential.unlocks},{id:'composio',unlocks:['Google Drive','Notion','Circleback','Slack']});
+  assert.deepEqual({id:notion.setup.credential.id,unlocks:notion.setup.credential.unlocks},{id:'composio',unlocks:['Google Drive','Notion','Circleback','Linear','Slack']});
   assert.match(notion.setup.credential.url,/^https:\/\/dashboard\.composio\.dev\//);
   const github=before.find(card=>card.provider==='github');
   assert.equal(github.setup.requirement,'Needs a GitHub App');assert.equal(github.setup.credential,undefined);
@@ -281,7 +281,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
 
   await service.connectorSettings.save('composio','  good-project-key\n',by);
   assert.deepEqual(composio.seen.at(-1),{method:'GET',url:'/api/v3.1/auth_configs?limit=1',key:'good-project-key'});
-  assert.deepEqual(await states(service),{googledrive:'disconnected',slack:'disconnected',granola:'disconnected',circleback:'disconnected',notion:'disconnected',github:'setup-required'});
+  assert.deepEqual(await states(service),{googledrive:'disconnected',slack:'disconnected',granola:'disconnected',circleback:'disconnected',linear:'disconnected',notion:'disconnected',github:'setup-required'});
   const sealed=await f.store.get('connector-settings/v1/org_team/settings.enc');
   assert.ok(sealed.length>40);assert.ok(!sealed.includes(Buffer.from('good-project-key')));
   assert.ok(!JSON.stringify(await service.integrations.list(principal)).includes('good-project-key'));

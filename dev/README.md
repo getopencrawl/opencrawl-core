@@ -102,7 +102,7 @@ Real external sources still require their owner's connector credentials or OAuth
 application. The demo uses only local synthetic data; it does not
 connect to your Google, GitHub, Slack or other accounts automatically.
 
-All six integration cards remain visible. Connections that need operator setup
+All seven integration cards remain visible. Connections that need operator setup
 say what they are waiting for, and onboarding can finish without any of them.
 An admin can add the Composio API key in the product, on the Sources step or the
 Integrations page: it is checked, stored encrypted, and used without a restart.

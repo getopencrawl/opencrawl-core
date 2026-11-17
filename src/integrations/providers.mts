@@ -1,3 +1,4 @@
+import {linearId, linearQuery} from './linear-source.mjs';
 import type {Proxy, ProviderCatalog, ConnectorDefinition} from './types.mjs';
 // Gmail is hidden for now; see the commented-out provider below.
 // const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -16,7 +17,7 @@ export const NOTION_VERSION = '2026-03-11';
 // The connector stops listing ten minutes before now so Gmail's search index has caught up.
 // const SETTLE_MS = 10 * 60_000;
 
-export function createProviderCatalog(connectors: Record<string,ConnectorDefinition>, {driveWorkspaceAccess = false}: {driveWorkspaceAccess?: boolean} = {}): ProviderCatalog {
+export function createProviderCatalog(connectors: Record<string,ConnectorDefinition>, {driveWorkspaceAccess = false, linearPublicAccess = false}: {driveWorkspaceAccess?: boolean; linearPublicAccess?: boolean} = {}): ProviderCatalog {
 const providers:ProviderCatalog = {
   googledrive: {
     id: 'googledrive', primaryMetric: 'Files', name: 'Google Drive',
@@ -224,6 +225,26 @@ const providers:ProviderCatalog = {
       }
       return count;
     },
+  },
+  linear: {
+    id: 'linear', name: 'Linear', primaryMetric: 'Issues',
+    description: 'Issues and comments from public teams.',
+    ...(!linearPublicAccess ? {unavailableReason: 'Linear requires the public-team permission adapter. Upgrade the application runtime to enable this source.'} : {}),
+    toolkit: 'linear', scope: 'team', teamOnly: true,
+    help: 'An administrator connects Linear for the whole workspace. Imports issues and comments from public Linear teams, including archived issues. Private teams, projects, documents and attachment bodies are excluded. Current access is checked again for search.',
+    owner: record => `workspace=${record.workspace}`,
+    authConfig: {name: 'OpenCrawl Linear read', credentials: {scopes: 'read'}},
+    connector: connectors.linear,
+    streams: [{name: 'issues', syncMode: 'full_refresh_append'}, {name: 'comments', syncMode: 'full_refresh_append'}],
+    progressStream: ['issues'], progress: [{stream: 'issues', label: 'Issues'}, {stream: 'comments', label: 'Comments'}],
+    keys: {issues: ['id'], comments: ['id']}, units: ['issue', 'issues'],
+    sourceConfiguration: () => ({}),
+    async account(proxy) {
+      const result = await linearQuery<{organization: {id: string; name: string}}>(proxy, 'query OpenCrawlAccount { organization { id name } }');
+      linearId(result.organization?.id);
+      return {label: result.organization.name || 'Linear workspace', workspace: result.organization.id};
+    },
+    total: async () => null,
   },
   notion: {
     id: 'notion',

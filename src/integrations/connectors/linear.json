@@ -1,0 +1,253 @@
+{
+  "version": "7.28.2",
+  "type": "DeclarativeSource",
+  "description": "Linear public-team issues and comments. Full snapshots include archived issues; the operator credential proxy excludes private teams and rejects GraphQL errors.",
+  "check": {
+    "type": "CheckStream",
+    "stream_names": [
+      "issues"
+    ]
+  },
+  "streams": [
+    {
+      "type": "DeclarativeStream",
+      "name": "issues",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "kind",
+            "title",
+            "text",
+            "url",
+            "updatedAt",
+            "access"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "issue"
+              ]
+            },
+            "title": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "access": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "type": "HttpRequester",
+          "url_base": "{{ config['credential_proxy_base_url'] }}",
+          "path": "/api/connector-proxy",
+          "http_method": "POST",
+          "authenticator": {
+            "type": "ApiKeyAuthenticator",
+            "api_token": "{{ config['credential_proxy_api_key'] }}",
+            "inject_into": {
+              "type": "RequestOption",
+              "inject_into": "header",
+              "field_name": "x-api-key"
+            }
+          },
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "opencrawl://linear/issues",
+              "parameters": "{{ [{'name': 'pageToken', 'value': next_page_token.next_page_token, 'type': 'query'}] if next_page_token else [] }}"
+            }
+          },
+          "error_handler": {
+            "type": "DefaultErrorHandler",
+            "max_retries": 5,
+            "backoff_strategies": [
+              {
+                "type": "ExponentialBackoffStrategy",
+                "factor": 5
+              }
+            ]
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "documents"
+            ]
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ (response.get('data') or {}).get('nextPageToken') }}",
+            "stop_condition": "{{ not (response.get('data') or {}).get('nextPageToken') }}"
+          }
+        }
+      }
+    },
+    {
+      "type": "DeclarativeStream",
+      "name": "comments",
+      "primary_key": [
+        "id"
+      ],
+      "schema_loader": {
+        "type": "InlineSchemaLoader",
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "kind",
+            "title",
+            "text",
+            "url",
+            "updatedAt",
+            "access"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "comment"
+              ]
+            },
+            "title": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "access": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "retriever": {
+        "type": "SimpleRetriever",
+        "requester": {
+          "type": "HttpRequester",
+          "url_base": "{{ config['credential_proxy_base_url'] }}",
+          "path": "/api/connector-proxy",
+          "http_method": "POST",
+          "authenticator": {
+            "type": "ApiKeyAuthenticator",
+            "api_token": "{{ config['credential_proxy_api_key'] }}",
+            "inject_into": {
+              "type": "RequestOption",
+              "inject_into": "header",
+              "field_name": "x-api-key"
+            }
+          },
+          "request_body": {
+            "type": "RequestBodyJsonObject",
+            "value": {
+              "connected_account_id": "{{ config['connected_account_id'] }}",
+              "user_id": "{{ config['user_id'] }}",
+              "method": "GET",
+              "endpoint": "opencrawl://linear/comments",
+              "parameters": "{{ [{'name': 'pageToken', 'value': next_page_token.next_page_token, 'type': 'query'}] if next_page_token else [] }}"
+            }
+          },
+          "error_handler": {
+            "type": "DefaultErrorHandler",
+            "max_retries": 5,
+            "backoff_strategies": [
+              {
+                "type": "ExponentialBackoffStrategy",
+                "factor": 5
+              }
+            ]
+          }
+        },
+        "record_selector": {
+          "type": "RecordSelector",
+          "extractor": {
+            "type": "DpathExtractor",
+            "field_path": [
+              "data",
+              "documents"
+            ]
+          }
+        },
+        "paginator": {
+          "type": "DefaultPaginator",
+          "pagination_strategy": {
+            "type": "CursorPagination",
+            "cursor_value": "{{ (response.get('data') or {}).get('nextPageToken') }}",
+            "stop_condition": "{{ not (response.get('data') or {}).get('nextPageToken') }}"
+          }
+        }
+      }
+    }
+  ],
+  "spec": {
+    "type": "Spec",
+    "connection_specification": {
+      "type": "object",
+      "required": [
+        "credential_proxy_base_url",
+        "credential_proxy_api_key",
+        "connected_account_id",
+        "user_id"
+      ],
+      "properties": {
+        "credential_proxy_base_url": {
+          "type": "string",
+          "title": "Operator credential proxy URL"
+        },
+        "credential_proxy_api_key": {
+          "type": "string",
+          "airbyte_secret": true
+        },
+        "connected_account_id": {
+          "type": "string"
+        },
+        "user_id": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
