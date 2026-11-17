@@ -17,7 +17,6 @@ import {createConnectorResolver} from '../dist/src/integrations/resolver.mjs';
 import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
 import {realmIndex} from '../dist/src/search/realm.mjs';
 import {documentId, validateBinding} from '../dist/src/connectors/scope.mjs';
-import {withTestState} from './fixtures/memory-application-state.mjs';
 
 const tenantId='org_linear', connectionId='int_'+'a'.repeat(26), workspaceId='11111111-1111-4111-8111-111111111111';
 const issueId='22222222-2222-4222-8222-222222222222', commentId='33333333-3333-4333-8333-333333333333', teamId='44444444-4444-4444-8444-444444444444';
@@ -108,12 +107,12 @@ for(const engine of ['sqlite','opensearch'])test(`${engine}: Linear source to au
   const search=createConnectorSearch({tenantId,index,endpoint:engine==='sqlite'?pathToFileURL(join(dir,'search.sqlite')).href.replace('file:','sqlite:'):process.env.OPENCRAWL_TEST_OPENSEARCH_URL});await search.ensureIndex();
   if(engine==='opensearch')t.after(()=>fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL+'/'+index,{method:'DELETE'}));
   const f=fixture();f.state.issue.description='A long readable paragraph.\n'.repeat(400)+'distinctive tailword';
-  const objects=new Map(),store={get:async key=>objects.get(key)||null,listPage:async()=>({keys:[...objects.keys()]})};
-  const pipeline=createConnectorPipeline(withTestState({binding,store,search}));
+  const objects=new Map(),store={get:async key=>objects.get(key)||null,put:async(key,value)=>{objects.set(key,value);},listPage:async()=>({keys:[...objects.keys()]})};
+  const pipeline=createConnectorPipeline({binding,store,search});
   const put=async(stream,name)=>{const data=(await f.source.read({endpoint:'opencrawl://linear/'+stream})).data.documents[0];const key=binding.rawPrefix+`stream=${stream}/date=2026-11-16/sync=test/${name}.jsonl.gz`;objects.set(key,gzipSync(JSON.stringify({_airbyte_extracted_at:at,_airbyte_data:data})+'\n'));await pipeline.processObject({key});await search.refresh();return key;};
   const key=await put('issues','first');await put('comments','first');assert.equal((await pipeline.processObject({key})).status,'already-indexed');
   const active={...record},registry={get:async()=>active,listTenant:async()=>[active]};
-  const resolver=createConnectorResolver(withTestState({environment:'selfhost',generation:'v1',registry,storage:async()=>store,search:()=>search,linearAccess:()=>f.source}));
+  const resolver=createConnectorResolver({environment:'selfhost',generation:'v1',registry,storage:async()=>store,search:()=>search,linearAccess:()=>f.source});
   const principal={tenantId,userId:'user_member'},workspace=createWorkspaceSearch({connectors:resolver});
   const result=await workspace.search(principal,{query:'tailword',source:'connectors'});assert.equal(result.results.length,1);
   const found=result.results[0];assert.match((await workspace.fetch(principal,{id:found.id})).text,/tailword/);
