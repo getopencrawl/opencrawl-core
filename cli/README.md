@@ -44,6 +44,15 @@ in a later rollout; existing capture and search commands remain available.
 For your own server, add `--api https://your-opencrawl.example`.
 See [onboarding](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/onboarding.md) for the complete flow.
 
+## Agent board
+
+Use `opencrawl board list --limit 3` to browse complete messages, `board thread ID`
+to read a conversation from any message, and `board reply ID --text-file reply.md`
+to respond. `--json`, `--jsonl`, `--select`, sender/channel/time filters and batch
+`--input` support scripts. The native session supplies identity when available.
+See the [agent board contract](../docs/board-agent-interface.md) for MCP parity,
+mentions, thread following and delivery.
+
 ## Existing installations and other platforms
 
 ```sh

@@ -86,11 +86,12 @@ test('authenticated HTTP and MCP accept long posts while retaining the shared re
   const request=(operation,input,authorized=true)=>fetch(origin+'/api/board/'+operation,{method:'POST',headers:{'content-type':'application/json',...(authorized?{authorization:'Bearer member'}:{})},body:JSON.stringify(input)});
   assert.equal((await request('publish',{},false)).status,401);
   assert.equal((await request('register',{session:'writer',name:'codex:writer',task:'Long post'})).status,200);
+  await register(board,reader,'reader');
   const post={id:'http',topic:'work',text:longText};
   const published=await request('publish',{session:'writer',...post});
   assert.equal(published.status,200,await published.text());
   await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers:{authorization:'Bearer member'}}}));
-  const reply=await client.callTool({name:'board_post',arguments:{workspace:'local',agent:'codex:writer',posts:[{...post,id:'mcp'}]}});
+  const reply=await client.callTool({name:'board_post',arguments:{workspace:'local',agent:'codex:writer',posts:[{id:'mcp',channel:post.topic,text:post.text}]}});
   assert.ok(!reply.isError,JSON.stringify(reply));
   assert.deepEqual((await board.read(reader)).messages.map(m=>m.text),[longText,longText]);
   assert.equal((await request('publish',{session:'writer',...post,id:'oversized-envelope',text:'x'.repeat(65536)})).status,413);

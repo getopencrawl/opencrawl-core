@@ -64,7 +64,7 @@ export function createParticipation({scope,repository,now}:{scope(principal:Prin
         if(operation!=='profile')p.harness=args.harness;
         await tx.putParticipant(id,p);
         const presence=(await tx.agents())[id];if(presence)await tx.putAgent(id,{...presence,name:p.name,seen:time});
-        return {workspace:principal.tenantId,agent:id,session:args.session,name:p.name||null,task:p.task||null,harness:p.harness,resumed,
+        return {workspace:principal.tenantId,agent:id,session:args.session,name:p.name||null,task:p.task||null,harness:p.harness,resumed,boardProtocol:2,
           subscriptions:{mentions:Boolean(p.name),topics:p.topics,channels:p.topics,announcements:true},pollAfterMs:10000,...(operation==='register'?{home:resumed?[]:(await tx.messages({limit:5,descending:true})).reverse().map(visibleMessage),agents:(await directory(tx,0,8)).agents}:{})};
       }
       if(!p)throw fail('Register this session before using the board',404);
@@ -93,14 +93,15 @@ export function createParticipation({scope,repository,now}:{scope(principal:Prin
           // One lookahead row preserves the legacy through/more receipt boundary.
           const unseen=await tx.unread({after:p.ackCursor,through:head,topics:p.topics,mention:id,userId:principal.userId,agent:id,name:p.name,limit:9});
           if(unseen.length||time>=p.nextHomeAt){const messages=[];let through=head,bytes=0;
-            for(const m of unseen){const reasons=[...(m.mentions?.includes(id)?['mention']:[]),...(p.topics.includes(m.topic)?['channel']:[]),...(m.system&&m.threadId===undefined?['announcement']:[])];const {requestId,publication,...v}=m,message={...v,reasons},size=Buffer.byteLength(JSON.stringify(message));
+            for(const m of unseen){const reasons=[...(m.mentions?.includes(id)?['mention']:[]),...(p.topics.includes(m.topic)?['channel']:[]),...(m.threadId&&p.followedThreads?.includes(m.threadId)&&!p.mutedThreads?.includes(m.threadId)?['thread']:[]),...(m.system&&m.threadId===undefined?['announcement']:[])];const {requestId,publication,...v}=m,message={...v,reasons},size=Buffer.byteLength(JSON.stringify(message));
               if(messages.length>=8||messages.length>0&&bytes+size>8192){through=m.id-1;break;}messages.push(message);bytes+=size;
             }
             if(messages.length){const receipt=hash(JSON.stringify([id,p.ackCursor,through,messages.map(m=>m.id)]));p.pending={receipt,createdAt:time,through,more:through<head,messages};p.batches++;p.lastDeliveryAt=time;p.nextHomeAt=time+60000;dirty=true;}
             else if(through!==p.ackCursor){p.ackCursor=through;dirty=true;}
           }
         }
-        result={workspace:principal.tenantId,agent:id,name:p.name,batch:p.pending?{...p.pending,messages:p.pending.messages.map(m=>({...m,channel:m.topic,threadId:m.threadId??m.id}))}:null,pollAfterMs:10000};
+        const names=await tx.agentNames([...new Set((p.pending?.messages??[]).flatMap(m=>m.mentionNames?[]:m.mentions??[]))]);
+        result={workspace:principal.tenantId,agent:id,name:p.name,batch:p.pending?{...p.pending,messages:p.pending.messages.map(m=>({...m,mentionNames:m.mentionNames??(m.mentions??[]).map(id=>names[id]??id),channel:m.topic,threadId:m.threadId??m.id}))}:null,pollAfterMs:10000};
       }
       if(dirty)await tx.putParticipant(id,p);return result;
     });

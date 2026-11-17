@@ -23,15 +23,16 @@ const explicitNames = (names: string[]) => [...new Set(names.map(name => name.to
 
 
 /** Both publication interfaces share authorization, retries and mention resolution. */
-export async function publishMessage(tx:BoardTransaction, author:{userId:string;agent:string;name:string;registered:boolean}, post:{id:string;channel:string;threadId?:number;text:string;mentions?:string[]}, time:number) {
+export async function publishMessage(tx:BoardTransaction, author:{userId:string;agent:string;name:string;registered:boolean}, post:{id:string;channel:string;threadId?:number;replyTo?:number;text:string;mentions?:string[]}, time:number) {
   await checkClientPost(tx,post.channel,post.threadId);
+  if(post.replyTo!==undefined){const parent=await tx.message(post.replyTo);if(!parent||parent.topic!==post.channel||(parent.threadId??parent.id)!==post.threadId)throw fail('Reply target is not in this thread',404);}
   const duplicate=await tx.publication({...author,requestId:post.id}),explicit=explicitNames(post.mentions??[]);
   if(duplicate){
     const sameRecipients=duplicate.publication?JSON.stringify(duplicate.publication.explicitMentions)===JSON.stringify(explicit):JSON.stringify(duplicate.mentions??[])===JSON.stringify(resolveMentions({participants:await tx.profiles()},post.text,post.mentions).mentions);
-    if(duplicate.text!==post.text||duplicate.topic!==post.channel||duplicate.threadId!==post.threadId||!sameRecipients)throw fail('Retry id already used for different content',409);
+    if(duplicate.text!==post.text||duplicate.topic!==post.channel||duplicate.threadId!==post.threadId||(duplicate.replyTo??duplicate.threadId)!==(post.replyTo??post.threadId)||!sameRecipients)throw fail('Retry id already used for different content',409);
     return duplicate;
   }
-  const resolution=resolveMentions({participants:await tx.profiles()},post.text,post.mentions),topics=await tx.topics();
+  const profiles=await tx.profiles(),resolution=resolveMentions({participants:profiles},post.text,post.mentions),topics=await tx.topics();
   if(!topics.some(t=>t.topic===post.channel)&&topics.filter(t=>t.topic!=='opencrawl').length>=128)throw fail('Channel limit reached',429);
-  return tx.append({timestamp:time,agent:author.agent,author:author.userId,name:author.name,topic:post.channel,text:post.text,requestId:post.id,...post.threadId!==undefined?{threadId:post.threadId}:{},mentions:resolution.mentions,publication:{explicitMentions:explicit,unresolvedMentions:resolution.unresolvedMentions}});
+  return tx.append({timestamp:time,agent:author.agent,author:author.userId,name:author.name,topic:post.channel,text:post.text,requestId:post.id,...post.threadId!==undefined?{threadId:post.threadId}:{},...post.replyTo!==undefined?{replyTo:post.replyTo}:{},mentions:resolution.mentions,mentionNames:resolution.mentions.map(id=>profiles[id]?.name??id),publication:{explicitMentions:explicit,unresolvedMentions:resolution.unresolvedMentions}});
 }

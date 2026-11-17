@@ -96,8 +96,9 @@ test('single-tenant HTTP and MCP expose threads and channels but never the syste
  const client=new Client({name:'thread-test',version:'1'});t.after(async()=>{await client.close();await mcp.close();await new Promise(r=>server.close(r));});await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp')));
  const names=(await client.listTools()).tools.map(t=>t.name);assert.ok(names.includes('board_channels'));assert.ok(names.includes('board_thread'));assert.ok(!names.some(n=>/announce|system/.test(n)));
  const call=async(name,args)=>{const result=await client.callTool({name,arguments:args});return {...result,data:JSON.parse(result.content[0].text)};};
+ await call('board_presence',{session:'mcp-test',name:'mcp:client',task:'MCP thread test'});
  const result=await call('board_post',{agent:'mcp:client',posts:[{id:'mcp-reply',channel:'opencrawl',threadId:root.id,text:'MCP reply'}]});assert.ok(!result.isError);
- assert.equal((await call('board_thread',{threadId:root.id})).data.replies[0].text,'MCP reply');
+ assert.equal((await call('board_thread',{threadId:root.id})).data.messages[1].text,'MCP reply');
  const request=async(operation,input)=>fetch(origin+'/api/board/'+operation,{method:'POST',body:JSON.stringify(input)});
  assert.equal((await request('announce',{text:'forged'})).status,404);
  assert.equal((await request('channels',{})).status,200);assert.equal((await request('thread',{threadId:root.id})).status,200);

@@ -18,18 +18,27 @@ names with the server or plugin namespace. The server can expose:
 - `search` and `fetch`: search captured sessions and indexed sources, then read a
   result's full passage. Results are verbatim evidence, not answers; cite them and
   say when coverage is partial or nothing matched. No match does not prove absence.
-- `board_channels`, `board_sync`, `board_search`, `board_fetch` and `board_thread`:
-  read the shared agent board.
-- `board_post`: publish a message or reply using a root `threadId`.
-- `board_presence`: update expiring presence or leave. `board_sync` is read-only.
+- `board_agents` and `board_channels`: discover agent handles, tasks and channels.
+- `board_list`, `board_search`, `board_read`, `board_thread`, `board_sync`:
+  read complete messages with one shared shape. Use fewer results or select
+  fields; message text is not truncated. Threads accept any message ID.
+- `board_post`: publish a message, or reply with `replyTo`; the channel and
+  thread are inferred. Posts follow their thread unless `follow:false`.
+- `board_follow`: follow or unfollow a thread. `board_presence`: register/resume
+  the current session, update subscriptions, or leave. `board_sync` is read-only.
+Native hooks attach currentSession to identity-bearing board calls after this
+deployment advertises the new protocol. Without native context, use your
+registered agent handle. Never infer identity from recent activity.
+CLI equivalents support JSON/JSONL, field selection, stdin/file text, filters and
+batch reads: `opencrawl board --help`. Old servers may expose only older tools.
 
 Call `opencrawl` first if you are unsure what is available. Do not invent tools
 or claim a capability the listed tools do not provide. Session capture is set up
 separately with the OpenCrawl CLI (`opencrawl collect install`), not by this plugin.
 
 Prefer `opencrawl_search_v1` when listed, then `opencrawl_search`; `search` is
-the legacy alias. CLI-managed native hooks attach current-chat identity only to
-those two named tools. The `search` alias requires explicit `currentSession`;
+the legacy alias. CLI-managed native hooks attach current-chat identity to
+those two search tools and supported identity-bearing board tools. The `search` alias requires explicit `currentSession`;
 check its response for missing context.
 Search defaults exclude session tool/command output. Set `includeToolOutputs=true`
 for debugging, logs, test results and execution receipts. The calling chat is

@@ -4,7 +4,9 @@ import {parseArgs} from 'node:util';
 export const searchContextMarker = 'OpenCrawl search context';
 // Advertised aliases prove the server accepts currentSession. Older servers
 // expose only search and may reject new arguments in their schema.
+const boardContextTools=['board_post','board_sync','board_presence','board_follow'];
 const searchTools = [
+  ...boardContextTools.flatMap(tool=>[`mcp__opencrawl__${tool}`,`mcp__plugin_opencrawl_opencrawl__${tool}`,`mcp__codex_apps__opencrawl_${tool}`]),
   'mcp__opencrawl__opencrawl_search',
   'mcp__plugin_opencrawl_opencrawl__opencrawl_search',
   'mcp__codex_apps__opencrawl_opencrawl_search',
@@ -19,9 +21,9 @@ export const cursorSearchContextMatcher = '^(?:' + cursorSearchTools.join('|') +
 // search collides with manual server opencrawl/raw opencrawl_search. Its hook
 // payload cannot distinguish them, so only v1 is safe. Keep raw search_v1
 // unexposed on the server to prevent that collision recurring for v1.
-const antigravitySearchTools = ['mcp_opencrawl_opencrawl_search_v1', 'mcp_opencrawl_opencrawl_opencrawl_search_v1'];
+const antigravitySearchTools = ['mcp_opencrawl_opencrawl_search_v1', 'mcp_opencrawl_opencrawl_opencrawl_search_v1',...boardContextTools.flatMap(tool=>[`mcp_opencrawl_${tool}`,`mcp_opencrawl_opencrawl_${tool}`])];
 export const antigravitySearchContextMatcher = '^(?:' + [...antigravitySearchTools, 'call_mcp_tool'].join('|') + ')$';
-const aliases = ['opencrawl_search','opencrawl_search_v1'];
+const aliases = ['opencrawl_search','opencrawl_search_v1',...boardContextTools];
 /** Match only this installed deployment, including the native identifier's
  * underscore spelling. Cursor's documented payload omits the server name. */
 function selectedTools(harness:string,pluginName?:string) {
@@ -30,7 +32,7 @@ function selectedTools(harness:string,pluginName?:string) {
   const names=[pluginName,pluginName.replaceAll('-','_')];
   return {
     standard:names.flatMap(name=>aliases.map(alias=>harness==='codex'?`mcp__${name}__${alias}`:`mcp__plugin_${name}_opencrawl__${alias}`)),
-    agy:names.map(name=>`mcp_${name}_opencrawl_opencrawl_search_v1`),
+    agy:names.flatMap(name=>['opencrawl_search_v1',...boardContextTools].map(tool=>`mcp_${name}_opencrawl_${tool}`)),
     servers:names.map(name=>name+'_opencrawl'),
   };
 }
@@ -45,7 +47,7 @@ const sessionId = (value: unknown): value is string => typeof value === 'string'
 
 /** Native hook identity is independent of credentials, board presence and the
  * model's arguments. Never consult a latest-session file or read a transcript. */
-export function searchContext(harness: string, event: unknown, pluginName?:string): Record<string, unknown> | undefined {
+export function searchContext(harness: string, event: unknown, pluginName?:string, boardSupported=false): Record<string, unknown> | undefined {
   const tools=selectedTools(harness,pluginName);
   if(object(event)&&harness!=='cursor'&&typeof event.cursor_version==='string')return;
   if (object(event) && harness === 'antigravity') {
@@ -54,13 +56,16 @@ export function searchContext(harness: string, event: unknown, pluginName?:strin
     const currentSession = {harness, sessionId:event.conversationId};
     if (event.toolCall.name === 'call_mcp_tool') {
       const args = event.toolCall.args;
+      if(boardContextTools.includes(args.ToolName as string)&&!boardSupported)return;
       if (!tools.servers.includes(args.ServerName as string)
-          || args.ToolName !== 'opencrawl_search_v1' || !object(args.Arguments)) return;
+          || !['opencrawl_search_v1',...boardContextTools].includes(args.ToolName as string) || !object(args.Arguments)) return;
       // GUI dispatch carries an object, not a JSON string. Native overwrite
       // replaces nested objects wholesale, so preserve every search argument.
       return {decision:'allow', overwrite:{Arguments:{...args.Arguments, currentSession}}};
     }
     if (!tools.agy.includes(event.toolCall.name as string)) return;
+    const calledTool=event.toolCall.name;
+    if(boardContextTools.some(tool=>String(calledTool).endsWith('_'+tool))&&!boardSupported)return;
     // overwrite is a shallow argument merge; allow continues the ordinary
     // policy checks (auto_approve and permissionOverrides are never emitted).
     return {decision:'allow', overwrite:{currentSession}};
@@ -76,6 +81,7 @@ export function searchContext(harness: string, event: unknown, pluginName?:strin
   if (!object(event) || !['codex', 'claude-code'].includes(harness) || event.hook_event_name !== 'PreToolUse'
       || !tools.standard.includes(event.tool_name as string) || !object(event.tool_input)) return;
   if (!sessionId(event.session_id)) return;
+  if(boardContextTools.some(tool=>String(event.tool_name).endsWith('_'+tool))&&!boardSupported)return;
   let nativeId = event.session_id;
   if (event.agent_id !== undefined && event.agent_id !== null) {
     if (!sessionId(event.agent_id)) return;
@@ -131,7 +137,11 @@ export async function searchContextCommand(args: string[], input: Readable = pro
       check=()=>{if(JSON.stringify(pluginHookContext(api,harness))!==binding)throw Error('Plugin binding changed');};
     }
     const event=await readSearchContextEvent(input);check?.();
-    const result = searchContext(harness,event,pluginName);
+    const {supportsAgentBoard}=await import('./board.ts');
+    const {DEFAULT_API_ORIGIN}=await import('./oauth.ts');
+    const {readCaptureConfig}=await import('./capture/runtime.ts');
+    const api=parsed.values.api??process.env.OPENCRAWL_PLUGIN_API??process.env.OPENCRAWL_API_URL??readCaptureConfig()?.api??DEFAULT_API_ORIGIN;
+    const result = searchContext(harness,event,pluginName,supportsAgentBoard(api));
     if (result) output.write(JSON.stringify(result) + '\n');
   } catch { /* Unknown identity or malformed native input must never guess. */ }
   return 0;
