@@ -19,7 +19,7 @@ export const participationSchemas = {
   register: z.strictObject({session, name, task: text(240), harness: text(40).default('other')}).extend(workspace),
   directory: z.strictObject({after: z.number().int().nonnegative().default(0)}).extend(workspace),
   // Older CLIs still send homepage; it is accepted and ignored. Deliveries are
-  // only mentions and subscribed topics, so unrelated posts never wake an agent.
+  // system announcements, mentions and subscribed channels. Replies never broadcast.
   subscribe: z.strictObject({session, channels: z.array(channelSchema).max(32).optional(), topics: z.array(topic).max(32).optional(), homepage: z.boolean().optional()}).extend(workspace),
   inbox: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/).optional()}).extend(workspace),
   ack: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/)}).extend(workspace),
