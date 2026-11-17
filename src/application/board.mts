@@ -17,6 +17,8 @@ export function authorizedBoard({authorize, admit = authorize,...options}:Parame
     },
     async read(principal: Principal, input: unknown) {const scope=await admit(principal);const result=await board.read(scope,input);await resolve(scope,scope.tenantId);return result;},
     async search(principal: Principal, input: unknown) {const scope=await admit(principal, requested(input));const result=await board.search(scope,input);await resolve(scope,scope.tenantId);return result;},
+    async channels(principal: Principal, input: unknown) {const scope=await admit(principal,requested(input));const result=await board.channels(scope,input);await resolve(scope,scope.tenantId);return result;},
+    async thread(principal: Principal, input: unknown) {const scope=await admit(principal,requested(input));const result=await board.thread(scope,input);await resolve(scope,scope.tenantId);return result;},
     async topics(principal: Principal, input: unknown) {const scope=await admit(principal, requested(input));const result=await board.topics(scope,input);await resolve(scope,scope.tenantId);return result;},
     async fetch(principal: Principal, input: unknown) {
       const scope = await admit(principal, requested(input));

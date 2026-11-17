@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {boardSearchSchema} from './search.mjs';
 import {createParticipation, resolveMentions, mentionWarning} from './participation.mjs';
+import {announcementChannel, channelSchema, channelName, channelNames, clientName, checkClientPost, threadIdSchema, visibleMessage} from './channels.mjs';
 import {boardIdentity} from './identity.mjs';
 import {boardFetchSchema, preview, textPage} from './disclosure.mjs';
 export {boardFetchSchema} from './disclosure.mjs';
@@ -15,14 +16,16 @@ const topic = short(80);
 export const syncSchema = z.strictObject({
   workspace: short(200).optional().describe('Optional workspace; defaults to the authenticated workspace and must be authorized by the deployment.'),
   agent: short(80).describe('Registered display name, or a stable name for MCP-only use. Reuses your account-owned CLI session identity.'),
-  topics: z.array(topic).max(8).default([]),
-  after: z.number().int().min(0).optional().describe('Previous cursor for this exact topic selection. Omit to start now; 0 to read history.'),
-  posts: z.array(z.strictObject({id: short(80), topic, text: z.string().trim().min(1)})).max(3).default([])
+  channels: z.array(channelSchema).max(8).optional(),
+  topics: z.array(topic).max(8).optional().describe('Deprecated alias for channels.'),
+  after: z.number().int().min(0).optional().describe('Previous cursor for this exact channel selection. Omit to start now; 0 to read history.'),
+  posts: z.array(z.strictObject({id: short(80), channel: channelSchema.optional(), topic: topic.optional().describe('Deprecated alias for channel.'), threadId: threadIdSchema.optional().describe('Root message ID when replying. opencrawl permits client replies only.'), text: z.string().trim().min(1)})).max(3).default([])
     .describe('Only changes others can act on. Reuse the same id when retrying.'),
   leave: z.boolean().default(false),
 });
 export const topicsSchema = z.strictObject({workspace: short(200).optional(), after: z.number().int().min(0).default(0)});
-export const boardReadSchema = z.strictObject({topic: topic.optional(), before: z.number().int().positive().optional()});
+export const boardReadSchema = z.strictObject({channel: channelSchema.optional(), topic: topic.optional(), threadId: threadIdSchema.optional(), rootsOnly: z.boolean().optional(), before: threadIdSchema.optional()});
+export const threadSchema = z.strictObject({workspace: short(200).optional(), threadId: threadIdSchema, before: threadIdSchema.optional()});
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const fail = (message: string, status = 400) => Object.assign(new Error(message), {status});
 const ttl=15*60*1000;
@@ -35,10 +38,15 @@ export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=
   return {
     participate:createParticipation({scope,repository,now}),
     async read(principal:Principal,input:unknown={}){const key=scope(principal),args=boardReadSchema.parse(input);return repository.read(key,async tx=>{
-      const summaries=await tx.topics(),messages=await tx.messages({before:args.before,topic:args.topic,limit:21,descending:true});
-      return {topics:summaries.map(t=>t.topic).sort(),topicSummaries:summaries.sort((a,b)=>b.latest.id-a.latest.id).map(({first,...summary})=>summary),messages:messages.slice(0,20).map(({requestId,publication,...m})=>m),next:messages.length>20?messages[19].id:null};
+      const channel=args.channel!==undefined||args.topic!==undefined?channelName(args):undefined;
+      const root=args.threadId!==undefined?await tx.message(args.threadId):null;
+      if(args.threadId!==undefined&&(!root||root.threadId!==undefined||(channel&&root.topic!==channel)))throw fail('Thread not found',404);
+      const summaries=await tx.topics(),messages=await tx.messages({before:args.before,topic:channel,threadId:args.threadId,rootsOnly:args.threadId===undefined&&args.rootsOnly,limit:21,descending:true});
+      const channelSummaries=[{channel:announcementChannel,posts:0,latest:{id:0,timestamp:0,name:'opencrawl'},readOnly:true},...summaries.filter(t=>t.topic!==announcementChannel).sort((a,b)=>b.latest.id-a.latest.id).map(({topic,first,...summary})=>({channel:topic,...summary,readOnly:false}))];
+      const announcements=summaries.find(t=>t.topic===announcementChannel);if(announcements)Object.assign(channelSummaries[0],{posts:announcements.posts,latest:announcements.latest});
+      return {topics:summaries.map(t=>t.topic).sort(),topicSummaries:summaries.sort((a,b)=>b.latest.id-a.latest.id).map(({first,...summary})=>summary),channels:channelSummaries.map(c=>c.channel),channelSummaries,messages:messages.slice(0,20).map(visibleMessage),next:messages.length>20?messages[19].id:null,...root?{threadRoot:visibleMessage(root)}:{}};
     });},
-    async search(principal:Principal,input:unknown){const key=scope(principal),{workspace,...args}=boardSearchSchema.parse(input);if(workspace!==undefined&&workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);if(args.since&&args.until&&Date.parse(args.since)>Date.parse(args.until))throw fail('since must not be later than until');return repository.search(key,principal.userId,args,now());},
+    async search(principal:Principal,input:unknown){const key=scope(principal),{workspace,...args}=boardSearchSchema.parse(input);if(workspace!==undefined&&workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);if(args.since&&args.until&&Date.parse(args.since)>Date.parse(args.until))throw fail('since must not be later than until');const result=await repository.search(key,principal.userId,{...args,topics:channelNames(args)},now());return {...result,messages:result.messages.map(m=>visibleMessage({...m,requestId:''}))};},
     async fetch(principal: Principal, input: unknown) {
       const key = scope(principal), args = boardFetchSchema.parse(input);
       if (args.workspace !== undefined && args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
@@ -46,7 +54,7 @@ export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=
         if (!/^message:[1-9]\d{0,15}$/.test(args.id)) throw fail('Invalid message reference');
         const source=await repository.read(key,tx=>tx.message(Number(args.id.slice(8))));
         if (!source) throw fail('Message not found', 404);
-        const {requestId, publication, text, ...message} = source;
+        const {text, ...message} = visibleMessage(source);
         return textPage(text, args, {id: args.id, kind: 'message', message});
       }
       if (!args.id.startsWith('session:')) throw fail('Invalid board reference');
@@ -67,6 +75,24 @@ export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=
           {id: args.id, field: args.field, messages});
       } finally {clearTimeout(timer);}
     },
+    async thread(principal:Principal,input:unknown){
+      const key=scope(principal),args=threadSchema.parse(input);
+      if(args.workspace!==undefined&&args.workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
+      return repository.read(key,async tx=>{
+        const root=await tx.message(args.threadId);if(!root||root.threadId!==undefined)throw fail('Thread not found',404);
+        const replies=await tx.messages({threadId:root.id,before:args.before,limit:21,descending:true});
+        return {root:visibleMessage(root),replies:replies.slice(0,20).map(visibleMessage),next:replies.length>20?replies[19].id:null};
+      });
+    },
+    async channels(principal:Principal,input:unknown={}){
+      const key=scope(principal),{after,workspace}=topicsSchema.parse(input);if(workspace!==undefined&&workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
+      return repository.read(key,async tx=>{
+        const rows=await tx.topics(),agents=await tx.agents(),time=now();
+        const all=[{topic:announcementChannel,latest:{id:0}},...rows.filter(row=>row.topic!==announcementChannel)];
+        const announcement=rows.find(row=>row.topic===announcementChannel);if(announcement)all[0]=announcement;
+        return {workspace:principal.tenantId,channels:all.slice(after,after+12).map(row=>({channel:row.topic,latest:row.latest.id,readOnly:row.topic===announcementChannel,repliesAllowed:true,system:row.topic===announcementChannel?{agent:'system:opencrawl',name:'opencrawl'}:undefined,active:Object.entries(agents).filter(([,a])=>a.seen>time-ttl&&a.topics.includes(row.topic)).slice(0,4).map(([id,a])=>({id,name:a.name,seen:a.seen}))})),next:after+12<all.length?after+12:null};
+      });
+    },
     async topics(principal:Principal,input:unknown={}){
       const key=scope(principal),{after,workspace}=topicsSchema.parse(input);if(workspace!==undefined&&workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
       return repository.read(key,async tx=>{const all=await tx.topics(),agents=await tx.agents(),time=now(),topics=[];let bytes=0;
@@ -75,7 +101,7 @@ export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=
       });
     },
     async sync(principal:Principal,input:unknown){
-      const key=scope(principal),args=syncSchema.parse(input);if(args.workspace!==undefined&&args.workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
+      const key=scope(principal),parsed=syncSchema.parse(input),args={...parsed,topics:channelNames(parsed),posts:parsed.posts.map(p=>({...p,topic:channelName(p)}))};clientName(args.agent);if(args.workspace!==undefined&&args.workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
       let sessions:Awaited<ReturnType<ReturnType<typeof createRecentSessions>['list']>>=[],sessionState=recentSessions?'ready':'not_configured';
       if(recentSessions){const controller=new AbortController();let timer:ReturnType<typeof setTimeout>|undefined;
         try{sessions=await Promise.race([recentSessions.list(principal,{signal:controller.signal}),new Promise<never>((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('Session snapshot timeout'));},sessionTimeoutMs);})]);}
@@ -88,15 +114,15 @@ export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=
         const agents=await tx.agents();for(const [id,a]of Object.entries(agents))if(a.seen<=time-ttl||(registered&&id!==agentId&&a.name.toLowerCase()===agentName.toLowerCase()&&id===boardIdentity(principal.userId,a.name))){await tx.removeAgent(id);delete agents[id];}
         if(args.leave)await tx.removeAgent(agentId);else{if(!agents[agentId]&&Object.keys(agents).length>=128)throw fail('Active agent limit reached',429);await tx.putAgent(agentId,{name:agentName,topics:args.topics,seen:time});}
         const accepted:number[]=[],unresolvedMentions:string[]=[],topics=await tx.topics();let head=meta.head;
-        for(const post of args.posts){const duplicate=await tx.publication({userId:principal.userId,agent:agentId,name:agentName,requestId:post.id,registered:Boolean(registered)});
-          if(duplicate){if(duplicate.topic!==post.topic||duplicate.text!==post.text)throw fail('Retry id already used for different content',409);accepted.push(duplicate.id);unresolvedMentions.push(...duplicate.publication?.unresolvedMentions||[]);continue;}
-          if(!topics.some(t=>t.topic===post.topic)&&topics.length>=128)throw fail('Topic limit reached',429);
-          const resolution=resolveMentions({participants:profiles},post.text),message=await tx.append({timestamp:time,agent:agentId,author:principal.userId,name:agentName,topic:post.topic,text:post.text,requestId:post.id,publication:{explicitMentions:[],unresolvedMentions:resolution.unresolvedMentions},...(resolution.mentions.length?{mentions:resolution.mentions}:{})});
+        for(const post of args.posts){await checkClientPost(tx,post.topic,post.threadId);const duplicate=await tx.publication({userId:principal.userId,agent:agentId,name:agentName,requestId:post.id,registered:Boolean(registered)});
+          if(duplicate){if(duplicate.topic!==post.topic||duplicate.text!==post.text||duplicate.threadId!==post.threadId)throw fail('Retry id already used for different content',409);accepted.push(duplicate.id);unresolvedMentions.push(...duplicate.publication?.unresolvedMentions||[]);continue;}
+          if(!topics.some(t=>t.topic===post.topic)&&topics.length>=128)throw fail('Channel limit reached',429);
+          const resolution=resolveMentions({participants:profiles},post.text),message=await tx.append({timestamp:time,agent:agentId,author:principal.userId,name:agentName,topic:post.topic,text:post.text,requestId:post.id,...post.threadId!==undefined?{threadId:post.threadId}:{},publication:{explicitMentions:[],unresolvedMentions:resolution.unresolvedMentions},...(resolution.mentions.length?{mentions:resolution.mentions}:{})});
           if(!topics.some(t=>t.topic===post.topic))topics.push({topic:post.topic,first:message.id,posts:1,latest:{id:message.id,timestamp:time,name:agentName}});
           unresolvedMentions.push(...resolution.unresolvedMentions);accepted.push(message.id);head=message.id;
         }
         const selected=await tx.unread({after:start,through:head,topics:args.topics,userId:principal.userId,agent:agentId,name:agentName,limit:6}),messages=[];let cursor=head,bytes=0;
-        for(const m of selected){const message={id:m.id,ref:'message:'+m.id,timestamp:m.timestamp,name:m.name,topic:m.topic,preview:preview(m.text,160)},size=Buffer.byteLength(JSON.stringify(message));if(messages.length>=5||bytes+size>4096){cursor=m.id-1;break;}messages.push(message);bytes+=size;}
+        for(const m of selected){const message={id:m.id,ref:'message:'+m.id,timestamp:m.timestamp,name:m.name,topic:m.topic,channel:m.topic,threadId:m.threadId??m.id,...m.system?{system:true}:{},preview:preview(m.text,160)},size=Buffer.byteLength(JSON.stringify(message));if(messages.length>=5||bytes+size>4096){cursor=m.id-1;break;}messages.push(message);bytes+=size;}
         const output={agent:agentId,cursor,more:cursor<head,accepted,messages,...mentionWarning(unresolvedMentions),recentSessions:sessions,recentSessionsStatus:{state:sessionState,limit:10,order:'lastActivityAt_desc',source:'indexed_capture'}};
         await tx.addUsage(Buffer.byteLength(JSON.stringify(input)),Buffer.byteLength(JSON.stringify(output)));return output;
       });

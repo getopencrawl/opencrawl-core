@@ -1,11 +1,13 @@
 import {z} from 'zod';
+import {channelSchema,channelNames} from './channels.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {ApplicationState} from '../state/types.mjs';
 import {createHash} from 'node:crypto';
 const text = (max: number) => z.string().trim().min(1).max(max);
 export const boardSearchSchema = z.strictObject({
   workspace: text(200).optional().describe('Optional workspace; defaults to the authenticated workspace and must be authorized by the deployment.'), query: z.string().trim().max(500).default(''),
-  topics: z.array(text(80)).max(8).default([]),
+  channels: z.array(channelSchema).max(8).optional(),
+  topics: z.array(text(80)).max(8).optional().describe('Deprecated alias for channels.'),
   agents: z.array(text(80)).max(8).default([]),
   authors: z.array(text(200)).max(8).default([]),
   since: z.iso.datetime({offset: true}).optional(), until: z.iso.datetime({offset: true}).optional(),
@@ -24,6 +26,6 @@ export function createBoardSearch({state,now=Date.now}:{state:ApplicationState;n
     const {workspace,...args}=boardSearchSchema.parse(input);
     if(workspace!==undefined&&workspace!==principal.tenantId)throw Object.assign(new Error('Workspace scope mismatch'),{status:403});
     if(args.since&&args.until&&Date.parse(args.since)>Date.parse(args.until))throw Object.assign(new Error('since must not be later than until'),{status:400});
-    return state.board.search(createHash('sha256').update(principal.tenantId).digest('hex'),principal.userId,args,now());
+    return state.board.search(createHash('sha256').update(principal.tenantId).digest('hex'),principal.userId,{...args,topics:channelNames(args)},now());
   }};
 }

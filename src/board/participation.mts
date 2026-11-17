@@ -2,6 +2,7 @@ import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader} from '../state/board.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
+import {channelSchema,channelName,channelNames,clientName,checkClientPost,threadIdSchema,visibleMessage} from './channels.mjs';
 import {boardIdentity} from './identity.mjs';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -19,11 +20,11 @@ export const participationSchemas = {
   directory: z.strictObject({after: z.number().int().nonnegative().default(0)}).extend(workspace),
   // Older CLIs still send homepage; it is accepted and ignored. Deliveries are
   // only mentions and subscribed topics, so unrelated posts never wake an agent.
-  subscribe: z.strictObject({session, topics: z.array(topic).max(32), homepage: z.boolean().optional()}).extend(workspace),
+  subscribe: z.strictObject({session, channels: z.array(channelSchema).max(32).optional(), topics: z.array(topic).max(32).optional(), homepage: z.boolean().optional()}).extend(workspace),
   inbox: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/).optional()}).extend(workspace),
   ack: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/)}).extend(workspace),
   leave: z.strictObject({session}).extend(workspace),
-  publish: z.strictObject({session, id: text(80), topic, text: z.string().trim().min(1), mentions: z.array(name).max(8).default([])}).extend(workspace),
+  publish: z.strictObject({session, id: text(80), channel: channelSchema.optional(), topic: topic.optional(), threadId: threadIdSchema.optional(), text: z.string().trim().min(1), mentions: z.array(name).max(8).default([])}).extend(workspace),
 };
 type Operation = keyof typeof participationSchemas;
 type Command = {[K in Operation]: {operation: K; args: z.output<typeof participationSchemas[K]>}}[Operation];
@@ -69,6 +70,7 @@ export function createParticipation({scope,repository,now}:{scope(principal:Prin
       const {head}=await tx.metadata();let p=await tx.participant(id);
       if(operation==='register'||operation==='bootstrap'||operation==='profile'){
         const profiles=await tx.profiles(),requestedName=operation==='bootstrap'?undefined:args.name;
+        if(requestedName)clientName(requestedName);
         for(const [otherId,other]of Object.entries(profiles)){
           if(otherId!==id&&other.seen<=time-retainMs){await tx.removeParticipant(otherId);delete profiles[otherId];}
           else if(requestedName&&otherId!==id&&other.name.toLowerCase()===requestedName.toLowerCase())throw fail('Agent name is already registered; choose a session-specific name',409);
@@ -84,14 +86,14 @@ export function createParticipation({scope,repository,now}:{scope(principal:Prin
         await tx.putParticipant(id,p);
         const presence=(await tx.agents())[id];if(presence)await tx.putAgent(id,{...presence,name:p.name,seen:time});
         return {workspace:principal.tenantId,agent:id,session:args.session,name:p.name||null,task:p.task||null,harness:p.harness,resumed,
-          subscriptions:{mentions:Boolean(p.name),topics:p.topics},pollAfterMs:10000,...(operation==='register'?{home:resumed?[]:(await tx.messages({limit:5,descending:true})).reverse().map(({requestId,publication,...m})=>m),agents:(await directory(tx,0,8)).agents}:{})};
+          subscriptions:{mentions:Boolean(p.name),topics:p.topics,channels:p.topics,announcements:true},pollAfterMs:10000,...(operation==='register'?{home:resumed?[]:(await tx.messages({limit:5,descending:true})).reverse().map(({requestId,publication,...m})=>m),agents:(await directory(tx,0,8)).agents}:{})};
       }
       if(!p)throw fail('Register this session before using the board',404);
       const ownerMissing=p.userId===undefined;p.userId=principal.userId;
       if(operation==='inbox'&&p.left)return {workspace:principal.tenantId,agent:id,left:true,batch:null};
       if(operation!=='leave'&&p.left)throw fail('Session has left; register it again to resume',409);
       let result:unknown,dirty=true;
-      if(operation==='subscribe'){p.topics=[...new Set(args.topics)].sort();delete p.homepage;p.seen=time;result={agent:id,mentions:Boolean(p.name),topics:p.topics,effectiveAfter:p.ackCursor};}
+      if(operation==='subscribe'){p.topics=channelNames(args).sort();delete p.homepage;p.seen=time;result={agent:id,mentions:Boolean(p.name),topics:p.topics,channels:p.topics,announcements:true,effectiveAfter:p.ackCursor};}
       else if(operation==='leave'){p.left=true;p.seen=time;result={agent:id,left:true};}
       else if(operation==='ack'){
         if(args.receipt===p.lastReceipt)return {agent:id,acknowledged:args.receipt,through:p.ackCursor};
@@ -101,15 +103,16 @@ export function createParticipation({scope,repository,now}:{scope(principal:Prin
         result={agent:id,acknowledged:args.receipt,through:p.ackCursor};
       }else if(operation==='publish'){
         if(!p.name)throw fail('Choose a session name and task with board profile before publishing',409);
+        clientName(p.name);const channel=channelName(args);await checkClientPost(tx,channel,args.threadId);
         const duplicate=await tx.publication({userId:principal.userId,agent:id,name:p.name,requestId:args.id,registered:true});
         const profiles=await tx.profiles();
         if(duplicate){const sameRecipients=duplicate.publication?JSON.stringify(duplicate.publication.explicitMentions)===JSON.stringify(explicitNames(args.mentions)):JSON.stringify(duplicate.mentions||[])===JSON.stringify(resolveMentions({participants:profiles},args.text,args.mentions).mentions);
-          if(duplicate.text!==args.text||duplicate.topic!==args.topic||!sameRecipients)throw fail('Retry id already used for different content',409);
+          if(duplicate.text!==args.text||duplicate.topic!==channel||duplicate.threadId!==args.threadId||!sameRecipients)throw fail('Retry id already used for different content',409);
           return {agent:id,accepted:[duplicate.id],mentions:duplicate.mentions||[],...mentionWarning(duplicate.publication?.unresolvedMentions||[])};
         }
         const {mentions,unresolvedMentions}=resolveMentions({participants:profiles},args.text,args.mentions),topics=await tx.topics();
-        if(!topics.some(t=>t.topic===args.topic)&&topics.length>=128)throw fail('Topic limit reached',429);
-        const message=await tx.append({timestamp:time,agent:id,author:principal.userId,name:p.name,topic:args.topic,text:args.text,requestId:args.id,mentions,publication:{explicitMentions:explicitNames(args.mentions),unresolvedMentions}});p.seen=time;
+        if(!topics.some(t=>t.topic===channel)&&topics.length>=128)throw fail('Channel limit reached',429);
+        const message=await tx.append({timestamp:time,agent:id,author:principal.userId,name:p.name,topic:channel,text:args.text,requestId:args.id,...args.threadId!==undefined?{threadId:args.threadId}:{},mentions,publication:{explicitMentions:explicitNames(args.mentions),unresolvedMentions}});p.seen=time;
         result={agent:id,accepted:[message.id],mentions,...mentionWarning(unresolvedMentions)};
       }else if(operation==='inbox'){
         if(args.receipt&&args.receipt!==p.pending?.receipt)throw fail('Delivery is no longer pending; do not acknowledge another batch',409);
@@ -119,14 +122,14 @@ export function createParticipation({scope,repository,now}:{scope(principal:Prin
           // One lookahead row preserves the legacy through/more receipt boundary.
           const unseen=await tx.unread({after:p.ackCursor,through:head,topics:p.topics,mention:id,userId:principal.userId,agent:id,name:p.name,limit:9});
           if(unseen.length||time>=p.nextHomeAt){const messages=[];let through=head,bytes=0;
-            for(const m of unseen){const reasons=[...(m.mentions?.includes(id)?['mention']:[]),...(p.topics.includes(m.topic)?['topic']:[])];const {requestId,publication,...v}=m,message={...v,reasons},size=Buffer.byteLength(JSON.stringify(message));
+            for(const m of unseen){const reasons=[...(m.mentions?.includes(id)?['mention']:[]),...(p.topics.includes(m.topic)?['channel']:[]),...(m.system&&m.threadId===undefined?['announcement']:[])];const {requestId,publication,...v}=m,message={...v,reasons},size=Buffer.byteLength(JSON.stringify(message));
               if(messages.length>=8||messages.length>0&&bytes+size>8192){through=m.id-1;break;}messages.push(message);bytes+=size;
             }
             if(messages.length){const receipt=hash(JSON.stringify([id,p.ackCursor,through,messages.map(m=>m.id)]));p.pending={receipt,createdAt:time,through,more:through<head,messages};p.batches++;p.lastDeliveryAt=time;p.nextHomeAt=time+60000;dirty=true;}
             else if(through!==p.ackCursor){p.ackCursor=through;dirty=true;}
           }
         }
-        result={workspace:principal.tenantId,agent:id,name:p.name,batch:p.pending,pollAfterMs:10000};
+        result={workspace:principal.tenantId,agent:id,name:p.name,batch:p.pending?{...p.pending,messages:p.pending.messages.map(m=>({...m,channel:m.topic,threadId:m.threadId??m.id}))}:null,pollAfterMs:10000};
       }
       if(dirty)await tx.putParticipant(id,p);return result;
     });
