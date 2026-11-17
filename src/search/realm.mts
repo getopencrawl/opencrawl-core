@@ -6,14 +6,13 @@ import type {Corpus, SearchDocument, DocumentItem, IndexHit, OpenSearchResponse,
 import {signRequest} from '../sessions/s3-store.mjs';
 import {realmMapping,passageFields,memoryProjectionFields,sessionTokenFields,sessionParticipantFields,sessionSearchContextFields} from './mapping.mjs';
 export {realmMapping};
-import {realmIndex,realmField,realmDocument} from './realm-format.mjs';
+import {fail,realmIndex,realmField,realmDocument} from './realm-format.mjs';
 export {realmIndex,realmField,realmDocument};
 import {createSqliteRealm} from './sqlite.mjs';
 import {patchScript} from './mutations.mjs';
 import {bulkItemLine,INITIAL_BULK_TARGET_BYTES} from './bulk.mjs';
 import {openSearchAggregations} from './aggregations.mjs';
 const gzip=promisify(gzipCallback);
-const fail = (message: string,status=503) => Object.assign(new Error(message),{status,permanent:status===403});
 const corpora = new Set(['connector','session','board','memory']);
 function compatible(actual: Mapping | undefined,expected: Mapping): boolean {
   if(expected.type && (actual?.type||(actual?.properties?'object':undefined))!==expected.type) return false;

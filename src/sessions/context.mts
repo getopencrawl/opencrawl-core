@@ -6,9 +6,9 @@ import {sessionScope} from './ingest.mjs';
 import {realmField} from '../search/realm-format.mjs';
 import {sessionSearchExclusions} from '../search/context.mjs';
 import {TITLE_KINDS} from './titles.mjs';
+import {fail} from '../errors.mjs';
 
 const f = (field: string) => realmField('session', field);
-function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 
 /** Keyset predicates preserve missing-first order without round-tripping engine
  * sentinel values (OpenSearch's missing dates exceed JS integer precision). */

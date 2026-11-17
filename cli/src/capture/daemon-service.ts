@@ -13,6 +13,7 @@ import {hostServiceCommand,installHostService,stopHostService,verifyHostService}
 import {assertTokenDestination} from '../environment-token.ts';
 import {apiOrigin,CliError} from '../oauth.ts';
 import {validWorkerPath} from './daemon-environment.ts';
+import {powershellQuote} from '../hook-runner.ts';
 type HostInvoke=NonNullable<Parameters<typeof installHostService>[1]>;
 
 const directory=()=>join(captureDir(),'daemon');
@@ -44,7 +45,6 @@ function writeServiceFile(path:string,content:string){
   try{const fd=openSync(temporary,'wx',0o600);try{writeFileSync(fd,content);fsyncSync(fd);}finally{closeSync(fd);}renameSync(temporary,path);syncDirectory(dirname(path));}
   finally{try{unlinkSync(temporary);}catch{}}
 }
-const powershellQuote=(value:string)=>"'"+value.replaceAll("'","''")+"'";
 const windowsArgument=(value:string)=>'"'+value.replace(/(\\*)"/g,'$1$1\\"').replace(/(\\+)$/,'$1$1')+'"';
 export function windowsTaskScript(config:CaptureConfig){
   if(!config.command.length)throw Error('Capture supervision requires an executable command');

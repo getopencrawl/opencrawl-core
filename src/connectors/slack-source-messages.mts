@@ -5,8 +5,8 @@ import {createHash} from 'node:crypto';
 import {validateBinding,digest,invalidRecord} from './scope.mjs';
 import {SourcePaginationError,sourcePaginationProgress,advanceSourcePagination,sourcePaginationCheckpoint} from './workflow.mjs';
 export {seedSlackSourceCatalog} from './slack-source-catalog.mjs';
+import {validId as id} from './slack-source-catalog.mjs';
 const hash=(bytes: Uint8Array)=>createHash('sha256').update(bytes).digest('hex');
-const id=(value: unknown): value is string=>typeof value==='string'&&/^[A-Z][A-Z0-9]{1,100}$/.test(value);
 const timestamp=(value: unknown): value is string=>typeof value==='string'&&/^\d{1,16}\.\d{1,6}$/.test(value);
 function pagination<T>(operation: () => T): T {
  try{return operation();}catch(error){if(error instanceof SourcePaginationError)invalidRecord('Invalid Slack message cursor progression');throw error;}

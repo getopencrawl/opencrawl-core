@@ -2,8 +2,8 @@ import type {ConnectorBinding, ConnectorStore, ConnectorDocument, AirbyteEnvelop
 import {createHash} from 'node:crypto';
 import {validateBinding,documentId,digest,invalidRecord} from './scope.mjs';
 import {extractDocumentText} from './document-text.mjs';
+import {validId as id} from './slack-source-catalog.mjs';
 
-const id=(value: unknown): value is string=>typeof value==='string'&&/^[A-Z][A-Z0-9]{1,100}$/.test(value);
 const hash=(bytes: Uint8Array)=>createHash('sha256').update(bytes).digest('hex');
 const label=(value: unknown): string=>{if(value===undefined||value===null)return '';if(typeof value!=='string'||Buffer.byteLength(value)>256*1024)invalidRecord('Invalid file label');return value;};
 /** Lossless, bounded chunks. Overlap keeps ordinary phrases crossing a boundary

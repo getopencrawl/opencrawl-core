@@ -12,6 +12,7 @@ import {retrievalInstruction} from '../retrieval-instruction.ts';
 import {setupCommandForSelf,profileSetupCommand} from './invocation.ts';
 import {reconcileCursorNativeHooks} from './cursor-native-hooks.ts';
 import {pluginHookFiles} from './plugin-hooks.ts';
+import {powershellQuote} from '../hook-runner.ts';
 import {pluginActivationMatches,verifyPluginBundle} from './plugin-context.ts';
 
 export type PluginClient = 'claude-code' | 'codex' | 'cursor' | 'antigravity' | 'devin';
@@ -150,8 +151,7 @@ function writeBundle(directory:string,files:Record<string,string>,client:PluginC
 }
 export function pluginCommand(command:string,args:string[],env:NodeJS.ProcessEnv,platform=process.platform):[string,string[]] {
   if(platform!=='win32'||!/[.](cmd|bat)$/i.test(command))return [command,args];
-  const literal=(value:string)=>"'"+value.replaceAll("'","''")+"'";
-  return [join(env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-Command','& '+[command,...args].map(literal).join(' ')+'; exit $LASTEXITCODE']];
+  return [join(env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-Command','& '+[command,...args].map(powershellQuote).join(' ')+'; exit $LASTEXITCODE']];
 }
 async function run(command:string,args:string[],env:NodeJS.ProcessEnv):Promise<CommandResult> {
   const [executable,arguments_]=pluginCommand(command,args,env);

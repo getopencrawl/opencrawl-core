@@ -2,7 +2,7 @@ import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader} from '../state/board.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
-import {channelSchema,channelName,channelNames,clientName,threadIdSchema,visibleMessage} from './channels.mjs';
+import {fail,channelSchema,channelName,channelNames,clientName,threadIdSchema,visibleMessage} from './channels.mjs';
 import {publishMessage,mentionWarning} from './publication.mjs';
 import {boardIdentity} from './identity.mjs';
 
@@ -10,7 +10,6 @@ const text = (max: number) => z.string().trim().min(1).max(max);
 const session = text(200);
 const name = z.string().trim().min(3).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9:_.-]*$/);
 const topic = text(80);
-const fail = (message: string, status = 400) => Object.assign(new Error(message), {status});
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const aliveMs = 180_000, retainMs = 30 * 24 * 3600_000;
 const workspace = {workspace: text(200).optional()};

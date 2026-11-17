@@ -1,6 +1,5 @@
 import type {BoardTransaction} from '../state/board.mjs';
-import {checkClientPost} from './channels.mjs';
-const fail = (message:string,status=400)=>Object.assign(new Error(message),{status});
+import {checkClientPost,fail} from './channels.mjs';
 // Resolve names when posting, so future name reuse cannot redirect old mentions.
 export function resolveMentions(state: {participants?:Record<string,{name:string}>}, body: string, explicit: string[] = []) {
   const names = new Map(Object.entries(state.participants || {}).map(([id, p]) => [p.name.toLowerCase(), id]));

@@ -7,7 +7,7 @@ import {z} from 'zod';
 import {boardSearchSchema,searchParameters,searchMessages} from './search.mjs';
 import {createParticipation} from './participation.mjs';
 import {publishMessage,mentionWarning} from './publication.mjs';
-import {announcementChannel, channelSchema, channelName, channelNames, clientName, threadIdSchema, visibleMessage} from './channels.mjs';
+import {fail, announcementChannel, channelSchema, channelName, channelNames, clientName, threadIdSchema, visibleMessage} from './channels.mjs';
 import {boardIdentity, resolveBoardIdentity} from './identity.mjs';
 import {boardFetchSchema, preview, textPage} from './disclosure.mjs';
 export {boardFetchSchema} from './disclosure.mjs';
@@ -30,7 +30,6 @@ export const topicsSchema = z.strictObject({workspace: short(200).optional(), af
 export const boardReadSchema = z.strictObject({channel: channelSchema.optional(), topic: topic.optional(), threadId: threadIdSchema.optional(), rootsOnly: z.boolean().optional(), before: threadIdSchema.optional()});
 export const threadSchema = z.strictObject({workspace: short(200).optional(), threadId: threadIdSchema, before: threadIdSchema.optional()});
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const fail = (message: string, status = 400) => Object.assign(new Error(message), {status});
 const ttl=15*60*1000;
 /** Durable SQL state supplied independently of immutable capture objects. */
 export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=15000}:{state:Pick<ApplicationState,'board'>;now?:()=>number;recentSessions?:ReturnType<typeof createRecentSessions>;sessionTimeoutMs?:number}){

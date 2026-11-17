@@ -5,12 +5,12 @@ import {GROK_BOT_HOOK_EVENTS} from '../capture/grok-bot.ts';
 import {pluginSearchContextMatcher,searchContextMarker} from '../search-context.ts';
 import type {PluginClient} from './plugins.ts';
 import {DEVIN_HOOK_EVENTS} from '../capture/devin.ts';
+import {literal} from '../hook-runner.ts';
 
 export type PluginHookBinding={command:string[];configHome:string;api:string;pluginName:string;env?:NodeJS.ProcessEnv};
 const json=(value:unknown)=>JSON.stringify(value,null,2)+'\n';
 const captureMarker='OpenCrawl session capture',startupMarker='OpenCrawl session startup';
 const ambientAuth=['OPENCRAWL_TOKEN','OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_AUTH','OPENCRAWL_API_URL'];
-const literal=(value:string,windows:boolean)=>windows?'"'+value.replaceAll('%','%%').replaceAll('"','""')+'"':"'"+value.replaceAll("'","'\\''")+"'";
 
 /** Native plugin hooks own delivery; the CLI guard owns endpoint/installation and
  * saved forward-consent checks. No credentials or global hook files live here.

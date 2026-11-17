@@ -6,7 +6,7 @@ import {dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import type {TenantPrincipal} from '../sessions/types.mjs';
 import type {Aggregation, Corpus, IndexHit, OpenSearchResponse, RealmOptions, SearchDocument, SearchRealm} from './types.mjs';
-import {realmDocument, realmField, realmIndex} from './realm-format.mjs';
+import {fail, realmDocument, realmField, realmIndex} from './realm-format.mjs';
 import {applyPatch, applyWrite} from './mutations.mjs';
 import {and, keys, object, QueryCompiler, readHits, unsupported} from './sqlite-query.mjs';
 import {aggregate} from './sqlite-aggregations.mjs';
@@ -16,7 +16,6 @@ const VERSION = 1;
 function preflight<T>(run: () => T): T {
   try {return run();} catch (error) {throw Object.assign(error as object, {writeOutcome: 'not-applied'});}
 }
-const fail = (message: string, status = 503) => Object.assign(new Error(message), {status, permanent: status === 403});
 const corpora = new Set<Corpus>(['session', 'connector', 'memory', 'board']);
 const response = (): OpenSearchResponse => ({timed_out: false, _shards: {failed: 0}, hits: {hits: [], total: {value: 0, relation: 'eq'}}, docs: [], items: []});
 export function sqlitePath(endpoint: string): string {

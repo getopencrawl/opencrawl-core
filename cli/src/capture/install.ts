@@ -13,14 +13,13 @@ import {environmentToken} from '../environment-token.ts';
 import {workspaceIdentityEnabled} from '../workspace-identity.ts';
 import {ANTIGRAVITY_SURFACES, captureDir, readCaptureConfig, captureDaemonEnabled, captureDaemonHarnesses, commandForSelf, request, harnessRoot, HOOK_MODE, type CaptureConfig} from './runtime.ts';
 import {captureNotice, grokBotNotice} from './policy.ts';
-import {hookRunner} from '../hook-runner.ts';
+import {hookRunner,commandQuote as quote} from '../hook-runner.ts';
 import {reconcileHookEntries, reconcileHookGroups} from '../hook-config.ts';
 import {installCaptureDaemon,uninstallCaptureDaemon} from './daemon-service.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 import {establishForwardBoundaries,hasUnverifiedForwardBoundaries} from '../setup/watermarks.ts';
 import {establishCursorForwardBoundaries} from '../setup/cursor-watermarks.ts';
 const marker='OpenCrawl session capture';
-const quote=(s:string)=>process.platform==='win32'?'"'+s.replace(/"/g,'""')+'"':"'"+s.replace(/'/g,"'\\''")+"'";
 function readJson(file:string){return existsSync(file)?JSON.parse(readFileSync(file,'utf8')):{};}
 /** Rewrite another program's JSON config the way people keep it: their
  * indentation (two spaces when new or unknown), same permissions, and the

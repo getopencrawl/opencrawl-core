@@ -16,3 +16,6 @@ export function required(value: string | undefined, name: string): string {
   if (!value) throw new Error(`${name} is required`);
   return value;
 }
+
+/** Reject a request with an HTTP status the caller's error handler may report. */
+export function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}

@@ -5,6 +5,7 @@ import {configDir} from '../session.ts';
 import {verifyPluginBundle} from '../setup/plugin-context.ts';
 import {spawn} from 'node:child_process';
 import {searchContextMarker} from '../search-context.ts';
+import {powershellQuote} from '../hook-runner.ts';
 
 const owned=new Set(['OpenCrawl session capture','OpenCrawl session startup']);
 // Review every bundled permission together; search context must not become a
@@ -63,8 +64,7 @@ export async function nativeCodexHooks(root:string):Promise<unknown>{
  const executable=Bun.which('codex');if(!executable)throw new Error('Codex unavailable');
  let command=executable,args=['app-server','--stdio'];
  if(process.platform==='win32'&&/\.(cmd|bat)$/i.test(command)){
-  const literal=(value:string)=>"'"+value.replaceAll("'","''")+"'";
-  args=['-NoProfile','-NonInteractive','-Command','& '+[command,...args].map(literal).join(' ')+'; exit $LASTEXITCODE'];
+  args=['-NoProfile','-NonInteractive','-Command','& '+[command,...args].map(powershellQuote).join(' ')+'; exit $LASTEXITCODE'];
   command=join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
  }
  return await new Promise((accept,reject)=>{

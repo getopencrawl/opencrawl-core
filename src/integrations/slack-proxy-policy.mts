@@ -1,5 +1,5 @@
 import type {ProxyRequest,ProxyResponse,ProviderData} from './types.mjs';
-const fail=(status:number,message='Connector authorization unavailable'):never=>{throw Object.assign(new Error(message),{status});};
+export const fail=(status:number,message='Connector authorization unavailable'):never=>{throw Object.assign(new Error(message),{status});};
 const METHODS=new Set(['auth.test','conversations.list','users.list','users.info','team.info','emoji.list','search.messages']);
 const SEARCH=/^in:#[a-z0-9_-]+(?: in:#[a-z0-9_-]+)* after:\d{4}-\d{2}-\d{2}(?: before:\d{4}-\d{2}-\d{2})?(?: is:thread)?$/;
 export interface SlackReply {ok:boolean;status:number;data:unknown;headers?:Record<string,string>}

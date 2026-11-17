@@ -1,7 +1,7 @@
 import {createHmac,timingSafeEqual} from 'node:crypto';
 import type {ConnectorOAuth,IntegrationRegistry} from './ports.mjs';
 import type {ProxyRequest,ProxyResponse,ProviderData} from './types.mjs';
-import {slackPublicRead} from './slack-proxy-policy.mjs';
+import {fail,slackPublicRead} from './slack-proxy-policy.mjs';
 import {createLinearSource} from './linear-source.mjs';
 import {createGoogleDriveSource} from './google-drive-source.mjs';
 import type {DriveAudience} from './google-drive-access.mjs';
@@ -15,7 +15,6 @@ interface Options {
 }
 interface AuthConfig {id:string;name:string;toolkit?:{slug:string};status:string;is_composio_managed:boolean;auth_scheme?:string}
 interface Account {id:string;user_id?:string;status:string;is_disabled?:boolean;toolkit?:{slug:string}}
-const fail=(status:number,message='Connector authorization unavailable'):never=>{throw Object.assign(new Error(message),{status});};
 const equal=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
 const BOUND=['connecting','provisioning','active','error'];
 /** Everything a source capability may read. Paths mirror the published connector manifests. */

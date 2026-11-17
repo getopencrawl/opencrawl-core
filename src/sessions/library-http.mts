@@ -7,6 +7,7 @@ import {validParticipant} from './participants.mjs';
 import {sessionScope} from './event-identity.mjs';
 import type {createSessionLibrary} from './library.mjs';
 import type {createMemoryLibrary} from '../memories/library.mjs';
+import {fail} from '../errors.mjs';
 
 const harness = z.enum(SESSION_HARNESSES);
 // Memory files exist only for harnesses that keep them on disk.
@@ -27,7 +28,6 @@ export const libraryOperations = {
 };
 export type LibraryOperation = keyof typeof libraryOperations;
 export const isLibraryOperation = (value: string): value is LibraryOperation => Object.hasOwn(libraryOperations, value);
-function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 
 /** One validated entry point for every runtime. The runtime authenticates and
  * supplies the principal; owner checks and visibility live in the libraries. */

@@ -6,7 +6,7 @@ export const announcementChannel = 'opencrawl';
 export const systemIdentity = Object.freeze({agent: 'system:opencrawl', author: 'system:opencrawl', name: 'opencrawl'});
 export const channelSchema = z.string().trim().min(1).max(80);
 export const threadIdSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
-const fail = (message: string, status = 400) => Object.assign(new Error(message), {status});
+export const fail = (message: string, status = 400) => Object.assign(new Error(message), {status});
 
 export function channelName(input: {channel?: string; topic?: string}): string {
   if (input.channel !== undefined && input.topic !== undefined && input.channel !== input.topic) throw fail('Use channel; conflicting topic alias');

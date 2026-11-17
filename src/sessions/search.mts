@@ -18,9 +18,9 @@ import {sessionContext} from './context.mjs';
 import type {SessionContextInput} from '../search/types.mjs';
 
 import {sessionIndexMapping} from '../search/mapping.mjs';
+import {fail} from '../errors.mjs';
 export {sessionIndexMapping};
 
-function fail(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
 export function createSessionSearch(options: RealmOptions & {store?: ObjectStore; prefix?: string}) {
   const resolve=createRealmResolver(options), f=(field: string)=>realmField('session',field);
   const controls=options.store && options.prefix ? createControls({store:options.store,prefix:options.prefix}) : null;

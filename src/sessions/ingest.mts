@@ -13,10 +13,10 @@ import {digest,sessionScope,reserveSessionEvents} from './event-identity.mjs';
 import {createMemoryIngest,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
 import {createControls} from './controls.mjs';
 import {sessionWriteBarrier, sessionWriteStore} from './write-barrier.mjs';
+import {fail} from '../errors.mjs';
 export {digest,sessionScope,auditSessionEventIdentities,auditSessionEventSource} from './event-identity.mjs';
 
 const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
-function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 export const MAX_BATCH_BYTES = 16 * 1024 * 1024;
 /** Capability checked by rollout tooling before accepting deletion requests. */
 export const sessionDeletionVersion = 1;

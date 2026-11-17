@@ -5,13 +5,12 @@ import {isDeepStrictEqual} from 'node:util';
 import {randomUUID} from 'node:crypto';
 import {atomicFile, configDir} from './session.ts';
 import {commandForSelf} from './capture/runtime.ts';
-import {hookRunner} from './hook-runner.ts';
+import {hookRunner, commandQuote as quote} from './hook-runner.ts';
 import {reconcileHookEntries, reconcileHookGroups} from './hook-config.ts';
 import {retryWindowsSharing} from './filesystem.ts';
 import {searchContextMarker, searchContextMatcher, cursorSearchContextMatcher, antigravitySearchContextMatcher} from './search-context.ts';
 
 export const startupMarker = 'OpenCrawl session startup';
-const quote = (s: string) => process.platform === 'win32' ? '"' + s.replace(/"/g, '""') + '"' : "'" + s.replace(/'/g, "'\\''") + "'";
 export type StartupOptions = {home?: string; env?: NodeJS.ProcessEnv; command?: string[]; node?: string; requirementsFile?: string; preserveProfile?: boolean};
 
 /** A runner binds its own configuration directory. Refreshing one profile must

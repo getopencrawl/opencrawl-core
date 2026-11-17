@@ -7,6 +7,7 @@ import {createControls, visibleTo} from '../sessions/controls.mjs';
 import {memoryTitle} from './titles.mjs';
 import {activeMemoryProjectionFilter,MEMORY_HEAD_FIELDS} from './projection.mjs';
 import {authorizedMemoryDocuments} from './access.mjs';
+import {fail} from '../errors.mjs';
 
 export interface MemoryKey {userId: string; harness: string; path: string}
 export interface MemorySummary extends MemoryKey {
@@ -16,7 +17,6 @@ const HARNESSES = ['claude-code', 'codex'];
 const f = (field: string) => realmField('memory', field);
 const identity = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 const validPath = (value: unknown): value is string => typeof value === 'string' && value.length <= 2048 && value.endsWith('.md') && !value.includes('\\') && value.split('/').every(part => part && part !== '.' && part !== '..');
-function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 function checkKey({userId, harness, path}: Partial<MemoryKey>) {
   if (!identity(userId) || !HARNESSES.includes(harness ?? '') || !validPath(path)) fail(400, 'Invalid memory');
   return {userId: userId!, harness: harness!, path: path!};

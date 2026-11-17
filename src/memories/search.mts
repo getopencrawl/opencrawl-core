@@ -10,9 +10,9 @@ import {searchFilters,searchSort} from '../search/controls.mjs';
 import {passages,PASSAGE_VERSION} from '../search/passages.mjs';
 import {activeMemoryProjectionFilter,memoryProjectionId,memoryPassageId,MEMORY_HEAD_FIELDS} from './projection.mjs';
 import {authorizedMemoryDocuments} from './access.mjs';
+import {fail} from '../errors.mjs';
 
 const f=(field: string)=>realmField('memory',field);
-function fail(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
 export function createMemorySearch(options: RealmOptions & {store?:ObjectStore;prefix?:string}) {
   const resolve=createRealmResolver(options);
   const authoritativeControls=options.store&&options.prefix?createControls({store:options.store,prefix:options.prefix}):null;

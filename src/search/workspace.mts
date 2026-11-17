@@ -14,6 +14,7 @@ import {searchFiltersSchema} from './controls.mjs';
 import {currentSessionSchema} from './context.mjs';
 import {candidateFacets, facetNames} from './facets.mjs';
 import {memoryPassageId} from '../memories/projection.mjs';
+import {fail} from '../errors.mjs';
 
 export const workspaceSearchSchema = z.strictObject({
   query: z.string().trim().max(4000).describe('Use 2–6 distinctive keywords or an exact phrase, not a question. Start match=all; shorten or use any if needed. Empty only for time-ordered browsing.'),
@@ -46,7 +47,6 @@ export const workspaceFetchSchema = z.strictObject({
 }).refine(v => v.context !== false || v.before === undefined && v.after === undefined, 'before/after require context')
   .refine(v => !(v.context || v.before !== undefined || v.after !== undefined) || v.id.startsWith('sessions:'), 'Event context requires a sessions: passage ID')
   .refine(v => v.includeToolOutputs === undefined || v.context || v.before !== undefined || v.after !== undefined, 'includeToolOutputs requires event context');
-function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const WINDOW = 100, TTL = 5 * 60_000;
 

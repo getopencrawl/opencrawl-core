@@ -13,6 +13,7 @@ import type {ResourceControl} from './controls.mjs';
 import {capturedTitle, TITLE_KINDS} from './titles.mjs';
 import {capturedActor,type CapturedActor} from './actors.mjs';
 import {validParticipant, type SessionParticipant} from './participants.mjs';
+import {fail} from '../errors.mjs';
 
 export interface SessionKey {userId: string; harness: string; sessionId: string}
 export interface SessionSummary extends SessionKey {
@@ -38,7 +39,6 @@ function capturedHosts(value?: HostBuckets) {
   return {host: hosts[0] ?? null, hosts: hosts.sort(), hostsTruncated: (value?.sum_other_doc_count ?? 0) > 0};
 }
 const MAX_TEXT = 20000;
-function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 function clip(text: string) {return text.length > MAX_TEXT ? {text: text.slice(0, MAX_TEXT), truncated: true} : {text, truncated: false};}
 function stringify(value: unknown) {if (typeof value === 'string') return value; try {return JSON.stringify(value, null, 2) ?? '';} catch {return '';}}
 function iso(value: unknown) {return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : typeof value === 'number' && Number.isFinite(value) ? new Date(value).toISOString() : null;}

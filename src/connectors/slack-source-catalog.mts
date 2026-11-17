@@ -4,7 +4,7 @@ interface FileCatalog extends Catalog {files: Record<string, string[]>}
 import {digest, invalidRecord, validateBinding} from './scope.mjs';
 
 const MAX_BYTES=16*1024*1024, MAX_IDENTITIES=100000;
-const validId=(value: unknown): value is string=>typeof value==='string'&&/^[A-Z][A-Z0-9]{1,100}$/.test(value);
+export const validId=(value: unknown): value is string=>typeof value==='string'&&/^[A-Z][A-Z0-9]{1,100}$/.test(value);
 function ids(values: unknown): string[] {
  if(!Array.isArray(values)||values.length>MAX_IDENTITIES||values.some(value=>!validId(value)))invalidRecord('Invalid Slack catalog identities');
  return values as string[];

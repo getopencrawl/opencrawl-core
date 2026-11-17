@@ -5,10 +5,9 @@ import type {JsonObject} from '../sessions/types.mjs';
 import type {Principal} from '../identity/types.mjs';
 import type {credentialVault,ConnectorGrant} from './credential-vault.mjs';
 import {GRANT_ID} from './credential-vault.mjs';
-import {slackPublicRead} from './slack-proxy-policy.mjs';
+import {fail,slackPublicRead} from './slack-proxy-policy.mjs';
 const SCOPES=['channels:read','channels:history','search:read','users:read','team:read','emoji:read'];
 const equal=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
-const fail=(status:number,message='Connector authorization unavailable'):never=>{throw Object.assign(new Error(message),{status});};
 interface TokenResponse {ok?:boolean;error?:string;access_token?:string;refresh_token?:string;expires_in?:number;token_type?:string;scope?:string;authed_user?:TokenResponse}
 interface Options {organizationId:string;url:string;proxyUrl:string;clientId:string;clientSecret:string;vault:ReturnType<typeof credentialVault>;registry:IntegrationRegistry;fetch?:typeof globalThis.fetch;now?:()=>number}
 /**

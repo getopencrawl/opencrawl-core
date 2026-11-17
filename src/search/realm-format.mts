@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import type {SearchDocument} from './types.mjs';
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const fail = (message: string,status=503) => Object.assign(new Error(message),{status,permanent:status===403});
+export const fail = (message: string,status=503) => Object.assign(new Error(message),{status,permanent:status===403});
 const corpora = new Set(['connector','session','board','memory']);
 export function realmIndex(environment: string,tenantId: string,generation='v1') {
   if (!/^[a-z][a-z0-9-]{0,24}$/.test(environment) || !/^v[1-9][0-9]*$/.test(generation) || typeof tenantId!=='string' || !tenantId) throw fail('Invalid realm scope',403);

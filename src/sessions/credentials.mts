@@ -3,8 +3,8 @@ import {parseJson} from './types.mjs';
 interface CredentialRecord {schemaVersion: number; id: string; principal: Principal; expiresAt: string; revoked: boolean; revokedAt?: string; generation?: string}
 import {randomBytes} from 'node:crypto';
 import {digest,sessionScope} from './ingest.mjs';
+import {fail as deny} from '../errors.mjs';
 
-function deny(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
 export const isCaptureCredential = (token: unknown): token is string => typeof token==='string' && /^occ1_[a-f0-9]{64}$/.test(token);
 /** Opaque, upload-only delegation. Only hashes are stored; every lookup checks expiry/revocation. */
 export function createCaptureCredentials({store,prefix='capture-v1',now=Date.now}: {store: ObjectStore; prefix?: string; now?: () => number}) {

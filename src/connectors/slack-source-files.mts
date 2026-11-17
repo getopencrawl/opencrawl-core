@@ -6,9 +6,9 @@ import {createHash} from 'node:crypto';
 import {validateBinding,digest,invalidRecord} from './scope.mjs';
 import {SourcePaginationError,sourcePaginationProgress,advanceSourcePagination,sourcePaginationCheckpoint} from './workflow.mjs';
 export {seedSlackSourceCatalog} from './slack-source-catalog.mjs';
+import {validId} from './slack-source-catalog.mjs';
 const MAX=20*1024*1024;
 const hash=(bytes: Uint8Array)=>createHash('sha256').update(bytes).digest('hex');
-const validId=(value: unknown): value is string=>typeof value==='string'&&/^[A-Z][A-Z0-9]{1,100}$/.test(value);
 function nextCursor(data: SlackApiData,current: string) {
  const next=data.response_metadata?.next_cursor??'';
  if(typeof next!=='string'||next.length>10000||next&&next===current)invalidRecord('Invalid or repeated source cursor');
