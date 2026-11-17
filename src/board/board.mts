@@ -27,7 +27,7 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const fail = (message: string, status = 400) => Object.assign(new Error(message), {status});
 const ttl=15*60*1000;
 /** Durable SQL state supplied independently of immutable capture objects. */
-export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=15000}:{state:ApplicationState;now?:()=>number;recentSessions?:ReturnType<typeof createRecentSessions>;sessionTimeoutMs?:number}){
+export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=15000}:{state:Pick<ApplicationState,'board'>;now?:()=>number;recentSessions?:ReturnType<typeof createRecentSessions>;sessionTimeoutMs?:number}){
   if(!state?.board)throw fail('PostgreSQL board state is required',503);
   if(!Number.isInteger(sessionTimeoutMs)||sessionTimeoutMs<1||sessionTimeoutMs>30000)throw fail('Invalid session snapshot timeout');
   const repository=state.board;
