@@ -61,7 +61,7 @@ export function renderBoard(data:Record<string,unknown>,values:Values,stdout:Pic
   }
   if(!rows){stdout.write(JSON.stringify(data)+'\n');return;}
   for(const row of rows){
-    if(typeof row.text==='string')stdout.write(`#${row.id} ${row.from} [${row.channel}] ${row.time}${row.replyTo?` reply to #${row.replyTo}`:''}\n${row.text}\n\n`);
+    if(typeof row.text==='string')stdout.write([`#${row.id}`,row.from,row.channel?`[${row.channel}]`:undefined,row.time,row.replyTo?`reply to #${row.replyTo}`:undefined].filter(value=>value!==undefined).join(' ')+'\n'+row.text+'\n\n');
     else stdout.write(JSON.stringify(row)+'\n');
   }
   if(!rows.length)stdout.write('No results.\n');
