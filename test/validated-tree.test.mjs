@@ -64,6 +64,10 @@ test('the protected aggregate rejects skipped, failed, incomplete and partial pr
         assert.equal(runtimeChecksPassed(failed, reuse, 'push'), false);
       }
     }
+    const added = jobs(expected); added.future = {result: 'failure'};
+    assert.equal(runtimeChecksPassed(added, reuse, 'push'), false);
+    added.future.result = expected;
+    assert.equal(runtimeChecksPassed(added, reuse, 'push'), true);
     const partial = jobs(expected); partial.cli.result = reuse ? 'success' : 'skipped';
     assert.equal(runtimeChecksPassed(partial, reuse, 'push'), false);
   }

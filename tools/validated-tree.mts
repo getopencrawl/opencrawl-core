@@ -46,7 +46,8 @@ export async function validatedTree(api: Api, repository: string, revision: stri
 export function runtimeChecksPassed(jobs: Record<string, {result: string}>, reuse: boolean, event: string): boolean {
   if (jobs.validation?.result !== 'success' || reuse && event !== 'push') return false;
   const expected = reuse ? 'skipped' : 'success';
-  return ['unit', 'web', 'integration', 'cli'].every(name => jobs[name]?.result === expected);
+  return ['unit', 'web', 'integration', 'cli'].every(name => jobs[name]?.result === expected)
+    && Object.entries(jobs).every(([name, job]) => name === 'validation' || job.result === expected);
 }
 
 if (import.meta.main) {
