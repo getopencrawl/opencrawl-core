@@ -1,9 +1,12 @@
 name: Core CI
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 permissions:
   contents: read
 jobs:
-  test:
+  unit:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
       postgres:
@@ -22,15 +25,17 @@ jobs:
           node-version: 24.22.2
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: 1.3.14
-      - name: Verify CLI consumers of core under Bun
-        run: |
-          bun install --cwd cli --frozen-lockfile --ignore-scripts
-          bun run --cwd cli test
       - name: Verify the standalone GitHub connector
         run: python3 -m unittest discover -s connectors/github/tests
+  web:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
       - run: npm ci --prefix web-v2 --ignore-scripts --no-audit --no-fund
       - run: npm run check --prefix web-v2
       - name: Verify the package contains the compiled self-host console
@@ -38,6 +43,25 @@ jobs:
       - name: Install browser for UI regression coverage
         run: npx --prefix web-v2 playwright install --with-deps chromium
       - run: npm run test:browser --prefix web-v2
+  integration:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    services:
+      postgres:
+        image: postgres:17.11-bookworm
+        env:
+          POSTGRES_PASSWORD: capture-test
+          POSTGRES_DB: capture_test
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      OPENCRAWL_TEST_POSTGRES_URL: postgres://postgres:capture-test@127.0.0.1:5432/capture_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
       - name: Verify every connector manifest on the pinned declarative runtime
         run: OPENCRAWL_TEST_CONNECTOR_RUNTIME=1 node --test test/connector-runtime.test.mjs
       - name: Verify real Temporal scheduling, retries and replay
@@ -93,3 +117,46 @@ jobs:
       - name: Remove disposable object store
         if: always()
         run: docker rm -f capture-s3-test capture-search-test || true
+  cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    services:
+      postgres:
+        image: postgres:17.11-bookworm
+        env:
+          POSTGRES_PASSWORD: capture-test
+          POSTGRES_DB: capture_test
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      CLI_SHARD: ${{ matrix.shard }}
+      OPENCRAWL_TEST_POSTGRES_URL: postgres://postgres:capture-test@127.0.0.1:5432/capture_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.14
+      - name: Verify CLI consumers of core under Bun
+        run: |
+          bun install --cwd cli --frozen-lockfile --ignore-scripts
+          mapfile -t tests < <(node --input-type=module -e 'import {readdirSync} from "node:fs"; const files=readdirSync("cli/test").filter(f=>f.endsWith(".test.ts")).sort(); for (const [i,file] of files.entries()) if(i%4===Number(process.env.CLI_SHARD)) console.log("test/"+file)')
+          test "${#tests[@]}" -gt 0
+          bun run --cwd cli test "${tests[@]}"
+  test:
+    # Preserve the protected check; every runtime and consumer shard must pass.
+    needs: [unit, web, integration, cli]
+    if: always()
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Require all runtime checks
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: node -e 'const jobs=JSON.parse(process.env.RESULTS);if(Object.values(jobs).some(j=>j.result!=="success"))process.exit(1)'

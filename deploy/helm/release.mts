@@ -152,16 +152,15 @@ if(import.meta.main){
   const api=client(repository),mode=process.argv[2];
   const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH!,'utf8'));
   const manual=process.env.GITHUB_EVENT_NAME==='workflow_dispatch';
-  if(manual?process.env.GITHUB_REF!=='refs/heads/main':process.env.GITHUB_EVENT_NAME!=='workflow_run'||event.workflow_run?.event!=='push'||event.workflow_run?.head_branch!=='main'||event.workflow_run?.head_repository?.full_name!==repository||event.workflow_run?.conclusion!=='success')throw Error('Only trusted mainline events may publish Helm releases');
-  const revision=manual?event.inputs?.revision:event.workflow_run.head_sha;
+  if(process.env.GITHUB_REF!=='refs/heads/main'||!['workflow_dispatch','schedule'].includes(process.env.GITHUB_EVENT_NAME!))throw Error('Only scheduled or manual mainline events may publish stable Helm releases');
+  const revision=manual?event.inputs?.revision:process.env.GITHUB_SHA;
   const requested=manual?event.inputs?.version:undefined;
   if(!sha.test(revision||'')||manual&&!requested)throw Error('A full source SHA and an explicit manual version are required');
   if(!ancestor(revision,'origin/main'))throw Error('Release source is not on main');
   const releases=await inventory(api);
   const plan=selectRelease(releases,revision,requested,ancestor);
   if(plan.action==='publish'&&!await ready(api,revision,repository)){
-    if(manual||mode==='publish')throw Error('The exact source revision has not passed every release gate');
-    plan.action='skip';plan.reason='Waiting for all exact-source checks and public images';
+    throw Error('The exact source revision has not passed every stable release gate; retry after validation');
   }
   if(mode==='plan'){
     writeFileSync('helm-release-plan.json',JSON.stringify(plan,null,2)+'\n');

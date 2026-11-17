@@ -2,14 +2,19 @@ import {readFileSync, writeFileSync, appendFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 
 export interface Run {id: number; path: string; event: string; head_branch: string; head_sha: string; conclusion: string | null; status: string; head_repository?: {full_name: string}}
-const required = ['.github/workflows/ci.yml', '.github/workflows/security.yml', '.github/workflows/self-host.yml', '.github/workflows/plugins.yml'];
+const required = ['.github/workflows/ci.yml', '.github/workflows/security.yml', '.github/workflows/plugins.yml'];
 export function ready(runs: Run[], revision: string, repository: string): boolean {
   const trusted = runs.filter(run => run.head_sha === revision && run.head_branch === 'main' && run.event === 'push' && run.head_repository?.full_name === repository);
-  const gates = trusted.some(run => run.path === '.github/workflows/cli.yml') ? [...required, '.github/workflows/cli.yml'] : required;
-  return gates.every(path => {
+  return required.every(path => {
     const run = trusted.filter(run => run.path === path).sort((a, b) => b.id - a.id)[0];
     return run?.status === 'completed' && run.conclusion === 'success';
   });
+}
+/** Core declares its compatible, already released client; independent client
+ * development/upload never changes this dependency implicitly. */
+export function publishedCliMatches(metadata: {version: string; opencrawlRevision?: string}, expected: string): boolean {
+  cliVersion(expected);
+  return metadata.version === expected && /^[a-f0-9]{40}$/.test(metadata.opencrawlRevision ?? '');
 }
 export function continuousVersion(base: string, count: string, revision: string): string {
   if (!/^\d+\.\d+\.\d+$/.test(base) || !/^[1-9]\d*$/.test(count) || !/^[a-f0-9]{40}$/.test(revision)) throw Error('Invalid core publication identity');
@@ -61,17 +66,17 @@ if (import.meta.main) {
     if (runs.total_count > 100) throw Error('Incomplete release check inventory');
     let eligible = head.object.sha === revision && ready(runs.workflow_runs, revision, process.env.GITHUB_REPOSITORY!);
     if (eligible) {
-      const response = await fetch('https://registry.npmjs.org/@getopencrawl%2fcli/latest', {signal: AbortSignal.timeout(30_000)});
+      const pinnedCli = JSON.parse(readFileSync('package.json', 'utf8')).opencrawlCliVersion as string;
+      cliVersion(pinnedCli);
+      const response = await fetch('https://registry.npmjs.org/@getopencrawl%2fcli/' + pinnedCli, {signal: AbortSignal.timeout(30_000)});
       if (!response.ok) throw Error(`Published CLI channel unavailable: ${response.status}`);
       const cli = await response.json() as {version: string; opencrawlRevision?: string};
-      cliVersion(cli.version);
-      const requiredCli = execFileSync('git', ['log', '-1', '--format=%H', '--', 'cli', 'tools/delivery.mts', '.github/workflows/cli.yml'], {encoding: 'utf8'}).trim();
-      if (!cli.opencrawlRevision || !/^[a-f0-9]{40}$/.test(cli.opencrawlRevision)) eligible = false;
-      else try {execFileSync('git', ['merge-base', '--is-ancestor', requiredCli, cli.opencrawlRevision], {stdio: 'ignore'});} catch {eligible = false;}
+      eligible = publishedCliMatches(cli, pinnedCli);
+      if (eligible) try {execFileSync('git', ['merge-base', '--is-ancestor', cli.opencrawlRevision!, revision], {stdio: 'ignore'});} catch {eligible = false;}
       if (eligible) output('cli_version', cli.version);
     }
     output('ready', String(eligible));
-    console.log(eligible ? `All core release gates passed for ${revision}` : 'Waiting for all current-main release gates; no publication');
+    console.log(eligible ? `All development runtime gates passed for ${revision}` : 'Waiting for current-main runtime gates and the declared CLI; no publication');
   } else if (mode === 'prepare') {
     const revision = execFileSync('git', ['rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
     const count = execFileSync('git', ['rev-list', '--count', 'HEAD'], {encoding: 'utf8'}).trim();

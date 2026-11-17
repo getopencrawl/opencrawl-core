@@ -1,9 +1,7 @@
 name: Release self-host kit
 on:
-  workflow_run:
-    workflows: [Core CI, Repository security, Self-host preview, Plugin packages, Self-host images, CLI, Helm]
-    branches: [main]
-    types: [completed]
+  schedule:
+    - cron: '0 10 * * 1'
   workflow_dispatch:
     inputs:
       revision:
@@ -23,7 +21,7 @@ concurrency:
   queue: max
 jobs:
   release:
-    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
