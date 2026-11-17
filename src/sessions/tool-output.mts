@@ -1,4 +1,5 @@
 import type {SessionEvent} from './types.mjs';
+import {capturedReplicasRecord,projectReplicasRecord} from './replicas-record.mjs';
 
 /** Canonical capture kinds and proven native result aliases. Tool calls and
  * connector records are separate; matching words in text are never a signal. */
@@ -8,6 +9,8 @@ const outputKind=(value:unknown)=>typeof value==='string'&&(TOOL_OUTPUT_KINDS as
 /** Claude places result blocks inside user-role messages. Classify the whole
  * event, including mixed text/result messages, without changing capture text. */
 export function containsToolOutput(event:Pick<SessionEvent,'kind'|'data'>):boolean {
+  const raw=capturedReplicasRecord(event);if(raw)event=projectReplicasRecord(raw);
+  if(event.kind==='replicas_tool')return event.data?.output!==undefined||event.data?.exitCode!==undefined;
   if(outputKind(event.kind))return true;
   const data=event.data;
   if(!data||typeof data!=='object')return false;

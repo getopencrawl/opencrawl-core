@@ -9,7 +9,7 @@ import {failureMessage, failureStatus, useLibraryMutation, useResource} from './
 import {consoleResourceKey, useConsoleAccessFailure, useConsoleModel} from '../data.tsx';
 
 const PAGE = 50, MAX = 500;
-const harnessOf = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'cursor' || value === 'grok-bot' || value === 'antigravity' ? value : null;
+const harnessOf = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'cursor' || value === 'grok-bot' || value === 'antigravity' || value === 'replicas' ? value : null;
 export function sessionPath({userId, harness, sessionId}: SessionRef) {
   return '/sessions?' + new URLSearchParams({user: userId, harness, id: sessionId}).toString();
 }
@@ -146,7 +146,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
 }
 
 type Activity = Exclude<TranscriptEntry, {type: 'message'}>;
-interface ActivityEvent {eventId: string; kind: string; timestamp: string | null; entries: Activity[]}
+interface ActivityEvent {eventId: string; kind: string; timestamp: string | null; entries: Activity[];raw?:unknown}
 type Block = {kind: 'message'; key: string; role: 'user' | 'assistant'; text: string; timestamp: string | null; actor?: TranscriptEvent['actor']}
   | {kind: 'activity'; key: string; events: ActivityEvent[]};
 /** Keep source events, including empty records, while rendering normalized entries. */
@@ -157,7 +157,7 @@ export function transcriptBlocks(events: ReadonlyArray<TranscriptEvent>): Block[
     if (block?.kind !== 'activity') {block = {kind: 'activity', key, events: []}; blocks.push(block);}
     const previous = block.events.at(-1);
     if (previous?.eventId === event.eventId) previous.entries.push(...entries);
-    else block.events.push({eventId: event.eventId, kind: event.kind, timestamp: event.timestamp, entries: [...entries]});
+    else block.events.push({eventId: event.eventId, kind: event.kind, timestamp: event.timestamp, entries: [...entries],...(event.raw!==undefined?{raw:event.raw}:{})});
   };
   for (const event of events) {
     if (!event.entries.length) activity(event, [], event.eventId);
@@ -191,6 +191,7 @@ function TranscriptBlock({block, agent, user}: {block: Block; agent: string; use
     return <li className="oc-log-activity"><details className="oc-log-tools"><summary><Icon name="chevron-right" size={14}/>{count} {count === 1 ? 'event' : 'events'}</summary>
       <ol>{block.events.map(event => <li key={event.eventId}><details className="oc-log-tool"><summary><Icon name="chevron-right" size={12}/><code>{event.kind}</code>{event.timestamp && <time dateTime={event.timestamp}>{timeLabel(event.timestamp)}</time>}</summary>
         {event.entries.length ? event.entries.map((entry, index) => <ActivityDetail key={index} entry={entry}/>) : <p className="muted">No displayable content in this event.</p>}
+        {event.raw!==undefined&&<details><summary>Original Replicas record</summary><pre className="code-block">{JSON.stringify(event.raw,null,2)}</pre></details>}
       </details></li>)}</ol></details></li>;
   }
   const name = block.role === 'assistant' ? agent : capturedSender(block.actor, user);

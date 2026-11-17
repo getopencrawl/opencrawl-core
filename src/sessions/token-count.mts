@@ -1,5 +1,6 @@
 import {countTokens} from 'gpt-tokenizer/encoding/o200k_base';
 import type {SessionEvent} from './types.mjs';
+import {replicasProjection} from './replicas-record.mjs';
 
 const AS_TEXT = {disallowedSpecial: new Set<string>()};
 /** Local, deterministic text size for bounded retrieval output as well as capture. */
@@ -8,11 +9,12 @@ const OMIT = new Set(['id', 'type', 'role', 'call_id', 'tool_use_id', 'encrypted
 /** A stable size measure, independent of model usage and commercial metering.
  * Count message text and tool inputs/results, including imported history. */
 export function capturedEventTokens(harness: string, event: SessionEvent): number {
+  event=replicasProjection(event);
   const data = event.data ?? {};
   let content: unknown;
   if (event.kind === 'message' || event.kind === 'agent_message') content = data.content;
   else if (event.kind === 'user_message' && harness !== 'codex') content = data.message;
-  else if (event.kind === 'tool_call') content = {name: data.name, input: data.arguments ?? data.input ?? data.action};
+  else if (event.kind === 'tool_call' || event.kind === 'replicas_tool') content = {name: data.name, input: data.arguments ?? data.input ?? data.action,output:data.output};
   else if (event.kind === 'tool_result') content = data.output ?? data.content;
   else if (event.kind === 'exec_command_end') content = data.aggregated_output ?? data.formatted_output ?? data.stdout;
   else return 0;

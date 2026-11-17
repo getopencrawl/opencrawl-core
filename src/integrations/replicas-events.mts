@@ -1,41 +1,37 @@
 import {createHash} from 'node:crypto';
 import type {SessionEvent} from '../sessions/types.mjs';
 import type {ReplicasConversation,ReplicasHistory} from './replicas-api.mjs';
+import {record,projectReplicasRecord} from '../sessions/replicas-record.mjs';
 
-function record(value:unknown):Record<string,unknown>|undefined{return value!==null&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:undefined;}
-function canonical(value:unknown):string{
+export function canonical(value:unknown):string{
   if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';
   const object=record(value);return object?'{'+Object.keys(object).sort().map(key=>JSON.stringify(key)+':'+canonical(object[key])).join(',')+'}':JSON.stringify(value)??'null';
 }
 export const replicasDigest=(value:string)=>createHash('sha256').update(value).digest('hex');
-export const replicasHarness=(provider:string|null)=>provider==='claude'?'claude-code':provider==='codex'?'codex':null;
+export function replicasTurns(history:ReplicasHistory):unknown[]{
+  const transcript=record(history.codex_asp_transcript);
+  return Array.isArray(transcript?.turns)?transcript.turns:[];
+}
 
-/** Retained exports have no file offsets. Give them their own immutable identity
- * namespace; never pretend these IDs match native live-capture wire IDs. */
-export function replicasEvents(conversation:ReplicasConversation,history:ReplicasHistory):SessionEvent[]{
-  const result=new Map<string,SessionEvent>();
-  for(const source of history.events){
-    const payload=source.payload;let data:Record<string,unknown>|undefined;
-    let nativeId=typeof payload.uuid==='string'?payload.uuid:null;
-    if(conversation.provider==='claude'&&['claude-user','claude-assistant'].includes(source.type)&&!payload.isMeta){
-      const message=record(payload.message);if(message&&['user','assistant'].includes(String(message.role)))data=message;
-    }
-    if(conversation.provider==='codex'&&source.type==='codex-item'){
-      const item=record(payload.item);
-      if(typeof item?.id==='string')nativeId=item.id;
-      if(item?.type==='userMessage'&&(typeof item.content==='string'||Array.isArray(item.content)))data={role:'user',content:typeof item.content==='string'?[{type:'text',text:item.content}]:item.content};
-      if(item?.type==='agentMessage'&&typeof item.text==='string')data={role:'assistant',content:[{type:'text',text:item.text}]};
-    }
-    // event_msg mirrors codex-item user messages. Import only the canonical item.
-    if(!data)continue;
-    // This connector imports conversation text only. Tool traces and images
-    // have different native schemas and are explicitly excluded in the preview.
-    const content=typeof data.content==='string'?[{type:'text',text:data.content}]:Array.isArray(data.content)?data.content.filter(value=>{const block=record(value);return block&&['text','input_text','output_text'].includes(String(block.type))&&typeof block.text==='string';}):[];
-    if(!content.length)continue;
-    data={role:data.role,content};
-    const timestamp=source.timestamp??null;
-    const id='replicas-v1:'+replicasDigest(canonical({chat:conversation.chat_id,type:source.type,timestamp,nativeId,data}));
-    result.set(id,{id,kind:'message',data,timestamp,...(nativeId?{nativeId}:{})});
+/** Preserve the complete API page and every event/turn. Occurrence numbers
+ * preserve identical records without native IDs across pagination boundaries.
+ * The caller checkpoints counters only after all immutable batches land. */
+export function replicasEvents(conversation:ReplicasConversation,history:ReplicasHistory,occurrences:Record<string,number>={},before:string|null=null):SessionEvent[]{
+  const page={conversation,request:{before_cursor:before},response:history};
+  const events:SessionEvent[]=[{id:'replicas-page-v2:'+replicasDigest(canonical(page)),kind:'replicas_history_page',timestamp:conversation.created_at,data:{replicasPage:page}}];
+  const records=[...history.events.map(value=>({collection:'events',value})),...replicasTurns(history).map(value=>({collection:'codex_asp_transcript.turns',value}))];
+  for(const {collection,value} of records){
+    const hash=replicasDigest(canonical({chat:conversation.chat_id,collection,value}));
+    const occurrence=occurrences[hash]??0;occurrences[hash]=occurrence+1;
+    const source=record(value),payload=record(source?.payload),item=record(payload?.item);
+    const nativeId=[payload?.uuid,item?.id,source?.id].find(value=>typeof value==='string');
+    const timestamp=[source?.timestamp,item?.timestamp,payload?.timestamp].find(value=>typeof value==='string');
+    // Provider/catalog metadata lives in the original page. The same native
+    // chat can appear multiple times in Replicas' export with different labels.
+    const raw={collection,record:value};
+    events.push({id:'replicas-v2:'+hash+':'+occurrence,kind:projectReplicasRecord(raw).kind,timestamp:typeof timestamp==='string'?timestamp:null,
+      ...(typeof nativeId==='string'?{nativeId}:{}),...(typeof payload?.turnId==='string'?{turnId:payload.turnId}:{}),
+      ...(typeof payload?.parent_tool_use_id==='string'?{parentId:payload.parent_tool_use_id}:{}),data:{replicas:raw}});
   }
-  return [...result.values()];
+  return events;
 }

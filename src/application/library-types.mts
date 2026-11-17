@@ -4,7 +4,7 @@ export type LibraryScope = 'all' | 'mine';
 export type Visibility = 'team' | 'private';
 /** Agents with native memory files. Sessions are captured from more agents. */
 export type Harness = 'claude-code' | 'codex';
-export type SessionHarness = Harness | 'cursor' | 'grok-bot' | 'antigravity';
+export type SessionHarness = Harness | 'cursor' | 'grok-bot' | 'antigravity' | 'replicas';
 export interface SessionRef {userId: string; harness: SessionHarness; sessionId: string}
 /** Capture-machine names, not a verified original execution host. Optional for older adapters. */
 export interface SessionHosts {host?: string | null; hosts?: string[]; hostsTruncated?: boolean}
@@ -19,7 +19,7 @@ export type TranscriptEntry =
   | {type: 'tool_call'; name: string; input: string; truncated: boolean}
   | {type: 'tool_result'; text: string; truncated: boolean}
   | {type: 'note'; label: string; text: string; truncated: boolean};
-export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[];actor?:import('../sessions/actors.mjs').CapturedActor}
+export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[];actor?:import('../sessions/actors.mjs').CapturedActor;raw?:unknown}
 export interface SessionTranscript {
   session: SessionRef & SessionHosts & {title: string; mine: boolean; private: boolean; origin: string | null};
   events: TranscriptEvent[]; total: number; next: string | null;

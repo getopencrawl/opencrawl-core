@@ -21,6 +21,7 @@ if(!connectionString||!root||!root.startsWith('/private/tmp/replicas-backfill-')
 const expectedOrganization=process.env.REPLICAS_PREVIEW_ORGANIZATION_ID;
 if(!expectedOrganization||!/^[-a-f0-9]{36}$/.test(expectedOrganization))throw new Error('Set the exact Replicas organization ID authorized for this test');
 await mkdir(root,{recursive:true,mode:0o700});
+await mkdir(resolve(root,'fetched'),{recursive:true,mode:0o700});
 const origin='http://localhost:48471',tenantId='org_replicaspreview',prefix='replicas-preview/v1';
 const database=createApplicationDatabase({connectionString,namespace:'replicas-preview-'+randomUUID()});await database.ready();
 const board=createPostgresBoardState(database);await board.ready();
@@ -34,6 +35,10 @@ const imports=createReplicasImport({database,key:randomBytes(32),ingest:createSe
   const response=await fetch(url,options);
   if(!response.ok)console.log(JSON.stringify({upstreamStatus:response.status,path:new URL(String(url)).pathname}));
   if(String(url).endsWith('/whoami')&&response.ok){const value:unknown=await response.clone().json();if(!value||typeof value!=='object'||!('organization' in value)||!value.organization||typeof value.organization!=='object'||!('id' in value.organization)||value.organization.id!==expectedOrganization)throw new Error('Preview only permits the explicitly selected Replicas organization');}
+  if(response.ok&&['/history','/conversations'].some(path=>new URL(String(url)).pathname.endsWith(path))){
+    const receipt=JSON.stringify({url:String(url),response:await response.clone().json()});
+    await writeFile(resolve(root,'fetched',randomUUID()+'.json'),receipt,{mode:0o600});
+  }
   return response;
 }});
 const app=selfhostApplication({settings:{organizationId:tenantId,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:secret,setupToken:setup,registryPath:'unused',search:searchOptions},store,prefix,identity,boardState:{namespace:database.namespace,board},replicasImport:imports});

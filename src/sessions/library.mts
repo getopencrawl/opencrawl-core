@@ -14,6 +14,7 @@ import {capturedTitle, TITLE_KINDS} from './titles.mjs';
 import {capturedActor,type CapturedActor} from './actors.mjs';
 import {validParticipant, type SessionParticipant} from './participants.mjs';
 import {fail} from '../errors.mjs';
+import {capturedReplicasRecord,replicasProjection,replicasRaw,record} from './replicas-record.mjs';
 
 export interface SessionKey {userId: string; harness: string; sessionId: string}
 export interface SessionSummary extends SessionKey {
@@ -27,7 +28,7 @@ export type TranscriptEntry =
   | {type: 'tool_call'; name: string; input: string; truncated: boolean}
   | {type: 'tool_result'; text: string; truncated: boolean}
   | {type: 'note'; label: string; text: string; truncated: boolean};
-export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[];actor?:CapturedActor}
+export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[];actor?:CapturedActor;raw?:unknown}
 
 const identity = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 const f = (field: string) => realmField('session', field);
@@ -53,7 +54,7 @@ export function promptText(text: string) {
   return INJECTED.test(trimmed) || /^# (?:Context from my IDE setup|Files mentioned by the user):/.test(trimmed) ? null : trimmed.trim() || null;
 }
 // Readable conversation kinds, and bookkeeping kinds that never render.
-const CONVERSATION = ['message', 'user_message', 'agent_message'];
+const CONVERSATION = ['message', 'user_message', 'agent_message', 'replicas_event', 'replicas_tool', 'replicas_history_page'];
 const HIDDEN = ['token_count', 'hook', 'turn_metadata', ...TITLE_KINDS];
 // Rendered-text budget for reused batches (UTF-16 code units, about 64 MB).
 const CACHE_CHARS = 32 * 1024 * 1024, FETCH_CONCURRENCY = 12;
@@ -71,6 +72,19 @@ function blockText(block: Record<string, unknown>) {
 /** Readable transcript entries from one original captured event. Thinking,
  * encrypted content, token accounting and transport bookkeeping are omitted. */
 export function transcriptEntries(event: SessionEvent): TranscriptEntry[] {
+  const raw=capturedReplicasRecord(event);
+  if(raw){
+    const projected=replicasProjection(event),data=projected.data??{};
+    if(projected.kind==='replicas_tool')return [
+      {type:'tool_call',name:String(data.name??'tool'),...((c=>({input:c.text,truncated:c.truncated}))(clip(stringify(data.input))))},
+      ...(data.output!==undefined?[{type:'tool_result' as const,...clip(stringify(data.output))}]:[]),
+      {type:'note',label:'Tool status',...clip(stringify({status:data.status,exitCode:data.exitCode}))},
+    ];
+    const entries=transcriptEntries(projected);
+    if(projected.kind==='message'&&Array.isArray(data.content))for(const value of data.content){const block=record(value);if(block&&['thinking','redacted_thinking'].includes(String(block.type)))entries.push({type:'note',label:String(block.type),...clip(stringify(block.thinking??block.text??block))});}
+    return entries.length?entries:[{type:'note',label:String(record(raw.record)?.type??raw.collection),...clip(stringify(raw.record))}];
+  }
+  if(event.kind==='replicas_history_page')return [{type:'note',label:'Original history page',text:'Complete Replicas response preserved. Expand the original record to inspect every field.',truncated:false}];
   const data = (event.data ?? {}) as Record<string, unknown>;
   const entries: TranscriptEntry[] = [];
   const message = (role: unknown, text: string) => {
@@ -165,9 +179,9 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
     const result = await reader(principal).search(principal, {size: 0, query: {bool: {filter: [
       {term: {[f('chunk')]: 0}}, visibleTo('session', principal),
       {bool: {minimum_should_match: 1, should: keys.map(key => ({bool: {filter: sessionFilter(key)}}))}},
-      {bool: {minimum_should_match: 1, should: [userText, {terms: {[f('kind')]: TITLE_KINDS}}]}},
+      {bool: {minimum_should_match: 1, should: [userText, {terms: {[f('kind')]: [...TITLE_KINDS,'replicas_history_page']}}]}},
     ]}}, aggs: {titles: {multi_terms: {terms: ['userId', 'harness', 'sessionId'].map(field => ({field: f(field)})), size: keys.length}, aggs: {
-      metadata: {filter: {terms: {[f('kind')]: TITLE_KINDS}}, aggs: {records: {top_hits: {size: 20, sort: [{timestamp: 'desc'}, {[f('sequence')]: 'desc'}, {id: 'desc'}]}}}},
+      metadata: {filter: {terms: {[f('kind')]: [...TITLE_KINDS,'replicas_history_page']}}, aggs: {records: {top_hits: {size: 20, sort: [{timestamp: 'desc'}, {[f('sequence')]: 'desc'}, {id: 'desc'}]}}}},
       prompts: {filter: userText, aggs: {records: {top_hits: {size: 20, sort: [{timestamp: 'asc'}, {[f('sequence')]: 'asc'}, {id: 'asc'}]}}}},
     }}}});
     type Records = {records: {hits: {hits: IndexHit[]}}};
@@ -222,13 +236,14 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
   // across pages and readers. Every read still authorizes through the index first.
   const rendered = new Map<string, {value: Promise<Map<string, TranscriptEvent> | null>; size: number}>();
   let cachedChars = 0;
-  const weigh = (events: Map<string, TranscriptEvent>) => [...events.values()].reduce((sum, event) => sum + 64 + (event.actor ? JSON.stringify(event.actor).length : 0) + event.entries.reduce((total, entry) => total + (entry.type === 'tool_call' ? entry.input.length + entry.name.length : entry.type === 'note' ? entry.text.length + entry.label.length : entry.text.length), 0), 0);
+  const weigh = (events: Map<string, TranscriptEvent>) => [...events.values()].reduce((sum, event) => sum + 64 + (event.raw!==undefined?JSON.stringify(event.raw).length:0) + (event.actor ? JSON.stringify(event.actor).length : 0) + event.entries.reduce((total, entry) => total + (entry.type === 'tool_call' ? entry.input.length + entry.name.length : entry.type === 'note' ? entry.text.length + entry.label.length : entry.text.length), 0), 0);
   function renderedBatch(principal: Principal, key: SessionKey, sourceKey: string, installationId: string, batchId: string) {
     const cached = rendered.get(sourceKey);
     if (cached) {rendered.delete(sourceKey); rendered.set(sourceKey, cached); return cached.value;}
     const entry = {value: ingest.getBatch(principal, {...key, installationId, batchId}).then(batch => batch && new Map(batch.events.map(event => {
       const actor=capturedActor(event,batch);
-      return [event.id, {eventId: event.id, kind: event.kind, timestamp: iso(event.timestamp), entries: transcriptEntries(event),...(actor?{actor}:{})}];
+      const raw=replicasRaw(event);
+      return [event.id, {eventId: event.id, kind: event.kind, timestamp: iso(event.timestamp), entries: transcriptEntries(event),...(raw!==undefined?{raw}:{}),...(actor?{actor}:{})}];
     }))), size: 0};
     rendered.set(sourceKey, entry);
     entry.value.then(events => {

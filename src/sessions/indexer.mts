@@ -15,6 +15,7 @@ import {passages,PASSAGE_VERSION} from '../search/passages.mjs';
 import {capturedEventTokens} from './token-count.mjs';
 import {participantProjection} from './participants.mjs';
 import {containsToolOutput} from './tool-output.mjs';
+import {capturedReplicasRecord,replicasProjection,record} from './replicas-record.mjs';
 export {sourceBatchIdentity} from './event-identity.mjs';
 export {memorySourceIdentity} from '../memories/snapshot.mjs';
 
@@ -45,15 +46,18 @@ export function sessionDocumentId({scope,harness,sessionId,eventId,chunk}: {scop
 }
 /** Shared searchable/meterable content; null denotes a transcript echo. */
 export function sessionEventData(harness: string,event: {kind?: string; data?: unknown}): unknown {
+  const data=record(event.data),raw=record(data?.replicas),page=record(data?.replicasPage);
+  if(raw&&'record' in raw)return {eventType:record(raw.record)?.type??raw.collection,record:raw.record};
+  if(page){const response=record(page.response)??{};const {events,codex_asp_transcript,...metadata}=response;const {turns,...transcriptMetadata}=record(codex_asp_transcript)??{};return {label:'Replicas retained history page',conversation:page.conversation,metadata,transcriptMetadata};}
   if(event.kind==='hook'||harness==='codex'&&event.kind==='user_message')return null;
   if(event.kind!=='compaction')return event.data;
-  const data=event.data&&typeof event.data==='object'?event.data as Record<string,unknown>:{};
-  return Object.fromEntries((harness==='codex'?['message']:['summary','content']).flatMap(key=>typeof data[key]==='string'?[[key,data[key]]]:[]));
+  return Object.fromEntries((harness==='codex'?['message']:['summary','content']).flatMap(key=>typeof data?.[key]==='string'?[[key,data[key]]]:[]));
 }
 /** Search projects content, not transport bookkeeping. Billing continues to use
  * sessionEventData; original capture and metering semantics are unchanged. */
 export function searchableEventData(harness:string,event:SessionEvent):unknown {
   const data=sessionEventData(harness,event);
+  if(capturedReplicasRecord(event)||event.data?.replicasPage)return data;
   if(!data||typeof data!=='object')return data;
   const d=data as Record<string,unknown>;
   if(event.kind==='message'&&d.content!==undefined)return d.content;
@@ -81,6 +85,7 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
   const documents=[];
   for(const event of batch.events){
     if(selected&&!selected.has(event.id))continue;
+    const projected=replicasProjection(event);
     // Hooks and Codex user_message notifications echo the native transcript.
     // Keep their immutable capture evidence, without indexing a second copy.
     const data=searchableEventData(batch.harness,event);
@@ -89,18 +94,18 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
     // replacement_history/retained_context also contain repeated system and
     // developer prompts. Only the explicit human-readable summary is evidence.
     const texts: string[]=[],attachments: Attachment[]=[],names=new Set<string>();collect(data,texts,attachments,names);
-    if(event.kind==='tool_call'&&typeof event.data?.name==='string')names.add(event.data.name);
+    if(['tool_call','replicas_tool'].includes(projected.kind)&&typeof projected.data?.name==='string')names.add(projected.data.name);
     const text=texts.join('\n');
     const chunks=passages(text),capturedTokens=capturedEventTokens(batch.harness,event),hasToolOutput=containsToolOutput(event);
     for(let chunk=0;chunk<chunks.length;chunk++){
       const document={tenantId:principal.tenantId,userId:principal.userId,installationId:batch.installationId,sessionId:batch.sessionId,
-        harness:batch.harness,origin:batch.origin,eventId:event.id,kind:event.kind,containsToolOutput:hasToolOutput,role:event.data?.role??(event.kind==='agent_message'&&event.data?.author==='assistant'?'assistant':null),
+        harness:batch.harness,origin:batch.origin,eventId:event.id,kind:event.kind,containsToolOutput:hasToolOutput,role:projected.data?.role??(event.kind==='agent_message'&&event.data?.author==='assistant'?'assistant':null),
         timestamp:typeof event.timestamp==='string'?event.timestamp:null,receivedAt:batch.receivedAt,
         sequence:Number.isSafeInteger(event.sequence)?event.sequence:0,chunk,...participantProjection(event,batch),...(chunk===0?{capturedTokens}:{}),text:chunks[chunk]!.text,sourceKey:key,
         passageVersion:PASSAGE_VERSION,textStart:chunks[chunk]!.start,textEnd:chunks[chunk]!.end,chunkCount:chunks.length,
         ...(batch.title?{title:batch.title}:{}),
         nativeId:typeof event.nativeId==='string'?event.nativeId:null,parentId:event.parentId??null,turnId:event.turnId??null,
-        toolCallId:event.data?.call_id??event.data?.tool_use_id??null,toolNames:[...names],host:batch.host??null,
+        toolCallId:projected.data?.call_id??projected.data?.tool_use_id??null,toolNames:[...names],host:batch.host??null,
         attachments:attachments.map(a=>({sha256:a.sha256,size:a.size,mimeType:a.mimeType,path:a.path,
           objectKey:/^[a-f0-9]{64}$/.test(a.sha256??'')?(batch.attachments?.find(item=>item.sha256===a.sha256)?.objectKey===`${prefix}/${scope}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/attachments/${a.sha256}`
             ? `${prefix}/${scope}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/attachments/${a.sha256}` : `${prefix}/${scope}/attachments/${a.sha256}`):null})),private:visibility==='private'};

@@ -1,62 +1,81 @@
 # Direct Replicas history import
 
 In **Integrations → Replicas → Import history**, an OpenCrawl workspace admin
-pastes a Replicas **organization API key**, reviews the organization name and
-retained conversation inventory, and explicitly starts the import. No Composio
-or Airbyte connection is involved. Personal API keys and CLI tokens are rejected.
+enters a Replicas organization API key, reviews the organization and retained
+conversation inventory, then starts the import. This is a direct connection;
+Composio and Airbyte are not involved.
 
-The importer uses only GET requests to `https://api.replicas.dev`, pins
-`X-Replicas-Api-Version: 2026-10-07`, and refuses redirects. It pages
-`/v1/organization/conversations` with `next_cursor` and each
-`/v1/replica/{id}/history` with `before_cursor`. Reading retained history does
-not wake sleeping or archived replicas. The export's total describes its
-inventory; it is not evidence that every listed history is readable.
+## Complete retained session history
 
-An organization key can read organization-owned workspaces. Reading personal
-workspaces also requires **Team workspace visibility** in Replicas. Export
-inventory can include chats whose history returns 404 to the key. Enabling
-visibility also lets organization members see one another's workspaces; the
-importer explains the setting and never changes it. An all-unavailable scan
-reports **No messages were imported**, not a successful data import.
+Every exported conversation is imported as organization history, regardless of
+agent or workspace owner. There is no personal-session mode, provider allowlist,
+text-only filter or empty-chat skip. The import preserves:
 
-This version imports **Claude and Codex text conversation messages**. Tool
-traces, reasoning, attachments, and other providers are excluded. Imported
-sessions are team-readable and titled `[Replicas history] …`. Message authors
-remain unknown; the importing admin is not presented as their author.
-Repeated historical imports use deterministic event IDs. Native live captures
-use different IDs and can overlap: this is disclosed before consent.
+- Every original history event, including user and assistant messages,
+  intermediate updates, tool calls and results, reasoning, system and lifecycle
+  events, usage metadata, and unknown event types.
+- The entire original response for every history page, including native Codex
+  transcript turns, sender information, goals, cursors, attachment payloads and
+  references, and fields added by Replicas in the future.
+- Repeated identical source events, even when they have no native event ID.
 
-Each browser request processes one history page. Keep the dialog open to run;
-closing it pauses after the current request. Any current workspace admin can
-resume. PostgreSQL holds the checkpoint and an AES-256-GCM encrypted key,
-bound to the runtime namespace and tenant. A per-tenant transaction lock
-serializes concurrent import requests. Checkpoints advance only after the
-normal session ingest accepts the batch and its indexing handoff. The key is
-removed on completion or **Remove key**; imported history remains.
+Preservation is lossless for the JSON returned by the Replicas history API.
+Separate external files that the response only references are not downloaded;
+the references and any embedded data are preserved exactly. Deleted or expired
+history that Replicas does not return cannot be recovered by this connector.
 
-A first-page 404 or 409 is counted as unavailable. Unsupported providers and
-empty conversations are counted separately. Transient failures, missing or
-repeated cursors, and failures midway through a conversation pause without
-advancing the checkpoint. Resuming retries the same immutable batch.
+Every session uses the `replicas` capture namespace. The original provider and
+native IDs remain attached to its records. Read projections make messages and
+tool activity readable without rewriting source records. The session read API
+includes original records in `raw`; the transcript exposes full original history
+pages under **Original Replicas record**. Tool-result display previews may be
+clipped by the shared transcript UI; the original record is retained in full.
+Search indexes the retained event text, including long tool output, through the
+normal session pipeline. Existing agent-search preferences still apply:
+`includeToolOutputs: true` includes tool-result passages. These search controls
+never remove captured data.
 
-Self-host startup derives a dedicated encryption key from the operator's
-stable auth secret via HKDF, scoped to the application database namespace.
-Rotating that secret requires removing/re-entering keys for unfinished imports.
-The hosted adapter supplies its own stable secret and existing scoped database.
-Both use the existing session store and search realm, with normal Temporal
-indexing in deployed runtimes.
+## Pagination, checkpoints and credentials
+
+The importer uses GET requests to `https://api.replicas.dev`, pins API version
+`2026-10-07`, and refuses redirects. It pages `/v1/organization/conversations`
+and `/v1/replica/{id}/history`. Sleeping and archived workspaces are not woken.
+
+Each request processes one complete history page. The original page and all of
+its events/turns go through immutable session ingest and durable indexing
+handoff. Large pages are split across ingest batches without truncating records.
+PostgreSQL commits the cursor and occurrence counters only after all batches
+are accepted. Failed partial handoffs retry the same IDs and immutable paths.
+Replicas can repeat a chat ID with different catalog metadata. The importer
+preserves those catalog records while counting distinct sessions separately.
+Repeated imports of unchanged history do not duplicate records. Native live
+captures use a separate identity and can overlap with historical imports.
+
+Unknown event/provider formats are preserved. Missing access, absent retained
+history, invalid/repeated cursors, oversized responses and transient failures
+pause the import without skipping the conversation or reporting completion.
+An organization key must be able to read every exported workspace. Replicas may
+require **Team workspace visibility** for that access; the importer does not
+change organization settings. Fix access and resume the same checkpoint.
+
+Closing the dialog pauses after the current page. Any current workspace admin
+can resume. The API key is encrypted with AES-256-GCM, bound to namespace and
+tenant, and removed on completion or **Remove key**. Removing a key leaves
+imported organization history in OpenCrawl. The deployed adapters use the normal
+session store and Temporal indexing pipeline; the encryption key is derived from
+the runtime's stable secret with HKDF.
 
 ## Branch verification
 
-`tools/replicas-import-preview.mts` is a loopback-only disposable fixture,
-requiring `OPENCRAWL_TEST_POSTGRES_URL`, `REPLICAS_PREVIEW_ORGANIZATION_ID`, and a task-owned
-`REPLICAS_PREVIEW_ROOT=/private/tmp/replicas-backfill-…` directory. It accepts
-only the explicitly selected Replicas organization, uses real local account
-authorization, and indexes into an isolated SQLite realm synchronously. Its
-one-shot `/__branch_test_login` is a test-only login; never deploy this fixture.
-No hosted production object store or search index is used. Remove the temporary
-key in Replicas after verification and stop/remove the task-owned fixture data.
+`tools/replicas-import-preview.mts` is a loopback-only disposable fixture using
+real local authentication and synchronous SQLite indexing. It requires a test
+PostgreSQL URL, `REPLICAS_PREVIEW_ROOT=/private/tmp/replicas-backfill-…` and the
+exact authorized `REPLICAS_PREVIEW_ORGANIZATION_ID`. Never deploy this fixture.
+Verification compares fetched pages with stored raw responses, source event
+counts and readback, tool-output search, replay, and workspace lifecycle state.
+Revoke the test key, restore temporary organization settings, and remove the
+fixture data after verification.
 
 References: [organization export](https://docs.replicas.dev/api-reference/replica/list-organization-conversations),
 [history pagination](https://docs.replicas.dev/api-reference/replica/read-history),
-[identity](https://docs.replicas.dev/api-reference/organization/get-current-identity).
+[API access](https://docs.replicas.dev/features/api#access).

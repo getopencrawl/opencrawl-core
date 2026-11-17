@@ -9,6 +9,7 @@ import {createControls, visibleTo} from './controls.mjs';
 import {capturedTitle, TITLE_KINDS} from './titles.mjs';
 import {promptText} from './library.mjs';
 import {preview} from '../board/disclosure.mjs';
+import {replicasProjection} from './replicas-record.mjs';
 
 const identityFields = ['userId', 'harness', 'installationId', 'sessionId'] as const;
 const f = (key: string) => realmField('session', key);
@@ -19,6 +20,7 @@ export type SessionContextField = 'context' | 'firstUserMessage' | 'lastUserMess
 // Only message text is context. Tool arguments/results, thinking, attachments,
 // transport metadata and routing instructions must never become message text.
 export function sessionMessage(event: SessionEvent) {
+  event=replicasProjection(event);
   const data = event?.data;
   let role;
   if (event?.kind === 'message') role = data?.role;
