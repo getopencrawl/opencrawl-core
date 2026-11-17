@@ -12,8 +12,6 @@ const rpcFetch = async (url:RequestInfo|URL, init?:RequestInit):Promise<Response
   };
 /** Independent POST reads keep slow operations and cancellation isolated. */
 export const rpcTransportOptions = (url = '/api/trpc') => ({url, fetch: rpcFetch, headers: {'x-opencrawl-usage-sections':'1'}, methodOverride: 'POST' as const});
-/** Compatibility for older consumers: never combine unrelated operations. */
-export const rpcBatchOptions = (url = '/api/trpc') => ({...rpcTransportOptions(url), maxItems: 1, maxURLLength: 8000});
 
 /** Normalize transport failures once; every operation retains the router's inferred types. */
 export async function rpcRead<T>(operation:()=>Promise<T>,signal?:AbortSignal):Promise<T> {
