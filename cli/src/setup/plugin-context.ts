@@ -23,6 +23,65 @@ export function hasPluginContext(env:NodeJS.ProcessEnv=process.env):boolean {
   return keys.some(key=>env[key]!==undefined);
 }
 
+/** The Claude Code and Codex plugins live in plugins/opencrawl-sessions and are
+ * installed natively from there. They carry no deployment binding: their hooks
+ * name only the installed copy, and the saved CLI profile decides the rest. */
+export const sessionsPlugin = {name:'opencrawl-sessions',marketplace:'opencrawl-core',id:'opencrawl-sessions@opencrawl-core'} as const;
+export type SessionsClient = 'claude-code'|'codex';
+export const isSessionsClient = (value:unknown):value is SessionsClient => value==='claude-code'||value==='codex';
+const sessionsRootKey = 'OPENCRAWL_SESSIONS_PLUGIN_ROOT';
+const sessionsFile = (client:SessionsClient,name:string) => join(configDir(),'setup-plugins',client,name);
+
+export function hasSessionsPluginContext(env:NodeJS.ProcessEnv=process.env):boolean {
+  return env[sessionsRootKey]!==undefined;
+}
+
+/** The plugin copy that ran this hook, or null when it is not that client's plugin. */
+export function sessionsPluginRoot(client:string,root:string|undefined=process.env[sessionsRootKey]):string|null {
+  if(!isSessionsClient(client)||!root||!isAbsolute(root))return null;
+  try {
+    const manifest=readJson(join(root,client==='codex'?'.codex-plugin':'.claude-plugin','plugin.json'));
+    return object(manifest)&&manifest.name===sessionsPlugin.name?realpathSync(root):null;
+  } catch {return null;}
+}
+
+/** A saved profile with its own global hooks keeps them; the plugin's hooks stand aside. */
+export function sessionsHookSuperseded():boolean {
+  const config=readCaptureConfig();
+  return Boolean(config&&config.hookOwnership!=='plugin');
+}
+
+/** Installing the plugin is not consent to record. Only setup's saved choice is. */
+export function sessionsRecordingEnabled(client:string):boolean {
+  const config=readCaptureConfig();
+  return Boolean(isSessionsClient(client)&&config&&config.hookOwnership==='plugin'&&!config.disabled&&!config.authPending&&config.harnesses?.includes(client));
+}
+
+export function writeSessionsReceipt(client:SessionsClient,api:string,nativeRoot:string):void {
+  atomicJson(sessionsFile(client,'sessions.json'),{schemaVersion:1,client,api:apiOrigin(api),pluginId:sessionsPlugin.id,nativeRoot});
+}
+
+export function readSessionsReceipt(client:SessionsClient):{api:string;nativeRoot:string}|null {
+  try {
+    const receipt=readJson(sessionsFile(client,'sessions.json'));
+    return object(receipt)&&receipt.schemaVersion===1&&receipt.client===client&&receipt.pluginId===sessionsPlugin.id&&typeof receipt.api==='string'&&typeof receipt.nativeRoot==='string'?{api:receipt.api,nativeRoot:receipt.nativeRoot}:null;
+  } catch {return null;}
+}
+
+/** Operational evidence that the client loaded the plugin and ran its hook. */
+export function recordSessionsActivation(client:string,event:unknown):void {
+  const root=sessionsPluginRoot(client);if(!root||!isSessionsClient(client))return;
+  const name=nativeEvent(client,event);if(!name)return;
+  atomicJson(sessionsFile(client,'sessions-activation.json'),{schemaVersion:1,client,pluginId:sessionsPlugin.id,nativeRoot:root,event:name,observedAt:new Date().toISOString()});
+}
+
+export function sessionsActivationMatches(client:SessionsClient,nativeRoot:string):boolean {
+  try {
+    const receipt=readJson(sessionsFile(client,'sessions-activation.json'));
+    return object(receipt)&&receipt.schemaVersion===1&&receipt.client===client&&receipt.pluginId===sessionsPlugin.id&&receipt.nativeRoot===realpathSync(nativeRoot)&&typeof receipt.observedAt==='string'&&Number.isFinite(Date.parse(receipt.observedAt));
+  } catch {return false;}
+}
+
 function bundleFile(root:string,name:string):string {
   if(!name||name.includes('\\')||isAbsolute(name)||name.split('/').some(part=>!part||part==='.'||part==='..'))throw invalid();
   const file=resolve(root,name),inside=relative(root,file);
@@ -66,24 +125,17 @@ function profile(binding:PluginBinding):CaptureConfig {
 function installedBundle(binding:PluginBinding,bundle:VerifiedPluginBundle):void {
   const receipt=readJson(join(profileRoot(binding.configHome,binding.client,binding.api),'installed.json'));
   if(!object(receipt)||receipt.schemaVersion!==2||receipt.api!==binding.api||receipt.client!==binding.client||receipt.pluginName!==binding.pluginName||receipt.digest!==bundle.digest||typeof receipt.nativeRoot!=='string'||realpathSync(receipt.nativeRoot)!==bundle.root)throw invalid();
-  // Ownership checks still admit an intact older bundle for installer migration.
-  // Activation requires Codex's deployment-scoped MCP name, not a colliding key.
-  if(binding.client==='codex'){
-    if(!bundle.files['.mcp.json'])throw invalid();
-    const mcp=readJson(bundleFile(bundle.root,'.mcp.json'));
-    const servers=object(mcp)&&object(mcp.mcpServers)?mcp.mcpServers:null;
-    const server=servers?.[binding.pluginName];
-    if(!servers||Object.keys(servers).length!==1||!object(server)||server.type!=='http'||server.url!==binding.api+'/mcp')throw invalid();
-  }
 }
 
 /** Reject mismatched deployment/client/profile before reading a transcript or using auth. */
 export function pluginHookContext(api:string,client:string,env:NodeJS.ProcessEnv=process.env):PluginHookContext|null {
   if(!hasPluginContext(env)){
-    if(readCaptureConfig()?.hookOwnership==='plugin')throw invalid();
+    if(readCaptureConfig()?.hookOwnership==='plugin'&&!sessionsPluginRoot(client,env[sessionsRootKey]))throw invalid();
     return null;
   }
   try {
+    // Claude Code and Codex no longer use a generated, deployment-bound bundle.
+    if(isSessionsClient(client))throw invalid();
     // Native runners remove ambient tokens and workload identity. An explicit
     // generated --api must never rebind a secret inherited from another app.
     if(env.OPENCRAWL_TOKEN||env.OPENCRAWL_SESSIONS_TOKEN||(client==='devin'?env.OPENCRAWL_AUTH!=='devin-cloud':Boolean(env.OPENCRAWL_AUTH)))throw invalid();

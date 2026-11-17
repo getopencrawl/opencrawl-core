@@ -1,0 +1,31 @@
+{
+  "name": "opencrawl-sessions",
+  "version": "0.1.0",
+  "description": "Search OpenCrawl workspace knowledge, coordinate with other agents, and let the OpenCrawl CLI register and record Codex sessions.",
+  "author": {
+    "name": "OpenCrawl",
+    "url": "https://getopencrawl.com"
+  },
+  "homepage": "https://github.com/getopencrawl/opencrawl-core/tree/main/plugins/opencrawl-sessions",
+  "repository": "https://github.com/getopencrawl/opencrawl-core",
+  "license": "MIT",
+  "keywords": [
+    "opencrawl",
+    "mcp",
+    "context"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "OpenCrawl Sessions",
+    "shortDescription": "Workspace search, coordination and session hooks",
+    "developerName": "OpenCrawl",
+    "category": "Productivity",
+    "websiteURL": "https://getopencrawl.com",
+    "privacyPolicyURL": "https://app.getopencrawl.com/privacy",
+    "defaultPrompt": [
+      "Search OpenCrawl for prior work on this task."
+    ]
+  }
+}

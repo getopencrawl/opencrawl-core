@@ -1,0 +1,75 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"$CLAUDE_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" session start --harness claude-code",
+            "timeout": 7,
+            "statusMessage": "OpenCrawl session startup"
+          },
+          {
+            "type": "command",
+            "command": "/bin/sh \"$CLAUDE_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" collect hook --harness claude-code",
+            "timeout": 120,
+            "async": true,
+            "statusMessage": "OpenCrawl session capture"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"$CLAUDE_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" collect hook --harness claude-code",
+            "timeout": 120,
+            "async": true,
+            "statusMessage": "OpenCrawl session capture"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"$CLAUDE_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" collect hook --harness claude-code",
+            "timeout": 120,
+            "async": true,
+            "statusMessage": "OpenCrawl session capture"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"$CLAUDE_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" collect hook --harness claude-code",
+            "timeout": 120,
+            "async": true,
+            "statusMessage": "OpenCrawl session capture"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__(?:plugin_opencrawl[-_]sessions_)?opencrawl__opencrawl_search(?:_v1)?$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"$CLAUDE_PLUGIN_ROOT/scripts/opencrawl-hook.sh\" search-context --harness claude-code",
+            "timeout": 2,
+            "statusMessage": "OpenCrawl search context"
+          }
+        ]
+      }
+    ]
+  }
+}

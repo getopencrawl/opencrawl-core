@@ -1,0 +1,19 @@
+{
+  "name": "opencrawl-core",
+  "owner": {
+    "name": "OpenCrawl",
+    "url": "https://getopencrawl.com"
+  },
+  "plugins": [
+    {
+      "name": "opencrawl-sessions",
+      "source": "./plugins/opencrawl-sessions/claude-code",
+      "description": "OpenCrawl skill, MCP server and session hooks for Claude Code. Installed by OpenCrawl CLI setup.",
+      "version": "0.1.0",
+      "license": "MIT"
+    }
+  ],
+  "metadata": {
+    "description": "Harness plugins the OpenCrawl CLI installs from this repository."
+  }
+}

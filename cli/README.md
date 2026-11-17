@@ -41,6 +41,7 @@ Use `opencrawl setup status --local --json` to read saved choices and
 sidebar and never blocks the rest of the app. Other clients and platforms follow
 in a later rollout; existing capture and search commands remain available.
 
+Claude Code and Codex use [this plugin](https://github.com/getopencrawl/opencrawl-core/tree/main/plugins/opencrawl-sessions).
 For your own server, add `--api https://your-opencrawl.example`.
 See [onboarding](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/onboarding.md) for the complete flow.
 

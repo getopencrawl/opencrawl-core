@@ -20,7 +20,7 @@ import {approveCapture,excludeCapture,purgeLocalCapture} from './controls.ts';
 import {captureNoticeFor} from './policy.ts';
 import {agentSkills} from '../skills.ts';
 import {refreshManagedSkills} from '../skill-activation.ts';
-import {hasPluginContext, pluginHookContext, pluginRecordingEnabled, recordPluginActivation, type PluginHookContext} from '../setup/plugin-context.ts';
+import {hasPluginContext, pluginHookContext, pluginRecordingEnabled, recordPluginActivation, hasSessionsPluginContext, isSessionsClient, sessionsPluginRoot, sessionsHookSuperseded, recordSessionsActivation, sessionsRecordingEnabled, type PluginHookContext} from '../setup/plugin-context.ts';
 /** With eager set, return as soon as a whole document has arrived: a runtime
  * may keep the pipe open after writing the payload. */
 async function hookInput(eager=false) {
@@ -145,7 +145,12 @@ export async function collectCommand(action:string,api:string,values:any) {
     case 'daemon': {if(!await awaitDaemonActivation())return null;await runCaptureDaemon({processStartupTask:processSessionStartTask});return null;}
     case 'worker': {try{await ownedCaptureWorker();}catch(e){try{recordError(e);}catch{}}return null;}
     case 'hook': {
-      if(!hasPluginContext()&&readCaptureConfig()?.hookOwnership==='plugin')return null;
+      if(!hasPluginContext()&&!hasSessionsPluginContext()&&readCaptureConfig()?.hookOwnership==='plugin')return null;
+      // Hooks of a retired generated Claude Code or Codex bundle stay silent, and
+      // the repository plugin stands aside for a profile that owns global hooks.
+      if(hasPluginContext()&&isSessionsClient(harness))return null;
+      const sessions=sessionsPluginRoot(harness??'')!==null;
+      if(sessions&&sessionsHookSuperseded())return null;
       const plugin=pluginHookContext(api,harness??'');
       if(captureDaemonEnabled()&&HARNESSES.includes(harness as Harness)){
         let event:any;
@@ -154,7 +159,8 @@ export async function collectCommand(action:string,api:string,values:any) {
           if(harness==='antigravity'&&!event.hookEventName&&values.event)event.hookEventName=values.event;
           if(!((harness==='claude-code'||harness==='codex')&&event?.cursor_version)){
             recordPluginActivation(plugin,event);
-            if(!plugin||pluginRecordingEnabled(plugin)){
+            if(sessions)recordSessionsActivation(harness!,event);
+            if(plugin?pluginRecordingEnabled(plugin):!sessions||sessionsRecordingEnabled(harness!)){
               const recorded=recordNativeDaemonHook(harness as Harness,event);
               // Only a verified, still-selected Devin plugin may request its
               // existing transient host worker after resume. Other hooks stay local.
@@ -184,15 +190,16 @@ export async function collectCommand(action:string,api:string,values:any) {
         // session: record nothing and never start the uploader there.
         if(typeof event?.cursor_version==='string')return null;
         recordPluginActivation(plugin,event);
-        if(plugin&&!pluginRecordingEnabled(plugin))return null;
-        if(!plugin)await refreshManagedSkills(api,{hook:true});
+        if(sessions)recordSessionsActivation(harness!,event);
+        if(plugin&&!pluginRecordingEnabled(plugin)||sessions&&!sessionsRecordingEnabled(harness!))return null;
+        if(!plugin&&!sessions)await refreshManagedSkills(api,{hook:true});
         await captureHook(harness as any,event);
         // Async Claude Code hooks deliver this JSON on the next turn, so a
         // paused capture is visible to the person instead of failing silently.
         const notice=harness==='claude-code'&&['SessionStart','UserPromptSubmit'].includes(event?.hook_event_name)?captureAttentionNotice():null;
         if(notice)process.stdout.write(JSON.stringify({systemMessage:notice,hookSpecificOutput:{hookEventName:event.hook_event_name,additionalContext:notice}})+'\n');
         await upgradeCaptureHooks();
-        if(values.managed||plugin&&(harness==='claude-code'||harness==='codex'&&event.hook_event_name!=='SessionEnd'))await ownedCaptureWorker();
+        if(values.managed||(plugin||sessions)&&(harness==='claude-code'||harness==='codex'&&event.hook_event_name!=='SessionEnd'))await ownedCaptureWorker();
       }catch(e){try{recordError(e);}catch{}}
       return null;
     }

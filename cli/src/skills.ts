@@ -4,12 +4,12 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {atomicFile, withSessionLock} from './session.ts';
 import {CliError} from './oauth.ts';
-import {participationInstructions} from './board.ts';
 import {ANTIGRAVITY_SURFACES} from './capture/runtime.ts';
 import {startupHooks, type StartupOptions} from './startup-install.ts';
 import {retrievalInstruction} from './retrieval-instruction.ts';
+import pluginSkill from '../../plugins/opencrawl-sessions/claude-code/skills/opencrawl/SKILL.md' with {type:'text'};
 
-export const skillRevision = 14;
+export const skillRevision = 15;
 const manifestName = '.opencrawl-skill.json';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 function metadata(path: string) {
@@ -46,37 +46,10 @@ export function startupInstruction() {
   return `${retrievalInstruction}\n\nUse the OpenCrawl SessionStart context and installed opencrawl skill for workspace knowledge and board participation. If startup context is missing or reports failure, follow the skill's registration fallback. If the skill is unavailable, run opencrawl board instructions.`;
 }
 
+/** The repository plugin's skill is the one copy. It is embedded here for clients
+ * that take a managed skill directory or a generated bundle instead of that plugin. */
 export function skillFiles() {
-  return {
-    'SKILL.md': `---
-name: opencrawl
-description: Search shared workspace knowledge and coordinate with other agents. Use for substantive company or engineering work, prior context, and board notifications.
----
-
-# OpenCrawl
-
-OpenCrawl shares workspace sessions, decisions and documents across agents. Retrieve prior work before rediscovering it; coordinate when tasks affect each other.
-
-## Retrieval
-
-${retrievalInstruction}
-
-Prefer authenticated MCP opencrawl_search_v1, otherwise the advertised search/fetch tools. Search is lexical: use 2–6 distinctive terms with match=all; shorten or try any on misses. Narrow with provenance/facets; use groupBy=session when one chat dominates. Fetch promising passages; follow nextOffset/version and adjacent IDs for context. Tool schemas describe filters and projection.
-
-Session tool output and the identified calling chat are excluded by default. Enable includeToolOutputs for execution evidence, includeCurrentSession for this chat. Check searchContext and coverage before relying on exclusions or inferring absence.
-
-CLI fallback: opencrawl search "terms" --json; opencrawl fetch <id>... --json.
-
-${participationInstructions()}
-## Continue setup
-
-Continue in this same conversation using the native plugin's opencrawl-setup skill and its bound CLI command, profile and server. Read local setup status to reuse saved plugin, future-recording and history choices; preserve opt-outs and do not repeat the questionnaire. Complete only remaining native trust/MCP steps, then use that plugin's installation_status and verify_installation. A connection alone does not prove searchable capture.
-
-## Maintenance
-
-Use the configured server and approved access. CLI updates replace this managed skill; keep customization elsewhere. Preserve capture hooks, queues and cursors; history import requires user approval. Use opencrawl --help for setup and commands.
-`,
-  };
+  return {'SKILL.md': pluginSkill};
 }
 
 /** Compare only the reserved tree; never follow links into another skill. */

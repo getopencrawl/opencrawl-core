@@ -3,7 +3,7 @@ import {posix,win32} from 'node:path';
 import {apiOrigin,CliError} from '../oauth.ts';
 import {GROK_BOT_HOOK_EVENTS} from '../capture/grok-bot.ts';
 import {pluginSearchContextMatcher,searchContextMarker} from '../search-context.ts';
-import type {PluginClient} from './plugins.ts';
+import type {GeneratedPluginClient} from './plugins.ts';
 import {DEVIN_HOOK_EVENTS} from '../capture/devin.ts';
 
 export type PluginHookBinding={command:string[];configHome:string;api:string;pluginName:string;env?:NodeJS.ProcessEnv};
@@ -18,7 +18,7 @@ const literal=(value:string,windows:boolean)=>windows?'"'+value.replaceAll('%','
  * OPENCRAWL_PLUGIN_ROOT is derived by the bundled runner, including in a native
  * plugin cache. The guard verifies that root's marker and complete file hashes.
  */
-export function pluginHookFiles(client:PluginClient,binding:PluginHookBinding,platform=process.platform):Record<string,string>{
+export function pluginHookFiles(client:GeneratedPluginClient,binding:PluginHookBinding,platform=process.platform):Record<string,string>{
  if(client==='devin'&&platform!=='linux')throw new CliError('INVALID_PLUGIN_BINDING','Devin Cloud bundles require a Linux native command.');
  const windows=platform==='win32',path=windows?win32:posix;
  const {command,configHome,pluginName}=binding,api=apiOrigin(binding.api);
@@ -35,24 +35,19 @@ export function pluginHookFiles(client:PluginClient,binding:PluginHookBinding,pl
   :'#!/bin/sh\n'+cloudGuard+'unset '+ambientAuth.join(' ')+'\n'+Object.entries(env).map(([key,value])=>'export '+key+'='+literal(value,false)+'\n').join('')
    +(client==='devin'?"export OPENCRAWL_AUTH='devin-cloud'\nexport PATH='/usr/local/bin:/usr/bin:/bin'\n":'')
    +'OPENCRAWL_PLUGIN_ROOT=$(CDPATH= cd -- "${0%/*}/.." && pwd -P) || exit 0\nexport OPENCRAWL_PLUGIN_ROOT\nexec '+command.map(value=>literal(value,false)).join(' ')+' "$@"\n';
- // Codex 0.166 uses the session's Windows shell (PowerShell by default);
- // it does not support Claude's per-handler shell override.
  // Use process environment expansion, not inline path substitution: quotes,
  // dollars and percent signs in native cache paths must remain path characters.
- const root=client==='codex'||client==='devin'?'PLUGIN_ROOT':client==='claude-code'?'CLAUDE_PLUGIN_ROOT':'CURSOR_PLUGIN_ROOT';
+ const root=client==='devin'?'PLUGIN_ROOT':'CURSOR_PLUGIN_ROOT';
  const invocation=windows
-  ?client==='claude-code'||client==='codex'?{command:'& "$env:'+root+'\\scripts\\opencrawl-hook.cmd"',...(client==='claude-code'?{shell:'powershell' as const}:{})}
-   :{command:client==='antigravity'?'".\\scripts\\opencrawl-hook.cmd"':'"%'+root+'%\\scripts\\opencrawl-hook.cmd"'}
+  ?{command:client==='antigravity'?'".\\scripts\\opencrawl-hook.cmd"':'"%'+root+'%\\scripts\\opencrawl-hook.cmd"'}
   :{command:client==='antigravity'?'/bin/sh ./scripts/opencrawl-hook.sh':'/bin/sh "$'+root+'/scripts/opencrawl-hook.sh"'};
  const args=(values:string[])=>values.map(value=>/^[a-zA-Z0-9_:/.-]+$/.test(value)?value:literal(value,windows)).join(' ');
  const startup={type:'command',...invocation,command:invocation.command+' '+args(['session','start','--harness',client,'--api',api]),timeout:7,statusMessage:startupMarker};
  const search={type:'command',...invocation,command:invocation.command+' '+args(['search-context','--harness',client,'--api',api]),timeout:2,statusMessage:searchContextMarker};
  const searchMatcher=pluginSearchContextMatcher(client,pluginName);
  const capture=(event:string)=>{
-  const daemon=client==='claude-code';
-  const managed=client==='codex'&&event!=='SessionEnd';
   return {type:'command',...invocation,command:invocation.command+' '+args(['collect','hook','--harness',client,'--api',api,...(client==='antigravity'?['--event',event]:[])]),
-   timeout:daemon?120:managed?120:client==='codex'?3:30,statusMessage:captureMarker,...(managed||daemon?{async:true}:{})};
+   timeout:30,statusMessage:captureMarker};
  };
  if(client==='devin'){
   const hooks=Object.fromEntries(DEVIN_HOOK_EVENTS.map(event=>[event,[{hooks:[event==='SessionStart'
@@ -67,14 +62,7 @@ export function pluginHookFiles(client:PluginClient,binding:PluginHookBinding,pl
   hooks.postToolUse.unshift({command:startup.command+' --after-tool',timeout:startup.timeout});
   return {[runner]:script,'hooks/hooks.json':json({version:1,hooks})};
  }
- if(client==='antigravity'){
-  const entry=(event:string)=>{const hook=capture(event);return {type:hook.type,command:hook.command,timeout:hook.timeout};};
-  return {[runner]:script,'hooks.json':json({[pluginName+'-startup']:{SessionStart:[{type:startup.type,command:startup.command,timeout:startup.timeout}],PreToolUse:[{matcher:searchMatcher,hooks:[{type:search.type,command:search.command,timeout:search.timeout}]}]},
-   [pluginName+'-capture']:{SessionStart:[entry('SessionStart')],PostToolUse:[{matcher:'*',hooks:[entry('PostToolUse')]}],PostInvocation:[entry('PostInvocation')],Stop:[entry('Stop')]}})};
- }
- const events=client==='claude-code'?['SessionStart','UserPromptSubmit','Stop','SessionEnd']
-  :['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SubagentStop','SessionEnd'];
- const hooks:Record<string,unknown[]>=Object.fromEntries(events.map(event=>[event,[{hooks:event==='SessionStart'?[startup,capture(event)]:[capture(event)]}]]));
- (hooks.PreToolUse??=[]).push({matcher:searchMatcher,hooks:[search]});
- return {[runner]:script,'hooks/hooks.json':json({hooks})};
+ const entry=(event:string)=>{const hook=capture(event);return {type:hook.type,command:hook.command,timeout:hook.timeout};};
+ return {[runner]:script,'hooks.json':json({[pluginName+'-startup']:{SessionStart:[{type:startup.type,command:startup.command,timeout:startup.timeout}],PreToolUse:[{matcher:searchMatcher,hooks:[{type:search.type,command:search.command,timeout:search.timeout}]}]},
+  [pluginName+'-capture']:{SessionStart:[entry('SessionStart')],PostToolUse:[{matcher:'*',hooks:[entry('PostToolUse')]}],PostInvocation:[entry('PostInvocation')],Stop:[entry('Stop')]}})};
 }

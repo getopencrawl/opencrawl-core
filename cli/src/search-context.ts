@@ -7,9 +7,13 @@ export const searchContextMarker = 'OpenCrawl search context';
 const searchTools = [
   'mcp__opencrawl__opencrawl_search',
   'mcp__plugin_opencrawl_opencrawl__opencrawl_search',
+  'mcp__plugin_opencrawl-sessions_opencrawl__opencrawl_search',
+  'mcp__plugin_opencrawl_sessions_opencrawl__opencrawl_search',
   'mcp__codex_apps__opencrawl_opencrawl_search',
   'mcp__opencrawl__opencrawl_search_v1',
   'mcp__plugin_opencrawl_opencrawl__opencrawl_search_v1',
+  'mcp__plugin_opencrawl-sessions_opencrawl__opencrawl_search_v1',
+  'mcp__plugin_opencrawl_sessions_opencrawl__opencrawl_search_v1',
   'mcp__codex_apps__opencrawl_opencrawl_search_v1',
 ] as const;
 export const searchContextMatcher = '^(?:' + searchTools.join('|') + ')$';

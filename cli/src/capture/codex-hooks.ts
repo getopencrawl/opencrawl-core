@@ -1,8 +1,7 @@
 import {existsSync,readFileSync,realpathSync} from 'node:fs';
-import {join,resolve,dirname} from 'node:path';
-import {createHash} from 'node:crypto';
+import {join,resolve} from 'node:path';
 import {configDir} from '../session.ts';
-import {verifyPluginBundle} from '../setup/plugin-context.ts';
+import {readSessionsReceipt,sessionsPlugin,sessionsPluginRoot} from '../setup/plugin-context.ts';
 import {spawn} from 'node:child_process';
 import {searchContextMarker} from '../search-context.ts';
 
@@ -27,8 +26,8 @@ function globalSnapshot(root:string):Snapshot {
  } catch {return {file,bytes,config,keys,review:{state:existsSync(file)?'unknown':'not_applicable',total:keys.size,pending:existsSync(file)?null:0,disabled:existsSync(file)?null:0}};}
  return {file,bytes,config,keys,review:{state:keys.size?'unknown':'not_applicable',total:keys.size,pending:keys.size?null:0,disabled:keys.size?null:0}};
 }
-/** A plugin enrollment must never inherit readiness from another deployment's
- * global hooks. The installer receipt binds the exact native cache and marker. */
+/** A plugin enrollment must never inherit readiness from global hooks. The
+ * installer receipt names the native copy whose hook file Codex reviews. */
 function snapshot(root:string):Snapshot {
  let captureBytes='',capture:{hookOwnership?:string;harnesses?:string[];api:string;roots?:{codex?:string}}|undefined;
  try{captureBytes=readFileSync(join(configDir(),'capture/config.json'),'utf8');capture=JSON.parse(captureBytes);}catch{}
@@ -38,13 +37,10 @@ function snapshot(root:string):Snapshot {
  // This is capture readiness, not a requirement to enable recording for search.
  if(!capture.harnesses?.includes('codex'))return {...result,review:{state:'not_applicable',total:0,pending:0,disabled:0}};
  try{
-  const key=createHash('sha256').update(capture.api).digest('hex').slice(0,12),name='opencrawl-'+key,pluginId=name+'@opencrawl-cli-'+key;
-  const receiptBytes=readFileSync(join(configDir(),'setup-plugins/codex',key,'installed.json'),'utf8');
-  const receipt=JSON.parse(receiptBytes);
-  if(receipt.schemaVersion!==2||receipt.api!==capture.api||receipt.client!=='codex'||receipt.pluginName!==name||receipt.pluginId!==pluginId||typeof receipt.nativeRoot!=='string')return result;
-  const bundle=verifyPluginBundle({nativeRoot:receipt.nativeRoot,api:capture.api,client:'codex',pluginName:name,configHome:dirname(configDir())});
-  if(bundle.digest!==receipt.digest||!('hooks/hooks.json' in bundle.files))return result;
-  const file=join(bundle.root,'hooks/hooks.json'),bytes=readFileSync(file,'utf8'),value=JSON.parse(bytes) as {hooks?:Record<string,unknown>};
+  const receipt=readSessionsReceipt('codex'),pluginId=sessionsPlugin.id;
+  const nativeRoot=receipt&&sessionsPluginRoot('codex',receipt.nativeRoot);
+  if(!receipt||!nativeRoot)return result;
+  const file=join(nativeRoot,'hooks/hooks.json'),bytes=readFileSync(file,'utf8'),value=JSON.parse(bytes) as {hooks?:Record<string,unknown>};
   for(const [event,groups] of Object.entries(value.hooks??{}))if(Array.isArray(groups))groups.forEach((group:unknown,g:number)=>{
    if(!group||typeof group!=='object'||!('hooks' in group)||!Array.isArray(group.hooks))return;
    group.hooks.forEach((hook:unknown,h:number)=>{
@@ -52,7 +48,7 @@ function snapshot(root:string):Snapshot {
    });
   });
   const config=existsSync(join(root,'config.toml'))?readFileSync(join(root,'config.toml'),'utf8'):'';
-  return {...result,file,bytes,config,pluginId,binding:JSON.stringify([captureBytes,receiptBytes,bundle.digest,bundle.files]),review:{state:'unknown',total:keys.size,pending:null,disabled:null}};
+  return {...result,file,bytes,config,pluginId,binding:JSON.stringify([captureBytes,receipt]),review:{state:'unknown',total:keys.size,pending:null,disabled:null}};
  }catch{return result;}
 }
 /** Local files establish ownership, never trust in a current hook definition. */
