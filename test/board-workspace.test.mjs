@@ -14,14 +14,14 @@ async function storeFixture(t){const f=await boardStateFixture(t);let reads=0,wr
 test('board operations derive scope from authentication and reject foreign or absent authority',async t=>{
   const f=await storeFixture(t),board=createBoard({state:f.state});
   for(const [principal,text]of [[alice,'Team A content'],[bob,'Team B content']]){
-    await board.sync(principal,{agent:'same-agent',posts:[post(text)]});
+    await board.post(principal,{agent:'same-agent',posts:[post(text)]});
     assert.equal((await board.fetch(principal,{id:'message:1'})).text,text);
     assert.equal((await board.search(principal,{query:'content'})).messages[0].text,text);
     assert.equal((await board.topics(principal,{})).workspace,principal.tenantId);
   }
   const before={reads:f.reads,writes:f.writes};
-  for(const operation of ['sync','fetch','search','topics']){
-    const input={sync:{agent:'same-agent',posts:[post('forged')]},fetch:{id:'message:1'},search:{},topics:{}}[operation];
+  for(const operation of ['sync','post','presence','fetch','search','topics']){
+    const input={sync:{agent:'same-agent'},post:{agent:'same-agent',posts:[post('forged')]},presence:{agent:'same-agent'},fetch:{id:'message:1'},search:{},topics:{}}[operation];
     await assert.rejects(board[operation](alice,{...input,workspace:bob.tenantId}),{status:403});
     for(const principal of [null,{}, {userId:'alice'}, {...alice,captureAccess:'write'}]){
       await assert.rejects(board[operation](principal,input),{status:403});
@@ -44,8 +44,8 @@ test('deployment-authorized workspace selection remains available alongside auth
       finalScopes.push(principal.tenantId);return principal;
     },
   });
-  await board.sync(alice,{agent:'writer',posts:[post('Default workspace content')]});
-  await board.sync(alice,{workspace:'team-b',agent:'writer',posts:[post('Selected workspace content')]});
+  await board.post(alice,{agent:'writer',posts:[post('Default workspace content')]});
+  await board.post(alice,{workspace:'team-b',agent:'writer',posts:[post('Selected workspace content')]});
   assert.equal((await board.fetch(alice,{id:'message:1'})).text,'Default workspace content');
   assert.equal((await board.fetch(alice,{workspace:'team-b',id:'message:1'})).text,'Selected workspace content');
   assert.equal((await board.search(alice,{workspace:'team-b'})).messages[0].text,'Selected workspace content');
@@ -64,7 +64,7 @@ test('omitting workspace still rechecks revocation after reading content',async 
     admit:async principal=>principal,
     authorize:async principal=>{if(!active)throw Object.assign(Error('Membership revoked'),{status:403});return principal;},
   });
-  await board.sync(alice,{agent:'author',posts:[post('Do not disclose after revocation')]});
+  await board.post(alice,{agent:'author',posts:[post('Do not disclose after revocation')]});
   revokeOnRead=true;
   await assert.rejects(board.fetch(alice,{id:'message:1'}),{status:403});
 });
@@ -84,10 +84,10 @@ test('real MCP tools omit workspace, isolate identical references and reject rev
   }
   const call=async(client,name,input)=>{const result=await client.callTool({name,arguments:input});assert.ok(!result.isError,JSON.stringify(result));return JSON.parse(result.content[0].text);};
   const tools=(await clients[0].listTools()).tools;
-  for(const name of ['board_sync','board_fetch','board_search','board_topics'])assert.ok(!tools.find(tool=>tool.name===name).inputSchema.required?.includes('workspace'));
+  for(const name of ['board_post','board_fetch','board_search','board_topics'])assert.ok(!tools.find(tool=>tool.name===name).inputSchema.required?.includes('workspace'));
   for(const [index,client]of clients.entries()){
     const text=`Tenant ${index} evidence`;
-    await call(client,'board_sync',{agent:'same-agent',posts:[post(text)]});
+    await call(client,'board_post',{agent:'same-agent',posts:[post(text)]});
     assert.equal((await call(client,'board_fetch',{id:'message:1'})).text,text);
     assert.equal((await call(client,'board_search',{})).messages[0].text,text);
   }

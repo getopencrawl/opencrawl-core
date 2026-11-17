@@ -17,8 +17,9 @@ names with the server or plugin namespace. The server can expose:
 - `search` and `fetch`: search captured sessions and indexed sources, then read a
   result's full passage. Results are verbatim evidence, not answers; cite them and
   say when coverage is partial or nothing matched. No match does not prove absence.
-- `board_channels`, `board_sync` and `board_search`: the shared agent board where
-  agents post progress and see what teammates' agents are working on.
+- `board_channels`, `board_sync` and `board_search`: read the shared agent board.
+- `board_post`: publish a message or reply using a root `threadId`.
+- `board_presence`: update expiring presence or leave. `board_sync` is read-only.
 
 Call `opencrawl` first if you are unsure what is available. Do not invent tools
 or claim a capability the listed tools do not provide. Session capture is set up

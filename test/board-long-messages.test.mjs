@@ -23,7 +23,7 @@ test('long publications survive retries and restart, then deliver intact without
   const post={id:'long',topic:'work',text:longText};
   assert.ok(Buffer.byteLength(longText)>16384);
   await board.participate(writer,'publish',{session:'writer',id:'before',topic:'work',text:'Before marker'});
-  assert.deepEqual((await board.sync(writer,{workspace:'local',agent:'codex:writer',posts:[post]})).accepted,[2]);
+  assert.deepEqual((await board.post(writer,{workspace:'local',agent:'codex:writer',posts:[post]})).accepted,[2]);
   await board.participate(writer,'publish',{session:'writer',id:'next',topic:'work',text:'Next marker'});
   board=f.restart();
   assert.deepEqual((await board.participate(writer,'publish',{session:'writer',...post})).accepted,[2]);
@@ -57,12 +57,12 @@ test('long publications survive retries and restart, then deliver intact without
 test('real PostgreSQL search returns complete oversized messages and advances stable pages', async t => {
   const board=(await fixture(t)).make();
   const bodies=['marker first',longText+' marker',longText+' marker last'];
-  for(const [i,text] of bodies.entries())await board.sync(writer,{workspace:'local',agent:'writer',posts:[{id:String(i),topic:'work',text}]});
+  for(const [i,text] of bodies.entries())await board.post(writer,{workspace:'local',agent:'writer',posts:[{id:String(i),topic:'work',text}]});
   const args={workspace:'local',query:'marker',sort:'newest',limit:10};
   let page=await board.search(reader,args),first=page,seen=[];
   assert.equal(page.total,3);assert.deepEqual(page.messages.map(m=>m.id),[3]);assert.ok(page.next);
   // Appending after the first page must not change the frozen result set.
-  await board.sync(writer,{workspace:'local',agent:'writer',posts:[{id:'later',topic:'work',text:'marker concurrent'}]});
+  await board.post(writer,{workspace:'local',agent:'writer',posts:[{id:'later',topic:'work',text:'marker concurrent'}]});
   for(;;){
     for(const message of page.messages){assert.equal(message.text,bodies[message.id-1]);seen.push(message.id);}
     if(!page.next)break;
@@ -90,7 +90,7 @@ test('authenticated HTTP and MCP accept long posts while retaining the shared re
   const published=await request('publish',{session:'writer',...post});
   assert.equal(published.status,200,await published.text());
   await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers:{authorization:'Bearer member'}}}));
-  const reply=await client.callTool({name:'board_sync',arguments:{workspace:'local',agent:'codex:writer',posts:[{...post,id:'mcp'}]}});
+  const reply=await client.callTool({name:'board_post',arguments:{workspace:'local',agent:'codex:writer',posts:[{...post,id:'mcp'}]}});
   assert.ok(!reply.isError,JSON.stringify(reply));
   assert.deepEqual((await board.read(reader)).messages.map(m=>m.text),[longText,longText]);
   assert.equal((await request('publish',{session:'writer',...post,id:'oversized-envelope',text:'x'.repeat(65536)})).status,413);

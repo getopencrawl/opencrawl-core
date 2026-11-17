@@ -45,7 +45,7 @@ test('bootstrap is unnamed and idempotent, then profile preserves identity and d
   assert.deepEqual(fork.subscriptions,{mentions:false,topics:[],channels:[],announcements:true});
   const publication={id:'same-retry',topic:'build',text:'Stable route'};
   const published=await board.participate(alice,'publish',{session:'one',...publication});
-  assert.deepEqual((await board.sync(alice,{workspace:'a',agent:'codex:chosen-by-agent',posts:[publication]})).accepted,published.accepted);
+  assert.deepEqual((await board.post(alice,{workspace:'a',agent:'codex:chosen-by-agent',posts:[publication]})).accepted,published.accepted);
 });
 
 test('bootstrap and profile scope colliding sessions to the authenticated user and tenant', async t => {
@@ -68,8 +68,9 @@ test('MCP reuses the account-owned CLI identity, canonical name and retry IDs ac
   const registered=await register(board,alice);
   await board.participate(alice,'subscribe',{session:'one',topics:['build']});
   const post={id:'shared',topic:'build',text:'One logical publication'};
-  const args={workspace:'a',agent:'CODEX:ONE',topics:['build'],posts:[post]};
-  const synced=await board.sync(alice,args);
+  const args={workspace:'a',agent:'CODEX:ONE',posts:[post]};
+  await board.presence(alice,{agent:args.agent,topics:['build']});
+  const synced=await board.post(alice,args);
   assert.equal(synced.agent,registered.agent);
   assert.deepEqual(synced.accepted,[1]);
   assert.equal((await board.read(alice)).messages[0].name,'codex:one');
@@ -78,12 +79,12 @@ test('MCP reuses the account-owned CLI identity, canonical name and retry IDs ac
   assert.deepEqual((await board.participate(alice,'publish',{session:'one',...post})).accepted,[1]);
   const cliPost={...post,id:'from-cli',text:'CLI publication reused by MCP'};
   await board.participate(alice,'publish',{session:'one',...cliPost});
-  assert.deepEqual((await board.sync(alice,{...args,posts:[cliPost]})).accepted,[2]);
-  assert.deepEqual((await board.sync(alice,args)).accepted,[1]);
-  await assert.rejects(board.sync(alice,{...args,posts:[{...post,text:'Different content'}]}),{status:409});
+  assert.deepEqual((await board.post(alice,{...args,posts:[cliPost]})).accepted,[2]);
+  assert.deepEqual((await board.post(alice,args)).accepted,[1]);
+  await assert.rejects(board.post(alice,{...args,posts:[{...post,text:'Different content'}]}),{status:409});
   await assert.rejects(board.participate(alice,'publish',{session:'one',...post,text:'Different content'}),{status:409});
   assert.deepEqual((await board.topics(alice)).topics[0].active.map(p=>p.id),[registered.agent]);
-  assert.equal((await board.sync(alice,{workspace:'a',agent:'codex:one',leave:true})).agent,registered.agent);
+  assert.equal((await board.presence(alice,{workspace:'a',agent:'codex:one',leave:true})).agent,registered.agent);
   assert.deepEqual((await board.topics(alice)).topics[0].active,[]);
   const participant=(await board.participate(alice,'directory')).agents[0];
   assert.deepEqual(participant.topics,['build']);
@@ -101,17 +102,19 @@ test('existing listeners establish ownership without guessing from names or chan
   delete state.participants[registered.agent].userId; // Persisted pre-upgrade registration.
   await f.repository.transaction(boardTenant('a'),tx=>tx.putParticipant(registered.agent,state.participants[registered.agent]));
   const publication={id:'legacy',topic:'build',text:'Legacy publication remains immutable'};
-  const args={workspace:'a',agent:'codex:one',topics:['build'],posts:[publication]};
-  const legacy=await board.sync(alice,args);
+  const args={workspace:'a',agent:'codex:one',posts:[publication]};
+  await board.presence(alice,{agent:args.agent,topics:['build']});
+  const legacy=await board.post(alice,args);
   assert.notEqual(legacy.agent,registered.agent); // An unverified name cannot select a session.
   const historical=await board.fetch(alice,{workspace:'a',id:'message:2'});
-  const foreign=await board.sync(bob,{...args,posts:[]});
+  const foreign=await board.presence(bob,{agent:args.agent,topics:['build']});
   assert.notEqual(foreign.agent,registered.agent);
   assert.notEqual(foreign.agent,legacy.agent);
   // lastPoll is still fresh: owner backfill must commit even during an idle poll.
   assert.deepEqual((await inbox(board)).batch,pending);
   board=f.restart();
-  const synced=await board.sync(alice,args);
+  await board.presence(alice,{agent:args.agent,topics:['build']});
+  const synced=await board.post(alice,args);
   assert.equal(synced.agent,registered.agent);
   assert.deepEqual(synced.accepted,[2]);
   assert.deepEqual((await board.participate(alice,'publish',{session:'one',...publication})).accepted,[2]);
@@ -121,29 +124,29 @@ test('existing listeners establish ownership without guessing from names or chan
   assert.deepEqual(ids,[registered.agent,foreign.agent].sort());
   await ack(board,pending.receipt);
   assert.equal((await inbox(board)).batch,null);
-  const next=await board.sync(alice,{...args,posts:[{...publication,id:'new'}]});
+  const next=await board.post(alice,{...args,posts:[{...publication,id:'new'}]});
   assert.deepEqual(next.accepted,[3]);
   assert.equal((await board.read(alice)).messages[0].agent,registered.agent);
-  await assert.rejects(board.sync(alice,{...args,posts:[{...publication,text:'Changed'}]}),{status:409});
+  await assert.rejects(board.post(alice,{...args,posts:[{...publication,text:'Changed'}]}),{status:409});
 });
 
 test('name resolution stays account- and tenant-scoped and cannot overwrite another registration', async t => {
   const f=await fixture(t), board=f.make();
   const owner=await register(board,alice), tenantOwner=await register(board,other,'different');
   const args={workspace:'a',agent:'codex:one',posts:[{id:'one',topic:'build',text:'Useful update'}]};
-  const own=await board.sync(alice,args), foreign=await board.sync(bob,args);
+  const own=await board.post(alice,args), foreign=await board.post(bob,args);
   assert.equal(own.agent,owner.agent);
   assert.notEqual(foreign.agent,owner.agent);
-  assert.equal((await board.sync(other,{...args,workspace:'b'})).agent,tenantOwner.agent);
+  assert.equal((await board.post(other,{...args,workspace:'b'})).agent,tenantOwner.agent);
   assert.deepEqual((await board.read(alice)).messages.map(m=>m.author),['bob','alice']);
   assert.equal((await board.read(other)).messages.length,1);
   assert.equal((await board.participate(alice,'directory')).agents[0].agent,owner.agent);
-  await assert.rejects(board.sync(bob,{...args,workspace:'b'}),{status:403});
+  await assert.rejects(board.post(bob,{...args,workspace:'b'}),{status:403});
 });
 
-test('sync resolves a registration committed before its transaction',async t=>{
+test('post resolves a registration committed before its transaction',async t=>{
     const f=await fixture(t),registered=await register(f.make(),alice),board=f.make();
-    const synced=await board.sync(alice,{agent:'codex:one',topics:['build'],posts:[{id:'race',topic:'build',text:'Concurrent update'}]});
+    const synced=await board.post(alice,{agent:'codex:one',posts:[{id:'race',topic:'build',text:'Concurrent update'}]});
     assert.equal(synced.agent,registered.agent);assert.deepEqual(synced.accepted,[1]);
     assert.equal((await board.read(alice)).messages[0].agent,registered.agent);
   });
@@ -151,8 +154,8 @@ test('sync resolves a registration committed before its transaction',async t=>{
 test('MCP-only names retain their separate retry namespaces until registration', async t => {
   const board=(await fixture(t)).make();
   const args={workspace:'a',agent:'codex:one',posts:[{id:'same',topic:'build',text:'Lowercase session'}]};
-  const lower=await board.sync(alice,args);
-  const upper=await board.sync(alice,{...args,agent:'CODEX:ONE',posts:[{...args.posts[0],text:'Uppercase session'}]});
+  const lower=await board.post(alice,args);
+  const upper=await board.post(alice,{...args,agent:'CODEX:ONE',posts:[{...args.posts[0],text:'Uppercase session'}]});
   assert.notEqual(lower.agent,upper.agent);
   assert.deepEqual(lower.accepted,[1]); assert.deepEqual(upper.accepted,[2]);
 });
@@ -242,10 +245,10 @@ test('concurrent registration, publishing, polling and ack retries preserve iden
   await register(boards[0],alice); assert.equal((await inbox(boards[0])).batch,null);
 });
 
-test('legacy MCP posts resolve registered mentions without changing board_sync contract', async t => {
+test('MCP posts resolve registered mentions and only return a write receipt', async t => {
   const f=await fixture(t),board=f.make(); await register(board,alice);
-  const result=await board.sync(bob,{workspace:'a',agent:'legacy',posts:[{id:'one',topic:'other',text:'@codex:one coordinate here'}]});
-  assert.deepEqual(result.accepted,[1]); assert.deepEqual(result.recentSessions,[]);
+  const result=await board.post(bob,{workspace:'a',agent:'legacy',posts:[{id:'one',topic:'other',text:'@codex:one coordinate here'}]});
+  assert.deepEqual(result.accepted,[1]); assert.equal('recentSessions' in result,false);
   const batch=(await inbox(board)).batch; assert.equal(batch.messages[0].reasons[0],'mention');
   assert.equal(batch.messages[0].name,'legacy');
 });
@@ -254,14 +257,15 @@ test('MCP and CLI suppress their own cross-transport posts without suppressing p
   const f=await fixture(t); let board=f.make();
   await register(board,alice); await register(board,alice,'another','codex:another');
   await board.participate(alice,'subscribe',{session:'one',topics:['build']});
-  const sync=(principal,agent,posts=[])=>board.sync(principal,{workspace:'a',agent,topics:['build'],after:0,posts});
-  const own=await sync(alice,'codex:one',[{id:'mcp',topic:'build',text:'Own MCP update'}]);
-  assert.deepEqual(own.accepted,[1]); assert.deepEqual(own.messages,[]);
+  const sync=(principal,agent)=>board.sync(principal,{workspace:'a',agent,topics:['build'],after:0});
+  const publish=(principal,agent,posts)=>board.post(principal,{workspace:'a',agent,posts});
+  const own=await publish(alice,'codex:one',[{id:'mcp',topic:'build',text:'Own MCP update'}]);
+  assert.deepEqual(own.accepted,[1]); assert.deepEqual((await sync(alice,'codex:one')).messages,[]);
   f.advance(); assert.equal((await inbox(board)).batch,null);
   await board.participate(alice,'publish',{session:'one',id:'cli',topic:'build',text:'Own CLI update'});
   assert.deepEqual((await sync(alice,'CODEX:ONE')).messages,[]);
   // Display-name equality from another account is never ownership evidence.
-  await sync(bob,'codex:one',[{id:'spoof',topic:'build',text:'Other account, same label'}]);
+  await publish(bob,'codex:one',[{id:'spoof',topic:'build',text:'Other account, same label'}]);
   await board.participate(alice,'publish',{session:'another',id:'peer',topic:'build',text:'Same account, other session'});
   board=f.restart();
   const batch=(await inbox(board)).batch;
@@ -271,7 +275,7 @@ test('MCP and CLI suppress their own cross-transport posts without suppressing p
   assert.equal((await inbox(board)).batch,null);
   const bobsView=await sync(bob,'codex:one');
   assert.deepEqual(bobsView.messages.map(m=>m.id),[1,2,4]);
-  assert.deepEqual((await sync(alice,'codex:one',[{id:'mcp',topic:'build',text:'Own MCP update'}])).accepted,[1]);
+  assert.deepEqual((await publish(alice,'codex:one',[{id:'mcp',topic:'build',text:'Own MCP update'}])).accepted,[1]);
   assert.equal((await board.read(alice)).messages.length,4);
 });
 
@@ -283,7 +287,7 @@ test('inline mentions accept sentence punctuation through CLI and MCP without cr
   for(const [i,text] of texts.entries()) {
     for(const transport of ['cli','mcp']) {
       const id=`${transport}-${i}`;
-      const result=transport==='cli' ? await post(board,id,text) : await board.sync(bob,{workspace:'a',agent:'legacy',posts:[{id,topic:'build',text}]});
+      const result=transport==='cli' ? await post(board,id,text) : await board.post(bob,{workspace:'a',agent:'legacy',posts:[{id,topic:'build',text}]});
       assert.equal(result.warning,undefined);
       const batch=(await inbox(board)).batch;
       assert.equal(batch.messages.length,1);
@@ -310,7 +314,7 @@ test('punctuated registered names take precedence and publication retries keep t
   assert.deepEqual(await post(board,'retry','@codex:one: dependency'),first);
   assert.deepEqual((await post(board,'exact','@codex:one: @codex:one. dependency')).mentions,[colon.agent,dot.agent]);
   assert.deepEqual((await post(board,'mixed','@codex:one:. dependency')).mentions,[colon.agent]);
-  const mcp=await board.sync(bob,{workspace:'a',agent:'legacy',posts:[{id:'exact',topic:'build',text:'@codex:one: dependency'}]});
+  const mcp=await board.post(bob,{workspace:'a',agent:'legacy',posts:[{id:'exact',topic:'build',text:'@codex:one: dependency'}]});
   assert.equal(mcp.warning,undefined);
   const batch=(await board.participate(alice,'inbox',{session:'colon'})).batch;
   assert.deepEqual(batch.messages.map(m=>m.id),[2,3,4]);
@@ -330,10 +334,10 @@ test('unknown inline tags warn once per response and retries retain original rou
   assert.equal(newTarget.batch,null); // No retroactive tag on the retry.
   await assert.rejects(board.participate(alice,'publish',{...args,id:'explicit',mentions:['unknown']}),{status:404});
   const mcpArgs={workspace:'a',agent:'legacy',posts:[{id:'tag',topic:'build',text:'@notjoined dependency'}]};
-  const mcp=await board.sync(alice,mcpArgs);
+  const mcp=await board.post(alice,mcpArgs);
   assert.equal(mcp.warning,'Tags not notified (unregistered): @notjoined.');
   await register(board,bob,'third','notjoined');
-  const retry=await board.sync(alice,mcpArgs);
+  const retry=await board.post(alice,mcpArgs);
   assert.deepEqual(retry.accepted,mcp.accepted); assert.equal(retry.warning,mcp.warning);
   assert.ok((await board.read(alice)).messages.every(m=>!('publication' in m)));
 });

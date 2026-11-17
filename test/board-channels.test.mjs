@@ -23,11 +23,11 @@ test('empty channels expose reserved identity; only the internal scoped applicat
  assert.equal(channels.channels[0].system.agent,'system:opencrawl');
  for(const name of ['opencrawl','OpenCrawl','system','root','SYSTEM:OPENCRAWL']){
   await assert.rejects(register(board,alice,name,name),{status:403});
-  await assert.rejects(board.sync(alice,{agent:name,posts:[]}),{status:403});
+  await assert.rejects(board.sync(alice,{agent:name}),{status:403});
  }
  await register(board);
  for(const channel of ['opencrawl','OpenCrawl',' OPENCRAWL ']){
-  await assert.rejects(board.sync({...alice,role:'admin'},{agent:'codex:client',posts:[{id:'forged',channel,text:'Fake'}]}),{status:403});
+  await assert.rejects(board.post({...alice,role:'admin'},{agent:'codex:client',posts:[{id:'forged',channel,text:'Fake'}]}),{status:403});
   await assert.rejects(board.participate(alice,'publish',{session:'s',id:'forged',topic:channel,text:'Fake'}),{status:403});
  }
  for(const forged of [{system:true},{author:'system:opencrawl'},{agent:'system:opencrawl'}])await assert.rejects(board.participate(alice,'publish',{session:'s',id:'x',channel:'opencrawl',text:'Fake',...forged}));
@@ -46,7 +46,7 @@ test('replies stay in a scoped root, preserve retry identity and survive export/
  const root=await f.announce('root');
  const input={session:'s',id:'reply',channel:'opencrawl',threadId:root.id,text:'I can help.'};
  const reply=await board.participate(alice,'publish',input);assert.deepEqual(reply.accepted,[2]);
- assert.deepEqual((await board.sync(alice,{agent:'codex:client',posts:[{id:'reply',channel:'opencrawl',threadId:1,text:'I can help.'}]})).accepted,[2]);
+ assert.deepEqual((await board.post(alice,{agent:'codex:client',posts:[{id:'reply',channel:'opencrawl',threadId:1,text:'I can help.'}]})).accepted,[2]);
  await assert.rejects(board.participate(alice,'publish',{...input,threadId:2}),{status:400});
  await assert.rejects(board.participate(alice,'publish',{...input,channel:'engineering'}),{status:404});
  await assert.rejects(board.participate(alice,'publish',{...input,threadId:777}),{status:404});
@@ -56,11 +56,11 @@ test('replies stay in a scoped root, preserve retry identity and survive export/
  await assert.rejects(board.thread(alice,{threadId:2}),{status:404});
  const thread=await f.make().thread(alice,{threadId:1});assert.equal(thread.root.system,true);assert.deepEqual(thread.replies.map(m=>[m.id,m.threadId,m.channel,m.system]),[[2,1,'opencrawl',undefined]]);
  const stored=await f.repository.exportLegacy(boardTenant(alice.tenantId));await f.repository.importLegacy(boardTenant('restore'),stored);assert.deepEqual(await f.repository.exportLegacy(boardTenant('restore')),stored);
- await board.sync(alice,{agent:'codex:client',posts:[{id:'normal',channel:'engineering',text:'Ordinary root'}]});
- await board.sync(bob,{agent:'claude:peer',posts:[{id:'reply-normal',channel:'engineering',threadId:3,text:'Ordinary reply'}]});
+ await board.post(alice,{agent:'codex:client',posts:[{id:'normal',channel:'engineering',text:'Ordinary root'}]});
+ await board.post(bob,{agent:'claude:peer',posts:[{id:'reply-normal',channel:'engineering',threadId:3,text:'Ordinary reply'}]});
  assert.deepEqual((await board.read(alice,{channel:'engineering',rootsOnly:true})).messages.map(m=>m.id),[3]);
  const page=await board.read(alice,{channel:'engineering',threadId:3});assert.equal(page.threadRoot.id,3);assert.deepEqual(page.messages.map(m=>m.id),[4]);
- await assert.rejects(board.sync(alice,{agent:'codex:client',posts:[{id:'normal',channel:'engineering',threadId:3,text:'Ordinary root'}]}),{status:409});
+ await assert.rejects(board.post(alice,{agent:'codex:client',posts:[{id:'normal',channel:'engineering',threadId:3,text:'Ordinary root'}]}),{status:409});
 });
 
 test('system announcements reach unsubscribed native and MCP agents; replies do not broadcast',async t=>{
@@ -79,9 +79,9 @@ test('system announcements reach unsubscribed native and MCP agents; replies do 
 
 test('thread pagination keeps roots explicit and replies complete across concurrent publication',async t=>{
  const f=await fixture(t),{board}=f;await f.announce('one');
- for(let i=0;i<25;i++)await board.sync(bob,{agent:'writer',posts:[{id:String(i),channel:'opencrawl',threadId:1,text:'Reply '+i}]});
+ for(let i=0;i<25;i++)await board.post(bob,{agent:'writer',posts:[{id:String(i),channel:'opencrawl',threadId:1,text:'Reply '+i}]});
  const first=await board.thread(alice,{threadId:1});assert.equal(first.root.id,1);assert.equal(first.replies.length,20);assert.equal(first.next,7);
- await board.sync(bob,{agent:'writer',posts:[{id:'new',channel:'opencrawl',threadId:1,text:'New reply'}]});
+ await board.post(bob,{agent:'writer',posts:[{id:'new',channel:'opencrawl',threadId:1,text:'New reply'}]});
  const second=await board.thread(alice,{threadId:1,before:first.next});assert.deepEqual([...first.replies,...second.replies].map(m=>m.id),Array.from({length:25},(_,i)=>26-i));assert.equal(second.next,null);
  const search=await board.search(alice,{channels:['opencrawl'],query:'Reply 24'});assert.equal(search.messages[0].threadId,1);assert.equal(search.messages[0].channel,'opencrawl');
  await assert.rejects(board.sync(alice,{agent:'client',channels:['opencrawl'],topics:['engineering']}),{status:400});
@@ -96,7 +96,7 @@ test('single-tenant HTTP and MCP expose threads and channels but never the syste
  const client=new Client({name:'thread-test',version:'1'});t.after(async()=>{await client.close();await mcp.close();await new Promise(r=>server.close(r));});await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp')));
  const names=(await client.listTools()).tools.map(t=>t.name);assert.ok(names.includes('board_channels'));assert.ok(names.includes('board_thread'));assert.ok(!names.some(n=>/announce|system/.test(n)));
  const call=async(name,args)=>{const result=await client.callTool({name,arguments:args});return {...result,data:JSON.parse(result.content[0].text)};};
- const result=await call('board_sync',{agent:'mcp:client',channels:[],posts:[{id:'mcp-reply',channel:'opencrawl',threadId:root.id,text:'MCP reply'}]});assert.ok(!result.isError);
+ const result=await call('board_post',{agent:'mcp:client',posts:[{id:'mcp-reply',channel:'opencrawl',threadId:root.id,text:'MCP reply'}]});assert.ok(!result.isError);
  assert.equal((await call('board_thread',{threadId:root.id})).data.replies[0].text,'MCP reply');
  const request=async(operation,input)=>fetch(origin+'/api/board/'+operation,{method:'POST',body:JSON.stringify(input)});
  assert.equal((await request('announce',{text:'forged'})).status,404);

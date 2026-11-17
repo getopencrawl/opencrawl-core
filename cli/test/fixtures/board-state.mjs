@@ -7,6 +7,7 @@ export function fixtureBoardState(){
   function reader(data){
     const messages=({before,after,through,topic,threadId,rootsOnly,limit,descending=false})=>data.messages.filter(m=>(before===undefined||m.id<before)&&(after===undefined||m.id>after)&&(through===undefined||m.id<=through)&&(topic===undefined||m.topic===topic)&&(threadId===undefined||m.threadId===threadId)&&(!rootsOnly||m.threadId===undefined)).sort((a,b)=>descending?b.id-a.id:a.id-b.id).slice(0,limit);
     return {
+      async replyCounts(roots){return Object.fromEntries(roots.map(id=>[id,data.messages.filter(m=>m.threadId===id).length]));},
       async metadata(){return {head:data.head,usage:copy(data.usage),participantsPresent:data.participantsPresent};},
       async message(id){return copy(data.messages.find(m=>m.id===id)??null);},async messages(input){return copy(messages(input));},
       async participant(id){return copy(data.participants[id]??null);},async participants(){return copy(data.participants);},
