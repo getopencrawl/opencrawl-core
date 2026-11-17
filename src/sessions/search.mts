@@ -1,7 +1,7 @@
-import type {ApplicationState} from '../state/types.mjs';
 import {lexicalQuery} from '../search/lexical.mjs';
 import {sessionSearchExclusions} from '../search/context.mjs';
 import type {Principal, ObjectStore} from './types.mjs';
+import {serviceError} from './types.mjs';
 import type {RealmOptions, DocumentItem, SearchInput, SearchResult, OpenSearchResponse, Passage} from '../search/types.mjs';
 interface TermsAggregation {buckets: Array<{key: string; doc_count: number}>}
 interface SessionCount {count: {value: number}}
@@ -19,9 +19,9 @@ import {sessionIndexMapping} from '../search/mapping.mjs';
 export {sessionIndexMapping};
 
 function fail(status: number,message: string): never {throw Object.assign(new Error(message),{status});}
-export function createSessionSearch(options: RealmOptions & {state:ApplicationState;store?: ObjectStore; prefix?: string}) {
+export function createSessionSearch(options: RealmOptions & {store?: ObjectStore; prefix?: string}) {
   const resolve=createRealmResolver(options), f=(field: string)=>realmField('session',field);
-  const controls=createControls({state:options.state});
+  const controls=options.store && options.prefix ? createControls({store:options.store,prefix:options.prefix}) : null;
   function search(principal: Principal, input: SearchInput & {raw: true}): Promise<OpenSearchResponse>;
   function search(principal: Principal, input?: SearchInput & {raw?: false}): Promise<SearchResult>;
   function search(principal: Principal, input: SearchInput): Promise<SearchResult | OpenSearchResponse>;

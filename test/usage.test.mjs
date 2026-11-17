@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {realmResponse} from './realm-fixture.mjs';
 import {test} from 'node:test';
@@ -16,10 +15,10 @@ const aggregations = people => ({activity: {doc_count: 8, sessions: {count: {val
 test('session usage counts only the principal, or the whole tenant when asked, and never returns text', async () => {
   const bodies = [];
   let people = [bucket('user_a')];
-  const search = createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint: 'http://localhost:9200', index: 'sessions', fetch: async (_, options) => {
+  const search = createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint: 'http://localhost:9200', index: 'sessions', fetch: async (_, options) => {
     bodies.push(JSON.parse(options.body));
     return realmResponse('session',{hits: {total: {value: 80, relation: 'eq'}}, aggregations: aggregations(people)});
-  }}));
+  }});
   const mine = await search.usage(owner, {now: Date.parse('2026-11-05T12:00:00Z')});
   assert.deepEqual(bodies[0].query.bool.must[0].bool.filter, [{term: {tenantId: 'org_a'}}, {term: {'session.userId': 'user_a'}}, {term: {'session.chunk': 0}}]);
   assert.equal(bodies[0].size, 0);

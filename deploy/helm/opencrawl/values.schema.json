@@ -50,11 +50,6 @@
             "type": "string"
           }
         },
-        "activationTimeoutSeconds": {
-          "type": "integer",
-          "minimum": 30,
-          "maximum": 86400
-        },
         "extraEnv": {
           "type": "array"
         },

@@ -131,32 +131,19 @@ shell. Source SDK names do not determine ownership. Core requires no account
 or service operated by OpenCrawl. This contract supersedes earlier hosted-only
 classification of reusable identity, integrations and product UI.
 
-PostgreSQL owns mutable server application state: identity, integrations, board
-messages and delivery, privacy and deletion controls, write admission, credentials,
-onboarding, connection bindings, capture progress and derived-index receipts.
-Callers supply the explicit `ApplicationState` interface independently of the raw
-object store. Object storage contains immutable source batches, attachments,
-memory snapshots, connector pages and verified recovery archives. It is not a
-fallback database. Optional SQLite FTS is a rebuildable search index.
+The reconciled runtime keeps PostgreSQL authoritative for Better Auth, the
+integration registry, board messages/delivery, and capture event identities.
+Remaining product state uses the proven production object-store contracts.
+Do not reintroduce a second runtime core version or require a whole-application
+migration for ordinary feature delivery. New state belongs in PostgreSQL; move
+existing domains individually with their own tested cutover and recovery plan.
 
-Temporal owns durable lifecycle and capture orchestration. Workflow arguments
-contain scoped references, while activities read current authorization and secrets
-from repositories. Desired state and queued commands commit atomically; recovery
-schedules recover committed work after process failure. Cancellation or elapsed
-time alone never proves an external writer has stopped.
-
-Application startup requires a verified source/database migration binding.
-The supported offline importer requires stopped writers, retains immutable recovery
-sources, verifies targets before readiness, and never recopies stale sources after
-cutover. Explicit online compatibility tooling instead journals every enrolled
-legacy mutation in PostgreSQL and uses Temporal for background backfill and replay.
-Its legacy envelopes and shadow mirror are migration artifacts, never runtime
-fallbacks. All legacy writers must be enrolled before change capture starts;
-runtime authority changes only after draining accepted mutations and verifying
-typed target parity at a closed journal frontier. Core owns these portable
-protocols; the hosted shell owns fleet enrollment, rollout and request routing.
-See `docs/app-state-migration.md` for the supported offline upgrade and restore,
-and `docs/online-app-state-migration.md` for online tooling and remaining gates.
+Temporal continues to run session indexing/deletion and connector indexing.
+The unfinished connector-lifecycle rewrite and online whole-state migration
+have been retired. Preserve current authorization and idempotency behavior.
+Self-host startup admits only a verified auth/registry/board import; an existing
+whole-state installation must retain its release or restore its matched recovery
+point before adopting this baseline. See `docs/app-state-migration.md`.
 
 ## React document seam
 

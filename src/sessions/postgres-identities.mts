@@ -1,7 +1,6 @@
 import {Pool, type PoolClient, type PoolConfig} from 'pg';
 import {randomUUID} from 'node:crypto';
 import {gunzipSync} from 'node:zlib';
-import {ensureSchemaIndex} from '../state/postgres.mjs';
 import {digest,eventIdentityLocation,eventFingerprints,eventIdentityConflict,sourceBatchIdentity,MAX_EVENT_LEDGER_BYTES} from './event-identity.mjs';
 import {parseJson,serviceError,type EventIdentityStore,type SessionIdentity,type SessionBatch,type SessionEvent,type ObjectStore} from './types.mjs';
 
@@ -11,27 +10,13 @@ const invalid=(message:string):never=>{throw Object.assign(new Error(message),{s
 type Where={source:string;identity?:string};
 type Marker={schemaVersion:2;identity:string;database:string;namespace:string};
 type Legacy={schemaVersion:1;identity:string;events:Record<string,string>};
-/** Exact bytes already read by this offline migration operation. Never a cache
- * across source inventories, and never a substitute for a first import's reads. */
-export interface ObservedEventIdentityMarker {source:string;bytes:Uint8Array}
 const resource=(source:string)=>source.replace(/\/[a-f0-9]{64}\/([a-f0-9]{64})\/$/,'/$1/');
-/** Canonical, installation-independent native deletion resource. */
-export function eventIdentityResource({prefix,source}:{prefix:string;source:string}):string {
- if(typeof prefix!=='string'||!prefix||Buffer.byteLength(prefix)>2048||prefix.includes('\0')||prefix.split('/').some(part=>!part||part==='.'||part==='..')||
-  typeof source!=='string'||Buffer.byteLength(source)>8192||!sourceBatchIdentity(prefix,source+'0'.repeat(64)+'.json.gz'))invalid('Invalid event identity source scope');
- return resource(source);
-}
-export interface EventIdentityDeletionProof {
- format:1;kind:'native-event-identity-deletion';databaseId:string;namespace:string;
- source:string;resource:string;deleted:true;sessionsAbsent:true;metadataOnly:true;eventRowsRead:false;
-}
-
 
 /** One row per immutable event. namespace must identify this object-store source
  * (for example a stable bucket identity), independently of credentials/URLs.
- * Runtime reservations never read or write object-store metadata. The explicit
- * offline importer preserves legacy reservations while all old writers are
- * stopped. Application readiness gates the switch to these runtime writers.
+ * The existing JSON ledger is fenced by CAS after every legacy reservation is
+ * durable in Postgres. A crash at any point is resumable; old CAS writers cannot
+ * overwrite the fence. Pre-ledger writers still require a quiescent upgrade.
  */
 export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{namespace:string}) {
  if(!namespace)throw new Error('Event identity database requires a storage namespace');
@@ -57,8 +42,8 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
       event_hash bytea NOT NULL CHECK(octet_length(event_hash)=32),
       content_hash bytea NOT NULL CHECK(octet_length(content_hash)=32),
       PRIMARY KEY(session_id,event_hash));
+      CREATE INDEX IF NOT EXISTS opencrawl_event_identity_resource ON opencrawl_event_identity_sessions(namespace,resource);
       CREATE TABLE IF NOT EXISTS opencrawl_event_identity_deletions(namespace text NOT NULL, resource text NOT NULL, PRIMARY KEY(namespace,resource))`);
-    await ensureSchemaIndex(client,{table:'opencrawl_event_identity_sessions',name:'opencrawl_event_identity_resource',keys:['namespace','resource']});
     await client.query('INSERT INTO opencrawl_event_identity_schema(singleton,version,database_id) VALUES(true,1,$1) ON CONFLICT DO NOTHING',[randomUUID()]);
     const result=await client.query<{version:number;database_id:string}>('SELECT version,database_id FROM opencrawl_event_identity_schema WHERE singleton');
     if(result.rows[0]?.version!==1)unavailable('Unsupported event identity database schema');
@@ -101,26 +86,16 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
    await client.query('COMMIT');return inserted.rowCount??0;
   }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}
  }
- function parseLedger(bytes:Uint8Array,where:Where){
-  let ledger:Legacy|Marker;try{ledger=parseJson(Buffer.from(bytes));}catch{invalid('Invalid legacy event identity ledger');}
-  if(!ledger!||!hex(ledger!.identity)||where.identity&&ledger!.identity!==where.identity||![1,2].includes(ledger!.schemaVersion))invalid('Legacy event identity scope mismatch');
-  if(ledger!.schemaVersion===1&&(!ledger!.events||typeof ledger!.events!=='object'||Array.isArray(ledger!.events)||Object.entries(ledger!.events).some(([id,hash])=>!hex(id)||!hex(hash))))invalid('Invalid legacy event identity fingerprints');
-  return ledger!;
- }
- function observedLedger(observed:ObservedEventIdentityMarker|undefined,source:string){
-  if(observed===undefined)return undefined;
-  if(!observed||observed.source!==source||!(observed.bytes instanceof Uint8Array)||!observed.bytes.byteLength||observed.bytes.byteLength>MAX_EVENT_LEDGER_BYTES)invalid('Invalid observed event identity marker');
-  const ledger=parseLedger(observed.bytes,{source}),keys=Object.keys(ledger).sort().join(',');
-  if(ledger.schemaVersion===2?(keys!=='database,identity,namespace,schemaVersion'||!hex(ledger.namespace)||typeof ledger.database!=='string'||!/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(ledger.database)):keys!=='events,identity,schemaVersion')invalid('Invalid observed event identity marker');
-  return ledger;
- }
  async function readLedger(store:ObjectStore,where:Where){
   const value=await store.readVersion(where.source+'event-identities-v1.json',{maxBytes:MAX_EVENT_LEDGER_BYTES});
   if(!value.data){if(value.version!==null)unavailable('Invalid event identity storage version');return {...value,ledger:null};}
   if(value.version===null||value.version===undefined)unavailable('Invalid event identity storage version');
-  return {...value,ledger:parseLedger(value.data,where)};
+  let ledger:Legacy|Marker;try{ledger=parseJson(value.data);}catch{invalid('Invalid legacy event identity ledger');}
+  if(!ledger!||!hex(ledger!.identity)||where.identity&&ledger!.identity!==where.identity||![1,2].includes(ledger!.schemaVersion))invalid('Legacy event identity scope mismatch');
+  if(ledger!.schemaVersion===1&&(!ledger!.events||typeof ledger!.events!=='object'||Array.isArray(ledger!.events)||Object.entries(ledger!.events).some(([id,hash])=>!hex(id)||!hex(hash))))invalid('Invalid legacy event identity fingerprints');
+  return {...value,ledger:ledger!};
  }
- async function migrate(client:PoolClient,database:string,store:ObjectStore,prefix:string,where:Where,observed?:Legacy|Marker){
+ async function migrate(client:PoolClient,database:string,store:ObjectStore,prefix:string,where:Where){
   const path=sourceBatchIdentity(prefix,where.source+'0'.repeat(64)+'.json.gz');
   if(!path)invalid('Invalid event identity source scope');
   const deleted=await client.query('SELECT 1 FROM opencrawl_event_identity_deletions WHERE namespace=$1 AND resource=$2',[namespace,resource(where.source)]);
@@ -129,15 +104,9 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
   if(existing.rows[0]){
    if(where.identity&&where.identity!==existing.rows[0].identity)invalid('Event identity scope mismatch');
    where={...where,identity:existing.rows[0].identity};
-   if(existing.rows[0].state==='ready'){
-    if(observed&&observed.identity!==existing.rows[0].identity)invalid('Event identity scope mismatch');
-    const original=observed?.schemaVersion===2?{ledger:observed}:await readLedger(store,where);
-    if(original.ledger?.schemaVersion===2&&(original.ledger.database!==database||original.ledger.namespace!==digest(namespace)))unavailable('Event identity database does not match the migrated source; restore its matching backup');
-    return;
-   }
+   if(existing.rows[0].state==='ready')return;
   }
   let current=await readLedger(store,where);
-  if(observed&&JSON.stringify(current.ledger)!==JSON.stringify(observed))unavailable('Observed event identity source changed before migration');
   if(current.ledger?.schemaVersion===2){
    if(!existing.rows[0]||current.ledger.database!==database||current.ledger.namespace!==digest(namespace))unavailable('Event identity database does not match the migrated source; restore its matching backup');
    await client.query("UPDATE opencrawl_event_identity_sessions SET state='ready' WHERE namespace=$1 AND source=$2",[namespace,where.source]);return;
@@ -172,16 +141,21 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
    cursor=page.nextToken;if(cursor){if(cursors.has(cursor))unavailable('Session inventory cursor did not advance');cursors.add(cursor);}
   }while(cursor);
   }
-  if(current.ledger?.schemaVersion===1){
-   await ensureSession(current.ledger.identity);const entries=Object.entries(current.ledger.events);
-   for(let start=0;start<entries.length;start+=1000)await claim(client,where,new Map(entries.slice(start,start+1000)));
+  // CAS races with a legacy writer import its additional committed reservations
+  // and retry. Imported chunks stay durable if the process is interrupted.
+  for(;;){
+   if(current.ledger?.schemaVersion===2){
+    if(current.ledger.database!==database||current.ledger.namespace!==digest(namespace))unavailable('Event identity source belongs to another database');
+    break;
+   }
+   if(current.ledger){await ensureSession(current.ledger.identity);const entries=Object.entries(current.ledger.events);
+    for(let start=0;start<entries.length;start+=1000)await claim(client,where,new Map(entries.slice(start,start+1000)));
+   }
+   if(!where.identity)invalid('Cannot identify an empty historical session');
+   const marker:Marker={schemaVersion:2,identity:where.identity!,database,namespace:digest(namespace)};
+   if(await store.compareAndSet(where.source+'event-identities-v1.json',current.version,Buffer.from(JSON.stringify(marker))))break;
+   current=await readLedger(store,where);
   }
-  if(!where.identity)invalid('Cannot identify an empty historical session');
-  // Sources are immutable during the supported offline upgrade. Re-read the
-  // original ledger before admitting this session; a concurrent old writer is
-  // a failed migration, never permission to choose one side of a race.
-  const after=await readLedger(store,where);
-  if(after.version!==current.version||JSON.stringify(after.ledger)!==JSON.stringify(current.ledger))unavailable('Legacy event identities changed during migration; stop all old writers and retry');
   await client.query("UPDATE opencrawl_event_identity_sessions SET state='ready' WHERE namespace=$1 AND source=$2",[namespace,where.source]);
  }
  const api={
@@ -189,52 +163,18 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
   async reserve(options:SessionIdentity&{store:ObjectStore;events:SessionEvent[]}){
    const where=eventIdentityLocation(options),conflicts=new Set<string>(),events=eventFingerprints(options.events,conflicts);
    if(conflicts.size)eventIdentityConflict(conflicts);
-   return locked(where.source,async client=>{
-    const deleted=await client.query('SELECT 1 FROM opencrawl_event_identity_deletions WHERE namespace=$1 AND resource=$2',[namespace,resource(where.source)]);
-    if(deleted.rowCount)throw Object.assign(new Error('Session was deleted'),{status:410,permanent:true});
-    await client.query("INSERT INTO opencrawl_event_identity_sessions(namespace,source,identity,resource,state) VALUES($1,$2,$3,$4,'ready') ON CONFLICT DO NOTHING",[namespace,where.source,where.identity,resource(where.source)]);
-    const current=(await client.query<{identity:string;state:string}>('SELECT identity,state FROM opencrawl_event_identity_sessions WHERE namespace=$1 AND source=$2',[namespace,where.source])).rows[0];
-    if(current?.identity!==where.identity)invalid('Event identity scope mismatch');
-    if(current.state!=='ready')unavailable('Event identity migration is incomplete; keep writers stopped');
+   return locked(where.source,async(client,database)=>{
+    await migrate(client,database,options.store,options.prefix,where);
     await claim(client,where,events);
     const result=await client.query<{event_count:string}>('SELECT event_count FROM opencrawl_event_identity_sessions WHERE namespace=$1 AND source=$2',[namespace,where.source]);
     return {reservedEvents:Number(result.rows[0]!.event_count)};
    });
   },
-  async migrateSession({store,prefix,source,observedMarker}:{store:ObjectStore;prefix:string;source:string;observedMarker?:ObservedEventIdentityMarker}){
-   const observed=observedLedger(observedMarker,source);
+  async migrateSession({store,prefix,source}:{store:ObjectStore;prefix:string;source:string}){
    return locked(source,async(client,database)=>{
-    const deleted=await client.query('SELECT 1 FROM opencrawl_event_identity_deletions WHERE namespace=$1 AND resource=$2',[namespace,resource(source)]);
-    if(deleted.rowCount)return {reservedEvents:0,deleted:true as const};
-    await migrate(client,database,store,prefix,{source},observed);
+    await migrate(client,database,store,prefix,{source});
     const result=await client.query<{event_count:string}>('SELECT event_count FROM opencrawl_event_identity_sessions WHERE namespace=$1 AND source=$2',[namespace,source]);
     return {reservedEvents:Number(result.rows[0]!.event_count)};
-   });
-  },
-  /** Offline verification only. Exporting the legacy shape lets the application
-   * migrator compare every reserved identity, including failed uploads. Retired
-   * resources remain retired even when their raw bytes await physical cleanup. */
-  async exportLegacyLedger({store,prefix,source,observedMarker}:{store:ObjectStore;prefix:string;source:string;observedMarker?:ObservedEventIdentityMarker}){
-   if(!sourceBatchIdentity(prefix,source+'0'.repeat(64)+'.json.gz'))invalid('Invalid event identity source scope');
-   const observed=observedLedger(observedMarker,source);
-   return locked(source,async(client,database)=>{
-    const {rows}=await client.query('SELECT id,identity,state,event_count FROM opencrawl_event_identity_sessions WHERE namespace=$1 AND source=$2',[namespace,source]);
-    const row=rows[0],current=row?.state==='ready'&&observed?.schemaVersion===2?{ledger:observed}:await readLedger(store,{source});if(!current.ledger)return null;
-    const deleted=await client.query('SELECT 1 FROM opencrawl_event_identity_deletions WHERE namespace=$1 AND resource=$2',[namespace,resource(source)]);
-    if(deleted.rowCount)return {deleted:true as const,resource:resource(source)};
-    if(!row||row.state!=='ready')return null;
-    if(current.ledger.schemaVersion===2){
-     if(current.ledger.database!==database||current.ledger.namespace!==digest(namespace)||current.ledger.identity!==row.identity)unavailable('Event identity database does not match the migrated source; restore its matching backup');
-     const count=await client.query('SELECT count(*) AS n FROM opencrawl_event_identities WHERE session_id=$1',[row.id]);if(String(count.rows[0].n)!==String(row.event_count))unavailable('Event identity count verification failed');
-     return {schemaVersion:2 as const,identity:row.identity as string,database,namespace:digest(namespace)};
-    }
-    const events:Record<string,string>={};let after:Buffer|undefined;
-    for(;;){const page=await client.query(`SELECT event_hash,content_hash FROM opencrawl_event_identities WHERE session_id=$1${after?' AND event_hash>$2':''} ORDER BY event_hash LIMIT 1000`,after?[row.id,after]:[row.id]);
-     for(const value of page.rows)events[(value.event_hash as Buffer).toString('hex')]=(value.content_hash as Buffer).toString('hex');
-     if(page.rows.length<1000)break;after=page.rows.at(-1)!.event_hash;
-    }
-    if(Object.keys(events).length!==Number(row.event_count))unavailable('Event identity count verification failed');
-    return {schemaVersion:1 as const,identity:row.identity as string,events};
    });
   },
   async purgeSession(options:Pick<SessionIdentity,'prefix'|'principal'|'harness'|'sessionId'>){
@@ -248,27 +188,6 @@ export function createPostgresEventIdentities({namespace,...config}:PoolConfig&{
      await client.query('COMMIT');
     }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}
    });
-  },
-  /** Read current permanent tombstone metadata only. Does not call ready(),
-   * create schema, inspect markers, or count/read immutable event rows. */
-  async readDeletionProof(options:{prefix:string;source:string}):Promise<EventIdentityDeletionProof|null>{
-   const prefix=options.prefix,source=options.source,scoped=eventIdentityResource({prefix,source});
-   const client=await pool.connect();let failed=false;
-   try{
-    await client.query('BEGIN READ ONLY');
-    await client.query("SET LOCAL statement_timeout='5s'");
-    const rows=(await client.query<{version:number;database_id:string;deleted:boolean;sessions_present:boolean}>(
-     `SELECT version,database_id,
-       EXISTS(SELECT 1 FROM opencrawl_event_identity_deletions WHERE namespace=$1 AND resource=$2) AS deleted,
-       EXISTS(SELECT 1 FROM opencrawl_event_identity_sessions WHERE namespace=$1 AND resource=$2) AS sessions_present
-      FROM opencrawl_event_identity_schema WHERE singleton`,[namespace,scoped])).rows;
-    const row=rows[0];
-    if(rows.length!==1||row?.version!==1||typeof row.database_id!=='string'||!/^([a-f0-9]{8}-)([a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(row.database_id))unavailable('Unsupported event identity database schema');
-    if(row.deleted&&row.sessions_present)unavailable('Deleted event identity resource is inconsistent');
-    await client.query('COMMIT');
-    return row.deleted?Object.freeze({format:1 as const,kind:'native-event-identity-deletion' as const,databaseId:row.database_id,namespace,source,resource:scoped,deleted:true as const,sessionsAbsent:true as const,metadataOnly:true as const,eventRowsRead:false as const}):null;
-   }catch(error){failed=true;throw serviceError(error).status?error:Object.assign(new Error('Event identity deletion proof unavailable'),{status:503});}
-   finally{client.release(failed);}
   },
   async close(){await pool.end();},
  } satisfies EventIdentityStore & Record<string,unknown>;

@@ -111,17 +111,19 @@ shell. Source SDK names do not determine ownership. Core requires no account
 or service operated by OpenCrawl. This contract supersedes earlier hosted-only
 classification of reusable identity, integrations and product UI.
 
-Mutable server application state belongs in explicit PostgreSQL repositories,
-supplied separately from raw object storage. Do not introduce SQLite, filesystem,
-object-store, or in-memory durability fallbacks. SQLite may serve only the optional
-derived search index or explicit offline legacy migration. Durable connector
-lifecycle and capture orchestration runs in Temporal. The supported default upgrade
-uses the verified offline migration before new writers start; see
-`docs/app-state-migration.md`. Explicit online compatibility tools may instrument
-enrolled legacy writers with a PostgreSQL journal and Temporal backfill. Keep this
-temporary migration path separate from runtime repositories; it cannot admit new
-writers until the old authority is fenced and typed target parity is verified.
-See `docs/online-app-state-migration.md` for current implementation limits.
+The reconciled runtime keeps PostgreSQL authoritative for Better Auth, the
+integration registry, board messages/delivery, and capture event identities.
+Remaining product state uses the proven production object-store contracts.
+Do not reintroduce a second runtime core version or require a whole-application
+migration for ordinary feature delivery. New state belongs in PostgreSQL; move
+existing domains individually with their own tested cutover and recovery plan.
+
+Temporal continues to run session indexing/deletion and connector indexing.
+The unfinished connector-lifecycle rewrite and online whole-state migration
+have been retired. Preserve current authorization and idempotency behavior.
+Self-host startup admits only a verified auth/registry/board import; an existing
+whole-state installation must retain its release or restore its matched recovery
+point before adopting this baseline. See `docs/app-state-migration.md`.
 
 Optional operator-owned connector OAuth, including Composio, belongs in core
 adapters. Core must work without our managed broker account. Keep unconfigured

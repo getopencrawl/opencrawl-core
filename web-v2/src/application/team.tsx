@@ -1,5 +1,5 @@
 import {useEffect, useId, useRef, useState, type FormEvent, type ReactNode} from 'react';
-import {Button, CopyField, Dialog, EmptyState, Field, Icon, Input, LoadingState, Notice, Page, Section, Select, StatusBadge} from '../index.ts';
+import {Button, CopyField, Dialog, EmptyState, Input, LoadingState, Notice, Page, Section, Select, StatusBadge} from '../index.ts';
 import {ConsoleApiError, failureMessage} from './errors.ts';
 import type {WorkspaceRole, TeamAdapter} from './api.ts';
 import {useResource} from './resource';
@@ -11,18 +11,17 @@ function initials(name: string | null, email: string): string {
   return words.length ? [words[0], ...(words.length > 1 ? [words[words.length - 1]] : [])].map(word => Array.from(word ?? '')[0] ?? '').join('').toUpperCase() : (Array.from(email)[0] ?? '').toUpperCase();
 }
 
-function TeamFrame({organizationName, children, embedded}: {organizationName?: string; children: ReactNode; embedded?: boolean}) {
-  if (embedded) return <div className="oc-management-page">{children}</div>;
+function TeamFrame({organizationName, children}: {organizationName?: string; children: ReactNode}) {
   return <Page className="oc-management-page" title="Team" description={organizationName ? `People and access for ${organizationName}.` : 'People and access for your workspace.'}>{children}</Page>;
 }
 function TeamRosterLoading({children}: {children?: ReactNode}) {
   return <Section className="oc-management-panel" title="Members">{children ?? <LoadingState label="Loading team" />}</Section>;
 }
-export function TeamLoadingPage({children, embedded}: {children?: ReactNode; embedded?: boolean}) {
-  return <TeamFrame embedded={embedded}><TeamRosterLoading>{children}</TeamRosterLoading></TeamFrame>;
+export function TeamLoadingPage({children}: {children?: ReactNode}) {
+  return <TeamFrame><TeamRosterLoading>{children}</TeamRosterLoading></TeamFrame>;
 }
 
-export function TeamPage({adapter, onWorkspaceRenamed, footer, embedded}: {embedded?: boolean; adapter: TeamAdapter; onWorkspaceRenamed?: (name: string) => void; footer?: ReactNode}) {
+export function TeamPage({adapter, onWorkspaceRenamed, footer}: {adapter: TeamAdapter; onWorkspaceRenamed?: (name: string) => void; footer?: ReactNode}) {
   const [email, setEmail] = useState('');
   const [organizationName, setOrganizationName] = useState<string | null>(null);
   const [organizationError, setOrganizationError] = useState('');
@@ -191,24 +190,16 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer, embedded}: {embed
     } finally {finish(request);}
   }
 
-  return <TeamFrame organizationName={data?.organization.name} embedded={embedded}>
+  return <TeamFrame organizationName={data?.organization.name}>
     {error && <Notice tone="danger">{data ? 'Team information couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}</Notice>}
     {!data ? loading ? <TeamRosterLoading /> : <EmptyState title="Your team couldn’t load" action={<Button onClick={() => void reload()}>Try again</Button>} /> : <>
-      {data.role === 'admin' && <Section className="oc-management-panel" title="Organization name">
-        <form className="field-inline oc-management-form oc-form-measure" onSubmit={event => void renameOrganization(event)}>
-          <div className="oc-field"><Input ref={organizationInput} aria-label="Organization name" aria-invalid={Boolean(organizationError) || undefined} aria-describedby={organizationError ? organizationErrorId : undefined} name="organizationName" autoComplete="organization" required maxLength={100} disabled={pending !== null} value={nameValue} onChange={event => {setOrganizationName(event.target.value); setOrganizationError(''); setOrganizationSuccess('');}} /></div>
-          <Button type="submit" busy={pending?.kind === 'organization'} disabled={pending !== null || !nameValue.trim() || nameValue.trim() === data.organization.name}>{pending?.kind === 'organization' ? 'Saving…' : 'Save'}</Button>
-        </form>
-        {organizationError && <div id={organizationErrorId}><Notice tone="danger">{organizationError}</Notice></div>}
-        {organizationSuccess && <Notice tone="success">{organizationSuccess}</Notice>}
-      </Section>}
       <Section className="oc-management-panel" title={<>Members {counts && <span className="oc-member-count">{counts}</span>}</>}>
         {!data.members && <p className="muted">Member information is unavailable. We’ll try again automatically.</p>}
         {(data.members?.length ?? 0) + invitations.length > 0 ? <ul className="oc-member-list" aria-label="Workspace members">{data.members?.map(member => {
           const name = member.name && member.name !== member.email ? member.name : null;
           return <li className="oc-member-row" key={member.id} data-state="active">
             <span className="oc-member-avatar" aria-hidden="true">{initials(member.name, member.email)}</span>
-            <div className="oc-member-identity"><span className="oc-member-name"><span>{name || member.email}</span>{member.id === data.viewerUserId && <> <span className="oc-member-self">You</span></>}</span>{name && <span className="oc-member-email">{member.email}</span>}</div>
+            <div className="oc-member-identity"><span className="oc-member-name">{name || member.email}</span>{name && <span className="oc-member-email">{member.email}</span>}</div>
             {data.role === 'admin' && data.viewerUserId && member.id !== data.viewerUserId && !member.directoryManaged ? <Select
               className="oc-member-role"
               aria-label={`Role for ${member.email}`}
@@ -221,26 +212,33 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer, embedded}: {embed
             ><option value="admin">Admin</option><option value="member">Member</option></Select> : <span className="oc-member-role">{member.role === 'admin' ? 'Admin' : 'Member'}</span>}
             {data.role === 'admin' && data.viewerUserId && member.id !== data.viewerUserId && (member.directoryManaged
               ? <span className="muted">Managed by identity provider</span>
-              : <Button variant="danger-quiet" className="oc-icon-button" title="Remove teammate" disabled={pending !== null} aria-label={`Remove ${member.email}`} onClick={() => {setRemoving({id:member.id,email:member.email}); setRemovalError('');}}><Icon name="trash" size={16}/></Button>)}
+              : <Button variant="quiet" disabled={pending !== null} aria-label={`Remove ${member.email}`} onClick={() => {setRemoving({id:member.id,email:member.email}); setRemovalError('');}}>Remove</Button>)}
           </li>;
         })}{invitations.map(invitation => <li className="oc-member-row" key={`invitation:${invitation.email.trim().toLowerCase()}`} data-state="pending">
           <span className="oc-member-avatar" aria-hidden="true">{initials(null, invitation.email)}</span>
           <div className="oc-member-identity"><span className="oc-member-name oc-invitation-email">{invitation.email}</span>{invitation.inviteUrl && <CopyField label="Private invitation link" value={invitation.inviteUrl}/>}</div>
-          <StatusBadge className="oc-member-role" tone="warning">Pending</StatusBadge>
+          <StatusBadge className="oc-member-role" tone="neutral" variant="pill">Pending</StatusBadge>
         </li>)}</ul> : data.members && <p className="muted">No members are listed yet.</p>}
         {roleError && <div id={roleErrorId}><Notice tone="danger">{roleError.message}</Notice></div>}
         <span className="sr-only" role="status">{roleStatus}</span>
         {data.role === 'admin' ? <>
           <form className="oc-invite-form" onSubmit={event => void invite(event)}>
             <div><h3>Invite teammates</h3><p>Invited teammates join as members, without administrative access.</p></div>
-            <div className="field-inline oc-management-form oc-form-measure"><Field label="Email address"><Input ref={emailInput} type="email" name="email" autoComplete="off" maxLength={254} required disabled={pending !== null} value={email} onChange={event => setEmail(event.target.value)} placeholder="teammate@company.com" /></Field><Button type="submit" variant="primary" busy={pending?.kind === 'invite'} disabled={pending !== null}>{pending?.kind === 'invite' ? 'Inviting…' : 'Invite'}</Button></div>
+            <div className="field-inline oc-form-measure"><div className="oc-field"><Input aria-label="Teammate’s email" ref={emailInput} type="email" name="email" autoComplete="off" maxLength={254} required disabled={pending !== null} value={email} onChange={event => setEmail(event.target.value)} placeholder="teammate@company.com" /></div><Button type="submit" variant="primary" busy={pending?.kind === 'invite'} disabled={pending !== null}>{pending?.kind === 'invite' ? 'Inviting…' : 'Invite'}</Button></div>
             {inviteError && <Notice tone="danger">{inviteError}</Notice>}
             {success && <Notice tone="success">{success}</Notice>}
             {createdInvite && !invitations.some(item => item.email === createdInvite.email && item.inviteUrl === createdInvite.url) && <CopyField label="Private invitation link" value={createdInvite.url}/>}
           </form>
         </> : <Notice tone="info">Ask an admin to invite teammates.</Notice>}
       </Section>
-
+      {data.role === 'admin' && <Section className="oc-management-footer" title="Organization name">
+        <form className="field-inline oc-form-measure" onSubmit={event => void renameOrganization(event)}>
+          <div className="oc-field"><Input ref={organizationInput} aria-label="Organization name" aria-invalid={Boolean(organizationError) || undefined} aria-describedby={organizationError ? organizationErrorId : undefined} name="organizationName" autoComplete="organization" required maxLength={100} disabled={pending !== null} value={nameValue} onChange={event => {setOrganizationName(event.target.value); setOrganizationError(''); setOrganizationSuccess('');}} /></div>
+          <Button type="submit" busy={pending?.kind === 'organization'} disabled={pending !== null || !nameValue.trim() || nameValue.trim() === data.organization.name}>{pending?.kind === 'organization' ? 'Saving…' : 'Save'}</Button>
+        </form>
+        {organizationError && <div id={organizationErrorId}><Notice tone="danger">{organizationError}</Notice></div>}
+        {organizationSuccess && <Notice tone="success">{organizationSuccess}</Notice>}
+      </Section>}
       {footer}
       <Dialog open={removing !== null && data.role === 'admin'} onClose={() => {if (!pending) setRemoving(null);}} title="Remove teammate?" description={removing?.email} actions={<>
         <Button variant="quiet" disabled={pending !== null} onClick={() => setRemoving(null)}>Cancel</Button>

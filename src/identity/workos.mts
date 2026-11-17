@@ -7,7 +7,7 @@ export function createWorkos({apiKey,clientId}:{apiKey:string;clientId:string}){
 export function workosDirectory(workos:WorkOS):IdentityDirectory {
   const member=(m:DirectoryMembership):DirectoryMembership=>({id:m.id,userId:m.userId,organizationId:m.organizationId,status:m.status,
     role:m.role?{slug:m.role.slug}:undefined,roles:m.roles?.map(r=>({slug:r.slug})),directoryManaged:m.directoryManaged});
-  const user=(u:HostedUser & {profilePictureUrl?:string|null}):HostedUser=>({id:u.id,email:u.email,firstName:u.firstName,lastName:u.lastName,emailVerified:u.emailVerified===true,...(u.profilePictureUrl?{avatarUrl:u.profilePictureUrl}:{})});
+  const user=(u:HostedUser):HostedUser=>({id:u.id,email:u.email,firstName:u.firstName,lastName:u.lastName,emailVerified:u.emailVerified===true});
   return {
     userManagement:{
       async getUser(id){return user(await workos.userManagement.getUser(id));},

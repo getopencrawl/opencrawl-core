@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -22,8 +21,8 @@ for(const backend of ['sqlite','opensearch'])test(`${backend}: multi-session dis
   const directory=await mkdtemp(join(tmpdir(),'opencrawl-session-scope-'));
   const target=backend==='sqlite'?pathToFileURL(join(directory,'search.sqlite')).href.replace('file:','sqlite:'):endpoint;
   const run=randomUUID(),principal={tenantId:'session-scope-'+run,userId:'alice'},peer={...principal,userId:'bob'},outsider={tenantId:'session-scope-outside-'+run,userId:'bob'};
-  const store=memorySessionStore(),prefix='capture-session-scope',sessions=createSessionSearch(withTestState({endpoint:target,store,prefix})),workspace=createWorkspaceSearch({sessions});
-  const ingest=createSessionIngest(withTestState({store,prefix}));
+  const store=memorySessionStore(),prefix='capture-session-scope',sessions=createSessionSearch({endpoint:target,store,prefix}),workspace=createWorkspaceSearch({sessions});
+  const ingest=createSessionIngest({store,prefix});
   t.after(async()=>{try{if(backend==='opensearch')for(const p of [principal,outsider])await fetch(target+'/'+createRealm({endpoint:target,tenantId:p.tenantId}).index,{method:'DELETE'});}finally{await rm(directory,{recursive:true,force:true});}});
   for(const [owner,sessionId,text] of [[peer,'chat-a','scope evidence first'],[peer,'chat-b','scope evidence second'],[peer,'chat-c','scope evidence outside selection'],[outsider,'chat-a','scope evidence foreign marker']]){
     const events=[{id:'same-event',kind:'message',timestamp:'2026-11-01T00:00:00Z',data:{role:'assistant',content:text}}];
@@ -44,7 +43,7 @@ for(const backend of ['sqlite','opensearch'])test(`${backend}: multi-session dis
   assert.equal((await workspace.search(principal,{...input,query:'scope needle',groupBy:'session'})).results.length,0);
   assert.equal((await workspace.search(principal,{...input,query:'needle'})).results[0].provenance.sessionId,'chat-a');
   assert.equal((await workspace.search(principal,{...input,filters:{...input.filters,roles:['user']}})).results.length,0);
-  await createControls(withTestState({store,prefix})).update(peer,'sessions','codex','chat-b',()=>({visibility:'private',deletedAt:null}));
+  await createControls({store,prefix}).update(peer,'sessions','codex','chat-b',()=>({visibility:'private',deletedAt:null}));
   const hidden=await workspace.search(principal,input);
   assert.deepEqual(hidden.results.map(h=>h.provenance.sessionId),['chat-a']);
   assert.deepEqual(hidden.facets.sessionId.values,[{value:'chat-a',count:1}]);
@@ -56,8 +55,8 @@ for(const backend of ['sqlite','opensearch'])test(`${backend}: origin filters an
   const directory=await mkdtemp(join(tmpdir(),'opencrawl-origin-filter-'));
   const target=backend==='sqlite'?pathToFileURL(join(directory,'search.sqlite')).href.replace('file:','sqlite:'):endpoint;
   const run=randomUUID(),principal={tenantId:'origin-'+run,userId:'alice'},peer={...principal,userId:'bob'},outsider={tenantId:'origin-outside-'+run,userId:'bob'};
-  const store=memorySessionStore(),prefix='capture-origins',sessions=createSessionSearch(withTestState({endpoint:target,store,prefix})),workspace=createWorkspaceSearch({sessions});
-  const ingest=createSessionIngest(withTestState({store,prefix}));
+  const store=memorySessionStore(),prefix='capture-origins',sessions=createSessionSearch({endpoint:target,store,prefix}),workspace=createWorkspaceSearch({sessions});
+  const ingest=createSessionIngest({store,prefix});
   t.after(async()=>{try{if(backend==='opensearch')for(const p of [principal,outsider])await fetch(target+'/'+createRealm({endpoint:target,tenantId:p.tenantId}).index,{method:'DELETE'});}finally{await rm(directory,{recursive:true,force:true});}});
   for(const [owner,sessionId,origin,text] of [[peer,'discussion','desktop','origin evidence from the conversation'],[peer,'worker','subagent','origin evidence from a useful worker'],[outsider,'discussion','desktop','origin evidence foreign marker']]){
     const receipt=await ingest.putBatch(owner,{schemaVersion:1,owner,harness:'codex',origin,installationId:'fixture',sessionId,attachments:[],events:[{id:'same-event',kind:'message',timestamp:'2026-11-01T00:00:00Z',data:{role:'assistant',content:text}}]});
@@ -74,7 +73,7 @@ for(const backend of ['sqlite','opensearch'])test(`${backend}: origin filters an
   assert.equal((await workspace.fetch(principal,{id:filtered.results[0].id})).provenance.origin,'desktop');
   assert.equal((await workspace.search(principal,{...input,filters:{origins:['desktop','subagent']}})).results.length,2);
   assert.equal((await workspace.search(principal,{...input,filters:{origins:['cloud']}})).results.length,0);
-  await createControls(withTestState({store,prefix})).update(peer,'sessions','codex','worker',()=>({visibility:'private',deletedAt:null}));
+  await createControls({store,prefix}).update(peer,'sessions','codex','worker',()=>({visibility:'private',deletedAt:null}));
   const hidden=await workspace.search(principal,{...input,filters:{origins:['subagent']}});
   assert.equal(hidden.results.length,0);assert.deepEqual(hidden.facets.origin.values,[]);
   await assert.rejects(workspace.fetch(principal,{id:unfiltered.results.find(h=>h.provenance.origin==='subagent').id}),{status:404});
@@ -87,9 +86,9 @@ test('real engine migration preserves evidence, replaces stale chunks, supports 
   const realm=createRealm({endpoint,tenantId:principal.tenantId}),store=memorySessionStore(),prefix='capture-quality';
   t.after(()=>fetch(endpoint+'/'+realm.index,{method:'DELETE'}));
   await realm.ensureIndex();
-  const sessions=createSessionSearch(withTestState({endpoint,store,prefix})),workspace=createWorkspaceSearch({sessions});
+  const sessions=createSessionSearch({endpoint,store,prefix}),workspace=createWorkspaceSearch({sessions});
   const text=('The release uses immutable captures and verifies deployment receipts.\n\n').repeat(500)+'Exact final conclusion: rollback succeeded.';
-  const ingest=createSessionIngest(withTestState({store,prefix}));
+  const ingest=createSessionIngest({store,prefix});
   await ingest.putBatch(peer,{schemaVersion:1,owner:peer,harness:'codex',origin:'cli',installationId:'fixture',sessionId:'quality-session',title:'Deployment receipts',attachments:[],events:[
     {id:'wire1:0evidence',kind:'message',timestamp:'2026-11-01T00:00:00Z',data:{role:'assistant',content:text,status:'completed'}},
     {id:'wire1:9question',kind:'message',timestamp:'2026-11-02T00:00:00Z',data:{role:'user',content:'Please verify deployment receipts.'}},
@@ -105,12 +104,12 @@ test('real engine migration preserves evidence, replaces stale chunks, supports 
   const stale={...legacy[0],id:'stale-passage',document:{...legacy[0].document,chunk:999,text:'obsolete stale evidence'}};
   await realm.collection('session').bulk(principal,[...legacy,stale],{refresh:true});
   const steps=[],args={realm,principal,store,prefix,backup:async s=>{steps.push(structuredClone(s));}};
-  assert.equal((await migrateSessionPassages(withTestState(args))).events,2);
+  assert.equal((await migrateSessionPassages(args)).events,2);
   const reports=[];
-  for(const eventIdRange of [{lt:'wire1:4'},{gte:'wire1:4',lt:'wire1:8'},{gte:'wire1:8',lt:'wire1:c'},{gte:'wire1:c'}])reports.push(await migrateSessionPassages(withTestState({...args,eventIdRange,dryRun:false})));
+  for(const eventIdRange of [{lt:'wire1:4'},{gte:'wire1:4',lt:'wire1:8'},{gte:'wire1:8',lt:'wire1:c'},{gte:'wire1:c'}])reports.push(await migrateSessionPassages({...args,eventIdRange,dryRun:false}));
   assert.equal(reports.reduce((n,r)=>n+r.events,0),2);assert.ok(reports.every(r=>r.complete));
   await realm.refresh(principal);
-  assert.equal((await migrateSessionPassages(withTestState({...args,dryRun:false}))).events,0);
+  assert.equal((await migrateSessionPassages({...args,dryRun:false})).events,0);
   const result=await workspace.search(principal,{query:'deployment receipts',match:'all',source:'sessions',filters:{roles:['assistant'],before:'2026-11-01T23:59:59Z'},facets:['role','author'],limit:40});
   assert.equal(result.partial,false);assert.equal(result.results.length,1);assert.ok(result.grouped>0);
   assert.equal(result.facets.role.values[0].value,'assistant');
@@ -122,10 +121,10 @@ test('real engine migration preserves evidence, replaces stale chunks, supports 
   let id='sessions:'+projected.find(x=>x.document.eventId==='wire1:0evidence'&&x.document.chunk===0).id,whole='',seen=new Set();
   while(id){assert.ok(!seen.has(id));seen.add(id);const part=await workspace.fetch(principal,{id,length:16000});whole+=part.text;id=part.nextId;}
   assert.equal(whole,text);
-  await createControls(withTestState({store,prefix})).update(peer,'sessions','codex','quality-session',()=>({visibility:'private',deletedAt:null}));
+  await createControls({store,prefix}).update(peer,'sessions','codex','quality-session',()=>({visibility:'private',deletedAt:null}));
   assert.equal((await workspace.search(principal,{query:'deployment',facets:['author']})).results.length,0);
   await assert.rejects(workspace.fetch(principal,{id:result.results[0].id}),{status:404});
-  await restoreSessionPassages(withTestState({...args,steps}));await realm.refresh(principal);
+  await restoreSessionPassages({...args,steps});await realm.refresh(principal);
   const restored=await realm.collection('session').search(peer,{size:100,track_total_hits:true});
   assert.equal(restored.hits.total.value,legacy.length+1);assert.ok(restored.hits.hits.every(h=>h._source.private));
   assert.ok(store.data.has(key));

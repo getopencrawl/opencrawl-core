@@ -1,6 +1,4 @@
-import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
-import {createApplicationState} from '../dist/src/state/application.mjs';
-import {createPostgresEventIdentities} from '../dist/src/sessions/postgres-identities.mjs';
+import {boardStateFixture} from './fixtures/board-state.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -17,20 +15,18 @@ import {createControls} from '../dist/src/sessions/controls.mjs';
 import {singleOrganizationSessionSource} from '../dist/src/selfhost/indexing.mjs';
 import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
 
-test('self-host workspace identity uploads and uses board; cannot mint credentials, forge owners or read private members',{skip:!postgresUrl},async t=>{
+test('self-host workspace identity uploads and uses board; cannot mint credentials, forge owners or read private members',async t=>{
  const dir=await mkdtemp(join(tmpdir(),'replicas-selfhost-')),store=createLocalSessionStore(dir),prefix='sessions/selfhost/v1';
- const database=await applicationDatabaseFixture(t),state=await createApplicationState({database}),eventIdentities=createPostgresEventIdentities({connectionString:postgresUrl,namespace:database.namespace});
- t.after(async()=>{await eventIdentities.close();await rm(dir,{recursive:true,force:true});});
  const organizationId='org_local',org='11111111-1111-4111-8111-111111111111',env='22222222-2222-4222-8222-222222222222',workspace='33333333-3333-4333-8333-333333333333';
- let app,identity;const server=createServer((req,res)=>app(req,res));
- t.after(async()=>{server.closeAllConnections();if(server.listening)await new Promise(resolve=>server.close(resolve));await identity?.close();});
- await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ let app;const server=createServer((req,res)=>app(req,res));await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  const url='http://localhost:'+server.address().port;
- identity=await createLocalIdentity({url,secret:'x'.repeat(40),database,organizationId});await identity.ready();
+ const {database,state:boardState}=await boardStateFixture(t);
+ const identity=await createLocalIdentity({url,secret:'x'.repeat(40),database,organizationId});await identity.ready();
+ t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
  const {publicKey,privateKey}=await generateKeyPair('RS256');let bindings=[{organizationId:org,environmentId:env,tenantId:organizationId}];
  const workloads=createReplicasWorkloads({audience:url,key:async()=>publicKey,bindings:()=>bindings});
  const settings={url,authOrigin:url+'/api/auth',clientId:'opencrawl-cli',organizationId,setupToken:'setup',search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:organizationId}};
- app=selfhostApplication({settings,state,eventIdentities,store,prefix,identity,workloadIdentity:workloads,readAsset:async()=>''});
+ app=selfhostApplication({settings,store,boardState,prefix,identity,workloadIdentity:workloads,readAsset:async()=>''});
  const token=await new SignJWT({organization_id:org,environment_id:env,workspace_id:workspace}).setProtectedHeader({alg:'RS256'}).setIssuer(REPLICAS_ISSUER).setAudience(url).setSubject(`org:${org}:env:${env}:workspace:${workspace}`).setIssuedAt().setExpirationTime('15m').sign(privateKey);
  const request=(path,body)=>fetch(url+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+token,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
  const me=await request('/api/cli/me');assert.equal(me.status,200);assert.equal((await me.json()).data.credential,'workspace-identity');
@@ -44,15 +40,15 @@ test('self-host workspace identity uploads and uses board; cannot mint credentia
  assert.equal((await request('/api/console/bootstrap')).status,401);
  const registered=await request('/api/board/register',{session:'fixture',name:'claude-code:workload',task:'test scoped admission',harness:'claude-code'});assert.equal(registered.status,200);
  assert.equal((await request('/api/board/fetch',{workspace:'org_other',id:'message:1'})).status,403);
- const source=singleOrganizationSessionSource(settings,store,prefix,state,eventIdentities),resolved=await source.resolve({sourceId:source.sourceId}),documents=[];
+ const source=singleOrganizationSessionSource(settings,store,prefix),resolved=await source.resolve({sourceId:source.sourceId}),documents=[];
  const worker=createSessionPipeline({...resolved,search:{identity:'workload-fixture',ensureIndex:async()=>{},putDocuments:async rows=>documents.push(...rows)}});
  for(const key of (await worker.listPage()).keys)await worker.processObject({key});
  assert.equal(documents.length,1);assert.equal(documents[0].document.text,'workspace fixture');assert.equal(documents[0].document.userId,principal.userId);
  assert.equal(documents[0].document.tenantId,organizationId);
  for(const owner of [{...principal,tenantId:'org_other'},{...principal,userId:'workload_replicas_forged'}])await assert.rejects(resolved.resolvePrincipal({batch:{owner}}),/scope denied/);
- const ingest=createSessionIngest({state,eventIdentities,store,prefix}),human={tenantId:organizationId,userId:'human'};
+ const ingest=createSessionIngest({store,prefix}),human={tenantId:organizationId,userId:'human'};
  const humanReceipt=await ingest.putBatch(human,{...batch,owner:human});
- await createControls({state}).update(human,'sessions','claude-code','same-session',()=>({visibility:'private',deletedAt:null}));
+ await createControls({store,prefix}).update(human,'sessions','claude-code','same-session',()=>({visibility:'private',deletedAt:null}));
  assert.equal(await ingest.getBatch({...principal,captureAccess:undefined},{...humanReceipt,harness:'claude-code',installationId:'fixture',sessionId:'same-session',userId:'human'}),null);
  assert.equal(await ingest.getBatch({tenantId:'org_other',userId:principal.userId},{...receipt,harness:'claude-code',installationId:'fixture',sessionId:'same-session'}),null);
  bindings=[];assert.equal((await request('/api/cli/me')).status,403);assert.equal((await request('/api/sessions/batches',batch)).status,403);

@@ -2,8 +2,6 @@ import {Pool, type PoolClient, type PoolConfig} from 'pg';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import type {ApplicationSourceIdentity} from './settings.mjs';
-import {readApplicationAdmission,verifyOnlineAdmissionSchemaIn} from './application-admission.mjs';
-export {readApplicationAdmission} from './application-admission.mjs';
 
 /** One operator-owned application database. Temporal keeps its own database. */
 export interface ApplicationDatabase {
@@ -138,16 +136,10 @@ export function createApplicationDatabase({namespace,sourceIdentity,onlineTarget
         // The schema advisory lock serializes this one-time offline upgrade.
         await ensureByteOrderIndex(client,'opencrawl_application_migration_sources','opencrawl_application_sources_byte_order',['namespace','source_key']);
         const result = await client.query('SELECT version FROM opencrawl_application_schema WHERE singleton');
-        if(result.rows[0]?.version===2)await verifyOnlineAdmissionSchemaIn(client);
-        else if (result.rows[0]?.version !== 1) throw new Error('Unsupported application database schema; use the supported upgrade');
+        if (result.rows[0]?.version !== 1) throw new Error('Unsupported application database schema; use the supported upgrade');
       }).catch(error => {preparing = undefined; throw error;});
       await preparing;
     },
     async close() {if (closed) return; closed = true; await Promise.all([pool.end(), identityPool.end()]);},
   };
-}
-
-/** Preparing schemas does not authorize runtime reads of a half-imported store. */
-export async function requireApplicationStateReady(database: ApplicationDatabase): Promise<void> {
-  await readApplicationAdmission(database);
 }

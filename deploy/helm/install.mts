@@ -149,12 +149,8 @@ async function install(c:Values,stateDir:string,through='application'){
   if(c.temporal.tls.serverName)tlsEnv.TEMPORAL_TLS_SERVER_NAME=c.temporal.tls.serverName;
   const endpoint=c.objectStorage.mode==='bundled'?`http://${c.release}-infra-s3:8333`:c.objectStorage.endpoint;
   const app=merge({image:c.image,storageClass:c.storageClass,postgresql:{enabled:false},opensearch:{enabled:false},objectStorage:{enabled:false},temporal:{enabled:false},runtime:{enabled:true,existingSecret:runtimeSecret,extraEnv,extraVolumes,extraVolumeMounts,env:{OPENCRAWL_URL:c.url,OPENCRAWL_APP_STATE_NAMESPACE:organization,OPENCRAWL_LANDING_S3_BUCKET:c.objectStorage.bucket,OPENCRAWL_LANDING_S3_REGION:c.objectStorage.region,OPENCRAWL_LANDING_S3_ENDPOINT:endpoint,OPENCRAWL_LANDING_S3_PATH:binding.prefix,OPENCRAWL_AIRBYTE_ENABLED:String(c.airbyte.mode!=='disabled'),OPENCRAWL_AIRBYTE_S3_ENDPOINT:c.objectStorage.airbyteEndpoint||endpoint,OPENCRAWL_AIRBYTE_APP_URL:c.airbyte.appUrl||`http://${applicationName(c)}.${c.namespace}.svc.cluster.local:${c.application.service?.port||8092}`,AIRBYTE_URL:airbyteUrl||'',AIRBYTE_WORKSPACE_ID:workspaceId||'',AIRBYTE_GITHUB_REPOSITORY:c.githubConnector.repository,AIRBYTE_GITHUB_TAG:c.githubConnector.tag,OPENCRAWL_OPENSEARCH_INDEX:binding.index,OPENCRAWL_OPENSEARCH_URL:c.opensearch.mode==='bundled'?`http://${c.release}-infra-opensearch:9200`:c.opensearch.url,TEMPORAL_ADDRESS:c.temporal.mode==='bundled'?`${c.release}-infra-temporal:7233`:c.temporal.address,TEMPORAL_NAMESPACE:c.temporal.namespace,...tlsEnv}}},c.application);
-  const applicationTimeout=Math.max(900,Number(app.runtime.activationTimeoutSeconds||900))+60;
-  progress('application');helm(['upgrade','--install',c.release,chart,'-n',c.namespace,'-f',values('application.json',app),'--wait','--timeout',`${applicationTimeout}s`]);
-  const appName=applicationName(c);
-  const {connectorCatchup}=JSON.parse(kube(['logs','job/'+appName+'-activate']));
-  if(connectorCatchup?.completed!==true)fail('ACTIVATION_INCOMPLETE','Connector activation did not return a completion receipt');
-  const receipt={...plan(c),status:'installed',organization,workspaceId,connectorCatchup,installedAt:new Date().toISOString()};values('receipt.json',receipt);console.log(JSON.stringify(receipt));
+  progress('application');helm(['upgrade','--install',c.release,chart,'-n',c.namespace,'-f',values('application.json',app),'--wait','--timeout','960s']);
+  const receipt={...plan(c),status:'installed',organization,workspaceId,installedAt:new Date().toISOString()};values('receipt.json',receipt);console.log(JSON.stringify(receipt));
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const {values}=parseArgs({options:{config:{type:'string'},apply:{type:'boolean'},'state-dir':{type:'string'},through:{type:'string',default:'application'}},strict:true});

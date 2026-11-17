@@ -5,7 +5,7 @@ import type {NativeConnectionOptions} from '@temporalio/worker';
 import type {SessionPipelineOptions} from '../indexer.mjs';
 import type {SourceCheckpoint, SourcePage} from '../../connectors/workflow.mjs';
 export interface SessionTaskInput {sourceId: string; key?: string; cursor?: string | null; paginationFailure?: string; paginationProgress?: SourceCheckpoint; failed?: number}
-export type SessionResolver = (input: SessionTaskInput) => Promise<SessionPipelineOptions & {onlineHandoff?:OnlineIndexingHandoffReader}>;
+export type SessionResolver = (input: SessionTaskInput) => Promise<SessionPipelineOptions>;
 import {serviceError} from '../types.mjs';
 import {Worker,NativeConnection,bundleWorkflowCode} from '@temporalio/worker';
 import {Context,heartbeat} from '@temporalio/activity';
@@ -15,8 +15,6 @@ import {writeFile} from 'node:fs/promises';
 import {createSessionPipeline} from '../indexer.mjs';
 import {SourcePaginationError,assertSourcePaginationInput,assertSourcePaginationPage} from '../../connectors/workflow.mjs';
 import {sessionCatchupMarker,sessionIndexingGeneration} from './handoff.mjs';
-import {digest} from '../event-identity.mjs';
-import {validateOnlineIndexingHandoff,onlineIndexingHandoffHash,type OnlineIndexingHandoffReader} from '../../state/online-indexing-handoff.mjs';
 export async function buildSessionWorkflows(path: string) {
   const {code}=await bundleWorkflowCode({workflowsPath:fileURLToPath(new URL('./workflows.cjs',import.meta.url))});
   await writeFile(path,code);
@@ -30,7 +28,7 @@ export function sessionActivities({resolve}: {resolve: SessionResolver}) {
       const resolved=await resolve(input);
       const pipeline=createSessionPipeline({...resolved,checkActive:async()=>{
         const current=await resolve(input);
-        if(current.state.namespace!==resolved.state.namespace||current.prefix!==resolved.prefix||current.store.bucket!==resolved.store.bucket||current.search.identity!==resolved.search.identity||JSON.stringify(current.principal)!==JSON.stringify(resolved.principal))throw Object.assign(new Error('Session binding changed'),{permanent:true});
+        if(current.prefix!==resolved.prefix||current.store.bucket!==resolved.store.bucket||current.search.identity!==resolved.search.identity||JSON.stringify(current.principal)!==JSON.stringify(resolved.principal))throw Object.assign(new Error('Session binding changed'),{permanent:true});
         if(Context.current().cancellationSignal.aborted)throw new Error('Session indexing cancelled');
       }});
       const result=action==='listPage' ? await pipeline.listPage(input) : await pipeline.processObject(input as SessionTaskInput & {key: string});
@@ -51,20 +49,9 @@ export function sessionActivities({resolve}: {resolve: SessionResolver}) {
       try {
         heartbeat();
         const resolved=await resolve(input);
-        const jobId=resolved.jobId||'sessions-v1',legacy=sessionIndexingGeneration(resolved.search.identity,jobId);
-        const handoff=resolved.onlineHandoff?validateOnlineIndexingHandoff(await resolved.onlineHandoff.read(),resolved.state.namespace):undefined;
-        const currentGeneration=handoff?sessionIndexingGeneration(resolved.search.identity,jobId,handoff):legacy;
-        // A running prior generation may finish only its own old marker. It
-        // cannot provide completion for this epoch's distinct generation.
-        const prior=handoff?[legacy,digest(JSON.stringify([resolved.search.identity,jobId]))]:[];
-        if(input.generation!==currentGeneration&&!prior.includes(input.generation))throw Object.assign(new Error('Session generation changed'),{permanent:true});
-        if(handoff){
-          const current=await resolve(input);
-          if(current.state.namespace!==resolved.state.namespace||current.prefix!==resolved.prefix||current.store.bucket!==resolved.store.bucket||current.search.identity!==resolved.search.identity||JSON.stringify(current.principal)!==JSON.stringify(resolved.principal)||(current.jobId||'sessions-v1')!==jobId||!current.onlineHandoff||onlineIndexingHandoffHash(validateOnlineIndexingHandoff(await current.onlineHandoff.read(),current.state.namespace))!==onlineIndexingHandoffHash(handoff))
-            throw Object.assign(new Error('Session online handoff changed'),{permanent:true});
-        }
+        if(input.generation!==sessionIndexingGeneration(resolved.search.identity,resolved.jobId||'sessions-v1'))throw Object.assign(new Error('Session generation changed'),{permanent:true});
         const {markerKey,marker}=sessionCatchupMarker({...input,prefix:resolved.prefix,taskQueue:Context.current().info.taskQueue});
-        await resolved.state.indexingReceipts.put(markerKey,marker);
+        await resolved.store.put(markerKey,Buffer.from(JSON.stringify(marker)),'application/json');
       } catch(caught) {
         const error=serviceError(caught);
         if(error.permanent)throw ApplicationFailure.nonRetryable('Session catch-up binding denied','InvalidSessionInput');

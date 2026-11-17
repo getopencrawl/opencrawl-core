@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -42,11 +41,11 @@ const batch={
 };
 
 test('Antigravity is a first-class session harness with fail-closed scope and owner controls',async()=>{
- assert.deepEqual([...SESSION_HARNESSES],['claude-code','codex','cursor','grok-bot','antigravity','devin']);
+ assert.deepEqual([...SESSION_HARNESSES],['claude-code','codex','cursor','grok-bot','antigravity']);
  assert.equal(isSessionHarness('antigravity'),true);
  // agy is a CLI convenience alias only; wire and storage contracts require canonical antigravity.
  for(const value of ['agy','ANTIGRAVITY','gemini-cli','',null,undefined,['antigravity']])assert.equal(isSessionHarness(value),false);
- const store=memorySessionStore(),ingest=createSessionIngest(withTestState({store}));
+ const store=memorySessionStore(),ingest=createSessionIngest({store});
  const att=await ingest.putAttachment(principal,attachmentHash,attachmentBytes,{harness:'antigravity',installationId:batch.installationId,sessionId:batch.sessionId});
  assert.equal(att.sha256,attachmentHash);
  await assert.rejects(ingest.putAttachment(principal,attachmentHash,attachmentBytes,{harness:'agy',installationId:batch.installationId,sessionId:batch.sessionId}),/attachments require a session identity/);
@@ -63,11 +62,11 @@ test('Antigravity is a first-class session harness with fail-closed scope and ow
  const key=`capture-v1/tenants/${digest(principal.tenantId)}/users/${digest(principal.userId)}/antigravity/${digest(batch.installationId)}/${digest(batch.sessionId)}/${receipt.batchId}.json.gz`;
  assert.equal(sourceBatchIdentity('capture-v1',key).harness,'antigravity');
  assert.equal(sourceBatchIdentity('capture-v1',key.replace('/antigravity/','/agy/')),null);
- const controls=createControls(withTestState({store,prefix:'capture-v1'}));
+ const controls=createControls({store,prefix:'capture-v1'});
  await controls.update(principal,'sessions','antigravity',batch.sessionId,()=>({visibility:'private',deletedAt:null}));
  assert.equal((await controls.read(principal,'sessions','antigravity',batch.sessionId)).visibility,'private');
  assert.equal((await controls.read({...principal,tenantId:'tenant2'},'sessions','antigravity',batch.sessionId)),null);
- await assert.rejects(controls.read(principal,'sessions','agy',batch.sessionId),{status:400});
+ await assert.rejects(controls.read(principal,'sessions','agy',batch.sessionId),/Invalid control identity/);
  // Deleted sessions discard both batches and attachments.
  await controls.update(principal,'sessions','antigravity',batch.sessionId,current=>({visibility:current.visibility,deletedAt:new Date().toISOString()}));
  assert.equal((await ingest.putBatch(principal,{...batch,events:[{...events[0],id:'later'}]})).discarded,'session_deleted');
@@ -76,7 +75,7 @@ test('Antigravity is a first-class session harness with fail-closed scope and ow
 
 test('single-tenant HTTP capture accepts Antigravity without hosted credentials and fails closed on scope mismatch',async t=>{
  const store=memorySessionStore(),token='self-hosted-admin-token-01234567890123456789';
- const server=createServer((req,res)=>standaloneCapture(withTestState({token,principal,store}))(req,res));
+ const server=createServer((req,res)=>standaloneCapture({token,principal,store})(req,res));
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  t.after(()=>new Promise(r=>server.close(r)));
  const base='http://127.0.0.1:'+server.address().port;
@@ -140,11 +139,11 @@ test('Antigravity onboarding requires a live message rather than imported histor
   [{...batch,captureMode:'history'},null],
   [batch,'antigravity'],
  ]) {
-  const status=createOnboardingStatus(withTestState({store:memorySessionStore()}));
+  const status=createOnboardingStatus({store:memorySessionStore()});
   await status.session(principal,input);
   assert.equal((await status.read(principal)).session?.harness??null,expected);
  }
- const history=createOnboardingStatus(withTestState({store:memorySessionStore()}));
+ const history=createOnboardingStatus({store:memorySessionStore()});
  await history.session(principal,{...batch,captureMode:'history'});
  assert.equal((await history.read(principal)).history.harness,'antigravity');
 });

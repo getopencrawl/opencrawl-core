@@ -1,5 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
-import {and, field, integer, keys, object, QueryCompiler, readHits, unsupported} from './sqlite-query.mjs';
+import {and, field, integer, keys, literal, object, QueryCompiler, readHits, unsupported} from './sqlite-query.mjs';
 import type {Sql} from './sqlite-query.mjs';
 import {termCount} from './aggregations.mjs';
 

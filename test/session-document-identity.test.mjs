@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -82,13 +81,13 @@ test('migration keeps one copy per captured record under its installation-indepe
   const before=new Map(e.docs);
 
   const backups=[];
-  const dry=await migrateSessionDocumentIds(withTestState({realm,store,prefix,principal:owner,dryRun:true,pageSize:2,backup:async step=>backups.push(step)}));
+  const dry=await migrateSessionDocumentIds({realm,store,prefix,principal:owner,dryRun:true,pageSize:2,backup:async step=>backups.push(step)});
   assert.deepEqual(new Map(e.docs),before);assert.equal(backups.length,0);
   assert.deepEqual({scanned:dry.scanned,rewritten:dry.rewritten,duplicatesRemoved:dry.duplicatesRemoved,distinctContent:dry.distinctContent,complete:dry.complete},
     {scanned:8,rewritten:6,duplicatesRemoved:2,distinctContent:1,complete:true});
 
   const pages=[];
-  const report=await migrateSessionDocumentIds(withTestState({realm,store,prefix,principal:owner,pageSize:2,backup:async step=>backups.push(step),onPage:async r=>pages.push(r)}));
+  const report=await migrateSessionDocumentIds({realm,store,prefix,principal:owner,pageSize:2,backup:async step=>backups.push(step),onPage:async r=>pages.push(r)});
   assert.equal(report.rewritten,6);assert.equal(report.duplicatesRemoved,2);
   const docs=e.flat();
   assert.equal(docs.length,6);
@@ -107,13 +106,13 @@ test('migration keeps one copy per captured record under its installation-indepe
   // Resume points never fall inside a group of copies.
   assert.ok(pages.length>1&&pages.at(-1).complete);
 
-  const again=await migrateSessionDocumentIds(withTestState({realm,store,prefix,principal:owner,pageSize:3,backup:async()=>assert.fail('nothing left to change')}));
+  const again=await migrateSessionDocumentIds({realm,store,prefix,principal:owner,pageSize:3,backup:async()=>assert.fail('nothing left to change')});
   assert.deepEqual({rewritten:again.rewritten,duplicatesRemoved:again.duplicatesRemoved,unchanged:again.unchanged},{rewritten:0,duplicatesRemoved:0,unchanged:6});
 
   // Restoring the recorded steps returns the exact pre-migration documents.
-  assert.deepEqual(await restoreSessionDocumentIds(withTestState({realm,store,prefix,principal:owner,steps:backups})),{restored:8,removed:6});
+  assert.deepEqual(await restoreSessionDocumentIds({realm,store,prefix,principal:owner,steps:backups}),{restored:8,removed:6});
   assert.deepEqual(new Map(e.docs),before);
-  await assert.rejects(restoreSessionDocumentIds(withTestState({realm,store,prefix,principal:{tenantId:'org_b'},steps:backups})),{status:403});
+  await assert.rejects(restoreSessionDocumentIds({realm,store,prefix,principal:{tenantId:'org_b'},steps:backups}),{status:403});
 });
 
 test('copies from older indexers merge despite reordered lines and different chunking',async()=>{
@@ -125,7 +124,7 @@ test('copies from older indexers merge despite reordered lines and different chu
   // Same position but a genuinely different record stays.
   const c=doc(owner,{...fields,installationId:'install-b',eventId:'wire1:n',text:'0.163.0\n/Users/me/x\ncodex_work_desktop\nvscode'});
   for(const d of [a0,a1,b,c])e.put(legacyId(owner,d),d);
-  const report=await migrateSessionDocumentIds(withTestState({realm,store,prefix,principal:owner,pageSize:1,backup:async()=>{}}));
+  const report=await migrateSessionDocumentIds({realm,store,prefix,principal:owner,pageSize:1,backup:async()=>{}});
   assert.deepEqual({rewritten:report.rewritten,duplicatesRemoved:report.duplicatesRemoved,distinctContent:report.distinctContent},{rewritten:2,duplicatesRemoved:2,distinctContent:1});
   assert.deepEqual(e.flat().map(d=>d.eventId).sort(),['wire1:m','wire1:n']);
 });
@@ -136,7 +135,7 @@ test('an interrupted migration converges on the next run',async()=>{
   e.put(legacyId(owner,a),a);e.put(legacyId(owner,b),b);
   // Simulate a crash after the surviving copy was written but before removals.
   e.put(sessionDocumentId({scope:sessionScope(owner),harness:'codex',sessionId:'s1',eventId:'wire1:1',chunk:0}),b);
-  const report=await migrateSessionDocumentIds(withTestState({realm,store,prefix,principal:owner,backup:async()=>{}}));
+  const report=await migrateSessionDocumentIds({realm,store,prefix,principal:owner,backup:async()=>{}});
   assert.equal(report.rewritten,0);assert.equal(report.duplicatesRemoved,2);
   assert.deepEqual(e.flat().map(d=>d.eventId),['wire1:1']);
 });
@@ -144,7 +143,7 @@ test('an interrupted migration converges on the next run',async()=>{
 test('migration and deletes are confined to the realm tenant',async()=>{
   const {realm,store,prefix}=setup();
   for(const principal of [{tenantId:'org_b'},{tenantId:'org_a',captureAccess:'write'}])
-    await assert.rejects(migrateSessionDocumentIds(withTestState({realm,store,prefix,principal,backup:async()=>{}})),{status:403});
+    await assert.rejects(migrateSessionDocumentIds({realm,store,prefix,principal,backup:async()=>{}}),{status:403});
   await assert.rejects(realm.collection('session').delete({tenantId:'org_b'},['x']),{status:403});
   await assert.rejects(realm.collection('session').delete({tenantId:'org_a'},['bad id/../x']),{status:400});
 });

@@ -8,10 +8,12 @@ export function singleOrganizationStorage(organizationId:string,store:ReturnType
   if(!/^org_[A-Za-z0-9]+$/.test(organizationId))throw new Error('Configure one organization');
   const deny=()=>{throw Object.assign(new Error('Storage scope denied'),{status:403});};
   const check=(bucket:string,key:string)=>{
-    if(bucket!==store.bucket||!key||key.split('/').some(p=>p==='.'||p==='..')||!key.startsWith('raw/v1/source='))deny();
+    if(bucket!==store.bucket||!key||key.split('/').some(p=>p==='.'||p==='..')||!(key.startsWith('raw/v1/source=')||/^_opencrawl\/counts\/connection=int_[a-f0-9]{26}\.json\.gz$/.test(key)))deny();
   };
   return {
     async get(id){return id===organizationId?store.bucket:null;},
+    async read(bucket,key){check(bucket,key);const body=await store.get(key,{maxBytes:32*1024*1024});if(!body)throw Object.assign(new Error('Object not found'),{status:404});return body;},
+    async write(bucket,key,body){check(bucket,key);await store.put(key,body);},
     async stream(bucket,key){check(bucket,key);return Readable.from(store.read(key));},
     async list(bucket,prefix){check(bucket,prefix);return (await store.list(prefix)).keys.map(key=>({key,size:0}));},
     async deletePrefix(bucket,prefix){

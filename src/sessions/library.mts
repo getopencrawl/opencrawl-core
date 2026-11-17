@@ -1,4 +1,3 @@
-import type {ApplicationState} from '../state/types.mjs';
 import type {Principal, ObjectStore, SessionEvent, JsonValue, EventIdentityStore} from './types.mjs';
 import {isSessionHarness, SESSION_HARNESSES, parseJson} from './types.mjs';
 import {gunzipSync} from 'node:zlib';
@@ -136,9 +135,9 @@ function decodeCursor(cursor: unknown): JsonValue[] | undefined {
 /** Team members read every session that is not private to another member.
  * Only the owner changes visibility or deletes; deletion removes raw capture,
  * search documents and future uploads of the same session. */
-export interface SessionLibraryOptions extends RealmOptions {state:ApplicationState;store: ObjectStore; prefix: string; eventIdentities?: EventIdentityStore; purgeCopies?: (principal: Principal, key: SessionKey, store: ObjectStore) => Promise<number>; scheduleDeletion?: (key: string) => Promise<unknown>}
-export function createSessionLibrary({state,store, prefix, eventIdentities, purgeCopies, scheduleDeletion, ...options}: SessionLibraryOptions) {
-  const resolve = createRealmResolver(options), ingest = createSessionIngest({state,store, prefix}), controls = createControls({state});
+export interface SessionLibraryOptions extends RealmOptions {store: ObjectStore; prefix: string; eventIdentities?: EventIdentityStore; purgeCopies?: (principal: Principal, key: SessionKey, store: ObjectStore) => Promise<number>; scheduleDeletion?: (key: string) => Promise<unknown>}
+export function createSessionLibrary({store, prefix, eventIdentities, purgeCopies, scheduleDeletion, ...options}: SessionLibraryOptions) {
+  const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
   const reader = (principal: Principal) => {
     sessionScope(principal);
     if (principal.captureAccess !== undefined) fail(403, 'Session read access required');
@@ -239,7 +238,7 @@ export function createSessionLibrary({state,store, prefix, eventIdentities, purg
     }, () => {if (rendered.get(sourceKey) === entry) rendered.delete(sourceKey);});
     return entry.value;
   }
-  const deletionRequests = createSessionDeletionRequests({state,prefix});
+  const deletionRequests = createSessionDeletionRequests({store, prefix});
   // Provider status codes are not user authorization failures. Keep storage
   // details out of the request response; durable accepted intents still recover.
   async function deletionStorage<T>(operation: () => Promise<T>): Promise<T> {
@@ -260,7 +259,7 @@ export function createSessionLibrary({state,store, prefix, eventIdentities, purg
   async function prepareDeletion(principal: Principal, input: {harness?: unknown; sessionId?: unknown}) {
     const key = checkKey({userId: principal.userId, harness: input.harness as string, sessionId: input.sessionId as string});
     const control = await revokeDeletion(principal, key);
-    const fence = await sessionWriteBarrier(state, prefix, principal, key.harness, key.sessionId).close();
+    const fence = await sessionWriteBarrier(store, prefix, principal, key.harness, key.sessionId).close();
     const documents = (await apply(principal, key, control)).changed;
     if (fence.pending) throw Object.assign(new Error('Session deletion is waiting for unfinished writes'), {type: 'SessionDeletionWritesPending'});
     if (!store.purgePrefix) throw new Error('Permanent version deletion is unavailable');
@@ -270,7 +269,7 @@ export function createSessionLibrary({state,store, prefix, eventIdentities, purg
     reader(principal);
     const control = await controls.read(principal, 'sessions', key.harness, key.sessionId);
     if (!control?.deletedAt) fail(409, 'Session deletion has not been requested');
-    const fence = await sessionWriteBarrier(state, prefix, principal, key.harness, key.sessionId).close();
+    const fence = await sessionWriteBarrier(store, prefix, principal, key.harness, key.sessionId).close();
     if (fence.pending) throw Object.assign(new Error('Session deletion is waiting for unfinished writes'), {type: 'SessionDeletionWritesPending'});
     return control;
   }

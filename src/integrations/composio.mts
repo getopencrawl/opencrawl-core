@@ -13,7 +13,7 @@ interface Options {
   driveAudience?:DriveAudience;
 }
 interface AuthConfig {id:string;name:string;toolkit?:{slug:string};status:string;is_composio_managed:boolean;auth_scheme?:string}
-interface Account {alias?:string;auth_config?:{id:string};id:string;user_id?:string;status:string;is_disabled?:boolean;toolkit?:{slug:string}}
+interface Account {id:string;user_id?:string;status:string;is_disabled?:boolean;toolkit?:{slug:string}}
 const fail=(status:number,message='Connector authorization unavailable'):never=>{throw Object.assign(new Error(message),{status});};
 const equal=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
 const BOUND=['connecting','provisioning','active','error'];
@@ -48,36 +48,16 @@ export function createComposioOAuth({apiKey,organizationId,proxyUrl,proxyKey,reg
   /** The live connection this capability was issued for; disconnecting ends it. */
   const bound=async(connectedAccountId:string,userId:string)=>(await registry.list(organizationId,userId.slice(scope.length)))
     .find(record=>record.connectedAccountId===connectedAccountId&&record.environment==='selfhost'&&BOUND.includes(record.status))||fail(403);
-  async function list<T>(path:string):Promise<T[]>{
-    const output:T[]=[],seen=new Set<string>();let cursor:string|undefined;
-    for(let page=0;page<100;page++){
-      const result=await request<{items?:T[];next_cursor?:string|null}>('GET',path+(cursor?'&cursor='+encodeURIComponent(cursor):''));
-      if(!Array.isArray(result.items)||result.items.length>100)fail(503);
-      output.push(...result.items!);if(!result.next_cursor)return output;
-      if(typeof result.next_cursor!=='string'||seen.has(result.next_cursor))fail(503);seen.add(result.next_cursor);cursor=result.next_cursor;
-    }
-    return fail(503);
-  }
-  async function findConfig({toolkit,name,scheme}:Parameters<ConnectorOAuth['authConfig']>[0]){
-    const items=await list<AuthConfig>(`/auth_configs?toolkit_slug=${encodeURIComponent(toolkit)}&limit=100`);
-    const matches=items.filter(c=>c.name===name&&c.toolkit?.slug===toolkit&&c.status==='ENABLED'&&(scheme?!c.is_composio_managed&&c.auth_scheme===scheme:c.is_composio_managed));
-    if(matches.length>1)fail(503);return matches[0]?.id??null;
-  }
   const oauth:ConnectorOAuth={
     async authConfig({toolkit,name,scheme,credentials={}}){
-      const existing=await findConfig({toolkit,name,scheme});if(existing)return existing;
+      const {items=[]}=await request<{items?:AuthConfig[]}>('GET',`/auth_configs?toolkit_slug=${encodeURIComponent(toolkit)}&limit=100`);
+      const existing=items.find(c=>c.name===name&&c.toolkit?.slug===toolkit&&c.status==='ENABLED'&&(scheme?!c.is_composio_managed&&c.auth_scheme===scheme:c.is_composio_managed));
+      if(existing)return existing.id;
       const created=await request<{auth_config:{id:string}}>('POST','/auth_configs',{toolkit:{slug:toolkit},auth_config:scheme
         ?{type:'use_custom_auth',authScheme:scheme,name,credentials}:{type:'use_composio_managed_auth',name,credentials}});
       return created.auth_config.id;
     },
-    recoverAuthConfig:findConfig,
-    link:({authConfigId,userId,callbackUrl,requestId})=>request('POST','/connected_accounts/link',{auth_config_id:authConfigId,user_id:owner(userId),callback_url:callbackUrl,...(requestId?{alias:'opencrawl_'+requestId}:{})}),
-    async recoverLink({authConfigId,userId,requestId}){
-      owner(userId);if(!requestId||!/^[a-f0-9]{32}$/.test(requestId))return null;
-      const items=await list<Account>('/connected_accounts?'+new URLSearchParams({user_ids:userId,auth_config_ids:authConfigId,limit:'100'}));
-      const matches=items.filter(item=>item.alias==='opencrawl_'+requestId&&item.user_id===userId&&item.auth_config?.id===authConfigId);
-      if(matches.length>1)fail(503);return matches[0]?{connected_account_id:matches[0].id}:null;
-    },
+    link:({authConfigId,userId,callbackUrl})=>request('POST','/connected_accounts/link',{auth_config_id:authConfigId,user_id:owner(userId),callback_url:callbackUrl}),
     account:async id=>{
       const account=await request<Account>('GET',`/connected_accounts/${encodeURIComponent(id)}`);
       owner(account.user_id||'');return account;

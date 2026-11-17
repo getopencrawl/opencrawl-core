@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -7,7 +6,7 @@ import {createCaptureHandler,createSessionIngest,digest,MAX_BATCH_BYTES} from '.
 import {memorySessionStore} from './session-store-fixture.mjs';
 
 test('compressed capture preserves receipts and scope with bounded expansion',async t=>{
- const owner={tenantId:'compression-team',userId:'author'},store=memorySessionStore(),ingest=createSessionIngest(withTestState({store}));
+ const owner={tenantId:'compression-team',userId:'author'},store=memorySessionStore(),ingest=createSessionIngest({store});
  let rejectAfterBody=false,authCalls=0;
  const handler=createCaptureHandler({ingest,authenticate:async req=>{
   authCalls++;return req.headers.authorization==='Bearer fixture'&&!(rejectAfterBody&&authCalls%2===0)?owner:null;

@@ -2,7 +2,6 @@ import {useEffect, useRef, useState} from 'react';
 import {Button} from '../design/components.tsx';
 import {Icon} from '../design/icons.tsx';
 import {useNavigate} from '../router.tsx';
-import {setupCommands} from './setup-commands.ts';
 
 /** Resolves false when the browser has no clipboard or refuses the write. */
 export async function copyText(text: string, clipboard: Pick<Clipboard, 'writeText'> | undefined = globalThis.navigator?.clipboard): Promise<boolean> {
@@ -13,9 +12,8 @@ export async function copyText(text: string, clipboard: Pick<Clipboard, 'writeTe
   } catch {return false;}
 }
 
-/** A terminal install command; clipboard refusal opens its visible manual path. */
-export function CopyInstallCommandButton({mcpUrl, manualPath = '/setup'}: {mcpUrl: string; manualPath?: string}) {
-  const text=setupCommands(mcpUrl,typeof navigator!=='undefined'&&/Windows/.test(navigator.userAgent)).start,label='Copy install command';
+/** The setup prompt from a page header. Agent setup keeps the manual copy path for browsers that cannot copy. */
+export function CopyPromptButton({text, label = 'Copy onboarding prompt', manualPath = '/settings'}: {text: string; label?: string; manualPath?: string}) {
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);

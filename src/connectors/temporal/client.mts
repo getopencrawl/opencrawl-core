@@ -1,6 +1,6 @@
 import type {ConnectionOptions} from '@temporalio/client';
 import type {ConnectionReference} from './types.mjs';
-import {Client, Connection, ScheduleAlreadyRunning, ScheduleOverlapPolicy, WorkflowExecutionAlreadyStartedError, WorkflowIdReusePolicy} from '@temporalio/client';
+import {Client, Connection, ScheduleAlreadyRunning, ScheduleOverlapPolicy} from '@temporalio/client';
 import {digest} from '../scope.mjs';
 
 /** connectionOptions are operator-supplied SDK options (TLS/credentials). The
@@ -27,17 +27,4 @@ export async function ensureConnectorSchedule(client: Client, {reference, taskQu
     if (existing.action.workflowType !== 'indexConnectorV1' || existing.action.taskQueue !== taskQueue || JSON.stringify(existing.action.args) !== JSON.stringify(args)) throw new Error('Existing connector schedule does not match its authorized binding');
   }
   return scheduleId;
-}
-
-/** Manual submitter uses the same reference-only workflow as scheduled indexing. */
-export async function startConnectorIndexing(client:Client,{reference,taskQueue,generation='v1',requestId}:{reference:ConnectionReference;taskQueue:string;generation?:string;requestId?:string}):Promise<{workflowId:string;submitted:boolean}> {
-  if(!reference||![reference.tenantId,reference.connectionId].every(value=>typeof value==='string'&&/^[A-Za-z0-9_:-]{1,200}$/.test(value))||!taskQueue||!/^v[1-9][0-9]*$/.test(generation))throw new Error('Invalid connector indexing request');
-  if(requestId!==undefined&&!/^[a-f0-9]{64}$/.test(requestId))throw new Error('Invalid durable connector request');
-  const workflowId=requestId?'connector-catchup-v1-'+requestId:'connector-manual-v1-'+digest([reference.tenantId,reference.connectionId,generation]);
-  // Copy only trusted reference fields; configuration and secrets remain worker-side.
-  if(reference.userId!==undefined&&!/^[A-Za-z0-9_:-]{1,200}$/.test(reference.userId))throw new Error('Invalid connector owner reference');
-  const input={tenantId:reference.tenantId,connectionId:reference.connectionId,...(reference.userId?{userId:reference.userId}:{}),generation};
-  try {await client.workflow.start('indexConnectorV1',{workflowId,taskQueue,args:[input],workflowIdReusePolicy:requestId?WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY:WorkflowIdReusePolicy.ALLOW_DUPLICATE});}
-  catch(error){if(!(error instanceof WorkflowExecutionAlreadyStartedError))throw error;return {workflowId,submitted:false};}
-  return {workflowId,submitted:true};
 }

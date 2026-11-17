@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gunzipSync} from 'node:zlib';
@@ -9,7 +8,7 @@ import {memorySessionStore} from './session-store-fixture.mjs';
 const principal={tenantId:'selected-team',userId:'owner'},prefix='selected-capture';
 async function fixture(){
   const store=memorySessionStore();
-  await createSessionIngest(withTestState({store,prefix})).putBatch(principal,{schemaVersion:1,owner:principal,harness:'codex',origin:'cli',installationId:'machine',sessionId:'session',attachments:[],events:[
+  await createSessionIngest({store,prefix}).putBatch(principal,{schemaVersion:1,owner:principal,harness:'codex',origin:'cli',installationId:'machine',sessionId:'session',attachments:[],events:[
     {id:'first',kind:'message',data:{role:'user',content:'An initial question.'}},
     {id:'long',kind:'message',data:{role:'assistant',content:('Evidence with preserved paragraph boundaries.\n\n').repeat(200)}},
     {id:'tool',kind:'tool_result',data:{call_id:'tool-call',output:'Verification passed.'}},

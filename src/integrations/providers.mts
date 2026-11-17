@@ -1,4 +1,4 @@
-import type {ProviderCatalog, ConnectorDefinition} from './types.mjs';
+import type {Proxy, ProviderCatalog, ConnectorDefinition} from './types.mjs';
 // Gmail is hidden for now; see the commented-out provider below.
 // const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const DRIVE = 'https://www.googleapis.com/drive/v3';

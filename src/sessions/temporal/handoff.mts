@@ -1,13 +1,9 @@
 import {digest} from '../event-identity.mjs';
-import {onlineIndexingHandoffHash,type OnlineIndexingHandoff} from '../../state/online-indexing-handoff.mjs';
-export type {OnlineIndexingHandoff,OnlineIndexingHandoffReader} from '../../state/online-indexing-handoff.mjs';
 /** The producer and worker derive the same generation from their trusted index
  * and receipt configuration. No tenant-selected target enters a Temporal task. */
-export function sessionIndexingGeneration(searchIdentity:string,jobId:string,onlineHandoff?:OnlineIndexingHandoff) {
+export function sessionIndexingGeneration(searchIdentity:string,jobId:string) {
   if(!searchIdentity||!jobId)throw new Error('Explicit indexing generation required');
-  // A fresh full scan is required when retiring legacy pending/retry/cursor
-  // objects. Old cutover markers remain evidence, never proof for this generation.
-  return digest(JSON.stringify(onlineHandoff===undefined?[searchIdentity,jobId,'postgres-app-state-v1']:[searchIdentity,jobId,'online-app-state-v1',onlineIndexingHandoffHash(onlineHandoff)]));
+  return digest(JSON.stringify([searchIdentity,jobId]));
 }
 export interface SessionIndexingBinding {sourceId:string;taskQueue:string;generation:string}
 export function indexingBinding(input:SessionIndexingBinding) {

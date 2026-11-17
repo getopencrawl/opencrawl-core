@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
@@ -191,13 +190,13 @@ for (const engine of ['sqlite', 'opensearch']) test(`${engine}: permission-beari
   const index=realmIndex('test','drive-'+randomUUID());
   const search=createConnectorSearch({endpoint:engine==='sqlite'?endpoint:process.env.OPENCRAWL_TEST_OPENSEARCH_URL,index,tenantId});await search.ensureIndex();
   if(engine==='opensearch')t.after(()=>fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL+'/'+index,{method:'DELETE'}));
-  const pipeline=createConnectorPipeline(withTestState({binding,store,search}));
+  const pipeline=createConnectorPipeline({binding,store,search});
   const put=async(data,name,observed=at)=>{const key=binding.rawPrefix+`stream=workspace_documents/date=2026-11-12/sync=test/${name}.jsonl.gz`;objects.set(key,gzipSync(JSON.stringify({_airbyte_extracted_at:observed,_airbyte_data:data})+'\n'));const result=await pipeline.processObject({key});await search.refresh();return {key,result};};
   const processed=await put(first,'first');assert.ok(processed.result.records>1);
   assert.equal((await pipeline.processObject({key:processed.key})).status,'already-indexed');
   const record={tenantId,userId:'user_owner',integrationId:connectionId,provider:'googledrive',scope:'team',status:'active',environment:'selfhost',workspace:tenantId,s3Prefix:binding.rawPrefix.slice(0,-1)};
   const registry={get:async()=>record,listTenant:async()=>[record]};
-  const resolver=createConnectorResolver(withTestState({environment:'selfhost',generation:'v1',registry,storage:async()=>store,search:()=>search,driveAccess:()=>createDriveAccess(source.options)}));
+  const resolver=createConnectorResolver({environment:'selfhost',generation:'v1',registry,storage:async()=>store,search:()=>search,driveAccess:()=>createDriveAccess(source.options)});
   const principal={tenantId,userId:'user_member'},workspace=createWorkspaceSearch({connectors:resolver});
   const result=await workspace.search(principal,{query:'distinctive tailword',source:'connectors'});
   assert.equal(result.results.length,1);const found=result.results[0];
@@ -213,10 +212,10 @@ for (const engine of ['sqlite', 'opensearch']) test(`${engine}: permission-beari
   const pending={...first,text:pendingText,version:'13',modifiedTime:new Date(at+500).toISOString(),access:{...first.access,checkedAt:at+500,contentHash:digest(pendingText)}};
   const pendingKey=binding.rawPrefix+'stream=workspace_documents/date=2026-11-12/sync=test/interrupted.jsonl.gz';
   objects.set(pendingKey,gzipSync(JSON.stringify({_airbyte_extracted_at:at+500,_airbyte_data:pending})+'\n'));
-  const interrupted=createConnectorPipeline(withTestState({binding,store,search:{...search,putDocuments:async(p,b,documents)=>{
+  const interrupted=createConnectorPipeline({binding,store,search:{...search,putDocuments:async(p,b,documents)=>{
     if(documents.some(item=>!item.document.parentId))throw new Error('simulated parent write failure');
     return search.putDocuments(p,b,documents);
-  }}}));
+  }}});
   await assert.rejects(interrupted.processObject({key:pendingKey}),/parent write failure/);await search.refresh();
   assert.equal((await resolver.search(principal,{query:'unpublishedword'})).hits.length,0);
   assert.equal((await resolver.search(principal,{query:'tailword'})).hits.length,1);

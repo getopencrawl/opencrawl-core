@@ -31,10 +31,11 @@ the [PostgreSQL application-state upgrade](app-state-migration.md). The runtime
 does not read `identity.sqlite` or fall back to it; `OPENCRAWL_IDENTITY_PATH` is
 only an input to the legacy import tooling. See the [release notes](releases/0.5.0.md).
 
-The application database is included in Compose
-and cold backups. Mutable state, including board history, privacy controls and
-connector progress, lives in PostgreSQL. Object storage retains immutable source
-captures and attachments. Temporal runs durable capture and connector workflows.
+The application database is included in Compose and cold backups. Auth, registry,
+board and capture event identities use PostgreSQL. Other product state retains the
+production object-store contracts. Temporal runs session and connector indexing.
+The retired whole-application migration is not required; installations that used
+it must follow the recovery guidance linked above.
 
 ## Configure your installation
 

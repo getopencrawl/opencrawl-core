@@ -4,7 +4,6 @@ import {fetchRequestHandler} from '@trpc/server/adapters/fetch';
 import {z} from 'zod';
 import {libraryOperations} from '../sessions/library-http.mjs';
 import type {Bootstrap, TeamReport, SourceCard} from './types.mjs';
-import type {SetupStatus} from '../setup/types.mjs';
 import type {UsageReport, DiagnosticSearch, BoardReport, OnboardingStatus, OnboardingSource, InvitationList, LibraryContract} from './types.mjs';
 
 export interface WebContext {usageSections?: boolean; invoke<T>(path: string, method?: 'GET' | 'POST', input?: object): Promise<T>}
@@ -17,7 +16,6 @@ export const empty = z.object({}).strict().optional();
 const provider = z.string().regex(/^[a-z0-9-]{1,40}$/);
 const email = z.object({email: z.string().max(254)}).strict();
 export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamReport = TeamReport>() {return {
-  setup:t.router({status:p.input(empty).query(async({ctx})=>(await ctx.invoke<{schemaVersion:1;data:SetupStatus}>('/api/setup')).data)}),
   console: {
     bootstrap: p.input(empty).query(({ctx}) => ctx.invoke<B>('/api/console/bootstrap')),
     usage: p.input(empty).query(async ({ctx}) => {

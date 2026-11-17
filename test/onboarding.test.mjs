@@ -1,4 +1,3 @@
-import {stateFor,withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
@@ -16,35 +15,35 @@ import {memorySessionStore} from './session-store-fixture.mjs';
 const principal = {tenantId:'tenant-a', userId:'user-a'};
 const batch = {schemaVersion:1,owner:principal,installationId:'install',sessionId:'session',harness:'codex',origin:'cli',events:[{id:'event',kind:'message'}],attachments:[]};
 
-test('receipt handlers preserve scope and only acknowledge durable accepted sessions', async t => {
+test('receipts persist, fail closed by scope, and only follow durable accepted sessions', async t => {
   const directory = await mkdtemp(join(tmpdir(),'opencrawl-onboarding-'));
   t.after(()=>rm(directory,{recursive:true,force:true}));
   const store=createLocalSessionStore(directory);
-  const status=createOnboardingStatus({state:stateFor(store)});
+  const status=createOnboardingStatus({store});
   assert.deepEqual(await status.read(principal), {cli:null,mcp:null,mcpTest:null,session:null,history:null,completed:null});
   await assert.rejects(status.read({userId:'user-a'}), /Authentication/);
   await status.cli(principal);
   await status.mcp(principal, {name:'codex'});
   assert.equal((await status.read(principal)).mcpTest,null);
   await status.mcpTest(principal);
-  assert.ok((await createOnboardingStatus({state:stateFor(store)}).read(principal)).mcpTest.observedAt);
-  const ingest=createSessionIngest(withTestState({store,onStored:status.session}));
+  assert.ok((await createOnboardingStatus({store:createLocalSessionStore(directory)}).read(principal)).mcpTest.observedAt);
+  const ingest=createSessionIngest({store,onStored:status.session});
   await assert.rejects(ingest.putBatch({...principal,userId:'user-b'},batch), /owner/);
   assert.equal((await status.read(principal)).session,null);
   await ingest.putBatch(principal,batch);
-  assert.equal((await createOnboardingStatus({state:stateFor(store)}).read(principal)).session.harness,'codex');
+  assert.equal((await createOnboardingStatus({store:createLocalSessionStore(directory)}).read(principal)).session.harness,'codex');
   for (const other of [{...principal,tenantId:'tenant-b'},{...principal,userId:'user-b'}]) {
     assert.deepEqual(await status.read(other),{cli:null,mcp:null,mcpTest:null,session:null,history:null,completed:null});
   }
   let receipts=0;
   const broken={...memorySessionStore(),put:async()=>{throw new Error('storage down');}};
-  await assert.rejects(createSessionIngest(withTestState({store:broken,onStored:()=>receipts++})).putBatch(principal,batch),/write outcome is uncertain/);
+  await assert.rejects(createSessionIngest({store:broken,onStored:()=>receipts++}).putBatch(principal,batch),/write outcome is uncertain/);
   assert.equal(receipts,0);
 });
 
 test('real MCP clients record independent authenticated identities in legacy and modern exchanges', async t => {
   const objects=new Map(), store={put:async(k,v)=>objects.set(k,v),get:async k=>objects.get(k)};
-  const status=createOnboardingStatus({state:stateFor(store)});
+  const status=createOnboardingStatus({store});
   let handler;
   const server=createServer((req,res)=>handler(req,res));
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -79,7 +78,7 @@ test('real MCP clients record independent authenticated identities in legacy and
 test('single-tenant receiver exposes authenticated onboarding without hosted services', async t => {
   const store=memorySessionStore();
   const token='x'.repeat(32);
-  const server=createServer(standaloneCapture(withTestState({token,principal,store})));
+  const server=createServer(standaloneCapture({token,principal,store}));
   await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
   const base='http://127.0.0.1:'+server.address().port;
   const headers={authorization:'Bearer '+token};
@@ -107,7 +106,7 @@ test('test_connection fails rather than acknowledging an unrecorded verification
 
 
 test('history receipts cannot complete recording and completion is durable and scoped', async () => {
- const store=memorySessionStore(), status=createOnboardingStatus({state:stateFor(store)});
+ const store=memorySessionStore(), status=createOnboardingStatus({store});
  await assert.rejects(status.complete(principal), {status:409});
  await status.cli(principal); await status.mcpTest(principal);
  await status.session(principal,{...batch,events:[{id:'hook',kind:'hook'}]});
@@ -118,7 +117,7 @@ test('history receipts cannot complete recording and completion is durable and s
  await assert.rejects(status.complete(principal),{status:409});
  await status.session(principal,{...batch,captureMode:'live'});
  const completion=await status.complete(principal);
- assert.deepEqual(await createOnboardingStatus({state:stateFor(store)}).complete(principal),completion);
+ assert.deepEqual(await createOnboardingStatus({store}).complete(principal),completion);
  assert.equal((await status.read({...principal,userId:'another'})).completed,null);
  await assert.rejects(status.complete({...principal,captureAccess:'write'}),{status:403});
 });
@@ -126,7 +125,7 @@ test('history receipts cannot complete recording and completion is durable and s
 test('approved shared installation opens the team without fabricating personal receipts', async () => {
   const store=memorySessionStore(),shared={id:'replicas-env',name:'Replicas',tenantId:'tenant-a',userId:'workload-a'};
   let approved=[shared];
-  const status=createOnboardingStatus({state:stateFor(store),sharedInstallations:()=>approved});
+  const status=createOnboardingStatus({store,sharedInstallations:()=>approved});
   const member={tenantId:'tenant-a',userId:'member'},other={tenantId:'tenant-b',userId:'member'};
   await status.cli(shared);await status.mcpTest(shared);
   await status.session(shared,{harness:'codex',captureMode:'history',events:[{kind:'message'}]});

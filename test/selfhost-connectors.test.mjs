@@ -1,5 +1,4 @@
-import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
-import {createApplicationState} from '../dist/src/state/application.mjs';
+import {applicationDatabaseFixture} from './fixtures/application-database.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -18,16 +17,15 @@ import {connectorProxyHandler} from '../dist/src/integrations/proxy-http.mjs';
 import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 
 async function fixture(t,extra={}){
+  const database=await applicationDatabaseFixture(t);
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-source-catalog-'));
-  const database=await applicationDatabaseFixture(t),state=await createApplicationState({database});
-  const services=selfhostServices({organizationId:'org_team',url:'https://self.example',search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},Object.assign(createLocalSessionStore(join(dir,'objects')),{bucket:'owned'}),
-    {AIRBYTE_WORKSPACE_ID:'00000000-0000-0000-0000-000000000001',AIRBYTE_URL:'http://127.0.0.1:1',AIRBYTE_CLIENT_ID:'test',AIRBYTE_CLIENT_SECRET:'test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test',OPENCRAWL_CONNECTOR_KEY:Buffer.alloc(32,7).toString('base64'),...extra},database,state);
-  await services.ready();
+  const services=selfhostServices({organizationId:'org_team',url:'https://self.example',registryPath:join(dir,'registry.sqlite'),search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},Object.assign(createLocalSessionStore(join(dir,'objects')),{bucket:'owned'}),database,
+    {AIRBYTE_WORKSPACE_ID:'00000000-0000-0000-0000-000000000001',AIRBYTE_URL:'http://127.0.0.1:1',AIRBYTE_CLIENT_ID:'test',AIRBYTE_CLIENT_SECRET:'test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test',OPENCRAWL_CONNECTOR_KEY:Buffer.alloc(32,7).toString('base64'),...extra});
   t.after(async()=>{services.close();await rm(dir,{recursive:true,force:true});});return services;
 }
 const principal={tenantId:'org_team',userId:'user_a'};
 
-test('Airbyte opt-out needs no connector credentials and exposes setup guidance without outbound work',{skip:!postgresUrl},async t=>{
+test('Airbyte opt-out needs no connector credentials and exposes setup guidance without outbound work',async t=>{
   const service=await fixture(t,{OPENCRAWL_AIRBYTE_ENABLED:'false',AIRBYTE_WORKSPACE_ID:undefined,AIRBYTE_URL:undefined,AIRBYTE_CLIENT_ID:undefined,AIRBYTE_CLIENT_SECRET:undefined,
     OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:undefined,OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:undefined,OPENCRAWL_CONNECTOR_KEY:undefined,
     GITHUB_APP:'invalid unused configuration',SLACK_CLIENT_ID:'incomplete-unused-configuration'});
@@ -44,10 +42,10 @@ test('Airbyte opt-out needs no connector credentials and exposes setup guidance 
 test('Airbyte is enabled by default and invalid opt-out values fail closed',()=>{
   assert.equal(airbyteEnabled({}),true);assert.equal(airbyteEnabled({OPENCRAWL_AIRBYTE_ENABLED:'true'}),true);
   for(const value of ['','0','False','disabled'])assert.throws(()=>airbyteEnabled({OPENCRAWL_AIRBYTE_ENABLED:value}),/must be true or false/);
-  assert.throws(()=>selfhostServices({}, {}, {}),/application database/);
+  assert.throws(()=>selfhostServices({}, {}, {}, {}),/AIRBYTE_WORKSPACE_ID is required/);
 });
 
-test('fresh OSS exposes every supported connector and explains missing setup without starting a connection',{skip:!postgresUrl},async t=>{
+test('fresh OSS exposes every supported connector and explains missing setup without starting a connection',async t=>{
   const service=await fixture(t);
   const cards=await service.integrations.list(principal);
   assert.deepEqual(cards.map(c=>c.provider).sort(),['circleback','github','googledrive','granola','notion','slack']);
@@ -57,7 +55,7 @@ test('fresh OSS exposes every supported connector and explains missing setup wit
   assert.equal((await service.registry.listTenant(principal.tenantId)).length,0);
 });
 
-test('operator broker enables OAuth connectors without exposing its key in the catalog',{skip:!postgresUrl},async t=>{
+test('operator broker enables OAuth connectors without exposing its key in the catalog',async t=>{
   const service=await fixture(t,{COMPOSIO_API_KEY:'operator-private-key'});
   const cards=await service.integrations.list(principal);
   for(const id of ['notion','circleback','slack'])assert.equal(cards.find(c=>c.provider===id).state,'disconnected');
@@ -96,8 +94,7 @@ const brokered=['googledrive','notion','circleback','slack'];
 /** The operator broker with a real registry and a recorded stand-in for the Composio API. */
 async function broker(t,respond=()=>({status:200,data:{ok:true},headers:{}})){
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-broker-'));
-  const database=await applicationDatabaseFixture(t);
-  const registry=createSingleOrganizationRegistry({database,organizationId:'org_team'});
+  const registry=createSingleOrganizationRegistry({database:await applicationDatabaseFixture(t),organizationId:'org_team'});
   t.after(async()=>{registry.close();await rm(dir,{recursive:true,force:true});});
   const calls=[];
   const oauth=createComposioOAuth({apiKey:OPERATOR_KEY,organizationId:'org_team',proxyUrl:APP_FOR_AIRBYTE,proxyKey:Buffer.alloc(32,7),registry,driveAudience:async()=>['a@example.com'],fetch:async(url,options)=>{
@@ -124,7 +121,7 @@ function conforms(id,config,manifest){
     if(declared.minimum!==undefined)assert.ok(value>=declared.minimum&&value<=declared.maximum,`${id} ${key} is out of range`);
   }
 }
-test('every brokered connector receives the configuration its manifest requires, without the operator key',{skip:!postgresUrl},async t=>{
+test('every brokered connector receives the configuration its manifest requires, without the operator key',async t=>{
   const f=await broker(t);
   for(const id of brokered){
     const record=await f.connect(id,'ca_'+id),config=await f.oauth.sourceConfiguration(record,f.providers[id]);
@@ -140,7 +137,7 @@ test('every brokered connector receives the configuration its manifest requires,
   assert.equal(f.calls.length,0);
 });
 
-test('the operator’s own Slack app receives the configuration its registered connector requires',{skip:!postgresUrl},async t=>{
+test('the operator’s own Slack app receives the configuration its registered connector requires',async t=>{
   // What self-host registers in Airbyte once a Slack app is configured, and the provider that builds the source settings.
   const {providers}=await fixture(t,{SLACK_CLIENT_ID:'client-id',SLACK_CLIENT_SECRET:'client-secret'});
   assert.equal(providers.slack.connector.name,'OpenCrawl Slack (operator OAuth)');
@@ -148,7 +145,7 @@ test('the operator’s own Slack app receives the configuration its registered c
   const record={tenantId:'org_team',userId:'user_a',integrationId:'int_'+'a'.repeat(26),provider:'slack',environment:'selfhost',status:'provisioning',startDate:'2026-01-01T00:00:00Z'};
   let connectedAccountId=null;
   const slack=createSlackOAuth({organizationId:'org_team',url:'https://self.example',proxyUrl:APP_FOR_AIRBYTE,clientId:'client-id',clientSecret:'client-secret',
-    vault:credentialVault({state:await createApplicationState({database:await applicationDatabaseFixture(t)}),key:Buffer.alloc(32,7),prefix:'credentials',organizationId:'org_team'}),registry:{get:async()=>({...record,connectedAccountId})},
+    vault:credentialVault({store:createLocalSessionStore(dir),key:Buffer.alloc(32,7),prefix:'credentials',organizationId:'org_team'}),registry:{get:async()=>({...record,connectedAccountId})},
     fetch:async target=>new URL(target).pathname==='/api/oauth.v2.access'
       ?Response.json({ok:true,authed_user:{token_type:'user',access_token:'access-secret',refresh_token:'refresh-secret',scope:'channels:read,channels:history,search:read,users:read,team:read,emoji:read',expires_in:3600}})
       :Response.json({ok:true,team_id:'T123',team:'Test',user:'Test'})});
@@ -163,7 +160,7 @@ test('the operator’s own Slack app receives the configuration its registered c
   assert.throws(()=>conforms('slack (published)',config,connectorManifest('slack')),/must match/);
 });
 
-test('a brokered source capability reads only its own provider’s listed endpoints while connected',{skip:!postgresUrl},async t=>{
+test('a brokered source capability reads only its own provider’s listed endpoints while connected',async t=>{
   const f=await broker(t,body=>({status:200,data:body.endpoint.endsWith('/drives')?{drives:[]}:body.endpoint.endsWith('/about')?{user:{emailAddress:'a@gmail.com'}}:{files:[]}}));
   const drive=await f.connect('googledrive','ca_drive'),config=await f.oauth.sourceConfiguration(drive,f.providers.googledrive);
   const call=(input,{secret=config.credential_proxy_api_key,id='ca_drive',user=config.user_id}={})=>f.oauth.proxyCredential(id,secret,user,input);
@@ -209,7 +206,7 @@ test('a brokered source capability reads only its own provider’s listed endpoi
   const before=f.calls.length;await assert.rejects(call(files),{status:403});assert.equal(f.calls.length,before);
 });
 
-test('brokered Slack keeps the public-channel policy of the direct adapter',{skip:!postgresUrl},async t=>{
+test('brokered Slack keeps the public-channel policy of the direct adapter',async t=>{
   const f=await broker(t,body=>{
     const method=new URL(body.endpoint).pathname.slice('/api/'.length);
     if(method==='conversations.list')return {status:200,data:{ok:true,channels:[{id:'C_PUBLIC',name:'general',is_private:false},{id:'C_PRIVATE',name:'private',is_private:true}]},headers:{}};
@@ -228,7 +225,7 @@ test('brokered Slack keeps the public-channel policy of the direct adapter',{ski
   assert.ok(f.calls.every(c=>c.body.method==='GET'&&c.body.user_id==='selfhost:org_team:user_a'&&c.body.connected_account_id==='ca_slack'));
 });
 
-test('the connector proxy route carries brokered reads, including a request body, and refuses browsers',{skip:!postgresUrl},async t=>{
+test('the connector proxy route carries brokered reads, including a request body, and refuses browsers',async t=>{
   const f=await broker(t,()=>({status:200,data:{results:[{id:'page_1'}]},headers:{}}));
   const config=await f.oauth.sourceConfiguration(await f.connect('notion','ca_notion'),f.providers.notion);
   const server=createServer(connectorProxyHandler(f.oauth));await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
@@ -254,18 +251,18 @@ async function brokerService(t,accepted='good-project-key'){
   return {url:'http://127.0.0.1:'+server.address().port,seen};
 }
 async function installation(t,env={}){
+  const database=await applicationDatabaseFixture(t);
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-connector-settings-'));
-  const database=await applicationDatabaseFixture(t),state=await createApplicationState({database});
   const store=Object.assign(createLocalSessionStore(join(dir,'objects')),{bucket:'owned'});
-  const open=()=>{const services=selfhostServices({organizationId:'org_team',url:'https://self.example',search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},store,
-    {AIRBYTE_WORKSPACE_ID:'00000000-0000-0000-0000-000000000001',AIRBYTE_URL:'http://127.0.0.1:1',AIRBYTE_CLIENT_ID:'test',AIRBYTE_CLIENT_SECRET:'test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test',OPENCRAWL_CONNECTOR_KEY:Buffer.alloc(32,7).toString('base64'),...env},database,state);
+  const open=()=>{const services=selfhostServices({organizationId:'org_team',url:'https://self.example',registryPath:join(dir,'registry.sqlite'),search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},store,database,
+    {AIRBYTE_WORKSPACE_ID:'00000000-0000-0000-0000-000000000001',AIRBYTE_URL:'http://127.0.0.1:1',AIRBYTE_CLIENT_ID:'test',AIRBYTE_CLIENT_SECRET:'test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test',OPENCRAWL_CONNECTOR_KEY:Buffer.alloc(32,7).toString('base64'),...env});
     t.after(()=>services.close());return services;};
   t.after(()=>rm(dir,{recursive:true,force:true}));
-  return {store,state,open};
+  return {store,open};
 }
 const states=async service=>Object.fromEntries((await service.integrations.list(principal)).map(card=>[card.provider,card.state]));
 
-test('an admin-entered broker key is checked, stored encrypted, and enables its connectors without a restart',{skip:!postgresUrl},async t=>{
+test('an admin-entered broker key is checked, stored encrypted, and enables its connectors without a restart',async t=>{
   const composio=await brokerService(t),f=await installation(t,{COMPOSIO_BASE_URL:composio.url}),service=f.open();
   const before=await service.integrations.list(principal),notion=before.find(card=>card.provider==='notion');
   assert.equal(notion.state,'setup-required');assert.equal(notion.setup.requirement,'Needs a Composio key');
@@ -285,15 +282,14 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
   await service.connectorSettings.save('composio','  good-project-key\n',by);
   assert.deepEqual(composio.seen.at(-1),{method:'GET',url:'/api/v3.1/auth_configs?limit=1',key:'good-project-key'});
   assert.deepEqual(await states(service),{googledrive:'disconnected',slack:'disconnected',granola:'disconnected',circleback:'disconnected',notion:'disconnected',github:'setup-required'});
-  assert.equal(await f.store.get('connector-settings/v1/org_team/settings.enc'),null);
-  const sealed=(await f.state.connectorSecrets.read({kind:'settings',organizationId:'org_team',id:'settings'},'connector-settings/v1/org_team/settings.enc')).data;
+  const sealed=await f.store.get('connector-settings/v1/org_team/settings.enc');
   assert.ok(sealed.length>40);assert.ok(!sealed.includes(Buffer.from('good-project-key')));
   assert.ok(!JSON.stringify(await service.integrations.list(principal)).includes('good-project-key'));
   // The saved key survives a restart and reaches a second process.
   assert.equal((await states(f.open())).notion,'disconnected');
 });
 
-test('a broker key from the server environment cannot be replaced in the product; without a connector key nothing is stored',{skip:!postgresUrl},async t=>{
+test('a broker key from the server environment cannot be replaced in the product; without a connector key nothing is stored',async t=>{
   const composio=await brokerService(t);
   const managed=(await installation(t,{COMPOSIO_BASE_URL:composio.url,COMPOSIO_API_KEY:'good-project-key'})).open();
   assert.equal((await states(managed)).googledrive,'disconnected');
@@ -303,20 +299,4 @@ test('a broker key from the server environment cannot be replaced in the product
   assert.equal(card.state,'setup-required');assert.equal(card.setup.credential,undefined);assert.match(card.setup.body,/COMPOSIO_API_KEY/);
   await assert.rejects(bare.connectorSettings.save('composio','good-project-key',{userId:'user_a'}),{status:409,expose:true});
   assert.equal(composio.seen.length,0);
-});
-
-test('broker reconciliation pages exact aliases and refuses duplicates, cursor loops and foreign scopes without another POST',async()=>{
- const requestId='a'.repeat(32),userId='selfhost:org_team:user_a',input={authConfigId:'config',userId,callbackUrl:'https://self.example/callback',requestId};
- let mode='paged';const calls=[];
- const exact={id:'owned-grant',user_id:userId,alias:'opencrawl_'+requestId,auth_config:{id:'config'}};
- const oauth=createComposioOAuth({apiKey:'private-key',organizationId:'org_team',proxyUrl:'https://self.example',proxyKey:Buffer.alloc(32,7),registry:{list:async()=>[]},fetch:async(target,options)=>{
-  const url=new URL(target);calls.push({url,options});assert.equal(options.method,'GET');assert.equal(url.searchParams.get('user_ids'),userId);assert.equal(url.searchParams.get('auth_config_ids'),'config');
-  if(mode==='loop')return Response.json({items:[],next_cursor:'repeat'});
-  if(mode==='duplicates')return Response.json({items:[exact,exact]});
-  if(mode==='empty')return Response.json({items:[]});
-  return Response.json(url.searchParams.has('cursor')?{items:[exact]}:{items:[{...exact,user_id:'selfhost:org_other:user_a'},{...exact,auth_config:{id:'foreign'}},{...exact,alias:'foreign'}],next_cursor:'page-two'});
- }});
- assert.deepEqual(await oauth.recoverLink(input),{connected_account_id:'owned-grant'});assert.equal(calls.length,2);
- mode='duplicates';await assert.rejects(oauth.recoverLink(input),{status:503});mode='loop';await assert.rejects(oauth.recoverLink(input),{status:503});mode='empty';assert.equal(await oauth.recoverLink(input),null);
- const count=calls.length;await assert.rejects(oauth.recoverLink({...input,userId:'selfhost:org_other:user_a'}),{status:403});assert.equal(calls.length,count);
 });

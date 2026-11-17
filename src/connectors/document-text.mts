@@ -27,7 +27,7 @@ export async function extractDocumentText(bytes: Uint8Array, {mediaType, signal,
       const cleanup = () => {clearTimeout(timer); signal?.removeEventListener('abort', abort);};
       worker.once('message', (message: ExtractionResult & {error?: string}) => {cleanup(); message.error ? reject(new Error(message.error)) : resolve(message);});
       worker.once('error', () => {cleanup(); reject(new Error('Document parser failed'));});
-      worker.once('exit', () => {cleanup(); reject(new Error('Document parser exited without a result'));});
+      worker.once('exit', code => {cleanup(); reject(new Error('Document parser exited without a result'));});
     });
     return {sourceSha256, sourceBytes: bytes.byteLength, extractor: 'document-text-v1', ...result};
   } finally {await worker.terminate();}

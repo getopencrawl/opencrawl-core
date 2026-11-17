@@ -1,4 +1,3 @@
-import {stateFor} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {parseValueReport, valueReportKey, valueReports} from '../dist/src/application/value-report.mjs';
@@ -26,11 +25,11 @@ test('value reports accept schema 4 exactly and ignore anything else', () => {
 
 test('the usage report shows only the signed-in workspace’s own measured value', async () => {
   const store = memorySessionStore();
-  await stateFor(store).valueReports.write('org_a', report);
-  await stateFor(store).valueReports.write('org_b', {...report, work: {...report.work, tasks: 1}});
+  await store.put(valueReportKey(prefix, 'org_a'), JSON.stringify(report));
+  await store.put(valueReportKey(prefix, 'org_b'), JSON.stringify({...report, work: {...report.work, tasks: 1}}));
   assert.notEqual(valueReportKey(prefix, 'org_a'), valueReportKey(prefix, 'org_b'));
   assert.match(valueReportKey(prefix, 'org_a'), /^sessions\/staging\/v1\/value\/tenants\/[a-f0-9]{64}\.json$/);
-  const values = valueReports({state:stateFor(store)});
+  const values = valueReports({store, prefix});
   const directory = {
     organizations: {getOrganization: async id => ({id, name: 'Acme'})},
     userManagement: {listOrganizationMemberships: async () => ({data: []}), getUser: async () => null},
@@ -39,7 +38,7 @@ test('the usage report shows only the signed-in workspace’s own measured value
   assert.equal((await read('org_a')).value?.work.tasks, 368);
   assert.equal((await read('org_b')).value?.work.tasks, 1);
   assert.equal((await read('org_c')).value, null);
-  stateFor(store).valueReports.records.set('org_c', {schema:4});
+  await store.put(valueReportKey(prefix, 'org_c'), '{"schema":4}');
   assert.equal((await read('org_c')).value, null);
   assert.equal((await usageReport({principal: {tenantId: 'org_a', userId: 'user_a'}, directory})).value, null);
 });

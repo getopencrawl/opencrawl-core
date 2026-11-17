@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -9,7 +8,7 @@ import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 test('portable capture durably stores attachments and idempotent account-scoped batches',async t=>{
  const dir=await mkdtemp(join(tmpdir(),'capture-core-'));t.after(()=>rm(dir,{recursive:true,force:true}));
  const principal={tenantId:'tenant1',userId:'owner1',name:'Owner'};
- const ingest=createSessionIngest(withTestState({store:createLocalSessionStore(dir)}));
+ const ingest=createSessionIngest({store:createLocalSessionStore(dir)});
  const attachment=Buffer.from('image fixture'),sha=digest(attachment);
  const batch={schemaVersion:1,owner:principal,installationId:'device',sessionId:'session',harness:'claude-code',origin:'desktop',
    events:[{id:'event',kind:'message',data:{role:'user',content:'fixture'}}],attachments:[{status:'captured',sha256:sha}]};
@@ -19,7 +18,7 @@ test('portable capture durably stores attachments and idempotent account-scoped 
  const receipt=await ingest.putBatch(principal,batch);
  assert.deepEqual(await ingest.putBatch(principal,batch),receipt);
  const ids={...batch,batchId:receipt.batchId};
- const restarted=createSessionIngest(withTestState({store:createLocalSessionStore(dir)}));
+ const restarted=createSessionIngest({store:createLocalSessionStore(dir)});
  assert.equal((await restarted.getBatch(principal,ids)).events[0].data.content,'fixture');
  assert.equal(await restarted.getBatch({...principal,tenantId:'tenant2'},ids),null);
  assert.equal(await restarted.getBatch({...principal,userId:'owner2'},ids),null);
@@ -35,7 +34,7 @@ test('portable capture durably stores attachments and idempotent account-scoped 
 
 test('teammates read an attributed batch; other teams and forged authors fail closed',async t=>{
  const dir=await mkdtemp(join(tmpdir(),'capture-team-'));t.after(()=>rm(dir,{recursive:true,force:true}));
- const ingest=createSessionIngest(withTestState({store:createLocalSessionStore(dir)}));
+ const ingest=createSessionIngest({store:createLocalSessionStore(dir)});
  const author={tenantId:'team-a',userId:'alice',name:'Alice',email:'alice@example.net'};
  const reader={tenantId:'team-a',userId:'bob'};
  const batch={schemaVersion:1,owner:{...author,name:'Spoofed'},installationId:'device',sessionId:'session',harness:'codex',origin:'cli',

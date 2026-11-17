@@ -4,12 +4,10 @@ import {sessionStorage} from './storage.mjs';
 
 try {
  const args=process.argv.slice(2);
- if(args.length)throw new Error('Legacy audits are read-only; use identity-migration.mjs to import PostgreSQL state');
+ if(args.length>1||args.some(arg=>arg!=='--initialize'))throw new Error('Invalid audit arguments');
  const {store,prefix}=sessionStorage();
- const tenantId=process.env.OPENCRAWL_ORGANIZATION_ID||process.env.OPENCRAWL_TENANT_ID,userId=process.env.OPENCRAWL_USER_ID;
- if(!tenantId||!userId)throw new Error('An explicit organization and user are required');
- const principal={tenantId,userId};
- const result=await auditSessionEventSource({store,prefix,principal});
+ const principal={tenantId:process.env.OPENCRAWL_TENANT_ID||'self-hosted',userId:process.env.OPENCRAWL_USER_ID||'owner'};
+ const result=await auditSessionEventSource({store,prefix,principal,initialize:args.includes('--initialize')});
  process.stdout.write(JSON.stringify(result)+'\n');
  if(result.conflicts)process.exitCode=1;
 } catch {

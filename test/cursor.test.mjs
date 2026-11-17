@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createSessionIngest,digest} from '../dist/src/sessions/ingest.mjs';
@@ -10,7 +9,7 @@ import {memorySessionStore} from './session-store-fixture.mjs';
 const owner={tenantId:'selfhost-team',userId:'owner'},peer={...owner,userId:'peer'},outside={tenantId:'other-team',userId:'owner'};
 const batch={schemaVersion:1,owner,installationId:'mac',sessionId:'native-cursor-chat',harness:'cursor',origin:'unknown',captureMode:'live',events:[{id:'prompt',kind:'message',sequence:1,data:{role:'user',content:[{type:'text',text:'Cursor harbor acceptance'}]}}],attachments:[]};
 test('self-host Cursor ingestion, namespace, controls and projection preserve trusted ownership',async()=>{
- const store=memorySessionStore(),ingest=createSessionIngest(withTestState({store})),controls=createControls(withTestState({store,prefix:'capture-v1'}));
+ const store=memorySessionStore(),ingest=createSessionIngest({store}),controls=createControls({store,prefix:'capture-v1'});
  const receipt=await ingest.putBatch(owner,batch);assert.equal(receipt.stored,true);
  assert.equal((await ingest.getBatch(owner,{...batch,batchId:receipt.batchId})).harness,'cursor');
  assert.equal(await ingest.getBatch(outside,{...batch,batchId:receipt.batchId}),null);

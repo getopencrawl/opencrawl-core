@@ -1,3 +1,5 @@
+> Historical integration: the reconciled server runtime does not include the unfinished Devin account-binding endpoints. Existing CLI plugin tooling remains available, but this server feature is deferred.
+
 # Devin Cloud adapter status
 
 This is an integration under development, not a supported installation or a

@@ -1,4 +1,3 @@
-import type {ApplicationState} from '../state/types.mjs';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 
 export interface Principal {
@@ -8,8 +7,7 @@ export interface Principal {
   email?: string | null;
   captureAccess?: string;
   /** Authenticated installation ownership; message authors remain independent. */
-  owner?: {kind: 'shared'; provider: 'replicas'; organizationId: string; environmentId: string; workspaceId: string}
-    | {kind: 'shared'; provider: 'devin'; organizationId: string; sessionId: string};
+  owner?: {kind: 'shared'; provider: 'replicas'; organizationId: string; environmentId: string; workspaceId: string};
 }
 export type TenantPrincipal = Pick<Principal, 'tenantId' | 'captureAccess'>;
 export type Authenticate = (request: IncomingMessage) => Promise<Principal | null>;
@@ -40,7 +38,7 @@ export interface ObjectStore extends ConditionalStore {
 }
 /** Capture clients with their own session namespace. Memory snapshots are
  * narrower: only harnesses that keep native memory files (see memories/). */
-export const SESSION_HARNESSES = ['claude-code', 'codex', 'cursor', 'grok-bot', 'antigravity', 'devin'] as const;
+export const SESSION_HARNESSES = ['claude-code', 'codex', 'cursor', 'grok-bot', 'antigravity'] as const;
 export type SessionHarness = typeof SESSION_HARNESSES[number];
 export const isSessionHarness = (value: unknown): value is SessionHarness => (SESSION_HARNESSES as readonly unknown[]).includes(value);
 export interface Attachment {type?: string; status?: string; sha256?: string; size?: number; mimeType?: string; path?: string; objectKey?: string | null}
@@ -65,7 +63,7 @@ export interface EventIdentityStore {
 }
 export interface EventReservationOptions extends SessionIdentity {store: ObjectStore; events: SessionEvent[]; eventIdentities?: EventIdentityStore; initialize?: boolean}
 export interface SourceOptions {
-  state:ApplicationState;store: ObjectStore; prefix: string; principal?: Principal;
+  store: ObjectStore; prefix: string; principal?: Principal;
   resolvePrincipal?: (input: {key: string; batch: SessionBatch}) => Promise<Principal>;
   initialize?: boolean;
   eventIdentities?: EventIdentityStore;

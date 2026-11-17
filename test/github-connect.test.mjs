@@ -23,18 +23,6 @@ function fixture({installations = [installation(42)], repositories = [{id: 7, fu
       const next = {...current, ...structuredClone(fields)}; records.set(key(record), next); return structuredClone(next);
     },
   };
-  registry.requestLifecycle=async(record,operation,_secret,requestedBy)=>{
-    assert.equal(requestedBy,owner.userId);
-    const commandId='command_1234567890123456';
-    await registry.update(record,{status:'provisioning',lifecycleCommandId:commandId,lifecycleOperation:operation},{whenStatus:['connecting']});
-    return {environment:'selfhost',tenantId:record.tenantId,userId:record.userId,integrationId:record.integrationId,commandId};
-  };
-  registry.abandonWithLifecycle=async(record,requestedBy)=>{
-    assert.equal(requestedBy,owner.userId);
-    const commandId='abandon_1234567890123456';
-    await registry.update(record,{status:'abandoned',lifecycleCommandId:commandId,lifecycleOperation:'disconnect'},{whenStatus:['connecting']});
-    return {environment:'selfhost',tenantId:record.tenantId,userId:record.userId,integrationId:record.integrationId,commandId};
-  };
   const github = {
     authorizeUrl: (state, redirect_uri) => 'https://github.com/login/oauth/authorize?' + new URLSearchParams({client_id:'app-client', state, redirect_uri}),
     installUrl: state => 'https://github.com/apps/owned-app/installations/new?' + new URLSearchParams({state}),
@@ -46,7 +34,7 @@ function fixture({installations = [installation(42)], repositories = [{id: 7, fu
     repositories: async () => assert.fail('Do not import repositories invisible to this user'),
   };
   const provider = {id:'github',auth:'github-app',scope:'team',owner:r=>`workspace=${r.workspace}`,account:(i,r)=>({label:i.account.login,workspace:String(i.account.id)})};
-  const integrations = createIntegrations({environment:'selfhost',appUrl:'https://self.example',registry,lifecycle:{schedule:async()=>{}},github,providers:{github:provider},oauth:{},airbyte:{},legacyBucket:'owned',buckets:{get:async()=>'owned'},workspaceId:async()=>'airbyte',destination:{validate:()=>{},prepare:()=>new Promise(()=>{})}});
+  const integrations = createIntegrations({environment:'selfhost',appUrl:'https://self.example',registry,github,providers:{github:provider},oauth:{},airbyte:{},legacyBucket:'owned',buckets:{get:async()=>'owned'},workspaceId:async()=>'airbyte',destination:{validate:()=>{},prepare:()=>new Promise(()=>{})}});
   return {integrations,registry,github,calls,records,
     start: async () => {const {redirectUrl}=await integrations.connect(owner,'github');return new URL(redirectUrl);},
     record: () => structuredClone([...records.values()][0]),
@@ -71,10 +59,10 @@ test('existing GitHub installation reconnects through OAuth and persists only us
 });
 
 test('disconnect winning the callback claim cannot be reported as a completed connection',async()=>{
-  const f=fixture(), url=await f.start(), request=f.registry.requestLifecycle;
-  f.registry.requestLifecycle=async(record,...args)=>{
-    await f.registry.update(record,{status:'disconnected'},{whenStatus:['connecting']});
-    return request(record,...args);
+  const f=fixture(), url=await f.start(), update=f.registry.update;
+  f.registry.update=async(record,fields,conditions)=>{
+    if(fields.status==='provisioning')await update(record,{status:'disconnected'},{whenStatus:['connecting']});
+    return update(record,fields,conditions);
   };
   assert.deepEqual(await f.integrations.complete(owner,'github',new URLSearchParams({state:url.searchParams.get('state'),code:'grant'})),{ok:false,reason:'done'});
   assert.equal(f.record().status,'disconnected');

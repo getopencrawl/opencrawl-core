@@ -1,6 +1,6 @@
 import type {Principal, Authenticate, HttpHandler} from '../sessions/types.mjs';
 import {parseJson} from '../sessions/types.mjs';
-import type {SearchAdapter} from './types.mjs';
+import type {SearchAdapter, Passage} from './types.mjs';
 import type {WorkspaceHit} from './presentation.mjs';
 interface WorkspaceOptions {sessions?: SearchAdapter & {memories?: SearchAdapter}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
 interface SearchCursor {fingerprint?: string; expires: number; offset: number}
@@ -70,10 +70,6 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       // Preserve the original dedupe=false inspection contract for older clients.
       if(!parsed.data.dedupe&&(input as {groupBy?:unknown}).groupBy===undefined)parsed.data.groupBy='none';
       const {cursor, ...query} = parsed.data;
-      // Devin's signed native session ID is supplied by the verified runtime
-      // principal. It is available even when the Cloud client has no search hook.
-      if(!query.currentSession&&principal.owner?.kind==='shared'&&principal.owner.provider==='devin')
-        query.currentSession=currentSessionSchema.parse({harness:'devin',sessionId:principal.owner.sessionId});
       const fingerprint = hash([principal.tenantId, principal.userId, query]);
       const page = cursor ? decode(cursor, fingerprint) : {offset: 0, expires: now() + TTL};
       const selected = query.source === 'all' ? ['sessions', 'connectors',...(memories?['memories']:[])] : [query.source];

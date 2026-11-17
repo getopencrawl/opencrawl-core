@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
@@ -37,7 +36,7 @@ for (const backend of ['sqlite', 'opensearch']) {
     const endpoint=backend==='sqlite'?pathToFileURL(join(directory,'search.sqlite')).href.replace('file:','sqlite:'):process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
     const tenantId='tokens-'+randomUUID(), alice={tenantId,userId:'alice'}, bob={tenantId,userId:'bob'};
     const store=memorySessionStore(), prefix='sessions/tokens', options={endpoint,tenantId,environment:'test',store,prefix};
-    const realm=createRealm(options), collection=realm.collection('session'), library=createSessionLibrary(withTestState(options)), ingest=createSessionIngest(withTestState({store,prefix}));
+    const realm=createRealm(options), collection=realm.collection('session'), library=createSessionLibrary(options), ingest=createSessionIngest({store,prefix});
     t.after(async()=>{if(backend==='opensearch')await fetch(endpoint+'/'+realm.index,{method:'DELETE'});await rm(directory,{recursive:true,force:true});});
     if(backend==='opensearch') {
       const legacy=structuredClone(realmMapping);delete legacy.properties.session.properties.capturedTokens;
@@ -71,7 +70,7 @@ for (const backend of ['sqlite', 'opensearch']) {
     await library.setVisibility(alice,{harness:'codex',sessionId:'old',visibility:'private'});
     assert.ok((await library.list(bob)).sessions.every(s=>s.sessionId!=='old'));
     const before=(await collection.mget(alice,old.docs.map(d=>d.id))).docs;
-    const migrate=extra=>migrateSessionTokens(withTestState({realm,principal:{tenantId},store,prefix,pageSize:2,maxEvents:100,...extra}));
+    const migrate=extra=>migrateSessionTokens({realm,principal:{tenantId},store,prefix,pageSize:2,maxEvents:100,...extra});
     assert.equal((await migrate({})).events,3);
     assert.equal((await library.list(alice,{scope:'mine'})).sessions.find(s=>s.sessionId==='old').capturedTokens,null,'dry run does not write');
     await assert.rejects(migrate({principal:{tenantId:'other'}}),{status:403});
@@ -86,7 +85,7 @@ for (const backend of ['sqlite', 'opensearch']) {
     const after=(await collection.mget(alice,old.docs.map(d=>d.id))).docs;
     for(let i=0;i<before.length;i++) {delete after[i]._source.capturedTokens;assert.deepEqual(after[i]._source,before[i]._source,'backfill preserves text, passage layout and privacy');}
     const tombstone=await capture(alice,'deleted','device',true);
-    await createControls(withTestState({store,prefix})).update(alice,'sessions','codex','deleted',()=>({visibility:'team',deletedAt:new Date().toISOString()}));
+    await createControls({store,prefix}).update(alice,'sessions','codex','deleted',()=>({visibility:'team',deletedAt:new Date().toISOString()}));
     await realm.refresh(alice);
     assert.equal((await migrate({dryRun:false})).skippedDeleted,3);
     assert.ok((await collection.mget(alice,tombstone.docs.map(d=>d.id))).docs.every(d=>d._source.capturedTokens===undefined));

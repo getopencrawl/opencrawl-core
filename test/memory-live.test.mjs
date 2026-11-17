@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,9 +23,9 @@ test('real memory rebuild: two harnesses, immutable S3, additive mapping, atomic
   const old=structuredClone(realmMapping);delete old.properties.memory;
   await transport('',{settings:{number_of_shards:1,number_of_replicas:0},mappings:{...old,_meta:{schema:1,tenantId:owner.tenantId}}},'PUT');
   await transport('/_doc/session:retained?refresh=true',{schema:1,tenantId:owner.tenantId,corpus:'session',id:'retained',text:'retained session',session:{userId:'alice'}},'PUT');
-  const search=createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment})),workspace=createWorkspaceSearch({sessions:search});
-  const prefix='sessions/memory-test/'+run,ingest=createSessionIngest(withTestState({store,prefix}));
-  const pipeline=createSessionPipeline(withTestState({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner}));
+  const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment}),workspace=createWorkspaceSearch({sessions:search});
+  const prefix='sessions/memory-test/'+run,ingest=createSessionIngest({store,prefix});
+  const pipeline=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
   const snapshots=[];
   const file=(path,text)=>({path,project:'fixture',modifiedAt:'2026-11-07T00:00:00Z',text});
   async function send(harness,generation,files,principal=owner) {
@@ -45,8 +44,8 @@ test('real memory rebuild: two harnesses, immutable S3, additive mapping, atomic
   // the head. A retry must then activate the complete replacement.
   const interrupted={...snapshots[0].snapshot,generation:gen+1,files:[file('memories/MEMORY.md','violet lighthouse newmemory')]};
   const {memorySnapshotId}=await import('../dist/src/memories/snapshot.mjs');
-  const broken=createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment,fetch:async(url,options)=>String(url).endsWith('/_refresh')?
-    new Response(JSON.stringify({_shards:{total:1,successful:0,failed:1}}),{status:200,headers:{'content-type':'application/json'}}):fetch(url,options)}));
+  const broken=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment,fetch:async(url,options)=>String(url).endsWith('/_refresh')?
+    new Response(JSON.stringify({_shards:{total:1,successful:0,failed:1}}),{status:200,headers:{'content-type':'application/json'}}):fetch(url,options)});
   await assert.rejects(broken.memories.putSnapshot({...interrupted,snapshotId:memorySnapshotId(interrupted),receivedAt:new Date().toISOString()},owner,'fixture'),/refresh incomplete/);
   assert.equal((await workspace.search(owner,{query:'oldmemory',source:'memories'})).results.length,1);
   assert.equal((await workspace.search(owner,{query:'newmemory',source:'memories'})).results.length,0);

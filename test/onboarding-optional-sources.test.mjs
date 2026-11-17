@@ -1,4 +1,3 @@
-import {stateFor} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createGuidedOnboarding} from '../dist/src/application/onboarding.mjs';
@@ -8,7 +7,7 @@ import {memorySessionStore} from './session-store-fixture.mjs';
 
 const principal={tenantId:'org_team',userId:'user_owner'};
 async function guidedFixture({agentSetup=true,cards=[]}={}) {
-  const store=memorySessionStore(),onboarding=createOnboardingStatus({state:stateFor(store)}),events=[];
+  const store=memorySessionStore(),onboarding=createOnboardingStatus({store,prefix:'sessions/test/v1'}),events=[];
   if(agentSetup){await onboarding.cli(principal);await onboarding.mcpTest(principal);await onboarding.session(principal,{harness:'codex',events:[{kind:'message'}]});}
   let outage=false;
   const guided=createGuidedOnboarding({onboarding,integrations:{list:async who=>{assert.deepEqual(who,principal);if(outage)throw new Error('private upstream');return cards;}},
@@ -20,7 +19,7 @@ const card=state=>({provider:'slack',name:'Slack',auth:'oauth',state});
 
 test('finishing onboarding needs agent setup only and records how many sources were connected',async()=>{
   const skipped=await guidedFixture({cards:[card('disconnected'),card('connecting')]});
-  assert.equal(await skipped.guided.next(principal),'/setup','setup remains an optional status page');
+  assert.equal(await skipped.guided.next(principal),'/onboarding/sources','an unfinished setup with nothing connected resumes at Sources');
   assert.deepEqual(await skipped.finish(),{status:200,body:{workspaceUrl:'/'}});
   assert.ok((await skipped.onboarding.read(principal)).completed.observedAt);
   assert.deepEqual(skipped.events,[{name:'onboarding_completed',who:principal,properties:{sources_connected:0}}],'a skipped Sources step is recorded as zero connected sources');
@@ -28,7 +27,7 @@ test('finishing onboarding needs agent setup only and records how many sources w
   assert.equal(skipped.events.length,1,'a repeated finish records no second completion');
 
   const connected=await guidedFixture({cards:[card('syncing'),card('synced'),card('error')]});
-  assert.equal(await connected.guided.next(principal),'/setup');
+  assert.equal(await connected.guided.next(principal),'/onboarding/invite');
   assert.equal((await connected.finish()).status,200);
   assert.deepEqual(connected.events.map(event=>event.properties),[{sources_connected:2}]);
 
@@ -37,11 +36,11 @@ test('finishing onboarding needs agent setup only and records how many sources w
   assert.deepEqual(outage.events.map(event=>event.properties),[{sources_connected:null}]);
 });
 
-test('leaving legacy onboarding opens the workspace without fabricating completion evidence',async()=>{
+test('skipping sources never skips agent setup',async()=>{
   const f=await guidedFixture({agentSetup:false,cards:[card('synced')]});
-  assert.deepEqual(await f.finish(),{status:200,body:{workspaceUrl:'/'}});
+  assert.deepEqual(await f.finish(),{status:409,body:{error:'Complete agent setup first.',onboardingUrl:'/onboarding'}});
   assert.equal((await f.onboarding.read(principal)).completed,null);assert.deepEqual(f.events,[]);
-  assert.equal(await f.guided.next(principal),'/setup');
+  assert.equal(await f.guided.next(principal),'/onboarding');
 });
 
 test('a connect refused for our own stated reason keeps that reason; only a live connection is already connected',async()=>{

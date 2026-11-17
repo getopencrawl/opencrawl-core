@@ -11,9 +11,6 @@
   --console-page-width: var(--page-width);
   --console-task-width: var(--chat-width);
   --console-form-width: 40rem;
-  --console-form-action-width: 8rem;
-  --console-member-role-width: 8rem;
-  --console-member-action-width: 2.75rem;
   --console-page-inset: var(--pane-inset);
   --console-page-top: var(--space-12);
   --console-page-bottom: var(--space-16);

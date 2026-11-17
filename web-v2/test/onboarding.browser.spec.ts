@@ -47,11 +47,11 @@ for (const viewport of [{name: 'desktop', width: 1280, height: 813}, {name: 'mob
     expect(gaps).toEqual([4, 4]);
     await navigation.getByRole('link', {name: 'Agent setup', exact: true}).click();
     await expect(page.getByRole('heading', {name: 'Agent setup', exact: true})).toBeFocused();
-    await expect(page.getByRole('heading', {name: 'Install OpenCrawl'})).toBeVisible();
+    await expect(page.getByRole('heading', {name: 'Connect your primary coding agent'})).toBeVisible();
     await expect(page.getByRole('main')).toHaveCount(1);
     await expect(page.getByRole('navigation', {name: 'Onboarding steps'})).toHaveCount(0);
     await expect(page.locator('body')).not.toHaveAttribute('data-onboarding');
-    await page.getByRole('button', {name: 'Show install command'}).click();
+    await page.getByRole('button', {name: 'Show setup prompt'}).click();
     await expect(page.locator('#connect-preview')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({path: testInfo.outputPath(`agent-setup-${viewport.name}.png`), fullPage: true});
@@ -173,16 +173,15 @@ test('the Integrations page takes the operator key and opens sign-in in the rese
   await expect(page.getByText('One Composio key unlocks')).toHaveCount(0);
 });
 
-test('members cannot open the integrations page',async({page,request})=>{
+test('members can inspect shared integrations without mutation controls',async({page,request})=>{
   await request.post('/__test/state',{data:{status:complete,sources:[
     {id:'slack',name:'Slack',scope:'team',state:'synced',auth:'oauth'},
     {id:'notion',name:'Notion',scope:'team',state:'disconnected',auth:'oauth'},
     {id:'granola',name:'Granola',scope:'team',state:'error',auth:'api-key'},
   ]}});
   await page.goto('/integrations-fixture?role=member');
-  await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('heading',{name:'Workspace overview'})).toBeVisible();
-  await expect(page.getByRole('article',{name:'Slack'})).toHaveCount(0);
+  await expect(page.getByText('Workspace admins manage shared integrations.',{exact:true})).toBeVisible();
+  await expect(page.getByRole('article',{name:'Slack'})).toBeVisible();
   await expect(page.getByRole('button',{name:/Disconnect|Connect Notion|Retry sync/})).toHaveCount(0);
   await page.goto('/onboarding/sources?role=member');
   await expect(page.getByRole('button',{name:'Connect Notion',exact:true})).toHaveAttribute('aria-disabled','true');
@@ -212,20 +211,20 @@ test('receipts, manual copy, and the three-step flow preserve one browser docume
   page.on('request', request => {if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documentLoads++;});
   await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {writeText: async () => {throw new Error('Clipboard denied');}}}));
   await page.goto('/onboarding');
-  await expect(page.getByRole('heading', {name: 'Install OpenCrawl'})).toBeVisible();
+  await expect(page.getByRole('heading', {name: 'Connect your primary coding agent'})).toBeVisible();
   await expect(page.getByRole('link', {name: 'Next', exact: true})).toHaveCount(0);
-  await page.getByRole('button', {name: 'Show install command'}).click();
+  await page.getByRole('button', {name: 'Show setup prompt'}).click();
   await expect(page.locator('#connect-preview')).toBeVisible();
-  await page.getByRole('button', {name: 'Copy install command', exact: true}).click();
-  await expect(page.getByRole('heading', {name: 'Copy this install command'})).toBeVisible();
-  await expect(page.getByLabel('Install command to copy')).toBeFocused();
-  expect(await page.getByLabel('Install command to copy').evaluate((node: HTMLTextAreaElement) => node.selectionEnd - node.selectionStart)).toBeGreaterThan(100);
+  await page.getByRole('button', {name: 'Copy setup prompt', exact: true}).click();
+  await expect(page.getByRole('heading', {name: 'Copy this prompt'})).toBeVisible();
+  await expect(page.getByLabel('Prompt to copy')).toBeFocused();
+  expect(await page.getByLabel('Prompt to copy').evaluate((node: HTMLTextAreaElement) => node.selectionEnd - node.selectionStart)).toBeGreaterThan(100);
   await page.getByRole('button', {name: 'I’ve copied it'}).click();
   await expect(page.locator('.copy-prompt')).toBeFocused();
 
   await request.post('/__test/state', {data: {status: {cli: receipt, mcp: receipt, history: {...receipt, state: 'complete'}}}});
   await refresh(page);
-  await expect(page.getByRole('heading', {name: 'Install OpenCrawl'})).toBeVisible();
+  await expect(page.getByRole('heading', {name: 'Connect your primary coding agent'})).toBeVisible();
   await expect(page.getByText('Waiting for agent to test connection', {exact: true})).toBeVisible();
   await expect(page.getByRole('button', {name: 'Copy test prompt', exact: true})).toHaveCount(0);
   await expect(page.getByRole('link', {name: 'Next', exact: true})).toHaveCount(0);
@@ -265,7 +264,7 @@ test('receipts, manual copy, and the three-step flow preserve one browser docume
 });
 
 for (const width of [1280, 320]) {
-  test(`the page-header install button copies the canonical install command, and opens Agent setup when the browser cannot copy, at ${width}px`, async ({page, request}) => {
+  test(`the page-header prompt button copies the Agent setup prompt, and opens Agent setup when the browser cannot copy, at ${width}px`, async ({page, request}) => {
     await request.post('/__test/state', {data: {status: complete}});
     await page.setViewportSize({width, height: 844});
     await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {writeText: async (text: string) => {
@@ -275,7 +274,7 @@ for (const width of [1280, 320]) {
     await page.goto('/workspace/prompt');
     let documents = 0;
     page.on('request', request => {if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documents++;});
-    const copy = page.getByRole('button', {name: 'Copy install command', exact: true});
+    const copy = page.getByRole('button', {name: 'Copy onboarding prompt', exact: true});
     await expect(copy).toBeVisible();
     // The action sits in the shared header, right of the title when there is room, and never widens the page.
     const title = page.getByRole('heading', {name: 'Usage', level: 1, exact: true});
@@ -294,9 +293,9 @@ for (const width of [1280, 320]) {
     await copy.click();
     await expect(page).toHaveURL(/\/workspace\/settings$/);
     await expect(page.getByRole('heading', {name: 'Agent setup', exact: true})).toBeVisible();
-    await page.getByRole('button', {name: 'Show install command'}).click();
-    // The header button copied exactly the install command offered for manual copying.
-    expect(copied).toBe(await page.locator('#connect-preview pre').textContent());
+    await page.getByRole('button', {name: 'Show setup prompt'}).click();
+    // The header button copied exactly the prompt that Agent setup offers for manual copying.
+    expect(copied).toBe(await page.locator('#connect-preview p').textContent());
     expect(copied?.length).toBeGreaterThan(100);
     expect(documents).toBe(0);
   });
@@ -412,7 +411,7 @@ for (const viewport of [{name: 'desktop', width: 1440, height: 1000}, {name: 'mo
     await page.screenshot({path: testInfo.outputPath(`onboarding-${viewport.name}.png`), fullPage: true});
     await request.post('/__test/state', {data: {status: {}}});
     await refresh(page);
-    await page.getByRole('button', {name: 'Show install command'}).click();
+    await page.getByRole('button', {name: 'Show setup prompt'}).click();
     await expect(page.locator('#connect-preview')).toBeVisible();
     await page.screenshot({path: testInfo.outputPath(`react-long-prompt-${viewport.name}.png`), fullPage: true});
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -436,8 +435,7 @@ test('the person and workspace stay together in the docked account menu', async 
   await expect(page.getByRole('button', {name: 'Sign out', exact: true})).not.toBeVisible();
   await trigger.click();
   await expect(account).toBeVisible();
-  await expect(account.getByRole('button', {name: 'Sign out', exact: true})).toBeVisible();
-  await expect(account).not.toContainText('alex@example.test');
+  await expect(account).toContainText('alex@example.test');
   await page.keyboard.press('Escape');
   await expect(account).not.toBeVisible();
   await expect(trigger).toBeFocused();
@@ -528,7 +526,7 @@ for (const width of [1280,390]) test(`Team removal confirms revocation before re
   await expect(dialog.getByRole('button',{name:'Remove teammate',exact:true})).toBeDisabled();await page.keyboard.press('Escape');await expect(dialog).toBeVisible();
   await page.screenshot({path:testInfo.outputPath(`team-removal-${width}.png`),fullPage:true});
   release();await expect(dialog).not.toBeVisible();await expect(page.getByRole('list',{name:'Workspace members'})).not.toContainText('bob@example.com');
-  await expect(page.getByLabel('Email address',{exact:true})).toBeFocused();expect(writes).toBe(1);
+  await expect(page.getByLabel('Teammate’s email',{exact:true})).toBeFocused();expect(writes).toBe(1);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
@@ -536,7 +534,7 @@ for(const width of [1280,390]) test(`self-host invites work before verification 
   await page.setViewportSize({width,height:844});
   await page.route('**/api/onboarding/invites',route=>route.fulfill({json:route.request().method()==='POST'?{items:[{email:'teammate@example.com',inviteUrl:'https://oss.example/auth/signup?invitation=private-grant'}],addedCount:1}:{items:[]}}));
   await page.goto('/onboarding?selfhost');
-  await expect(page.getByText('You can use your workspace while your agent completes setup.',{exact:true})).toBeVisible();
+  await expect(page.getByText('CLI sign-in, a successful MCP connection test, and a new session recording are required to open your workspace.')).toBeVisible();
   await page.evaluate(()=>{document.documentElement.dataset.navigationSentinel='same-document';});
   await page.getByRole('link',{name:'Invite teammates now'}).focus();await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/onboarding\/invite$/);
@@ -548,10 +546,10 @@ for(const width of [1280,390]) test(`self-host invites work before verification 
   await expect(page.getByRole('button',{name:'Open workspace',exact:true})).toHaveCount(0);
   await page.screenshot({path:testInfo.outputPath(`early-invites-${width}.png`),fullPage:true});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  await page.goBack();await expect(page.getByRole('heading',{name:'Install OpenCrawl'})).toBeVisible();
+  await page.goBack();await expect(page.getByRole('heading',{name:'Connect your primary coding agent'})).toBeVisible();
   await page.goForward();await expect(page.getByRole('heading',{name:'Invite your teammates'})).toBeVisible();
   await page.getByRole('link',{name:'Return to agent setup'}).click();
-  await expect(page.getByRole('heading',{name:'Install OpenCrawl'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Connect your primary coding agent'})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.dataset.navigationSentinel)).toBe('same-document');
   const state=await (await request.get('/__test/state')).json();expect(state.requests.finish).toBe(0);
 });
@@ -577,7 +575,7 @@ test('Team preserves a newly created private invitation link when refresh fails'
   let created=false;
   await page.route('**/api/console/team',route=>created?route.fulfill({status:503,json:{error:'Unavailable'}}):route.fulfill({json:report}));
   await page.route('**/api/console/team/invite',route=>{created=true;return route.fulfill({json:{ok:true,inviteUrl:'https://oss.example/auth/signup?invitation=private-grant'}});});
-  await page.goto('/team-fixture');await page.getByLabel('Email address',{exact:true}).fill('teammate@example.com');await page.getByRole('button',{name:'Invite',exact:true}).click();
+  await page.goto('/team-fixture');await page.getByLabel('Teammate’s email',{exact:true}).fill('teammate@example.com');await page.getByRole('button',{name:'Invite',exact:true}).click();
   await expect(page.getByText('Invitation created for teammate@example.com. Share the private link with them. No email was sent.')).toBeVisible();
   await expect(page.getByLabel('Private invitation link',{exact:true})).toHaveValue('https://oss.example/auth/signup?invitation=private-grant');
   await expect(page.getByText(/Team information couldn’t update/)).toBeVisible();
@@ -590,38 +588,40 @@ test('React OAuth return renders the Claude native callback and a manual continu
   await expect(page.getByRole('link',{name:'Continue',exact:true})).toHaveAttribute('href','claude://claude.ai/mcp-auth-callback/sdk?code=example&state=bound');
 });
 
-for (const provider of ['Replicas','Devin Cloud']) for (const width of [1280,390]) test(`shared ${provider} setup does not ask each member to install at width ${width}`,async({page,request})=>{
- await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'env',name:provider,owner:'shared'}}}});
+for (const width of [1280,390]) test(`shared setup does not ask each member to install at width ${width}`,async({page,request})=>{
+ await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'env',name:'Replicas',owner:'shared'}}}});
  await page.setViewportSize({width,height:844});
  await page.goto('/onboarding');
- await expect(page.getByRole('heading',{name:`Your team’s ${provider} setup is ready`})).toBeVisible();
- if (provider === 'Devin Cloud') await expect(page.getByText(/Replicas/)).toHaveCount(0);
+ await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
  await expect(page.getByRole('link',{name:'Open workspace',exact:true})).toBeVisible();
  await expect(page.getByText('Waiting for CLI sign-in',{exact:true})).toHaveCount(0);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
-for (const width of [1280,390]) test(`Replicas installation is absent from every onboarding presentation at ${width}px`, async ({page,request}) => {
+for (const width of [1280,390]) test(`Replicas installation stays in workspace settings, outside onboarding at ${width}px`, async ({page,request}) => {
   await page.setViewportSize({width,height:844});
-  for (const path of ['/onboarding','/workspace/settings']) for (const role of ['admin','member']) for (const shared of [false,true]) {
-    await request.post('/__test/state',{data:{status:shared?{shared:{...receipt,id:'approved',name:'Replicas',owner:'shared'}}:{}}});
-    await page.goto(`${path}?role=${role}`);
-    if (shared) {
-      await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
-      await expect(page.getByRole('link',{name:'Open workspace',exact:true})).toBeVisible();
-    } else await expect(page.getByRole('button',{name:'Copy install command',exact:true})).toBeVisible();
-    await expect(page.getByRole('button',{name:'Install on Replicas',exact:true})).toHaveCount(0);
-    await expect(page.getByRole('region',{name:'Replicas installation'})).toHaveCount(0);
-    if (shared) {
-      await page.getByRole('button',{name:'Set up a personal computer'}).click();
-      await expect(page.getByRole('heading',{name:'Install OpenCrawl'})).toBeVisible();
-      await expect(page.getByRole('button',{name:'Copy install command',exact:true})).toBeVisible();
-      await expect(page.getByRole('button',{name:'Install on Replicas',exact:true})).toHaveCount(0);
-      await page.getByRole('button',{name:'Back to shared setup'}).click();
-      await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
-    }
-    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  }
+  await page.addInitScript(() => Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{if(sessionStorage.getItem('deny'))throw new Error('denied');sessionStorage.setItem('copied',text);}}}));
+  await page.goto('/onboarding');
+  await expect(page.getByRole('button',{name:'Install on Replicas',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Copy setup prompt',exact:true})).toBeVisible();
+  await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'approved',name:'Replicas',owner:'shared'}}}});
+  await page.reload();
+  await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Install on Replicas',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('link',{name:'Open workspace',exact:true})).toBeVisible();
+  await page.goto('/workspace/settings');
+  await page.getByRole('button',{name:'Install on Replicas',exact:true}).click();
+  expect(await page.evaluate(()=>sessionStorage.getItem('copied'))).toContain('Use workspace_identity');
+  await page.evaluate(()=>sessionStorage.setItem('deny','yes'));
+  await page.reload();
+  await page.getByRole('button',{name:'Install on Replicas',exact:true}).click();
+  await expect(page.getByLabel('Prompt to copy')).toBeFocused();
+  await expect(page.getByLabel('Prompt to copy')).toHaveValue(/Install OpenCrawl in this Replicas environment/);
+  await page.getByRole('button',{name:'I’ve copied it'}).click();
+  await expect(page.getByRole('button',{name:'Copied',exact:true})).toBeFocused();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.goto('/workspace/settings?role=member');
+  await expect(page.getByRole('button',{name:'Install on Replicas'})).toHaveCount(0);
 });
 
 
@@ -640,7 +640,7 @@ for (const viewport of [{width:1280,height:813},{width:400,height:580}]) {
     const setup = page.locator('.copy-prompt');
     await setup.click();
     const setupText = await page.evaluate(()=>sessionStorage.getItem('copied-prompt'));
-    await page.getByRole('button',{name:'Show install command'}).click();
+    await page.getByRole('button',{name:'Show setup prompt'}).click();
     const scrolls = await page.evaluate(()=>sessionStorage.getItem('automatic-scrolls'));
     for (const status of [{cli:receipt},{cli:receipt,mcp:receipt},{cli:receipt,mcpTest:receipt}]) {
       await request.post('/__test/state',{data:{status}});
@@ -648,9 +648,9 @@ for (const viewport of [{width:1280,height:813},{width:400,height:580}]) {
       await expect(page.locator('[data-signal="cli"]')).toHaveAttribute('data-complete','');
       if ('mcp' in status) await expect(page.locator('[data-signal="mcp"]')).toHaveAttribute('data-complete','');
       if ('mcpTest' in status) await expect(page.locator('[data-signal="mcpTest"]')).toHaveAttribute('data-complete','');
-      await expect(setup).toHaveText('Copy install command');
+      await expect(setup).toHaveText('Copy setup prompt');
       await expect(page.locator('#connect-preview')).toBeVisible();
-      await expect(page.locator('#connect-preview pre')).toHaveText(setupText!);
+      await expect(page.locator('#connect-preview p')).toHaveText(setupText!);
       await expect(page.getByRole('button',{name:/Copy (MCP setup|test) prompt/})).toHaveCount(0);
       await expect(page.locator('.signal-disclosure[open]')).toHaveCount(0);
       await expect(page.getByRole('link',{name:'Next',exact:true})).toHaveCount(0);
@@ -663,7 +663,7 @@ for (const viewport of [{width:1280,height:813},{width:400,height:580}]) {
     await refresh(page);
     await expect(page.getByRole('heading',{name:'Your coding agent is ready'})).toBeVisible();
     await expect(page.locator('.completed-setup')).not.toHaveAttribute('open','');
-    await expect(page.getByRole('button',{name:'Copy install command',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Copy setup prompt',exact:true})).toHaveCount(0);
     const next = page.getByRole('link',{name:'Next',exact:true});
     await expect(next).toBeInViewport({ratio:1});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -679,8 +679,8 @@ for (const viewport of [{width:1280,height:813},{width:400,height:580}]) {
 test('receipt changes preserve the setup manual-copy text and keyboard focus',async({page,request})=>{
   await page.addInitScript(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('denied');}}}));
   await page.goto('/onboarding?role=member');
-  await page.getByRole('button',{name:'Copy install command',exact:true}).click();
-  const fallback = page.getByLabel('Install command to copy');
+  await page.getByRole('button',{name:'Copy setup prompt',exact:true}).click();
+  const fallback = page.getByLabel('Prompt to copy');
   await expect(fallback).toBeFocused();
   const setupText = await fallback.inputValue();
   for (const status of [{cli:receipt},{cli:receipt,mcp:receipt},{cli:receipt,mcpTest:receipt}]) {
@@ -701,23 +701,23 @@ test('completion dismisses manual setup even when receipts arrive together',asyn
   await page.setViewportSize({width:400,height:580});
   await page.addInitScript(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('denied');}}}));
   await page.goto('/onboarding?role=member');
-  await page.getByRole('button',{name:'Copy install command',exact:true}).click();
-  await expect(page.getByLabel('Install command to copy')).toBeFocused();
+  await page.getByRole('button',{name:'Copy setup prompt',exact:true}).click();
+  await expect(page.getByLabel('Prompt to copy')).toBeFocused();
   await request.post('/__test/state',{data:{status:complete}});
   await refresh(page);
   await expect(page.getByRole('heading',{name:'Your coding agent is ready'})).toBeVisible();
-  await expect(page.getByLabel('Install command to copy')).toHaveCount(0);
+  await expect(page.getByLabel('Prompt to copy')).toHaveCount(0);
   await expect(page.getByRole('link',{name:'Next',exact:true})).toBeInViewport({ratio:1});
 });
 
-for (const provider of ['Replicas','Devin Cloud']) for (const width of [1280,390]) test(`shared ${provider} setup also offers independent personal-machine setup at ${width}px`,async({page,request})=>{
- await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'env',name:provider,owner:'shared'}}}});
+for (const width of [1280,390]) test(`shared Replicas setup also offers independent personal-machine setup at ${width}px`,async({page,request})=>{
+ await request.post('/__test/state',{data:{status:{shared:{...receipt,id:'env',name:'Replicas',owner:'shared'}}}});
  await page.setViewportSize({width,height:844});await page.goto('/onboarding?role=member');
  await page.getByRole('button',{name:'Set up a personal computer'}).click();
- await expect(page.getByRole('heading',{name:'Install OpenCrawl'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Connect your primary coding agent'})).toBeVisible();
  await expect(page.getByText('Waiting for CLI sign-in',{exact:true})).toBeVisible();
  await expect(page.getByRole('button',{name:'Install on Replicas'})).toHaveCount(0);
  await page.getByRole('button',{name:'Back to shared setup'}).click();
- await expect(page.getByRole('heading',{name:`Your team’s ${provider} setup is ready`})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Your team’s Replicas setup is ready'})).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

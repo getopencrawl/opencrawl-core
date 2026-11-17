@@ -1,4 +1,3 @@
-import type {ApplicationState} from '../state/types.mjs';
 import type {TenantPrincipal, ObjectStore, JsonValue} from './types.mjs';
 import type {SearchRealm, DocumentItem, IndexHit} from '../search/types.mjs';
 import {createSessionIngest, digest} from './ingest.mjs';
@@ -11,15 +10,15 @@ export interface TokenMigrationReport {events: number; skippedDeleted: number; a
 /** Add counts to existing first passages, without rewriting content, receipts,
  * visibility or billing. Retrying fills only missing values. No deleted document
  * can be recreated. Scope and source batches are verified before every write. */
-export async function migrateSessionTokens({realm, principal, state, store, prefix, dryRun = true, pageSize = 100, maxEvents = 1000, after = null, onPage = async () => {}}: {
-  realm: SearchRealm; principal: TenantPrincipal; state:ApplicationState;store: ObjectStore; prefix: string;
+export async function migrateSessionTokens({realm, principal, store, prefix, dryRun = true, pageSize = 100, maxEvents = 1000, after = null, onPage = async () => {}}: {
+  realm: SearchRealm; principal: TenantPrincipal; store: ObjectStore; prefix: string;
   dryRun?: boolean; pageSize?: number; maxEvents?: number; after?: JsonValue[] | null;
   onPage?(report: TokenMigrationReport): Promise<unknown>;
 }): Promise<TokenMigrationReport> {
   if (!principal?.tenantId || principal.tenantId !== realm.tenantId || principal.captureAccess !== undefined) throw Object.assign(new Error('Realm scope denied'), {status: 403});
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 500 || !Number.isSafeInteger(maxEvents) || maxEvents < 1 || maxEvents > 1_000_000) throw new Error('Invalid token migration bounds');
   if (!dryRun) await realm.ensureIndex();
-  const collection = realm.collection('session'), f = collection.field, ingest = createSessionIngest({state,store, prefix}), controls = createControls({state});
+  const collection = realm.collection('session'), f = collection.field, ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
   // Retain numeric counts only, never raw transcript buffers between groups.
   const batches = new Map<string, Map<string, {kind: string; tokens: number}>>();
   const report: TokenMigrationReport = {events: 0, skippedDeleted: 0, after, complete: false};
@@ -80,7 +79,7 @@ export async function migrateSessionTokens({realm, principal, state, store, pref
       for (const result of results) if (result.status === 'rejected') throw result.reason;
     }
     if (!dryRun && updates.length) {
-        await withSessionDocumentWrites({state, prefix, tenantId: principal.tenantId, documents: updates}, async () => {
+        await withSessionDocumentWrites({store, prefix, tenantId: principal.tenantId, documents: updates}, async () => {
           await collection.bulk(principal, updates);
           const actual = await collection.mget(principal, updates.map(item => item.id));
           const byId = new Map(actual.docs.map(hit => [hit._id, hit]));

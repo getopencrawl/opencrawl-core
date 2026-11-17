@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {mkdtemp, rm} from 'node:fs/promises';
@@ -52,7 +51,7 @@ function fixture(count = 3, searchFactory) {
     listTenant: async tenant => {assert.equal(tenant, tenantId); return state.records;},
     get: async (tenant, user, id) => {assert.equal(tenant, tenantId); return state.records.find(record => record.integrationId === id && record.userId === user);},
   };
-  const resolver = createConnectorResolver(withTestState({environment: 'selfhost', generation: 'v1', registry, storage: async () => ({}), search: () => search}));
+  const resolver = createConnectorResolver({environment: 'selfhost', generation: 'v1', registry, storage: async () => ({}), search: () => search});
   const expected = {total: 0, kinds: {}, providers: {}, connections: {}};
   const add = (target, kinds) => {target.total += total(kinds); for (const [kind, n] of Object.entries(kinds)) target.kinds[kind] = (target.kinds[kind] || 0) + n;};
   for (const binding of bindings) {

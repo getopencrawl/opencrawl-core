@@ -18,34 +18,30 @@ function referencesInput(references: MessageReference[]) {
 
 /** Refresh explicit native identities without pretending to enumerate a channel.
  * Operators serialize this with other history/replies captures for the workspace. */
-export function createSlackMessageReferenceCapture({binding,store,state:applicationState,request,checkActive=async()=>{},now=Date.now}: SlackCaptureOptions) {
+export function createSlackMessageReferenceCapture({binding,store,request,checkActive=async()=>{},now=Date.now}: SlackCaptureOptions) {
  validateBinding(binding);if(binding.provider!=='slack')invalidRecord('Slack source binding required');
- if(!applicationState?.slackCapture)throw new Error('PostgreSQL Slack capture state is required');
  const active=async()=>{validateBinding(binding);await checkActive(binding);};
  async function put(key: string,bytes: Uint8Array,type: string){await active();await store.put(key,bytes,type);}
  return {async step({runId,references}: ReferenceRun): Promise<CaptureStepResult> {
   if(!/^[A-Za-z0-9_-]{1,150}$/.test(runId||''))invalidRecord('Invalid reference capture run');
   const refs=referencesInput(references),inputHash=digest(refs);
-  await active();const prefix=binding.rawPrefix+'capture/message-references-v1/'+runId+'/';
-  const saved=await applicationState.slackCapture.readCheckpoint(binding,'message-references-v1',runId);let revision=saved?.revision??null;
-  const state: ReferenceCheckpoint=saved?.value??{version:1,scope:digest(binding),runId,inputHash,position:0,nextDue:{},pages:0,emitted:0,errors:[]};
+  await active();const prefix=binding.rawPrefix+'capture/message-references-v1/'+runId+'/',stateKey=prefix+'state.json';
+  const bytes=await store.get(stateKey,{maxBytes:1024*1024});
+  const state: ReferenceCheckpoint=bytes?JSON.parse(bytes.toString()) as ReferenceCheckpoint:{version:1,scope:digest(binding),runId,inputHash,position:0,nextDue:{},pages:0,emitted:0,errors:[]};
   if(state.version!==1||state.scope!==digest(binding)||state.runId!==runId||state.inputHash!==inputHash||!Number.isSafeInteger(state.position)||state.position<0||state.position>refs.length)invalidRecord('Reference capture checkpoint scope mismatch');
-  const save=async()=>{await active();revision=await applicationState.slackCapture.saveCheckpoint(binding,'message-references-v1',runId,state,revision);};
+  const save=()=>put(stateKey,Buffer.from(JSON.stringify(state)),'application/json');
   const fail=async(method: string,code: string)=>{state.errors.push({position:state.position,method,code});state.position++;await save();return {done:false,waitMs:0};};
   if(state.position===refs.length)return {done:true,references:refs.length,pages:state.pages,emitted:state.emitted,failed:state.errors.length};
   const ref=refs[state.position],reply=micros(ref.threadTs)!==micros(ref.ts),method=reply?'conversations.replies':'conversations.history';
   const due=Math.max(state.nextDue[method]||0,state.nextDue['conversations.info']||0);
   if(due>now())return {done:false,waitMs:due-now()};
-  async function read(api: string,query: SlackQuery): Promise<{retry: true; waitMs:number; error?: never; data?: never; at?: never} | {error: string; retry?: never; data?: never; at?: never} | {data: SlackApiData; at: number; retry?: never; error?: never}> {
+  async function read(api: string,query: SlackQuery): Promise<{retry: true; error?: never; data?: never; at?: never} | {error: string; retry?: never; data?: never; at?: never} | {data: SlackApiData; at: number; retry?: never; error?: never}> {
    // Persist the rate reservation before the request, including transport failures.
-   const interval=api==='conversations.info'?3500:65000,reservation=await applicationState.slackCapture.reserve(binding,api,now(),interval);
-   if(!reservation.reserved)return {retry:true,waitMs:reservation.waitMs};
-   state.nextDue[api]=now()+interval;await save();await active();
+   state.nextDue[api]=now()+(api==='conversations.info'?3500:65000);await save();await active();
    const response=await request(api,query),at=now(),data=response?.data;
-   await applicationState.slackCapture.defer(binding,api,at+interval);
    if(response?.status===429||data?.error==='ratelimited') {
     const seconds=Number(Object.entries(response.headers||{}).find(([k])=>k.toLowerCase()==='retry-after')?.[1]||60);
-    state.nextDue[api]=at+Math.max(65000,Number.isFinite(seconds)?seconds*1000:65000);await applicationState.slackCapture.defer(binding,api,state.nextDue[api]);await save();return {retry:true,waitMs:Math.max(0,state.nextDue[api]-now())};
+    state.nextDue[api]=at+Math.max(65000,Number.isFinite(seconds)?seconds*1000:65000);await save();return {retry:true};
    }
    if(response?.status>=500)throw new Error('Transient Slack message reference failure');
    if(response?.status!==200||data?.ok!==true)return {error:typeof data?.error==='string'?data.error.slice(0,100):'invalid_response'};
@@ -54,13 +50,13 @@ export function createSlackMessageReferenceCapture({binding,store,state:applicat
    return {data,at};
   }
   const info=await read('conversations.info',{channel:ref.channelId});
-  if(info.retry)return {done:false,waitMs:info.waitMs};
+  if(info.retry)return {done:false,waitMs:0};
   if(info.error)return fail('conversations.info',info.error);
   const channel=info.data!.channel;
   if(channel?.id!==ref.channelId||channel.is_private!==false||channel.is_im||channel.is_mpim)invalidRecord('Message reference is not an authorized public channel');
   const query={channel:ref.channelId,...(reply?{ts:ref.threadTs}:{}),oldest:ref.ts,latest:ref.ts,inclusive:true,limit:15,include_all_metadata:true};
   const source=await read(method,query);
-  if(source.retry)return {done:false,waitMs:source.waitMs};
+  if(source.retry)return {done:false,waitMs:0};
   if(source.error)return fail(method,source.error);
   if(!Array.isArray(source.data!.messages)||source.data!.has_more||source.data!.response_metadata?.next_cursor)invalidRecord('Incomplete exact-message response');
   const matches=source.data!.messages.filter(message=>message.ts===ref.ts);

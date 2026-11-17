@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {gunzipSync} from 'node:zlib';
@@ -10,8 +9,8 @@ const input={runId:'run-1',cutoff:1000};
 function setup(handler) {
  const objects=new Map(),calls=[];let clock=1000,active=true;
  const store={bucket:'customer-owned',get:async k=>objects.get(k),put:async(k,v)=>objects.set(k,Buffer.from(v))};
- const options=withTestState({binding,store,now:()=>clock,checkActive:async()=>{if(!active)throw Error('revoked');},request:async(method,query)=>{calls.push({method,query});return handler(method,query);},download:async()=>({bytes:Buffer.from('Complete document body far beyond preview'),mediaType:'text/markdown'})});
- return {capture:createSlackFileCapture(options),restart:()=>createSlackFileCapture(options),objects,states:options.state.slackCapture.values,repository:options.state.slackCapture,calls,store,advance:(ms=70000)=>{clock+=ms;},revoke:()=>{active=false;}};
+ const options={binding,store,now:()=>clock,checkActive:async()=>{if(!active)throw Error('revoked');},request:async(method,query)=>{calls.push({method,query});return handler(method,query);},download:async()=>({bytes:Buffer.from('Complete document body far beyond preview'),mediaType:'text/markdown'})};
+ return {capture:createSlackFileCapture(options),restart:()=>createSlackFileCapture(options),objects,calls,store,advance:(ms=70000)=>{clock+=ms;},revoke:()=>{active=false;}};
 }
 const ok=data=>({status:200,data:{ok:true,...data}});
 test('customer-operated capture exhausts channels, files and comments; lands originals before searchable envelopes',async()=>{
@@ -27,7 +26,7 @@ test('customer-operated capture exhausts channels, files and comments; lands ori
  assert.equal(records.length,2);assert.deepEqual(records.map(r=>r._airbyte_data.channel_id),['C1','C2']);
  assert.ok(records.every(r=>r._airbyte_data.api_text.some(p=>p.text==='Final comment beyond first page')));
  const writes=[];const search={identity:'selfhost',putDocuments:async(_,__,docs)=>writes.push(...docs)};
- const pipeline=createConnectorPipeline(withTestState({binding,store:h.store,search}));for(const key of sourceKeys)await pipeline.processObject({key});
+ const pipeline=createConnectorPipeline({binding,store:h.store,search});for(const key of sourceKeys)await pipeline.processObject({key});
  assert.ok(writes.some(d=>d.document.text.includes('Complete document body far beyond preview')));
  assert.ok(writes.some(d=>d.document.text.includes('Final comment beyond first page')));
 });
@@ -37,7 +36,7 @@ test('rate limits persist retry timing and retries do not advance a failed page'
 });
 test('private enumeration, checkpoint scope mismatch and revocation fail closed',async()=>{
  const h=setup(()=>ok({channels:[{id:'C1',is_private:true}]}));await assert.rejects(h.capture.step(input),/public channel/);
- const b=setup(()=>ok({channels:[]}));await b.capture.step(input);const key=[...b.states.keys()].find(k=>k.endsWith('state.json'));const state=JSON.parse(b.states.get(key));state.scope='other';b.states.set(key,Buffer.from(JSON.stringify(state)));await assert.rejects(b.capture.step(input),/scope/);
+ const b=setup(()=>ok({channels:[]}));await b.capture.step(input);const key=[...b.objects.keys()].find(k=>k.endsWith('state.json'));const state=JSON.parse(b.objects.get(key));state.scope='other';b.objects.set(key,Buffer.from(JSON.stringify(state)));await assert.rejects(b.capture.step(input),/scope/);
  b.revoke();await assert.rejects(b.capture.step(input),/revoked/);
 });
 test('provider errors remain failures and an explicit lost public share emits unavailable metadata',async()=>{
@@ -84,7 +83,7 @@ test('shares discovered only by files.info remain catalogued and are revoked in 
  });
  for(const runId of ['first','second']) {
   for(let i=0;i<10;i++){const result=await h.restart().step({...input,runId});if(result.done)break;h.advance();}
-  if(runId==='first')assert.deepEqual(JSON.parse(h.states.get(binding.rawPrefix+'capture/files-v1/catalog.json')).files.F1,['C1','C2']);
+  if(runId==='first')assert.deepEqual(JSON.parse(h.objects.get(binding.rawPrefix+'capture/files-v1/catalog.json')).files.F1,['C1','C2']);
   removed=true;h.advance();
  }
  const records=[...h.objects].filter(([key])=>key.includes('stream=file_documents/')&&key.includes('sync=second/'))
@@ -100,15 +99,15 @@ test('same-run retry keeps published file shares absent from the last successful
   if(method==='files.list')return ok({files:q.channel==='C1'?[{id:'F1'}]:[],paging:{page:1,pages:1}});
   return ok({file:{id:'F1',mimetype:'image/png',channels:shared}});
  });
- const save=h.repository.saveCheckpoint;let failed=false;
- h.repository.saveCheckpoint=async(binding,kind,run,value,revision)=>{
-  if(run==='run-1'&&value.files.F1?.done&&!failed){failed=true;throw Error('checkpoint unavailable');}
-  return save(binding,kind,run,value,revision);
+ const put=h.store.put;let failed=false;
+ h.store.put=async(key,bytes)=>{
+  if(key.endsWith('/run-1/state.json')&&JSON.parse(bytes).files.F1?.done&&!failed){failed=true;throw Error('checkpoint unavailable');}
+  await put(key,bytes);
  };
  for(let step=0;step<3;step++){await h.restart().step(input);h.advance();}
  await assert.rejects(h.restart().step(input),/checkpoint unavailable/);
  shared=['C1'];h.advance();await h.restart().step(input);
- assert.deepEqual(JSON.parse(h.states.get(binding.rawPrefix+'capture/files-v1/catalog.json')).files.F1,['C1','C2']);
+ assert.deepEqual(JSON.parse(h.objects.get(binding.rawPrefix+'capture/files-v1/catalog.json')).files.F1,['C1','C2']);
  const records=[...h.objects].filter(([key])=>key.includes('stream=file_documents/'))
   .flatMap(([,bytes])=>gunzipSync(bytes).toString().trim().split('\n').map(line=>JSON.parse(line)._airbyte_data));
  assert.ok(records.some(record=>record.channel_id==='C2'&&record.available===true));
@@ -117,10 +116,10 @@ test('same-run retry keeps published file shares absent from the last successful
 
 test('file capture never publishes public channels when their catalog reservation fails',async()=>{
  const h=setup(()=>ok({channels:[{id:'C1',is_private:false}]}));
- const merge=h.repository.mergeCatalog;
- h.repository.mergeCatalog=async(binding,kind,value)=>{
-  if(value.channels.includes('C1'))throw Error('catalog unavailable');
-  return merge(binding,kind,value);
+ const put=h.store.put;
+ h.store.put=async(key,bytes)=>{
+  if(key.endsWith('/catalog.json')&&JSON.parse(bytes).channels.includes('C1'))throw Error('catalog unavailable');
+  await put(key,bytes);
  };
  await assert.rejects(h.capture.step(input),/catalog unavailable/);
  assert.equal([...h.objects.keys()].some(key=>key.includes('stream=channels/')),false);

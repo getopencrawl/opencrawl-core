@@ -1,5 +1,5 @@
 import type {OnboardingReceipt, OnboardingSource, OnboardingStatus} from './types.ts';
-import {setupCommands} from './setup-commands.ts';
+import {nativeInstallCommand,nativePathCommand} from '../../../src/sessions/cli-installation.mjs';
 
 export type OnboardingStep = 'connect' | 'mcp' | 'verify' | 'session' | 'ready';
 export type PromptStep = Exclude<OnboardingStep, 'ready'>;
@@ -41,18 +41,17 @@ export function oauthDestination(value: string): string {
   return url.href;
 }
 
-export function promptModel({mcpUrl, windows=typeof navigator!=='undefined'&&/Windows/.test(navigator.userAgent)}: {mcpUrl: string; setupPrompt: string; windows?:boolean}) {
+export function promptModel({mcpUrl, setupPrompt, windows=typeof navigator!=='undefined'&&/Windows/.test(navigator.userAgent)}: {mcpUrl: string; setupPrompt: string; windows?:boolean}) {
   const api = new URL(mcpUrl).origin;
-  const installation=setupCommands(mcpUrl,windows).start;
   const deploymentArgs = api === 'https://app.getopencrawl.com' ? '' : ` --api ${api}`;
   return {
     commands: {
-      cli: installation,
+      cli: `${nativeInstallCommand(windows)}\n${nativePathCommand(windows)}\nopencrawl login${deploymentArgs}`,
       recording: `opencrawl collect install${deploymentArgs}`,
       history: `opencrawl collect backfill${deploymentArgs}`,
     },
     prompts: {
-      connect: {label: 'Copy install command', name: 'install', text: installation},
+      connect: {label: 'Copy setup prompt', name: 'setup', text: setupPrompt},
       session: {label: 'Copy a small task', name: 'task', text: 'Tell me which project we are working in and briefly describe its purpose.'},
     },
   };

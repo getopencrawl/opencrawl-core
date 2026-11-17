@@ -1,6 +1,5 @@
 import {createCipheriv,createDecipheriv,randomBytes} from 'node:crypto';
-import type {StoreVersion} from '../sessions/types.mjs';
-import type {ApplicationState} from '../state/types.mjs';
+import type {ConditionalStore,StoreVersion} from '../sessions/types.mjs';
 import {z} from 'zod';
 const token=z.string().min(1).max(16384);
 /** A direct OAuth grant. Its ID is also the connection ID that the grant's source jobs present. */
@@ -11,15 +10,9 @@ const schema=z.object({
   provider:z.literal('slack'),status:z.enum(['INITIATED','EXCHANGING','ACTIVE','REFRESHING','FAILED','REVOKED']),
   state:token,callbackUrl:z.string().url().max(4096),flowExpiresAt:z.number().finite(),proxyToken:token,
   accessToken:token.optional(),refreshToken:token.optional(),accessExpiresAt:z.number().finite().optional(),
-  tokenIntent:z.object({attemptId:z.string().regex(/^[a-f0-9]{32}$/),kind:z.enum(['exchange','refresh']),requestedAt:z.number().finite()}).strict().optional(),
-  retirementTokens:z.array(token).max(4).optional(),
-  // Legacy active grants may have overwritten older live tokens before this protocol.
-  tokenProtocol:z.literal(1).optional(),legacyTokenUncertainty:z.boolean().optional(),
-  settlementProof:z.object({version:z.literal(1),fingerprint:z.string().regex(/^[a-f0-9]{64}$/),verifiedBy:z.string().min(1).max(200),verifiedAt:z.string().datetime(),exchangeDisposition:z.string().min(1).max(3000),providerRevocation:z.string().min(1).max(3000)}).strict().optional(),
   remoteRevoked:z.boolean().optional(),version:z.literal(1),
 }).strict();
 export type ConnectorGrant=z.infer<typeof schema>;
-export const connectorGrantSchema=schema;
 /** AES-256-GCM envelope bound to its storage path, so a sealed object cannot be replayed elsewhere. */
 export function sealedEnvelope(key:Uint8Array){
   if(key.length!==32)throw new Error('Invalid credential vault configuration');
@@ -38,7 +31,7 @@ export function sealedEnvelope(key:Uint8Array){
   };
 }
 /** Secrets stay encrypted at rest, including backups; encryption binds the exact organization and key. */
-export function credentialVault({state,prefix,organizationId,key}:{state:ApplicationState;prefix:string;organizationId:string;key:Uint8Array}){
+export function credentialVault({store,prefix,organizationId,key}:{store:ConditionalStore;prefix:string;organizationId:string;key:Uint8Array}){
   if(key.length!==32||!/^org_[A-Za-z0-9]+$/.test(organizationId)||!prefix||prefix.split('/').some(p=>!p||p==='.'||p==='..'))throw new Error('Invalid credential vault configuration');
   const envelope=sealedEnvelope(key);
   const path=(id:string)=>{if(!GRANT_ID.test(id))throw Object.assign(new Error('Invalid connector grant'),{status:404});return `${prefix}/${organizationId}/${id}.enc`;};
@@ -46,7 +39,7 @@ export function credentialVault({state,prefix,organizationId,key}:{state:Applica
   const encode=(record:ConnectorGrant)=>{validate(record,record.id);return envelope.seal(path(record.id),Buffer.from(JSON.stringify(record)));};
   const decode=(bytes:Buffer,id:string)=>validate(JSON.parse(envelope.open(path(id),bytes).toString()),id);
   return {
-    async read(id:string){const current=await state.connectorSecrets.read({kind:'grant',organizationId,id},path(id));return {version:current.version,record:current.data?decode(current.data,id):null};},
-    async write(record:ConnectorGrant,version:StoreVersion|null){if(!await state.connectorSecrets.compareAndSet({kind:'grant',organizationId,id:record.id},path(record.id),version,encode(record)))throw Object.assign(new Error('Connector credentials changed; retry'),{status:409});},
+    async read(id:string){const current=await store.readVersion(path(id),{maxBytes:65536});return {version:current.version,record:current.data?decode(current.data,id):null};},
+    async write(record:ConnectorGrant,version:StoreVersion|null){if(!await store.compareAndSet(path(record.id),version,encode(record)))throw Object.assign(new Error('Connector credentials changed; retry'),{status:409});},
   };
 }

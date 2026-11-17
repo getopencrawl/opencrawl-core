@@ -86,16 +86,8 @@ test('application-only release renders with secret references and prevents SQL i
   const args=['template','sample',join(root,'opencrawl'),'--set','postgresql.enabled=false,temporal.enabled=false,opensearch.enabled=false,objectStorage.enabled=false,runtime.existingSecret=app-secrets,image.tag=sha-test'];
   const p=spawnSync(process.env.HELM||'helm',args,{encoding:'utf8'});assert.equal(p.status,0,p.stderr);
   assert.match(p.stdout,/name: sample-app\n/);assert.match(p.stdout,/name: sample-worker\n/);assert.ok(!p.stdout.includes('POSTGRES_PASSWORD'));
-  const activation=p.stdout.split('\n---').find(document=>document.includes('name: sample-activate\n'))!;
-  assert.match(activation,/helm.sh\/hook: post-install,post-upgrade/);
-  assert.match(activation,/helm.sh\/hook-delete-policy: before-hook-creation/);
-  assert.match(activation,/activateSelfhostConnectors/);
-  assert.match(activation,/result.completed,true/);
-  assert.match(activation,/name: app-secrets/);
-  assert.match(activation,/activeDeadlineSeconds: 900/);
   const override='custom-'.repeat(8),custom=configuration({...input,application:{nameOverride:override}});
   const renamed=spawnSync(process.env.HELM||'helm',[...args,'--set-string','nameOverride='+override],{encoding:'utf8'});assert.equal(renamed.status,0,renamed.stderr);
-  for(const suffix of ['app','worker','activate'])assert.ok(renamed.stdout.includes('name: '+applicationName(custom)+'-'+suffix+'\n'));
-  const invalid=spawnSync(process.env.HELM||'helm',[...args,'--set','runtime.activationTimeoutSeconds=0'],{encoding:'utf8'});assert.notEqual(invalid.status,0);assert.match(invalid.stderr,/activationTimeoutSeconds/);
+  for(const suffix of ['app','worker'])assert.ok(renamed.stdout.includes('name: '+applicationName(custom)+'-'+suffix+'\n'));
   const bad=spawnSync(process.env.HELM||'helm',['template','sample',join(root,'opencrawl'),'--set','runtime.enabled=false,postgresql.existingSecret=test,objectStorage.existingSecret=test,temporal.existingSecret=test','--set-string','postgresql.databases[0].name=bad;drop','--set','postgresql.databases[0].user=app,postgresql.databases[0].passwordKey=PASSWORD'],{encoding:'utf8'});assert.notEqual(bad.status,0);assert.match(bad.stderr,/pattern/);
 });

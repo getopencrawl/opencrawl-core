@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {realmIndex} from '../dist/src/search/realm.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +29,7 @@ test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and 
       catch (error) { if (attempt === 60) throw error; await new Promise(r => setTimeout(r, 1000)); }
     }
     const tracked = {...store, put: async (key, bytes, type) => {objects.push(key); await store.put(key, bytes, type);}};
-    const pipeline = createConnectorPipeline(withTestState({binding, store: tracked, search}));
+    const pipeline = createConnectorPipeline({binding, store: tracked, search});
     async function ingest(stream, data, extractedAt, suffix) {
       const key = `${binding.rawPrefix}stream=${stream}/date=2026-11-04/sync=1/${suffix}.jsonl.gz`;
       await tracked.put(key, gzipSync(JSON.stringify({_airbyte_extracted_at: extractedAt, _airbyte_data: data}) + '\n'));
@@ -137,7 +136,7 @@ test('real S3/OpenSearch: workspace providers, linked passages, shorter edits, r
     const connectionId = `${provider}-${run}`;
     const binding = {tenantId, connectionId, workspaceId: 'workspace', provider, access: 'workspace-global', rawPrefix: `raw/v1/source=${provider}/workspace=workspace/connection=${connectionId}/`};
     bindings.push(binding);
-    const pipeline = createConnectorPipeline(withTestState({binding, store: tracked, search}));
+    const pipeline = createConnectorPipeline({binding, store: tracked, search});
     async function raw(stream, data, name = '1', at = 2000) {
       const key = `${binding.rawPrefix}stream=${stream}/date=2026-11-05/sync=1/${name}.jsonl.gz`;
       await tracked.put(key, gzipSync((Array.isArray(data) ? data : [data]).map(d => JSON.stringify({_airbyte_extracted_at: at, _airbyte_data: d})).join('\n')));
@@ -191,7 +190,7 @@ test('real S3/OpenSearch: complete file suffixes, shorter replacement, late repl
  const tracked={...store,put:async(k,v,type)=>{objects.push(k);await store.put(k,v,type);}};
  const search=createConnectorSearch({endpoint:process.env.OPENCRAWL_TEST_OPENSEARCH_URL,index,tenantId}),principal={tenantId};
  t.after(async()=>{for(const key of objects)await store.delete(key);await fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL+'/'+index,{method:'DELETE'});});
- await search.ensureIndex();const pipeline=createConnectorPipeline(withTestState({binding,store:tracked,search}));
+ await search.ensureIndex();const pipeline=createConnectorPipeline({binding,store:tracked,search});
  async function ingest(stream,data,at,name){const key=binding.rawPrefix+`stream=${stream}/date=2026-11-05/sync=test/${name}.jsonl.gz`;await tracked.put(key,gzipSync(JSON.stringify({_airbyte_extracted_at:at,_airbyte_data:data})+'\n'));await pipeline.processObject({key});await search.refresh();}
  async function file(text,at,name){const bytes=Buffer.from(text),sha=createHash('sha256').update(bytes).digest('hex'),content_key=binding.rawPrefix+'files/sha256/'+sha+'.bin';await tracked.put(content_key,bytes,'text/plain');await ingest('file_documents',{format_version:1,id:'F1',channel_id:'C1',available:true,media_type:'text/plain',content_key,content_sha256:sha,content_bytes:bytes.length},at,name);}
  await ingest('channels',{id:'C1',is_private:false},1,'channel');

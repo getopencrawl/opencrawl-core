@@ -1,14 +1,11 @@
-import {stateFor,withTestState} from './fixtures/memory-application-state.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateKeyPair, SignJWT} from 'jose';
-import {createReplicasConnections as makeReplicasConnections} from '../dist/src/identity/replicas-connections.mjs';
+import {createReplicasConnections} from '../dist/src/identity/replicas-connections.mjs';
 import {createReplicasVerifier, createReplicasWorkloads, replicasOwnerId, REPLICAS_ISSUER} from '../dist/src/identity/replicas.mjs';
-import {createOnboardingStatus as makeOnboardingStatus} from '../dist/src/onboarding-status.mjs';
+import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 
-const createReplicasConnections=options=>makeReplicasConnections(withTestState(options));
-const createOnboardingStatus=options=>makeOnboardingStatus(withTestState(options));
 const org='11111111-1111-4111-8111-111111111111', env='22222222-2222-4222-8222-222222222222', workspace='33333333-3333-4333-8333-333333333333', other='44444444-4444-4444-8444-444444444444';
 const audience='https://operator.example', keys=await generateKeyPair('RS256'), badKeys=await generateKeyPair('RS256');
 const second=Math.floor(Date.now()/1000), admin={tenantId:'org_a',userId:'user_admin'}, member={id:'membership',userId:admin.userId,organizationId:admin.tenantId,status:'active',role:{slug:'admin'}};
@@ -55,7 +52,7 @@ test('invalid, forged, wrong-audience and expired workspace credentials cannot c
 
 test('setup code is hashed at rest, scoped, single-workspace and retryable after a lost response',async()=>{
  const f=fixture(),{code}=await f.connections.issue(admin,member);
- assert.equal(JSON.stringify([...stateFor(f.store).replicas.setups.entries()]).includes(code),false);assert.equal(f.store.data.size,0);
+ assert.equal([...f.store.data.keys(),...[...f.store.data.values()].map(v=>v.toString())].some(v=>v.includes(code)),false);
  const first=await f.connections.claim(code,await token());assert.deepEqual(await f.connections.claim(code,await token()),first);
  await assert.rejects(f.connections.claim(code,await token({workspaceId:other})),status(409));
  await assert.rejects(f.connections.claim(code,await token({organizationId:other})),status(409));
@@ -146,12 +143,14 @@ test('an already used setup prompt cannot restore a revoked connection; a fresh 
  await f.connections.claim(fresh.code,await token());assert.equal(await f.connections.resolveOrganization(org),'org_a');
 });
 
-test('enrollment retries a lost connection commit response without losing its authoritative tenant listing',async()=>{
- const f=fixture(),setup=await f.connections.issue(admin,member),repository=stateFor(f.store).replicas,save=repository.saveConnection;let failOnce=true;
- repository.saveConnection=async(...args)=>{const result=await save(...args);if(failOnce){failOnce=false;throw new Error('commit response unavailable');}return result;};
- await assert.rejects(f.connections.claim(setup.code,await token()),/commit response unavailable/);
- assert.equal(await f.connections.resolveOrganization(org),'org_a');assert.equal((await f.connections.list(admin)).length,1);
- await f.make().claim(setup.code,await token());assert.equal((await f.connections.list(admin)).length,1);
+test('enrollment recovers after the authoritative connection succeeds but its tenant index write fails',async()=>{
+ const f=fixture(),setup=await f.connections.issue(admin,member),put=f.store.put;let failOnce=true;
+ f.store.put=async(key,...args)=>{if(key.includes('/tenants/')&&failOnce){failOnce=false;throw new Error('index write unavailable');}return put(key,...args);};
+ await assert.rejects(f.connections.claim(setup.code,await token()),/index write unavailable/);
+ assert.equal(await f.connections.resolveOrganization(org),'org_a');
+ assert.deepEqual(await f.connections.list(admin),[]);
+ await f.make().claim(setup.code,await token());
+ assert.equal((await f.connections.list(admin)).length,1);
 });
 
 test('a forged tenant index never grants another tenant a connection or shared receipt',async()=>{

@@ -1,6 +1,4 @@
-import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
-import {postgresUrl} from './fixtures/application-database.mjs';
-import {withTestState,stateFor} from './fixtures/memory-application-state.mjs';
+import {boardStateFixture} from './fixtures/board-state.mjs';
 import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,23 +35,25 @@ test('snapshots extract only human and assistant text across both harness format
 
 test('snapshot scope checks precede all reads and reject malformed aggregation identities', async () => {
   const store = memorySessionStore(); let requests = 0;
-  const recent = createRecentSessions(withTestState({store, prefix: 'sessions', endpoint: 'http://localhost:9200',
-    fetch: async () => {requests++; return Response.json({timed_out:false, _shards:{failed:0}, hits:{hits:[]}, aggregations:{recent:{buckets:[{key:['attacker'],lastActivity:{value:1}}]}}});}}));
+  const recent = createRecentSessions({store, prefix: 'sessions', endpoint: 'http://localhost:9200',
+    fetch: async () => {requests++; return Response.json({timed_out:false, _shards:{failed:0}, hits:{hits:[]}, aggregations:{recent:{buckets:[{key:['attacker'],lastActivity:{value:1}}]}}});}});
   await assert.rejects(recent.read(null), /Authentication/);
   await assert.rejects(recent.read({tenantId:'org',userId:'user',captureAccess:'write'}), /read access/);
   assert.equal(requests, 0);
   await assert.rejects(recent.read({tenantId:'org',userId:'user'}), /Invalid recent/);
 });
 
-test('sync uses session discovery without requesting transcripts; outages preserve posts', {skip:!postgresUrl}, async t => {
-  const {state,repository}=await boardStateFixture(t);let calls=0,failure=false,hang=false;
+test('sync uses session discovery without requesting transcripts; outages preserve posts', async t => {
+  const {state}=await boardStateFixture(t);
+  const objects = new Map(); let calls=0, failure=false, hang=false;
+  const store={async readVersion(k){return objects.get(k)||{version:null,data:null};},async compareAndSet(k,v,data){objects.set(k,{version:1,data});return true;}};
   const principal={tenantId:'org',userId:'reader'}, snapshot=[{sessionId:'team-session',title:'Private context'}];
   const board=createBoard({state,sessionTimeoutMs:10,recentSessions:{async read(){throw new Error('Sync must not load transcripts');},async list(who){assert.deepEqual(who,principal);calls++;if(failure)throw new Error('offline');if(hang)return new Promise(()=>{});return snapshot;}}});
   let read=await board.sync(principal,{workspace:'org',agent:'reader',topics:[]});
   assert.deepEqual(read.recentSessions,snapshot);assert.equal(read.recentSessionsStatus.state,'ready');
   read=await board.sync(principal,{workspace:'org',agent:'reader',topics:['unrelated'],after:read.cursor,leave:true});
   assert.deepEqual(read.recentSessions,snapshot);assert.equal(calls,2);
-  assert.ok(!JSON.stringify(await repository.exportLegacy(boardTenant('org'))).includes('Private context'));
+  assert.ok([...objects.values()].every(value=>!String(value.data).includes('Private context')));
   failure=true;
   read=await board.sync(principal,{workspace:'org',agent:'reader',posts:[{id:'outage',topic:'work',text:'Useful update'}]});
   assert.deepEqual(read.accepted,[1]);assert.equal(read.recentSessionsStatus.state,'unavailable');assert.deepEqual(read.recentSessions,[]);
@@ -83,7 +83,7 @@ test('selected session fetch pages only requested text and detects changed conte
 test('selected reply fetch skips unrelated history reads and still rechecks visibility', async () => {
   const store=memorySessionStore(), prefix='sessions/selected', owner={tenantId:'team',userId:'alice'}, reader={...owner,userId:'bob'};
   const identity={userId:'alice',harness:'claude-code',installationId:'device',sessionId:'long-session'};
-  const ingest=createSessionIngest(withTestState({store,prefix})), docs=[];
+  const ingest=createSessionIngest({store,prefix}), docs=[];
   for (const [id,role,text] of [['first','user','Original request'],['answer','assistant','Latest answer']]) {
     await ingest.putBatch(owner,{schemaVersion:1,owner,...identity,origin:'desktop',attachments:[],events:[{
       id,kind:'message',timestamp:'2026-11-10T00:00:00Z',sequence:docs.length,data:{role,content:[{type:'text',text}]},
@@ -93,13 +93,13 @@ test('selected reply fetch skips unrelated history reads and still rechecks visi
   }
   const id='session:'+Buffer.from(JSON.stringify([owner.tenantId,...Object.values(identity)])).toString('base64url');
   let queryCount=0, revoke=false;
-  const controls=createControls(withTestState({store,prefix}));
+  const controls=createControls({store,prefix});
   const readStore={...store,async get(key,options){
     const value=await store.get(key,options);
     if(revoke && key===docs[1].document.sourceKey) await controls.update(owner,'sessions','claude-code','long-session',()=>({visibility:'private',deletedAt:null}));
     return value;
   }};
-  const recent=createRecentSessions(withTestState({state:stateFor(store),store:readStore,prefix,endpoint:'http://localhost:9200',fetch:async (_url,options)=>{
+  const recent=createRecentSessions({store:readStore,prefix,endpoint:'http://localhost:9200',fetch:async (_url,options)=>{
     queryCount++;
     const body=JSON.parse(options.body), query=JSON.stringify(body.query);
     assert.ok(query.includes('"tenantId":"team"'));
@@ -112,7 +112,7 @@ test('selected reply fetch skips unrelated history reads and still rechecks visi
     if(!assistant && body.sort[0].timestamp==='desc')throw new Error('Unrelated last-user history must not be read');
     const item=docs[assistant?1:0];
     return Response.json({...base,hits:{hits:[{_id:'session:'+item.id,_source:realmDocument('session',item.id,item.document)}]}});
-  }}));
+  }});
   const board=createBoard({state:{board:{}},recentSessions:recent});
   const args={workspace:'team',id,field:'latestAssistantMessage'};
   const result=await board.fetch(reader,args);
@@ -129,10 +129,10 @@ test('selected reply fetch skips unrelated history reads and still rechecks visi
 test('real realm: newest ten org sessions, original first/last text, tool exclusion, timestamps and source isolation', {skip:!endpoint}, async t => {
   const environment='recent-'+randomUUID().slice(0,8), prefix='sessions/recent', store=memorySessionStore();
   const owner={tenantId:'team',userId:'alice'}, teammate={...owner,userId:'bob'}, foreign={...owner,tenantId:'foreign'};
-  const search=createSessionSearch(withTestState({store,prefix,endpoint,environment})), recent=createRecentSessions(withTestState({endpoint,environment,store,prefix}));
+  const search=createSessionSearch({store,prefix,endpoint,environment}), recent=createRecentSessions({endpoint,environment,store,prefix});
   t.after(async()=>{for(const who of [owner,foreign])await fetch(endpoint+'/'+realmIndex(environment,who.tenantId),{method:'DELETE'});});
   for(let attempt=0;;attempt++){try{await search.ensureIndex(owner);await search.ensureIndex(foreign);break;}catch(error){if(attempt>=60)throw error;await new Promise(resolve=>setTimeout(resolve,1000));}}
-  const ingest=createSessionIngest(withTestState({store,prefix}));
+  const ingest=createSessionIngest({store,prefix});
   const event=(id,role,text,minute,extra={})=>({id,kind:'message',sequence:minute,timestamp:new Date(Date.UTC(2026,10,1,0,minute)).toISOString(),data:{role,content:[{type:'text',text}]},...extra});
   async function add(who,sessionId,events,harness='codex',installationId='device') {
     await ingest.putBatch(who,{schemaVersion:1,owner:who,harness,origin:'desktop',installationId,sessionId,events,attachments:[]});
@@ -185,7 +185,7 @@ test('real realm: newest ten org sessions, original first/last text, tool exclus
   assert.equal(selectedReply.latestAssistantMessage.text, assistantText);
   assert.equal(selectedReply.firstUserMessage, null);assert.equal(selectedReply.lastUserMessage, null);
   await assert.rejects(recent.fetch(foreign, discovery[2].id), {status: 404});
-  const controls = createControls(withTestState({store, prefix}));
+  const controls = createControls({store, prefix});
   await controls.update(teammate, 'sessions', 'codex', 'session-11', () => ({visibility: 'private', deletedAt: null}));
   // The index is intentionally stale: current owner controls must still deny.
   await assert.rejects(recent.fetch(owner, discovery[2].id), {status: 404});

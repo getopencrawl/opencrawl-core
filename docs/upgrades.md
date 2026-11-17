@@ -8,7 +8,7 @@ Use the same startup options as before. Search backend changes remain a separate
 migration; an upgrade does not switch an existing index.
 The application-state transition from published `v0.4.1` is documented in
 [Application-state migration](app-state-migration.md), including the preserved
-identity, privacy, credential and pending-work invariants.
+auth, registry and board cutover and recovery requirements.
 
 An operator's agent can inspect and run the same operation directly. The shell
 wrapper downloads and verifies the same pinned Node runtime as normal startup;
@@ -67,8 +67,8 @@ and deletion records. No source volume is automatically deleted.
 
 Next, event-ledger migration scans the retained object store, using per-session
 commits for restartability. The application-state migrator checks the original
-source binding, imports SQLite identity and integration records plus mutable
-object-store state into PostgreSQL, and verifies its receipts before allowing
+source binding, imports SQLite identity and integration records plus the board
+into PostgreSQL, and verifies its receipts before allowing
 any new application writer to start. The original SQLite files and object-store
 records remain available for matched rollback. An interrupted upgrade resumes
 the same source and backup; a later release verifies the existing binding and

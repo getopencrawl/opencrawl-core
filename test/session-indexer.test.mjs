@@ -1,4 +1,3 @@
-import {withTestState,stateFor} from './fixtures/memory-application-state.mjs';
 import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {realmIndex} from '../dist/src/search/realm.mjs';
 import {realmResponse} from './realm-fixture.mjs';
@@ -21,30 +20,30 @@ const owner={tenantId:'tenant-a',userId:'same-user'};
 function batch(principal,text='unique transcript words') {return {schemaVersion:1,owner:principal,harness:'codex',origin:'desktop',installationId:'same-device',sessionId:'same-session',events:[{id:'same-event',kind:'message',data:{role:'user',content:[{type:'input_text',text}]}}],attachments:[]};}
 
 test('fixed-scope indexing, checkpoints, crash replay and poison records cannot cross tenant/user scope',async()=>{
- const store=memoryStore(),prefix='sessions/test/v1',ingest=createSessionIngest(withTestState({store,prefix}));
+ const store=memoryStore(),prefix='sessions/test/v1',ingest=createSessionIngest({store,prefix});
  const otherTenant={...owner,tenantId:'tenant-b'},otherUser={...owner,userId:'other-user'};
  for(const principal of [owner,otherTenant,otherUser])await ingest.putBatch(principal,batch(principal));
  const docs=new Map();let fail=true;const search={identity:'test-index',ensureIndex:async()=>{},putDocuments:async items=>{for(const d of items)docs.set(d.id,d.document);if(fail)throw new Error('Interrupted after write');}};
  let time=0;const options={store,prefix,search,principal:owner,now:()=>time};
- let worker=createSessionPipeline(withTestState(options));
+ let worker=createSessionPipeline(options);
  assert.equal((await sweep(worker)).failed,1);assert.equal(docs.size,1);
- fail=false;time=10000;worker=createSessionPipeline(withTestState(options));
+ fail=false;time=10000;worker=createSessionPipeline(options);
  assert.equal((await sweep(worker)).indexed,1);assert.equal(docs.size,1);
  assert.equal((await sweep(worker)).indexed,0);
  assert.ok([...docs.values()].every(d=>d.tenantId===owner.tenantId&&d.userId===owner.userId));
- const hosted=createSessionPipeline(withTestState({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner}));
+ const hosted=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
  assert.equal((await sweep(hosted)).indexed,3);assert.equal(docs.size,3);
  const key=[...store.data.keys()].find(k=>k.startsWith(prefix+'/'+sessionScope(owner))&&k.endsWith('.json.gz'));
  const forged={...batch(otherTenant),receivedAt:new Date().toISOString()};
  assert.throws(()=>batchDocuments({prefix,key,batch:forged,principal:otherTenant}),/authorized scope/);
- assert.throws(()=>createSessionPipeline(withTestState({store,prefix,search})),/fixed single-tenant principal/);
+ assert.throws(()=>createSessionPipeline({store,prefix,search}),/fixed single-tenant principal/);
 });
 
 test('discovery skips indexed objects without an activity each, and retries unfinished ones',async()=>{
- const store=memoryStore(),prefix='sessions/test/v1',ingest=createSessionIngest(withTestState({store,prefix}));
+ const store=memoryStore(),prefix='sessions/test/v1',ingest=createSessionIngest({store,prefix});
  for(const text of ['first','second','third'])await ingest.putBatch(owner,{...batch(owner,text),sessionId:'session-'+text});
  let fail='second';const search={identity:'test-index',ensureIndex:async()=>{},putDocuments:async docs=>{if(docs.some(d=>d.document.text.includes(fail)))throw new Error('Interrupted');}};
- const worker=createSessionPipeline(withTestState({store,prefix,search,principal:owner}));
+ const worker=createSessionPipeline({store,prefix,search,principal:owner});
  const processed=[];
  const run=()=>runConnectorSegment({}, {listPage:input=>worker.listPage(input),processObject:async input=>{processed.push(input.key);const r=await worker.processObject(input);return {records:r.skipped?0:1};}});
  assert.deepEqual(await run(),{cursor:null,indexed:2,failed:1});
@@ -64,15 +63,15 @@ test('large discovery pages bound receipt reads, retain pagination order, and se
  const base=`${prefix}/${sessionScope(owner)}/codex/${digest('device')}/${digest('session')}/`;
  const keys=Array.from({length:240},(_,i)=>base+digest(String(i))+'.json.gz').sort();
  for(const key of keys)store.data.set(key,Buffer.from('unread source'));
- const worker=createSessionPipeline(withTestState({store,prefix,search,principal:owner}));
+ const worker=createSessionPipeline({store,prefix,search,principal:owner});
  const indexed=new Set(keys.filter((_,i)=>i%3===0).map(key=>digest(key)+'.json'));
  let active=0,peak=0,reads=0,deny=false;
- stateFor(store).indexingReceipts.read=async key=>{
+ store.get=async key=>{
   assert.ok(key.includes('/_index/'));active++;peak=Math.max(peak,active);const read=++reads;
   try{
    await new Promise(resolve=>setImmediate(resolve));
    if(deny&&read===1)throw new Error('receipt unavailable');
-   return indexed.has(key.split('/').at(-1))?{status:'indexed'}:null;
+   return indexed.has(key.split('/').at(-1))?Buffer.from('{"status":"indexed"}'):null;
   }finally{active--;}
  };
  const first=await worker.listPage();
@@ -88,19 +87,19 @@ test('large discovery pages bound receipt reads, retain pagination order, and se
 
 test('bulk item errors are failures even with HTTP 200; search binds the team and retains human attribution',async()=>{
  const requests=[];
- const search=createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async(url,options)=>{
+ const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async(url,options)=>{
   requests.push(JSON.parse(options.body));
   if(url.pathname.endsWith('_bulk'))return realmResponse('session',{errors:true,items:[{index:{status:429}}]});
   return realmResponse('session',{hits:{total:{value:0},hits:[]}});
- }}));
+ }});
  // Replace the fake parser for NDJSON, then retain the observed search body.
- const failing=createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{errors:true,items:[{index:{status:429}}]})}));
+ const failing=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{errors:true,items:[{index:{status:429}}]})});
  await assert.rejects(failing.putDocuments([{id:'id',document:{...owner,harness:'codex',receivedAt:'2026-11-01T00:00:00Z',text:'retry me'}}],owner),/failed or missing items/);
  await search.search(owner,{query:'tenant-b OR *'});
  assert.deepEqual(requests[0].query.bool.filter,[{term:{tenantId:'tenant-a'}},{term:{corpus:'session'}}]);
  await assert.rejects(search.search(null,{query:'anything'}),/Authentication/);
  await assert.rejects(search.search(owner,{limit:101}),/Invalid search/);
- const leaking=createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{hits:{total:{value:1},hits:[{_id:'foreign',_source:{tenantId:'tenant-b',userId:'same-user'}}]}})}));
+ const leaking=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{hits:{total:{value:1},hits:[{_id:'foreign',_source:{tenantId:'tenant-b',userId:'same-user'}}]}})});
  await assert.rejects(leaking.search(owner),/ownership scope/);
 });
 
@@ -109,10 +108,10 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, t
 },async t=>{
  const environment='test-'+randomUUID().slice(0,8),index=realmIndex(environment,owner.tenantId),prefix='sessions/index-test/'+randomUUID();
  const {store}=sessionStorage({OPENCRAWL_LANDING_S3_ENDPOINT:process.env.OPENCRAWL_TEST_S3_ENDPOINT,OPENCRAWL_LANDING_S3_BUCKET:'capture-test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'capture-test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'capture-test-secret'});
- const search=createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint:process.env.OPENCRAWL_TEST_OPENSEARCH_URL,environment}));
+ const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:process.env.OPENCRAWL_TEST_OPENSEARCH_URL,environment});
  for(let attempt=0;;attempt++){try{await store.checkAccess();await search.ensureIndex(owner);break;}catch(e){if(attempt>=60)throw e;await new Promise(r=>setTimeout(r,1000));}}
  t.after(async()=>{for(const key of (await store.list(prefix+'/')).keys)await store.delete(key);for(const tenantId of [owner.tenantId,'tenant-b'])await fetch(process.env.OPENCRAWL_TEST_OPENSEARCH_URL+'/'+realmIndex(environment,tenantId),{method:'DELETE'});});
- const ingest=createSessionIngest(withTestState({store,prefix}));
+ const ingest=createSessionIngest({store,prefix});
  const owners=[owner,{...owner,tenantId:'tenant-b'},{...owner,userId:'other-user'}];
  for(const principal of owners)await search.ensureIndex(principal);
  for(const principal of owners){
@@ -124,11 +123,11 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, t
   await ingest.putAttachment(principal,sha,bytes,b);
   await ingest.putBatch(principal,b);
  }}
- const single=createSessionPipeline(withTestState({store,prefix,search,principal:owner}));
+ const single=createSessionPipeline({store,prefix,search,principal:owner});
  assert.equal((await sweep(single)).indexed,4);for(const principal of owners)await search.refresh(principal);
  assert.equal((await search.search(owner,{query:'violet'})).total,4);
  assert.equal((await search.search(owners[1],{query:'violet'})).total,0);
- const hosted=createSessionPipeline(withTestState({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner}));
+ const hosted=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
  assert.equal((await sweep(hosted)).indexed,12);for(const principal of owners)await search.refresh(principal);
  for(const principal of owners){
   const expected=principal.tenantId===owner.tenantId?8:4;
@@ -138,7 +137,7 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, t
   assert.deepEqual(new Set(result.hits.map(hit=>hit.userId)),new Set(owners.filter(p=>p.tenantId===principal.tenantId).map(p=>p.userId)));
   assert.equal((await search.search(principal,{query:'Build completed'})).total,expected);
  }
- const restarted=createSessionPipeline(withTestState({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner}));
+ const restarted=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner});
  assert.equal((await sweep(restarted)).indexed,0);
  assert.equal((await search.search(owner)).total,16);
  const later=batch(owner,'new incremental indigo message');later.events[0].id='later-event';
@@ -171,17 +170,17 @@ test('real S3 to OpenSearch pipeline: incremental replay, text/tool retrieval, t
 test('capture only lands immutable data and succeeds without any processing service',async()=>{
  const store=memoryStore(),prefix='sessions/simple/v1';
  const put=store.put;store.put=async(k,v)=>{if(!k.endsWith('.json.gz'))throw new Error('Processing storage unavailable');await put(k,v);};
- const ingest=createSessionIngest(withTestState({store,prefix})),value=batch(owner);
+ const ingest=createSessionIngest({store,prefix}),value=batch(owner);
  assert.equal((await ingest.putBatch(owner,value)).stored,true);
  assert.equal((await ingest.putBatch(owner,value)).stored,true);
- assert.equal(store.data.size,1); // Only immutable capture bytes are object state.
+ assert.equal(store.data.size,3); // Immutable batch, event ledger and durable write fence.
 });
 
 test('real OpenSearch usage separates windowed activity from lifetime inventory and excludes future events', {
  skip: !process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
 }, async t => {
  const environment='usage-'+randomUUID().slice(0,8), endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
- const search=createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment}));
+ const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment});
  const teammate={...owner,userId:'teammate'},foreign={...owner,tenantId:'foreign-usage'};
  t.after(async()=>{for(const tenantId of [owner.tenantId,foreign.tenantId])await fetch(endpoint+'/'+realmIndex(environment,tenantId),{method:'DELETE'});});
  await search.ensureIndex(owner);await search.ensureIndex(foreign);
@@ -202,24 +201,24 @@ test('real OpenSearch usage separates windowed activity from lifetime inventory 
 });
 
 test('worker rejects forged source keys and checkpoints only after all indexing writes succeed',async()=>{
- const store=memoryStore(),prefix='sessions/boundary/v1',ingest=createSessionIngest(withTestState({store,prefix}));
+ const store=memoryStore(),prefix='sessions/boundary/v1',ingest=createSessionIngest({store,prefix});
  await ingest.putBatch(owner,batch(owner));
  const key=[...store.data.keys()].find(key=>key.endsWith('.json.gz'));let fail=true;
  const search={identity:'target',ensureIndex:async()=>{},putDocuments:async()=>{if(fail)throw new Error('Partial bulk failure');}};
- const pipeline=createSessionPipeline(withTestState({store,prefix,search,principal:owner}));
+ const pipeline=createSessionPipeline({store,prefix,search,principal:owner});
  await assert.rejects(pipeline.processObject({key:key.replace('tenants/','tenants/foreign/')}),/authorized source/);
  await assert.rejects(pipeline.processObject({key}),/write outcome is uncertain/);
- assert.equal(store.data.size,1); // Only immutable source bytes; no object-store metadata receipt.
+ assert.equal(store.data.size,3); // Source, event ledger and unresolved write fence; no index receipt.
  fail=false;assert.equal((await pipeline.processObject({key})).records,1);
  assert.equal((await pipeline.processObject({key})).skipped,true);
- assert.equal(stateFor(store).receiptValues.size,1);assert.equal([...store.data.keys()].filter(k=>k.includes('/_index/')).length,0);
+ assert.equal([...store.data.keys()].filter(k=>k.includes('/_index/')).length,1);
 });
 
 test('OpenSearch SigV4 signs temporary credentials for the es service and index-scoped endpoint',async()=>{
  let captured;
- const search=createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint:'https://search.example.com',index:'session-test',region:'us-west-2',
+ const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'https://search.example.com',index:'session-test',region:'us-west-2',
   credentials:async()=>({accessKeyId:'test-key',secretAccessKey:'test-secret',sessionToken:'temporary-token'}),
-  fetch:async(url,options)=>{captured={url,options};return realmResponse('session',{hits:{total:{value:0},hits:[]}});}}));
+  fetch:async(url,options)=>{captured={url,options};return realmResponse('session',{hits:{total:{value:0},hits:[]}});}});
  await search.search(owner,{query:'hello'});
  assert.equal(captured.url.pathname,'/session-test/_search');
  assert.equal(captured.options.headers['x-amz-security-token'],'temporary-token');
@@ -231,7 +230,7 @@ test('OpenSearch SigV4 signs temporary credentials for the es service and index-
 test('search returns another teammate with attribution and rejects foreign tenant results',async()=>{
  const teammate={tenantId:owner.tenantId,userId:'teammate',harness:'codex',sessionId:'s',text:'shared knowledge'};
  let source=teammate;
- const search=createSessionSearch(withTestState({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{hits:{total:{value:1},hits:[{_id:'event',_source:source}]}})}));
+ const search=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint:'http://localhost:9200',index:'sessions-test',fetch:async()=>realmResponse('session',{hits:{total:{value:1},hits:[{_id:'event',_source:source}]}})});
  assert.equal((await search.search(owner)).hits[0].userId,'teammate');
  source={...teammate,tenantId:'another-team'};
  await assert.rejects(search.search(owner),/ownership scope/);

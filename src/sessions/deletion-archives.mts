@@ -1,4 +1,3 @@
-import type {ApplicationState} from '../state/types.mjs';
 import type {ObjectStore, Principal} from './types.mjs';
 import {parseJson} from './types.mjs';
 import {gzipSync,gunzipSync} from 'node:zlib';
@@ -11,12 +10,12 @@ import type {DocumentItem} from '../search/types.mjs';
  * Every affected version is replaced by a content-addressed sanitized copy
  * before erasure. Other sessions' backup records are preserved, not discarded.
  * Migration writers must be drained before enabling session deletion. */
-export async function purgeSessionArchives({state,store,prefix,roots,principal,harness,sessionId}: {
-  state:ApplicationState;store:ObjectStore;prefix:string;roots:string[];principal:Principal;harness:string;sessionId:string;
+export async function purgeSessionArchives({store,prefix,roots,principal,harness,sessionId}: {
+  store:ObjectStore;prefix:string;roots:string[];principal:Principal;harness:string;sessionId:string;
 }) {
   sessionScope(principal);
   if(principal.captureAccess!==undefined||!store.purgePrefix)throw new Error('Archive erasure requires a trusted reader and permanent storage deletion');
-  const controls=createControls({state});
+  const controls=createControls({store,prefix});
   const isTarget=(doc:Record<string,unknown>)=>doc.userId===principal.userId&&doc.harness===harness&&doc.sessionId===sessionId;
   function archive(bytes:Buffer) {
     const value=parseJson<Record<string,unknown>>(gunzipSync(bytes,{maxOutputLength:256*1024*1024}));
@@ -65,7 +64,7 @@ export async function purgeSessionArchives({state,store,prefix,roots,principal,h
           const sanitized=await redact(original);
           if(!sanitized)throw new Error('Archive changed during erasure');
           const replacement=root+'redacted/'+digest(key)+'/'+digest(sanitized.bytes)+'.json.gz';
-          try{await withSessionDocumentWrites({state,prefix,tenantId:principal.tenantId,documents:sanitized.documents},()=>store.put(replacement,sanitized.bytes,'application/gzip'));}
+          try{await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:sanitized.documents},()=>store.put(replacement,sanitized.bytes,'application/gzip'));}
           catch(error){if(attempt<3&&(error as {status?:number}).status===403)continue;throw error;}
           if(!Buffer.from(await store.get(replacement,{maxBytes:256*1024*1024})??[]).equals(sanitized.bytes))throw new Error('Sanitized archive did not persist');
           break;

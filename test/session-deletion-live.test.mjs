@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -29,9 +28,9 @@ test('versioned S3 and real OpenSearch: erasure removes every raw version and bl
   });
   await s3request('PUT',{versioning:''},'<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>');
   assert.match(await (await s3request('GET',{versioning:''})).text(),/<Status>Enabled<\/Status>/);
-  const ingest=createSessionIngest(withTestState(options)),search=createSessionSearch(withTestState(options)),library=createSessionLibrary(withTestState(options));
+  const ingest=createSessionIngest(options),search=createSessionSearch(options),library=createSessionLibrary(options);
   await search.ensureIndex(owner);
-  const pipeline=createSessionPipeline(withTestState({...options,search,principal:owner}));
+  const pipeline=createSessionPipeline({...options,search,principal:owner});
   const value={schemaVersion:1,owner,harness:'codex',installationId:'device',sessionId:'delete-me',origin:'desktop',events:[{id:'one',kind:'message',data:{role:'user',content:'verifiable erasure '+run}}],attachments:[]};
   const blob=Buffer.from('private attachment '+run),sha=digest(blob);
   value.attachments=[{status:'captured',sha256:sha}];
@@ -49,13 +48,13 @@ test('versioned S3 and real OpenSearch: erasure removes every raw version and bl
   assert.equal((await search.search(peer,{id:found.hits[0].id})).hits.length,0);
   await assert.rejects(library.read(peer,{userId:owner.userId,harness:value.harness,sessionId:value.sessionId}),{status:404});
   assert.equal(await ingest.getBatch(peer,{...value,...receipt,userId:owner.userId}),null);
-  assert.equal((await createRecentSessions(withTestState(options)).read(peer)).length,0);
+  assert.equal((await createRecentSessions(options).read(peer)).length,0);
   assert.deepEqual((await store.listPage(root)).keys,[]);
   const versions=await (await s3request('GET',{versions:'',prefix:root})).text();
   assert.doesNotMatch(versions,/<(?:Version|DeleteMarker)>/);
-  const restarted=createSessionIngest(withTestState(options));
+  const restarted=createSessionIngest(options);
   assert.equal((await restarted.putBatch(owner,{...value,installationId:'new-install',captureMode:'history'})).discarded,'session_deleted');
   assert.equal((await restarted.putAttachment(owner,sha,blob,{...value,installationId:'new-install'})).discarded,'session_deleted');
   assert.equal((await pipeline.processObject({key})).skipped,true);
-  assert.equal((await createSessionLibrary(withTestState(options)).delete(owner,value)).deleted,true);
+  assert.equal((await createSessionLibrary(options).delete(owner,value)).deleted,true);
 });

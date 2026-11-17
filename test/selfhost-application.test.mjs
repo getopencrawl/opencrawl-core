@@ -1,4 +1,5 @@
-import {test as nodeTest} from 'node:test';
+import {boardStateFixture} from './fixtures/board-state.mjs';
+import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {promisify} from 'node:util';
@@ -11,30 +12,21 @@ import {selfhostApplication} from '../dist/src/selfhost/application.mjs';
 import {createLocalIdentity} from '../dist/src/identity/better-auth.mjs';
 import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
-import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
-import {createApplicationState} from '../dist/src/state/application.mjs';
-import {createPostgresEventIdentities} from '../dist/src/sessions/postgres-identities.mjs';
-const test=(name,run)=>nodeTest(name,{skip:!postgresUrl},run);
+import {valueReportKey} from '../dist/src/application/value-report.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 const org='org_selfhost',setup='setup-token-for-tests';
 async function fixture(t,options={}){
-  const {search:searchOptions,replicasBindings,setupStartCommand,setupCliCommand,...appOptions}=options;
+  const {search:searchOptions,replicasBindings,...appOptions}=options;
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-selfhost-app-'));
-  t.after(()=>rm(dir,{recursive:true,force:true}));
   const store=createLocalSessionStore(dir),prefix='sessions/selfhost/v1';
-  const database=await applicationDatabaseFixture(t),state=await createApplicationState({database});
-  const eventIdentities=createPostgresEventIdentities({connectionString:postgresUrl,namespace:database.namespace});
-  t.after(()=>eventIdentities.close());
   let app;const server=createServer((req,res)=>app(req,res));
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin='http://localhost:'+server.address().port;
-  let identity;
-  // Register teardown before any provider/schema setup can fail.
-  t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));identity?.close();});
-  identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),database,organizationId:org});
-  await identity.ready();
-  const settings={replicasBindings,setupStartCommand,setupCliCommand,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
-  app=selfhostApplication({settings,state,eventIdentities,store,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
+  const {database,state:boardState}=await boardStateFixture(t);
+  const identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),database,organizationId:org});
+  await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
+  const settings={replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),identityPath:join(dir,'identity.sqlite'),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
+  app=selfhostApplication({settings,store,boardState,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
   const jars=new Map();
   const request=async(path,who=null,options={})=>{
     const jar=who?jars.get(who)||new Map():null;
@@ -52,7 +44,7 @@ async function fixture(t,options={}){
     assert.equal((await identity.invitationLinks()).has(email),false);
     return invited;
   };
-  return {request,post,identity,state,store,prefix,origin,admin,join:join_};
+  return {request,post,identity,store,prefix,origin,admin,join:join_};
 }
 
 test('OSS first run creates one admin from the setup link; nobody else can sign up without an invitation',async t=>{
@@ -65,13 +57,8 @@ test('OSS first run creates one admin from the setup link; nobody else can sign 
   await f.admin();
   const boot=await (await f.request('/api/console/bootstrap','admin')).json();
   assert.equal(boot.workspace.name,'Self-hosted team');
-  assert.equal(boot.workspace.avatarUrl,undefined);
-  const [adminMembership]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
-  const {adapter}=await f.identity.auth.$context;
-  await adapter.update({model:'user',where:[{field:'id',value:adminMembership.userId}],update:{image:'/avatars/ada.png'}});
-  assert.equal((await (await f.request('/api/console/bootstrap','admin')).json()).workspace.avatarUrl,'/avatars/ada.png');
   assert.deepEqual(boot.invitationPolicy,{delivery:'link',beforeAgentSetup:true});
-  assert.deepEqual(boot.onboarding,{completed:false,next:'/setup'});
+  assert.deepEqual(boot.onboarding,{completed:false,next:'/onboarding'});
   // Setup is single-use and Better Auth's own sign-up endpoint is not reachable.
   assert.equal((await f.post('/auth/signup','mallory',{setup,workspace:'x',name:'M',email:'m@example.com',password:'long enough password'})).status,403);
   assert.equal((await f.request('/api/auth/sign-up/email',null,{method:'POST',headers:{'content-type':'application/json',origin:f.origin},body:JSON.stringify({email:'m@example.com',password:'long enough password',name:'M'})})).status,404);
@@ -111,25 +98,22 @@ test('OSS invitations admit distinct members once; removing a membership denies 
   assert.equal((await f.request('/api/console/bootstrap','bob')).status,403);
   assert.equal((await f.request('/api/console/team/invite','admin',{method:'POST',headers:{origin:'https://foreign.example'}})).status,403);
 });
-test('OSS setup is optional status; unverified users can use sources, team and workspace',async t=>{
+test('OSS onboarding requires agent setup only; the Sources step can be skipped',async t=>{
   const f=await fixture(t);await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
-  const onboarding=createOnboardingStatus({state:f.state}),principal={tenantId:org,userId:member.userId};
+  const onboarding=createOnboardingStatus({store:f.store,prefix:f.prefix}),principal={tenantId:org,userId:member.userId};
   const finish=()=>f.request('/api/onboarding/finish','admin',{method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'});
-  assert.equal((await finish()).status,200);
-  assert.equal((await f.request('/onboarding/sources','admin')).status,200);
-  for(const path of ['/','/setup','/sources','/team'])assert.equal((await f.request(path,'admin')).status,200);
-  const emptySetup=await(await f.request('/api/setup','admin')).json();
-  assert.equal(emptySetup.data.scope.userId,principal.userId);assert.equal(emptySetup.data.firstWin,null);assert.deepEqual(emptySetup.data.installations,[]);
-  assert.equal((await f.request('/api/setup?tenantId=forged','admin')).status,400);
-  assert.equal((await f.request('/api/setup')).status,401);
+  // Skipping sources never skips agent setup.
+  assert.equal((await finish()).status,409);
+  assert.equal((await f.request('/onboarding/sources','admin')).headers.get('location'),'/onboarding');
   assert.equal((await f.request('/onboarding/invite','admin')).status,200);
   assert.equal((await f.request('/api/onboarding/invites','admin')).status,200);
   await onboarding.cli(principal);await onboarding.mcpTest(principal);await onboarding.session(principal,{harness:'codex',events:[{kind:'message'}]});
-  assert.deepEqual((await (await f.request('/api/console/bootstrap','admin')).json()).onboarding,{completed:false,next:'/setup'});
+  // With nothing connected, setup resumes at Sources, yet Invite opens and finishing needs no source.
+  assert.deepEqual((await (await f.request('/api/console/bootstrap','admin')).json()).onboarding,{completed:false,next:'/onboarding/sources'});
   for(const path of ['/onboarding/sources','/onboarding/invite'])assert.equal((await f.request(path,'admin')).status,200);
   assert.equal((await f.request('/api/onboarding/invites','admin')).status,200);
-  assert.equal((await f.request('/api/console/team','admin')).status,200);
+  assert.equal((await f.request('/api/console/team','admin')).status,409);
   const done=await finish();assert.equal(done.status,200);assert.deepEqual(await done.json(),{workspaceUrl:'/'});
   assert.ok((await onboarding.read(principal)).completed.observedAt);
   assert.equal((await f.request('/api/console/team','admin')).status,200);
@@ -180,16 +164,16 @@ test('OSS reads only its configured organization measured report from operator s
   const f=await fixture(t,{search:{fetch:async()=>Response.json({error:{type:'index_not_found_exception'}},{status:404})}});
   await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
-  const onboarding=createOnboardingStatus({state:f.state}),principal={tenantId:org,userId:member.userId};
+  const onboarding=createOnboardingStatus({store:f.store,prefix:f.prefix}),principal={tenantId:org,userId:member.userId};
   await onboarding.cli(principal);await onboarding.mcpTest(principal);
   await onboarding.session(principal,{harness:'codex',events:[{kind:'message'}]});await onboarding.complete(principal);
   const report={schema:4,measuredAt:'2026-11-09',window:{from:'2026-11-01',to:'2026-11-08',days:8},
     model:{model:'Measured model',input:1,cacheRead:0,cacheWrite:0,output:1,asOf:'2026-11-09',share:100},
     work:{sessions:1,tasks:1},spend:{input:1,cacheRead:0,cacheWrite:0,output:1},drift:{conflictsAvoided:0,duplicatesAvoided:0},usage:{searches:0,boardMessages:0},
     value:{searchesUsed:0,fixesReused:0,found:{teammateWork:0,whereThingsLive:0,pastDecisions:0,pastFixes:0,other:0}}};
-  await f.state.valueReports.write('org_foreign',report);
+  await f.store.put(valueReportKey(f.prefix,'org_foreign'),JSON.stringify(report));
   assert.equal((await (await f.request('/api/console/usage','admin')).json()).value,null);
-  await f.state.valueReports.write(org,report);
+  await f.store.put(valueReportKey(f.prefix,org),JSON.stringify(report));
   const response=await f.request('/api/console/usage','admin');assert.equal(response.status,200);
   const result=await response.json();assert.deepEqual(result.value,report);assert.equal(result.capture,null);
 
@@ -203,21 +187,6 @@ test('OSS withholds a completed tRPC response if membership or admin role change
   during=()=>adapter.update({model:'member',where:[{field:'id',value:member.id}],update:{role:'member'}});
   const result=await f.request('/api/trpc/console.bootstrap?input='+encodeURIComponent('{}'),'admin');
   assert.equal(result.status,403);assert.doesNotMatch(await result.text(),/Self-hosted team/);
-});
-
-for(const change of ['demotion','removal'])
-test(`direct consent response is withheld after concurrent ${change}`,async t=>{
-  let during=async()=>{};
-  const redirectUrl='https://provider.example/authorize?fixture=private-consent';
-  const integrations={list:async()=>[],connect:async()=>{await during();return {redirectUrl};}};
-  const f=await fixture(t,{integrations,providers:{notion:{id:'notion',name:'Notion',scope:'team',auth:'oauth'}}});
-  await f.admin();
-  const {adapter}=await f.identity.auth.$context;
-  const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
-  const where=[{field:'id',value:member.id}];
-  during=()=>change==='demotion'?adapter.update({model:'member',where,update:{role:'member'}}):adapter.delete({model:'member',where});
-  const response=await f.request('/api/integrations/notion/connect','admin',{method:'POST',headers:{origin:f.origin}});
-  assert.equal(response.status,403);assert.doesNotMatch(await response.text(),/provider\.example|private-consent/);
 });
 
 test('CLI device sign-in requires a member’s approval and yields refreshable tokens for this deployment',async t=>{
@@ -336,7 +305,7 @@ test('delegated capture works for the configured team, remains write-only, and o
   const f=await fixture(t);await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
   const p={tenantId:org,userId:member.userId};
-  const credentials=createCaptureCredentials({state:f.state}),issued=await credentials.issue(p);
+  const credentials=createCaptureCredentials({store:f.store,prefix:f.prefix}),issued=await credentials.issue(p);
   const request=path=>f.request(path,null,{headers:{authorization:'Bearer '+issued.token}});
   assert.equal((await request('/api/sessions/identity')).status,200);
   assert.equal((await request('/api/sessions/search?query=private')).status,403);
@@ -348,7 +317,7 @@ test('self-host capture acknowledges only after raw storage and the durable inde
   const f=await fixture(t,{scheduleSessionIndexing:async key=>{scheduled.push(key);if(fail)throw Error('Temporal unavailable');}});await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
   const owner={tenantId:org,userId:member.userId};
-  const issued=await createCaptureCredentials({state:f.state}).issue(owner);
+  const issued=await createCaptureCredentials({store:f.store,prefix:f.prefix}).issue(owner);
   const batch={schemaVersion:1,owner,harness:'codex',origin:'desktop',installationId:'device',sessionId:'durable',events:[{id:'event',kind:'message',data:{text:'kept locally until acknowledged'}}],attachments:[]};
   const upload=()=>f.request('/api/sessions/batches',null,{method:'POST',headers:{authorization:'Bearer '+issued.token,'content-type':'application/json'},body:JSON.stringify(batch)});
   assert.equal((await upload()).status,503);assert.equal(scheduled.length,1);assert.ok(await f.store.get(scheduled[0]));
@@ -392,7 +361,7 @@ test('admin removal immediately denies existing browser, CLI, MCP and capture cr
  const f=await fixture(t);await f.admin();await f.join('bob','bob@example.com');
  const members=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
  const admin=members.find(m=>m.role.slug==='admin'),bob=members.find(m=>m.role.slug==='member');
- const onboarding=createOnboardingStatus({state:f.state});
+ const onboarding=createOnboardingStatus({store:f.store,prefix:f.prefix});
  for(const member of members){const p={tenantId:org,userId:member.userId};await onboarding.cli(p);await onboarding.mcpTest(p);await onboarding.session(p,{harness:'codex',events:[{kind:'message'}]});await onboarding.complete(p);}
  const json=userId=>({method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:JSON.stringify({userId})});
  assert.equal((await f.request('/api/console/team/remove','bob',json(admin.userId))).status,403);
@@ -432,7 +401,7 @@ test('admin removal immediately denies existing browser, CLI, MCP and capture cr
  assert.equal((await f.request('/api/sessions/identity',null,{headers:captureAuth})).status,401);
 });
 
-test('self-host admin can invite before verification while authorization still protects team changes',async t=>{
+test('self-host admin can invite a teammate before agent verification without opening the workspace',async t=>{
   const f=await fixture(t);await f.admin();
   const invite=(who,email,origin=f.origin)=>f.request('/api/onboarding/invites',who,{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({email})});
   assert.equal((await invite(null,'bob@example.com')).status,401);
@@ -446,9 +415,9 @@ test('self-host admin can invite before verification while authorization still p
   assert.equal((await f.request('/api/console/bootstrap','bob')).status,200);
   assert.equal((await invite('bob','mallory@example.com')).status,403);
   assert.equal((await f.request('/api/onboarding/invites','bob')).status,403);
-  assert.equal((await f.request('/api/console/team','admin')).status,200);
-  assert.equal((await f.request('/onboarding/sources','admin')).status,200);
-  assert.equal((await f.request('/api/onboarding/finish','admin',{method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'})).status,200);
+  assert.equal((await f.request('/api/console/team','admin')).status,409);
+  assert.equal((await f.request('/onboarding/sources','admin')).headers.get('location'),'/onboarding');
+  assert.equal((await f.request('/api/onboarding/finish','admin',{method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'})).status,409);
 });
 
 test('MCP registration rejects executable and local-file callback schemes',async t=>{
@@ -463,8 +432,8 @@ test('shared installation admits real local members without personal setup or ho
  const binding={organizationId:'11111111-1111-4111-8111-111111111111',environmentId:'22222222-2222-4222-8222-222222222222',onboardingWorkspaceId:'33333333-3333-4333-8333-333333333333',tenantId:org};
  const {replicasSharedInstallations}=await import('../dist/src/identity/replicas.mjs');
  const f=await fixture(t,{replicasBindings:[binding]});await f.admin();await f.join('member','member@example.com');
- assert.equal((await f.request('/','member')).status,200);
- const owner=replicasSharedInstallations([binding])[0],status=createOnboardingStatus({state:f.state});
+ assert.equal((await f.request('/','member')).headers.get('location'),'/onboarding');
+ const owner=replicasSharedInstallations([binding])[0],status=createOnboardingStatus({store:f.store,prefix:f.prefix});
  await status.cli(owner);await status.mcpTest(owner);await status.session(owner,{harness:'codex',events:[{kind:'message'}]});
  const boot=await(await f.request('/api/console/bootstrap','member')).json();
  assert.deepEqual(boot.onboarding,{completed:true,next:'/'});
@@ -517,14 +486,6 @@ test('admin connects Replicas through the product before onboarding; native fork
  assert.equal((await f.request('/api/onboarding','admin')).status,200,'personal browser onboarding remains usable');
  const progress=(await (await f.request('/api/onboarding','admin')).json()).data;
  assert.equal(progress.shared,undefined,'enrollment without actual MCP/capture receipts is not completed setup');
-});
-
-
-test('operator-pinned setup commands reach authenticated bootstrap unchanged',async t=>{
- const setupStartCommand='sh /private/candidate/install.sh && /private/candidate/opencrawl setup',setupCliCommand='/private/candidate/opencrawl';
- const f=await fixture(t,{setupStartCommand,setupCliCommand});await f.admin();
- const boot=await(await f.request('/api/console/bootstrap','admin')).json();
- assert.equal(boot.setupStartCommand,setupStartCommand);assert.equal(boot.setupCliCommand,setupCliCommand);
 });
 
 test('ordinary login reuses only a current member session and keeps redirects local',async t=>{

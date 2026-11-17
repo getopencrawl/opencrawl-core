@@ -1,7 +1,7 @@
 import type {Principal} from '../identity/types.mjs';
 import type {createOnboardingStatus} from '../onboarding-status.mjs';
-type Batch = Parameters<ReturnType<typeof createOnboardingStatus>['session']>[1];
-interface ObservedOnboarding {cli(principal:Principal):unknown;session(principal:Principal,batch:Batch):unknown}
+type ObservedOnboarding = Pick<ReturnType<typeof createOnboardingStatus>, 'cli' | 'session'>;
+type Batch = Parameters<ObservedOnboarding['session']>[1];
 interface ObservationError {event: string; kind: 'cli' | 'session'; reason: 'timeout' | 'error'}
 /** Optional setup receipts must not change authenticated or committed results. */
 export function createOnboardingObserver(onboarding: ObservedOnboarding | null, {

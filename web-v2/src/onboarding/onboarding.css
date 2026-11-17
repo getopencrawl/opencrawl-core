@@ -66,7 +66,7 @@ body[data-onboarding] .brand img{width:32px;height:auto}
 .prompt-toggle,.prompt-toggle svg,.prompt-preview{transition:none;animation:none}
 .prompt-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}
 .prompt-preview{margin-top:var(--space-5);padding:var(--space-4);border:1px solid var(--line);border-radius:var(--radius-control);background:var(--surface-subtle);text-align:left}
-.prompt-preview pre{margin:0;color:var(--muted);font:var(--text-sm)/1.75 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.prompt-preview p{color:var(--muted);font:var(--text-sm)/1.75 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
 
 
 /* Original v1 status SVG and states, shared by pending and completed checks. */

@@ -1,10 +1,9 @@
 import {Component, useCallback, useEffect, useRef, useState, useMemo} from 'react';
 import type {ErrorInfo, ReactNode} from 'react';
-import {ConsoleDataProvider, useConsoleQueryClient, AppRouter, AppShell, FocusedFrame, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, Page, LinkButton, Icon, Navigate, useLocation, useNavigate} from '../index.ts';
-import type {ConsoleDataAdapter, NavigationItem} from '../index.ts';
+import {ConsoleDataProvider, useConsoleQueryClient, AppRouter, AppShell, FocusedFrame, AgentOnboarding, SourcesOnboarding, InviteOnboarding, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, Page, LinkButton, Navigate, Routes, Route, useLocation, useNavigate} from '../index.ts';
+import type {ConsoleDataAdapter, NavigationItem, OnboardingAdapter} from '../index.ts';
 import type {Bootstrap, ProductApi} from './api.ts';
 import {SourcesPage} from './sources.tsx';
-import {SetupPage} from './setup.tsx';
 import {TeamPage, TeamLoadingPage} from './team.tsx';
 import {BoardNavigation} from '../pages/board.tsx';
 import {SearchPlaygroundPage} from '../pages/diagnostics.tsx';
@@ -30,7 +29,7 @@ function WorkspaceInvalidation() {
   },[cache]);
   return null;
 }
-function SignOut() {return <form method="post" action="/auth/logout"><Button type="submit" variant="quiet"><Icon name="sign-out" size={18}/>Sign out</Button></form>;}
+function SignOut() {return <form method="post" action="/auth/logout"><Button type="submit" variant="quiet">Sign out</Button></form>;}
 class ErrorBoundary extends Component<{children: ReactNode}, {failed: boolean}> {
   state = {failed:false};
   static getDerivedStateFromError() {return {failed:true};}
@@ -40,11 +39,19 @@ class ErrorBoundary extends Component<{children: ReactNode}, {failed: boolean}> 
 function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>; extensions?: ConsoleExtensions<B>}) {
   const dataAdapter = useMemo<ConsoleDataAdapter>(() => ({usage: api.usage, search: api.search, board: api.board}), [api]);
   const libraryAdapter = api.library;
+  const onboardingAdapter = useMemo<OnboardingAdapter>(() => ({
+    replicasSetup: api.replicasSetup,
+    status: async signal => (await api.onboardingStatus(signal)).data,
+    sources: api.onboardingSources, connectSource: (id, input, signal) => api.connect(id, input.apiKey, signal),
+    ...(api.saveCredential ? {saveCredential: (id: string, value: string, signal: AbortSignal) => api.saveCredential!(id, value, signal)} : {}),
+    invitations: api.onboardingInvitations, invite: api.onboardingInvite, finish: api.finishOnboarding,
+  }), [api]);
   const [data,setData] = useState<B | null>(null), [error,setError] = useState('');
   const [attempt,setAttempt] = useState(0);
   const accessEpoch=useRef(0),blocked=useRef(false);
   const invalidateAccess=useCallback((failure:unknown)=>{accessEpoch.current++;blocked.current=true;setData(null);setError(failure instanceof Error?failure.message:typeof failure==='string'?failure:'Your workspace access changed. Sign in again.');},[]);
   const navigate = useNavigate(), location = useLocation();
+  const refresh = useCallback(async () => {const epoch=accessEpoch.current;const next = await api.bootstrap();if(epoch!==accessEpoch.current||blocked.current)throw new Error('Your workspace access changed. Sign in again.');setData(next);return next;},[api]);
   useEffect(() => {
     const controller=new AbortController();let active=false,loaded=false;blocked.current=false;const epoch=++accessEpoch.current;
     const load=async()=>{
@@ -64,40 +71,40 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     const next = await api.bootstrap(signal);
     if (signal.aborted || epoch !== accessEpoch.current || blocked.current) return;
     // Commit admission and navigation together before the initiating page unmounts.
-    setData(next); navigate(next.onboarding.completed ? '/' : '/setup');
+    setData(next); navigate(next.onboarding.completed ? '/' : next.onboarding.next);
   };
+  const onboarding = location.pathname.startsWith('/onboarding');
   const boardQuery = new URLSearchParams(location.search);
   const boardNavigation = location.pathname === '/diagnostics' && boardQuery.get('nav') !== 'workspace' && boardQuery.get('view') !== 'search' && data?.workspace.role === 'admin';
   const boardTopic = boardQuery.get('view') === 'stream' ? '' : boardQuery.get('topic')?.trim() || '';
-  const canConfigureSources = data?.workspace.role === 'admin';
   const routes: ConsoleRoute[] = [
-    {path:'/setup',label:'Setup',icon:'terminal',element:data ? <SetupPage api={api} mcpUrl={data.mcpUrl} setupStartCommand={data.setupStartCommand} setupCliCommand={data.setupCliCommand}/> : null,pending:feedback => <PendingPage title="Setup" description="Manage your agent connections and history imports.">{feedback}</PendingPage>},
-    {path:'/',label:'Usage',icon:'usage',element:<UsagePage adapter={dataAdapter}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
+    {path:'/',label:'Usage',icon:'usage',element:<UsagePage adapter={dataAdapter} setupPrompt={data?.setupPrompt}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them.">{feedback}</PendingPage>},
-    {path:'/sources',label:'Integrations',icon:'sources',navigation:canConfigureSources,element:<SourcesPage adapter={api} canConfigure={canConfigureSources}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
+    {path:'/sources',label:'Integrations',icon:'sources',element:<SourcesPage adapter={api} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
     {path:'/diagnostics',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All topics'}>{feedback}</PendingPage>},
     {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
-    {path:'/agent-setup',label:'Setup',navigation:false,element:<Navigate to={'/setup' + location.search + location.hash} replace/>},
-    {path:'/onboarding',label:'Setup',navigation:false,element:<Navigate to={'/setup' + location.search + location.hash} replace/>},
-    {path:'/onboarding/sources',label:'Integrations',navigation:false,element:<Navigate to={'/sources' + location.search + location.hash} replace/>},
-    {path:'/onboarding/invite',label:'Team',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>},
-    {path:'/settings/team',label:'Team',icon:'team',group:'settings',element:<TeamPage embedded adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={name => setData(current => current ? {...current, workspace: {...current.workspace, name}} : current)}/>,pending:feedback => <TeamLoadingPage embedded>{feedback}</TeamLoadingPage>},
+    {path:'/settings',label:'Agent setup',icon:'settings',element:data ? <AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
+    {path:'/team',label:'Team',icon:'team',group:'manage',element:<TeamPage adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={name => setData(current => current ? {...current, workspace: {...current.workspace, name}} : current)}/>,pending:feedback => <TeamLoadingPage>{feedback}</TeamLoadingPage>},
     ...(extensions?.routes?.({data, activated}) ?? []),
-    {path:'/settings',label:'Settings',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
-    {path:'/team',label:'Team',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
     {path:'/integrations',label:'Integrations',navigation:false,element:<Navigate to="/sources" replace/>},
     {path:'/data',label:'Data controls',navigation:false,element:<Navigate to="/sources#data-controls" replace/>},
     {path:'/_/debug',label:'Diagnostics',navigation:false,element:<Navigate to={'/diagnostics' + location.search} replace/>},
   ];
   if (!data) {
     const feedback = error ? <div className="stack"><Notice tone="danger">{error}</Notice><div className="action-row"><Button onClick={() => setAttempt(value => value + 1)}>Try again</Button><LinkButton to="/auth/login" reloadDocument>Sign in</LinkButton></div></div> : undefined;
+    if (onboarding) return <FocusedFrame footer={<SignOut/>}>{feedback ?? <LoadingState label="Loading your workspace"/>}</FocusedFrame>;
     const route = routes.find(item => item.path === location.pathname);
-    const sourcesPending = ['/sources', '/integrations', '/data', '/onboarding/sources'].includes(location.pathname);
-    return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{sourcesPending ? <PendingPage title="Workspace">{feedback}</PendingPage> : route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
+    return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
   }
-  const shown = extensions?.decorateRoute ? routes.map(route => route.path === '/sources' && !canConfigureSources ? route : extensions.decorateRoute!(route, data)) : routes;
+  if (!data.onboarding.completed && !onboarding) return <Navigate to={data.onboarding.next} replace/>;
+  if (onboarding) return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><FocusedFrame footer={<SignOut/>}><Routes>
+    <Route path="/onboarding" element={<AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} canInviteBeforeSetup={data.canInvite && data.invitationPolicy?.beforeAgentSetup}/>}/>
+    <Route path="/onboarding/sources" element={<SourcesOnboarding adapter={onboardingAdapter} canConfigure={data.workspace.role === 'admin'}/>}/>
+    <Route path="/onboarding/invite" element={<InviteOnboarding adapter={onboardingAdapter} canInvite={data.canInvite} invitationDelivery={data.invitationPolicy?.delivery} returnToAgent={Boolean(data.invitationPolicy?.beforeAgentSetup && !data.onboarding.completed && data.onboarding.next === '/onboarding')} onComplete={async path => {await refresh();navigate(path);}}/>}/>
+  </Routes></FocusedFrame></ConsoleDataProvider>;
+  const shown = extensions?.decorateRoute ? routes.map(route => extensions.decorateRoute!(route, data)) : routes;
   return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board topics' : undefined} navigation={boardNavigation ? closeNavigation => <BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/> : undefined}/></ConsoleDataProvider>;
 }
 /** One application composition for self-hosted and hosted deployments. */

@@ -22,8 +22,6 @@ runtime:
   # PostgreSQL migration is coordinated by the released runtime before writers start.
   migrationCommand: [node, dist/src/state/migrate.mjs, migrate]
   readinessCommand: [node, dist/src/state/migrate.mjs, verify]
-  # After app/worker readiness, await the runtime's migration-bound connector catch-up.
-  activationTimeoutSeconds: 900
   appResources:
     requests: {cpu: 250m, memory: 512Mi}
     limits: {memory: 2Gi}

@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm, stat} from 'node:fs/promises';
@@ -39,9 +38,9 @@ for (const backend of ['sqlite', 'opensearch']) test(`session participants use h
   const principal = {...local.principal, tenantId: 'participants_' + Date.now()}, store = memorySessionStore(), prefix = 'sessions/participants';
   const checkedFetch = async (...args) => {const response = await fetch(...args); if (!response.ok) console.error('Participant fixture engine response:', await response.clone().text()); return response;};
   const realm = createRealm({endpoint, tenantId: principal.tenantId, fetch: checkedFetch}), collection = realm.collection('session');
-  const search = createSessionSearch(withTestState({endpoint, store, prefix, fetch: checkedFetch})), ingest = createSessionIngest(withTestState({store, prefix}));
-  const pipeline = createSessionPipeline(withTestState({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner}));
-  const library = createSessionLibrary(withTestState({endpoint, store, prefix, fetch: checkedFetch}));
+  const search = createSessionSearch({endpoint, store, prefix, fetch: checkedFetch}), ingest = createSessionIngest({store, prefix});
+  const pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
+  const library = createSessionLibrary({endpoint, store, prefix, fetch: checkedFetch});
   const foreign = principal.tenantId + '_foreign';
   if (backend === 'opensearch') t.after(async () => {for (const tenantId of [principal.tenantId, foreign]) await fetch(endpoint + '/' + createRealm({endpoint, tenantId}).index, {method: 'DELETE'});});
   const sender = n => `50000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -83,17 +82,17 @@ for (const backend of ['sqlite', 'opensearch']) test(`session participants use h
   const legacy = existing.hits.hits.map(hit => {const document = {...hit._source}; for (const field of ['participantVersion','participantId','participantName','participantUnknown']) delete document[field]; return {id: hit._id, document};});
   await collection.bulk(principal, legacy, {refresh: true});
   const snapshot = await collection.mget(principal, legacy.map(d => d.id));
-  assert.equal((await migrateSessionParticipants(withTestState({realm, principal, store, prefix}))).events, legacy.length);
+  assert.equal((await migrateSessionParticipants({realm, principal, store, prefix})).events, legacy.length);
   assert.deepEqual(await collection.mget(principal, legacy.map(d => d.id)), snapshot);
-  const migrated = await migrateSessionParticipants(withTestState({realm, principal, store, prefix, dryRun: false, pageSize: 2}));
+  const migrated = await migrateSessionParticipants({realm, principal, store, prefix, dryRun: false, pageSize: 2});
   await realm.refresh(principal);
   assert.equal(migrated.complete, true); assert.equal(migrated.events, legacy.length);
-  assert.equal((await migrateSessionParticipants(withTestState({realm, principal, store, prefix, dryRun: false}))).events, 0);
+  assert.equal((await migrateSessionParticipants({realm, principal, store, prefix, dryRun: false})).events, 0);
   list = await library.list(owner, {participant: 'replicas:' + sender(1)});
   assert.equal(list.sessions[0].private, true);
   const after = await collection.mget(principal, legacy.map(d => d.id));
   for (const hit of after.docs) {const previous = legacy.find(d => d.id === hit._id).document; assert.equal(hit._source.private, previous.private); assert.equal(hit._source.text, previous.text); assert.equal(hit._source.capturedTokens, previous.capturedTokens);}
-  await assert.rejects(migrateSessionParticipants(withTestState({realm, principal: {...principal, tenantId: 'foreign'}, store, prefix})), {status: 403});
+  await assert.rejects(migrateSessionParticipants({realm, principal: {...principal, tenantId: 'foreign'}, store, prefix}), {status: 403});
   const item = legacy[0]; await collection.delete(principal, [item.id]);
   await collection.bulk(principal, [{...item, document: {...item.document, participantVersion: 1}, policy: 'session-participants'}]);
   assert.equal((await collection.mget(principal, [item.id])).docs[0].found, false);
@@ -126,20 +125,20 @@ test('SQLite persists across factories, isolates colliding tenants and rejects u
 
 test('SQLite keeps the actual MCP search/fetch interface, controls and connector revocation', async t => {
   const {endpoint, principal} = await fixture(t), peer = {...principal, userId: 'bob'};
-  const store = memorySessionStore(), prefix = 'capture-v1', sessions = createSessionSearch(withTestState({endpoint, store, prefix}));
-  const ingest = createSessionIngest(withTestState({store, prefix}));
+  const store = memorySessionStore(), prefix = 'capture-v1', sessions = createSessionSearch({endpoint, store, prefix});
+  const ingest = createSessionIngest({store, prefix});
   for (const owner of [peer, {...peer, tenantId: 'outside'}]) await ingest.putBatch(owner, {
     schemaVersion: 1, owner, harness: 'codex', origin: 'cli', installationId: 'fixture', sessionId: 'demo', attachments: [],
     events: [{id: 'event', kind: 'message', timestamp: '2026-11-01T00:00:00Z', data: {role: 'user', content: 'violet lighthouse session evidence'}}],
   });
-  const pipeline = createSessionPipeline(withTestState({store, prefix, search: sessions, resolvePrincipal: async ({batch}) => batch.owner}));
+  const pipeline = createSessionPipeline({store, prefix, search: sessions, resolvePrincipal: async ({batch}) => batch.owner});
   for (const key of (await pipeline.listPage()).keys) await pipeline.processObject({key});
-  const library = createSessionLibrary(withTestState({endpoint, store, prefix}));
+  const library = createSessionLibrary({endpoint, store, prefix});
   const listed = await library.list(principal, {query: 'violet lighthouse'});
   assert.equal(listed.sessions.length, 1);
   assert.equal(listed.sessions[0].userId, 'bob');
   assert.equal((await library.read(principal, {userId: 'bob', harness: 'codex', sessionId: 'demo'})).events.length, 1);
-  const recent = await createRecentSessions(withTestState({endpoint, store, prefix})).list(principal);
+  const recent = await createRecentSessions({endpoint, store, prefix}).list(principal);
   assert.equal(recent.length, 1);
   const binding = {tenantId: principal.tenantId, connectionId: 'github', workspaceId: 'w', provider: 'github', access: 'workspace-global', rawPrefix: 'raw/v1/source=github/workspace=w/connection=github/'};
   const connectors = createConnectorSearch({endpoint, tenantId: principal.tenantId});
@@ -166,14 +165,14 @@ test('SQLite keeps the actual MCP search/fetch interface, controls and connector
   bindings = [];
   const next = await search({query: 'violet', limit: 1, cursor: first.next}); assert.ok(next.results.every(r => r.source !== 'connectors'));
   assert.equal((await client.callTool({name: 'fetch', arguments: {id: all.results.find(r => r.source === 'connectors').id}})).isError, true);
-  await createControls(withTestState({store, prefix})).update(peer, 'sessions', 'codex', 'demo', () => ({visibility: 'private', deletedAt: null}));
+  await createControls({store, prefix}).update(peer, 'sessions', 'codex', 'demo', () => ({visibility: 'private', deletedAt: null}));
   assert.equal((await search({query: 'violet', source: 'sessions'})).results.length, 0);
   assert.equal((await client.callTool({name: 'fetch', arguments: {id: all.results.find(r => r.source === 'sessions').id}})).isError, true);
 });
 
 test('SQLite supports library and usage aggregations', async t => {
   const {endpoint, principal} = await fixture(t), realm = createRealm({endpoint, tenantId: principal.tenantId});
-  const sessions = createSessionSearch(withTestState({endpoint, store: memorySessionStore(), prefix: 'capture-v1'}));
+  const sessions = createSessionSearch({endpoint, store: memorySessionStore(), prefix: 'capture-v1'});
   await sessions.ensureIndex(principal);
   await sessions.putDocuments([{id: 'event', document: {...principal, text: 'hello', kind: 'message', role: 'user', harness: 'codex', origin: 'cli', sessionId: 'session', installationId: 'machine', chunk: 0, toolNames: ['mcp__opencrawl__search', 'exec'], timestamp: '2026-11-01T12:00:00Z', receivedAt: '2026-11-01T12:00:00Z'}}], principal);
   const usage = await sessions.usage(principal, {days: 2, now: Date.parse('2026-11-02T12:00:00Z')});
@@ -185,8 +184,8 @@ test('SQLite supports library and usage aggregations', async t => {
 
 test('SQLite memory snapshots activate, replace removed files and reject stale replay', async t => {
   const {endpoint, principal} = await fixture(t), store = memorySessionStore(), prefix = 'capture-v1';
-  const search = createSessionSearch(withTestState({endpoint, store, prefix})), workspace = createWorkspaceSearch({sessions: search});
-  const ingest = createSessionIngest(withTestState({store, prefix})), pipeline = createSessionPipeline(withTestState({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner}));
+  const search = createSessionSearch({endpoint, store, prefix}), workspace = createWorkspaceSearch({sessions: search});
+  const ingest = createSessionIngest({store, prefix}), pipeline = createSessionPipeline({store, prefix, search, resolvePrincipal: async ({batch}) => batch.owner});
   async function send(generation, files) {
     const snapshot = {schemaVersion: 1, owner: principal, installationId: 'machine', host: 'fixture', harness: 'codex', generation, files};
     const receipt = await ingest.putMemorySnapshot(principal, snapshot);
@@ -271,7 +270,7 @@ test('realm migration copies and verifies large documents without treating the s
   const documents = ['small-before', 'large', 'small-after'].map(id => ({id, document: {...principal, text: id === 'large' ? '界'.repeat(2 * 1024 * 1024) : id}}));
   const source = {identity: 'frozen-large-source', version: async () => 'v1', read: async after => ({total: documents.length, documents: after ? [] : documents, next: after ? null : ['done']})};
   let checkpoint;
-  const result = await migrateRealmCorpus(withTestState({principal, corpus: 'connector', source, realm, load: async () => null, save: async value => {checkpoint = value;}}));
+  const result = await migrateRealmCorpus({principal, corpus: 'connector', source, realm, load: async () => null, save: async value => {checkpoint = value;}});
   assert.equal(result.complete, true); assert.equal(checkpoint.copied, 3);
   assert.deepEqual((await realm.collection('connector').mget(principal, documents.map(d => d.id))).docs.map(d => d._source), documents.map(d => d.document));
 });

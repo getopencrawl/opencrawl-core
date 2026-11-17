@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {memoryProjectionId, memoryPassageId, activeMemoryProjectionFilter} from '../dist/src/memories/projection.mjs';
@@ -25,7 +24,7 @@ test('memory projection identities retain legacy IDs and separate versions, owne
 });
 
 test('stale memory projection cannot override a later private or deleted owner control', async () => {
-  const controls = createControls(withTestState({store: memorySessionStore(), prefix: 'capture'}));
+  const controls = createControls({store: memorySessionStore(), prefix: 'capture'});
   const document = {...alice, harness: 'codex', path, modifiedAt: '2026-11-10T00:00:00Z', private: false, text: 'old projection'};
   assert.equal((await authorizedMemoryDocuments(controls, bob, [document])).length, 1);
   await controls.update(alice, 'memories', 'codex', path, () => ({visibility: 'private', deletedAt: null}));

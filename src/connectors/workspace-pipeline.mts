@@ -6,7 +6,7 @@ import type {WorkspaceRecord} from './workspace.mjs';
 import {workspaceAccumulator} from './workspace.mjs';
 import {sourcePaginationProgress, advanceSourcePagination} from './workflow.mjs';
 
-export function createWorkspacePipeline({binding, state, store, search, checkActive = async () => {}, heartbeat = () => {}}: PipelineOptions) {
+export function createWorkspacePipeline({binding, store, search, checkActive = async () => {}, heartbeat = () => {}}: PipelineOptions) {
   const principal = {tenantId: binding.tenantId};
   const taskKey = binding.rawPrefix + 'workspace-snapshot';
   async function active() {authorize(principal, binding); await checkActive(binding);}
@@ -36,7 +36,7 @@ export function createWorkspacePipeline({binding, state, store, search, checkAct
       const before = await inventory();
       const fingerprint = digest(before.keys);
       const receipt = `derived/indexing/${pipelineVersion(binding)}/${digest([binding.tenantId, binding.connectionId, search.identity])}/snapshot-${fingerprint}.json`;
-      if (await state.indexingReceipts.read(receipt)) return {status: 'already-indexed', records: 0};
+      if (await store.get(receipt, {maxBytes: 8192})) return {status: 'already-indexed', records: 0};
       const accumulator = workspaceAccumulator(binding), checksums = [];
       let sourceRecords = 0;
       for (const sourceKey of before.keys) {
@@ -63,8 +63,8 @@ export function createWorkspacePipeline({binding, state, store, search, checkAct
       await flush();
       if (digest((await inventory()).keys) !== fingerprint) throw new Error('Source inventory changed during snapshot; retry to include new files');
       await active();
-      await state.indexingReceipts.put(receipt,{pipeline: pipelineVersion(binding), fingerprint,
-        checksum: digest(checksums), sourceRecords, records, objects: before.keys.length, ignored: before.ignored});
+      await store.put(receipt, Buffer.from(JSON.stringify({pipeline: pipelineVersion(binding), fingerprint,
+        checksum: digest(checksums), sourceRecords, records, objects: before.keys.length, ignored: before.ignored})), 'application/json');
       return {status: 'indexed', records};
     },
   };

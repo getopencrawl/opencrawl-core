@@ -14,7 +14,7 @@ both authentication and application state; no separate auth database is needed.
 
 Existing SQLite installations need a separate migration before starting this
 runtime. Ask your agent to inspect the installation, preserve a matched backup,
-and follow the [application-state upgrade guide](https://github.com/getopencrawl/opencrawl-core/blob/v0.5.0/docs/app-state-migration.md).
+and follow the [application-state upgrade guide](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/app-state-migration.md).
 This release does not migrate an installed deployment when downloaded. Keep the
 previous runtime and its complete backup for rollback; do not point old binaries
 at the new database. See the [core 0.5.0 release notes](https://github.com/getopencrawl/opencrawl-core/releases/tag/v0.5.0).
@@ -44,16 +44,11 @@ The installer applies three ordinary Helm releases, in order:
 
 1. `<release>-infra`: selected bundled databases and backends.
 2. `<release>-airbyte`: pinned upstream Airbyte 2.4.0, if selected.
-3. `<release>`: migration Job, application, worker and connector activation hook.
+3. `<release>`: scoped initialization Job, application and worker.
 
-The post-install/post-upgrade hook runs the runtime's connector activation after
-app and worker readiness. Fresh installations have no historical caches to catch
-up. Migrated installations await actual Temporal completions before Helm succeeds;
-the installer includes that completion receipt in its JSON output. A failed or
-timed-out hook leaves the release failed and retains its logs. Repair the dependency
-and rerun the same installation to resume. `application.runtime.activationTimeoutSeconds`
-controls the hook deadline (default 900 seconds); the installer extends its Helm
-timeout to cover it. Direct Helm users must supply `--wait` and an adequate `--timeout`.
+The scoped initialization Job admits auth, registry and board before runtime startup.
+The application and worker use the established indexing workflow contracts.
+Use `--wait` and an adequate `--timeout` with direct Helm installations.
 
 Airbyte's pre-install bootloader needs its database to exist already. Separate
 releases preserve the upstream chart's lifecycle. The installer validates the
@@ -178,7 +173,6 @@ node verify.mts --config disposable.json --exercise --existing
 
 For infrastructure failures inspect Pods, Events, PVCs and the named release.
 For app-state failures inspect `<release>-migrate-<revision>` and `app-state-ready`.
-For connector catch-up inspect the `<release>-activate` Job and its retained logs.
 The installer supports `--through infrastructure` or `--through airbyte` to stop at
 an intermediate stage. Rerun the same command/configuration to resume.
 

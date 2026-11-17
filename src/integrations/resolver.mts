@@ -1,4 +1,3 @@
-import type {ApplicationState} from '../state/types.mjs';
 import type {Principal} from '../identity/types.mjs';
 import type {IntegrationRecord} from './types.mjs';
 import type {IntegrationRegistry} from './ports.mjs';
@@ -13,7 +12,6 @@ export function denied(): never {throw Object.assign(new Error('Connector is ina
 export interface HostedConnectorReference {tenantId: string; userId: string; connectionId: string; generation?: string}
 export interface ConnectorReferenceInput {tenantId?: unknown; userId?: unknown; connectionId?: unknown; generation?: unknown}
 export interface ConnectorResolverOptions {
-  state:ApplicationState;
   environment: IntegrationRecord['environment'];
   generation: string;
   registry: IntegrationRegistry;
@@ -24,7 +22,7 @@ export interface ConnectorResolverOptions {
 }
 interface ConnectionCount {total: number; kinds: Record<string, number>}
 export interface CountSummary extends ConnectionCount {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}
-export function createConnectorResolver({environment, generation, state, registry, storage, search: searchFor, driveAccess}: ConnectorResolverOptions) {
+export function createConnectorResolver({environment, generation, registry, storage, search: searchFor, driveAccess}: ConnectorResolverOptions) {
   if (!['staging', 'production', 'selfhost'].includes(environment) || !/^v[1-9][0-9]*$/.test(generation)) throw new Error('Invalid connector configuration');
   function reference(value: ConnectorReferenceInput): asserts value is HostedConnectorReference {
     if (!value || !/^(org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(typeof value.tenantId === 'string' ? value.tenantId : '') || !/^user_[A-Za-z0-9]+$/.test(typeof value.userId === 'string' ? value.userId : '') || !/^int_[a-f0-9]{26}$/.test(typeof value.connectionId === 'string' ? value.connectionId : '') || (value.generation && value.generation !== generation)) denied();
@@ -38,7 +36,7 @@ export function createConnectorResolver({environment, generation, state, registr
     const store = await storage(record);
     const search = searchFor(binding.tenantId);
     const drive = record.provider === 'googledrive' ? driveAccess?.(record) : undefined;
-    return {binding, state, store, search, ...(drive ? {drive, resourceAccess: async (sourceId: string) => {const permitted = await drive.inspect(sourceId); await drive.validateAudience(); return Boolean(permitted);}} : {})};
+    return {binding, store, search, ...(drive ? {drive, resourceAccess: async (sourceId: string) => {const permitted = await drive.inspect(sourceId); await drive.validateAudience(); return Boolean(permitted);}} : {})};
   }
   type CoreSearch = ReturnType<typeof createConnectorSearch>['search'];
   type ConnectorQuery = Parameters<CoreSearch>[2];

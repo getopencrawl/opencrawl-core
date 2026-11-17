@@ -2,8 +2,8 @@ import type {NativeConnectionOptions} from '@temporalio/worker';
 import type {PipelineOptions, ConnectorSearch} from '../types.mjs';
 import type {FileCaptureOptions, CaptureRun, ReferenceRun, CaptureStepResult} from '../capture-types.mjs';
 import type {ConnectorSegmentInput} from '../workflow.mjs';
-export interface ConnectionReference {tenantId: string; connectionId: string; userId?: string}
-export interface ResolvedConnector extends PipelineOptions {search: ConnectorSearch & {ensureIndex(): Promise<unknown>}; afterObject?(key: string, check: () => void): Promise<void>}
+export interface ConnectionReference {tenantId: string; connectionId: string}
+export interface ResolvedConnector extends PipelineOptions {search: ConnectorSearch & {ensureIndex(): Promise<unknown>}}
 export type ConnectorActivityInput = ConnectorSegmentInput & ConnectionReference;
 export interface ConnectorActivityOptions {resolve: (input: ConnectorActivityInput) => Promise<ResolvedConnector>}
 export interface WorkerConnectionOptions {address: string; namespace: string; taskQueue: string; bundlePath: string; connectionOptions?: NativeConnectionOptions}

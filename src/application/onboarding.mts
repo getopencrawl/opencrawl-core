@@ -20,25 +20,34 @@ export function createGuidedOnboarding({onboarding,integrations,organizations,au
   const progress = async (principal: Principal) => onboarding ? onboarding.read(principal) : null;
   const sourceCards = async (principal: Principal) => integrations ? integrations.list(principal) : [];
   const connected = (card: SourceCard) => ['syncing','synced','connected'].includes(card.state);
-  /** Setup is a status page, never an admission gate for the product. */
-  const requiredSetup = async (_principal: Principal) => '/setup';
+  const connectedSource = (cards: SourceCard[]) => cards.some(connected);
+  /** Where an unfinished setup resumes. Only agent setup is required: Sources can be skipped, so this is a resume point, never a gate. */
+  const requiredSetup = async (principal: Principal) => {
+    const state = await progress(principal);
+    if (!state || !deriveOnboarding(state).complete) return '/onboarding';
+    return connectedSource(await sourceCards(principal)) ? '/onboarding/invite' : '/onboarding/sources';
+  };
   return {progress, next:requiredSetup,
     handles: (name: string) => name.startsWith('/api/onboarding/') || name === '/api/workspace/search',
     async handle(req: IncomingMessage, {route,principal,identity,member,respond}: GuidedContext) {
       const json = (status: number,value: unknown) => respond(status,JSON.stringify(value),'application/json');
-      const state = await progress(principal);
+      if (!onboarding) return json(503,{error:'Setup status is temporarily unavailable.'});
+      const state = (await progress(principal))!;
+      if (!deriveOnboarding(state).complete && !hasCompletedOnboarding(state) && !(inviteBeforeSetup && route.name === '/api/onboarding/invites')) {
+        return json(409,{error:'Complete agent setup first.',onboardingUrl:'/onboarding'});
+      }
       if (route.name === '/api/onboarding/sources') {
         const items = (await sourceCards(principal)).map(card => ({id:card.provider,scope:card.scope,name:card.name,icon:`/assets/connectors/${card.provider}.svg`,state:card.state,auth:card.auth,keyHelp:card.keyHelp,setup:card.setup}));
         return json(200,{items});
       }
       if (route.name === '/api/workspace/search') {
+        if (!hasCompletedOnboarding(state)) return json(409,{error:'Finish setup to open your workspace.',onboardingUrl:await requiredSetup(principal)});
         if (!authorizedSearch) return json(503,{error:'Workspace search is temporarily unavailable.'});
         try {return json(200,await authorizedSearch.search(principal,await smallJson(req,16384)));}
         catch(error) {return json([400,401,403].includes(errorInfo(error).status || 0)?errorInfo(error).status!:503,{error:errorInfo(error).status===400?'Enter a valid search query.':'We couldn’t search your workspace. Try again.'});}
       }
       if (route.name === '/api/onboarding/finish' && hasCompletedOnboarding(state)) return json(200,{workspaceUrl:'/'});
       if (route.name === '/api/onboarding/finish') {
-        if(!onboarding||!state||!deriveOnboarding(state).complete)return json(200,{workspaceUrl:'/'});
         await onboarding.complete(principal);
         // Sources connected when setup finished: 0 means Sources was skipped, null that the count was unavailable. Never blocks finishing.
         const sourcesConnected = await sourceCards(principal).then(cards => cards.filter(connected).length, () => null);

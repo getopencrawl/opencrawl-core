@@ -1,4 +1,4 @@
-import {activateConnectors,verifyStartup} from './activation.mjs';
+import {verifyStartup} from './activation.mjs';
 import {existsSync,readFileSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {join,resolve} from 'node:path';
@@ -46,9 +46,8 @@ if(record) {
   const startup=currentStartup();validated=true;
   // A failed revalidation must not leave a prior completion report authoritative.
   if(journal){journal={...journal,phase:'healthy'};privateFile(journalFile,journal);}
-  const connectorCatchup=activateConnectors(current);
   currentStartup(startup);
-  privateFile(journalFile,{...journal,format:1,project:current.project,target,phase:'complete',image:startup.find(writer=>writer.service==='app').image,connectorCatchup});
+  privateFile(journalFile,{...journal,format:1,project:current.project,target,phase:'complete',image:startup.find(writer=>writer.service==='app').image});
  }catch(error){if(validated){const writers=containers(current.project).filter(c=>['app','worker'].includes(c.Config.Labels['com.docker.compose.service']));if(writers.length)docker(['stop',...writers.map(c=>c.Id)]);}throw error;}
  finally{release();}
  console.log(JSON.stringify({upgrade:'startup-recorded',target}));process.exit(0);
@@ -170,7 +169,6 @@ try {
   }
  } else {
   const startup=currentStartup();
-  journal.connectorCatchup=activateConnectors(current);
   currentStartup(startup);mark('complete',startup.find(writer=>writer.service==='app').image);
  }
  if(!automatic||current.kind==='deploy')console.log(JSON.stringify({upgrade:'complete',project:current.project,target,backup:journal.backup}));

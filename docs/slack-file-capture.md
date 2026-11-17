@@ -16,19 +16,13 @@ intended workspace and be authorized for the configured public-channel policy.
 Do not put the token in the config file or source control.
 
 ```sh
-# Run this worker with SLACK_TOKEN, AWS credentials and application DB settings.
-node dist/src/connectors/temporal/source-standalone.mjs worker-config.json source-workflows.cjs
-# In another process, submit only connection/run references and Temporal settings.
+# SLACK_TOKEN is supplied securely through the operator's environment.
 node dist/src/connectors/slack-source-standalone.mjs config.json stable-run-id
 node dist/src/connectors/standalone.mjs index config.json
 node dist/src/connectors/standalone.mjs search config.json 'phrase near document end'
 ```
 
-The submitter prints a workflow ID and exits; inspect its result in Temporal.
-It never loads Slack/storage credentials. An existing capture for the connection
-returns `submitted: false` and exit code 2. Run the source worker with a dedicated
-Temporal task queue for its fixed trusted binding. Reusing the run ID and cutoff
-resumes the PostgreSQL checkpoint after the earlier workflow has closed. New runs retain a connection
+Reusing the run ID and cutoff resumes the checkpoint. New runs retain a connection
 catalog of previously observed file shares, including shares discovered only by
 `files.info`, so removed shares and newly inaccessible
 files can be hidden. A complete public-channel enumeration hides prior channels
@@ -42,7 +36,7 @@ to preserve channel and file-share identities that older catalogs may have misse
 For durable operation, build `buildSlackSourceWorkflows`, then run
 `createSlackSourceWorker` from the `connectors/slack-source-temporal` export.
 Schedule `captureSlackFilesV1` with trusted opaque connection references only.
-The resolver supplies `{state, binding, store, request, download}` after current
+The resolver supplies `{binding, store, request, download}` after current
 server-side authorization; every write rechecks it. One workflow at a time may
 advance each connection; use overlap SKIP. The workflow uses durable timers for
 rate limits, persists request reservations before sending, retries activities,
@@ -67,9 +61,8 @@ All keys are relative to the authorized connection's `rawPrefix`:
 - `stream=file_documents/date=YYYY-MM-DD/sync=<run-id>/<hash>.jsonl.gz`:
   envelopes with integer `_airbyte_extracted_at` and `_airbyte_data` version 1.
 - `capture/files-v1/<run-id>/pages/<hash>.json`: exact API response evidence.
-Mutable cursors, pacing reservations, checkpoints and observed file/channel
-catalogs live in PostgreSQL. Historical `state.json` and `catalog.json` objects
-are read only by the upgrade importer; the runtime never resumes from them.
+- `capture/files-v1/<run-id>/state.json`: mutable cursor/rate/checkpoint state.
+- `capture/files-v1/catalog.json`: previously observed file/channel identities.
 
 A file record contains `format_version: 1`, native `id`, `channel_id`, boolean
 `available`, `media_type`, optional title/name/user and `api_text: [{path,text}]`.

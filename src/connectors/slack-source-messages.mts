@@ -13,26 +13,29 @@ function pagination<T>(operation: () => T): T {
 }
 /** Canonical history/replies capture has no search-result or backfill-date filter.
  * Method-specific durable pacing respects Slack's restrictive history tier. */
-export function createSlackMessageCapture({binding,store,state:applicationState,request,checkActive=async()=>{},now=Date.now}: SlackCaptureOptions) {
+export function createSlackMessageCapture({binding,store,request,checkActive=async()=>{},now=Date.now}: SlackCaptureOptions) {
  validateBinding(binding);if(binding.provider!=='slack')invalidRecord('Slack source binding required');
- if(!applicationState?.slackCapture)throw new Error('PostgreSQL Slack capture state is required');
  const active=async()=>{validateBinding(binding);await checkActive(binding);};
  async function put(key: string,bytes: Uint8Array,type: string){await active();await store.put(key,bytes,type);}
  return {async step({runId,cutoff}: CaptureRun): Promise<CaptureStepResult> {
   if(!/^[A-Za-z0-9_-]{1,150}$/.test(runId||'')||!Number.isSafeInteger(cutoff)||cutoff<0)invalidRecord('Invalid message capture run');
-  await active();const prefix=binding.rawPrefix+'capture/messages-v1/'+runId+'/';
-  const saved=await applicationState.slackCapture.readCheckpoint(binding,'messages-v1',runId);let revision=saved?.revision??null;
-  const state: MessageCheckpoint=saved?.value??{version:1,scope:digest(binding),runId,cutoff,channels:{},threads:{},cursor:'',listed:false,nextDue:{},pages:0,emitted:0,errors:[]};
+  await active();const prefix=binding.rawPrefix+'capture/messages-v1/'+runId+'/',stateKey=prefix+'state.json';
+  const raw=await store.get(stateKey,{maxBytes:16*1024*1024});
+  const state: MessageCheckpoint=raw?JSON.parse(raw.toString()) as MessageCheckpoint:{version:1,scope:digest(binding),runId,cutoff,channels:{},threads:{},cursor:'',listed:false,nextDue:{},pages:0,emitted:0,errors:[]};
   if(state.version!==1||state.scope!==digest(binding)||state.runId!==runId||state.cutoff!==cutoff)invalidRecord('Message capture checkpoint scope mismatch');
-  const catalog: MessageCatalog=await applicationState.slackCapture.readCatalog(binding,'messages-v1')??{scope:digest(binding),channels:[]};
+  const catalogKey=binding.rawPrefix+'capture/messages-v1/catalog.json';
+  const catalogBytes=await store.get(catalogKey,{maxBytes:16*1024*1024});
+  const catalog: MessageCatalog=catalogBytes?JSON.parse(catalogBytes.toString()) as MessageCatalog:{scope:digest(binding),channels:[]};
   if(catalog.scope!==digest(binding)||!Array.isArray(catalog.channels)||catalog.channels.some(channel=>!id(channel)))invalidRecord('Message channel catalog scope mismatch');
   // Catalog publication precedes the final checkpoint. Reconcile it even on
   // same-run retries, whose saved checkpoint may predate a public raw record.
   state.priorChannels=[...new Set([...(state.priorChannels||[]),...catalog.channels])];
   const saveCatalog=async()=>{
-   await active();await applicationState.slackCapture.mergeCatalog(binding,'messages-v1',{scope:digest(binding),channels:[...new Set([...state.priorChannels!,...Object.keys(state.channels)])]});
+   const bytes=Buffer.from(JSON.stringify({scope:digest(binding),channels:[...new Set([...state.priorChannels!,...Object.keys(state.channels)])]}));
+   if(bytes.length>16*1024*1024)invalidRecord('Message channel catalog exceeds limit');
+   await put(catalogKey,bytes,'application/json');
   };
-  const save=async()=>{await active();revision=await applicationState.slackCapture.saveCheckpoint(binding,'messages-v1',runId,state,revision);};
+  const save=async()=>{const body=Buffer.from(JSON.stringify(state));if(body.length>16*1024*1024)invalidRecord('Message capture checkpoint exceeds limit');await put(stateKey,body,'application/json');};
   const emit=async(stream: string,data: object[],at: number)=>{
    if(!data.length)return;
    const bytes=Buffer.from(data.map(d=>JSON.stringify({_airbyte_extracted_at:at,_airbyte_data:d})).join('\n')+'\n');
@@ -56,14 +59,11 @@ export function createSlackMessageCapture({binding,store,state:applicationState,
   const progress=pagination(()=>sourcePaginationProgress(cursorOwner.cursor===''?null:cursorOwner.cursor,cursorOwner.paginationProgress));
   // Persist the request reservation even when transport or response processing
   // fails; retries retain the same cursor but must respect the method window.
-  const interval=method==='conversations.list'?3500:65000,reservation=await applicationState.slackCapture.reserve(binding,method,now(),interval);
-  if(!reservation.reserved)return {done:false,waitMs:reservation.waitMs};
-  state.nextDue[method]=now()+interval;await save();await active();
+  state.nextDue[method]=now()+(method==='conversations.list'?3500:65000);await save();await active();
   const response=await request(method,query),data=response?.data,at=now();state.nextDue[method]=at+(method==='conversations.list'?3500:65000);
-  await applicationState.slackCapture.defer(binding,method,state.nextDue[method]);
   if(response?.status===429||data?.error==='ratelimited') {
    const seconds=Number(Object.entries(response.headers||{}).find(([k])=>k.toLowerCase()==='retry-after')?.[1]||60);
-   state.nextDue[method]=at+Math.max(65000,Number.isFinite(seconds)?seconds*1000:65000);await applicationState.slackCapture.defer(binding,method,state.nextDue[method]);await save();return {done:false,waitMs:0};
+   state.nextDue[method]=at+Math.max(65000,Number.isFinite(seconds)?seconds*1000:65000);await save();return {done:false,waitMs:0};
   }
   if(response?.status>=500)throw new Error('Transient Slack history failure');
   if(response?.status!==200||data?.ok!==true) {

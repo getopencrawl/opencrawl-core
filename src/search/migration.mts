@@ -1,4 +1,3 @@
-import type {ApplicationState} from '../state/types.mjs';
 import type {TenantPrincipal, JsonValue, ObjectStore} from '../sessions/types.mjs';
 import type {Corpus, DocumentItem, IndexTransportOptions} from './types.mjs';
 import type {createRealm} from './realm.mjs';
@@ -46,7 +45,7 @@ export function legacyRealmSource({corpus,tenantId,...options}: IndexTransportOp
   };
 }
 /** Checkpoint only after write+readback; interrupted pages are safe to replay while target writers are stopped. */
-export async function migrateRealmCorpus({principal,corpus,source,realm,state:applicationState,store,prefix,load,save,onPage=async()=>{}}: {principal: TenantPrincipal; corpus: Corpus; source: MigrationSource; realm: ReturnType<typeof createRealm>; state:ApplicationState;store?:ObjectStore;prefix?:string;load(): Promise<MigrationState | null>; save(state: MigrationState): Promise<unknown>; onPage?(progress: {copied: number; total: number | null}): Promise<unknown>}){
+export async function migrateRealmCorpus({principal,corpus,source,realm,store,prefix,load,save,onPage=async()=>{}}: {principal: TenantPrincipal; corpus: Corpus; source: MigrationSource; realm: ReturnType<typeof createRealm>; store?:ObjectStore;prefix?:string;load(): Promise<MigrationState | null>; save(state: MigrationState): Promise<unknown>; onPage?(progress: {copied: number; total: number | null}): Promise<unknown>}){
   realm.scope(principal);const collection=realm.collection(corpus);
   let state=await load();const identity=JSON.stringify([source.identity,realm.identity,corpus]);
   if(state&&state.identity!==identity)throw new Error('Migration checkpoint scope mismatch');
@@ -80,7 +79,7 @@ export async function migrateRealmCorpus({principal,corpus,source,realm,state:ap
     };
     if(corpus==='session'){
       if(!store||!prefix)throw new Error('Session migration requires authoritative deletion controls');
-      await withSessionDocumentWrites({state:applicationState,prefix,tenantId:principal.tenantId,documents:page.documents},copy);
+      await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:page.documents},copy);
     }else await copy();
     state={...state,total:page.total,after:page.next,copied:state.copied+page.documents.length};
     if(state.copied>page.total)throw new Error('Migration duplicated source records');

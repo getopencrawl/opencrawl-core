@@ -24,7 +24,7 @@ test('manual setup chooses a native installer and makes its command available be
     const {commands}=promptModel({mcpUrl:'https://selfhost.example/mcp',setupPrompt:'Approved prompt',windows});
     assert.match(commands.cli,windows?/install\.ps1/:/install\.sh/);
     assert.match(commands.cli,windows?/\$env:PATH =/:/export PATH=/);
-    assert.match(commands.cli,/opencrawl setup --api 'https:\/\/selfhost\.example'/);
+    assert.match(commands.cli,/opencrawl login --api https:\/\/selfhost\.example$/);
     assert.doesNotMatch(commands.cli,/npm |node /);
   }
 });
@@ -46,7 +46,7 @@ test('completed agent setup shows a compact success state with the checklist ava
   assert.match(html, /First session recording received/);
   assert.match(html, /Import past sessions/);
   assert.match(html, /<details class="completed-setup signal-disclosure"><summary>/);
-  assert.doesNotMatch(html, /connect-preview|Copy install command/);
+  assert.doesNotMatch(html, /connect-preview|Copy setup prompt/);
   assert.match(html, /class="onboarding-flow onboarding-flow-panel"/);
   assert.match(html, /class="focus-content focus-panel"/);
 });
@@ -54,8 +54,8 @@ test('completed agent setup shows a compact success state with the checklist ava
 test('workspace agent setup shares its prompt and receipts without restarting the onboarding flow', () => {
   const html = render(createElement(AgentOnboarding, {adapter, mcpUrl: 'https://app.getopencrawl.com/mcp', setupPrompt: 'The approved setup prompt.', initialStatus: complete, presentation: 'workspace'}));
   assert.match(html, /<h1[^>]*>Agent setup<\/h1>/);
-  assert.match(html, /<h2[^>]*>Install OpenCrawl<\/h2>/);
-  assert.doesNotMatch(html, /The approved setup prompt\./);assert.match(html,/Copy install command/);assert.match(html,/opencrawl setup/);
+  assert.match(html, /<h2[^>]*>Connect your primary coding agent<\/h2>/);
+  assert.match(html, /The approved setup prompt\./);
   assert.match(html, /First session recording received/);
   assert.doesNotMatch(html, /<main|next-step|Next is available|onboarding-flow/);
 });
@@ -123,13 +123,4 @@ test('invitation input is one address and navigation contracts reject cross-orig
   assert.equal(oauthDestination('https://accounts.example.com/authorize'), 'https://accounts.example.com/authorize');
   assert.throws(() => oauthDestination('javascript:alert(1)'));
   assert.throws(() => oauthDestination('https://secret@example.com'));
-});
-
-
-test('the install CTA always copies the canonical platform-specific command, never agent prompt text',()=>{
- for(const windows of [false,true]){
-  const {commands,prompts}=promptModel({mcpUrl:'https://selected.example/mcp',setupPrompt:'private legacy agent prompt',windows});
-  assert.equal(prompts.connect.label,'Copy install command');assert.equal(prompts.connect.text,commands.cli);
-  assert.match(prompts.connect.text,/opencrawl setup --api 'https:\/\/selected.example'/);assert.doesNotMatch(prompts.connect.text,/private legacy agent prompt|opencrawl login/);
- }
 });

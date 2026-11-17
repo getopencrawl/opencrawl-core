@@ -1,126 +1,80 @@
+/** Offline import of exactly three domains: Better Auth, registry, and board.
+ * Other state and raw content retain their production storage contracts. */
 import {createHash} from 'node:crypto';
 import {createReadStream} from 'node:fs';
 import {stat} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
-import type {PoolClient} from 'pg';
-import type {ObjectStore} from '../sessions/types.mjs';
-import type {IntegrationRecord} from '../integrations/types.mjs';
-import type {ApplicationDatabase} from './postgres.mjs';
-import type {ApplicationSourceIdentity} from './settings.mjs';
-import {applicationDatabase,applicationStateSettings} from './settings.mjs';
+import {isDeepStrictEqual} from 'node:util';
+import {applicationDatabase} from './settings.mjs';
+import {prepareScopedState,requireScopedState} from './scoped.mjs';
 import {sessionStorage} from '../sessions/storage.mjs';
-import {standaloneEventIdentities,type createPostgresEventIdentities} from '../sessions/postgres-identities.mjs';
-import {migrateEventIdentitySource} from '../sessions/identity-migration.mjs';
 import {migrateIdentitySqlite} from './identity-migration.mjs';
 import {migrateRegistrySqlite} from './registry-migration.mjs';
-import {canonical,openLegacySqlite,type ImportMode} from './sqlite-import.mjs';
-import {createObjectMigration} from './object-migration.mjs';
-import {createConnectorCacheRetirements} from './connector-cache-retirements.mjs';
-import {createIntegrationCommands} from './integration-commands.mjs';
-import {ensureWriteBarrierSchema} from './write-barriers.mjs';
-import {finalizeIntegrationLifecycles} from './lifecycle-migration.mjs';
-
-import {migrateApplicationSources,type MigrationSource,type MigrationReadback,type MigrationInventoryItem} from './migration-engine.mjs';
-export interface ApplicationMigrationOptions {
-  database:ApplicationDatabase;store:ObjectStore&{checkAccess():Promise<void>};source:ApplicationSourceIdentity;
-  organizationId:string;url:string;secret:string;identityPath:string;registryPath:string;mode:ImportMode;
-  writersStopped?:boolean;expectExisting?:boolean;connectorKey?:Uint8Array;
-  eventIdentities:ReturnType<typeof createPostgresEventIdentities>;
+import {createPostgresBoardState,validateLegacyBoard} from './board.mjs';
+import {ensureIdentitySchema} from '../identity/better-auth.mjs';
+import {createSingleOrganizationRegistry} from '../integrations/local-registry.mjs';
+import {canonical,type ImportMode} from './sqlite-import.mjs';
+import type {ApplicationDatabase} from './postgres.mjs';
+import type {ObjectStore} from '../sessions/types.mjs';
+import type {BoardState} from '../board/types.mjs';
+const hash=(value:string|Uint8Array)=>createHash('sha256').update(value).digest('hex');
+async function fileHash(path:string){
+  try{if(!(await stat(path)).isFile())throw new Error('Legacy SQLite source must be a regular file');}
+  catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw error;}
+  const digest=createHash('sha256');for await(const chunk of createReadStream(path))digest.update(chunk);return digest.digest('hex');
 }
-const sha=(value:string|Uint8Array)=>createHash('sha256').update(value).digest('hex');
-function fail(message:string):never{throw Object.assign(new Error(message),{code:'APPLICATION_MIGRATION_UNSAFE'});}
-async function filePart(path:string){
-  let info;try{info=await stat(path);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw error;}
-  if(!info.isFile())fail('Legacy SQLite source must be a regular file');
-  const hash=createHash('sha256');for await(const chunk of createReadStream(path))hash.update(chunk);
-  return {bytes:info.size,hash:hash.digest('hex')};
-}
-async function sqliteSource(path:string,domain:'identity'|'registry'):Promise<MigrationSource&{exists:boolean}>{
-  const main=await filePart(path),wal=await filePart(path+'-wal');
-  if(!main&&wal)fail('Legacy SQLite WAL exists without its database; restore the complete backup');
-  return {key:'sqlite:'+domain,domain,version:null,bytes:(main?.bytes??0)+(wal?.bytes??0),hash:sha(canonical({main,wal})),exists:main!==null};
-}
-async function registryRecords(path:string,exists:boolean):Promise<IntegrationRecord[]>{
-  if(!exists)return [];
-  const source=await openLegacySqlite(path);
-  try{return source.prepare('SELECT record FROM integrations ORDER BY id').all().map(row=>JSON.parse(String(row.record)) as IntegrationRecord);}finally{source.close();}
-}
-/** Strict single-organization adapter over the common migration engine. */
-export async function migrateApplicationState(options:ApplicationMigrationOptions){
-  const {database,source,store}=options,connectorCaches=new Set<string>();
-  if(source.organizationId!==options.organizationId||!/^org_[A-Za-z0-9]+$/.test(options.organizationId))fail('Invalid application migration scope');
-  const result=await migrateApplicationSources({...options,checkAccess:()=>store.checkAccess(),sources:async()=>{
-    const identity=await sqliteSource(options.identityPath,'identity'),registry=await sqliteSource(options.registryPath,'registry');
-    const identityOptions={database,path:options.identityPath,organizationId:options.organizationId,url:options.url,secret:options.secret};
-    const registryOptions={database,path:options.registryPath,organizationId:options.organizationId};
-    const records=await registryRecords(options.registryPath,registry.exists);
-    const objects=createObjectMigration({database,store,prefix:source.prefix,organizationId:options.organizationId,registryRecords:records,connectorKey:options.connectorKey,eventIdentities:options.eventIdentities});
-    await objects.ready();
-    const roots=[...new Set(objects.roots)].sort().filter((root,_,all)=>!all.some(other=>other!==root&&root.startsWith(other)));
-    async function sqliteRead(input:typeof identity,mode:ImportMode):Promise<MigrationReadback>{
-      if(!input.exists)return {source:[],target:[],rows:0};
-      const report=input.domain==='identity'?await migrateIdentitySqlite({...identityOptions,mode}):await migrateRegistrySqlite({...registryOptions,mode});
-      return {source:report.tables.map(table=>({table:table.table,target:table.source})),
-        target:report.tables.some(table=>table.target===null)?null:report.tables.map(table=>({table:table.table,target:table.target})),
-        rows:report.tables.reduce((total,table)=>total+(table.target?.rows??0),0)};
-    }
-    async function objectRead(key:string){
-      const classification=objects.classify(key);
-      if(classification&&['connector-indexing','connector-snapshots'].includes(classification.domain))connectorCaches.add(key);if(!classification)fail('Mutable source no longer has a migration classification');
-      const raw=await store.readVersion(key,{maxBytes:classification.maxBytes});if(!raw.data)fail('Source object disappeared during migration inventory');
-      const bytes=raw.data,entry={key,domain:classification.domain,version:raw.version===null?null:String(raw.version),hash:sha(bytes),bytes:bytes.length};
-      const sessionReceipt=objects.sessionReceipt(key,bytes);if(sessionReceipt)return {entry,sessionReceipt};
-      return {entry,readback:await objects.process(key,bytes,{write:false}),migrate:()=>objects.process(key,bytes,{write:true})};
-    }
-    const commands=createIntegrationCommands({database,environment:'selfhost',encryptionKey:options.connectorKey});
-    return {
-      async *inventory():AsyncGenerator<MigrationInventoryItem>{
-        for(const input of [await sqliteSource(options.identityPath,'identity'),await sqliteSource(options.registryPath,'registry')])
-          yield {entry:input,readback:await sqliteRead(input,'check'),legacy:input.exists};
-        for(const root of roots){let cursor:string|undefined;const seen=new Set<string>();
-          for(;;){const page=await store.listPage(root,{maxKeys:1000,continuationToken:cursor});
-            for(const key of page.keys){
-              if(!key.startsWith(root))fail('Object listing escaped its source prefix');
-              yield {retainedKey:canonical([root,key]),legacy:key.startsWith(source.prefix+'/')};
-              if(!objects.classify(key))continue;
-              yield {...await objectRead(key),legacy:true,mutableObject:true};
-            }
-            if(!page.nextToken)break;if(page.nextToken===cursor||seen.has(page.nextToken))fail('Source listing did not advance');seen.add(page.nextToken);cursor=page.nextToken;
-          }
-        }
-      },
-      async validateInventory(fresh:boolean){if(!identity.exists&&!fresh)fail('An existing installation has no legacy identity database; restore the complete installation backup');},
-      async read(value:MigrationSource){
-        if(value.key==='sqlite:identity'||value.key==='sqlite:registry'){
-          const input=await sqliteSource(value.key==='sqlite:identity'?options.identityPath:options.registryPath,value.key==='sqlite:identity'?'identity':'registry');
-          return {entry:input,readback:await sqliteRead(input,'check'),migrate:()=>sqliteRead(input,'migrate')};
-        }
-        return objectRead(value.key);
-      },
-      async beforeImport(){await migrateEventIdentitySource({store,prefix:source.prefix,eventIdentities:options.eventIdentities});},
-      async prepareFinalization(){await commands.ready();await ensureWriteBarrierSchema(database);},
-      async finalize(client:PoolClient){
-        const lifecycle=await finalizeIntegrationLifecycles({client,namespace:database.namespace,environment:'selfhost',organizationId:options.organizationId,records,commands:commands.transactional});
-        const {commands:queued,...transitionCounts}=lifecycle;return {lifecycle:{...transitionCounts,queued:queued.length}};
-      },
-    };
-  }});
-  return {...result,connectorCatchupRequired:Math.max(connectorCaches.size,(await createConnectorCacheRetirements(database).required()).receipts)};
-}
-
-async function main(){
-  const [operation,...flags]=process.argv.slice(2);if(!['check','migrate','verify'].includes(operation)||flags.some(flag=>!['--writers-stopped','--expect-existing'].includes(flag)))throw new Error('Usage: node dist/src/state/migrate.mjs check|migrate|verify [--writers-stopped] [--expect-existing]');
-  const env=process.env,settings=applicationStateSettings(env),database=applicationDatabase(env),{store}=sessionStorage(env),eventIdentities=standaloneEventIdentities(store,env);
+export async function migrateScopedState({database,store,prefix,organizationId,url,secret,identityPath,registryPath,mode,writersStopped=false,expectExisting=false}:{
+  database:ApplicationDatabase;store:ObjectStore;prefix:string;organizationId:string;url:string;secret:string;
+  identityPath:string;registryPath:string;mode:ImportMode;writersStopped?:boolean;expectExisting?:boolean;
+}){
+  if(!['check','migrate','verify'].includes(mode)||!/^org_[A-Za-z0-9]+$/.test(organizationId)||database.sourceIdentity?.organizationId!==organizationId||database.sourceIdentity.prefix!==prefix||database.sourceIdentity.bucket!==store.bucket)throw new Error('Exact scoped-state source binding required');
+  await prepareScopedState(database);
+  const client=await database.pool.connect(),lock=database.namespace+':scoped-import';
   try{
-    const required=(name:string)=>{const value=env[name];if(!value)throw new Error(name+' is required');return value;};
-    const key=env.OPENCRAWL_CONNECTOR_KEY?Buffer.from(env.OPENCRAWL_CONNECTOR_KEY,'base64'):undefined;if(key&&key.length!==32)throw new Error('Invalid connector encryption key');
-    // Legacy files are read only by this offline import command. Runtime database
-    // settings expose PostgreSQL alone; these paths cannot select a backend.
-    const identityPath=env.OPENCRAWL_IDENTITY_PATH||'/data/identity.sqlite',registryPath=env.OPENCRAWL_REGISTRY_PATH||'/data/integrations.sqlite';
-    const result=await migrateApplicationState({database,store,eventIdentities,source:settings.source,mode:operation as ImportMode,organizationId:required('OPENCRAWL_ORGANIZATION_ID'),url:required('OPENCRAWL_URL'),secret:required('OPENCRAWL_AUTH_SECRET'),identityPath,registryPath,connectorKey:key,writersStopped:flags.includes('--writers-stopped'),expectExisting:flags.includes('--expect-existing')});
-    console.log(JSON.stringify({event:'application_state_migration',...result}));
-  }finally{await Promise.all([database.close(),eventIdentities.close()]);}
+    await client.query('SELECT pg_advisory_lock(hashtextextended($1,0))',[lock]);
+    if((await client.query('SELECT 1 FROM opencrawl_application_installations WHERE namespace=$1',[database.namespace])).rows.length)throw new Error('Whole-application migration cannot be reversed by the scoped importer; retain the existing release and verified recovery point');
+    const previous=(await client.query('SELECT source_identity,source_hash,state FROM opencrawl_scoped_installations WHERE namespace=$1',[database.namespace])).rows[0];
+    if(previous&&!isDeepStrictEqual(previous.source_identity,database.sourceIdentity))throw new Error('Scoped source binding differs');
+    // A completed domain import never replays stale legacy files over live rows.
+    if(previous?.state==='ready'){await requireScopedState(database);return {scope:'auth-registry-board',mode,ready:true,reused:true};}
+    if(mode==='verify')throw new Error('Scoped-state import has not completed');
+    const tenant=hash(organizationId),boardKey=prefix+'/board/tenants/'+tenant+'.json';
+    async function inventory(){
+      const identity=await fileHash(identityPath),identityWal=await fileHash(identityPath+'-wal'),registry=await fileHash(registryPath),registryWal=await fileHash(registryPath+'-wal');
+      if(!identity&&identityWal||!registry&&registryWal)throw new Error('Legacy SQLite WAL has no database; restore the complete backup');
+      const board=await store.readVersion(boardKey,{maxBytes:128*1024*1024});
+      return {identity,identityWal,registry,registryWal,board:board.data?hash(board.data):null};
+    }
+    const inputs=await inventory(),sourceHash=hash(canonical(inputs)),legacy=Object.values(inputs).some(Boolean);
+    if(previous&&previous.source_hash!==sourceHash)throw new Error('Source changed during scoped import; restore the verified recovery point');
+    if(expectExisting&&!inputs.identity)throw new Error('Existing installation has no legacy identity database; preserve and review its recovery point');
+    if(legacy&&!writersStopped)throw new Error('Stop application, workers and external source writers before importing existing state');
+    const identity={database,path:identityPath,organizationId,url,secret};
+    if(inputs.identity)await migrateIdentitySqlite({...identity,mode:'check'});
+    if(inputs.registry)await migrateRegistrySqlite({database,path:registryPath,organizationId,mode:'check'});
+    let board:BoardState|null=null;
+    if(inputs.board){const raw=await store.readVersion(boardKey,{maxBytes:128*1024*1024});if(!raw.data||hash(raw.data)!==inputs.board)throw new Error('Board source changed');board=JSON.parse(raw.data.toString('utf8')) as BoardState;validateLegacyBoard(board);}
+    if(mode==='check')return {scope:'auth-registry-board',mode,ready:false,legacy};
+    await client.query('INSERT INTO opencrawl_scoped_installations(namespace,source_identity,source_hash,state) VALUES($1,$2::jsonb,$3,\'importing\') ON CONFLICT DO NOTHING',[database.namespace,JSON.stringify(database.sourceIdentity),sourceHash]);
+    if(inputs.identity)await migrateIdentitySqlite({...identity,mode:'migrate'});else{
+      await ensureIdentitySchema(identity);
+      if(Number((await database.identityPool.query('SELECT count(*) FROM "user"')).rows[0].count))throw new Error('Target identity has data absent from the source');
+    }
+    const registry=createSingleOrganizationRegistry({database,organizationId});await registry.ready();
+    if(inputs.registry)await migrateRegistrySqlite({database,path:registryPath,organizationId,mode:'migrate'});
+    else if((await registry.listTenant(organizationId)).length)throw new Error('Target registry has data absent from the source');
+    const repository=createPostgresBoardState(database);await repository.ready();
+    if((await database.pool.query('SELECT 1 FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash<>$2',[database.namespace,tenant])).rows.length)throw new Error('Target board contains foreign scope');
+    if(board)await repository.importLegacy(tenant,board);else if(await repository.exportLegacy(tenant))throw new Error('Target board has data absent from the source');
+    if(sourceHash!==hash(canonical(await inventory())))throw new Error('Source changed during import; keep writers stopped');
+    await client.query("UPDATE opencrawl_scoped_installations SET state='ready',verified_at=now() WHERE namespace=$1",[database.namespace]);
+    await requireScopedState(database);return {scope:'auth-registry-board',mode,ready:true,reused:false};
+  }finally{try{await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',[lock]);}finally{client.release();}}
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await main().catch(error=>{
-  console.error(JSON.stringify({event:'application_state_migration_failed',code:(error as {code?:string}).code==='APPLICATION_MIGRATION_UNSAFE'?'APPLICATION_MIGRATION_UNSAFE':'APPLICATION_MIGRATION_FAILED',message:(error as {code?:string}).code==='APPLICATION_MIGRATION_UNSAFE'?(error as Error).message:'Migration validation or storage access failed; keep writers stopped and retain the recovery backup.'}));process.exitCode=1;
-});
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
+  const [mode,...flags]=process.argv.slice(2);
+  if(!['check','migrate','verify'].includes(mode||'')||flags.some(flag=>!['--writers-stopped','--expect-existing'].includes(flag)))throw new Error('Usage: state/migrate check|migrate|verify [--writers-stopped] [--expect-existing]');
+  const database=applicationDatabase(),{store,prefix}=sessionStorage();
+  try{await store.checkAccess();console.log(JSON.stringify(await migrateScopedState({database,store,prefix,organizationId:process.env.OPENCRAWL_ORGANIZATION_ID||'',url:process.env.OPENCRAWL_URL||'',secret:process.env.OPENCRAWL_AUTH_SECRET||'',identityPath:process.env.OPENCRAWL_IDENTITY_PATH||'/data/identity.sqlite',registryPath:process.env.OPENCRAWL_REGISTRY_PATH||'/data/integrations.sqlite',mode:mode as ImportMode,writersStopped:flags.includes('--writers-stopped'),expectExisting:flags.includes('--expect-existing')})));}
+  finally{await database.close();}
+}

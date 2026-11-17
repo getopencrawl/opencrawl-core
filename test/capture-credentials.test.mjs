@@ -1,19 +1,16 @@
-import {stateFor,withTestState} from './fixtures/memory-application-state.mjs';
 import {document} from '../dist/src/application/presentation.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {createCaptureCredentials as makeCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
-import {standaloneCapture as makeStandaloneCapture} from '../dist/tools/test-fixtures/capture.mjs';
+import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
+import {standaloneCapture} from '../dist/tools/test-fixtures/capture.mjs';
 import {cloudSetupScript,captureSetupPrompt,replicasSetupPrompt,cloudCapturePage} from '../dist/src/sessions/cloud-setup.mjs';
 import {memorySessionStore as memory} from './session-store-fixture.mjs';
-const createCaptureCredentials=options=>makeCaptureCredentials(withTestState(options));
-const standaloneCapture=options=>makeStandaloneCapture(withTestState(options));
 const owner={tenantId:'fixed',userId:'owner'};
 test('capture delegation is hashed, scoped, expiring and revocable',async()=>{
  const store=memory();let now=0;const credentials=createCaptureCredentials({store,now:()=>now});
  const issued=await credentials.issue(owner);
- assert.equal(store.data.size,0);assert.ok(!JSON.stringify([...stateFor(store).accounts.credentialRecords.values()]).includes(issued.token));
+ assert.ok(![...store.data.values()].some(value=>value.toString().includes(issued.token)));
  const delegated=await credentials.authenticate(issued.token);assert.equal(delegated.captureAccess,'write');
  await assert.rejects(credentials.issue(delegated),{status:403});
  await assert.rejects(credentials.revoke({...owner,tenantId:'other'},issued.id),{status:403});
@@ -72,7 +69,8 @@ test('owner revocation permanently invalidates old delegations without affecting
  const first=await credentials.issue(owner),second=await credentials.issue(owner);
  const otherUser=await credentials.issue({...owner,userId:'other'}),otherTeam=await credentials.issue({...owner,tenantId:'other'});
  // Legacy records without a generation are valid until the first owner revocation.
- const record=stateFor(store).accounts.credentialRecords.get(first.id);delete record.generation;
+ const key=[...store.data.keys()].find(key=>key.endsWith(first.id+'.json'));
+ const record=JSON.parse(store.data.get(key));delete record.generation;await store.put(key,JSON.stringify(record));
  assert.ok(await credentials.authenticate(first.token));
  await credentials.revokeAll(owner);
  assert.equal(await credentials.authenticate(first.token),null);assert.equal(await credentials.authenticate(second.token),null);

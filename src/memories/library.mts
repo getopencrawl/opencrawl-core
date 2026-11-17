@@ -1,4 +1,3 @@
-import type {ApplicationState} from '../state/types.mjs';
 import type {Principal, ObjectStore} from '../sessions/types.mjs';
 import type {RealmOptions, QueryBody} from '../search/types.mjs';
 import type {StoredMemorySnapshot} from './types.mjs';
@@ -37,8 +36,8 @@ export function memoryControls(controls: ReturnType<typeof createControls>, owne
 
 /** Current captured memory files. Readable by the team unless private to their
  * owner; only the owner changes visibility or deletes. */
-export function createMemoryLibrary({state,store, prefix, ...options}: RealmOptions & {state:ApplicationState;store: ObjectStore; prefix: string}) {
-  const resolve = createRealmResolver(options), controls = createControls({state});
+export function createMemoryLibrary({store, prefix, ...options}: RealmOptions & {store: ObjectStore; prefix: string}) {
+  const resolve = createRealmResolver(options), controls = createControls({store, prefix});
   const reader = (principal: Principal) => {
     sessionScope(principal);
     if (principal.captureAccess !== undefined) fail(403, 'Memory read access required');

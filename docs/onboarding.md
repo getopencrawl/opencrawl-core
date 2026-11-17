@@ -1,193 +1,73 @@
-# CLI onboarding and permanent Setup
+# Guided onboarding
 
-The first win is one real new agent session becoming searchable. The CLI is the
-bootloader: it authenticates, installs the chosen plugins, saves recording and
-history choices, and runs approved history imports in the background. The agent
-is the interface for human steps such as native hook trust and MCP sign-in.
-Setup is a permanent first sidebar item at `/setup`, not an admission gate.
-An authenticated, admitted user can use the rest of the workspace while setup
-is incomplete and return later to add another machine or client.
+The shared product renderers live in `src/onboarding*.mts`. The document frame,
+icons, controls and browser JSON transport are reused across all three steps.
+The hosted adapter supplies identity, scope, connector authorization, invitations,
+billing admission and routing. It never copies the core product UI.
 
-Core owns this flow, its React UI, portable CLI and evidence contracts. The
-hosted shell supplies tenant selection, provisioning and hosted admission;
-self-host uses the core single-tenant adapters. Authentication and resource
-permissions still apply to every route. Nonblocking setup does not mean
-unauthenticated access.
+Setup prompts and copied commands prefer the native CLI installer. The shared
+`src/sessions/cli-installation.mts` supplies shell and PowerShell commands;
+cloud bootstrap is pinned to the verified CLI version during core publication.
+npm remains an installation alternative. Installing the CLI is separate from
+sign-in, recording consent, hook trust and proof of a stored session.
 
-## Launch availability
+## Progress and gates
 
-New setup currently offers Claude Code, Codex, and Cursor on macOS. Other clients and
-client operating systems are deferred; their adapters and existing installations
-remain supported. Saved deferred selections may continue or be turned off, but
-cannot be newly enabled. A legacy installation containing deferred clients stops
-before changing configuration. This client availability is separate from the
-operating system running a self-hosted server.
+`createOnboardingStatus` persists individual receipts under the authenticated
+user and tenant scope. Step one requires CLI authentication, a successful native
+MCP `test_connection`, and an accepted batch containing a recorded message.
+MCP initialization is not a connection-test receipt. Hook-only batches cannot
+complete recording. For Grok Bot, whose sessions are built from hook payloads
+and whose runtime may report only tool hooks, a recorded tool call counts as
+well as a message; its lifecycle hooks alone do not. New CLI batches mark `captureMode` as `live` or `history`;
+history updates a separate optional receipt and cannot unlock recording. Legacy
+batches remain supported. Their original capture mode cannot be reconstructed.
 
-## Cloud and self-hosted authentication
+CLI installation alone is not evidence of recorded messages, so the recording
+parent remains pending until a live recording is stored. History shows Received
+when a historical batch is accepted; this does not claim the entire import has
+finished. The CLI's own final report describes full-import completion.
 
-**Cloud:** run `opencrawl setup` against the hosted deployment, or use the
-installer command on its Setup page. The CLI completes browser device sign-in
-before presenting client choices. The hosted adapter uses WorkOS and resolves
-the user's admitted workspace. A remaining account or workspace requirement is
-reported as such; installation never substitutes for membership or admission.
-Each agent's MCP connection subsequently authenticates through its native flow.
-CLI authentication does not authenticate MCP on its behalf.
+Step one never advances automatically. Its Next action opens Sources only after
+the required receipts exist. Sources are optional: until a connection is
+authorized the step offers a quiet Skip for now, and a confirmed connection turns
+it into Next. Indexing may continue in the background. Starting OAuth is not a
+connection. If the catalog fails to load, Try again and Skip for now both remain.
+The provider callback returns to Sources without advancing the onboarding step.
+The catalog comes from the current hosted service, not a copied provider list.
+Search appears only for catalogs of at least fifteen connectors.
 
-**Self-hosted:** the operator first starts the supported distribution and uses
-its private first-admin setup link. That one-time server provisioning step is
-separate from connecting a client machine. Users then run
-`opencrawl setup --api https://your-opencrawl.example`; device sign-in and MCP
-consent use that deployment's Better Auth identity and local accounts. Existing
-workspaces admit additional users through their invitations. No OpenCrawl-hosted
-account or WorkOS account is required. See [self-host operation](self-host.md).
+The final teammate step is optional. Admins can invite one email at a time;
+ordinary members can continue without seeing or sending invitations. WorkOS owns
+invitation delivery and the existing hosted service always assigns member access.
+The browser receives email-only invitation DTOs, never tokens or membership roles.
 
-Both flows use the same subsequent choices and verification. The copied command
-is bound to the selected deployment. Native CLI installation is preferred; npm
-remains an alternative. Installation failure must stop before setup executes.
+Both Skip for now and Open workspace POST to the authenticated finish endpoint.
+The adapter rechecks the agent gate before saving a durable completed receipt;
+finishing never requires a connected source. It then opens `/`, the actual
+workspace home backed by authorized search. Completion is idempotent and scoped.
+Disconnecting sources later does not relock an already completed workspace.
+Existing receipts are retained; absent new milestones are shown rather than
+inferred from clicks or stored browser state.
 
-## The bootloader flow
+## Presentation and recovery
 
-1. **Authenticate the CLI.** Reuse a valid saved sign-in. Complete the normal
-   browser handoff when required, then establish the current API, owner and
-   installation binding before changing clients.
-2. **Choose plugins and future recording.** Setup offers native
-   Claude Code, Codex, and Cursor plugins on macOS. Detected offered clients
-   start selected; saved off choices remain off. Recording requires that client's
-   plugin: turning its plugin off also turns recording off, and turning recording
-   on selects the plugin. A plugin may remain installed for search with recording
-   off. The CLI prepares the collector and installs the selected plugins.
-3. **Choose historical imports separately.** Show this benefit in one line:
-   “Import past sessions so your agents can find previous decisions, fixes, and
-   context.” Available supported histories start selected, subject to saved
-   choices; importing none is valid. History is independent of plugin and future
-   recording choices. The current selector offers available Claude Code and Codex
-   histories on macOS. Save the approved file snapshot and start its
-   background worker; do not wait for the archive to finish.
-4. **Continue in the coding agent.** The handoff reuses the exact installed CLI
-   invocation and saved choices. Explain only the next required native trust,
-   reload or MCP sign-in action. Preserve the conversation when the harness
-   permits it; a required reload or new conversation resumes saved progress.
-5. **Verify the selected clients.** Each plugin-selected client completes its own
-   native MCP exchange. Only clients with future recording enabled need a new
-   captured session. History-only clients continue importing without a capture
-   verification requirement. One primary agent may coordinate these steps but
-   cannot supply another client's native tool evidence.
+All steps share the boxed, left-aligned shell and bounded header with Sign out.
+Forward navigation sits outside the panel at the right; Back stays quiet with
+matching arrow insets. The primary button's brand layers appear only on hover.
+The setup prompt remains unchanged while required receipts arrive. Pending checks
+do not open disclosures, move the viewport, or replace it with MCP setup/test
+prompts. The expanded prompt and manual-copy fallback remain available until setup
+completes. Checklist disclosures close when their receipt first becomes complete.
+Prompt and snippet copy feedback clears after 1.5 seconds; disclosure changes are instant.
+Clipboard failures retain a usable manual-copy path.
+Replicas enrollment stays in workspace Agent setup for administrators; the focused
+onboarding flow does not offer that separate installation action. Existing shared
+readiness still opens the workspace and offers personal-computer setup.
 
-Native plugin bundles contain both startup and capture hooks. Setup
-offers the Claude Code, Codex, and Cursor bundles. The CLI owns collector
-configuration, queues and history workers;
-it does not install global client hook or startup-skill files for this flow.
-Capture still requires the saved recording choice. Plugin identities are scoped
-to the deployment and their installation receipts bind the CLI profile, preserving
-another profile's or destination's plugin.
-
-Cursor's local plugin includes MCP, startup and capture hooks. Setup preserves
-manually configured MCP connections and installs the deployment-specific plugin
-alongside them. Cursor historical imports are not offered; new-session recording
-starts at the saved consent boundary.
-
-A bundle marked `prepared` has not yet demonstrated native hook activation.
-Native loading, policy or trust can still require attention. In particular,
-writing a Cursor local plugin directory is not proof that the native client
-loaded it. Disabled or foreign installations remain intact. `setup resume`
-reconciles native registration and current bundle contents using saved choices;
-it does not repeat the questionnaire or broaden the approved history snapshot.
-
-## Local state and native verification
-
-`opencrawl setup status --local --json` reads the exact local capture/setup
-binding and returns `installationId`, `scope`, `savedSelections` and effective
-`selections`. It performs no network request, token refresh, child-process launch
-or write. `freshness: "local-only"`, `scopeSource: "saved-capture-config"` and
-`serverChecked: false` explicitly exclude fresh authentication or server proof.
-Missing, malformed or mismatched state fails without resetting setup or sign-in.
-Use the command prefix supplied by the installed guide rather than assuming a
-different CLI on `PATH` uses the same profile.
-
-The agent then calls this deployment's native MCP `installation_status` with the
-local installation ID and its own client ID. This tool issues or checks the
-server-owned proof through the existing authorized verification operation; it
-does not change the user's choices. Compare server recording selection with the
-local effective selection. If they differ, preserve local opt-outs, leave
-verification pending and reconcile with ordinary authorized `setup resume`
-when available. Do not follow a stale server capture task or claim completion.
-
-Call native `verify_installation` with the same installation/client and returned
-`proof.id` as `proofId`. With recording enabled, include `proof.marker` once in a
-normal assistant message and let the client's trusted plugin hooks capture that
-message and its native tool call/result. Never synthesize a transcript, seed a
-batch, or replace the native MCP call with a shell request. Check
-`installation_status` again for capture, authorized search and fetch evidence.
-
-| Evidence | Meaning |
-| --- | --- |
-| `prepared` plugin result | Bundle prepared; native activation remains unobserved. |
-| `installed` or `unchanged` plugin result | Matching native activation was observed locally; this alone proves neither MCP authentication nor search. |
-| `proof.state=waiting_capture` | The selected client's fresh marker message has not been observed. |
-| `proof.state=waiting_index` | Capture exists; authorized search and fetch have not yet confirmed the matching passage. |
-| `proof.state=verified` | The matching user's installation, harness, session and event were found and fetched. |
-| `mcp.state=observed` | The authenticated MCP exchange occurred; for recording clients, native call/result correlation is still missing. |
-| `mcp.state=authenticated` | The native verification call/result was correlated with this client's captured session. |
-| `firstWin` | The first new session was captured and retrieved; other clients and imports may remain incomplete. |
-
-For `forward=true`, client verification completes only when
-`proof.state=verified` **and** `mcp.state=authenticated`. For `forward=false`, the
-native tool returns `authenticated_transport_observed`; status with
-`proof.state=not_selected` and `mcp.state=observed` is sufficient for search-only
-transport proof. Do not enable capture or wait for `authenticated` in that case.
-These outcomes are distinct from plugin activation and historical import status.
-
-Check at most twice after an action, at least 15 seconds apart. If capture or
-indexing is pending, retain progress and continue on the next interaction.
-Do not replace the handoff with a separate “test MCP” prompt. A connection test,
-installed configuration, history upload, CLI login or another client's receipt
-cannot establish this client's new-session verification.
-
-Native MCP authentication and transport are separate from shell network access.
-Respect the harness's declared permissions; use its normal approval mechanism
-when one is available and stop a denied command. Do not change sandbox policy,
-copy CLI credentials into plugins, or ask for another sign-in because a shell
-network request failed. Online `setup status`, `setup resume` and
-`verify-installation --client CLIENT` remain available with normally authorized
-shell access. The native MCP path does not require that access.
-
-## The Setup page and recovery
-
-`web-v2/src/application/setup.tsx` uses `Page`, `Section`, `CopyField` and status
-rows inside `AppShell`. It offers installation/setup commands, a stable agent
-handoff, per-machine client status and separate history progress. It remains
-available after the first win and while new clients are added. A missing CLI
-activation observation stays visible separately from authenticated MCP/search
-evidence; successful proof must not be hidden behind a stale installation label.
-
-History completion means the approved local worker has finished processing its
-snapshot. It does not establish that every record is already searchable. Upload
-acceptance, indexing and first-session verification remain separate facts.
-Failures retain the queue, saved selections and progress for retry.
-
-Integrations and Team are ordinary workspace destinations. Neither connecting a
-source nor inviting a teammate is required to use the workspace or reach the
-first searchable session. The Setup page does not offer Replicas enrollment.
-Admin-only source and team operations retain their existing authorization.
-
-Legacy `collect install` remains supported. Migrating its global hooks preserves
-foreign profiles, queued data and native trust. Only verified same-profile owned
-runners may be refreshed; unsafe or unknown definitions block migration rather
-than silently disabling recording. Native plugin preparation and activation are
-separate stages, so migration must not promise uninterrupted capture while the
-client still needs to load or trust the new plugin.
-
-## Compatibility and owning sources
-
-The older focused onboarding components, `createOnboardingStatus` receipts and
-`/api/onboarding/*` operations remain compatibility surfaces. Their CLI/MCP/live
-and historical observations are retained; they no longer define workspace
-admission or a mandatory three-step funnel. Legacy `/onboarding` and `/agent-setup`
-links open Setup, `/onboarding/sources` opens Integrations, and
-`/onboarding/invite` opens Team in Settings. `/settings` opens its Team section. Do not remove stored receipts or infer new
-milestones from a legacy completed flag.
-
-Current behavior lives in `cli/src/setup/`, `src/setup/`, `src/mcp/server.mts`,
-`web-v2/src/application/setup.tsx` and the shared route registry in
-`web-v2/src/application/app.tsx`. See [onboarding QA](onboarding-qa.md) for the
-distinction between automated checks and actual native acceptance.
+The release contains no preview controls, simulated APIs, variant switches or
+mock workspace. Hosted route tests use synthetic identity/provider adapters;
+real authentication, provider authorization, delivery and retrieval remain live
+release acceptance checks. Core and CLI checks run independently without hosted
+credentials. Publish immutable core and CLI versions, then advance the hosted
+package, integrity lock and Git source pin together before deployment.

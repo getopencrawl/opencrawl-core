@@ -258,21 +258,6 @@ test('restore refuses a same-named empty volume owned by another project',async(
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 
-test('connector activation failure keeps upgrade incomplete and stops the new writers',()=>{
- const f=fixture({failBuild:false,failCatchup:true});try{
-  const result=f.run([]);assert.equal(result.status,1);const journal=JSON.parse(readFileSync(join(f.deploy,'.upgrade/upgrade.json'),'utf8'));assert.equal(journal.phase,'healthy');assert.equal(journal.connectorCatchup,undefined);
-  const calls=readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').map(JSON.parse);const gate=calls.findIndex(a=>a.includes('dist/src/selfhost/activate.mjs'));assert.ok(gate>0);assert.ok(calls.slice(gate+1).some(a=>a[0]==='stop'&&a.includes('app')&&a.includes('worker')));assert.ok(!result.stdout.includes('"upgrade":"complete"'));
- }finally{f.cleanup();}
-});
-
-test('record-startup cannot retain a prior completion after connector revalidation fails',()=>{
- const options={failBuild:false},f=fixture(options);try{
-  assert.equal(f.run([]).status,0);options.failCatchup=true;
-  const failed=f.run(['--record-startup']);assert.equal(failed.status,1);assert.equal(JSON.parse(readFileSync(join(f.deploy,'.upgrade/upgrade.json'),'utf8')).phase,'healthy');
-  options.failCatchup=false;const resumed=f.run(['--record-startup']);assert.equal(resumed.status,0,resumed.stderr);assert.equal(JSON.parse(readFileSync(join(f.deploy,'.upgrade/upgrade.json'),'utf8')).connectorCatchup.completed,true);
- }finally{f.cleanup();}
-});
-
 test('record-startup rejects another target and unproven runtime before activation or stopping writers',()=>{
  for(const field of ['wrongImageRevision','unhealthyWorker','foreignWorker','otherTarget']){
   const options={failBuild:false},f=fixture(options);try{

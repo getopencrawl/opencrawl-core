@@ -100,9 +100,7 @@ configuration file (credentials stay in environment variables):
 }
 ```
 
-Configure the Temporal worker described below with PostgreSQL application state,
-`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The submitting CLI needs only the
-Temporal connection and the tenant/connection reference, then:
+Set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for your object store, then:
 
 ```sh
 node dist/src/connectors/standalone.mjs index /path/to/config.json
@@ -115,12 +113,11 @@ before calling the same core search API. OpenSearch basic auth is supported via
 protected `search.username`/`search.password`; the hosted adapter uses SigV4.
 Do not expose an unauthenticated object store or OpenSearch endpoint publicly.
 
-The `index` command now submits `indexConnectorV1` and prints its workflow ID;
-it does not scan storage or run a process-local indexing loop. A successful
-submission is not completion. Inspect the workflow result in Temporal. An already
-running manual sweep returns `submitted: false` and exit code 2; it is never
-silently replaced. Pagination, retries and continuation are worker responsibilities.
-The `search` command remains a bounded read-only operation.
+Local indexing checks every page with the same cursor guard as durable sweeps.
+Advancing empty or filtered pages continue; cyclic cursors fail with a fixed
+error. Objects remain sequential and fail fast: an object error stops later
+objects/pages, and the CLI refreshes search and reports success only after a
+complete traversal.
 
 ## Durable Temporal adapter
 
@@ -150,14 +147,14 @@ revoking that fixed scope; hosted deployments recheck their connection registry.
 new with the S3 cursor. Each activity retries five times and heartbeats while it
 runs. A poison object does not prevent processing the rest of the page; the sweep
 ends in a visible failure if any object exhausted retries. Schedule a new sweep
-with overlap policy SKIP to retry repaired objects and find late arrivals. PostgreSQL
+with overlap policy SKIP to retry repaired objects and find late arrivals. S3
 receipts avoid reprocessing successfully indexed objects. Entire-prefix sweeps
 are an initial bounded-memory discovery strategy, not an optimal large-corpus
 notification architecture. Monitor scan duration and lag before expanding scale.
 
 Reindex into a new index generation, which creates separate receipts; verify
 results before changing the query target. Keep the previous index for rollback.
-Back up raw S3 data, PostgreSQL application state and Temporal's persistent database together. Restoring source data into
+Back up raw S3 data and Temporal's persistent database. Restoring source data into
 a fresh index rebuilds search; restoring only receipts without their matching
 index is invalid. Raw-data loss cannot be recovered from Temporal pointers.
 

@@ -1,4 +1,3 @@
-import {withTestState} from './fixtures/memory-application-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
@@ -57,9 +56,9 @@ function driveFixture(count = 40, {withPolicy = true} = {}) {
   }});
   const record = {tenantId, userId: 'user_owner', integrationId: binding.connectionId, provider: 'googledrive', scope: 'team',
     status: 'active', environment: 'selfhost', workspace: tenantId, s3Prefix: binding.rawPrefix.slice(0, -1)};
-  const resolver = createConnectorResolver(withTestState({environment: 'selfhost', generation: 'v1',
+  const resolver = createConnectorResolver({environment: 'selfhost', generation: 'v1',
     registry: {get: async () => record, listTenant: async () => [record]}, storage: async () => ({}), search: () => search,
-    ...(withPolicy ? {driveAccess: () => createDriveAccess(access)} : {})}));
+    ...(withPolicy ? {driveAccess: () => createDriveAccess(access)} : {})});
   return {binding, candidates, state, access, record, resolver};
 }
 

@@ -44,7 +44,7 @@ export interface TeamReport {
 }
 
 export interface SettingsData {
-  workspace: {name: string; userName: string; email: string; role: WorkspaceRole; avatarUrl?: string | null};
+  workspace: {name: string; userName: string; email: string; role: WorkspaceRole};
   mcpUrl: string;
   setupPrompt: string;
   replicasSetupPrompt?: string;
@@ -52,13 +52,8 @@ export interface SettingsData {
 }
 
 export interface InvitationPolicy {delivery: 'email' | 'link'; beforeAgentSetup: boolean}
-export interface Bootstrap extends SettingsData {
-  /** Operator-owned complete start command and matching shell-quoted CLI prefix; configure both together. */
-  setupStartCommand?: string;
-  setupCliCommand?: string;
-  cacheScope: string; canInvite: boolean; invitationPolicy?: InvitationPolicy; onboarding: {completed: boolean; next: string}}
+export interface Bootstrap extends SettingsData {cacheScope: string; canInvite: boolean; invitationPolicy?: InvitationPolicy; onboarding: {completed: boolean; next: string}}
 
 export type * from './reports.mjs';
 export type * from './library-types.mjs';
 export type * from './onboarding-types.mjs';
-export type * from '../setup/types.mjs';

@@ -42,7 +42,7 @@ for (const width of [1440, 390]) {
     await expect(privateSession).toHaveAttribute('title', 'Private. Share with team');
     await expect(page.getByRole('button', {name: /^Share session with team:/})).toHaveCount(2);
     await expect(shared).toHaveCSS('opacity', '1');
-    if (width === 390) {await expect(shared).toBeVisible(); await expect.poll(async () => (await shared.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(44); await expect.poll(async () => (await shared.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);}
+    if (width === 390) {const box = await shared.boundingBox(); expect(box?.width).toBeGreaterThanOrEqual(44); expect(box?.height).toBeGreaterThanOrEqual(44);}
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({path: testInfo.outputPath(`session-visibility-${width}.png`), fullPage: true});
 

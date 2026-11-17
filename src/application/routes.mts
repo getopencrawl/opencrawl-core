@@ -1,7 +1,6 @@
 import {consoleRoute,consolePages} from './console.mjs';
 export type Route = {name: string; status?: number; provider?: string; action?: 'connect' | 'retry' | 'disconnect'};
 export function productRoute(method: string, path: string): Route | null {
-  if(path==='/api/setup')return method==='GET'?{name:path}:{name:path,status:405};
   if (method === 'GET' && consolePages.has(path)) return {name:path};
   if (path.startsWith('/api/trpc/')) return ['GET','POST'].includes(method) ? {name:'web-rpc'} : {name:'web-rpc',status:405};
   const console = consoleRoute(method, path);
