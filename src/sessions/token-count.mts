@@ -2,6 +2,8 @@ import {countTokens} from 'gpt-tokenizer/encoding/o200k_base';
 import type {SessionEvent} from './types.mjs';
 
 const AS_TEXT = {disallowedSpecial: new Set<string>()};
+/** Local, deterministic text size for bounded retrieval output as well as capture. */
+export const plainTextTokens=(text:string)=>countTokens(text,AS_TEXT);
 const OMIT = new Set(['id', 'type', 'role', 'call_id', 'tool_use_id', 'encrypted_content', 'signature', 'image_url']);
 /** A stable size measure, independent of model usage and commercial metering.
  * Count message text and tool inputs/results, including imported history. */

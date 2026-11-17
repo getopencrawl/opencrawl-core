@@ -45,6 +45,8 @@ import {createSessionLibrary} from '../sessions/library.mjs';
 import {createMemoryLibrary} from '../memories/library.mjs';
 import {createLibraryApi,libraryFailure} from '../sessions/library-http.mjs';
 import {createWorkspaceSearch,createWorkspaceSearchHandler} from '../search/workspace.mjs';
+import {createContextCheck,lexicalCheckJudgment} from '../search/check.mjs';
+import {createContextCheckHandler} from '../search/check-http.mjs';
 import {captureSetupPrompt,cloudCapturePage} from '../sessions/cloud-setup.mjs';
 import {createCaptureCredentials,isCaptureCredential} from '../sessions/credentials.mjs';
 import {createSessionIngest,createCaptureHandler} from '../sessions/ingest.mjs';
@@ -110,6 +112,7 @@ export function selfhostApplication({settings,store,boardState,eventIdentities,p
   const board=authorizedBoard({state:boardState,authorize,recentSessions:createRecentSessions({store,prefix,...settings.search})});
   const identifyAgent=async(req:IncomingMessage)=>{const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];return isReplicasToken(token)?workloads.identify(token):identifyCli(req.headers.authorization,{capture:true});};
   const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});return identity.principal;};
+  const contextCheck=createContextCheckHandler({authenticate,check:createContextCheck({search:authorizedSearch,judge:lexicalCheckJudgment,authorize})});
   const query=createWorkspaceSearchHandler({search:authorizedSearch,authenticate});
   const fetchPassage=createWorkspaceSearchHandler({search:authorizedSearch,authenticate,operation:'fetch'});
   const boardHandler=createBoardHandler({board,authenticate});
@@ -162,6 +165,7 @@ export function selfhostApplication({settings,store,boardState,eventIdentities,p
       if(url.pathname==='/api/replicas/connect')return await replicasConnect(req,res);
       if(url.pathname==='/mcp')return await mcp(req,res);
       if(url.pathname.startsWith('/api/sessions/'))return await capture(req,res);
+      if(url.pathname==='/api/search/check')return contextCheck(req,res);
       if(url.pathname==='/api/search')return await query(req,res);
       if(url.pathname==='/api/search/fetch')return await fetchPassage(req,res);
       if(url.pathname.startsWith('/api/board/')){if(req.headers.origin)return respond(403,'Browser request denied');return await boardHandler(req,res);}
