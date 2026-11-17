@@ -56,6 +56,16 @@ and downgrades. Core check-completion events drive publication, and publication
 drives consumption; neither repository needs a scheduled polling job or an idle
 watcher for this handoff. Stable tagged distribution is unchanged.
 
+For a core-to-hosted latency measurement, start at the core PR's `mergedAt`
+timestamp and stop only when the consumer's full production verification has
+completed, including its API and background workers. Include publication,
+dispatch, queueing, consumer validation and rollout time. Record the immutable
+core revision, package version, consumer revision and workflow receipts together.
+An idle-start measurement first confirms that no consumer controller or prior
+production rollout is active; it must use the automatic publication notification.
+Early API health or controller success alone does not establish completion.
+A single successful sample establishes that run's latency, not a percentile or SLA.
+
 CLI changes on main allocate a version above all published CLI artifacts unless
 the committed version is already newer. The same version is used for the build
 and all Linux, macOS and Windows checks. All six packages advance `latest` only
