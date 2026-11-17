@@ -8,7 +8,9 @@ import {object} from './context-check-events.ts';
 export async function flushSuggestionEvents(store:CheckStore,guard:()=>void,fetcher=fetch):Promise<{accepted:string[];rejected?:boolean}|undefined> {
   try{
     const events=store.pending();if(!events.length)return;
-    const signal=AbortSignal.timeout(650);
+    // Production identity plus authorized event ingestion exceeded 650 ms in
+    // three consecutive probes. Keep one shared deadline within 3 s hooks.
+    const signal=AbortSignal.timeout(1500);
     guard();assertCheckSettings(store.settings,store.harness);
     const saved=readSession(store.settings.api);
     // No interactive login or human refresh on a delivery hook's critical path.

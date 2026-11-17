@@ -176,3 +176,23 @@ test('telemetry retries the same bounded metadata and withholds a different acco
     store.record(task,{stage:'handoff',results:1});expect(suggestionEventsSchema.safeParse({events:store.pending()}).success).toBe(true);
   }finally{store.close();f.close();}
 });
+
+test('telemetry covers measured authorization latency but still bounds a stalled transport',async()=>{
+  const paths:string[]=[];
+  const server=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
+    const path=new URL(request.url).pathname;paths.push(path);
+    if(path.endsWith('/identity')){await pause(350);return Response.json({data:{principal:{tenantId:'tenant-a',userId:'user-a'}}});}
+    const body=await request.json() as {events:{id:string}[]};await pause(450);
+    return Response.json({data:{accepted:body.events.map(e=>e.id)}});
+  }});
+  const f=fixture('codex',server.url.origin),store=new CheckStore(f.settings,'codex');
+  try{
+    const task=store.enqueue(checkEvent('codex',prompt('codex'),f.config)!)!;
+    await flushSuggestionEvents(store,()=>{});
+    expect(paths).toEqual(['/api/sessions/identity','/api/context/suggestions/events']);expect(store.pending()).toHaveLength(0);
+    store.record(task,{stage:'handoff',results:1});const pending=store.pending();let calls=0;
+    const stalled=(async(_url,init)=>{calls++;return await new Promise<Response>((_resolve,reject)=>init!.signal!.addEventListener('abort',()=>reject(init!.signal!.reason),{once:true}));}) as typeof fetch;
+    const start=performance.now();await flushSuggestionEvents(store,()=>{},stalled);
+    expect(performance.now()-start).toBeLessThan(2200);expect(calls).toBe(1);expect(store.pending()).toEqual(pending);
+  }finally{store.close();f.close();server.stop(true);}
+},5000);

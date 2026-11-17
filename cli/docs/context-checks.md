@@ -89,7 +89,7 @@ References: [Codex hooks](https://learn.chatgpt.com/docs/hooks),
 Eligible opted-in hooks queue bounded lifecycle metadata for the selected
 deployment: observed, skipped, requested, received, handoff and dropped. The
 private outbox holds at most 512 events for 24 hours; each flush sends at most 24
-and has a 650 ms deadline. Failed sends retry on a later eligible hook, with
+and has a 1,500 ms deadline. Failed sends retry on a later eligible hook, with
 stable IDs. No extra model call or credit is used for telemetry.
 
 A handoff means the CLI wrote context to the harness; it does not establish model
