@@ -1,3 +1,4 @@
+import {loadContextSuggestions} from './context-suggestions.mjs';
 import {selfhostTemporalSettings} from './temporal-settings.mjs';
 import {selfhostState} from './state.mjs';
 import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
@@ -11,6 +12,7 @@ import {createLocalIdentity} from '../identity/better-auth.mjs';
 import {sessionStorage} from '../sessions/storage.mjs';
 import {createDrainableServer} from '../application/request-lifecycle.mjs';
 export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
+  const contextSuggestions=await loadContextSuggestions(env.OPENCRAWL_CONTEXT_SUGGESTIONS_MODULE);
   const settings=selfhostSettings(env),{store,prefix}=sessionStorage(env);
   await store.checkAccess();
   const {database,state:boardState}=await selfhostState(env);
@@ -22,7 +24,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
   const indexing=sessionIndexingScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',sourceId:source.sourceId,generation:source.generation,mode:'workflow'});
   const scheduleSessionDeletion=sessionDeletionScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1',sourceId:'sessions-'+settings.organizationId+'-v1'});
-  const {server,shutdown}=createDrainableServer(selfhostApplication({settings,store,boardState,eventIdentities,prefix,identity,...services,scheduleSessionDeletion,scheduleSessionIndexing:indexing.schedule}),{analytics:{async close(){services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close(),indexing.close()]);}}});
+  const {server,shutdown}=createDrainableServer(selfhostApplication({contextSuggestions,settings,store,boardState,eventIdentities,prefix,identity,...services,scheduleSessionDeletion,scheduleSessionIndexing:indexing.schedule}),{analytics:{async close(){services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close(),indexing.close()]);}}});
   server.requestTimeout=60000;server.headersTimeout=10000;
   // Keep idle upstream sockets longer than Caddy's default two minutes.
   // Header/request deadlines still bound slow clients independently.

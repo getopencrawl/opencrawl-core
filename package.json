@@ -97,6 +97,8 @@
     "./state/board": "./dist/src/state/board.mjs",
     "./state/initialize": "./dist/src/state/initialize.mjs",
     "./integrations/linear-source": "./dist/src/integrations/linear-source.mjs",
+    "./context/suggestion-events": "./dist/src/search/suggestion-events.mjs",
+    "./selfhost/context-suggestions": "./dist/src/selfhost/context-suggestions.mjs",
     "./search/check": "./dist/src/search/check.mjs",
     "./search/check-http": "./dist/src/search/check-http.mjs"
   },

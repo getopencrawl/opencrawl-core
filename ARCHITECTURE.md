@@ -159,3 +159,15 @@ focused documents and the workspace console.
 Shared integration changes require a verified active admin membership bound to
 the principal and organization. Runtime adapters pass plain membership facts to
 core; UI controls reflect these permissions but never grant them.
+
+## Context suggestions extension
+
+Core owns bounded context suggestions, judgment and lifecycle-event contracts,
+source authorization and the lexical self-host adapter. Self-host startup may
+load `OPENCRAWL_CONTEXT_SUGGESTIONS_MODULE`, an explicit absolute local path to
+trusted operator code exporting a per-request judgment factory and/or observer.
+This is a composition boundary, not a sandbox: no request selects a module,
+remote URL, model credential or hosted fallback. The hosted shell supplies its
+private judgment policy, credit ledger and managed telemetry retention. Public
+harness plugins own hook definitions/runners; the CLI installs those assets and
+writes deployment configuration, preserving native trust and disabled choices.

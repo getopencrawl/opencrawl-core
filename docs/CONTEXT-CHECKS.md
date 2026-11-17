@@ -1,6 +1,6 @@
-# Bounded context checks
+# Bounded context suggestions
 
-`POST /api/search/check` accepts the same authenticated agent credentials as
+`POST /api/context/suggestions` accepts the same authenticated agent credentials as
 workspace search. Upload-only credentials cannot read context. Browser-origin
 requests are rejected. The self-hosted runtime exposes a working local lexical
 judgment adapter; it needs no model vendor, OpenCrawl account or telemetry.
@@ -47,3 +47,6 @@ The caller must supply the actual native chat identity and a stable event ID whe
 its harness provides one. Reuse an event ID and identical input when retrying.
 Harness-specific asynchronous delivery is a separate transport concern; an HTTP
 success does not establish that a harness injected the returned context.
+
+For a working self-host judgment extension and lifecycle telemetry, see
+[Context suggestions](CONTEXT-SUGGESTIONS.md).
