@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" start",
+        "timeout": 7
+      },
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" capture",
+        "timeout": 30
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" capture",
+        "timeout": 30
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" capture",
+        "timeout": 30
+      },
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" suggest",
+        "timeout": 3
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" capture",
+        "timeout": 30
+      }
+    ],
+    "afterAgentThought": [
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" capture",
+        "timeout": 30
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" start-after-tool",
+        "timeout": 7
+      },
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" capture",
+        "timeout": 30
+      },
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" suggest",
+        "timeout": 3
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" capture",
+        "timeout": 30
+      },
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" suggest",
+        "timeout": 3
+      }
+    ],
+    "preCompact": [
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" capture",
+        "timeout": 30
+      }
+    ],
+    "stop": [
+      {
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" capture",
+        "timeout": 30
+      }
+    ],
+    "preToolUse": [
+      {
+        "matcher": "^(?:MCP:opencrawl_search|MCP:opencrawl_search_v1)$",
+        "command": "\"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd\" search",
+        "timeout": 2
+      }
+    ]
+  }
+}

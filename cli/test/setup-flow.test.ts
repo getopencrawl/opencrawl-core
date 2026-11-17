@@ -380,7 +380,7 @@ test('manual Cursor MCP can enroll through normal setup without replacing connec
  expect(state.selections).toMatchObject({plugins:{cursor:true,codex:false,'claude-code':false},forward:{cursor:true,codex:false,'claude-code':false},history:{cursor:false,codex:false,'claude-code':false}});
  expect(state.historyJob).toBeUndefined();expect(readCaptureConfig()).toMatchObject({api,hookOwnership:'plugin',captureWorker:'daemon-v1',harnesses:['cursor'],command});
  expect(JSON.parse(readFileSync(join(plugin,'mcp.json'),'utf8'))).toEqual({mcpServers:{opencrawl:{url:api+'/mcp'}}});
- expect(existsSync(join(plugin,'hooks','hooks.json'))).toBe(false);expect(existsSync(join(cursorRoot,'hooks.json'))).toBe(true);
+ expect(existsSync(join(plugin,'hooks','hooks.json'))).toBe(true);expect(existsSync(join(cursorRoot,'hooks.json'))).toBe(false);
  expect(result).toMatchObject({status:'needs_attention'});expect(state.pluginResults).toEqual([expect.objectContaining({client:'cursor',status:'prepared'})]);expect(readFileSync(mcpFile,'utf8')).toBe(manual);
  await setupCommand('resume',api,{json:true},dependencies);
  expect(readSetupState(state.scope)?.installationId).toBe(state.installationId);expect(readSetupState(state.scope)?.selections).toEqual(state.selections);expect(readFileSync(mcpFile,'utf8')).toBe(manual);

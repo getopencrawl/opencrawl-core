@@ -1,0 +1,17 @@
+{
+  "name": "opencrawl-sessions",
+  "version": "1.0.0",
+  "description": "Workspace knowledge, lifecycle capture and context suggestions.",
+  "author": {
+    "name": "OpenCrawl"
+  },
+  "license": "MIT",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "onboardingSkill": "./skills/opencrawl-setup/SKILL.md",
+  "interface": {
+    "displayName": "OpenCrawl",
+    "shortDescription": "Workspace knowledge and context suggestions"
+  }
+}

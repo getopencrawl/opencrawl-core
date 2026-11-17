@@ -47,19 +47,19 @@ test('all four bundles contain native hooks bound to the exact profile, command 
   const files=setupPluginFiles(client,origin,{command:[join(tmpdir(),'private cli','opencrawl')],configHome:join(tmpdir(),'private profile')});
   const mcp=Object.entries(files).find(([name])=>['mcp.json','.mcp.json','mcp_config.json'].includes(name))!;
   expect(mcp[1]).toContain(origin+'/mcp');expect(mcp[1]).not.toContain('app.getopencrawl.com');
-  expect(files[client==='antigravity'?'hooks.json':client==='cursor'?'scripts/cursor-native-hooks.json':'hooks/hooks.json']).toBeDefined();
-  const runner=files['scripts/'+(client==='cursor'?'opencrawl-cursor-native':'opencrawl-hook')+(process.platform==='win32'?'.cmd':'.sh')];
-  expect(runner).toContain(identity.name);expect(runner).toContain('OPENCRAWL_CONFIG_HOME');expect(runner).toContain('private profile');expect(runner).toContain('private cli');
-  expect(files['skills/opencrawl-setup/SKILL.md']).toContain(identity.name);expect(files['skills/opencrawl-setup/SKILL.md']).toContain('Never switch to a separate "test MCP" prompt');
+  expect(files[client==='antigravity'?'hooks.json':'hooks/hooks.json']).toBeDefined();
+  const runner=files['.opencrawl-binding.json'];
+  expect(runner).toContain(identity.name);expect(runner).toContain('configHome');expect(runner).toContain('private profile');expect(runner).toContain('private cli');
+  expect(files['skills/opencrawl-setup/SKILL.md']).toContain('.opencrawl-binding.json');
   expect(files['skills/opencrawl/SKILL.md']).toContain('Search is lexical');
   expect(Object.keys(files).some(name=>name.startsWith('skills/opencrawl/references/'))).toBe(false);
   if(client==='codex'){const manifest=JSON.parse(files['.codex-plugin/plugin.json']);expect(manifest).toMatchObject({hooks:'./hooks/hooks.json',mcpServers:'./.mcp.json',skills:'./skills/'});expect(JSON.parse(files['.mcp.json']).mcpServers).toEqual({[identity.name]:{type:'http',url:origin+'/mcp'}});expect(files['plugin.json']).toBeUndefined();expect(files['mcp.json']).toBeUndefined();}
  }
 });
-test('generated Cursor rule delivers retrieval and native notifications for its bound deployment',()=>{
+test('canonical Cursor rule delivers retrieval and native notifications for its bound deployment',()=>{
  const command=[join(tmpdir(),'private cli','opencrawl')],files=setupPluginFiles('cursor',origin,{command,configHome:join(tmpdir(),'private profile')});
  const rule=files['rules/opencrawl.mdc'];
- for(const phrase of ['alwaysApply: true',identity.name,origin,'exact command, profile','first-tool receipt','notify_on_output','block_until_ms:0','Registration alone is not listening','Do not run board diagnostics','use OpenCrawl search'])expect(rule).toContain(phrase);
+ for(const phrase of ['alwaysApply: true','.opencrawl-binding.json','exact command, profile','first-tool receipt','notify_on_output','block_until_ms:0','alone is not listening','Do not run board diagnostics','use OpenCrawl search'])expect(rule).toContain(phrase);
  expect(rule).not.toContain('app.getopencrawl.com');expect(rule).not.toContain('opencrawl_search');
  expect(files['skills/opencrawl/SKILL.md']).toContain('## Coordination');
 });
@@ -101,7 +101,7 @@ test('Cursor local discovery is prepared and names the exact plugin while preser
  const production=join(home,'.cursor/plugins/cache/opencrawl/opencrawl/prior/mcp.json');save(production,{mcpServers:{opencrawl:{url:'https://app.getopencrawl.com/mcp'}}});
  const before=readFileSync(production,'utf8'),result=await installSetupPlugins(origin,['cursor'],options);
  expect(result.results[0]?.status).toBe('prepared');expect(calls).toHaveLength(0);expect(existsSync(join(home,'.cursor/plugins/local',identity.name,'.cursor-plugin/plugin.json'))).toBe(true);
- expect(existsSync(join(home,'.cursor/hooks.json'))).toBe(true);expect(result.humanTasks.map(task=>task.kind)).toEqual(['restart','mcp_auth']);
+ expect(existsSync(join(home,'.cursor/hooks.json'))).toBe(false);expect(result.humanTasks.map(task=>task.kind)).toEqual(['restart','mcp_auth']);
  expect(result.humanTasks[0]?.instruction).toContain('/plugin list');expect(result.humanTasks[0]?.instruction).toContain(identity.name);expect(result.humanTasks[0]?.instruction).toContain('local imports are blocked');
  expect(readFileSync(production,'utf8')).toBe(before);
 }));
@@ -155,7 +155,7 @@ test('changing the private CLI invalidates old activation and binds the updated 
  await installSetupPlugins(origin,['cursor'],options);activate(home,'cursor');
  options.command=[join(home,'new private cli','opencrawl')];
  expect((await installSetupPlugins(origin,['cursor'],options)).results[0]?.status).toBe('prepared');
- expect(readFileSync(join(home,'.cursor/plugins/local',identity.name,process.platform==='win32'?'scripts/opencrawl-cursor-native.cmd':'scripts/opencrawl-cursor-native.sh'),'utf8')).toContain('new private cli');
+ expect(readFileSync(join(home,'.cursor/plugins/local',identity.name,'.opencrawl-binding.json'),'utf8')).toContain('new private cli');
 }));
 test('interrupted receipt write recovers only the exact owned enabled source through native install',()=>fixture(async(home,options,calls)=>{
  await installSetupPlugins(origin,['codex'],options);rmSync(receipt(home,'codex'));calls.length=0;
@@ -258,20 +258,18 @@ test('current Codex cache inventory takes precedence over a stale saved path and
  expect(read(markerFile).configHome).toBe(join(home,'other-config'));
 }));
 
-test('Cursor upgrade removes obsolete executable plugin hooks and keeps one native user delivery path',()=>fixture(async(home,options)=>{
+test('Cursor installs hooks exclusively in its plugin and preserves unrelated user hooks',()=>fixture(async(home,options)=>{
+ const file=join(home,'.cursor/hooks.json'),native={version:1,hooks:{stop:[{command:'user-owned',enabled:false}]}};save(file,native);
  const initial=await installSetupPlugins(origin,['cursor'],options),directory=initial.results[0]!.directory!;
- const current=setupPluginFiles('cursor',origin,{command:options.command,configHome:join(home,'config'),env:options.env});
- const suffix=process.platform==='win32'?'.cmd':'.sh',old={...current};
- old['hooks/hooks.json']=old['scripts/cursor-native-hooks.json']!;delete old['scripts/cursor-native-hooks.json'];
- old['scripts/opencrawl-hook'+suffix]=old['scripts/opencrawl-cursor-native'+suffix]!;delete old['scripts/opencrawl-cursor-native'+suffix];
- for(const file of Object.keys(current))if(!(file in old))rmSync(join(directory,file));
- for(const [file,text] of Object.entries(old)){mkdirSync(dirname(join(directory,file)),{recursive:true});writeFileSync(join(directory,file),text);}
- const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
- save(join(directory,'.opencrawl-setup-plugin.json'),{...read(join(directory,'.opencrawl-setup-plugin.json')),digest:digest(JSON.stringify(old,null,2)+'\n'),files:Object.fromEntries(Object.entries(old).map(([file,text])=>[file,digest(text)]))});
- const resumed=await installSetupPlugins(origin,['cursor'],options);expect(resumed.results[0]?.status).toBe('prepared');
- expect(existsSync(join(directory,'hooks/hooks.json'))).toBe(false);expect(existsSync(join(directory,'scripts/opencrawl-hook'+suffix))).toBe(false);
- const native=read(join(home,'.cursor/hooks.json'));
- expect(native.hooks.sessionStart).toHaveLength(2);expect(native.hooks.afterAgentResponse).toHaveLength(1);
- expect(native.hooks.sessionStart[0].command).toContain('opencrawl-cursor-native');
- await installSetupPlugins(origin,['cursor'],options);expect(read(join(home,'.cursor/hooks.json'))).toEqual(native);
+ expect(existsSync(join(directory,'hooks/hooks.json'))).toBe(true);
+ expect(read(file)).toEqual(native);await installSetupPlugins(origin,['cursor'],options);expect(read(file)).toEqual(native);
+}));
+
+test('Cursor migration retires exact old user entries and refuses changed or disabled choices',()=>fixture(async(home,options)=>{
+ const file=join(home,'.cursor/hooks.json'),directory=join(home,'.cursor/plugins/local',identity.name),marker=join(home,'config/opencrawl/setup-plugins/cursor',identity.key,'native-hooks.json');
+ const old={command:'old-owned-runner',timeout:3},foreign={command:'user-owned',enabled:false};
+ save(marker,{file,directory,hooks:{stop:[old]}});save(file,{version:1,hooks:{stop:[{...old,enabled:false},foreign]}});
+ const before=readFileSync(file,'utf8');expect((await installSetupPlugins(origin,['cursor'],options)).results[0]?.status).toBe('error');expect(readFileSync(file,'utf8')).toBe(before);expect(existsSync(directory)).toBe(false);
+ save(file,{version:1,hooks:{stop:[old,foreign]}});
+ expect((await installSetupPlugins(origin,['cursor'],options)).results[0]?.status).toBe('prepared');expect(read(file).hooks.stop).toEqual([foreign]);expect(read(marker).hooks).toEqual({});
 }));
