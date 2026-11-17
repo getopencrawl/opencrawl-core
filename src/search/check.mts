@@ -102,6 +102,7 @@ export function createContextCheck({search,judge,authorize,now=Date.now}:{search
       if(candidates.length===CHECK_LIMITS.candidates)break;
     }
     signal.throwIfAborted();
+    if(partial&&!candidates.length)throw Error('Context search unavailable');
     const keys=candidates.length?await policy.shortlist(input,candidates,signal):[];
     if(keys.length>CHECK_LIMITS.ranked||new Set(keys).size!==keys.length||keys.some(k=>!candidates.some(c=>c.key===k)))throw Error('Invalid check shortlist');
     const selected=keys.map(k=>candidates.find(c=>c.key===k)!);

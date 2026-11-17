@@ -40,6 +40,10 @@ test('invalid judge fanout and aborted calls stop before further reads',async()=
   await assert.rejects(f.run(principal,input),/queries/);assert.equal(f.counts().searches,0);
   const g=fixture();await assert.rejects(g.run(principal,input,AbortSignal.abort()));assert.equal(g.counts().searches,0);
 });
+test('an unavailable candidate search cannot masquerade as a successful empty check',async()=>{
+  const f=fixture({search:{async search(){return {results:[],partial:true};},async fetch(){throw Error('unreachable');}}});
+  await assert.rejects(f.run(principal,input),/search unavailable/);
+});
 test('quote windows retain exact Unicode text within token limits',()=>{
   const text='😀中文 Queue '.repeat(300),prefix=tokenPrefix(text,200);assert.ok(text.startsWith(prefix));assert.ok(!/[\uD800-\uDBFF]$/.test(prefix));assert.ok(prefix.length<text.length);
 });
