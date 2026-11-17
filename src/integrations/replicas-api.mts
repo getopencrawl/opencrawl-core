@@ -5,7 +5,9 @@ export const conversationSchema=z.object({chat_id:uuid,workspace_id:uuid,workspa
 export type ReplicasConversation=z.infer<typeof conversationSchema>;
 const cursor=z.string().max(16384).nullable();
 const conversationsSchema=z.object({conversations:z.array(conversationSchema).max(100),total:z.number().int().nonnegative(),next_cursor:cursor});
-const historySchema=z.object({events:z.array(z.object({type:z.string(),timestamp:z.string().optional().nullable(),payload:z.record(z.string(),z.unknown())})).max(1000),before_cursor:cursor,has_more:z.boolean().optional()});
+const historySchema=z.object({events:z.array(z.object({type:z.string(),timestamp:z.string().optional().nullable(),payload:z.record(z.string(),z.unknown())})).max(1000),before_cursor:cursor.optional(),has_more:z.boolean().optional()})
+  .refine(page=>page.before_cursor!==undefined||page.events.length===0||page.has_more===false)
+  .transform(page=>({...page,before_cursor:page.before_cursor??null}));
 export type ReplicasHistory=z.infer<typeof historySchema>;
 export function replicasError(message:string,status=400){return Object.assign(new Error(message),{status,expose:true});}
 

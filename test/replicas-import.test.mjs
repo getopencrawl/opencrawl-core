@@ -60,6 +60,11 @@ test('personal keys and upstream bodies never become accepted credentials or exp
   await assert.rejects(service.action(principal,{action:'preview',apiKey:'secret'}),/organization API key/);assert.equal(await service.status(principal),null);
   const api=replicasApi('secret',async()=>new Response('upstream secret',{status:403}));await assert.rejects(api.identity(),error=>!error.message.includes('upstream secret')&&error.message.includes('denied'));
 });
+test('Replicas empty terminal history may omit its cursor; nonterminal pages cannot',async()=>{
+  const empty=replicasApi('key',async()=>Response.json({thread_id:null,events:[],total:0,has_more:false}));
+  assert.equal((await empty.history(chat)).before_cursor,null);
+  const malformed=replicasApi('key',async()=>Response.json({events:[event('not terminal')]}));await assert.rejects(malformed.history(chat),/unsupported history format/);
+});
 test('import HTTP checks exact active admin membership before parsing or accessing state',async()=>{
   let called=false;const imports={action:async()=>{called=true;return {};}};
   const member={userId:principal.userId,organizationId:principal.tenantId,status:'active',role:{slug:'admin'}};
