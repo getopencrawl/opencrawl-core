@@ -2,8 +2,12 @@
 
 One application replica and one worker. PostgreSQL, OpenSearch, Temporal,
 S3-compatible storage and Airbyte are included by default. This is a durable
-single-instance installation, with downtime during upgrades; it does not provide HA.
+single-instance installation; it does not provide HA.
 It operates independently of OpenCrawl Cloud.
+
+**No upgrade path during alpha:** there is no upgrade or import from an older
+self-host version. To move to a newer release, install it fresh into empty
+databases and storage; an installation on an older release keeps that release.
 
 ## Breaking change in 0.2.0
 
@@ -153,7 +157,7 @@ On a **disposable fresh installation**, add `--exercise` to create a synthetic f
 administrator and run device OAuth, duplicate capture, conflicting-event rejection,
 Temporal indexing, authenticated MCP retrieval, scope/origin denial and token refresh.
 It retains a synthetic account and capture fixture in the instance. Its generated
-account Secret permits repeat runs after pod replacement and upgrades. `--existing`
+account Secret permits repeat runs after pod replacement. `--existing`
 refuses to recreate the account, capture or index fixture, so a data loss cannot be
 hidden by reseeding. `--deny-marker` additionally checks that a synthetic marker
 from another installation is absent from authenticated search. Do not use
@@ -172,12 +176,14 @@ For app-state failures inspect `<release>-migrate-<revision>` and `app-state-rea
 The installer supports `--through infrastructure` or `--through airbyte` to stop at
 an intermediate stage. Rerun the same command/configuration to resume.
 
-## Upgrades, backup and removal
+## Versions, backup and removal
 
 Pin a released runtime digest and chart version. When selecting the runtime by
-digest only, set `githubConnector.tag` to the matching published connector tag. Back up PostgreSQL, raw objects,
-credentials, and the installation journal together before upgrades. Follow the
-runtime's release notes; Helm rollback alone cannot undo a database change.
+digest only, set `githubConnector.tag` to the matching published connector tag.
+There is no upgrade path from older versions during alpha: do not move an
+existing installation to a newer chart or runtime in place. Install the newer
+release fresh instead. Helm rollback cannot undo a database change. Back up
+PostgreSQL, raw objects, credentials, and the installation journal together.
 Keep the organization, storage prefix, index and Temporal binding stable. Moving
 data between backends is a separate migration, not an endpoint edit.
 
@@ -216,6 +222,6 @@ rather than being overwritten. Existing published versions are never replaced.
 
 Every new release reruns chart conformance and pulls both architectures with an empty
 Docker credential configuration. It verifies anonymous downloads after publishing the
-chart, complete installer kit, image digest receipt and SHA256SUMS. Operators choose
-when to upgrade their pinned installations. Releases do not deploy or update OpenCrawl
+chart, complete installer kit, image digest receipt and SHA256SUMS. A release never
+changes an operator's pinned installation. Releases do not deploy or update OpenCrawl
 Cloud, and Helm releases do not replace the repository's CLI latest-release marker.

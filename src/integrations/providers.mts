@@ -1,7 +1,5 @@
 import {linearId, linearQuery} from './linear-source.mjs';
 import type {Proxy, ProviderCatalog, ConnectorDefinition} from './types.mjs';
-// Gmail is hidden for now; see the commented-out provider below.
-// const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const DRIVE = 'https://www.googleapis.com/drive/v3';
 const SLACK = 'https://slack.com/api';
 export const GRANOLA = 'https://public-api.granola.ai';
@@ -14,8 +12,6 @@ export function nextCursor(headers: Record<string, string> = {}) {
 }
 // Data sources and page markdown require this Notion API version.
 export const NOTION_VERSION = '2026-03-11';
-// The connector stops listing ten minutes before now so Gmail's search index has caught up.
-// const SETTLE_MS = 10 * 60_000;
 
 export function createProviderCatalog(connectors: Record<string,ConnectorDefinition>, {driveWorkspaceAccess = false, linearPublicAccess = false}: {driveWorkspaceAccess?: boolean; linearPublicAccess?: boolean} = {}): ProviderCatalog {
 const providers:ProviderCatalog = {

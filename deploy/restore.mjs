@@ -7,7 +7,7 @@ import {recoveryCompose} from './recovery-network.mjs';
 const args=process.argv.slice(2);
 if(args.length!==2||args[0]!=='--backup')throw new Error('Usage: node deploy/restore.mjs --backup /private/recovery-directory. Requires empty destination volumes and the saved configuration.');
 const directory=resolve(args[1]),snapshot=await verifyRecovery(directory),compose=recoveryCompose(snapshot);
-const release=lock(join(root,snapshot.kind==='dev'?'.opencrawl-dev/upgrade.lock':'deploy/.upgrade/upgrade.lock'));
+const release=lock(join(root,snapshot.kind==='dev'?'.opencrawl-dev/operation.lock':'deploy/.state/operation.lock'));
 try {
  if(docker(['ps','-q','--filter',`label=com.docker.compose.project=${snapshot.project}`]))throw new Error('Stop this installation before restoring; no running installation is overwritten');
  for(const saved of snapshot.configurations) {

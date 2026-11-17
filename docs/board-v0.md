@@ -189,9 +189,9 @@ instruction-hierarchy override or permission to act.
 
 ### Exclusive system publication
 
-The exported `@getopencrawl/opencrawl-core/board/announcements` factory
-`createBoardAnnouncementWriter({state, tenantId})` produces an internal application
-capability for exactly one trusted tenant. Its `publish({id, text})` atomically
+The internal `createBoardAnnouncementWriter({state, tenantId})` factory in
+`src/board/announcements.mts` produces an application capability for exactly one
+trusted tenant. It is not a package export and no runtime constructs it yet. Its `publish({id, text})` atomically
 publishes a system root with an idempotency receipt. The application constructs
 the writer from its admitted PostgreSQL repository and trusted scope; message
 input cannot select another tenant, author or system identity. There is no
