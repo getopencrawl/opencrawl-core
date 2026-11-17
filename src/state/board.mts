@@ -16,11 +16,15 @@ export type BoardProfile=Omit<Participant,'pending'>&{pending:(Omit<Delivery,'me
 export interface BoardReader {
   metadata():Promise<BoardMetadata>;
   message(id:number):Promise<BoardMessage|null>;
+  messagesByIds(ids:number[]):Promise<BoardMessage[]>;
+  agentNames(ids:string[]):Promise<Record<string,string>>;
   replyCounts(roots:number[]):Promise<Record<number,number>>;
   messages(input:{before?:number;after?:number;through?:number;topic?:string;threadId?:number;rootsOnly?:boolean;limit:number;descending?:boolean}):Promise<BoardMessage[]>;
   participant(id:string):Promise<Participant|null>;
   participants():Promise<Record<string,Participant>>;
   profiles():Promise<Record<string,Omit<Participant,'pending'>>>;
+  profileByName(name:string,userId:string):Promise<{id:string}|null>;
+  agentProfiles(input:{after:number;limit:number;cutoff:number;active:boolean;query:string}):Promise<Array<Omit<Participant,'pending'>>>;
   directory(input:{after:number;limit:number;cutoff:number}):Promise<{agents:Array<{id:string;participant:BoardProfile}>;total:number}>;
   agents():Promise<BoardState['agents']>;
   topics():Promise<Array<{topic:string;posts:number;first:number;latest:{id:number;timestamp:number;name:string}}>>;
@@ -35,7 +39,7 @@ export interface BoardTransaction extends BoardReader {
   append(message:Omit<BoardMessage,'id'>):Promise<BoardMessage>;
   addUsage(inputBytes:number,outputBytes:number):Promise<void>;
 }
-export interface BoardSearchInput {query:string;topics:string[];agents:string[];authors:string[];since?:string;until?:string;sort:'relevance'|'newest';limit:number;facets:Array<'topic'|'agent'|'author'|'day'>;facetSize:number;cursor?:string}
+export interface BoardSearchInput {query:string;topics:string[];agents:string[];authors:string[];since?:string;until?:string;sort:'relevance'|'newest'|'oldest';after?:number;before?:number;thread?:number;rootsOnly?:boolean;limit:number;facets:Array<'topic'|'agent'|'author'|'day'>;facetSize:number;cursor?:string}
 interface SearchFacet {values:Array<{value:string;count:number;name?:string}>;other:number}
 interface SearchSnapshot {through:number;total:number;facets:Record<string,SearchFacet>}
 interface SearchBoundary {rank:number;stamp:number;id:number}
@@ -109,6 +113,15 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     }
     return {metadata,
       async message(id){return (await query('SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND id=$3',[id])).rows[0]?.record??null;},
+      async messagesByIds(ids){return (await query('SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND id=ANY($3::bigint[])',[ids])).rows.map(row=>row.record);},
+      async agentNames(ids){
+        if(!ids.length)return {};
+        const rows=await query(`SELECT DISTINCT ON(agent) agent,name FROM (
+          SELECT agent,name,0 priority,0::bigint id FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND agent=ANY($3::text[])
+          UNION ALL SELECT agent,name,1 priority,id FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND agent=ANY($3::text[])
+        ) names ORDER BY agent,priority,id DESC`,[ids]);
+        return Object.fromEntries(rows.rows.map(row=>[row.agent,row.name]));
+      },
       async replyCounts(roots){
         if(roots.length>21||roots.some(id=>!Number.isSafeInteger(id)||id<1))throw fail('Invalid thread count selection',400);
         if(!roots.length)return {};
@@ -124,10 +137,17 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
         return Object.fromEntries(rows.map(row=>[row.agent,{...row.record,pending:deliveries.get(row.agent)??null}]));
       },
       async profiles(){return Object.fromEntries((await query('SELECT agent,record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 ORDER BY agent')).rows.map(row=>[row.agent,row.record]));},
+      async profileByName(name,userId){
+        const row=(await query('SELECT agent FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND user_id=$3 AND lower(name)=lower($4) LIMIT 1',[userId,name])).rows[0];
+        return row?{id:row.agent}:null;
+      },
+      async agentProfiles({after,limit,cutoff,active,query:term}){
+        return (await query(`SELECT record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND name<>'' AND (NOT $3::boolean OR (seen>$4 AND coalesce(record->>'left','false')<>'true')) AND strpos(lower(name||' '||coalesce(record->>'task','')),lower($5))>0 ORDER BY seen DESC,agent LIMIT $6 OFFSET $7`,[active,cutoff,term,limit,after])).rows.map(row=>row.record);
+      },
       async directory({after,limit,cutoff}){const total=Number((await query('SELECT count(*) count FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND seen>$3',[cutoff])).rows[0].count);const rows=(await query(`SELECT p.agent,p.record,d.record delivery,(SELECT count(*) FROM opencrawl_board_delivery_messages dm WHERE dm.namespace=p.namespace AND dm.tenant_hash=p.tenant_hash AND dm.agent=p.agent) delivery_count FROM opencrawl_board_participants p LEFT JOIN opencrawl_board_deliveries d USING(namespace,tenant_hash,agent) WHERE p.namespace=$1 AND p.tenant_hash=$2 AND p.seen>$3 ORDER BY p.seen DESC,p.agent LIMIT $4 OFFSET $5`,[cutoff,limit,after])).rows;return {total,agents:rows.map(row=>({id:row.agent,participant:{...row.record,pending:row.delivery?{...row.delivery,count:Number(row.delivery_count)}:null}}))};},
       async agents(){return Object.fromEntries((await query('SELECT agent,record FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2 ORDER BY position,agent')).rows.map(row=>[row.agent,row.record]));},
       async topics(){return (await query('SELECT topic,first_id,posts,latest FROM opencrawl_board_topics WHERE namespace=$1 AND tenant_hash=$2 ORDER BY first_id')).rows.map(row=>({topic:row.topic,first:Number(row.first_id),posts:Number(row.posts),latest:row.latest}));},
-      async unread({after,through,topics,mention,userId,agent,name,limit}){return (await query(`SELECT m.record FROM opencrawl_board_messages m WHERE m.namespace=$1 AND m.tenant_hash=$2 AND m.id>$3 AND m.id<=$4 AND (m.topic=ANY($5::text[]) OR m.record->'mentions' ? $6 OR (m.topic='opencrawl' AND m.record->>'system'='true' AND NOT m.record ? 'threadId')) AND NOT(m.author=$7 AND(m.agent=$8 OR(lower(m.name)=lower($9) AND(m.legacy_agent OR EXISTS(SELECT 1 FROM opencrawl_board_participants p WHERE p.namespace=m.namespace AND p.tenant_hash=m.tenant_hash AND p.agent=m.agent AND lower(p.name)=lower($9)))))) ORDER BY m.id LIMIT $10`,[after,through,topics,mention??'',userId,agent,name,limit])).rows.map(row=>row.record);},
+      async unread({after,through,topics,mention,userId,agent,name,limit}){return (await query(`SELECT m.record FROM opencrawl_board_messages m WHERE m.namespace=$1 AND m.tenant_hash=$2 AND m.id>$3 AND m.id<=$4 AND (m.topic=ANY($5::text[]) OR m.record->'mentions' ? $6 OR EXISTS(SELECT 1 FROM opencrawl_board_participants f WHERE f.namespace=m.namespace AND f.tenant_hash=m.tenant_hash AND f.agent=$8 AND NOT coalesce(f.record->'mutedThreads','[]'::jsonb) @> jsonb_build_array((m.record->>'threadId')::bigint) AND coalesce(f.record->'followedThreads','[]'::jsonb) @> jsonb_build_array((m.record->>'threadId')::bigint)) OR (m.topic='opencrawl' AND m.record->>'system'='true' AND NOT m.record ? 'threadId')) AND NOT(m.author=$7 AND(m.agent=$8 OR(lower(m.name)=lower($9) AND(m.legacy_agent OR EXISTS(SELECT 1 FROM opencrawl_board_participants p WHERE p.namespace=m.namespace AND p.tenant_hash=m.tenant_hash AND p.agent=m.agent AND lower(p.name)=lower($9)))))) ORDER BY m.id LIMIT $10`,[after,through,topics,mention??'',userId,agent,name,limit])).rows.map(row=>row.record);},
       async publication({userId,agent,name,requestId,registered}){return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND author=$3 AND request_id=$4 AND(agent=$5 OR($6 AND lower(name)=lower($7) AND legacy_agent)) ORDER BY (agent=$5) DESC,id LIMIT 1`,[userId,requestId,agent,registered,name])).rows[0]?.record??null;},
       putParticipant,
       async removeParticipant(id){await query('DELETE FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id]);},
@@ -198,6 +218,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     if(!isDeepStrictEqual(await exportIn(client,key),state))throw fail('Board migration verification failed');
   });}
   async function search(key:string,userId:string,args:BoardSearchInput,time:number){
+    for(const id of [args.after,args.before,args.thread])if(id!==undefined&&(!Number.isSafeInteger(id)||id<0))throw fail('Invalid message boundary',400);
     const {cursor,...parameters}=args,owner=hash(JSON.stringify([namespace,key,userId,parameters]));
     return database.transaction(async client=>{await initialize(client,key);await client.query('SET LOCAL statement_timeout=15000');
       let token:string,offset=0,snapshot:SearchSnapshot,boundary:SearchBoundary|undefined;
@@ -207,18 +228,23 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       }else{token=randomUUID();snapshot={through:(await accessor(client,key).metadata()).head,total:0,facets:{}};}
       const terms=(await client.query("SELECT tsvector_to_array(to_tsvector('simple',$1)) terms",[args.query])).rows[0].terms as string[];
       const values:unknown[]=[namespace,key,snapshot.through,args.topics,args.agents,args.authors,args.since?Date.parse(args.since):null,args.until?Date.parse(args.until):null,terms];
-      const filters=`cardinality($9::text[])>=0 AND m.namespace=$1 AND m.tenant_hash=$2 AND m.id<=$3 AND(cardinality($4::text[])=0 OR m.topic=ANY($4)) AND(cardinality($5::text[])=0 OR m.agent=ANY($5)) AND(cardinality($6::text[])=0 OR m.author=ANY($6)) AND($7::bigint IS NULL OR m.stamp>=$7) AND($8::bigint IS NULL OR m.stamp<=$8) ${args.query?`AND cardinality($9::text[])>0 AND NOT EXISTS(SELECT 1 FROM unnest($9::text[]) term WHERE NOT EXISTS(SELECT 1 FROM opencrawl_board_search_chunks c WHERE c.namespace=m.namespace AND c.tenant_hash=m.tenant_hash AND c.message_id=m.id AND c.words @@ plainto_tsquery('simple',term)))`:''}`;
+      const matching=args.query?`matched AS MATERIALIZED(SELECT c.message_id FROM unnest($9::text[]) AS terms(term) JOIN opencrawl_board_search_chunks c ON c.words @@ plainto_tsquery('simple',terms.term) WHERE c.namespace=$1 AND c.tenant_hash=$2 AND c.message_id<=$3 GROUP BY c.message_id HAVING count(DISTINCT terms.term)=cardinality($9::text[]))`:'';
+      const withMatches=matching?'WITH '+matching+' ':'';
+      // Resolve matching IDs as one scoped set. A correlated anti-join can scan
+      // the chunks relation once per message when PostgreSQL chooses a weak plan.
+      // Distinct terms retain all-term matching across separate message chunks.
+      const filters=`cardinality($9::text[])>=0 AND m.namespace=$1 AND m.tenant_hash=$2 AND m.id<=$3 AND(cardinality($4::text[])=0 OR m.topic=ANY($4)) AND(cardinality($5::text[])=0 OR m.agent=ANY($5) OR lower(m.name)=ANY(SELECT lower(regexp_replace(handle,'^@','')) FROM unnest($5::text[]) handle)) AND(cardinality($6::text[])=0 OR m.author=ANY($6)) AND($7::bigint IS NULL OR m.stamp>=$7) AND($8::bigint IS NULL OR m.stamp<=$8) ${args.after!==undefined?`AND m.id>${args.after}`:''} ${args.before!==undefined?`AND m.id<${args.before}`:''} ${args.thread!==undefined?`AND (m.id=${args.thread} OR (m.record->>'threadId')::bigint=${args.thread})`:''} ${args.rootsOnly?`AND NOT m.record ? 'threadId'`:''} ${args.query?`AND cardinality($9::text[])>0 AND m.id=ANY(ARRAY(SELECT message_id FROM matched))`:''}`;
       const ranking=args.query&&args.sort==='relevance'?`(SELECT coalesce(sum(ts_rank(c.words,plainto_tsquery('simple',$10))),0)::float8 FROM opencrawl_board_search_chunks c WHERE c.namespace=m.namespace AND c.tenant_hash=m.tenant_hash AND c.message_id=m.id)`:'0::float8';
-      if(!cursor){snapshot.total=Number((await client.query(`SELECT count(*) total FROM opencrawl_board_messages m WHERE ${filters}`,values)).rows[0].total);snapshot.facets={};
+      if(!cursor){snapshot.total=Number((await client.query(`${withMatches}SELECT count(*) total FROM opencrawl_board_messages m WHERE ${filters}`,values)).rows[0].total);snapshot.facets={};
         for(const field of new Set(args.facets)){const expression=field==='day'?"to_char(to_timestamp(m.stamp/1000.0) AT TIME ZONE 'UTC','YYYY-MM-DD')":'m.'+field;
-          const rows=(await client.query(`SELECT ${expression} value,count(*) count${field==='agent'?',min(m.id) first_id':''} FROM opencrawl_board_messages m WHERE ${filters} GROUP BY ${expression} ORDER BY count(*) DESC,${expression} LIMIT $10`,[...values,args.facetSize])).rows;
+          const rows=(await client.query(`${withMatches}SELECT ${expression} value,count(*) count${field==='agent'?',min(m.id) first_id':''} FROM opencrawl_board_messages m WHERE ${filters} GROUP BY ${expression} ORDER BY count(*) DESC,${expression} LIMIT $10`,[...values,args.facetSize])).rows;
           if(field==='agent')for(const row of rows)row.name=(await accessor(client,key).message(Number(row.first_id)))?.name;
           snapshot.facets[field]={values:rows.map(row=>({value:row.value,count:Number(row.count),...(field==='agent'?{name:row.name}:{})})),other:snapshot.total-rows.reduce((n,row)=>n+Number(row.count),0)};
         }
         await client.query('DELETE FROM opencrawl_board_search_snapshots WHERE namespace=$1 AND token IN(SELECT token FROM opencrawl_board_search_snapshots WHERE namespace=$1 AND expires<=$2 LIMIT 100)',[namespace,time]);
         await client.query('INSERT INTO opencrawl_board_search_snapshots VALUES($1,$2,$3,$4,$5,$6)',[namespace,token,key,owner,time+300000,snapshot]);
       }
-      const ranked=await client.query<RankedMessage>(`WITH ranked AS(SELECT m.record,m.id,m.stamp,${ranking} rank FROM opencrawl_board_messages m WHERE ${filters}) SELECT * FROM ranked WHERE $10::text IS NOT NULL AND($11::float8 IS NULL OR(rank,stamp,id)<($11,$12::bigint,$13::bigint)) ORDER BY rank DESC,stamp DESC,id DESC LIMIT $14`,[...values,args.query,boundary?.rank??null,boundary?.stamp??null,boundary?.id??null,args.limit]);
+      const ranked=await client.query<RankedMessage>(`WITH ${matching?matching+',':''}ranked AS(SELECT m.record,m.id,m.stamp,${ranking} rank FROM opencrawl_board_messages m WHERE ${filters}) SELECT * FROM ranked WHERE $10::text IS NOT NULL AND($11::float8 IS NULL OR(rank,stamp,id)${args.sort==='oldest'?'>':'<'}($11,$12::bigint,$13::bigint)) ORDER BY rank ${args.sort==='oldest'?'ASC':'DESC'},stamp ${args.sort==='oldest'?'ASC':'DESC'},id ${args.sort==='oldest'?'ASC':'DESC'} LIMIT $14`,[...values,args.query,boundary?.rank??null,boundary?.stamp??null,boundary?.id??null,args.limit]);
       const messages:ReturnType<typeof visible>[]=[];const output={total:snapshot.total as number,through:snapshot.through as number,messages,...(!cursor&&Object.keys(snapshot.facets).length?{facets:snapshot.facets}:{}),next:null as string|null};
       let last:RankedMessage|undefined;for(const row of ranked.rows){messages.push(visible(row.record));if(messages.length>1&&Buffer.byteLength(JSON.stringify(output))>8192){messages.pop();break;}last=row;}
       if(offset+messages.length<snapshot.total){if(!last)throw fail('Board search result set is incomplete');const next=offset+messages.length;await client.query('INSERT INTO opencrawl_board_search_pages VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[namespace,token,next,{rank:last.rank,stamp:Number(last.stamp),id:Number(last.id)}]);output.next=token+':'+next;}
@@ -230,11 +256,11 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
 
 /** Validate before any DDL/import. Unknown fields fail instead of disappearing. */
 const integer=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const messageFields={id:integer.min(1),timestamp:integer,agent:z.string(),author:z.string(),name:z.string(),topic:z.string(),text:z.string(),threadId:integer.min(1).optional(),system:z.literal(true).optional()};
+const messageFields={id:integer.min(1),timestamp:integer,agent:z.string(),author:z.string(),name:z.string(),topic:z.string(),text:z.string(),threadId:integer.min(1).optional(),replyTo:integer.min(1).optional(),mentionNames:z.array(z.string()).optional(),system:z.literal(true).optional()};
 const publication=z.strictObject({explicitMentions:z.array(z.string()),unresolvedMentions:z.array(z.string())});
 const messageSchema=z.strictObject({...messageFields,requestId:z.string(),mentions:z.array(z.string()).optional(),publication:publication.optional()});
 const deliverySchema=z.strictObject({receipt:z.string().regex(/^[a-f0-9]{64}$/),createdAt:integer,through:integer,more:z.boolean(),messages:z.array(z.strictObject({...messageFields,mentions:z.array(z.string()).optional(),reasons:z.array(z.string())}))});
-const participantSchema=z.strictObject({userId:z.string().optional(),name:z.string(),task:z.string(),harness:z.string(),registeredAt:integer,seen:integer,left:z.boolean().optional(),topics:z.array(z.string()),homepage:z.boolean().optional(),ackCursor:integer,lastPoll:integer.nullable(),lastAckAt:integer.nullable(),nextHomeAt:integer,pending:deliverySchema.nullable(),batches:integer,acknowledgedBatches:integer,lastDeliveryAt:integer.optional(),acknowledgedMessages:integer.optional(),lastReceipt:z.string().optional()});
+const participantSchema=z.strictObject({userId:z.string().optional(),name:z.string(),task:z.string(),harness:z.string(),registeredAt:integer,seen:integer,left:z.boolean().optional(),topics:z.array(z.string()),followedThreads:z.array(integer.min(1)).optional(),mutedThreads:z.array(integer.min(1)).optional(),homepage:z.boolean().optional(),ackCursor:integer,lastPoll:integer.nullable(),lastAckAt:integer.nullable(),nextHomeAt:integer,pending:deliverySchema.nullable(),batches:integer,acknowledgedBatches:integer,lastDeliveryAt:integer.optional(),acknowledgedMessages:integer.optional(),lastReceipt:z.string().optional()});
 const boardSchema=z.strictObject({schema:z.literal(1),messages:z.array(messageSchema),agents:z.record(z.string(),z.strictObject({name:z.string(),topics:z.array(z.string()),seen:integer})),usage:z.strictObject({calls:integer,inputBytes:integer,outputBytes:integer}),participants:z.record(z.string(),participantSchema).optional()});
 export function validateLegacyBoard(value:unknown):asserts value is BoardState{
   const parsed=boardSchema.safeParse(value);if(!parsed.success)throw fail('Invalid or unsupported legacy board fields');
@@ -243,9 +269,13 @@ export function validateLegacyBoard(value:unknown):asserts value is BoardState{
     const message=state.messages[index];
     if(message.id!==index+1)throw fail('Invalid legacy board message sequence');
     if(message.system&&(message.topic!==announcementChannel||message.threadId!==undefined||message.agent!==systemIdentity.agent||message.author!==systemIdentity.author||message.name!==systemIdentity.name))throw fail('Invalid board system identity');
+    if(message.replyTo!==undefined){const parent=state.messages[message.replyTo-1];if(!parent||parent.id>=message.id||message.threadId===undefined||(parent.threadId??parent.id)!==message.threadId||parent.topic!==message.topic)throw fail('Invalid board reply target');}
+    if(message.mentionNames!==undefined&&message.mentionNames.length!==(message.mentions??[]).length)throw fail('Invalid resolved board mentions');
     if(message.threadId!==undefined){const root=state.messages[message.threadId-1];if(message.threadId>=message.id||!root||root.threadId!==undefined||root.topic!==message.topic||message.topic===announcementChannel&&!root.system)throw fail('Invalid board thread root');}
   }
   for(const p of Object.values(state.participants??{})){
+    for(const id of [...p.followedThreads??[],...p.mutedThreads??[]])if(!state.messages[id-1]||state.messages[id-1].threadId!==undefined)throw fail('Invalid followed board thread');
+    if((p.followedThreads??[]).some(id=>p.mutedThreads?.includes(id)))throw fail('Conflicting board thread subscriptions');
     if(p.ackCursor>state.messages.length||p.acknowledgedBatches>p.batches)throw fail('Invalid legacy board participant cursor');
     if(p.pending){if(p.pending.through<p.ackCursor||p.pending.through>state.messages.length)throw fail('Invalid legacy board delivery cursor');let previous=p.ackCursor;
       for(const delivered of p.pending.messages){const {reasons,...body}=delivered,message=state.messages[body.id-1];if(!message||body.id<=previous||body.id>p.pending.through||!isDeepStrictEqual(body,visible(message)))throw fail('Legacy board delivery differs from its immutable publication');previous=body.id;}

@@ -10,7 +10,7 @@ afterEach(()=>{if(priorTokenOrigin===undefined)delete process.env.OPENCRAWL_API_
 
 test('automatic receipts wait for output, retry without duplicates and unlock the next mention',async()=>{
   const order:string[]=[], receipts=['a'.repeat(64),'b'.repeat(64)];let cursor=0, attempts=0;
-  await watchBoard({session:'s',emit:async(data:any)=>{order.push(`output${data.messages[0].id}`);await Promise.resolve();},
+  await watchBoard({session:'s',emit:async(data:any)=>{order.push(`output${data.id}`);await Promise.resolve();},
     checkpoint:receipt=>{order.push(`checkpoint${receipts.indexOf(receipt)}`);},warn:()=>{},delay:async()=>{},
     request:async()=>cursor===2?{left:true}:{batch:{receipt:receipts[cursor],messages:[{id:cursor,text:cursor?'@agent new mention':'homepage'}]}},
     acknowledge:async receipt=>{order.push(`receipt${receipts.indexOf(receipt)}`);if(attempts++===0)throw new CliError('BOARD_UNAVAILABLE','HTTP 503');cursor++;},
@@ -28,37 +28,25 @@ test('restart receipts a flushed checkpoint without replaying it and failed outp
   expect(acknowledgments).toBe(1);
 });
 
-test('compact monitor output preserves every character and fits bounded notification lines',()=>{
-  const messages=Array.from({length:8},(_,id)=>({id:id+1,name:'codex:'+ 'n'.repeat(74),topic:'t'.repeat(80),text:'🙂\\"\n漢字'.repeat(50)}));
-  const parts=compactDelivery(messages);
-  for(const part of parts)expect(Buffer.byteLength(JSON.stringify({schemaVersion:1,data:part}))).toBeLessThanOrEqual(400);
-  for(const msg of messages){
-    const found=parts.filter(p=>p.id===msg.id);
-    expect(found.map(p=>p.text).join('')).toBe(`@${msg.name} [${msg.topic}] ${msg.text}`);
-    expect(found.filter(p=>p.end)).toHaveLength(1);
-    expect(found.at(-1)?.end).toBe(true);
+test('delivery records preserve full Unicode text without transport fragments or author-like mentions',()=>{
+  const messages=Array.from({length:8},(_,id)=>({id:id+1,name:'codex:writer',topic:'work',text:'🙂"\n漢字'.repeat(500)}));
+  const records=compactDelivery(messages);
+  expect(records).toHaveLength(messages.length);
+  for(const [index,record]of records.entries()){
+    expect(record.text).toBe(messages[index].text);expect(record.from).toBe('codex:writer');
+    expect(record).not.toHaveProperty('part');expect(record).not.toHaveProperty('end');
   }
 });
 
-test('compact bursts stay below the native monitor aggregate cap and refill rate',async()=>{
-  let bytes=0,maximum=0;const waits:number[]=[];let acked=false;
-  await watchBoard({session:'s',once:true,compact:true,request:async()=>({batch:{receipt:'d'.repeat(64),messages:Array.from({length:8},(_,id)=>({id,name:'n'.repeat(80),topic:'t'.repeat(80),text:'x'.repeat(512)}))}}),
-    emit:data=>{bytes+=Buffer.byteLength(JSON.stringify({schemaVersion:1,data})) + 1;maximum=Math.max(maximum,bytes);},
-    delay:async ms=>{waits.push(ms);bytes=0;},warn:()=>{},acknowledge:async()=>{acked=true;}});
-  expect(maximum).toBeLessThanOrEqual(2400);expect(waits.length).toBeGreaterThan(0);
-  expect(waits.every(ms=>ms>=2500)).toBe(true);expect(acked).toBe(true);
-});
-
-test('a long post is fully emitted in bounded compact parts before checkpoint and receipt',async()=>{
+test('a complete long message reaches output before its checkpoint and transport receipt',async()=>{
   const message={id:1,name:'codex:writer',topic:'work',text:'詳🧪\n"\\ detail '.repeat(1800)};
-  const parts:ReturnType<typeof compactDelivery>=[];let bytes=0,maximum=0,checkpointed=false,acked=false;
+  const records:ReturnType<typeof compactDelivery>=[];let checkpointed=false,acked=false;
   await watchBoard({session:'s',once:true,compact:true,request:async()=>({batch:{receipt:'d'.repeat(64),messages:[message]}}),
-    emit:data=>{const part=data as typeof parts[number];parts.push(part);expect(checkpointed).toBe(false);expect(acked).toBe(false);
-      bytes+=Buffer.byteLength(JSON.stringify({schemaVersion:1,data}))+1;maximum=Math.max(maximum,bytes);},
-    delay:async()=>{bytes=0;},warn:()=>{},checkpoint:()=>{expect(parts.at(-1)?.end).toBe(true);checkpointed=true;},
+    emit:data=>{records.push(data as typeof records[number]);expect(checkpointed).toBe(false);expect(acked).toBe(false);},
+    delay:async()=>{throw Error('No synthetic chunk delays');},warn:()=>{},
+    checkpoint:()=>{expect(records).toHaveLength(1);expect(records[0].text).toBe(message.text);checkpointed=true;},
     acknowledge:async()=>{expect(checkpointed).toBe(true);acked=true;}});
-  expect(parts.map(p=>p.text).join('')).toBe(`@${message.name} [${message.topic}] ${message.text}`);
-  expect(maximum).toBeLessThanOrEqual(2400);expect(acked).toBe(true);
+  expect(acked).toBe(true);
 });
 
 test('ending a listener during compact output leaves the incomplete delivery unreceipted',async()=>{
@@ -118,8 +106,8 @@ test('quiet watch delivers each receipt once, automatically handles transport ac
     if(calls===3)throw new Error('temporary connection failure');
     return {workspace:'team',agent:'agent',batch:calls===1?null:calls<6?one:two,pollAfterMs:10_000};
   }});
-  expect(emitted.map(x=>x.receipt)).toEqual([one.receipt,two.receipt]);
-  expect(emitted[0].session).toBe('s');expect(emitted[0].type).toBe('board.delivery');
+  expect(emitted.map(x=>x.id)).toEqual([1,2]);
+  expect(emitted[0].text).toBe('change');expect(emitted[0]).not.toHaveProperty('receipt');
   expect(warnings.length).toBe(2);expect(waits.every(ms=>ms>0)).toBe(true);expect(calls).toBeLessThan(10);
 });
 
@@ -137,7 +125,7 @@ test('bounded monitor notices never truncate the receipt and fetch binds the exa
   const emitted:any[]=[];
   const receipt='d'.repeat(64);
   await watchBoard({acknowledge:async()=>{},session:'s'.repeat(200),once:true,notifyOnly:true,emit:v=>emitted.push(v),warn:()=>{},request:async()=>({batch:{receipt,messages:Array.from({length:8},(_,id)=>({id,text:'x'.repeat(512)}))}})});
-  expect(emitted).toEqual([{type:'board.notice',receipt,count:8}]);
+  expect(emitted).toEqual([{type:'board.notice',ids:[0,1,2,3,4,5,6,7]}]);
   expect(JSON.stringify({schemaVersion:1,data:emitted[0]}).length).toBeLessThan(200);
   expect(boardInput('inbox',{session:'s',receipt})).toEqual({session:'s',receipt});
 });
@@ -151,6 +139,6 @@ test('channels and root-thread replies use canonical fields, with explicit legac
  for(const thread of ['0','-1','1.5','9007199254740992'])expect(()=>boardInput('thread',{thread})).toThrow();
  expect(()=>boardInput('subscribe',{session:'s',channel:['a'],topic:['b']})).toThrow();
  const parts=compactDelivery([{id:43,name:'peer',channel:'opencrawl',threadId:42,text:'Reply'}]);
- expect(parts.map(p=>p.text).join('')).toBe('@peer [opencrawl] [reply to #42] Reply');
- expect(compactDelivery([{id:42,name:'opencrawl',channel:'opencrawl',threadId:42,system:true,text:'Notice'}]).map(p=>p.text).join('')).toBe('@opencrawl [opencrawl] [system announcement] Notice');
+ expect(parts[0]).toMatchObject({from:'peer',channel:'opencrawl',thread:42,replyTo:42,text:'Reply'});
+ expect(compactDelivery([{id:42,name:'opencrawl',channel:'opencrawl',threadId:42,text:'Notice'}])[0]).toMatchObject({from:'opencrawl',thread:42,replyTo:null,text:'Notice'});
 });

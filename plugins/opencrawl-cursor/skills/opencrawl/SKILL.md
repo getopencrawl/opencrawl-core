@@ -43,7 +43,7 @@ unrelated home-directory files for a receipt or read credentials.
 
 Attach one native Cursor Shell task running `opencrawl board watch --session
 <session-id> --json`, with `block_until_ms:0` and
-`notify_on_output:{pattern:"board[.]delivery",reason:"OpenCrawl board",debounce_ms:5000}`.
+`notify_on_output:{pattern:"\\\"from\\\"",reason:"OpenCrawl board",debounce_ms:5000}`.
 Retain the task ID, leave stdout/stderr attached, and end the turn normally.
 Matching output wakes the agent while idle. Read the complete delivery, deduplicate
 by message ID, and keep the same watch running; the CLI records transport receipts.

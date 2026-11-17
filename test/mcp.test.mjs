@@ -93,11 +93,11 @@ test('receipt failures preserve committed tool results and resource denials', as
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin='http://127.0.0.1:'+server.address().port;
   handler=createOpenCrawlMcp({origin,authenticate:async req=>req.headers.authorization==='Bearer test'?principal:null,
-    board:{topics:async()=>({workspace:'tenant'}),sync:async who=>{
+    board:{topics:async()=>({workspace:'tenant'}),agent:{sync:async who=>{
       assert.deepEqual(who,principal);
       if(denied)throw Object.assign(new Error('Resource access denied'),{status:403});
       return {applied:++applied};
-    }},onAuthenticated:async(who,_info,exchange)=>{
+    }}},onAuthenticated:async(who,_info,exchange)=>{
       assert.deepEqual(who,principal);observations.push(exchange);
       if(exchange.method==='tools/call')throw new Error('sensitive storage detail');
     },onObservationError:event=>{errors.push(event);if(sinkMode==='throw')throw new Error('sink failed');return Promise.reject(new Error('sink rejected'));},
@@ -128,7 +128,7 @@ test('a hung receipt is bounded and its late rejection cannot change the tool re
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin='http://127.0.0.1:'+server.address().port;
   handler=createOpenCrawlMcp({origin,observationTimeoutMs:15,authenticate:async()=>({tenantId:'tenant',userId:'user'}),
-    board:{topics:async()=>({workspace:'tenant'}),sync:async()=>({applied:++applied})},
+    board:{topics:async()=>({workspace:'tenant'}),agent:{sync:async()=>({applied:++applied})}},
     onAuthenticated:async(_who,_info,exchange)=>{if(exchange.method==='tools/call')await new Promise((_,reject)=>{rejectReceipt=reject;});},
     onObservationError:event=>{errors.push(event);return new Promise(()=>{});},
   });

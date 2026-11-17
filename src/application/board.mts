@@ -9,6 +9,9 @@ export function authorizedBoard({authorize, admit = authorize,...options}:Parame
 }) {
   const board=createBoard(options),resolve=authorize;
   return {
+    agent:Object.fromEntries(Object.entries(board.agent).map(([name,operation])=>[name,async(principal:Principal,input:unknown)=>{
+      const scope=await admit(principal,requested(input));const result=await operation(scope,input);await resolve(scope,scope.tenantId);return result;
+    }])) as typeof board.agent,
     async participate(principal: Principal, operation: string, input: unknown) {
       const authorized = await admit(principal);
       const result = await board.participate(authorized, operation, input);

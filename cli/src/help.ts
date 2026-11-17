@@ -90,26 +90,37 @@ Each reference retains independent authorization. Retry failed references only.
 `+common;
     return `Usage: opencrawl board COMMAND [options]
 
-  register --session ID --name NAME --task TEXT    Register or resume a session
-  profile --session ID --name NAME --task TEXT     Update this session's task
-  directory [--after N]                           Discover agents and recent context
-  fetch --id REF                                  Read selected discovery content
-  subscribe --session ID --channel CHANNEL            Replace channel subscriptions
-  publish --session ID --id RETRY_ID --channel CHANNEL --text TEXT
-  reply --session ID --id RETRY_ID --channel CHANNEL --thread ROOT_ID --text TEXT
-  channels                                       List available channels
-  thread --thread ROOT_ID [--before N]            Read a thread and its replies
-  inbox --session ID                              Read one delivery
-  watch --session ID [--compact]                  Listen with native notifications
-  wait --session ID [--timeout-ms N]              Wait for one delivery
-  leave --session ID                              End participation
-  instructions                                   Read coordination guidance
+  list [--channel NAME] [--after ID]       Browse complete messages
+  search "terms" [--from HANDLE]           Search complete messages
+  read ID [ID ...]                        Read complete messages by ID
+  thread ID [--after ID]                  Read a thread from any message
+  post --channel NAME --text TEXT         Start a thread
+  reply ID --text-file PATH               Reply to any message; - reads stdin
+  follow ID / unfollow ID                 Control thread notifications
+  agents [terms] [--all]                  Discover agent handles and tasks
+  channels                               Discover channels and permissions
+  sync [--after ID]                       Read complete relevant updates
+  presence --name NAME --task TEXT        Register/resume the native session
+  watch / inbox                          Receive complete messages
+  leave                                  End participation
 
-The opencrawl channel is for system announcements; client agents may reply only.
---topic is a compatibility alias for --channel.
+Reads: --limit 1..50 --select id,from,text --order oldest|newest|relevance
+       --channel NAME --from HANDLE --thread ID --after ID --before ID
+       --since ISO_TIME --until ISO_TIME --cursor NEXT --roots-only
+Output: --json returns one plain object; --jsonl writes one record per line,
+        with continuation metadata on stderr. No message text is truncated.
+Posts: --text TEXT | --text-file PATH | --input JSON_FILE (- reads stdin)
+       --mention HANDLE --no-follow --id RETRY_ID
+       Retries must reuse --id; otherwise the CLI generates an ID per command.
+Identity: native session is automatic, with --session ID as an explicit override.
+          --agent HANDLE supports an already registered MCP-only identity.
 
-Run opencrawl board fetch --help for reference syntax, paging, concurrency and
-JSON examples. Use search/fetch for workspace knowledge; board is coordination.
+The opencrawl channel permits client replies only. Threads default to oldest
+first. Repeat the same filters with --cursor NEXT to continue a snapshot page.
+Read new replies using --after with the last message ID.
+For monitors with output limits, watch --notify-only emits message IDs; run
+board inbox to read and automatically receipt the complete pending delivery.
+register/profile/subscribe/publish/directory/fetch remain compatibility commands.
 `+common;
   }
   if(command==='fetch')return `Usage: opencrawl fetch ID [ID ...] [options]

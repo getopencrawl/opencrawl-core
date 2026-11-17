@@ -24,31 +24,33 @@ test('real PostgreSQL and MCP: relevance, phrase boost, facets, scope, full text
   t.after(()=>client.close());
   const call=async(name,args)=>{const result=await client.callTool({name,arguments:args});assert.ok(!result.isError,JSON.stringify(result));return JSON.parse(result.content[0].text);};
   assert.ok((await client.listTools()).tools.some(t=>t.name==='board_search'));
-  const post=(id,topic,text)=>({id,topic,text});
+  const post=(id,channel,text)=>({id,channel,text});
+  await call('board_presence',{session:'codex-session',name:'codex'});
+  await call('board_presence',{session:'claude-session',name:'claude'});
   await call('board_post',{workspace:'team-a',agent:'codex',posts:[
     post('1','auth','OAuth refresh token rotation fixed; tests pass. Evidence: https://example.test/pr/1'),
     post('2','auth','Investigating a refresh timeout while the cache token expires'),
     post('3','storage','Archive upload verified'),
   ]});
   await board.post({tenantId:'team-b',userId:'mallory'},{workspace:'team-b',agent:'outsider',posts:[post('1','secret','refresh token confidential')]});
-  const args={workspace:'team-a',query:'refresh token',limit:1,facets:['topic','agent','author','day']};
+  const args={workspace:'team-a',query:'refresh token',order:'relevance',limit:1,facets:['channel','agent','day']};
   const first=await call('board_search',args);
-  assert.equal(first.total,2);assert.equal(first.messages[0].id,1); // Exact phrase beats the separated terms.
+  assert.equal(first.facets.channel.values[0].count,2);assert.equal(first.messages[0].id,1); // Exact phrase beats the separated terms.
   assert.equal(first.messages[0].text,'OAuth refresh token rotation fixed; tests pass. Evidence: https://example.test/pr/1');
-  assert.deepEqual(first.facets.topic.values,[{value:'auth',count:2}]);
+  assert.deepEqual(first.facets.channel.values,[{value:'auth',count:2}]);
   assert.deepEqual(first.facets.day.values,[{value:'2026-11-01',count:2}]);
   assert.equal(first.facets.agent.values[0].name,'codex');
   assert.ok(Buffer.byteLength(JSON.stringify(first))<=8192);
   await call('board_post',{workspace:'team-a',agent:'claude',posts:[post('4','auth','refresh token refresh token refresh token')]});
   const next=await call('board_search',{...args,cursor:first.next});
-  assert.equal(next.total,2);assert.equal(next.messages[0].id,2);assert.equal(next.next,null);
-  const filtered=await call('board_search',{workspace:'team-a',query:'refresh',agents:[first.messages[0].agent],topics:['auth'],authors:['alice'],since:'2026-10-31T00:00:00Z',until:'2026-11-02T00:00:00Z',sort:'newest'});
-  assert.equal(filtered.total,2);assert.deepEqual(filtered.messages.map(m=>m.id),[2,1]);
-  assert.equal((await call('board_search',{workspace:'team-a',query:'refresh',topics:['secret']})).total,0);
-  const browsed=await call('board_search',{workspace:'team-a',facetSize:1});
-  assert.equal(browsed.total,4);assert.equal(browsed.facets.channel.other,1);
+  assert.equal(next.messages.length,1);assert.equal(next.messages[0].id,2);assert.equal(next.next,null);
+  const filtered=await call('board_search',{workspace:'team-a',query:'refresh',from:[first.messages[0].from],channels:['auth'],since:'2026-10-31T00:00:00Z',until:'2026-11-02T00:00:00Z',order:'newest'});
+  assert.equal(filtered.messages.length,2);assert.deepEqual(filtered.messages.map(m=>m.id),[2,1]);
+  assert.equal((await call('board_search',{workspace:'team-a',query:'refresh',channels:['secret']})).messages.length,0);
+  const browsed=await call('board_search',{workspace:'team-a',facets:['channel']});
+  assert.equal(browsed.messages.length,4);assert.equal(browsed.facets.channel.values.reduce((count,row)=>count+row.count,0),4);
   const bad=await client.callTool({name:'board_search',arguments:{workspace:'team-b',query:'confidential'}});assert.equal(bad.isError,true);
-  assert.equal((await call('board_search',{workspace:'team-a',query:'refresh'})).total,3);
+  assert.equal((await call('board_search',{workspace:'team-a',query:'refresh'})).messages.length,3);
 });
 
 

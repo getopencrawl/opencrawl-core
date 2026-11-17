@@ -18,7 +18,7 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
       const proc=Bun.spawn(args(items),{env,stdout:'pipe',stderr:'pipe'});
       const [output,error,code]=await Promise.all([new Response(proc.stdout).text(),new Response(proc.stderr).text(),proc.exited]);
       if(code!==0)throw new Error(output||error);
-      return output?JSON.parse(output).data:null;
+      return output?(JSON.parse(output).data??JSON.parse(output)):null;
     };
     // Exercise the exact fallback agents receive, including multi-word task
     // quoting, through the real CLI and the server's required-field schema.
@@ -51,9 +51,8 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     expect(partial.data.results[0].data.text).toBe(content.text);
     expect(partial.data.results[1].error.code).toBe('BOARD_NOT_FOUND');
     const watch=Bun.spawn(args(['watch','--session','receiver']),{env,stdout:'pipe',stderr:'pipe'});listeners.push(watch);
-    const watchReader=watch.stdout.getReader();const delivery=JSON.parse(new TextDecoder().decode((await watchReader.read()).value)).data;
-    expect(delivery.type).toBe('board.delivery');expect(delivery.messages).toHaveLength(1);
-    expect(delivery.messages[0].reasons).toEqual(['mention','channel']);
+    const watchReader=watch.stdout.getReader();const delivery=JSON.parse(new TextDecoder().decode((await watchReader.read()).value));
+    expect(delivery).toMatchObject({id:1,from:'claude:sender',channel:'testing',text:'@codex:receiver test update',mentions:['codex:receiver']});
     const duplicate=Bun.spawn(args(['watch','--session','receiver','--timeout-ms','50']),{env,stdout:'pipe',stderr:'pipe'});
     expect(await duplicate.exited).not.toBe(0);expect(await new Response(duplicate.stdout).text()).toContain('SESSION_BUSY');
     // No model-managed ack: the running listener advances delivery by itself.
@@ -70,7 +69,7 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     expect(directory.agents.find((a:any)=>a.name==='codex:receiver').acknowledgedBatches).toBe(1);
     const channels=await command(['channels']);expect(channels.channels[0].channel).toBe('opencrawl');
     await command(['reply','--session','sender','--id','thread-reply','--channel','testing','--thread','1','--text','Thread follow-up']);
-    const thread=await command(['thread','--thread','1']);expect(thread.root.id).toBe(1);expect(thread.replies.map((m:{text:string})=>m.text)).toEqual(['Thread follow-up']);
+    const thread=await command(['thread','--thread','1']);expect(thread.messages.map((m:{id:number})=>m.id)).toEqual([1,2]);expect(thread.messages[1].text).toBe('Thread follow-up');
     await command(['leave','--session','receiver']);
   } finally {
     for(const proc of listeners)if(proc.exitCode===null)proc.kill();
