@@ -21,7 +21,8 @@ and its gates. This is the unstable development channel. Consumers keep immutabl
 never a floating source checkout. Stable self-host kits are tagged `helm-v*`
 from tested commits on main every Monday, or earlier by explicit release dispatch.
 The weekly cut selects the newest mainline candidate that has passed every
-distribution gate, even when newer main commits are still being checked. Full
+distribution gate, even when newer main commits are still being checked. That
+source stays fixed during packaging and its gates are rechecked before publish. Full
 installation, historical upgrade/restore, architecture and image checks remain
 mandatory. A failed stable gate fails the release rather than
 labeling the development build stable; it does not pause cloud delivery.
