@@ -1,6 +1,6 @@
 import {Component, useCallback, useEffect, useRef, useState, useMemo} from 'react';
 import type {ErrorInfo, ReactNode} from 'react';
-import {ConsoleDataProvider, useConsoleQueryClient, AppRouter, AppShell, FocusedFrame, AgentOnboarding, SourcesOnboarding, InviteOnboarding, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, Page, LinkButton, Navigate, Routes, Route, useLocation, useNavigate} from '../index.ts';
+import {ConsoleDataProvider, useConsoleQueryClient, AppRouter, AppShell, FocusedFrame, AgentOnboarding, SourcesOnboarding, InviteOnboarding, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, Page, LinkButton, Icon, Navigate, Routes, Route, useLocation, useNavigate} from '../index.ts';
 import type {ConsoleDataAdapter, NavigationItem, OnboardingAdapter} from '../index.ts';
 import type {Bootstrap, ProductApi} from './api.ts';
 import {SourcesPage} from './sources.tsx';
@@ -29,7 +29,7 @@ function WorkspaceInvalidation() {
   },[cache]);
   return null;
 }
-function SignOut() {return <form method="post" action="/auth/logout"><Button type="submit" variant="quiet">Sign out</Button></form>;}
+function SignOut() {return <form method="post" action="/auth/logout"><Button type="submit" variant="quiet"><Icon name="sign-out" size={18}/>Sign out</Button></form>;}
 class ErrorBoundary extends Component<{children: ReactNode}, {failed: boolean}> {
   state = {failed:false};
   static getDerivedStateFromError() {return {failed:true};}
@@ -85,9 +85,11 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
     {path:'/diagnostics',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All channels'}>{feedback}</PendingPage>},
     {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter} canInspect={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
-    {path:'/settings',label:'Agent setup',icon:'settings',element:data ? <AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
-    {path:'/team',label:'Team',icon:'team',group:'manage',element:<TeamPage adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={name => setData(current => current ? {...current, workspace: {...current.workspace, name}} : current)}/>,pending:feedback => <TeamLoadingPage>{feedback}</TeamLoadingPage>},
+    {path:'/agent-setup',label:'Agent setup',icon:'terminal',element:data ? <AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
+    {path:'/settings/team',label:'Team',icon:'team',group:'settings',element:<TeamPage embedded adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={name => setData(current => current ? {...current, workspace: {...current.workspace, name}} : current)}/>,pending:feedback => <TeamLoadingPage embedded>{feedback}</TeamLoadingPage>},
     ...(extensions?.routes?.({data, activated}) ?? []),
+    {path:'/settings',label:'Settings',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
+    {path:'/team',label:'Team',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
     {path:'/integrations',label:'Integrations',navigation:false,element:<Navigate to="/sources" replace/>},
     {path:'/data',label:'Data controls',navigation:false,element:<Navigate to="/sources#data-controls" replace/>},
     {path:'/_/debug',label:'Diagnostics',navigation:false,element:<Navigate to={'/diagnostics' + location.search} replace/>},

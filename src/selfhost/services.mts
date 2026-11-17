@@ -14,6 +14,7 @@ import {connectorManifest} from '../integrations/manifests.mjs';
 import {createConnectorResolver} from '../integrations/resolver.mjs';
 import {createConnectorSearch} from '../connectors/search.mjs';
 import {singleOrganizationStorage,singleOrganizationDestination} from '../integrations/single-organization-storage.mjs';
+import {createLinearSource} from '../integrations/linear-source.mjs';
 import {createGitHubApp,githubAppSettings} from '../integrations/github.mjs';
 import {credentialVault} from '../integrations/credential-vault.mjs';
 import {createSlackOAuth,slackOAuthManifest} from '../integrations/slack-oauth.mjs';
@@ -24,10 +25,10 @@ import type {IdentityDirectory} from '../identity/types.mjs';
 import {createDriveAccess,workspaceDriveAudience} from '../integrations/google-drive-access.mjs';
 export function selfhostServices(settings:SelfhostSettings,store:ReturnType<typeof createObjectStore>,database:ApplicationDatabase,env:NodeJS.ProcessEnv=process.env,directory?:IdentityDirectory){
   const enabled=airbyteEnabled(env);
-  const definitions:Record<string,ConnectorDefinition>=Object.fromEntries(['slack','googledrive','notion','circleback','granola'].map(id=>[id,{name:`OpenCrawl ${id} (operator-owned)`,manifest:connectorManifest(id)}]));
+  const definitions:Record<string,ConnectorDefinition>=Object.fromEntries(['slack','googledrive','notion','circleback','granola','linear'].map(id=>[id,{name:`OpenCrawl ${id} (operator-owned)`,manifest:connectorManifest(id)}]));
   definitions.github={name:'OpenCrawl GitHub (app)',docker:{repository:env.AIRBYTE_GITHUB_REPOSITORY||'opencrawl/source-github',tag:env.AIRBYTE_GITHUB_TAG||'local'}};
   if(!enabled){
-    const providers=createProviderCatalog(definitions,{driveWorkspaceAccess:true});
+    const providers=createProviderCatalog(definitions,{driveWorkspaceAccess:true,linearPublicAccess:true});
     const registry=createSingleOrganizationRegistry({database,organizationId:settings.organizationId});
     const body='External sources are disabled on this instance. Ask your administrator to enable Airbyte. Agent capture, memories, search and the board remain available.';
     const disabled=async():Promise<never>=>{throw Object.assign(new Error(body),{status:503,expose:true});};
@@ -89,8 +90,8 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
     proxy:async<T=ProviderData,>(input:ProxyRequest&{connectedAccountId:string;userId:string})=>(await byGrant(input.connectedAccountId)).proxy<T>(input),
     sourceConfiguration:async(record,provider)=>(await byGrant(record.connectedAccountId||'')).sourceConfiguration(record,provider),
   };
-  const providers=createProviderCatalog(definitions,{driveWorkspaceAccess:true});
-  const brokered=['googledrive','notion','circleback',...(!oauth?['slack']:[])].filter(id=>!providers[id]!.unavailableReason);
+  const providers=createProviderCatalog(definitions,{driveWorkspaceAccess:true,linearPublicAccess:true});
+  const brokered=['googledrive','notion','circleback','linear',...(!oauth?['slack']:[])].filter(id=>!providers[id]!.unavailableReason);
   const sentence=(names:string[])=>names.length>1?names.slice(0,-1).join(', ')+' and '+names.at(-1):names[0]||'';
   // Present when an admin can add the key in the product; otherwise the setup text names the server setting.
   const credential:ConnectorCredential|undefined=saved?{id:'composio',name:'Composio',label:'Composio API key',url:'https://dashboard.composio.dev/~/project/settings/api-keys',
@@ -132,6 +133,7 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
     },
   };
   const connectors=createConnectorResolver({environment:'selfhost',generation:'v1',registry,
+    linearAccess:record=>createLinearSource({tenantId:record.tenantId,connectionId:record.integrationId,workspaceId:record.workspace||'',request:input=>authorization.proxy({...input,connectedAccountId:record.connectedAccountId||'',userId:`selfhost:${record.tenantId}:${record.userId}`})}),
     ...(driveAudience?{driveAccess:(record:import('../integrations/types.mjs').IntegrationRecord)=>createDriveAccess({audience:driveAudience,request:input=>authorization.proxy({...input,connectedAccountId:record.connectedAccountId||'',userId:`selfhost:${record.tenantId}:${record.userId}`})})}:{}),
     async storage(record){destination.validate(record);return store;},search:tenantId=>{if(tenantId!==settings.organizationId)throw new Error('Workspace scope denied');return createConnectorSearch(settings.search);}});
   async function recover(){

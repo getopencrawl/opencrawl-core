@@ -5,7 +5,7 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
 
 - This repository owns the product and its usable single-tenant self-hosted
   distribution: operations, formats, resource authorization, UI, CLI, contracts,
-  reference adapters, and startup/upgrade tools.
+  reference adapters, and startup tools.
 - The separate proprietary hosted shell owns hosted tenant selection,
   provisioning/routing, billing, entitlements,
   managed infrastructure, fleet operations and compliance exports.
@@ -17,7 +17,7 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
   belongs to shell. Core enforces
   resource access within an explicit trusted scope. Single tenant does not mean
   unauthenticated; no implicit default scope for hosted calls.
-- Keep self-host HTTP/auth, storage, migrations, backup/restore and startup
+- Keep self-host HTTP/auth, storage, backup/restore and startup
   usable without the shell. Optional user-operated integrations belong outside
   domain logic. Do not classify all auth, HTTP, AWS or deployment code as
   proprietary merely because the hosted adapter uses them.
@@ -42,8 +42,7 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
 - Add fail-closed resource/scope tests with the first data-bearing operation.
   Prove a single-tenant path without hosted credentials for each product feature.
 - Core and CLI are Apache-2.0; `plugins/` remains MIT. See
-  `docs/PLUGIN-RELEASE.md`. Do not promise self-host readiness from the greeting smoke
-  runner. Package and CLI releases are distinct artifacts.
+  `docs/PLUGIN-RELEASE.md`. Package and CLI releases are distinct artifacts.
 - Describe placement and validation in each PR. Core runtime releases must be
   tested/published before the shell updates its package, lockfile and Git pin.
 
@@ -61,8 +60,7 @@ adapter conformance suite. Agent API compatibility does not promise matching or
 ranking parity. Keep engine-specific scripts inside adapters; product indexing
 uses named write policies and field patches. SQLite FTS5 is opt-in for smaller
 single-host deployments; cloud continues using OpenSearch.
-Do not introduce per-feature index routing. Existing data requires verified
-migration and rollback coverage before switching runtime reads or writes.
+Do not introduce per-feature index routing.
 
 ## React web console
 
@@ -101,29 +99,11 @@ Backend source under `src/` uses strict TypeScript (`.mts`, or `.cts` for Tempor
 
 ## Shared application seam
 
-The single-tenant product uses Better Auth with local accounts in an operator-owned
-PostgreSQL application database. Cloud continues to use WorkOS. Both adapters expose core-owned
-identity directory facts; provider sessions and tokens stay at their runtime boundary.
-Reusable authentication, membership, role controls, UI, Airbyte and connector
-lifecycle implementations belong in core. Hosted multi-tenant selection and
-provisioning, billing, fleet operation and internal administration belong in
-shell. Source SDK names do not determine ownership. Core requires no account
-or service operated by OpenCrawl. This contract supersedes earlier hosted-only
-classification of reusable identity, integrations and product UI.
-
-The reconciled runtime keeps PostgreSQL authoritative for Better Auth, the
-integration registry, board messages/delivery, and capture event identities.
-Remaining product state uses the proven production object-store contracts.
-Do not reintroduce a second runtime core version or require a whole-application
-migration for ordinary feature delivery. New state belongs in PostgreSQL; move
-existing domains individually with their own tested cutover and recovery plan.
-
-Temporal continues to run session indexing/deletion and connector indexing.
-The unfinished connector-lifecycle rewrite and online whole-state migration
-have been retired. Preserve current authorization and idempotency behavior.
-Self-host startup admits only a verified auth/registry/board import; an existing
-whole-state installation must retain its release or restore its matched recovery
-point before adopting this baseline. See `docs/app-state-migration.md`.
+Identity adapters, core/shell ownership and the PostgreSQL state baseline are
+defined once in `ARCHITECTURE.md` under "Shared application seam"; follow it.
+New state belongs in PostgreSQL. Do not reintroduce a second runtime core
+version. Temporal runs session indexing/deletion and connector indexing;
+preserve current authorization and idempotency behavior.
 
 Optional operator-owned connector OAuth, including Composio, belongs in core
 adapters. Core must work without our managed broker account. Keep unconfigured
@@ -133,12 +113,7 @@ The standalone Airbyte GitHub source under `connectors/github/` is a Python cont
 
 ## Browser rendering
 
-Every browser screen uses client-rendered React and shared core controls, including
-organization setup, auth outcomes, provider handoffs, capture setup and legal pages.
-Servers send an empty application mount plus escaped inert page data; never compose
-feature markup or return an alternate server-rendered UI. Authorization, cookies,
-HTTP status and identity-changing redirects remain server responsibilities.
-
-Shared integration changes require a verified active admin membership bound to
-the principal and organization. Runtime adapters pass plain membership facts to
-core; UI controls reflect these permissions but never grant them.
+Every browser screen uses client-rendered React and shared core controls. Never
+compose feature markup on the server or return an alternate server-rendered UI.
+`ARCHITECTURE.md` ("React document seam") defines what servers retain, the
+core/shell split, and the admin-membership rule for shared integration changes.

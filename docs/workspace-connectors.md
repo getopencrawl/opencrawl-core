@@ -1,6 +1,6 @@
 # Global workspace connector indexing
 
-The portable pipeline supports Slack, Granola, Circleback, Notion and GitHub.
+The portable pipeline supports Slack, Granola, Circleback, Notion, GitHub and Linear.
 Use the same standalone CLI or Temporal worker documented in
 [connector indexing](connector-indexing.md). For the four new providers, the
 operator-trusted binding must explicitly specify `access: "workspace-global"`,
@@ -13,6 +13,11 @@ upstream ingestion to exclude non-global resources. Personal and
 subteam resources require a future permission model and are not supported here.
 
 ## Indexed content
+
+- Linear: issue identifiers, titles and descriptions, plus issue comments from
+  public teams. Private and restricted teams are excluded. The
+  [Linear contract](linear-connector.md) specifies the Airbyte source and the
+  mandatory live resource checks for search and fetch.
 
 - Granola: `notes` title, summary markdown/text, date, attendees and source URL;
   `transcripts` speaker, text and start/end time. Private notes, attachments and

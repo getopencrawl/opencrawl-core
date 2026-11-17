@@ -114,7 +114,8 @@
     "./state/integration-resources": "./dist/src/state/integration-resources.mjs",
     "./integrations/temporal-types": "./dist/src/integrations/temporal/types.mjs",
     "./state/migration": "./dist/src/state/migrate.mjs",
-    "./board/announcements": "./dist/src/board/announcements.mjs"
+    "./board/announcements": "./dist/src/board/announcements.mjs",
+    "./integrations/linear-source": "./dist/src/integrations/linear-source.mjs"
   },
   "files": [
     "dist/src",

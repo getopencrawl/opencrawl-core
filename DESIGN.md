@@ -233,6 +233,18 @@ components:
     padding: "0 16px 8px"
   board-message-selected:
     backgroundColor: "{colors.wash}"
+  settings-navigation-link:
+    textColor: "{colors.muted}"
+    typography: "{typography.ui}"
+    padding: "12px 4px"
+  settings-navigation-link-active:
+    textColor: "{colors.accent}"
+  management-form-action:
+    width: "8rem"
+  member-role:
+    width: "8rem"
+  member-action:
+    width: "2.75rem"
 ---
 
 # Design System: OpenCrawl Night
@@ -335,17 +347,21 @@ bounded presentation stylesheet; do not restyle it with the console page heading
 
 `AppShell` is the only workspace shell. One route registry drives the left sidebar
 and page routing through the shared router. Its navigation render slot supports the
-board takeover without duplicating shell chrome. The hosted routes are Usage, Sessions,
-Memories, Integrations, Message board, Search playground, Team and Billing. Deployment adapters supply only their
-supported routes; the shared shell does not imply hosted capabilities in the
+board takeover without duplicating shell chrome. The hosted workspace destinations are Usage, Sessions,
+Memories, Integrations, Message board, Search playground, Agent setup and Settings.
+Team and hosted Billing live inside Settings, reached through the bottom account menu.
+Deployment adapters supply only their supported routes; the shared shell does not imply hosted capabilities in the
 single-tenant adapter.
 
 The desktop sidebar is 256px wide and spans the viewport. Its static mark and
 lowercase `opencrawl` wordmark come from Brand. The account footer is a full-width bottom row separated by a rule. It follows the
-supplied reference: rounded-square workspace icon, person name above workspace,
-and one trailing chevron for the whole account menu. Workspace and
-management links form separate groups. Links have padded 44px targets and the
-current page uses a lavender wash. The sidebar scrolls on short viewports.
+supplied reference: personal avatar, person name above workspace,
+and one trailing chevron for the whole account menu. Settings sections are excluded
+from the sidebar links; Agent setup remains a workspace destination at `/agent-setup`.
+Settings uses the shared gear, Agent setup the terminal, and Message board the
+speech bubble. Keep these three destination icons distinct.
+Links have padded 44px targets and the current page uses a lavender wash.
+The sidebar scrolls on short viewports.
 The brand, navigation and account rows share a 32px leading column,
 12px gap and aligned text edge. Rows use 8px horizontal insets inside the 8px sidebar gutter. The footer
 uses 16px insets, preserving the same icon and label alignment. Navigation targets are 44px tall with 4px between rows; distinct
@@ -385,10 +401,11 @@ a separate row at 600px and below. Contextual actions stay with their section.
 Use H2 for sections and H3 within them; use the shared 24px section padding and
 48px report-section separation. Tabs and filters start the body, before results.
 
-All sidebar destinations use the same full-width page grid, bounded to 1200px.
-This includes Usage, Sessions, Memories, Integrations, Message board, Search playground, Team, Billing
-and the self-hosted Settings page. The page header, section frames, tables and
-lists share both edges. A route change must not create a narrower content column.
+All workspace destinations use the same full-width page grid, bounded to 1200px.
+This includes Usage, Sessions, Memories, Integrations, Message board, Search playground,
+Agent setup and Settings. Team and hosted Billing share the Settings frame.
+The page header, section frames, tables and lists share both edges.
+A route change must not create a narrower content column.
 
 Readable measure belongs inside the grid: prose stays within 75ch, and individual
 form rows use `oc-form-measure`, bounded to 640px and the space available. Keep
@@ -397,7 +414,7 @@ billing sections span the page; their inputs do not need to stretch with them.
 Tables retain their own horizontal overflow region. Use `bodyClassName` for
 existing body patterns and the default Page body for every sidebar destination:
 
-`<Page title="Team" description="People and access for your workspace."><form className="oc-form-measure">…</form></Page>`
+`<Page title="Settings" description="Manage your workspace and access.">…</Page>`
 
 The legacy `bodyWidth="narrow"` prop remains compatible for earlier consumers,
 but feature-page architecture checks reject it. New sidebar pages use one grid.
@@ -502,6 +519,26 @@ accent underline, 12px vertical and 16px horizontal label padding, 4px gaps,
 roving focus, arrow-key navigation and Home/End support. The tab list owns the
 single divider above its content; a following Section has no extra top border
 or top padding. Do not stack two rules below the tabs.
+
+### Settings and account menu
+
+The docked account row opens a native popover with the existing subtle surface,
+strong hairline boundary and panel radius. One full-width Settings link pairs the
+shared gear icon with a trailing chevron; Sign out is a separate quiet action with
+its shared icon. Keep identity in the docked row and omit the static email/role
+summary. Do not open an empty popover when no actions are available.
+Use the established hover and focus treatments. The account chevron turns while
+the popover is open; Escape closes it and returns focus to the account row.
+
+AppShell owns one Settings Page and heading, followed by a horizontal navigation
+row and the selected section. Team at `/settings/team` is the default for
+`/settings`; hosted Billing appears at `/settings/billing` when the deployment
+supplies it. The section links are text-only, use muted text at rest and an accent
+underline for the current route, and retain visible keyboard focus. They are
+normal route links. Keep the divider beneath the row and allow horizontal
+overflow when needed. Embedded Team and Billing content, including pending
+states, reuse the frame without another page heading. Preserve the existing
+management cards in both sections.
 
 ### Sections, insets and tables
 
@@ -670,14 +707,30 @@ document counts. `/sources` and its `/integrations` alias share one page.
 
 ## Team management
 
-Team uses the same full-width page grid as every sidebar destination. Form rows
-use the shared 640px measure inside it.
-The member roster is the primary content: initials, a name and email grouped as
-one identity, with the role aligned at the right. Display the actual member
-count beside the section heading, distinguishing active members from pending
-invitations. Pending invitations belong in the same roster, with an explicit
-Pending status in the row. Workspace membership is invite-only; keep invitation
-controls below the roster.
+Team lives inside Settings and uses its shared full-width page grid. Form rows
+use the shared 640px measure inside it. For admins, the Organization name section
+sits above the Members card and uses the same management-panel padding.
+The member roster retains its existing card, initials avatars, native role
+controls and row separators. Keep the roster and its row separators at the full
+card width; only form rows use the bounded form measure.
+Keep a name and email grouped as one identity, mark the current member with plain
+“You” text beside their name, and label the invitation field “Email address” using
+the shared Field component. Rows use shared grid columns for the 40px avatar,
+flexible identity, role and action.
+Use the member-role and member-action widths recorded in the component tokens;
+reserve the action column for every row, including read-only and Pending rows.
+Align read-only role text with the native select text, and start the Pending
+badge in the same role column. At management-container widths of 600px and below,
+every role and action moves below its identity, with 12px row padding and a 4px
+gap between identity and role. Interactive targets remain 44px. Display the actual
+member count beside the section heading,
+distinguishing active members from pending invitations. Pending invitations
+belong in the same roster, with a Pending badge. Workspace membership is
+invite-only; keep invitation controls below the roster inside the Members card.
+The organization-name and invitation forms share the management-form grid and
+its action width, aligning both input and button boundaries. At container widths
+of 400px and below, both forms stack identically.
+The optional hosted workspace switcher remains in the Team footer.
 Activity and rankings belong to the Usage report, not membership administration.
 
 Use the shared `oc-management-*`, `oc-member-*` and `oc-invite-form` patterns
@@ -801,9 +854,15 @@ Report columns respond to the main pane width: below 900px, use two metric colum
 and one column for paired panels, preserving legibility beside the sidebar.
 
 The account footer matches the supplied person/workspace reference. Its 64px
-row spans the sidebar below a full-width divider; a 32px outlined workspace icon
+row spans the sidebar below a full-width divider; a 32px circular personal avatar
 sits 16px from the edge. Person name uses 16px type above the 13px workspace name.
+Use the shared Avatar with initials during loading and after a missing or failed
+photo. The adjacent account name supplies its accessible identity. Image requests
+omit referrers; the hosted shell permits the WorkOS image CDN without widening
+the self-hosted policy.
 One trailing chevron opens the native account popover above the row. Keep the
+popover to Settings and runtime account actions such as Sign out; do not repeat
+email or role in a static summary. Keep the
 workspace name here instead of repeating it beneath Brand. Outside clicks and
 Escape close the account menu. Inside mobile navigation, the first Escape closes
 account details and the second closes the drawer. Workspace-only adapters show
