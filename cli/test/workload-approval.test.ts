@@ -70,9 +70,14 @@ test('failures and malformed replies never expose provider text or leave a code 
 }));
 
 test('a replaced destination is preserved and never receives the approval',()=>isolated(async dir=>{
-  await signIn();const file=join(dir,'approval');
-  await expect(approveWorkload(api,file,service(()=>{unlinkSync(file);writeFileSync(file,'replacement');return issued();}))).rejects.toMatchObject({code:'CODE_FILE_ERROR'});
-  expect(readFileSync(file,'utf8')).toBe('replacement');
+  await signIn();
+  // Exercise rapid file-ID allocation and empty replacements as well as content
+  // changes; ownership cannot depend on rounded IDs or replacement length.
+  for(let i=0;i<32;i++){
+    const file=join(dir,'approval-'+i),replacement=i%2?'replacement':'';
+    await expect(approveWorkload(api,file,service(()=>{unlinkSync(file);writeFileSync(file,replacement);return issued();}))).rejects.toMatchObject({code:'CODE_FILE_ERROR'});
+    expect(readFileSync(file,'utf8')).toBe(replacement);
+  }
 }));
 
 test('CLI dispatch requires an explicit provider, origin and code file',()=>isolated(async dir=>{
