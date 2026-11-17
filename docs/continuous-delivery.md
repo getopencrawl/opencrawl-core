@@ -7,7 +7,13 @@ Failed, cancelled, untrusted and superseded revisions cannot advance the channel
 Callbacks evaluate the current default-branch revision; the triggering job's
 older revision is never substituted for it. Core CI runs unit, browser, real
 storage/workflow integrations and sharded CLI consumer tests in parallel.
-Every shard is required; distribution publication is a separate gate.
+Every shard is required on PRs; distribution publication is a separate gate.
+Main may reuse a successful PR runtime check only when a run-bound receipt and
+GitHub's commit tree prove that the merged source is identical. The receipt must
+come from the latest successful Core CI run for the merged same-repository PR;
+its repository, source tree, head, run and attempt must match. Missing, expired,
+changed or inaccessible evidence runs the complete suite again. Security and
+plugin checks still run on main, and stable distribution gates are independent.
 Protected PRs require `test`, `validate` and `Secret scan`. The full self-host
 installation suite runs on main as stable-release candidate validation;
 it no longer runs twice on each feature branch or gates ordinary PR merges.
