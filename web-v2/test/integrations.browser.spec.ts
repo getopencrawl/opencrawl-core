@@ -7,13 +7,27 @@ test.beforeEach(async({page,request})=>{
   await request.post('/__test/reset',{data:{}});
   await page.route('**/api/console/sources',route=>route.fulfill({json:{items:sources}}));
 });
-for(const width of [1440,390]) test(`uniform cards disclose complete stats and support search at ${width}px`,async({page})=>{
+for(const width of [1440,600,390,320]) test(`uniform cards disclose complete stats and support search at ${width}px`,async({page})=>{
   await page.setViewportSize({width,height:900});
   await page.goto('/integrations-fixture');
   const cards=page.getByRole('article');
   await expect(cards).toHaveCount(24);
   expect(await cards.evaluateAll(es=>es.map(e=>e.getAttribute('aria-label')))).toEqual([...sources].reverse().map(s=>s.name));
   expect(await cards.evaluateAll(es=>[...new Set(es.map(e=>e.getBoundingClientRect().height))])).toEqual([226]);
+  if(width<=600) {
+    const footers=await cards.locator('.oc-connector-footer').evaluateAll(elements=>elements.map(footer=>{
+      const action=footer.querySelector('button')!.getBoundingClientRect();
+      const status=footer.querySelector('span')!.getBoundingClientRect();
+      const bounds=footer.getBoundingClientRect();
+      return {height:action.height,above:action.top-bounds.top,below:bounds.bottom-action.bottom,gap:action.left-status.right};
+    }));
+    for(const footer of footers) {
+      expect(footer.height).toBeGreaterThanOrEqual(44);
+      expect(footer.above).toBeGreaterThanOrEqual(8);
+      expect(footer.below).toBeGreaterThanOrEqual(8);
+      expect(footer.gap).toBeGreaterThanOrEqual(8);
+    }
+  }
   const first=cards.first();
   await expect(first.locator('.oc-connector-headline')).toContainText('100');
   const more=first.locator('.oc-connector-more');
