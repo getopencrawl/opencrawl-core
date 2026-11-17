@@ -158,7 +158,7 @@ test('the Integrations page takes the operator key and opens sign-in in the rese
   await page.goto('/integrations-fixture');
   await expect(page.getByRole('status').filter({hasText:'One Composio key unlocks Google Drive and Notion.'})).toBeVisible();
   const notion=page.getByRole('article',{name:'Notion'});
-  await expect(notion.locator('.oc-connector-footer > span')).toHaveAttribute('title','Needs a Composio key.');
+  await expect(notion).toHaveText('NotionConnect');
   await notion.getByRole('button',{name:'Connect Notion'}).click();
   const dialog=page.getByRole('dialog',{name:'Set up Notion'});
   await dialog.getByLabel('Composio API key').fill('accepted-key');

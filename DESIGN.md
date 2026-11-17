@@ -721,17 +721,20 @@ and one column for paired panels, preserving legibility beside the sidebar.
 
 ## Integrations
 
-Integrations uses an alphabetical, responsive grid of uniform connector cards.
-Every collapsed card occupies the same space. Show the catalog-selected key metric,
+Integrations separates Available and Connected sections, with Available first.
+Each section uses an alphabetical, responsive grid. Available tiles show only the
+connector name and Connect button; unavailable providers retain their Details action.
+Connect starts OAuth immediately, or opens the required API-key/setup form.
+Connected cards occupy the same collapsed space. Show the catalog-selected key metric,
 or the highest valid count when no key metric is available, with an N more caret
 button that expands the full list of stats. Keep real zero counts, per-stream
 completion, and measured progress. Use 8px solid status dots without glow and
 unframed provider icons. Keep account/scope details inside Manage, not beneath
 the card title. Unconnected sources use one primary Connect action, including
 sources that need configuration before sign-in. Search and state filters support a growing catalog.
-Shared dialogs retain setup, sign-in recovery, sync retries and confirmed deletion.
+Shared dialogs retain required setup, sign-in recovery, sync retries and confirmed deletion.
 
-The shared `oc-connector-*` patterns own the 226px collapsed cards and their
+The shared `oc-connector-*` patterns own compact available tiles, 226px connected cards and their
 3/2/1-column grid. Expanding a card never stretches neighboring cards. The same
 core component and shared Button, Dialog and Icon primitives serve hosted and
 self-hosted adapters. Imported stats describe ingest progress, not Usage indexed

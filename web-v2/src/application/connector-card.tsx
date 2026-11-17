@@ -4,7 +4,7 @@ import {Icon} from '../design/icons.tsx';
 import {ago as relativeTime} from '../pages/usage-model.ts';
 import {sourceStatus, sourceProgress} from './source-model.ts';
 import type {SourceCard} from './api.ts';
-import {headlineMetric} from './connector-card-model.ts';
+import {headlineMetric, sourceConnected} from './connector-card-model.ts';
 
 export interface ConnectorCardProps {
   source: SourceCard;
@@ -12,6 +12,7 @@ export interface ConnectorCardProps {
   primaryMetric?: string;
   action: string;
   pending?: boolean;
+  busy?: boolean;
   onAction: () => void;
 }
 export function ProviderIcon({source}: {source: SourceCard}) {
@@ -32,11 +33,15 @@ export function SourceProgress({source}: {source: SourceCard}) {
   return <div className="oc-source-message" data-state={source.state}><p>{sourceProgress(source)}</p>{source.state === 'syncing' && <progress aria-label={`${source.name} import progress`} {...(measured ? {value:Math.max(0,Math.min(source.synced!,source.total!)),max:source.total!} : {})}/>}</div>;
 }
 
-/** One card for every provider and state. Only an explicit disclosure changes height. */
-export function ConnectorCard({source, primaryMetric, action, pending = false, onAction}: ConnectorCardProps) {
+/** Compact connection tiles above detailed cards for existing connections. */
+export function ConnectorCard({source, primaryMetric, action, pending = false, busy = false, onAction}: ConnectorCardProps) {
   const [expanded, setExpanded] = useState(false);
   const statsId = useId();
   const titleId = useId();
+  if (!sourceConnected(source)) return <article className="oc-connector-card oc-connector-available" aria-label={source.name} data-state={source.state}>
+    <h3 id={titleId} title={source.name}>{source.name}</h3>
+    <Button variant={action === 'Connect' ? 'primary' : 'secondary'} disabled={pending} busy={busy} onClick={onAction} aria-label={`${action} ${source.name}`}>{busy ? 'Connecting…' : action}</Button>
+  </article>;
   const status = sourceStatus(source);
   const headline = headlineMetric(source.rows, primaryMetric);
   const more = Math.max(0, (source.rows?.length ?? 0) - (headline ? 1 : 0));
@@ -47,7 +52,7 @@ export function ConnectorCard({source, primaryMetric, action, pending = false, o
   const metricText = headline ? new Intl.NumberFormat('en-US', headline.count >= 1_000_000 ? {notation:'compact',maximumFractionDigits:1} : {}).format(headline.count) : '';
   return <article className="oc-connector-card" aria-label={source.name} data-state={source.state} data-expanded={expanded}>
     <div className="oc-connector-summary">
-      <header className="oc-connector-heading"><ProviderIcon source={source}/><h2 id={titleId} title={source.name}>{source.name}</h2></header>
+      <header className="oc-connector-heading"><ProviderIcon source={source}/><h3 id={titleId} title={source.name}>{source.name}</h3></header>
       <div className="oc-connector-content">
         {headline ? <>
           <dl className="oc-connector-headline"><dt title={headline.label}>{headline.label}</dt><dd title={headline.count.toLocaleString('en-US')} aria-label={headline.count.toLocaleString('en-US')}>{metricText}</dd></dl>

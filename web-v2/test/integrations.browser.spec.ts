@@ -7,13 +7,20 @@ test.beforeEach(async({page,request})=>{
   await request.post('/__test/reset',{data:{}});
   await page.route('**/api/console/sources',route=>route.fulfill({json:{items:sources}}));
 });
-for(const width of [1440,600,390,320]) test(`uniform cards disclose complete stats and support search at ${width}px`,async({page})=>{
+for(const width of [1440,600,390,320]) test(`available tiles precede connected cards and support search at ${width}px`,async({page})=>{
   await page.setViewportSize({width,height:900});
   await page.goto('/integrations-fixture');
   const cards=page.getByRole('article');
   await expect(cards).toHaveCount(24);
-  expect(await cards.evaluateAll(es=>es.map(e=>e.getAttribute('aria-label')))).toEqual([...sources].reverse().map(s=>s.name));
-  expect(await cards.evaluateAll(es=>[...new Set(es.map(e=>e.getBoundingClientRect().height))])).toEqual([226]);
+  const available=page.getByRole('region',{name:'Available',exact:true});
+  const connected=page.getByRole('region',{name:'Connected',exact:true});
+  const connectedCards=connected.getByRole('article');
+  const sorted=[...sources].reverse();
+  expect(await cards.evaluateAll(es=>es.map(e=>e.getAttribute('aria-label')))).toEqual([...sorted.filter(s=>s.state==='disconnected'),...sorted.filter(s=>s.state!=='disconnected')].map(s=>s.name));
+  await expect(available.getByRole('article')).toHaveCount(6);
+  await expect(available.getByRole('article').locator('img, p, footer, dl')).toHaveCount(0);
+  expect(await available.getByRole('article').evaluateAll(es=>es.every(e=>e.getBoundingClientRect().height<120))).toBe(true);
+  expect(await connectedCards.evaluateAll(es=>[...new Set(es.map(e=>e.getBoundingClientRect().height))])).toEqual([226]);
   if(width<=600) {
     const footers=await cards.locator('.oc-connector-footer').evaluateAll(elements=>elements.map(footer=>{
       const action=footer.querySelector('button')!.getBoundingClientRect();
@@ -28,7 +35,7 @@ for(const width of [1440,600,390,320]) test(`uniform cards disclose complete sta
       expect(footer.gap).toBeGreaterThanOrEqual(8);
     }
   }
-  const first=cards.first();
+  const first=connectedCards.first();
   await expect(first.locator('.oc-connector-headline')).toContainText('100');
   const more=first.locator('.oc-connector-more');
   await more.focus();
@@ -36,7 +43,7 @@ for(const width of [1440,600,390,320]) test(`uniform cards disclose complete sta
   await expect(more).toHaveAttribute('aria-expanded','true');
   await expect(first.locator('.oc-source-counts')).toBeVisible();
   await expect(first.locator('.oc-source-counts dd')).toHaveText(['100','150','0']);
-  expect(await cards.nth(1).evaluate(e=>e.getBoundingClientRect().height)).toBe(226);
+  expect(await connectedCards.nth(1).evaluate(e=>e.getBoundingClientRect().height)).toBe(226);
   await more.press('Space');
   await expect(more).toHaveAttribute('aria-expanded','false');
   await expect(more).toBeFocused();
@@ -77,9 +84,9 @@ test('recovery dialogs preserve sign-in, sync and removal actions and member per
   await expect(page.getByRole('button',{name:/Restart sign-in|Retry|Disconnect/})).toHaveCount(0);
 });
 
-test('cards keep account context in Manage and use primary Connect for both connection paths',async({page})=>{
+test('cards keep account context in Manage and directly open OAuth or required setup',async({page,context})=>{
   const connected={...source(1),name:'Connected source',account:'Example account',connectedBy:'admin@example.com'};
-  const direct={...source(4),name:'Direct source'};
+  const direct={...source(4),provider:'linear',name:'Linear'};
   const setup:SourceCard={...source(8),name:'Setup source',state:'setup-required',setup:{title:'Set up source',body:'Ask your administrator to configure this source.'}};
   await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[connected,direct,setup]}}));
   await page.goto('/integrations-fixture');
@@ -90,13 +97,42 @@ test('cards keep account context in Manage and use primary Connect for both conn
   await expect(page.getByRole('dialog')).toContainText('Example account');
   await expect(page.getByRole('dialog')).toContainText('Connected by admin@example.com');
   await page.keyboard.press('Escape');
-  for(const name of ['Direct source','Setup source']) await expect(page.getByRole('button',{name:`Connect ${name}`,exact:true})).toHaveClass(/\bprimary\b/);
-  await page.getByRole('button',{name:'Connect Direct source',exact:true}).click();
-  await expect(page.getByRole('dialog',{name:'Connect Direct source'})).toContainText('Workspace connection');
-  await expect(page.getByRole('button',{name:'Continue to Direct source'})).toBeVisible();
-  await page.keyboard.press('Escape');
+  for(const name of ['Linear','Setup source']) await expect(page.getByRole('button',{name:`Connect ${name}`,exact:true})).toHaveClass(/\bprimary\b/);
+  let connects=0;
+  await page.route('**/api/integrations/linear/connect',route=>{connects++;return route.fulfill({json:{redirectUrl:'https://linear.example/authorize'}});});
+  await context.route('https://linear.example/authorize',route=>route.fulfill({contentType:'text/plain',body:'Linear authorization fixture'}));
+  const popupPromise=page.waitForEvent('popup');
+  await page.getByRole('button',{name:'Connect Linear',exact:true}).click();
+  const popup=await popupPromise;
+  await expect(popup).toHaveURL('https://linear.example/authorize');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(connects).toBe(1);
+  await popup.close();
   await page.getByRole('button',{name:'Connect Setup source',exact:true}).click();
   await expect(page.getByRole('dialog')).toContainText('Ask your administrator to configure this source.');
+});
+
+test('direct connect preserves busy state, closes a failed popup and allows retry',async({page})=>{
+  const linear={...source(4),provider:'linear',name:'Linear'};
+  await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[linear]}}));
+  let release:()=>void=()=>{};
+  const blocked=new Promise<void>(resolve=>{release=resolve;});
+  await page.route('**/api/integrations/linear/connect',async route=>{await blocked;await route.fulfill({status:503,json:{error:'Sign-in is temporarily unavailable. Try again.'}});});
+  await page.goto('/integrations-fixture');
+  const button=page.getByRole('button',{name:'Connect Linear',exact:true});
+  const popupPromise=page.waitForEvent('popup');
+  await button.focus();
+  await button.press('Enter');
+  const popup=await popupPromise;
+  await expect(button).toBeDisabled();
+  await expect(button).toHaveAttribute('aria-busy','true');
+  await expect(button).toHaveText('Connecting…');
+  release();
+  await expect(page.getByRole('alert')).toContainText('Sign-in is temporarily unavailable. Try again.');
+  await expect.poll(()=>popup.isClosed()).toBe(true);
+  await expect(button).toBeEnabled();
+  await expect(button).toHaveText('Connect');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test('cold status stays unknown and failed refreshes label retained measurements',async({page})=>{
