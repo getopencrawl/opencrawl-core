@@ -42,11 +42,21 @@ for(const width of [1280,390])test(`members never load Integrations, including a
 
 test('members finish agent onboarding without fetching or showing admin steps',async({page})=>{
   let completed=false,finishes=0,restrictedReads=0;
-  await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{cacheScope:'member-onboarding',workspace:{name:'Workspace',role:'member'},mcpUrl:'https://app.example/mcp',setupPrompt:'Setup',canInvite:false,onboarding:{completed,next:completed?'/':'/onboarding/sources'}}}));
+  await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{cacheScope:'member-onboarding',workspace:{name:'Workspace',role:'member'},mcpUrl:'https://app.example/mcp',setupPrompt:'Setup',canInvite:false,onboarding:{completed,next:completed?'/':'/onboarding'}}}));
   await page.route('**/api/onboarding/finish',route=>{completed=true;finishes++;return route.fulfill({json:{workspaceUrl:'/'}});});
   await page.route(/\/api\/onboarding\/(sources|invites)$/,route=>{restrictedReads++;return route.fulfill({json:{items:[]}});});
   await page.goto('/onboarding/sources?full-app');
   await expect(page).toHaveURL(/\/$/);
   expect(finishes).toBe(1);expect(restrictedReads).toBe(0);
   await expect(page.getByRole('heading',{name:/Connect your sources|Invite your teammates/})).toHaveCount(0);
+});
+
+test('members with incomplete agent setup return to it when server completion refuses',async({page})=>{
+  await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{cacheScope:'member-incomplete',workspace:{name:'Workspace',role:'member'},mcpUrl:'https://app.example/mcp',setupPrompt:'Setup',canInvite:false,onboarding:{completed:false,next:'/onboarding'}}}));
+  await page.route('**/api/onboarding/finish',route=>route.fulfill({status:409,json:{error:'Complete agent setup first.'}}));
+  await page.route('**/api/onboarding',route=>route.fulfill({json:{}}));
+  await page.goto('/onboarding/invite?full-app');
+  await expect(page).toHaveURL(/\/onboarding$/);
+  await expect(page.getByRole('heading',{name:'Connect your primary coding agent'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Invite your teammates'})).toHaveCount(0);
 });

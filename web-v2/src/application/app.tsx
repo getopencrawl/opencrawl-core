@@ -101,7 +101,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
   }
   if (!data.onboarding.completed && !onboarding) return <Navigate to={data.onboarding.next} replace/>;
-  if (onboarding && data.workspace.role !== 'admin' && location.pathname !== '/onboarding') return data.onboarding.completed ? <Navigate to="/" replace/> : data.onboarding.next === '/onboarding' ? <Navigate to="/onboarding" replace/> : <FinishMemberOnboarding api={api} onComplete={async () => {await refresh();navigate('/');}}/>;
+  if (onboarding && data.workspace.role !== 'admin' && location.pathname !== '/onboarding') return data.onboarding.completed ? <Navigate to="/" replace/> : <FinishMemberOnboarding api={api} onComplete={async () => {await refresh();navigate('/');}}/>;
   if (onboarding) return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><FocusedFrame footer={<SignOut/>}><Routes>
     <Route path="/onboarding" element={<AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} canInviteBeforeSetup={data.canInvite && data.invitationPolicy?.beforeAgentSetup}/>}/>
     <Route path="/onboarding/sources" element={<SourcesOnboarding adapter={onboardingAdapter} canConfigure={data.workspace.role === 'admin'}/>}/>
@@ -113,12 +113,13 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
 /** Members finish their personal setup without entering workspace administration. */
 function FinishMemberOnboarding({api,onComplete}:{api:Pick<ProductApi,'finishOnboarding'>;onComplete:()=>Promise<void>}) {
   const [attempt,setAttempt]=useState(0),[error,setError]=useState('');
+  const navigate=useNavigate();
   const complete=useRef(onComplete);complete.current=onComplete;
   useEffect(()=>{
     const controller=new AbortController();setError('');
-    void api.finishOnboarding(controller.signal).then(async()=>{if(!controller.signal.aborted)await complete.current();}).catch(failure=>{if(!controller.signal.aborted)setError(failure instanceof Error?failure.message:'Setup could not finish. Try again.');});
+    void api.finishOnboarding(controller.signal).then(async()=>{if(!controller.signal.aborted)await complete.current();}).catch(failure=>{if(controller.signal.aborted)return;if(failure instanceof Error && 'status' in failure && failure.status===409){navigate('/onboarding',{replace:true});return;}setError(failure instanceof Error?failure.message:'Setup could not finish. Try again.');});
     return()=>controller.abort();
-  },[api,attempt]);
+  },[api,attempt,navigate]);
   return <FocusedFrame footer={<SignOut/>}>{error ? <><Notice tone="danger">{error}</Notice><Button onClick={()=>setAttempt(value=>value+1)}>Try again</Button></> : <LoadingState label="Opening your workspace"/>}</FocusedFrame>;
 }
 /** One application composition for self-hosted and hosted deployments. */
