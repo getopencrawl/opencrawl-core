@@ -13,8 +13,7 @@
     "build": "node --import tsx tools/build.ts",
     "test": "node --import tsx --test test/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build",
-    "test:browser": "playwright test --config test/onboarding.playwright.ts",
-    "start": "node --import tsx tools/reference-server.ts"
+    "test:browser": "playwright test --config test/onboarding.playwright.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "5.107.1",
