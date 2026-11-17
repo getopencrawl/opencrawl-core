@@ -5,6 +5,10 @@ the same for OpenSearch and SQLite FTS5. The application continues to own source
 authorization, current resource visibility, grouping, excerpts, facets and
 pagination. Backend configuration is operator-owned, never request input.
 
+This choice applies to derived session, memory and connector search. Auth, the
+integration registry and board (including board search) use PostgreSQL with either
+search backend. Legacy derived board documents remain readable for index migration.
+
 **API compatibility does not guarantee matching, scoring or ranking parity.**
 The adapters share a small conformance floor. Tokenization, relevance order,
 scores, aggregation implementation and performance can differ. Unsupported
@@ -50,7 +54,7 @@ docker compose -f compose.yaml -f compose.sqlite.yaml up -d --build --wait
 The override selects SQLite for app and worker and excludes the OpenSearch
 service. It requires Compose support for `!override` (2.24.4 or later).
 Use the same file arguments for subsequent stop/start and maintenance commands.
-S3-compatible source storage and Temporal are still required; this changes only
+PostgreSQL, S3-compatible source storage and Temporal are still required; this changes only
 the derived search index. Existing quickstart installations continue using
 OpenSearch unless explicitly configured otherwise.
 
@@ -106,7 +110,7 @@ product requirements and adapter conformance coverage.
 
 FTS5 uses `unicode61` tokenization, case folding and no stemming or diacritic
 removal. Query text is treated literally, without exposing FTS query syntax.
-Title and board-topic columns have weight 2; body text has weight 1. FTS5 BM25
+Title and legacy board-topic columns have weight 2; body text has weight 1. FTS5 BM25
 scores are converted so higher is better. Tokenization and scoring differ from
 OpenSearch's analyzer and BM25 implementation; scores are not comparable.
 Each realm has its own FTS table, including corpus-wide term statistics.
@@ -155,7 +159,8 @@ The conformance suite runs SQLite unconditionally and OpenSearch when that
 explicit test endpoint is supplied. CI runs both against a disposable real
 OpenSearch instance. `test/sqlite-search.test.mjs` additionally exercises a real
 MCP client, native session ingestion, connector revocation, privacy, durable
-reopening, atomic rollback, board facets and usage/library aggregations.
+reopening, atomic rollback and usage/library aggregations. Board search and facets
+are covered separately by the real PostgreSQL board tests.
 Self-host CI boots the SQLite Compose profile without OpenSearch, ingests and
 searches through the real application, then repeats verification after restart
 and a cold backup/restore into empty disposable volumes.

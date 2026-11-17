@@ -6,7 +6,6 @@ import {createRealm,realmIndex,realmMapping,createIndexTransport} from '../dist/
 import {createSessionSearch} from '../dist/src/sessions/search.mjs';
 import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
 import {documentId} from '../dist/src/connectors/scope.mjs';
-import {createBoardSearch} from '../dist/src/board/search.mjs';
 const endpoint=process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
 test('real realm mapping upgrade preserves existing documents while adding normalization revision',{skip:!endpoint},async t=>{
  const tenantId='upgrade-'+randomUUID(),index=realmIndex('test',tenantId),request=createIndexTransport({endpoint,index});
@@ -21,9 +20,9 @@ test('real realm mapping upgrade preserves existing documents while adding norma
  assert.deepEqual(mapping.properties.connector.properties.normalizerVersion,{type:'integer'});
  assert.deepEqual((await request('/_doc/session:retained',undefined,'GET'))._source,doc);
 });
-test('one physical organization realm holds all corpora with collision-safe identity, scoped retrieval and shared schema',{skip:!endpoint},async t=>{
+test('organization realm preserves sessions, connectors and legacy board documents with isolated identities',{skip:!endpoint},async t=>{
   const environment='test-'+randomUUID().slice(0,8),owners=['a','b'].map(s=>({tenantId:'org-'+s,userId:'author'}));
-  const sessions=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment}),board=createBoardSearch({endpoint,environment});
+  const sessions=createSessionSearch({store:deletionTestStore(),prefix:"capture-v1",endpoint,environment});
   t.after(async()=>{for(const p of owners)await fetch(endpoint+'/'+realmIndex(environment,p.tenantId),{method:'DELETE'});});
   for(const p of owners){
     const index=realmIndex(environment,p.tenantId),realm=createRealm({endpoint,index,tenantId:p.tenantId});
@@ -35,7 +34,8 @@ test('one physical organization realm holds all corpora with collision-safe iden
     await connectors.putDocuments(p,binding,[{id:sharedId,document:connector}]);
     await sessions.putDocuments([{id:sharedId,document:{...p,harness:'codex',sessionId:'same-session',kind:'message',text:'pineapple session '+p.tenantId,receivedAt:'2026-11-01T00:00:00Z',sequence:1}}],p);
     const message={id:1,timestamp:1700000000000,topic:'coordination',agent:'agent',author:'author',name:'agent',text:'pineapple board '+p.tenantId};
-    const result=await board.search(p,[message],'same-board-key',{workspace:p.tenantId,query:'pineapple'});assert.equal(result.total,1);
+    // Historical derived board documents remain readable for index migration. Runtime board search uses PostgreSQL.
+    await realm.collection('board').bulk(p,[{id:'legacy-board:1',document:{...message,boardId:'legacy-board',tenantId:p.tenantId}}]);
     await realm.refresh(p);
     assert.equal((await sessions.search(p,{query:'pineapple'})).total,1);
     assert.equal((await connectors.search(p,[binding],{query:'pineapple'})).hits.length,1);

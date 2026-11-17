@@ -113,8 +113,9 @@ source revision. Documentation/test-only changes need no runtime publication.
 
 ## Organization search organization
 
-A tenant's connector documents, session histories and board messages share one
-organization realm per environment. Core owns its common envelope, typed metadata,
+A tenant's connector documents, session histories and memories share one
+organization search realm per environment. Board storage and search use PostgreSQL;
+legacy derived board documents remain readable for index migration. Core owns its common envelope, typed metadata,
 index naming, transport, scope checks and migration primitives. Source adapters
 retain resource visibility checks. The shell supplies verified identity, managed
 routing and safe migration/cutover; it must not introduce per-feature index layouts.
