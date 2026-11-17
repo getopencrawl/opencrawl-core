@@ -1,4 +1,3 @@
-import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 // Prove a real npm-installed N launcher adopts a fully installed N+1 launcher
 // and native binary, using a disposable loopback registry and cache.
 import {readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, cpSync, existsSync, renameSync} from 'node:fs';
@@ -101,7 +100,7 @@ try {
     const principal={tenantId:'org_team',userId:'human',name:'Human'};
     const store=createLocalSessionStore(join(scratch,'objects'));
     const token='upgrade-fixture-token-at-least-32-characters';
-    captureServer=createServer(standaloneCapture(withTestState({token,principal,store})));
+    captureServer=createServer(standaloneCapture(({token,principal,store})));
     await new Promise<void>(r=>captureServer!.listen(0,'127.0.0.1',r));
     const api='http://127.0.0.1:'+(captureServer.address() as any).port;
     Object.assign(env,{OPENCRAWL_SESSIONS_TOKEN:token});
@@ -176,7 +175,7 @@ try {
     const status=JSON.parse(await asyncRun(['node',launcher,'collect','status','--json'])).data;
     if(status.queued!==0||status.owner.tenantId!==principal.tenantId||status.installationId!==config.installationId)throw new Error('Updated capture status is inconsistent');
     if(readFileSync(join(capture,'state','cursor.json'),'utf8')!=='{"offset":42}')throw new Error('Upgrade changed capture cursor');
-    const stored=await createSessionIngest(withTestState({store})).getBatch(principal,{...batch,batchId:status.lastUpload.batchId});
+    const stored=await createSessionIngest(({store})).getBatch(principal,{...batch,batchId:status.lastUpload.batchId});
     if(stored?.owner.userId!==principal.userId||stored?.owner.tenantId!==principal.tenantId||stored?.events[0].data?.content!=='synthetic upgrade fixture')throw new Error('Upgrade lost attribution or queued content');
     console.log(`Real npm upgrade ${original.version} → ${version}, CLI-owned skill replacement, configuration precedence, original-command reuse and queued capture recovery verified.`);
   } finally { server.stop(true); }

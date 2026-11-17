@@ -1,4 +1,3 @@
-import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {mkdtempSync,readdirSync,readFileSync,rmSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -11,7 +10,7 @@ import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
 
 test('killing a flush after stored receipts preserves acknowledged and unacknowledged events',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'capture-receipt-crash-')),configHome=join(dir,'config'),capture=join(configHome,'opencrawl/capture');
- const owner={tenantId:'team',userId:'owner'},ingest=createSessionIngest(withTestState({store:createLocalSessionStore(join(dir,'objects'))}));
+ const owner={tenantId:'team',userId:'owner'},ingest=createSessionIngest(({store:createLocalSessionStore(join(dir,'objects'))}));
  const stored=new Map<string,any>();let requests=0,release!:()=>void,third!:()=>void;
  const gate=new Promise<void>(r=>release=r),blocked=new Promise<void>(r=>third=r);
  const server=createServer(async(req,res)=>{

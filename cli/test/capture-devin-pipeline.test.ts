@@ -1,4 +1,3 @@
-import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test, expect} from 'bun:test';
 import {mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
@@ -21,8 +20,8 @@ test('Devin hooks survive a lost upload receipt and stay distinct, searchable an
   const principal = {tenantId: 'synthetic-tenant-a', userId: 'synthetic-owner'};
   const token = 'synthetic-devin-upload-token-0123456789';
   const store = createLocalSessionStore(join(scratch, 'objects'));
-  const ingest = createSessionIngest(withTestState({store, onStored: undefined}));
-  const fallback = standaloneCapture(withTestState({token, principal, store}));
+  const ingest = createSessionIngest(({store, onStored: undefined}));
+  const fallback = standaloneCapture(({token, principal, store}));
   const received: any[] = [];
   let loseReceipt = true;
   const server = createServer(async (req, res) => {

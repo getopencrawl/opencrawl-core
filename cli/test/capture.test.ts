@@ -1,4 +1,3 @@
-import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,appendFileSync,statSync,chmodSync} from 'node:fs';
 import {join} from 'node:path';
@@ -74,8 +73,8 @@ test('install, repeat install, capture, durable upload, isolation, partial appen
   const principal={tenantId:'tenant-test',userId:'user-test',name:'Capture Test',email:'test@example.com'};
   const token='test-capture-token-01234567890123456789';
   const store=createLocalSessionStore(join(dir,'objects'));
-  const ingest=createSessionIngest(withTestState({store,onStored:undefined}));
-  const server=createServer(standaloneCapture(withTestState({token,principal,store,prefix:undefined,search:undefined})));
+  const ingest=createSessionIngest(({store,onStored:undefined}));
+  const server=createServer(standaloneCapture(({token,principal,store,prefix:undefined,search:undefined})));
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
   const api='http://127.0.0.1:'+(server.address() as any).port;process.env.OPENCRAWL_API_URL=api;
   try{
@@ -210,7 +209,7 @@ test('cloud capture identifies remote sessions and drops internal system snapsho
 test('cloud installation skips systemd and Codex, and hooks retain cloud identity across transcript increments',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-cloud-')),saved={...process.env};
  const principal={tenantId:'fixed',userId:'owner'},token='cloud-fixture-token-01234567890123456789';
- const server=createServer(standaloneCapture(withTestState({token,principal,store:createLocalSessionStore(join(dir,'objects'))})));
+ const server=createServer(standaloneCapture(({token,principal,store:createLocalSessionStore(join(dir,'objects'))})));
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
  try {
   process.env.OPENCRAWL_CONFIG_HOME=join(dir,'state');process.env.CLAUDE_CONFIG_DIR=join(dir,'claude');process.env.CODEX_HOME=join(dir,'codex');

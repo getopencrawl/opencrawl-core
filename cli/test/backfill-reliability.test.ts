@@ -1,4 +1,3 @@
-import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,readdirSync} from 'node:fs';
 import {join} from 'node:path';
@@ -29,7 +28,7 @@ test('history preview works before consent, install or login without creating st
 }));
 
 test('large approved import survives refresh throttling, uploads four at a time, reports receipts and resumes',async()=>isolated(async dir=>{
- const owner={tenantId:'test',userId:'importer'},store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest(withTestState({store}));
+ const owner={tenantId:'test',userId:'importer'},store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest(({store}));
  let active=0,peak=0,refreshes=0,denied=false;const starts:number[]=[];
  const accepted:any[]=[],progress:BackfillProgress[]=[];
  const server=createServer(async(req,res)=>{

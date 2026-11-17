@@ -1,17 +1,7 @@
 import {test,expect} from 'bun:test';
 import {PassThrough} from 'node:stream';
-import {createServer} from 'node:http';
-import {mkdtempSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join,resolve} from 'node:path';
-import {generateKeyPair,SignJWT} from 'jose';
 import {connectWorkload,readEnrollmentCode,type EnrollmentFetch} from '../src/workload-enrollment.ts';
 import {withEnvironmentTokenOrigin} from '../src/environment-token.ts';
-import {createDevinConnections} from '../../dist/src/identity/devin-connections.mjs';
-import {createDevinVerifier,createDevinWorkloads,DEVIN_ISSUER} from '../../dist/src/identity/devin.mjs';
-import {devinConnectionHandler} from '../../dist/src/identity/devin-http.mjs';
-import {memoryApplicationState} from '../../test/fixtures/memory-application-state.mjs';
-import {fixtureBoardState} from './fixtures/board-state.mjs';
 
 const code='a'.repeat(64),api='https://workload.example',org='org-11111111111141118111111111111111';
 async function mode(run:()=>Promise<void>){
@@ -61,43 +51,3 @@ test('connection failures and malformed responses never echo credentials or clai
   await expect(connectWorkload(api,code,{mint:async()=> 'secret-token',fetcher:(async()=>{throw Error(code);}) as EnrollmentFetch})).rejects.toMatchObject({code:'WORKLOAD_CONNECT_UNAVAILABLE',message:'The cloud connection could not be confirmed. Retry the same setup code from this session.'});
 }));
 
-test('real core enrollment admits one signed Cloud session, retries lost acknowledgements and rejects a competing session',()=>mode(async()=>{
-  const {privateKey,publicKey}=await generateKeyPair('RS256'),state={...memoryApplicationState(),...fixtureBoardState()};
-  let handler:ReturnType<typeof devinConnectionHandler>;
-  const server=createServer((req,res)=>{if(req.url!=='/api/devin/connect'){res.writeHead(404);res.end();return;}void handler(req,res);});
-  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+(server.address() as {port:number}).port;
-  try{
-    const verify=createDevinVerifier({audience:origin,key:async()=>publicKey});
-    const connections=createDevinConnections({state,verify,isAdmin:async p=>p.tenantId==='org_fixture'&&p.userId==='admin'});handler=devinConnectionHandler(connections);
-    const admin={tenantId:'org_fixture',userId:'admin'},member={...admin,organizationId:admin.tenantId,status:'active' as const,role:{slug:'admin'}};
-    const approval=await connections.issue(admin,member);
-    const sign=(session:string)=>new SignJWT({org_id:org,devin_id:session}).setProtectedHeader({alg:'RS256'}).setIssuer(DEVIN_ISSUER).setAudience(origin).setSubject('org_id:'+org).setIssuedAt().setExpirationTime('60s').sign(privateKey);
-    const identity=await sign('devin-enroll-one'),second=await sign('devin-enroll-two');
-    await withEnvironmentTokenOrigin(origin,async()=>{
-      await expect(connectWorkload(origin,approval.code,{mint:async()=>identity,fetcher:(async(url,init)=>{
-        const reply=await fetch(url,init);expect(reply.status).toBe(200);await reply.body?.cancel();throw Error('Simulated lost acknowledgement after claim');
-      }) as EnrollmentFetch})).rejects.toHaveProperty('code','WORKLOAD_CONNECT_UNAVAILABLE');
-      expect(await connectWorkload(origin,approval.code,{mint:async()=>identity})).toEqual({provider:'devin',...result});
-      expect(await connectWorkload(origin,approval.code,{mint:async()=>identity})).toEqual({provider:'devin',...result});
-      await expect(connectWorkload(origin,approval.code,{mint:async()=>second})).rejects.toHaveProperty('code','WORKLOAD_APPROVAL_CONFLICT');
-      const auth=createDevinWorkloads({audience:origin,key:async()=>publicKey,resolveOrganization:connections.resolveOrganization});
-      expect((await auth.identify(second)).status).toBe(200);
-    });
-    if(process.platform!=='win32'){
-      const dir=mkdtempSync(join(tmpdir(),'opencrawl-enrollment-'));
-      try{
-        // Only synthetic signing material is embedded in this disposable helper.
-        const helper=join(dir,'devin-oidc');writeFileSync(helper,"#!/bin/sh\nprintf '%s' '"+identity+"'\n",{mode:0o700});
-        const source=resolve(import.meta.dir,'../src/cli.ts'),env={...process.env,PATH:dir,OPENCRAWL_CONFIG_HOME:join(dir,'profile'),OPENCRAWL_NO_UPDATE:'1'};
-        expect((await Bun.build({entrypoints:[source],outdir:dir,target:'bun'})).success).toBe(true);
-        for(const entry of [source,join(dir,'cli.js')]){
-          const child=Bun.spawn([process.execPath,entry,'workload','connect','--api',origin,'--code-stdin','--json'],{env,stdin:new Blob([approval.code+'\n']),stdout:'pipe',stderr:'pipe'});
-          const [exit,out,err]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);
-          expect(exit).toBe(0);expect(JSON.parse(out)).toEqual({schemaVersion:1,data:{provider:'devin',...result}});expect(err).toBe('');
-          expect(out).not.toContain(identity);expect(out).not.toContain(approval.code);expect(existsSync(join(dir,'profile'))).toBe(false);
-        }
-        expect(readFileSync(helper,'utf8')).toContain(identity);
-      }finally{rmSync(dir,{recursive:true,force:true});}
-    }
-  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
-}));

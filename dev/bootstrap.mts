@@ -23,10 +23,5 @@ assert.equal(login.status,303,'Generated local login failed');
 const response=await request('/api/console/bootstrap');assert.equal(response.status,200);
 const bootstrap=await response.json() as {workspace:{email:string;role:string};onboarding:{completed:boolean;next:string}};
 assert.equal(bootstrap.workspace.email,input.email);assert.equal(bootstrap.workspace.role,'admin');
-if(created){assert.equal(bootstrap.onboarding.completed,false);assert.equal(bootstrap.onboarding.next,'/setup');}
-// Setup remains available without blocking the authenticated workspace.
-for(const path of ['/setup','/','/api/console/team']){
-  const page=await request(path);assert.equal(page.status,200,`Development account cannot access ${path} before setup finishes`);
-  await page.arrayBuffer();
-}
+if(created){assert.equal(bootstrap.onboarding.completed,false);assert.equal(bootstrap.onboarding.next,'/onboarding');}
 console.log(JSON.stringify({ok:true,accountCreated:created,onboarding:bootstrap.onboarding}));

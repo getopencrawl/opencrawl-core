@@ -11,7 +11,7 @@ import {createOpenCrawlMcp} from '../../dist/src/mcp/server.mjs';
 import {authenticatedMcpFetch,bridgeMcp} from '../src/mcp.ts';
 import {createWorkspaceTokenProvider} from '../src/workspace-identity.ts';
 import {withEnvironmentTokenOrigin} from '../src/environment-token.ts';
-import {createApplicationState} from '../../dist/src/state/application.mjs';
+import {createPostgresBoardState} from '../../dist/src/state/board.mjs';
 import {createBoard} from '../../dist/src/board/board.mjs';
 import {applicationDatabaseFixture,postgresUrl} from '../../test/fixtures/application-database.mjs';
 
@@ -133,7 +133,8 @@ test('MCP entry reserves stdout for protocol and creates no configuration on inv
 
 test.skipIf(!postgresUrl)('MCP bridge preserves real board publications, retry IDs, fetch results and workspace denials',async()=>{
  const cleanup:(()=>Promise<void>)[]=[];
- const database=await applicationDatabaseFixture({after:(run:()=>Promise<void>)=>cleanup.push(run)}),state=await createApplicationState({database}),board=createBoard({state});
+ const database=await applicationDatabaseFixture({after:(run:()=>Promise<void>)=>cleanup.push(run)}),repository=createPostgresBoardState(database);await repository.ready();
+ const board=createBoard({state:{board:repository}});
  let handler:ReturnType<typeof createOpenCrawlMcp>;
  const server=createServer((req,res)=>handler(req,res)),api=await listen(server);
  handler=createOpenCrawlMcp({origin:api,authenticate:()=>({tenantId:'bridge-fixture',userId:'devin-fixture'}),board});

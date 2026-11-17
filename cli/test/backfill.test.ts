@@ -1,4 +1,3 @@
-import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,rmSync,utimesSync,symlinkSync,realpathSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -20,9 +19,9 @@ import {claudeDesktopSessionsRoot,defaultClaudeDesktopSessionsRoot} from '../src
 test('optional backfill: four local surfaces, archives, consent, retry, receipts and isolation',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-backfill-')),saved={...process.env};
  const principal={tenantId:'test',userId:'test-user'},token='backfill-test-token-01234567890123456789';
- const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest(withTestState({store,onStored:undefined}));
+ const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest(({store,onStored:undefined}));
  const receipts:any[]=[],batches:any[]=[];let requests=0,offline=false,failUpload=false,failNext=0,phase='setup';
- const handler=standaloneCapture(withTestState({token,principal,store,prefix:undefined,search:undefined}));
+ const handler=standaloneCapture(({token,principal,store,prefix:undefined,search:undefined}));
  const server=createServer(async(req,res)=>{
   requests++;
   if(offline || (failUpload || failNext>0&&failNext--) && req.url==='/api/sessions/batches'){res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:'OFFLINE'}}));return;}
@@ -190,9 +189,9 @@ test('only approved history reconciliation upgrades old parser cursors, includin
 test('Claude Desktop mirrors preserve unmatched audit messages, session boundaries, consent and scope',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-desktop-')),saved={...process.env};
  const principal={tenantId:'test',userId:'desktop-user'},token='desktop-backfill-token-01234567890123456789';
- const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest(withTestState({store,onStored:undefined}));
+ const store=createLocalSessionStore(join(dir,'objects')),ingest=createSessionIngest(({store,onStored:undefined}));
  const batches:any[]=[],receipts:any[]=[];let requests=0;
- const handler=standaloneCapture(withTestState({token,principal,store,prefix:undefined,search:undefined}));
+ const handler=standaloneCapture(({token,principal,store,prefix:undefined,search:undefined}));
  const server=createServer(async(req,res)=>{
   requests++;
   if(req.url==='/api/sessions/batches'){

@@ -1,4 +1,3 @@
-import {withTestState} from '../../test/fixtures/memory-application-state.mjs';
 import {test,expect} from 'bun:test';
 import {beforeEach, afterEach} from 'bun:test';
 import {mkdtempSync,mkdirSync,readFileSync,readdirSync,writeFileSync,renameSync,rmSync} from 'node:fs';
@@ -37,7 +36,7 @@ test('final event identity follows canonical wire JSON and includes normalized m
 test('replayed native attachment changes, disappearance and reappearance get safe immutable event identities',async()=>fixture(async(directory,config)=>{
  const transcript=join(config.roots['claude-code'],'projects','fixture','session.jsonl'),asset=join(directory,'image.png');mkdirSync(join(transcript,'..'),{recursive:true});
  const record={type:'user',sessionId:'session',uuid:'native',timestamp:'2026-11-06T00:00:00Z',message:{role:'user',content:[{type:'file',path:asset}]}};
- const raw=JSON.stringify(record)+'\n',ids:string[]=[],store=createLocalSessionStore(join(directory,'objects')),ingest=createSessionIngest(withTestState({store}));
+ const raw=JSON.stringify(record)+'\n',ids:string[]=[],store=createLocalSessionStore(join(directory,'objects')),ingest=createSessionIngest(({store}));
  for(const content of ['first bytes','changed bytes',null,'first bytes']) {
   if(content===null)rmSync(asset);else writeFileSync(asset,content);
   // Replacing the inode is a supported transcript replay, without changing raw
@@ -71,7 +70,7 @@ test('hook enqueue replay retains final identity while normalized hook metadata 
 
 test('upgrade leaves legacy queued bytes and IDs intact, including lost-acknowledgement retries',async()=>fixture(async(directory,config)=>{
  const token=process.env.OPENCRAWL_SESSIONS_TOKEN;process.env.OPENCRAWL_SESSIONS_TOKEN='fixture-token';
- const ingest=createSessionIngest(withTestState({store:createLocalSessionStore(join(directory,'objects'))})),payloads:string[]=[];
+ const ingest=createSessionIngest(({store:createLocalSessionStore(join(directory,'objects'))})),payloads:string[]=[];
  const server=createServer(async(req,res)=>{
   res.setHeader('content-type','application/json');
   if(req.url==='/api/sessions/identity'){res.end(JSON.stringify({data:{principal:config.owner}}));return;}
