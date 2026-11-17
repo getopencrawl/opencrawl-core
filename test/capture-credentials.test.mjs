@@ -42,6 +42,9 @@ test('shared setup prompt covers consent, every environment, startup awareness a
  const api='https://capture.example.com',prompt=captureSetupPrompt(api),script=cloudSetupScript(api);
  for(const text of ['all coding agents and environments','human-required steps','fresh session','stored receipt','recording consent',api+'/capture/cloud',api+'/mcp',api+' --no-browser --json','global instructions','opencrawl board instructions','stable session identity','native context-notification','automatic transport receipts','explicit consent to import all available history','Skip only declined sources'])assert.ok(prompt.includes(text),text);
  assert.ok(prompt.includes('collect install --yes --backfill skip'));
+ // Cloud and sandbox agents install through npm first; the native installer stays the local default.
+ assert.ok(prompt.includes('In a cloud agent or locked-down sandbox environment, prefer npm install -g @getopencrawl/cli'));
+ assert.ok(prompt.indexOf('npm install -g @getopencrawl/cli')<prompt.indexOf('install.sh')&&prompt.includes('install.ps1'));
  for(const text of ['ORGANIZATION_REQUIRED',api+'/organizations','same email','never create a duplicate team','saved sign-in','login --organization <verified workspace id>','Browser team selection does not change the CLI session','verified workspace',api+'/onboarding','Sources and Invite teammates','both are optional','verify the workspace opens','does not finish browser onboarding'])assert.ok(prompt.includes(text),text);
  // Replicas uses workload identity; other platforms retain the explicit personal-token path.
  for(const text of ['new machine for every task','opencrawl token create --env-file','OPENCRAWL_API_URL, OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN','Authorization: Bearer <OPENCRAWL_TOKEN>','--defer-auth --api '+api,'OPENCRAWL_AUTH=replicas-workspace','never print the token','an environment only I use','opencrawl token revoke','report that as pending until a newly created machine confirms it','each new machine needs opencrawl login'])assert.ok(prompt.includes(text),text);
@@ -82,6 +85,8 @@ test('owner revocation permanently invalidates old delegations without affecting
 
 test('dedicated Replicas prompt keeps shared setup independent from personal login',()=>{
  const prompt=replicasSetupPrompt('https://selfhost.example');
+ // Replicas is a cloud environment: npm first, the native installer as the alternative.
+ assert.ok(prompt.indexOf('npm install -g @getopencrawl/cli')>=0&&prompt.indexOf('npm install -g @getopencrawl/cli')<prompt.indexOf('install.sh'));
  for(const expected of ['install.sh','export PATH=', 'opencrawl update','workspace_identity','https://selfhost.example/mcp','https://selfhost.example/onboarding','automatically records the connected organization as ready','warm-hooks save-test','start-hooks test','validate warm preparation and runtime start together','do not reinstall or replace the CLI during every start','existing VMs retain their original start-hook snapshot','without preventing unrelated project startup','stored and searchable','never write user hook trust','unknown authors','one shared installation verification']) assert.ok(prompt.includes(expected),expected);
  assert.ok(!prompt.includes('https://app.getopencrawl.com'));
  assert.ok(!prompt.includes('opencrawl token create'));

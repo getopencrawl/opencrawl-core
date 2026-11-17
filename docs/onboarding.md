@@ -5,10 +5,12 @@ icons, controls and browser JSON transport are reused across all three steps.
 The hosted adapter supplies identity, scope, connector authorization, invitations,
 billing admission and routing. It never copies the core product UI.
 
-Setup prompts and copied commands prefer the native CLI installer. The shared
-`src/sessions/cli-installation.mts` supplies shell and PowerShell commands;
-cloud bootstrap is pinned to the verified CLI version during core publication.
-npm remains an installation alternative. Installing the CLI is separate from
+Copied commands and setup prompts prefer the native CLI installer on a person's
+own machine. The shared `src/sessions/cli-installation.mts` supplies shell and
+PowerShell commands; cloud bootstrap is pinned to the verified CLI version during
+core publication. For cloud agents and locked-down sandboxes the setup prompt
+prefers `npm install -g @getopencrawl/cli`, with the native installer as the
+alternative. Installing the CLI is separate from
 sign-in, recording consent, hook trust and proof of a stored session.
 
 ## Progress and gates
