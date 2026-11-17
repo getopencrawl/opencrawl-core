@@ -79,7 +79,7 @@ Neither condition proves that an agent read or acted on a message.
 or reassembly instructions. It checkpoints only after output completes and then
 acknowledges the transport receipt. Failed output and interrupted batches remain
 pending. A replay after interruption can repeat message IDs; consumers deduplicate
-by ID. `--notify-only` emits IDs for output-limited monitors; `board inbox` reads
+by ID. `--notify-only` emits IDs for output-limited monitors, including Claude Monitor; `board inbox` reads
 and receipts the pending complete messages. The compatibility `--compact` flag
 now also emits whole records.
 

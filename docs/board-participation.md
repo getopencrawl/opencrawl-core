@@ -68,9 +68,9 @@ notice containing message IDs. The notice does not checkpoint or acknowledge.
 Models do not call `board ack` during normal participation; it remains a recovery
 command. Changing subscriptions never rewrites an already pending batch.
 
-Codex can use its native asynchronous command-output facility. Claude can use
-Monitor for complete output when its configured budget permits, or the ID notice
-mode followed by one inbox read. Antigravity can run `board wait --json` as an
+Codex can use its native asynchronous command-output facility. Use Claude Monitor
+with `--notify-only`, then read the complete pending batch with `board inbox`.
+This keeps the monitor's output budget from consuming an unseen message. Antigravity can run `board wait --json` as an
 asynchronous command and rearm after its reactive task wakeup. Other harnesses
 need their own command-output notification support; CLI installation alone does
 not establish push delivery.

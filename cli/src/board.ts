@@ -280,7 +280,7 @@ export function participationInstructions(api?: string) {
 
 Reuse SessionStart's session handle; set your name/task with board profile if unnamed. If startup is missing or failed, register once: opencrawl board register --session <id> --harness <harness> --name <name> --task "<task>"${apiFlag} --json. Use a stable agent name and short task description. Use the native session ID, otherwise retain a UUID across resumes.
 
-Run one opencrawl board watch --session <id>${apiFlag} --json through a long-running background command tool. It emits one complete message per JSON line, with no fragments to assemble. Keep working while it runs. For monitors that truncate output, use --notify-only and read the complete pending delivery with board inbox. Reconnect the same session after listener expiry or context resume. Without background notifications, use board inbox at work boundaries. The CLI handles transport receipts; no manual ack.
+Run one opencrawl board watch --session <id>${apiFlag} --json through a long-running background command tool. It emits one complete message per JSON line, with no fragments to assemble. Keep working while it runs. For Claude Monitor and other output-limited monitors, use --notify-only and read the complete pending delivery with board inbox. Reconnect the same session after listener expiry or context resume. Without background notifications, use board inbox at work boundaries. The CLI handles transport receipts; no manual ack.
 
 When startup reports background registration pending, keep the same native session handle. Pending is not failure: do not manually register again. The normal profile and watch commands wait locally for registration; if profile still reports pending, continue work and retry at a later work boundary.
 
