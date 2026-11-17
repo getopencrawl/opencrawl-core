@@ -251,7 +251,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
         : await oauth.sourceConfiguration(record, provider)}));
       await resource('connectionId', () => airbyte.createConnection({name: label, sourceId: ids.sourceId, destinationId: ids.destinationId,
         namespaceDefinition: 'destination', schedule: {scheduleType: 'cron', cronExpression: provider.schedule || schedule}, status: 'active',
-        configurations: {streams: provider.streams}}));
+        configurations: {streams: provider.streamsFor?.(record) ?? provider.streams}}));
       record = await save({airbyte: ids});
       await airbyte.sync(required(ids.connectionId, 'connection')).catch(error => { if (errorInfo(error).status !== 409) throw error; });
       return await save({status: 'active'});

@@ -76,6 +76,13 @@ test('all upstream streams and operations survive the OAuth transport adapter',a
   assert.equal(provider.streams.filter(s=>s.syncMode==='incremental_append').length,14);
   assert.deepEqual(provider.streams.map(s=>s.name),LINEAR_STREAMS);
   assert.equal(provider.authConfig.credentials.scopes,'read');assert.equal(provider.authConfig.name,'OpenCrawl Linear full user read');
+  for(const enabled of [true,false]){
+    const account=await provider.account(async()=>({status:200,data:{data:{organization:{id:workspaceId,name:'Test',customersEnabled:enabled}}}}));
+    const selected=provider.streamsFor({settings:account.settings});assert.equal(selected.length,enabled?20:18);
+    assert.equal(selected.some(s=>s.name==='customers'),enabled);assert.equal(selected.some(s=>s.name==='customer_needs'),enabled);
+    assert.ok(selected.some(s=>s.name==='customer_statuses'));
+  }
+  await assert.rejects(provider.account(async()=>({status:200,data:{data:{organization:{id:workspaceId,name:'Test'}}}})),/feature availability/);
 });
 
 test('all twenty record types have real access policies and retain their content',async()=>{

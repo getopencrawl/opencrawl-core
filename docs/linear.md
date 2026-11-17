@@ -1,7 +1,7 @@
 # Linear
 
 OpenCrawl uses Airbyte source-linear 1.0.3, pinned to the revision in
-`src/integrations/upstream/linear/provenance.json`. It selects all 20 upstream
+`src/integrations/upstream/linear/provenance.json`. It supports all 20 upstream
 streams: issues, comments, users, teams, cycles, labels, workflow states,
 attachments, issue relationships and history, projects, project updates,
 milestones and statuses, initiatives and their project links, customers,
@@ -18,8 +18,11 @@ user-mode `read` scope, which inherits the consenting user's resource access.
 The upstream app-mode OAuth flow uses `customer:read` and `initiative:read`;
 those scopes are invalid for Composio's user-mode authorization. The broker owns OAuth tokens;
 Airbyte receives a revocable capability restricted to one connection's upstream
-read queries. Customer streams also require Linear's Customer Requests feature.
-Unsupported or revoked permissions fail the sync visibly; they are never
+read queries. Setup reads Linear's `organization.customersEnabled` flag. When
+false, it omits `customers` and `customer_needs` from the selected catalog;
+customer statuses and tiers remain available. All 20 streams are selected when
+the feature is enabled. Other unsupported or revoked permissions fail the sync
+visibly; they are never
 reported as an empty successful sync.
 
 Connecting shares organization-wide references and resources belonging to
