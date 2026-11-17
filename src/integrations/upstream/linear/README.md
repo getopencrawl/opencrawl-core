@@ -5,8 +5,9 @@ source-linear manifest. `provenance.json` pins its repository revision, version,
 source path and YAML SHA-256. This vendored manifest is under the Elastic License
 2.0 in `LICENSE`; OpenCrawl's original code remains Apache-2.0.
 
-The runtime adapter in `../../linear-upstream.mts` changes only transport and
-credential setup. Airbyte retains extraction, all 20 streams, GraphQL queries,
+The runtime adapter in `../../linear-upstream.mts` changes transport and
+credential setup, selects our tested declarative runtime, and shortens the
+definition description for Airbyte's storage. Airbyte retains extraction, all 20 streams, GraphQL queries,
 schemas, transformations, pagination, rate handling and incremental cursors.
 `../../linear-access.mts` is OpenCrawl's resource permission adapter, not another
 source implementation. Both collection and authenticated retrieval check current

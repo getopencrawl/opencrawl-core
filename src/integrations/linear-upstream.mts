@@ -4,6 +4,7 @@ import type {JsonObject, JsonValue} from '../sessions/types.mjs';
 
 export const LINEAR_API = 'https://api.linear.app/graphql';
 export const LINEAR_VERSION = '1.0.3';
+export const LINEAR_RUNTIME_VERSION = '7.45.1';
 const upstream = JSON.parse(readFileSync(new URL('./upstream/linear/manifest.json', import.meta.url), 'utf8')) as JsonObject;
 const object = (value: JsonValue | undefined) => value as JsonObject;
 const definitions = object(upstream.definitions);
@@ -47,6 +48,9 @@ export function linearQueryStream(query: unknown): string | undefined {
  */
 export function linearManifest(): ConnectorManifest {
   const manifest = structuredClone(upstream);
+  // Use the runtime verified by our real extraction tests and installed by dev/up.
+  // Airbyte chooses the image's major version from this field.
+  manifest.version = LINEAR_RUNTIME_VERSION;
   // Airbyte stores the definition description in a 255-character database field.
   manifest.description = 'Linear workspace data via Airbyte source-linear ' + LINEAR_VERSION + '.';
   const defs = object(manifest.definitions), requester = object(defs.base_requester);

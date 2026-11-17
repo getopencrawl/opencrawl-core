@@ -16,6 +16,7 @@ test('the development Airbyte and the GitHub connector image pin the same declar
   const from=/^FROM airbyte\/source-declarative-manifest:(\S+)@(sha256:[a-f0-9]{64})$/m.exec(await readFile(new URL('../connectors/github/Dockerfile',import.meta.url),'utf8'));
   assert.ok(from,'the GitHub connector image pins the declarative runtime by digest');
   assert.deepEqual(pin,{version:from[1],imageSha:from[2]});
+  assert.equal(connectorManifest('linear').version,pin.version);
 });
 
 test('real runtime image: full upstream Linear extraction, excluded pages, transforms and incremental state',{skip:!process.env.OPENCRAWL_TEST_CONNECTOR_RUNTIME},async t=>{

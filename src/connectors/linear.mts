@@ -1,12 +1,18 @@
 import type {AirbyteEnvelope, ConnectorBinding} from './types.mjs';
 import {linearId, linearUrl, type LinearContext} from '../integrations/linear-access.mjs';
 import {LINEAR_KINDS} from '../integrations/linear-upstream.mjs';
-import {invalidRecord} from './scope.mjs';
+import {digest, invalidRecord} from './scope.mjs';
 import {resource, text, time} from './documents.mjs';
 
 export function linearResourceId(stream: string, data: Record<string, unknown>): string {
   const kind = LINEAR_KINDS[stream];
   if (!kind) invalidRecord('Invalid Linear stream');
+  // Existing raw objects keep their identity during the upstream cutover. This
+  // is a storage decoder only; no retired extraction operation remains usable.
+  if (['issues', 'comments'].includes(stream) && typeof data.id === 'string' && data.id.startsWith(kind + ':')) {
+    linearId(data.id.slice(kind.length + 1));
+    return data.id;
+  }
   linearId(data.id);
   if (stream === 'issue_history') {linearId(data.issueId); return `${kind}:${data.issueId}:${data.id}`;}
   return `${kind}:${data.id}`;
@@ -18,7 +24,21 @@ const label = (key: string) => key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/
 /** Airbyte records stay intact in raw storage; only live-authorized resources enter search. */
 export function normalizeLinear(binding: ConnectorBinding, stream: string, envelope: AirbyteEnvelope, key: string, context: LinearContext) {
   if (binding.provider !== 'linear' || !context || !Array.isArray(context.lines)) invalidRecord('Linear access proof required');
-  const data = envelope._airbyte_data, sourceId = linearResourceId(stream, data), kind = LINEAR_KINDS[stream];
+  let data = envelope._airbyte_data;
+  const sourceId = linearResourceId(stream, data), kind = LINEAR_KINDS[stream];
+  if (data.id === sourceId) {
+    const access = data.access as Record<string, unknown> | undefined;
+    if (data.kind !== kind || typeof data.title !== 'string' || typeof data.text !== 'string' ||
+      typeof data.updatedAt !== 'string' || !Number.isFinite(Date.parse(data.updatedAt)) ||
+      !access || access.policy !== 'linear-public-team-v1' || access.tenantId !== binding.tenantId ||
+      access.connectionId !== binding.connectionId || access.workspaceId !== binding.workspaceId ||
+      !Number.isSafeInteger(access.checkedAt) || (access.checkedAt as number) < 0 ||
+      (access.checkedAt as number) > envelope._airbyte_extracted_at + 60000 ||
+      access.contentHash !== digest({id: data.id, kind: data.kind, title: data.title, text: data.text, url: data.url, updatedAt: data.updatedAt}))
+      invalidRecord('Invalid historical Linear record');
+    linearId(access.teamId);
+    data = {id: sourceId.slice(kind.length + 1), title: data.title, body: data.text, url: data.url, updatedAt: data.updatedAt};
+  }
   const title = [typeof data.identifier === 'string' ? data.identifier : '', typeof data.title === 'string' ? data.title : typeof data.name === 'string' ? data.name : ''].filter(Boolean).join(': ') || context.title || label(kind);
   const lines = [...context.lines];
   for (const [field, value] of Object.entries(data)) {
