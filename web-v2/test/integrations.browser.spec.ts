@@ -18,7 +18,8 @@ for(const width of [1440,600,390,320]) test(`available tiles precede connected c
   const sorted=[...sources].reverse();
   expect(await cards.evaluateAll(es=>es.map(e=>e.getAttribute('aria-label')))).toEqual([...sorted.filter(s=>s.state==='disconnected'),...sorted.filter(s=>s.state!=='disconnected')].map(s=>s.name));
   await expect(available.getByRole('article')).toHaveCount(6);
-  await expect(available.getByRole('article').locator('img, p, footer, dl')).toHaveCount(0);
+  await expect(available.getByRole('article').locator('p, footer, dl')).toHaveCount(0);
+  await expect(available.getByRole('article').locator('.oc-connector-icon, .oc-connector-placeholder')).toHaveCount(6);
   expect(await available.getByRole('article').evaluateAll(es=>es.every(e=>e.getBoundingClientRect().height<120))).toBe(true);
   expect(await connectedCards.evaluateAll(es=>[...new Set(es.map(e=>e.getBoundingClientRect().height))])).toEqual([226]);
   if(width<=600) {

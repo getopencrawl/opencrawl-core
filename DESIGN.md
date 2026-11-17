@@ -722,8 +722,8 @@ and one column for paired panels, preserving legibility beside the sidebar.
 ## Integrations
 
 Integrations separates Available and Connected sections, with Available first.
-Each section uses an alphabetical, responsive grid. Available tiles show only the
-connector name and Connect button; unavailable providers retain their Details action.
+Each section uses an alphabetical, responsive grid. Available tiles show the
+connector logo, name and Connect button; unavailable providers retain their Details action.
 Connect starts OAuth immediately, or opens the required API-key/setup form.
 Connected cards occupy the same collapsed space. Show the catalog-selected key metric,
 or the highest valid count when no key metric is available, with an N more caret
