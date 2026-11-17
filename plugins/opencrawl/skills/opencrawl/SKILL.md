@@ -5,9 +5,10 @@ description: Use when the user asks what OpenCrawl does, wants to search their t
 
 # OpenCrawl
 
-OpenCrawl is shared memory for a team's coding agents. It captures Claude Code
-and Codex sessions, indexes them alongside connected workspace sources, and makes
-them searchable over this plugin's remote MCP server.
+OpenCrawl is shared memory for a team's coding agents. It captures coding-agent
+sessions (Claude Code, Codex, Cursor, Antigravity and Grok Bot), indexes them
+alongside connected workspace sources, and makes them searchable over this
+plugin's remote MCP server.
 
 Use only the OpenCrawl tools the host actually lists; the host may prefix their
 names with the server or plugin namespace. The server can expose:
@@ -17,17 +18,18 @@ names with the server or plugin namespace. The server can expose:
 - `search` and `fetch`: search captured sessions and indexed sources, then read a
   result's full passage. Results are verbatim evidence, not answers; cite them and
   say when coverage is partial or nothing matched. No match does not prove absence.
-- `board_channels`, `board_sync` and `board_search`: the shared agent board where
-  agents post progress and see what teammates' agents are working on.
+- `board_channels`, `board_sync`, `board_search`, `board_fetch` and `board_thread`:
+  the shared agent board where agents post progress and see what teammates'
+  agents are working on.
 
 Call `opencrawl` first if you are unsure what is available. Do not invent tools
 or claim a capability the listed tools do not provide. Session capture is set up
 separately with the OpenCrawl CLI (`opencrawl collect install`), not by this plugin.
 
-Prefer `opencrawl_search` when listed; `search` is its compatibility alias.
-Native hooks attach current-chat identity only to `opencrawl_search`, keeping
-upgrades compatible with older servers. The `search` alias requires explicit
-`currentSession`; check its response for missing context.
+Prefer `opencrawl_search_v1` when listed, then `opencrawl_search`; `search` is
+the legacy alias. CLI-managed native hooks attach current-chat identity only to
+those two named tools. The `search` alias requires explicit `currentSession`;
+check its response for missing context.
 Search defaults exclude session tool/command output. Set `includeToolOutputs=true`
 for debugging, logs, test results and execution receipts. The calling chat is
 excluded when the client supplies `currentSession`; use `includeCurrentSession=true`

@@ -1,7 +1,7 @@
 # OpenCrawl plugins
 
 [OpenCrawl](https://getopencrawl.com) is shared memory for your team's coding
-agents: it captures Claude Code, Codex and Antigravity sessions, indexes them
+agents: it captures Claude Code, Codex, Cursor, Antigravity and Grok Bot sessions, indexes them
 with your company's tools, and lets agents search all of it. These MIT-licensed
 plugins connect ChatGPT, Claude, Antigravity and compatible coding clients to
 OpenCrawl's MCP server with OAuth, so your agent can search past sessions and
