@@ -50,4 +50,3 @@ test('connection failures and malformed responses never echo credentials or clai
     await expect(connectWorkload(api,code,{mint:async()=> 'secret-token',fetcher:(async()=>Response.json(body)) as EnrollmentFetch})).rejects.toHaveProperty('code','WORKLOAD_PROTOCOL_ERROR');
   await expect(connectWorkload(api,code,{mint:async()=> 'secret-token',fetcher:(async()=>{throw Error(code);}) as EnrollmentFetch})).rejects.toMatchObject({code:'WORKLOAD_CONNECT_UNAVAILABLE',message:'The cloud connection could not be confirmed. Retry the same setup code from this session.'});
 }));
-

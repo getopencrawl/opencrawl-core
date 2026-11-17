@@ -212,14 +212,17 @@ test('SQLite waits for a competing initializer when enabling WAL', async t => {
   const db = new DatabaseSync(path);
   let release;
   try {
-    db.exec('PRAGMA journal_mode=DELETE; BEGIN IMMEDIATE');
+    // The fixture writer must wait for brief competing read locks at COMMIT too.
+    db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=DELETE; BEGIN IMMEDIATE');
     const module = new URL('../dist/src/search/realm.mjs', import.meta.url).href;
     const code = `import {createRealm} from ${JSON.stringify(module)};
       const realm=createRealm({endpoint:process.argv[1],tenantId:'org_sqlite'});
       process.stdout.write('ready'); await realm.ensureIndex();`;
     await new Promise((resolve, reject) => {
       const child = execFile(process.execPath, ['--input-type=module', '-e', code, endpoint], {timeout: 15000}, error => error ? reject(error) : resolve());
-      child.stdout.once('data', () => {release = setTimeout(() => db.exec('COMMIT'), 200);});
+      child.stdout.once('data', () => {release = setTimeout(() => {
+        try {db.exec('COMMIT');} catch (error) {child.kill(); reject(error);}
+      }, 200);});
     });
   } finally {
     clearTimeout(release);
