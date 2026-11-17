@@ -10,10 +10,27 @@ import {TITLE_KINDS} from './titles.mjs';
 const f = (field: string) => realmField('session', field);
 function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 
+/** Keyset predicates preserve missing-first order without round-tripping engine
+ * sentinel values (OpenSearch's missing dates exceed JS integer precision). */
+function boundary(anchor: Passage, reverse: boolean) {
+  const equal: unknown[] = [], alternatives: unknown[] = [];
+  for (const key of ['timestamp', 'sequence', 'eventId']) {
+    const field = f(key), value = anchor[key], exists = {exists: {field}}, missing = {bool: {must_not: [exists]}};
+    if (value === null || value === undefined) {
+      if (!reverse) alternatives.push({bool: {filter: [...equal, exists]}});
+      equal.push(missing);
+    } else {
+      const range = {range: {[field]: {[reverse ? 'lt' : 'gt']: value}}};
+      alternatives.push({bool: {filter: [...equal, reverse ? {bool: {should: [missing, range], minimum_should_match: 1}} : range]}});
+      equal.push({term: {[field]: value}});
+    }
+  }
+  return {bool: {should: alternatives, minimum_should_match: 1}};
+}
+
 /** One first passage per neighboring event, never one row per passage chunk.
  * The selected passage remains the anchor, including matches deep in a long
- * event. Each direction obtains its own native sort tuple: missing timestamps
- * have different OpenSearch sentinels in ascending and descending order.
+ * event. Both directions use the same freshly read anchor and explicit keysets.
  */
 export async function sessionContext(collection: SearchCollection, controls: ReturnType<typeof createControls> | null, principal: Principal,
   anchor: Passage, input: SessionContextInput): Promise<SessionContextResult> {
@@ -33,18 +50,18 @@ export async function sessionContext(collection: SearchCollection, controls: Ret
   const sameSession = (doc: Passage) => doc.tenantId === principal.tenantId && doc.userId === anchor.userId && doc.harness === anchor.harness && doc.sessionId === anchor.sessionId;
   const scope = [{term: {tenantId: principal.tenantId}}, ...['userId', 'harness', 'sessionId'].map(key => ({term: {[f(key)]: anchor[key]}})), visibleTo('session', principal)];
   await authorize();
+  const selected = await collection.search(principal, {size: 1, query: {bool: {filter: [...scope, {term: {id: anchor.id}}]}}});
+  const found = selected.hits.hits[0];
+  if (!found) fail(404, 'Context anchor not found or no longer available.');
+  const doc = {...found._source, id: found._id};
+  if (!sameSession(doc) || doc.id !== anchor.id || doc.eventId !== anchor.eventId)
+    throw new Error('Invalid session context anchor scope');
   async function direction(count: number, reverse: boolean) {
     // Query one extra event even for a zero-sized side, so more is truthful.
     const order = reverse ? 'desc' : 'asc';
-    const sort = [{[f('timestamp')]: {order, missing: reverse ? '_last' : '_first'}}, {[f('sequence')]: order}, {[f('eventId')]: order}];
-    const selected = await collection.search(principal, {size: 1, query: {bool: {filter: [...scope, {term: {id: anchor.id}}]}}, sort});
-    const found = selected.hits.hits[0];
-    if (!found) fail(404, 'Context anchor not found or no longer available.');
-    const doc = {...found._source, id: found._id};
-    if (!sameSession(doc) || doc.id !== anchor.id || doc.eventId !== anchor.eventId || !Array.isArray(found.sort) || found.sort.length !== 3)
-      throw new Error('Invalid session context anchor scope');
-    const result = await collection.search(principal, {size: count + 1, track_total_hits: false, sort, search_after: found.sort,
-      query: {bool: {filter: [...scope, {term: {[f('chunk')]: 0}}, ...sessionSearchExclusions(principal, {includeToolOutputs: input.includeToolOutputs})],
+    const sort = ['timestamp', 'sequence', 'eventId'].map(key => ({[f(key)]: {order, missing: reverse ? '_last' : '_first'}}));
+    const result = await collection.search(principal, {size: count + 1, track_total_hits: false, sort,
+      query: {bool: {filter: [...scope, boundary(doc, reverse), {term: {[f('chunk')]: 0}}, ...sessionSearchExclusions(principal, {includeToolOutputs: input.includeToolOutputs})],
         must_not: [{term: {[f('eventId')]: anchor.eventId}}, {terms: {[f('kind')]: ['hook', 'token_count', 'turn_metadata', ...TITLE_KINDS]}}]}}});
     const hits = result.hits.hits.map(hit => ({...hit._source, id: hit._id}));
     if (hits.length > count + 1 || hits.some(hit => !sameSession(hit) || typeof hit.eventId !== 'string' || hit.eventId === anchor.eventId || hit.chunk !== 0) || new Set(hits.map(hit => hit.eventId)).size !== hits.length)

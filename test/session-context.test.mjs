@@ -19,6 +19,11 @@ for (const backend of ['sqlite', 'opensearch']) {
     const endpoint = backend === 'sqlite' ? pathToFileURL(join(directory, 'index.sqlite')).href.replace('file:', 'sqlite:') : process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
     const principal = {tenantId: 'context-' + randomUUID(), userId: 'alice'}, owner = {...principal, userId: 'bob'};
     const store = memorySessionStore(), options = {endpoint, environment: 'test', store, prefix: 'test'};
+    options.fetch = async (...args) => {
+      const response = await fetch(...args);
+      if (!response.ok) console.error('Event context fixture engine response:', await response.clone().text());
+      return response;
+    };
     const controls = createControls(options);
     const realm = createRealm({...options, tenantId: principal.tenantId});
     t.after(async () => {if (backend === 'opensearch') await fetch(endpoint + '/' + realm.index, {method: 'DELETE'});await rm(directory, {recursive: true, force: true});});
@@ -67,6 +72,21 @@ for (const backend of ['sqlite', 'opensearch']) {
     assert.equal(beginning.context.moreBefore, false);assert.equal(beginning.context.moreAfter, true);
     const ending = await workspace.fetch(principal, {id: last, before: 0, after: 10});
     assert.equal(ending.context.moreAfter, false);assert.equal(ending.context.moreBefore, true);
+    // Missing timestamp and sequence keys must page in both directions without
+    // sending the engine's unsafe 64-bit missing-value sentinel back as JSON.
+    const start = documents.length, undated = {sessionId: 'undated', timestamp: null};
+    const missingFirst = add('undated-a', 0, {...undated, sequence: null});
+    const missingSecond = add('undated-b', 0, {...undated, sequence: null});
+    const sequenced = add('undated-sequenced', 1, undated);
+    add('dated', 2, {sessionId: 'undated'});
+    await realm.collection('session').bulk(principal, documents.slice(start));await realm.refresh(principal);
+    const missingWindow = await workspace.fetch(principal, {id: missingSecond, before: 10, after: 10});
+    assert.deepEqual(ids(missingWindow.context.before), ['undated-a']);
+    assert.deepEqual(ids(missingWindow.context.after), ['undated-sequenced', 'dated']);
+    assert.equal(missingWindow.context.moreBefore, false);assert.equal(missingWindow.context.moreAfter, false);
+    const missingBeginning = await workspace.fetch(principal, {id: missingFirst, before: 0, after: 1});
+    assert.deepEqual(ids(missingBeginning.context.after), ['undated-b']);assert.equal(missingBeginning.context.moreAfter, true);
+    assert.deepEqual(ids((await workspace.fetch(principal, {id: sequenced, before: 2, after: 1})).context.before), ['undated-a', 'undated-b']);
     assert.equal((await workspace.fetch(principal, {id: anchor})).context, undefined);
     await assert.rejects(workspace.fetch({...principal, captureAccess: 'write'}, {id: anchor, context: true}), /credentials/);
     await assert.rejects(workspace.fetch({...principal, tenantId: 'foreign'}, {id: anchor, context: true}));
