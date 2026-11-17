@@ -367,6 +367,25 @@ The brand, navigation and account rows share a 32px leading column,
 uses 16px insets, preserving the same icon and label alignment. Navigation targets are 44px tall with 4px between rows; distinct
 groups retain the same 4px row spacing, without extra grouping space or a navigation divider. Keep the mark and wordmark optically aligned, and dock the identity row to the sidebar edges rather than floating it as a card.
 
+The account footer's 64px
+row spans the sidebar below a full-width divider; a 32px circular personal avatar
+sits 16px from the edge. Person name uses 16px type above the 13px workspace name.
+Use the shared Avatar with initials during loading and after a missing or failed
+photo. The adjacent account name supplies its accessible identity. Image requests
+omit referrers; the hosted shell permits the WorkOS image CDN without widening
+the self-hosted policy.
+One trailing chevron opens the native account popover above the row. Keep the
+popover to Settings and runtime account actions such as Sign out; do not repeat
+email or role in a static summary. Keep the
+workspace name here instead of repeating it beneath Brand. Outside clicks and
+Escape close the account menu. Inside mobile navigation, the first Escape closes
+account details and the second closes the drawer. Workspace-only adapters show
+static footer context without an empty menu.
+
+The sidebar starts 16px from the top. Keep the wordmark optically aligned with
+the mark using its scoped 2px adjustment. Integrations uses the shared plug icon.
+The footer divider remains the only persistent horizontal rule in navigation.
+
 Content is centered at 1200px within the remaining area, with 32px side insets,
 48px top padding and 64px bottom padding. At 800px and below, the same navigation
 tree becomes a focus-managed drawer bounded by 300px and the viewport minus 48px.
@@ -456,7 +475,7 @@ Onboarding copy/reveal disclosures keep their established immediate transitions.
 
 Use the shared badge, control and panel radii. Controls and compact insets have
 small corners; onboarding panels and dialogs use the larger panel radius. Source
-logos retain their original assets: compact slots in Usage and 44px icons in
+logos retain their original assets: compact slots in Usage and 32px icons in
 Integrations. Identity initials
 use compact square workspace avatars and circular user avatars. Dividers and
 field borders are hairlines, with a stronger boundary only where interaction needs it.
@@ -505,12 +524,9 @@ copy/reveal control retains its separate feedback timing and unchanged dimension
 
 ### Navigation and tabs
 
-Desktop navigation stays grouped at the right. Links have 40px padded targets
-with 12px horizontal padding and 4px gaps, leaving vertical room inside the 72px
-header. The active page uses bright text and a 2px accent stroke close beneath
-the label, inside the target. Do not stretch the target to the header height or
-move the stroke to the header bottom. Mobile navigation
-links use muted text, a subtle hover surface and a periwinkle active wash.
+Workspace navigation is the left sidebar described under Layout; there is no
+top navigation bar. Navigation links use muted text, a subtle hover surface and
+a periwinkle active wash.
 Active links expose their current-page semantics. The mobile navigation drawer traps
 focus while open, closes with Escape, restores the toggle's focus on dismissal
 and makes underlying content inert. Internal page changes focus the new page
@@ -652,15 +668,22 @@ The Info icon license is retained at
 ## Approved Usage organization
 
 Preserve the original Usage screen's Night typography, source identities, cards
-and quiet surfaces. The user's current refinement replaces its tabs with one
-continuous page ordered **Agent sessions**, **Data sources**, then **Team**.
+and quiet surfaces. Usage is one continuous page ordered **Agent alignment**,
+**Data sources**, then **Team**, with no summary sentence above them.
 The source tiles show actual indexed document-type counts for each connection;
 import breakdowns and Imported/Indexed labels are omitted. Missing breakdowns are unavailable,
 never inferred from ingestion rows. Do not use progress or relative-size bars to
 compare different index corpora.
 
-Agent sessions groups captured sessions, messages, tool calls, machines, daily
-activity and available tool/harness/surface breakdowns. Do not relabel messages
+Agent alignment is a single row of four metric cards (tokens captured, which
+billing is based on; drift saves; OpenCrawl uses; answers agents used), each with
+a question-mark hover saying how it is counted, followed by the capture charts.
+The three alignment cards render only from a measured report and count things
+that happened; never claim token, turn or dollar savings, show AI spend, or
+compare with OpenCrawl's own price. Without a measured report the section is
+titled Agent sessions and shows sessions, messages, tokens captured or tool
+calls, and OpenCrawl calls. Both forms keep machines, daily activity and the
+available tool/harness/surface breakdowns. Do not relabel messages
 as turns without an independently measured turn count. Team is the per-person
 leaderboard and session/tool-call highlights, without a Most sources connected tile; workspace membership administration stays
 on the Team management route.
@@ -688,6 +711,13 @@ measurement in the authenticated scoped cache with its original update time,
 while healthy sections continue updating. A first-load failure belongs beside
 that measurement with a retry action; it must not hide healthy sections or show
 an invented zero. Access failures still clear all cached workspace data.
+Usage refreshes while visible at a one-minute cadence because the report includes
+live inventory and latency queries. Keep reads single-flight; abort
+hidden/unmounted reads and discard old-adapter completions.
+
+Metric cards align labels and values at the top regardless of description length.
+Report columns respond to the main pane width: below 900px, use two metric columns
+and one column for paired panels, preserving legibility beside the sidebar.
 
 ## Integrations
 
@@ -696,7 +726,9 @@ Every collapsed card occupies the same space. Show the catalog-selected key metr
 or the highest valid count when no key metric is available, with an N more caret
 button that expands the full list of stats. Keep real zero counts, per-stream
 completion, and measured progress. Use 8px solid status dots without glow and
-unframed provider icons. Search and state filters support a growing catalog.
+unframed provider icons. Keep account/scope details inside Manage, not beneath
+the card title. Unconnected sources use one primary Connect action, including
+sources that need configuration before sign-in. Search and state filters support a growing catalog.
 Shared dialogs retain setup, sign-in recovery, sync retries and confirmed deletion.
 
 The shared `oc-connector-*` patterns own the 226px collapsed cards and their
@@ -784,7 +816,8 @@ position. Manual scroll restoration is scoped to the mounted reader. Normal user
 scrolling can clip headers and messages. Direct permalinks focus their article.
 
 Retain BoardReader's staged bridge, overlapping-page validation and pagination
-safeguards. A normal chunk reads at most five pages; a detected reset discards
+safeguards: bridge new pages to the displayed newest post before merging them,
+and never merge a new head directly into stale paginated history. A normal chunk reads at most five pages; a detected reset discards
 cached/staged posts and permits one additional fresh-head recovery read. Preserve
 loaded older messages, focus and scroll anchors across updates; follow new messages
 when the reader is already at the latest edge. Load older messages uses the shared
@@ -804,17 +837,6 @@ Use natural punctuation, sentences, spacing, or separate lines. Do not replace
 separator dots with decorative badges. Genuine status indicators and user/source
 content remain intact. The shared architecture guard enforces this rule in core
 and hosted React source.
-
-The Usage report retains its top-level narrative above Agent sessions: imported
-records and source count, measured indexed documents, and median query time. Use
-`report-summary` with the original emphasized numeric spans. Never substitute zero
-for unavailable measurements, and retain the accepted section order and per-source
-indexed document types without reintroducing aggregate comparison bars.
-
-Source tiles show only actual indexed document-type counts, with source identity
-and sync metadata. Omit Imported/Indexed labels, import breakdowns and aggregate
-totals so each card presents one content breakdown.
-
 
 ## React document ownership
 
@@ -856,26 +878,3 @@ into a total. New or canceled queries, failures, adapter changes and unmounts
 clear prior result data. Late responses cannot replace the latest submitted query.
 Input edits remain separate from the displayed submitted query; Cancel restores
 focus to the query field. Keep the shared workspace shell and separate board route intact.
-
-Metric cards align labels and values at the top regardless of description length.
-Report columns respond to the main pane width: below 900px, use two metric columns
-and one column for paired panels, preserving legibility beside the sidebar.
-
-The account footer matches the supplied person/workspace reference. Its 64px
-row spans the sidebar below a full-width divider; a 32px circular personal avatar
-sits 16px from the edge. Person name uses 16px type above the 13px workspace name.
-Use the shared Avatar with initials during loading and after a missing or failed
-photo. The adjacent account name supplies its accessible identity. Image requests
-omit referrers; the hosted shell permits the WorkOS image CDN without widening
-the self-hosted policy.
-One trailing chevron opens the native account popover above the row. Keep the
-popover to Settings and runtime account actions such as Sign out; do not repeat
-email or role in a static summary. Keep the
-workspace name here instead of repeating it beneath Brand. Outside clicks and
-Escape close the account menu. Inside mobile navigation, the first Escape closes
-account details and the second closes the drawer. Workspace-only adapters show
-static footer context without an empty menu.
-
-The sidebar starts 16px from the top. Keep the wordmark optically aligned with
-the mark using its scoped 2px adjustment. Integrations uses the shared plug icon.
-The footer divider remains the only persistent horizontal rule in navigation.

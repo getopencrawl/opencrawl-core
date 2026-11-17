@@ -66,89 +66,15 @@ DTOs and runtime adapters; WorkOS, billing and managed connector code stay outsi
   no document reload on internal links, desktop/mobile keyboard navigation and
   the approved onboarding appearance.
 
-## Screen-by-screen visual restoration
+## Screen specifications
 
-The approved original Usage screen is the visual specification for the report,
-including its nested source cards. Preserve its character;
-TypeScript and shared components are implementation improvements, not permission
-to replace approved visuals. AppShell owns the shared left sidebar on every route and one responsive navigation
-tree. Usage is one page ordered Agent alignment, Data sources, Team, with no summary sentence above them. Agent alignment is a single row of four metric cards (tokens captured, which billing is based on; drift saves; OpenCrawl uses; answers agents used), each with a question-mark hover saying how it is counted, followed by the capture charts. The three alignment cards render only from a measured report and count things that happened; never claim token, turn or dollar savings, show AI spend, or compare with OpenCrawl's own price. Without a measured report the section is titled Agent sessions and shows sessions, messages, tokens captured or tool calls, and OpenCrawl calls. Show real
-indexed document-type counts inside each source tile without Imported/Indexed
-labels or import breakdowns; never compare distinct corpora with relative-size bars. Approved screens
-remain the visual baseline; changes to them require their own explicit scope.
-Do not repeat the source breakdown as a large indexed-document total or an
-"Imported N" summary. Keep the useful per-type counts and sync metadata.
-Usage refreshes while visible at a one-minute cadence because the report includes
-live inventory and latency queries. Keep reads single-flight and retain the
-existing report during routine updates. Abort hidden/unmounted reads and discard
-old-adapter completions. Only explicit server failures may retain stale data;
-access or unclassified failures clear it. Initial failures retain a retry action.
-
-Integrations uses an alphabetical, responsive grid of uniform connector cards.
-Every collapsed card occupies the same space. Show the catalog-selected key metric,
-or the highest valid count when no key metric is available, with an N more caret
-button that expands the full list of stats. Keep real zero counts, per-stream
-completion, and measured progress. Use 8px solid status dots without glow and
-unframed provider icons. Keep account/scope details inside Manage, not beneath
-the card title. Unconnected sources use one primary Connect action, including
-sources that need configuration before sign-in. Search and state filters support a growing catalog.
-Shared dialogs retain setup, sign-in recovery, sync retries and confirmed deletion.
-
-Team administration uses the existing management cards and member-list patterns.
-Place the admin Organization name section above the Members card, using the same
-management-panel padding. Preserve the roster card, avatars, native role controls,
-member count beside the heading and Pending badges. Keep names and emails
-together and invitation controls below the roster inside the Members card.
-Keep the roster and its row separators at the full card width. Mark the current member with plain “You” text beside their
-name, and use the shared Field with a visible Email address label for invitations.
-Member rows share 40px avatar, flexible identity, 8rem role and 2.75rem action
-columns; reserve the action column for read-only and Pending rows too. Align
-read-only role text with select text and the Pending badge with the role column.
-At management-container widths of 600px and below, every role and action moves
-below its identity. Use 12px row padding and a 4px identity-to-role gap while
-retaining 44px interactive targets. Organization-name and invitation forms share
-`oc-management-form` with an 8rem button column so their input and button
-boundaries align; both stack at container widths of 400px and below.
-The optional hosted workspace switcher
-remains in the Team footer. Hosted Billing retains its existing management cards.
-Team updates automatically; preserve form input and focus and pause background reads
-while hidden or mutating. Do not add a normal-state Refresh button.
-Team activity rankings remain on Usage, without a Most sources connected tile. Do not add unsupported
-member actions or treat displayed roles as authorization. Distinguish a sent
-invitation from a failed refresh, and discard team data on access revocation.
-
-Message board uses AppShell's navigation render slot: one quiet Back control with
-the shared arrow and visible label, All channels, then #channel links. Preserve Brand,
-account footer and mobile drawer; Back restores workspace navigation. All channels
-is the default combined ascending stream. Topic views filter it without forum
-panels, count strips, author rails, avatars or a composer. In the combined view
-only, place the channel link above the bold author/time line. Use shared
-agentIdentityClass and the 36 ten-degree identity tokens; no inline color styles.
-Full names remain visible and colors carry no status or authorization meaning.
-Each group has one visible header; each article retains its accessible identity.
-Only dates are sticky. Align the initial recent view to a complete group header;
-normal manual scrolling can clip content. Preserve full text, links and permalinks.
-Keep permalink IDs in text flow at every width so long first lines wrap around
-them. Do not restore channel/message counts in the board header or navigation.
-Channel summaries use a separate scoped reader; sidebar refresh must not scan older
-permalink history. Refresh automatically while visible, with one read at a time.
-Bridge new pages to the displayed newest post before merging them;
-never merge a new head directly into stale paginated history. Validate overlapping
-page boundaries. Limit each chunk to five reads, plus at most one fresh-head read
-after a detected reset discards cached/staged posts. Preserve loaded
-older pages, keyboard focus and the reader's position inside the list. At the
-latest edge, let new posts appear naturally. Abort hidden/stale reads and
-clear all cached/staged board data on access or unclassified failures.
-
-Search playground lives separately at /search and uses the actual SearchInspector
-and scoped adapter, with no introduction above its query form. The legacy
-/diagnostics?view=search URL redirects there. Search inspection uses source-specific
-rows and progressive raw-detail disclosures.
-Preserve actual text and coverage. Never label returned window length as a total,
-turn an unavailable source into empty success, infer source URLs from IDs, or
-render highlighted/source text as HTML. Superseded/canceled requests and changed
-adapters cannot retain or restore earlier results. Keep search-only styles in the
-shared design system and preserve the existing public diagnostic exports.
+../DESIGN.md owns the per-screen specification for Usage, Integrations, Team,
+Message board and Search playground: layout, copy rules, refresh and failure
+behavior. Follow it rather than restating it here. Approved screens remain the
+visual baseline; TypeScript and shared components are implementation
+improvements, not permission to replace approved visuals, and changing a screen
+requires its own explicit scope. Keep search-only styles in the shared design
+system and preserve the existing public diagnostic exports.
 
 Sessions and Memories are core-owned pages driven by one LibraryAdapter and the
 core library API (see ../docs/sessions-and-memories.md). The server owns scope,
