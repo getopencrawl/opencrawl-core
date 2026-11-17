@@ -1,14 +1,13 @@
 import type {SourceCard} from './types.mjs';
 
 export const sourceBusy = (source: SourceCard): boolean => ['connecting', 'syncing'].includes(source.state);
-export const sourceDeletable = (source: SourceCard): boolean => ['syncing', 'synced', 'connected', 'error'].includes(source.state) && source.recoveryAction !== 'connect' && source.recoveryAction !== 'disconnect';
+export const sourceDeletable = (source: SourceCard): boolean => ['syncing', 'synced', 'connected', 'error'].includes(source.state) && source.recoveryAction !== 'connect';
 
 export function disconnectDescription(source: SourceCard): string {
   return `OpenCrawl will stop syncing ${source.name}${source.scope === 'team' ? ' for your whole team' : ''} and permanently delete everything imported from it. This can’t be undone.`;
 }
 
 export function sourceStatus(source: SourceCard): {label: string; tone: 'neutral' | 'success' | 'warning' | 'danger'} {
-  if (source.recoveryAction === 'disconnect') return {label:'Removing',tone:'neutral'};
   if (source.statusUnavailable) return {label:'Status unavailable',tone:'warning'};
   switch (source.state) {
     case 'synced': case 'connected': return {label: 'Connected', tone: 'success'};
@@ -33,7 +32,7 @@ export function sourceProgress(source: SourceCard): string {
   if (source.state === 'syncing' && source.initial !== false && source.total) return `${Math.min(count, source.total).toLocaleString()} of ${source.total.toLocaleString()} ${units[1]} imported${source.eta && source.eta > 0 ? `. ${remaining(source.eta)}` : ''}`;
   if (source.state === 'syncing') return count ? `${countText} imported so far` : 'Preparing your import…';
   if (source.state === 'connecting') return 'Finish signing in using the window that opened.';
-  if (source.state === 'error') return source.message || (source.recoveryAction === 'disconnect' ? 'Disconnected from search. Data cleanup is continuing in the background.' : 'This source needs attention. Try syncing again.');
+  if (source.state === 'error') return source.message || (source.recoveryAction === 'disconnect' ? 'Removal did not finish. Retry to finish deleting imported data.' : 'This source needs attention. Try syncing again.');
   if (source.state === 'unavailable') return 'Connection status is temporarily unavailable. We’ll check again automatically.';
   return countText;
 }

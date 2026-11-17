@@ -19,3 +19,34 @@ for(const width of [1280,390])test(`members read the board and search through th
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('heading',{name:'Invite your teammates'})).toHaveCount(0);
 });
+
+for(const width of [1280,390])test(`members never load Integrations, including after role loss at ${width}px`,async({page})=>{
+  await page.setViewportSize({width,height:900});
+  let role='member',reads=0;
+  await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{cacheScope:role,workspace:{name:'Workspace',userName:'Member',role},mcpUrl:'https://app.example/mcp',setupPrompt:'Setup',canInvite:role==='admin',onboarding:{completed:true,next:'/'}}}));
+  await page.route('**/api/console/sources',route=>{reads++;return route.fulfill({json:{items:[]}});});
+  for(const path of ['/sources','/integrations','/data','/onboarding/sources']){
+    await page.goto(path+'?full-app');
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole('heading',{name:'Integrations',exact:true})).toHaveCount(0);
+  }
+  expect(reads).toBe(0);
+  role='admin';await page.goto('/sources?full-app');
+  await expect(page.getByText('No integrations available')).toBeVisible();
+  expect(reads).toBe(1);
+  role='member';await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByText('No integrations available')).toHaveCount(0);
+  expect(reads).toBe(1);
+});
+
+test('members finish agent onboarding without fetching or showing admin steps',async({page})=>{
+  let completed=false,finishes=0,restrictedReads=0;
+  await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{cacheScope:'member-onboarding',workspace:{name:'Workspace',role:'member'},mcpUrl:'https://app.example/mcp',setupPrompt:'Setup',canInvite:false,onboarding:{completed,next:completed?'/':'/onboarding/sources'}}}));
+  await page.route('**/api/onboarding/finish',route=>{completed=true;finishes++;return route.fulfill({json:{workspaceUrl:'/'}});});
+  await page.route(/\/api\/onboarding\/(sources|invites)$/,route=>{restrictedReads++;return route.fulfill({json:{items:[]}});});
+  await page.goto('/onboarding/sources?full-app');
+  await expect(page).toHaveURL(/\/$/);
+  expect(finishes).toBe(1);expect(restrictedReads).toBe(0);
+  await expect(page.getByRole('heading',{name:/Connect your sources|Invite your teammates/})).toHaveCount(0);
+});
