@@ -20,7 +20,7 @@ import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 async function fixture(t,extra={}){
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-source-catalog-'));
   const database=await applicationDatabaseFixture(t),state=await createApplicationState({database});
-  const services=selfhostServices({organizationId:'org_team',url:'https://self.example',registryPath:join(dir,'registry.sqlite'),search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},Object.assign(createLocalSessionStore(join(dir,'objects')),{bucket:'owned'}),
+  const services=selfhostServices({organizationId:'org_team',url:'https://self.example',search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},Object.assign(createLocalSessionStore(join(dir,'objects')),{bucket:'owned'}),
     {AIRBYTE_WORKSPACE_ID:'00000000-0000-0000-0000-000000000001',AIRBYTE_URL:'http://127.0.0.1:1',AIRBYTE_CLIENT_ID:'test',AIRBYTE_CLIENT_SECRET:'test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test',OPENCRAWL_CONNECTOR_KEY:Buffer.alloc(32,7).toString('base64'),...extra},database,state);
   await services.ready();
   t.after(async()=>{services.close();await rm(dir,{recursive:true,force:true});});return services;
@@ -257,7 +257,7 @@ async function installation(t,env={}){
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-connector-settings-'));
   const database=await applicationDatabaseFixture(t),state=await createApplicationState({database});
   const store=Object.assign(createLocalSessionStore(join(dir,'objects')),{bucket:'owned'});
-  const open=()=>{const services=selfhostServices({organizationId:'org_team',url:'https://self.example',registryPath:join(dir,'registry.sqlite'),search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},store,
+  const open=()=>{const services=selfhostServices({organizationId:'org_team',url:'https://self.example',search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},store,
     {AIRBYTE_WORKSPACE_ID:'00000000-0000-0000-0000-000000000001',AIRBYTE_URL:'http://127.0.0.1:1',AIRBYTE_CLIENT_ID:'test',AIRBYTE_CLIENT_SECRET:'test',OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:'test',OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:'test',OPENCRAWL_CONNECTOR_KEY:Buffer.alloc(32,7).toString('base64'),...env},database,state);
     t.after(()=>services.close());return services;};
   t.after(()=>rm(dir,{recursive:true,force:true}));
