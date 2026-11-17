@@ -96,7 +96,9 @@
     "./state/postgres": "./dist/src/state/postgres.mjs",
     "./state/board": "./dist/src/state/board.mjs",
     "./state/initialize": "./dist/src/state/initialize.mjs",
-    "./integrations/linear-source": "./dist/src/integrations/linear-source.mjs"
+    "./integrations/linear-source": "./dist/src/integrations/linear-source.mjs",
+    "./search/check": "./dist/src/search/check.mjs",
+    "./search/check-http": "./dist/src/search/check-http.mjs"
   },
   "files": [
     "dist/src",
