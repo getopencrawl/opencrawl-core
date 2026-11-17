@@ -139,8 +139,7 @@ older backup or roll back to a pre-fence writer after deletion. See the
 
 Every runtime calls the same validated core operations
 (`createLibraryApi` in `src/sessions/library-http.mts`) with a trusted principal.
-The self-host MCP runtime serves them as `POST /api/library/<operation>`; the
-self-host console proxies them as `/api/reference/library/<operation>`.
+The self-host MCP runtime serves them as `POST /api/library/<operation>`.
 
 | Operation | Input |
 | --- | --- |
