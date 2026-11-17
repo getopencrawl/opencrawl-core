@@ -2,11 +2,7 @@
 
 Capture coding-agent sessions and search workspace knowledge.
 
-Optional [automatic prompt context](https://github.com/getopencrawl/opencrawl-core/blob/main/cli/docs/context-checks.md)
-checks each admitted human prompt and delivers up to five historical snippets.
-Enable it separately with `opencrawl context-check enable --harness codex`
-(or `claude-code`, `cursor`, `antigravity`, `devin`). It uses the selected
-deployment's credit policy and is disabled by default.
+See [optional prompt context](https://github.com/getopencrawl/opencrawl-core/blob/main/cli/docs/context-checks.md).
 
 ## Install
 
