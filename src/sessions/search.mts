@@ -14,6 +14,8 @@ import type {ResourceControl} from './controls.mjs';
 import {applySessionControl} from './library.mjs';
 import {searchFilters,searchSort} from '../search/controls.mjs';
 import {sessionOverlap} from './overlap.mjs';
+import {sessionContext} from './context.mjs';
+import type {SessionContextInput} from '../search/types.mjs';
 
 import {sessionIndexMapping} from '../search/mapping.mjs';
 export {sessionIndexMapping};
@@ -74,6 +76,7 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       await collection.bulk(principal,prepared);
     },
     search,
+    context: (principal: Principal, anchor: Passage, input: SessionContextInput) => sessionContext(resolve(principal).collection('session'), controls, principal, anchor, input),
     async overlap(principal: Principal, window?: {days?: number; now?: number}) {
       sessionScope(principal);
       if (principal.captureAccess !== undefined) fail(403, 'Session read access required');

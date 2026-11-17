@@ -81,4 +81,9 @@ export interface CurrentSession {harness: SessionHarness; sessionId: string}
 export interface SearchInput {query?: string; limit?: number; raw?: boolean; match?: string; sessionId?: string; id?: string; filters?: SearchFilters; order?: SearchOrder; currentSession?: CurrentSession; includeCurrentSession?: boolean; includeToolOutputs?: boolean}
 export interface Passage extends SearchDocument {id: string; score?: number}
 export interface SearchResult {hits: Passage[]; total?: number; truncated?: boolean}
-export interface SearchAdapter {search(principal: Principal, input: SearchInput & {raw?: false}): Promise<SearchResult>}
+export interface SessionContextInput {before: number; after: number; includeToolOutputs: boolean}
+export interface SessionContextResult {before: Passage[]; after: Passage[]; moreBefore: boolean; moreAfter: boolean}
+export interface SearchAdapter {
+  search(principal: Principal, input: SearchInput & {raw?: false}): Promise<SearchResult>;
+  context?(principal: Principal, anchor: Passage, input: SessionContextInput): Promise<SessionContextResult>;
+}

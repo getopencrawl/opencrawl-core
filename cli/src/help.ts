@@ -115,6 +115,20 @@ memories: or connectors:. Independent references run concurrently (default 8).
   --content-version HASH            Detect changed content when paging
   --concurrency 1..8                Bound concurrent requests
 
+Session event context (requires server support):
+  --context                       Include 3 events before and 3 after the result
+  --before 0..10 --after 0..10      Event counts, not character offsets; imply --context
+  --include-tool-outputs           Include tool/command outputs in neighbors
+
+  opencrawl fetch sessions:RESULT_ID --context --json
+  opencrawl fetch sessions:RESULT_ID --before 2 --after 5
+
+The selected passage remains the anchor, even when it is a tool result or a later
+chunk of a long event. Neighbors contain at most 2000 characters from each event's
+first passage. data.context.before and .after are chronological; moreBefore and
+moreAfter indicate additional matching events. Fetch a neighbor's ID to read more
+or center a new window. These are live reads, not a frozen transcript snapshot.
+
 Single-reference JSON is {"schemaVersion":1,"data":{"id":"...","text":"...",
 "offset":0,"totalChars":123,"nextOffset":null,"version":"..."}}.
 Follow nextOffset with the same version; nextId/previousId identify adjacent

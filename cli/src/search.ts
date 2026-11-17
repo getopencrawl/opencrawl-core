@@ -19,6 +19,9 @@ async function workspaceRequest(api: string, operation: 'search' | 'fetch', inpu
     ? Array.isArray(data?.results) && Array.isArray(data?.coverage) && typeof data.partial === 'boolean'
     : data?.id === input.id && typeof data?.text === 'string' && typeof data?.version === 'string' && Number.isInteger(data?.offset) && Number.isInteger(data?.totalChars) && (data?.nextOffset === null || Number.isInteger(data?.nextOffset));
   if (result.body.schemaVersion !== 1 || !valid) throw new CliError('INVALID_RESPONSE', 'The service returned an invalid search response.');
+  if (operation === 'fetch' && (input.context || input.before !== undefined || input.after !== undefined) &&
+      (!data.context || !Array.isArray(data.context.before) || !Array.isArray(data.context.after)))
+    throw new CliError('CONTEXT_UNAVAILABLE', 'This server did not return event context. Upgrade the server or fetch the passage without --context.');
   return data;
 }
 export const searchWorkspace = (api: string, input: Record<string, unknown>, fetcher = fetch) => workspaceRequest(api, 'search', input, fetcher);
@@ -65,10 +68,24 @@ export function searchInput(query: string | undefined, values: Record<string, un
 export function fetchInput(id: string | undefined, values: Record<string, unknown>) {
   const offset = Number(values.offset ?? 0), length = Number(values.length ?? 6000), version = values['content-version'];
   if (!id || !/^(sessions|connectors|memories):[A-Za-z0-9_:-]{1,256}$/.test(id) || !Number.isInteger(offset) || offset < 0 || offset > 10_000_000 || !Number.isInteger(length) || length < 1 || length > 16000 || (version !== undefined && (typeof version !== 'string' || !/^[a-f0-9]{64}$/.test(version)))) throw new CliError('INVALID_USAGE', 'Use fetch ID [--offset N] [--length 1..16000] [--content-version VERSION].', 64);
-  return {id, offset, length, ...(version ? {version} : {})};
+  const context = values.context === true || values.before !== undefined || values.after !== undefined;
+  if (context && (!id.startsWith('sessions:') || values.context === false) || !context && values['include-tool-outputs'] !== undefined)
+    throw new CliError('INVALID_USAGE', 'Event context requires a sessions: result ID and --context, --before or --after.', 64);
+  const before = Number(values.before ?? 3), after = Number(values.after ?? 3);
+  if (context && ![before, after].every(n => Number.isInteger(n) && n >= 0 && n <= 10))
+    throw new CliError('INVALID_USAGE', 'Use --before 0..10 and --after 0..10 for neighboring events.', 64);
+  return {id, offset, length, ...(version ? {version} : {}), ...(context ? {context: true, before, after, includeToolOutputs: values['include-tool-outputs'] === true} : {})};
 }
 
 export function formatFetch(data: any): string {
+  if (data.context) {
+    const event = (item: any) => [`[${item.id}] ${item.provenance.role || item.provenance.kind}${item.provenance.timestamp ? ' at ' + item.provenance.timestamp : ''}`,
+      item.text, !item.eventTextComplete ? `Event excerpt. Read more: opencrawl fetch ${item.id}` : ''].filter(Boolean).join('\n');
+    return [`Event context: tool outputs ${data.context.toolOutputsIncluded ? 'included' : 'excluded from neighbors'}. Selected passage is always included.`,
+      data.context.warning, ...data.context.before.map(event), 'Selected passage:', formatFetch({...data, context: undefined}), ...data.context.after.map(event),
+      data.context.moreBefore ? 'Earlier events are available; center --context on an earlier event ID.' : 'Start of matching session events.',
+      data.context.moreAfter ? 'Later events are available; center --context on a later event ID.' : 'End of matching session events.'].filter(Boolean).join('\n\n');
+  }
   return [`[${data.id}] ${data.title}`, JSON.stringify(data.provenance), data.url, data.text,
     `Characters ${data.offset}–${data.offset + data.text.length} of ${data.totalChars}.`,
     data.nextOffset !== null ? `Continue: opencrawl fetch ${data.id} --offset ${data.nextOffset} --content-version ${data.version}` : 'End of indexed passage.',

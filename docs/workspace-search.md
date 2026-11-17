@@ -1,5 +1,38 @@
 # Unified workspace search
 
+## Read around a session event
+
+Use the existing search result ID as the anchor:
+
+```sh
+opencrawl fetch sessions:RESULT_ID --context --json
+opencrawl fetch sessions:RESULT_ID --before 2 --after 5
+opencrawl fetch sessions:RESULT_ID --context --include-tool-outputs
+```
+
+HTTP and MCP `fetch` accept the same `context`, `before`, `after` and
+`includeToolOutputs` fields. `context: true` defaults to three events on each
+side; either count implies context and accepts 0–10. Only session passage IDs
+support event context. Ordinary passage fetches are unchanged.
+
+The response keeps the selected passage in `text`, with its normal offsets and
+version. `context.before` and `context.after` contain neighboring events in
+chronological order, one first-passage excerpt per event, capped at 2000 UTF-16
+units. `eventTextComplete` reports whether that excerpt covers the whole event;
+fetch its `id` to expand it or center another window. The selected passage can
+be any chunk of its event and is never replaced by its first chunk.
+`moreBefore` and `moreAfter` report additional matching events. Metadata-only
+events are omitted. Neighbor tool-output filtering follows search, including
+the explicit warning for older unclassified events. The requested anchor is
+read regardless of that preference.
+
+Context is a bounded live read, not a snapshot or a guarantee that every source
+event has been indexed. Native timestamps, sequence and event ID determine
+order; missing timestamps sort first. All rows stay within the anchor's tenant,
+owner, harness and session, with authoritative visibility/deletion checks before
+retrieval and again before release. No schema migration or capture change is
+required. Sharing continues to use the existing web session view.
+
 The core-owned `createWorkspaceSearch` operation powers MCP `search` / `fetch`
 and `POST /api/search` / `POST /api/search/fetch`. CLI commands are
 `opencrawl search "words" --json` and `opencrawl fetch <result-id> --json`.

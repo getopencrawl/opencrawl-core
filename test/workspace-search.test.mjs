@@ -36,7 +36,8 @@ test('unified ranks, scoped live pages, cursor binding/expiry, validation, and e
 });
 
 test('real MCP and HTTP expose the same operation and reject forged scope, origin and capture credentials', async t => {
-  const search=createWorkspaceSearch({sessions:{search:async()=>({total:1,hits:[hit('s')]})}});
+  const search=createWorkspaceSearch({sessions:{search:async()=>({total:1,hits:[hit('s')]}),
+    context:async(_principal,_anchor,input)=>{assert.deepEqual(input,{before:2,after:4,includeToolOutputs:false});return {before:[],after:[],moreBefore:false,moreAfter:false};}}});
   // Port 0 is used to reserve the listener, then origin is fixed before requests.
   const {createServer}=await import('node:http');const probe=createServer();await new Promise(r=>probe.listen(0,'127.0.0.1',r));const port=probe.address().port;await new Promise(r=>probe.close(r));
   const origin=`http://127.0.0.1:${port}`, token='local-search-token-'.repeat(3);
@@ -64,6 +65,10 @@ test('real MCP and HTTP expose the same operation and reject forged scope, origi
   const fetched=await (await fetch(origin+'/api/search/fetch',{method:'POST',headers,body:JSON.stringify(input)})).json();
   assert.equal(fetched.data.text,'evi');assert.equal(fetched.data.nextOffset,3);
   assert.deepEqual((await client.callTool({name:'fetch',arguments:input})).structuredContent,fetched.data);
+  const contextInput={...input,context:true,before:2,after:4};
+  const contextHttp=await (await fetch(origin+'/api/search/fetch',{method:'POST',headers,body:JSON.stringify(contextInput)})).json();
+  assert.deepEqual((await client.callTool({name:'fetch',arguments:contextInput})).structuredContent,contextHttp.data);
+  assert.deepEqual(contextHttp.data.context.before,[]);assert.equal(contextHttp.data.context.moreAfter,false);
   assert.equal((await fetch(origin+'/api/search/fetch',{method:'POST',body:JSON.stringify(input)})).status,401);
   assert.equal((await fetch(origin+'/api/search/fetch',{method:'POST',headers:{...headers,origin:'https://evil.test'},body:JSON.stringify(input)})).status,403);
 });

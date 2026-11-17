@@ -23,6 +23,26 @@ test('fetch command validates paging and uses the authenticated fetch endpoint',
     for(const status of [404,409]) await expect(fetchWorkspace('http://127.0.0.1:8093',{id:'sessions:abc'},(async()=>Response.json({}, {status})) as unknown as typeof fetch)).rejects.toThrow();
   } finally {if(saved===undefined)delete process.env.OPENCRAWL_TOKEN;else process.env.OPENCRAWL_TOKEN=saved;}
 });
+test('event context options count events, render chronologically and reject silently ignored server support', async () => {
+  expect(fetchInput('sessions:abc', {context:true})).toMatchObject({context:true,before:3,after:3,includeToolOutputs:false});
+  expect(fetchInput('sessions:abc', {before:'0',after:'5','include-tool-outputs':true})).toMatchObject({context:true,before:0,after:5,includeToolOutputs:true});
+  for(const [id,options] of [['connectors:x',{context:true}],['sessions:x',{before:'yesterday'}],['sessions:x',{after:'11'}],['sessions:x',{'include-tool-outputs':true}] ] as const)
+    expect(()=>fetchInput(id,options)).toThrow();
+  const saved=process.env.OPENCRAWL_TOKEN;process.env.OPENCRAWL_API_URL='http://127.0.0.1:8093';process.env.OPENCRAWL_TOKEN='local-only-secret';
+  try {
+    const data={id:'sessions:abc',title:'Session',text:'selected anchor',provenance:{sessionId:'s'},offset:0,totalChars:15,nextOffset:null,version:'a'.repeat(64)};
+    const input=fetchInput(data.id,{context:true});
+    const legacy=(async()=>Response.json({schemaVersion:1,data})) as unknown as typeof fetch;
+    await expect(fetchWorkspace('http://127.0.0.1:8093',input,legacy)).rejects.toThrow('did not return event context');
+    const result={...data,context:{before:[{id:'sessions:earlier',text:'earlier question',provenance:{role:'user'},eventTextComplete:true}],after:[{id:'sessions:later',text:'later outcome',provenance:{role:'assistant'},eventTextComplete:false}],moreBefore:false,moreAfter:true,toolOutputsIncluded:false}};
+    const current=(async(_url:any,init:any)=>{expect(JSON.parse(init.body)).toEqual(input);return Response.json({schemaVersion:1,data:result});}) as typeof fetch;
+    expect(await fetchWorkspace('http://127.0.0.1:8093',input,current)).toEqual(result);
+    const text=formatFetch(result);
+    expect(text.indexOf('earlier question')).toBeLessThan(text.indexOf('selected anchor'));
+    expect(text.indexOf('selected anchor')).toBeLessThan(text.indexOf('later outcome'));
+    expect(text).toContain('opencrawl fetch sessions:later');
+  } finally {if(saved===undefined)delete process.env.OPENCRAWL_TOKEN;else process.env.OPENCRAWL_TOKEN=saved;}
+});
 test('self-host query returns versioned evidence, reports incomplete coverage and sanitizes failures', async () => {
   const saved=process.env.OPENCRAWL_TOKEN;process.env.OPENCRAWL_API_URL='http://127.0.0.1:8093';process.env.OPENCRAWL_TOKEN='local-only-secret';
   try {

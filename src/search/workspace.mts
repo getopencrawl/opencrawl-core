@@ -39,7 +39,13 @@ export const workspaceFetchSchema = z.strictObject({
   offset: z.number().int().min(0).max(10_000_000).default(0),
   length: z.number().int().min(1).max(16000).default(6000),
   version: z.string().regex(/^[a-f0-9]{64}$/).optional().describe('Repeat the returned version when paging, to detect content changes.'),
-});
+  context: z.boolean().optional().describe('For a sessions: result, include nearby events around its event. Defaults to 3 before and 3 after, with up to 2000 characters from each neighboring event. The selected passage stays the anchor.'),
+  before: z.number().int().min(0).max(10).optional().describe('Number of preceding events. Implies context=true.'),
+  after: z.number().int().min(0).max(10).optional().describe('Number of following events. Implies context=true.'),
+  includeToolOutputs: z.boolean().optional().describe('Include tool/command outputs in neighboring events; false by default. The explicitly selected anchor is always readable.'),
+}).refine(v => v.context !== false || v.before === undefined && v.after === undefined, 'before/after require context')
+  .refine(v => !(v.context || v.before !== undefined || v.after !== undefined) || v.id.startsWith('sessions:'), 'Event context requires a sessions: passage ID')
+  .refine(v => v.includeToolOutputs === undefined || v.context || v.before !== undefined || v.after !== undefined, 'includeToolOutputs requires event context');
 function fail(status: number, message: string): never {throw Object.assign(new Error(message), {status});}
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const WINDOW = 100, TTL = 5 * 60_000;
@@ -119,7 +125,7 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       sessionScope(principal);
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot read workspace data.');
       const parsed = workspaceFetchSchema.safeParse(input);
-      if (!parsed.success) fail(400, 'Invalid fetch request. Use id, offset, length and version only.');
+      if (!parsed.success) fail(400, 'Invalid fetch request. Use id, offset, length, version; session event context accepts context, before/after 0..10 and includeToolOutputs.');
       const {id, offset, length, version} = parsed.data, separator = id.indexOf(':');
       const source = id.slice(0, separator), documentId = id.slice(separator + 1);
       const adapter = source === 'sessions' ? sessions : source==='memories'?memories:connectors;
@@ -144,7 +150,29 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
           if(checked.hits.some(d=>d.id===neighbor&&d.tenantId===principal.tenantId&&d.userId===document.userId))neighbors[label]=source+':'+neighbor;
         }
       }
-      return {...hit, text: hit.text.slice(offset, end), offset, totalChars: hit.text.length, nextOffset: end < hit.text.length ? end : null, version: currentVersion,...neighbors};
+      const wantsContext = parsed.data.context || parsed.data.before !== undefined || parsed.data.after !== undefined;
+      let context;
+      if (wantsContext) {
+        if (!adapter.context) fail(503, 'Session event context is not configured.');
+        const input = {before: parsed.data.before ?? 3, after: parsed.data.after ?? 3, includeToolOutputs: parsed.data.includeToolOutputs ?? false};
+        const window = await adapter.context(principal, document, input);
+        const render = (items: typeof window.before) => items.map(item => {
+          if (item.tenantId !== principal.tenantId || item.userId !== document.userId || item.harness !== document.harness || item.sessionId !== document.sessionId)
+            throw new Error('Invalid workspace context scope');
+          const event = workspaceHit('sessions', item), limit = Math.min(2000, event.text.length);
+          // Do not split a UTF-16 surrogate pair at the bounded excerpt edge.
+          const end = limit && /[\uD800-\uDBFF]/.test(event.text[limit - 1]!) ? limit - 1 : limit;
+          return {...event, text: event.text.slice(0, end), offset: 0, totalChars: event.text.length,
+            nextOffset: end < event.text.length ? end : null, version: hash(event),
+            eventTextComplete: item.chunkCount === 1 && end === event.text.length};
+        });
+        const unclassifiedEvents = [...window.before, ...window.after].filter(item => typeof item.containsToolOutput !== 'boolean').length;
+        context = {before: render(window.before), after: render(window.after), moreBefore: window.moreBefore, moreAfter: window.moreAfter,
+          toolOutputsIncluded: input.includeToolOutputs, unclassifiedEvents,
+          ...(unclassifiedEvents && !input.includeToolOutputs ? {warning: 'Some neighboring events predate tool-output classification and may contain embedded tool output.'} : {}),
+          pagination: 'live', maxCharsPerEvent: 2000};
+      }
+      return {...hit, text: hit.text.slice(offset, end), offset, totalChars: hit.text.length, nextOffset: end < hit.text.length ? end : null, version: currentVersion,...neighbors,...(context ? {context} : {})};
     },
   };
 }
