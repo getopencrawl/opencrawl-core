@@ -157,7 +157,7 @@ See the [OpenSearch memory guidance](https://docs.opensearch.org/latest/install-
 Apply a changed heap during a planned service restart with `./deploy/up.sh` using
 the installation's existing Airbyte mode. Then check `docker stats` and
 `docker compose --env-file deploy/.env -f deploy/compose.yaml logs --tail 100 opensearch`.
-Heap tuning does not replace enough disk space for the index and upgrade backups.
+Heap tuning does not replace enough disk space for the index and backups.
 
 ### Existing infrastructure
 

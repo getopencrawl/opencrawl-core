@@ -25,7 +25,7 @@ async function fixture(t,options={}){
   const {database,state:boardState}=await boardStateFixture(t);
   const identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),database,organizationId:org});
   await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
-  const settings={replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),identityPath:join(dir,'identity.sqlite'),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
+  const settings={replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
   app=selfhostApplication({settings,store,boardState,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
   const jars=new Map();
   const request=async(path,who=null,options={})=>{

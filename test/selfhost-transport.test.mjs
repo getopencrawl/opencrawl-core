@@ -36,7 +36,7 @@ test('the self-host entrypoint outlives proxy idle timeouts without widening req
   child=spawn(process.execPath,['--input-type=module','--eval',code],{
     env:{TEMPORAL_ADDRESS:'127.0.0.1:7233',TEMPORAL_NAMESPACE:'test',OPENCRAWL_APP_STATE_NAMESPACE:database.namespace,OPENCRAWL_DATABASE_URL:process.env.OPENCRAWL_TEST_POSTGRES_URL,PATH:process.env.PATH,HOST:'127.0.0.1',PORT:'0',OPENCRAWL_URL:'http://localhost:8092',
       OPENCRAWL_ORGANIZATION_ID:'org_transporttest',OPENCRAWL_AUTH_SECRET:secret,
-      OPENCRAWL_SETUP_TOKEN:randomBytes(32).toString('hex'),OPENCRAWL_IDENTITY_PATH:join(dir,'identity.sqlite'),
+      OPENCRAWL_SETUP_TOKEN:randomBytes(32).toString('hex'),
       OPENCRAWL_REGISTRY_PATH:join(dir,'registry.sqlite'),OPENCRAWL_AIRBYTE_ENABLED:'false',
       OPENCRAWL_OPENSEARCH_URL:'http://127.0.0.1:1',OPENCRAWL_LANDING_S3_BUCKET:'transport-test',
       OPENCRAWL_LANDING_S3_ENDPOINT:'http://127.0.0.1:'+storage.address().port,

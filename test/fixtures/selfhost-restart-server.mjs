@@ -17,7 +17,7 @@ const server=createServer((req,res)=>app(req,res));
 await new Promise(resolve=>server.listen(config.port||0,'127.0.0.1',resolve));
 const origin='http://localhost:'+server.address().port;
 const settings={organizationId:'org_restarttest',url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',
-  authSecret:config.secret,identityPath:join(config.dir,'identity.sqlite'),setupToken:config.setup,
+  authSecret:config.secret,setupToken:config.setup,
   search:{endpoint:pathToFileURL(join(config.dir,'search.sqlite')).href.replace('file:','sqlite:'),environment:'selfhost',tenantId:'org_restarttest'}};
 const database=createApplicationDatabase({connectionString:process.env.OPENCRAWL_TEST_POSTGRES_URL,namespace:config.namespace});
 const board=createPostgresBoardState(database);await board.ready();

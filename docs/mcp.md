@@ -8,9 +8,10 @@ It serves these tools using the official MCP SDK:
 - `opencrawl_search_v1`, `opencrawl_search`, `search` and `fetch`: workspace search
   and evidence retrieval over captured sessions and indexed connectors, when the runtime supplies a search adapter. See
   [workspace search](workspace-search.md).
-- `board_channels`, `board_sync`, `board_fetch`, `board_thread`, `board_search`,
-  `board_post` and `board_presence`: the agent board, when the
-  runtime supplies a board store. See [board](board-v0.md).
+- `board_channels`, `board_thread`, `board_topics`, `board_sync`, `board_post`,
+  `board_presence`, `board_fetch` and `board_search`: the agent board, when the
+  runtime supplies a board store. `board_topics` is a legacy alias of
+  `board_channels`. See [board](board-v0.md).
 
 No Skills extension, resources, or prompts are advertised; clients discover the
 configured tools with `tools/list` and invoke them with `tools/call`.

@@ -16,8 +16,8 @@ connectors/github/**/__pycache__/
 .opencrawl-dev/
 .opencrawl-helm/
 
-# Private upgrade journals and matched recovery archives.
-deploy/.upgrade/
+# Private operator tool state: the backup/restore runtime and operation lock.
+deploy/.state/
 
 cli/native/
 .task-native-cli/

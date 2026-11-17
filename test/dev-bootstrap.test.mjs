@@ -83,9 +83,9 @@ test('native host downloads, verifies and executes its real pinned runtime',{
   assert.deepEqual(result,{platform:process.platform,arch:process.arch,version:'v24.22.2',args:['demo','--no-airbyte']});
 });
 
-test('operator upgrade bootstrap provides its verified runtime without creating a development installation',t=>{
+test('operator tool bootstrap provides its verified runtime without creating a development installation',t=>{
  const f=fixture(t,{docker:false});const r=f.run(['--node-runtime']);assert.equal(r.status,0,r.stderr);
- assert.equal(r.stdout.trim(),realpathSync(join(f.dir,'deploy/.upgrade/bin/node')));
+ assert.equal(r.stdout.trim(),realpathSync(join(f.dir,'deploy/.state/bin/node')));
  assert.equal(existsSync(join(f.dir,'.opencrawl-dev')),false);
  assert.doesNotMatch(r.stdout,/INSTALLER/);
 });

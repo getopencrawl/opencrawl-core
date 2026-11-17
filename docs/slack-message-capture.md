@@ -8,10 +8,11 @@ channels, exhausts history cursors with no `oldest` filter, and exhausts replies
 for every returned parent with replies. Old parents remain eligible for recent
 replies. Private channels and DMs are outside this contract.
 
-Use `createSlackMessageCapture` from `@getopencrawl/opencrawl-core/connectors/slack-source-messages`
-with an explicit validated binding, scoped object store, and a workspace-verified
-read adapter. The customer-operated HTTP adapter verifies `auth.test`. The
-standalone runner accepts the same config as [file capture](slack-file-capture.md):
+Capture runs through the standalone runner or the `captureSlackMessagesV1`
+workflow; the capture module is not a package export. Both use an explicit
+validated binding, scoped object store, and a workspace-verified read adapter.
+The customer-operated HTTP adapter verifies `auth.test`. The standalone runner
+accepts the same config as [file capture](slack-file-capture.md):
 
 ```sh
 node dist/src/connectors/slack-source-standalone.mjs config.json stable-run-id messages
@@ -76,7 +77,7 @@ and scope checks, or derive the same identities from retained `channels` and
 catalog remembers observations; it does not grant access.
 
 ```js
-import {seedSlackSourceCatalog} from '@getopencrawl/opencrawl-core/connectors/slack-source-messages';
+import {seedSlackSourceCatalog} from '@getopencrawl/opencrawl-core/connectors/slack-source';
 
 await seedSlackSourceCatalog({
   binding, store,
@@ -104,9 +105,7 @@ for an upgrade audit without checking the index or retained raw records.
 
 ## Refresh known messages
 
-A finite set of known messages can be refreshed with
-`createSlackMessageReferenceCapture` from
-`@getopencrawl/opencrawl-core/connectors/slack-source-message-references`, or the
+A finite set of known messages can be refreshed with the
 `captureSlackMessageReferencesV1` workflow on the existing source worker.
 The standalone runner supports `references` mode with config:
 

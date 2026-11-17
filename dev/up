@@ -84,7 +84,7 @@ fi
 docker compose version >/dev/null || { echo 'Install the Docker Compose v2 plugin, then retry.' >&2; exit 1; }
 fi
 STATE="$ROOT/.opencrawl-dev"
-if [[ "$NODE_ONLY" == true && ! -x "$STATE/bin/node" ]]; then STATE="$ROOT/deploy/.upgrade"; fi
+if [[ "$NODE_ONLY" == true && ! -x "$STATE/bin/node" ]]; then STATE="$ROOT/deploy/.state"; fi
 [[ ! -L "$STATE" ]] || { echo 'Refusing a symlinked development state directory.' >&2; exit 1; }
 mkdir -p "$STATE/bin"
 chmod 700 "$STATE"

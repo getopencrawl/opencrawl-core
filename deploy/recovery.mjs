@@ -66,7 +66,7 @@ export function snapshot(installation,containers) {
   if(services['app-state-ready']&&!services['app-state-ready'].depends_on)services['app-state-ready'].depends_on={'database-ready':{condition:'service_completed_successfully'},s3:dependency('s3')};
   if(services.app&&!services.app.depends_on)services.app.depends_on=Object.fromEntries(['app-db','database-ready','app-state-ready','storage-ready','s3','opensearch'].filter(name=>services[name]).map(name=>[name,name.endsWith('-ready')?{condition:'service_completed_successfully'}:dependency(name)]));
   if(services.worker&&!services.worker.depends_on)services.worker.depends_on={app:dependency('app'),...(services.temporal?{temporal:dependency('temporal')}:{})};
-  if(!services.app||!services.worker||!services['temporal-db'])throw new Error('Upgrade requires the full application installation (app, worker and temporal-db)');
+  if(!services.app||!services.worker||!services['temporal-db'])throw new Error('Backup requires the full application installation (app, worker and temporal-db)');
   return {format:2,project,kind:installation.kind,createdAt:new Date().toISOString(),stores,compose:{name:project,services,volumes,...(network?{networks:{default:network}}:{})},
     configurations:installation.configuration.map(path=>({path:relative(root,path),content:readFileSync(path,'utf8')})),
     images:[...new Set(containers.map(c=>c.Image))]};

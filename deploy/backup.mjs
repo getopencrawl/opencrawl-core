@@ -15,7 +15,7 @@ if(action==='restore') {
 } else {
   const current=installation('deploy');
   if(!current)throw new Error('Configure the original deployment before backing it up');
-  const release=lock(join(current.stateDir,'upgrade.lock'));
+  const release=lock(join(current.stateDir,'operation.lock'));
   try {
     if(existsSync(directory))throw new Error('Choose a new backup directory; existing backups are never overwritten');
     const inventory=containers(current.project),running=inventory.filter(c=>c.State.Running);

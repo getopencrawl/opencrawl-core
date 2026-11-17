@@ -22,7 +22,7 @@ export function run(command,args,{capture=true,input,env={},stdio}={}) {
 export const docker=(args,options)=>run('docker',args,options);
 export function installation(kind='deploy') {
   if(!['deploy','dev'].includes(kind))throw new Error('Use --installation deploy or dev');
-  const stateDir=join(root,kind==='dev'?'.opencrawl-dev':'deploy/.upgrade');
+  const stateDir=join(root,kind==='dev'?'.opencrawl-dev':'deploy/.state');
   const envFile=join(root,kind==='dev'?'.opencrawl-dev/compose.env':'deploy/.env');
   if(!existsSync(envFile))return null;
   const env=parseEnv(readFileSync(envFile,'utf8'));

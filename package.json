@@ -38,11 +38,9 @@
     "./connectors/slack-source": "./dist/src/connectors/slack-source-files.mjs",
     "./connectors/slack-source-http": "./dist/src/connectors/slack-source-http.mjs",
     "./connectors/slack-source-temporal": "./dist/src/connectors/temporal/source-worker.mjs",
-    "./connectors/slack-source-messages": "./dist/src/connectors/slack-source-messages.mjs",
     "./search": "./dist/src/search/workspace.mjs",
     "./search/realm": "./dist/src/search/realm.mjs",
     "./search/migration": "./dist/src/search/migration.mjs",
-    "./connectors/slack-source-message-references": "./dist/src/connectors/slack-source-message-references.mjs",
     "./onboarding/state": "./dist/src/onboarding-state.mjs",
     "./web-v2": "./web-v2/src/index.ts",
     "./web-v2/styles.css": "./web-v2/src/styles.css",
@@ -98,7 +96,6 @@
     "./state/postgres": "./dist/src/state/postgres.mjs",
     "./state/board": "./dist/src/state/board.mjs",
     "./state/initialize": "./dist/src/state/initialize.mjs",
-    "./board/announcements": "./dist/src/board/announcements.mjs",
     "./integrations/linear-source": "./dist/src/integrations/linear-source.mjs"
   },
   "files": [

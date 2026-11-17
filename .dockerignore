@@ -9,4 +9,4 @@
 *.tar
 *.zip
 
-deploy/.upgrade
+deploy/.state
