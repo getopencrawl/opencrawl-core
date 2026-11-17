@@ -157,7 +157,7 @@ jobs:
       - name: Verify CLI consumers of core under Bun
         run: |
           bun install --cwd cli --frozen-lockfile --ignore-scripts
-          mapfile -t tests < <(node --input-type=module -e 'import {readdirSync} from "node:fs"; const files=readdirSync("cli/test").filter(f=>f.endsWith(".test.ts")).sort(); for (const [i,file] of files.entries()) if(i%4===Number(process.env.CLI_SHARD)) console.log("test/"+file)')
+          mapfile -t tests < <(node --input-type=module -e 'import {readdirSync} from "node:fs"; const files=readdirSync("cli/test",{recursive:true}).filter(f=>/\.(test|spec)\.[cm]?[jt]sx?$/.test(f)).sort(); for (const [i,file] of files.entries()) if(i%4===Number(process.env.CLI_SHARD)) console.log("test/"+file)')
           test "${#tests[@]}" -gt 0
           bun run --cwd cli test "${tests[@]}"
   test:

@@ -16,7 +16,7 @@ permissions:
   actions: read
 jobs:
   publish:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/core-shell-seam'
+    if: github.ref == 'refs/heads/main'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
       postgres:
@@ -63,9 +63,12 @@ jobs:
         id: publication
         env:
           REQUESTED_REVISION: ${{ inputs.revision }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           node --input-type=module <<'JS'
           import {readFileSync,appendFileSync} from 'node:fs';
+          import {execFileSync} from 'node:child_process';
+          import {checksPassed} from './deploy/helm/release.mts';
           const {version}=JSON.parse(readFileSync('package.json','utf8'));
           const stable=process.env.GITHUB_REF==='refs/heads/main';
           if(process.env.REQUESTED_REVISION) {
@@ -73,9 +76,16 @@ jobs:
             appendFileSync(process.env.GITHUB_OUTPUT,'tag=revision\n');
             process.exit(0);
           }
-          if(stable ? !/^\d+\.\d+\.\d+$/.test(version) : !/^\d+\.\d+\.\d+-seam\.\d+$/.test(version))
-            throw new Error('Stable and candidate versions must use separate release channels');
-          appendFileSync(process.env.GITHUB_OUTPUT,`tag=${stable?'latest':'seam'}\n`);
+          if(!stable || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Stable versions require main');
+          const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
+          const revision=git('rev-parse','HEAD');
+          if(git('rev-parse',`refs/tags/v${version}^{commit}`)!==revision) throw new Error('Stable packages require a matching immutable v tag on main');
+          const repository=process.env.GITHUB_REPOSITORY;
+          const response=await fetch(`https://api.github.com/repos/${repository}/actions/runs?head_sha=${revision}&event=push&branch=main&per_page=100`,{headers:{authorization:`Bearer ${process.env.GH_TOKEN}`,accept:'application/vnd.github+json'},signal:AbortSignal.timeout(30000)});
+          if(!response.ok) throw new Error('Cannot verify stable release gates');
+          const runs=await response.json();
+          if(runs.total_count>100 || !checksPassed(runs.workflow_runs,revision,repository)) throw new Error('Stable packages require all distribution gates');
+          appendFileSync(process.env.GITHUB_OUTPUT,'tag=latest\n');
           JS
       - name: Record the source revision in the package
         if: inputs.revision == ''

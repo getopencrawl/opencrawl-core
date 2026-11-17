@@ -23,6 +23,9 @@ from tested commits on main every Monday, or earlier by explicit release dispatc
 Their full installation, historical upgrade/restore, architecture and image
 checks remain mandatory. A failed stable gate fails the release rather than
 labeling the development build stable; it does not pause cloud delivery.
+Manual stable private-package publication also requires a matching `v<version>`
+tag on that mainline commit and the full distribution gates. An untagged main
+revision can only be published as an immutable development/revision package.
 
 The hosted consumer owns its independent promotion automation. It verifies the
 archive integrity and embedded revision, updates its package, lock and source pin
