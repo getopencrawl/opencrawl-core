@@ -7,6 +7,14 @@ storage. The selected search index remains a derived index; this upgrade does
 not change search engines. Temporal retains its own databases and workflow
 history.
 
+Core 0.5.0 removes SQLite as a self-host integration-registry backend. The registry
+and its lifecycle commands require `OPENCRAWL_DATABASE_URL`; there is no fallback.
+`OPENCRAWL_REGISTRY_PATH` is accepted only by the offline legacy import command,
+not by runtime configuration. The existing read-only SQLite importer remains a
+recovery tool for coordinated application-state upgrades; it does not preserve
+support for running an installation on SQLite. Back up and migrate an existing
+installation separately before starting the new runtime.
+
 ## Supported baseline and acceptance
 
 The current stable baseline is `v0.4.1`, commit

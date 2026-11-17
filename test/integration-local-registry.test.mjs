@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {randomBytes} from 'node:crypto';
 import {createSingleOrganizationRegistry,createPostgresIntegrationRegistry} from '../dist/src/integrations/local-registry.mjs';
 import {createIntegrationCommands} from '../dist/src/state/integration-commands.mjs';
+import {createApplicationDatabase} from '../dist/src/state/postgres.mjs';
+import {applicationStateSettings} from '../dist/src/state/settings.mjs';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 const live=(name,run)=>test(name,{skip:!postgresUrl},run);
 const record={tenantId:'org_team',userId:'user_a',integrationId:'int_'+'a'.repeat(26),environment:'selfhost',provider:'slack',scope:'team',status:'connecting',createdAt:'2026-11-01T00:00:00Z',startDate:'2026-10-01T00:00:00Z'};
@@ -11,6 +13,45 @@ async function fixture(t){
   const options={database,organizationId:record.tenantId,commands:commands.transactional};
   return {database,commands,options,registry:createSingleOrganizationRegistry(options)};
 }
+test('self-host registry requires PostgreSQL and rejects the retired SQLite configuration',()=>{
+  assert.throws(()=>createSingleOrganizationRegistry({organizationId:record.tenantId,path:'/data/integrations.sqlite'}),/Invalid integration database configuration/);
+  assert.throws(()=>createSingleOrganizationRegistry({organizationId:record.tenantId}),/Invalid integration database configuration/);
+  const legacy={OPENCRAWL_REGISTRY_PATH:'/data/integrations.sqlite',OPENCRAWL_IDENTITY_PATH:'/data/identity.sqlite',OPENCRAWL_LANDING_S3_BUCKET:'owned',OPENCRAWL_ORGANIZATION_ID:record.tenantId};
+  assert.throws(()=>applicationStateSettings(legacy),/OPENCRAWL_DATABASE_URL is required/);
+  const settings=applicationStateSettings({...legacy,OPENCRAWL_DATABASE_URL:'postgres://operator@localhost/application'});
+  assert.equal(settings.connectionString,'postgres://operator@localhost/application');
+  assert.equal('registryPath' in settings,false);assert.equal('identityPath' in settings,false);
+});
+live('registry and encrypted lifecycle handoff survive closing every writer connection',async t=>{
+  const database=await applicationDatabaseFixture(t),encryptionKey=randomBytes(32);
+  function open(){
+    const connection=createApplicationDatabase({connectionString:postgresUrl,namespace:database.namespace});
+    const commands=createIntegrationCommands({database:connection,environment:'selfhost',encryptionKey});
+    return {connection,commands,registry:createSingleOrganizationRegistry({database:connection,organizationId:record.tenantId,commands:commands.transactional})};
+  }
+  const first=open();let reference;
+  try{
+    await first.commands.ready();
+    reference=await first.registry.createWithLifecycle(record,'provision',{apiKey:'restart-test-only-secret'},'user_admin');
+  }finally{await first.connection.close();}
+  const second=open();
+  try{
+    await second.commands.ready();
+    const persisted=await second.registry.get(record.tenantId,record.userId,record.integrationId);
+    assert.equal(persisted.status,'provisioning');assert.equal(persisted.lifecycleCommandId,reference.commandId);
+    assert.deepEqual((await second.commands.listPending({})).commands,[reference]);
+    assert.deepEqual(await second.commands.readSecret(reference),{apiKey:'restart-test-only-secret'});
+    assert.deepEqual(await second.registry.requestLifecycle(record,'provision',{},'user_admin'),reference);
+    assert.equal(await second.registry.get(record.tenantId,'user_other',record.integrationId),null);
+    await assert.rejects(second.registry.listTenant('org_other'),{status:403});
+    assert.equal(await second.commands.read({...reference,tenantId:'org_other'}),null);
+    assert.deepEqual(await second.commands.readSecret({...reference,tenantId:'org_other'}),{});
+    const disconnect=await second.registry.requestLifecycle(record,'disconnect',{},'user_admin');
+    assert.equal((await second.commands.read(reference)).status,'superseded');
+    assert.deepEqual(await second.commands.readSecret(reference),{});
+    assert.deepEqual((await second.commands.listPending({})).commands,[disconnect]);
+  }finally{await second.connection.close();}
+});
 live('registry scope and provisioning intents survive adapter restart',async t=>{
   const f=await fixture(t);await f.registry.create(record);
   await f.registry.update(record,{status:'provisioning',provisionIntent:{resource:'sourceId',workspaceId:'airbyte',name:'source',attemptId:'attempt',requestedAt:record.createdAt}},{whenStatus:['connecting']});

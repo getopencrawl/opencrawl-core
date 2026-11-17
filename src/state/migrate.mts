@@ -114,7 +114,10 @@ async function main(){
   try{
     const required=(name:string)=>{const value=env[name];if(!value)throw new Error(name+' is required');return value;};
     const key=env.OPENCRAWL_CONNECTOR_KEY?Buffer.from(env.OPENCRAWL_CONNECTOR_KEY,'base64'):undefined;if(key&&key.length!==32)throw new Error('Invalid connector encryption key');
-    const result=await migrateApplicationState({database,store,eventIdentities,source:settings.source,mode:operation as ImportMode,organizationId:required('OPENCRAWL_ORGANIZATION_ID'),url:required('OPENCRAWL_URL'),secret:required('OPENCRAWL_AUTH_SECRET'),identityPath:settings.identityPath,registryPath:settings.registryPath,connectorKey:key,writersStopped:flags.includes('--writers-stopped'),expectExisting:flags.includes('--expect-existing')});
+    // Legacy files are read only by this offline import command. Runtime database
+    // settings expose PostgreSQL alone; these paths cannot select a backend.
+    const identityPath=env.OPENCRAWL_IDENTITY_PATH||'/data/identity.sqlite',registryPath=env.OPENCRAWL_REGISTRY_PATH||'/data/integrations.sqlite';
+    const result=await migrateApplicationState({database,store,eventIdentities,source:settings.source,mode:operation as ImportMode,organizationId:required('OPENCRAWL_ORGANIZATION_ID'),url:required('OPENCRAWL_URL'),secret:required('OPENCRAWL_AUTH_SECRET'),identityPath,registryPath,connectorKey:key,writersStopped:flags.includes('--writers-stopped'),expectExisting:flags.includes('--expect-existing')});
     console.log(JSON.stringify({event:'application_state_migration',...result}));
   }finally{await Promise.all([database.close(),eventIdentities.close()]);}
 }

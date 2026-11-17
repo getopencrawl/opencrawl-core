@@ -19,9 +19,7 @@ export function applicationStateSettings(env: NodeJS.ProcessEnv = process.env) {
   if (!prefix || prefix.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Invalid application-state source prefix');
   const namespace = env.OPENCRAWL_APP_STATE_NAMESPACE || JSON.stringify([bucket, prefix]);
   const source: ApplicationSourceIdentity = {version: 1, bucket, prefix, organizationId: env.OPENCRAWL_ORGANIZATION_ID || null};
-  return {connectionString, namespace, source,
-    identityPath: env.OPENCRAWL_IDENTITY_PATH || '/data/identity.sqlite',
-    registryPath: env.OPENCRAWL_REGISTRY_PATH || '/data/integrations.sqlite'};
+  return {connectionString, namespace, source};
 }
 
 export function applicationDatabase(env: NodeJS.ProcessEnv = process.env) {
