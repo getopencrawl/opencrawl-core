@@ -132,7 +132,6 @@ body[data-onboarding] .brand img{width:32px;height:auto}
 .command-snippet[data-copied] .snippet-icon,.command-snippet[data-copy-error] .snippet-icon{visibility:hidden}
 .command-snippet[data-copied] .snippet-done,.command-snippet[data-copy-error] .snippet-done{visibility:visible}
 
-.help-content>p+.command-snippet{margin-top:8px}
 
 .command-snippet[data-copy-error] code{user-select:text}
 

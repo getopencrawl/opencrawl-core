@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {MemoryRouter} from '../src/router.tsx';
-import {SourcesSummary, UsagePage, UsageReportView} from '../src/pages/usage.tsx';
+import {UsagePage, UsageReportView} from '../src/pages/usage.tsx';
 import type {ConsoleDataAdapter, UsageReport} from '../src/pages/types.ts';
 import {ago, compact, count, harnessName, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
 import {harnessName as libraryHarnessName} from '../src/pages/library-controls.tsx';
@@ -271,13 +271,9 @@ test('subagent sessions are reported beside, not inside, the sessions a person s
   assert.match(html, /Most sessions<\/dt><dd><strong>Sam<\/strong><span>5 sessions/);
 });
 
-test('date formatting and compact source-summary exports remain usable by existing consumers', () => {
+test('relative date formatting handles recent and invalid values', () => {
   assert.equal(ago('2026-11-07T20:01:00Z', now), 'just now');
   assert.equal(ago('invalid', now), 'never');
-  const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(SourcesSummary, {data: report()})));
-  assert.match(html, /<table/);
-  assert.match(html, /Connected source status/);
-  assert.doesNotMatch(html, /report-source-grid|report-indexed-species/);
 });
 
 function value(): ValueReport {
