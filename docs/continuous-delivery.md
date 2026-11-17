@@ -9,7 +9,7 @@ older revision is never substituted for it. Core CI runs unit, browser, real
 storage/workflow integrations and sharded CLI consumer tests in parallel.
 Every shard is required; distribution publication is a separate gate.
 Protected PRs require `test`, `validate` and `Secret scan`. The full self-host
-installation/upgrade suite runs on main as stable-release candidate validation;
+installation suite runs on main as stable-release candidate validation;
 it no longer runs twice on each feature branch or gates ordinary PR merges.
 
 The private package uses a deterministic version such as
@@ -23,7 +23,7 @@ from tested commits on main every Monday, or earlier by explicit release dispatc
 The weekly cut selects the newest mainline candidate that has passed every
 distribution gate, even when newer main commits are still being checked. That
 source stays fixed during packaging and its gates are rechecked before publish. Full
-installation, historical upgrade/restore, architecture and image checks remain
+installation, backup/restore, architecture and image checks remain
 mandatory. A failed stable gate fails the release rather than
 labeling the development build stable; it does not pause cloud delivery.
 Manual stable private-package publication also requires a matching `v<version>`

@@ -12,12 +12,8 @@ the application PostgreSQL database configured by `OPENCRAWL_DATABASE_URL`.
 There is no SQLite authentication backend or fallback. `databases.app` serves
 both authentication and application state; no separate auth database is needed.
 
-Existing SQLite installations need a separate migration before starting this
-runtime. Ask your agent to inspect the installation, preserve a matched backup,
-and follow the [application-state upgrade guide](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/app-state-migration.md).
-This release does not migrate an installed deployment when downloaded. Keep the
-previous runtime and its complete backup for rollback; do not point old binaries
-at the new database. See the [core 0.5.0 release notes](https://github.com/getopencrawl/opencrawl-core/releases/tag/v0.5.0).
+There is no import from earlier SQLite installations: install into an empty
+PostgreSQL database. Do not point old binaries at the new database.
 
 ## Agent installation
 
@@ -181,7 +177,7 @@ an intermediate stage. Rerun the same command/configuration to resume.
 Pin a released runtime digest and chart version. When selecting the runtime by
 digest only, set `githubConnector.tag` to the matching published connector tag. Back up PostgreSQL, raw objects,
 credentials, and the installation journal together before upgrades. Follow the
-runtime's migration instructions; Helm rollback alone cannot undo a database change.
+runtime's release notes; Helm rollback alone cannot undo a database change.
 Keep the organization, storage prefix, index and Temporal binding stable. Moving
 data between backends is a separate migration, not an endpoint edit.
 
@@ -198,7 +194,7 @@ database provisioning or automatic destructive cleanup is included in this v1.
 ## Maintainer releases
 
 Relevant merges to `main` automatically publish the next Helm **patch** release
-after the exact source revision passes core CI, self-host upgrade checks, security,
+after the exact source revision passes core CI, self-host installation checks, security,
 plugin checks and both image builds (plus CLI/chart checks when they run). The image
 workflow supplies amd64/arm64 images with SBOM and provenance attestations. A merge
 without an image-build run does not create a Helm release. Failed checks do not publish;

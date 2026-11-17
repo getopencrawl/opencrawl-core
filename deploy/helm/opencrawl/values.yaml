@@ -19,9 +19,9 @@ runtime:
   extraEnv: []
   extraVolumes: []
   extraVolumeMounts: []
-  # PostgreSQL migration is coordinated by the released runtime before writers start.
-  migrationCommand: [node, dist/src/state/migrate.mjs, migrate]
-  readinessCommand: [node, dist/src/state/migrate.mjs, verify]
+  # The released runtime creates its PostgreSQL schema before writers start.
+  migrationCommand: [node, dist/src/state/initialize.mjs, initialize]
+  readinessCommand: [node, dist/src/state/initialize.mjs, verify]
   appResources:
     requests: {cpu: 250m, memory: 512Mi}
     limits: {memory: 2Gi}

@@ -26,7 +26,7 @@ spec:
         - |
           import assert from 'node:assert/strict';
           import {spawnSync} from 'node:child_process';
-          const state=spawnSync('node',['dist/src/state/migrate.mjs','verify'],{stdio:'inherit'});
+          const state=spawnSync('node',['dist/src/state/initialize.mjs','verify'],{stdio:'inherit'});
           assert.equal(state.status,0,'Application state must be verified');
           const base={{ printf "http://%s:%v" $name .Values.service.port | toJson }};
           const headers={host:new URL(process.env.OPENCRAWL_URL).host};

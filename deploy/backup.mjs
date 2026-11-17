@@ -10,12 +10,7 @@ if(!['create','restore'].includes(action)||!destination||options.some(value=>val
 const directory=resolve(destination);
 if(action==='restore') {
   const manifest=JSON.parse(readFileSync(join(directory,'manifest.json'),'utf8'));
-  // Format 1 is read-only compatibility. All new backups use the same matched
-  // images/configuration/store engine as upgrades; never create a new format 1.
-  if(manifest.format===1) {
-    const {restoreLegacyBackup}=await import('./legacy-backup.mjs');
-    await restoreLegacyBackup(directory);
-  } else if(manifest.format===2)run(process.execPath,[join(root,'deploy/restore.mjs'),'--backup',directory],{capture:false});
+  if(manifest.format===2)run(process.execPath,[join(root,'deploy/restore.mjs'),'--backup',directory],{capture:false});
   else throw new Error('Unsupported backup format; retain the archive for review');
 } else {
   const current=installation('deploy');
