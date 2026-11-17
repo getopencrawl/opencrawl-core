@@ -1,4 +1,4 @@
-import {Notice, Page} from '../design/components.js';
+import {Page} from '../design/components.js';
 import {Navigate, useLocation} from '../router.js';
 import type {ConsoleDataAdapter} from './types.js';
 import {BoardInspector} from './board.js';
@@ -7,16 +7,16 @@ import {SearchInspector} from './search.js';
 export {SearchInspector, JsonDisclosure} from './search.js';
 export {excerpt, searchGroups} from './search-model.js';
 
-export function DiagnosticsPage({adapter, canInspect}: {adapter: ConsoleDataAdapter; canInspect: boolean}) {
+export function DiagnosticsPage({adapter}: {adapter: ConsoleDataAdapter; canInspect?: boolean}) {
   const location = useLocation(), query = new URLSearchParams(location.search);
   if (query.get('view') === 'search') return <Navigate to="/search" replace/>;
   const topic = query.get('view') === 'stream' ? '' : (query.get('channel')??query.get('topic'))?.trim() || '';
   const id = query.get('message') || '', parsed = /^\d+$/.test(id) ? Number(id) : NaN;
   const message = Number.isSafeInteger(parsed) && parsed > 0 && parsed < Number.MAX_SAFE_INTEGER ? parsed : undefined;
   const thread=Number(query.get('thread')),threadId=Number.isSafeInteger(thread)&&thread>0?thread:undefined;
-  return <Page title={topic ? '# ' + topic : 'All channels'} className="oc-conversation-page">{!canInspect ? <Notice>Workspace admins can inspect agent messages. Ask an admin for access.</Notice> : <BoardInspector key={JSON.stringify([topic, message, threadId])} adapter={adapter} stream={!topic} topic={topic} message={message} threadId={threadId}/>}</Page>;
+  return <Page title={topic ? '# ' + topic : 'All channels'} className="oc-conversation-page">{<BoardInspector key={JSON.stringify([topic, message, threadId])} adapter={adapter} stream={!topic} topic={topic} message={message} threadId={threadId}/>}</Page>;
 }
 
-export function SearchPlaygroundPage({adapter, canInspect}: {adapter: ConsoleDataAdapter; canInspect: boolean}) {
-  return <Page title="Search playground">{canInspect ? <SearchInspector adapter={adapter}/> : <Notice>Workspace admins can inspect search results. Ask an admin for access.</Notice>}</Page>;
+export function SearchPlaygroundPage({adapter}: {adapter: ConsoleDataAdapter; canInspect?: boolean}) {
+  return <Page title="Search playground"><SearchInspector adapter={adapter}/></Page>;
 }

@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
-import {Button, Dialog, EmptyState, Field, Icon, Input, LoadingState, Notice, Page, Tabs} from '../index.ts';
+import {Button, Dialog, EmptyState, Field, Icon, Input, LoadingState, Notice, Page, Tabs, Navigate} from '../index.ts';
 import {ConsoleApiError, externalTarget, failureMessage} from './errors.ts';
 import type {SourceCard, SourcesAdapter} from './api.ts';
 import {useResource} from './resource';
@@ -13,6 +13,10 @@ import {listPhrase} from '../onboarding/model.ts';
 const refreshInterval = (data: {items: SourceCard[]} | undefined) => data?.items.some(source => source.statusUpdatedAt === null && source.statusRefreshing && !source.statusUnavailable) ? 1000 : 30_000;
 
 export function SourcesPage({adapter, canConfigure = false}: {adapter: SourcesAdapter; /** Admin permission for shared integrations and operator credentials. */ canConfigure?: boolean}) {
+  return canConfigure ? <AdminSourcesPage adapter={adapter}/> : <Navigate to="/" replace/>;
+}
+function AdminSourcesPage({adapter}:{adapter:SourcesAdapter}) {
+  const canConfigure = true;
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState<string | null>(null);
@@ -132,8 +136,8 @@ export function SourcesPage({adapter, canConfigure = false}: {adapter: SourcesAd
   return <Page bodyClassName="oc-connections" id="data-controls" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">
     {error && <Notice tone="danger">{data ? 'Connection status couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}</Notice>}
     {actionError && !confirmation && !keySource && !setupSource && <Notice tone="danger">{actionError}</Notice>}
-    {unlock && <Notice>{canConfigure && adapter.saveCredential ? `One ${unlock.name} key unlocks ${listPhrase(unlock.unlocks)}. Choose Connect on any of them to add it.` : `${listPhrase(unlock.unlocks)} need a ${unlock.name} key. Ask a workspace admin to add it.`}</Notice>}
-    {!canConfigure && data?.items.some(source => source.scope !== 'user') && <Notice>Workspace admins manage shared integrations.</Notice>}
+    {unlock && canConfigure && adapter.saveCredential && <Notice>{`One ${unlock.name} key unlocks ${listPhrase(unlock.unlocks)}. Choose Connect on any of them to add it.`}</Notice>}
+
     {success && <Notice tone="success">{success}</Notice>}
     {!data ? loading ? <LoadingState label="Loading integrations" /> : <EmptyState title="Integrations couldn’t load" description="Try again to see your connections." action={<Button onClick={() => void reload()}>Try again</Button>} /> : <>
       <div className="oc-source-toolbar"><Tabs label="Filter integrations" value={filter} onChange={setFilter} items={[{value:'all',label:`All ${counts.all}`},{value:'connected',label:`Connected ${counts.connected}`},{value:'available',label:`Available ${counts.available}`},...(counts.attention || filter==='attention' ? [{value:'attention',label:`Needs attention ${counts.attention}`}] : [])]}/><div className="oc-source-search"><Icon name="search" size={16}/><Input type="search" aria-label="Search integrations" placeholder="Search integrations" value={query} onChange={event=>setQuery(event.target.value)}/></div></div>
@@ -183,7 +187,6 @@ export function SourceRow({source, canManage = false, pending, active, connect, 
       <div className="oc-source-detail-account"><ProviderIcon source={source}/><div><strong>{source.account || (source.scope === 'user' ? 'Personal connection' : 'Workspace connection')}</strong>{source.connectedBy && <p>Connected by {source.connectedBy}</p>}</div></div>
       {!available && <SourceProgress source={source}/>}
       {Boolean(source.rows?.length) && <SourceStats source={source}/>}
-      {!canManage && source.scope !== 'user' && <p className="muted">Workspace admins manage this integration.</p>}
     </Dialog>
     {source.setup && !setUp && <Dialog open={setupOpen} onClose={()=>setSetupOpen(false)} title={source.setup.title}><p>{source.setup.body}</p></Dialog>}
   </>;

@@ -19,7 +19,7 @@ function checkImports(source, file, root = sourceRoot) {
     if (file.href.endsWith('/sessions/postgres-identities.mts') && specifier === 'pg') continue;
     if ((file.href.includes('/state/') || file.href.endsWith('/integrations/local-registry.mts') || file.href.endsWith('/identity/better-auth.mts')) && specifier === 'pg') continue;
     if (file.href.includes('/identity/') && specifier==='jose') continue;
-    if (['workos.mts','cli.mts','single-organization-device.mts'].some(name=>file.href.endsWith('/identity/'+name)) && specifier==='@workos-inc/node') continue;
+    if (['workos.mts','cli.mts'].some(name=>file.href.endsWith('/identity/'+name)) && specifier==='@workos-inc/node') continue;
     // Self-host identity: Better Auth is confined to its adapter and the self-host auth routes.
     if ((file.href.endsWith('/identity/better-auth.mts') || file.href.endsWith('/selfhost/local-auth.mts')) && ['better-auth', 'better-auth/plugins', 'better-auth/db/migration', 'better-auth/node', '@better-auth/oauth-provider', 'jose'].includes(specifier)) continue;
     if (file.href.endsWith('/application/rpc.mts') && ['@trpc/server', '@trpc/server/adapters/fetch'].includes(specifier)) continue;

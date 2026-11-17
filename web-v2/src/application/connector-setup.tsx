@@ -32,6 +32,6 @@ export function ConnectorSetupDialog({source, canConfigure, busy = false, error,
       <ExternalLink href={credential.url}>Get a key from {credential.name}</ExternalLink>
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="actions"><Button disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" disabled={busy || !value.trim()}>{busy ? 'Checking key…' : `Save key and connect ${source?.name ?? 'source'}`}</Button></div>
-    </form> : <p>Ask a workspace admin to add the {credential.name} key. It only needs to be added once.</p> : null}
+    </form> : null : null}
   </Dialog>;
 }

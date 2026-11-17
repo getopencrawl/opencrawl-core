@@ -238,7 +238,7 @@ export function TeamPage({adapter, onWorkspaceRenamed, footer, embedded}: {embed
             {success && <Notice tone="success">{success}</Notice>}
             {createdInvite && !invitations.some(item => item.email === createdInvite.email && item.inviteUrl === createdInvite.url) && <CopyField label="Private invitation link" value={createdInvite.url}/>}
           </form>
-        </> : <Notice tone="info">Ask an admin to invite teammates.</Notice>}
+        </> : null}
       </Section>
 
       {footer}

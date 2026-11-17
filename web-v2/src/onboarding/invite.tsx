@@ -2,7 +2,7 @@ import {consoleResourceKey} from '../data.tsx';
 import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {Button, CopyField, Input} from '../design/components.tsx';
 import {Icon} from '../design/icons.tsx';
-import {useNavigate} from '../router.tsx';
+import {Navigate, useNavigate} from '../router.tsx';
 import {deriveOnboarding, normalizeInvitationEmail, safeWorkspacePath} from './model.ts';
 import {useOnboardingResource} from './resource.ts';
 import {OnboardingShell} from './shell.tsx';
@@ -76,6 +76,7 @@ export function InviteOnboarding({adapter, canInvite, initialInvitations, onComp
     }
   }
   const items = invitations.data?.items ?? [];
+  if (!canInvite) return <Navigate to="/" replace/>;
   return <OnboardingShell step="invite" backUrl={returnToAgent ? '/onboarding' : '/onboarding/sources'} nextVisible nextUrl={returnToAgent ? '/onboarding' : undefined} nextLabel={returnToAgent ? 'Return to agent setup' : items.length ? 'Open workspace' : 'Skip for now'} nextPrimary={returnToAgent || items.length > 0} busy={finishing || busy} onNext={returnToAgent ? undefined : () => void finish()}>
     <section aria-labelledby="invite-title"><h1 id="invite-title" tabIndex={-1}>Invite your teammates</h1><p className="focus-description">{invitationDelivery === 'link' ? 'Create a private invitation link and share it with your teammate. No email is sent; they choose their own password.' : 'Share this workspace with your team. You can also invite them later.'}</p>
       {returnToAgent && <p className="focus-reassurance">Your teammates can connect their own agents while you finish your setup.</p>}
@@ -86,7 +87,7 @@ export function InviteOnboarding({adapter, canInvite, initialInvitations, onComp
           {feedback && <p className={`invite-feedback${feedback === 'Invitation sent.' ? ' sr-only' : ''}`} role="status">{feedback}</p>}
         </div>
         {invitations.error && <div className="invite-load-error"><p role="alert">We couldn’t load existing invitations.</p><Button variant="quiet" onClick={invitations.reload}>Try again</Button></div>}
-      </> : <p className="focus-description">Your workspace admin can invite teammates. You can continue now.</p>}
+      </> : null}
       {finishError && <p className="invite-error" role="alert">{finishError}</p>}
     </section>
   </OnboardingShell>;

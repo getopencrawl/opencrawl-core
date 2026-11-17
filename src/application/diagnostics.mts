@@ -11,10 +11,10 @@ export interface DiagnosticOptions {
   board?: Pick<ReturnType<typeof createBoard>, 'read'>;
 }
 export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {name: string}, {
-  search, connectors, board, principal, admin, revalidate, respond, onSearch,
-}: DiagnosticOptions & {principal: Principal; admin: boolean; revalidate(): Promise<number>;
+  search, connectors, board, principal, revalidate, respond, onSearch,
+}: DiagnosticOptions & {principal: Principal; admin?: boolean; revalidate(): Promise<number>;
   respond(status: number, body: string, type?: string): void; onSearch?(length: number): void}) {
-  if (!admin) return respond(403, 'Organization admin access required');
+  if (!principal?.tenantId || !principal.userId) return respond(403, 'Workspace access required');
   try {
       if (route.name === 'debug-board') {
         const json = (status: number, value: unknown) => respond(status, JSON.stringify(value), 'application/json');

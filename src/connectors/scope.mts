@@ -8,6 +8,7 @@ export const PROVIDER_STREAMS: Record<Provider, string[]> = {
   notion: ['pages', 'page_markdown', 'data_sources', 'comments'],
   github: ['commits', 'pull_requests', 'issues', 'issue_comments', 'review_comments', 'commit_comments', 'releases'],
   googledrive: ['workspace_documents'],
+  linear: ['issues', 'comments'],
 };
 export const pipelineVersion = (binding: ConnectorBinding) => binding.provider === 'slack' ? PIPELINE_VERSION : binding.provider === 'googledrive' ? 'drive-workspace-v1' : binding.provider === 'circleback' ? 'workspace-v2' : 'workspace-v1';
 export const digest = (value: unknown) => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');

@@ -93,7 +93,7 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
           const visibleResource = parentVisible && (d.kind!=='file' || d.available===true) &&
             (d.provider!=='slack' || allowed.has(documentId(binding!, 'channel', d.channelId!)));
           let providerVisible = visibleResource;
-          if (providerVisible && d.provider === 'googledrive') {
+          if (providerVisible && ['googledrive', 'linear'].includes(d.provider)) {
             const sourceId = d.parentId || d.sourceId, key = binding!.connectionId + ':' + sourceId;
             if (!driveAccess.has(key)) driveAccess.set(key, resourceAccess ? resourceAccess(binding!, sourceId) : Promise.resolve(false));
             providerVisible = await driveAccess.get(key)!;

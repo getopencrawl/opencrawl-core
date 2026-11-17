@@ -1,3 +1,4 @@
+import {Navigate} from '../router.tsx';
 import {consoleResourceKey} from '../data.tsx';
 import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {Button, Dialog, Field, Input} from '../design/components.tsx';
@@ -18,7 +19,7 @@ export interface SourcesOnboardingProps {
 }
 
 export function SourcesOnboarding({adapter, initialSources, authorize = url => window.location.assign(url), canConfigure = false}: SourcesOnboardingProps) {
-  const resource = useOnboardingResource(signal => adapter.sources(signal), {key:consoleResourceKey(adapter,'onboarding-sources'), initial: initialSources ? {items: initialSources} : undefined});
+  const resource = useOnboardingResource(signal => adapter.sources(signal), {key:consoleResourceKey(adapter,'onboarding-sources'), enabled:canConfigure, initial: initialSources ? {items: initialSources} : undefined});
   const items = resource.data?.items ?? [];
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
@@ -122,11 +123,11 @@ export function SourcesOnboarding({adapter, initialSources, authorize = url => w
   const grouped = ready.length > 0 && locked.length > 0;
   const unlock = locked.find(item => item.setup?.credential)?.setup?.credential;
   // Sources are optional: a quiet Skip for now continues until a connection is confirmed, even if the catalog failed to load.
+  if (!canConfigure) return <Navigate to="/" replace/>;
   return <OnboardingShell step="sources" backUrl="/onboarding" nextUrl="/onboarding/invite" nextVisible={!resource.loading} nextLabel={connected ? 'Next' : 'Skip for now'} nextPrimary={connected}>
     <section aria-labelledby="sources-title">
       <h1 id="sources-title" tabIndex={-1}>Connect your sources</h1>
       <p className="focus-description">Connect a source to give your agent more context. You can also add one later.</p>
-      {!canConfigure && items.some(item => item.scope !== 'user') && <p className="connector-group-note">Workspace admins manage shared integrations. You can continue without connecting a source.</p>}
       <div className="connector-search" hidden={!showSearch}><Icon name="search" /><label className="sr-only" htmlFor="connector-query">Search connectors</label><Input ref={queryField} id="connector-query" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${items.length} connectors…`} autoComplete="off" maxLength={100} aria-controls="connector-list" disabled={resource.loading} /></div>
       <div className="connector-catalog" aria-busy={resource.loading}>
         {resource.loading ? <p id="sources-loading" className="connector-message" role="status"><span className="signal-mark connector-spinner" aria-hidden="true" />Loading connectors…</p>

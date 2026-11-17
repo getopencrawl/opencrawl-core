@@ -507,3 +507,17 @@ test('ordinary login reuses only a current member session and keeps redirects lo
   assert.equal((await f.request('/auth/login','admin')).status,200);
   assert.equal((await f.request('/api/console/bootstrap','admin')).status,401);
 });
+
+test('self-host members read board and search over HTTP and tRPC while anonymous callers stay denied',async t=>{
+  const f=await fixture(t,{search:{fetch:async()=>Response.json({error:{type:'index_not_found_exception'}},{status:404})}});
+  await f.admin();await f.join('bob','bob@example.com');
+  assert.equal((await f.request('/api/debug/board','bob')).status,200);
+  assert.equal((await f.request('/api/debug/board')).status,401);
+  const options={method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:JSON.stringify({query:'scope test'})};
+  assert.equal((await f.request('/api/debug/search','bob',options)).status,200);
+  assert.equal((await f.request('/api/debug/search',null,options)).status,401);
+  for(const procedure of ['board','search']){
+    const input=procedure==='board'?{}:{query:'scope test'};
+    assert.equal((await f.request('/api/trpc/diagnostics.'+procedure+'?input='+encodeURIComponent(JSON.stringify(input)),'bob')).status,200);
+  }
+});

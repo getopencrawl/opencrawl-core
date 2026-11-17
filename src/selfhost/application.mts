@@ -145,7 +145,7 @@ export function selfhostApplication({settings,store,boardState,eventIdentities,p
     ['/favicon.svg',['web/assets/opencrawl-mark.svg','image/svg+xml']],
     ...['tokens.css'].map((f):[string,[string,string]]=>['/'+f,['web/'+f,'text/css']]),
     ...['geist-sans.woff2','geist-mono.woff2','opencrawl-mark.svg'].map((f):[string,[string,string]]=>['/assets/'+f,['web/assets/'+f,f.endsWith('.svg')?'image/svg+xml':'font/woff2']]),
-    ...['googledrive','slack','granola','circleback','notion','github'].flatMap(f=>['connectors','integrations'].map((kind):[string,[string,string]]=>[`/assets/${kind}/${f}.svg`,[`web/assets/connectors/${f}.svg`,'image/svg+xml']])),
+    ...['googledrive','slack','granola','circleback','notion','github','linear'].flatMap(f=>['connectors','integrations'].map((kind):[string,[string,string]]=>[`/assets/${kind}/${f}.svg`,[`web/assets/connectors/${f}.svg`,'image/svg+xml']])),
   ]);
   return async(req:IncomingMessage,res:ServerResponse)=>{
     for(const [key,value] of Object.entries(securityHeaders))if(key!=='Strict-Transport-Security'||settings.url.startsWith('https:'))res.setHeader(key,key==='Content-Security-Policy'?value.replace(" https://api.workos.com https://*.authkit.app",''):value);
@@ -210,7 +210,7 @@ export function selfhostApplication({settings,store,boardState,eventIdentities,p
         }
         if(guided.handles(selected.name))return guided.handle(request,{route:selected,principal,identity:{user},member,respond:reply});
         if(selected.name==='/api/onboarding')return reply(200,JSON.stringify({data:{...await onboarding.read(principal),displayName:user.firstName?.trim()||null}}),'application/json');
-        if(['debug-search','debug-board'].includes(selected.name))return diagnosticRequest(request,target,selected,{search,connectors,board,principal,admin:isAdmin(member),revalidate:async()=>rpc||await revalidate()?200:403,respond:reply});
+        if(['debug-search','debug-board'].includes(selected.name))return diagnosticRequest(request,target,selected,{search,connectors,board,principal,revalidate:async()=>rpc||await revalidate()?200:403,respond:reply});
         if(selected.name==='integration-credential'){
           const refuse=(status:number,code:string,text:string)=>reply(status,JSON.stringify({error:{code,message:text}}),'application/json');
           if(!connectorSettings)return refuse(503,'INTEGRATIONS_NOT_CONFIGURED','Integrations aren’t available yet.');

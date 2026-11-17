@@ -4,8 +4,9 @@ import type {IntegrationRegistry} from './ports.mjs';
 import type {createObjectStore} from '../sessions/s3-store.mjs';
 import {createConnectorSearch} from '../connectors/search.mjs';
 import {validateBinding} from '../connectors/scope.mjs';
+import type {createLinearSource} from './linear-source.mjs';
 import type {createDriveAccess} from './google-drive-access.mjs';
-export const INDEXED_PROVIDERS = Object.freeze(['slack', 'granola', 'circleback', 'notion', 'github', 'googledrive'] as const);
+export const INDEXED_PROVIDERS = Object.freeze(['slack', 'granola', 'circleback', 'notion', 'github', 'googledrive', 'linear'] as const);
 export const eligible = (record: IntegrationRecord): record is IntegrationRecord & {provider: typeof INDEXED_PROVIDERS[number]} => record.scope === 'team' && INDEXED_PROVIDERS.some(provider => provider === record.provider);
 
 export function denied(): never {throw Object.assign(new Error('Connector is inactive or outside authorized scope'), {permanent: true, status: 403});}
@@ -18,11 +19,12 @@ export interface ConnectorResolverOptions {
   /** Host policy authorizes the existing storage binding. Never provisions storage. */
   storage(record: IntegrationRecord): Promise<ReturnType<typeof createObjectStore>>;
   search(tenantId: string): ReturnType<typeof createConnectorSearch>;
+  linearAccess?(record: IntegrationRecord): Pick<ReturnType<typeof createLinearSource>, 'inspect'>;
   driveAccess?(record: IntegrationRecord): ReturnType<typeof createDriveAccess>;
 }
 interface ConnectionCount {total: number; kinds: Record<string, number>}
 export interface CountSummary extends ConnectionCount {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}
-export function createConnectorResolver({environment, generation, registry, storage, search: searchFor, driveAccess}: ConnectorResolverOptions) {
+export function createConnectorResolver({environment, generation, registry, storage, search: searchFor, driveAccess, linearAccess}: ConnectorResolverOptions) {
   if (!['staging', 'production', 'selfhost'].includes(environment) || !/^v[1-9][0-9]*$/.test(generation)) throw new Error('Invalid connector configuration');
   function reference(value: ConnectorReferenceInput): asserts value is HostedConnectorReference {
     if (!value || !/^(org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(typeof value.tenantId === 'string' ? value.tenantId : '') || !/^user_[A-Za-z0-9]+$/.test(typeof value.userId === 'string' ? value.userId : '') || !/^int_[a-f0-9]{26}$/.test(typeof value.connectionId === 'string' ? value.connectionId : '') || (value.generation && value.generation !== generation)) denied();
@@ -36,7 +38,8 @@ export function createConnectorResolver({environment, generation, registry, stor
     const store = await storage(record);
     const search = searchFor(binding.tenantId);
     const drive = record.provider === 'googledrive' ? driveAccess?.(record) : undefined;
-    return {binding, store, search, ...(drive ? {drive, resourceAccess: async (sourceId: string) => {const permitted = await drive.inspect(sourceId); await drive.validateAudience(); return Boolean(permitted);}} : {})};
+    const linear = record.provider === 'linear' ? linearAccess?.(record) : undefined;
+    return {binding, store, search, ...(linear ? {linear, resourceAccess: (sourceId: string) => linear.inspect(sourceId)} : {}), ...(drive ? {drive, resourceAccess: async (sourceId: string) => {const permitted = await drive.inspect(sourceId); await drive.validateAudience(); return Boolean(permitted);}} : {})};
   }
   type CoreSearch = ReturnType<typeof createConnectorSearch>['search'];
   type ConnectorQuery = Parameters<CoreSearch>[2];
@@ -53,6 +56,7 @@ export function createConnectorResolver({environment, generation, registry, stor
       const accessed = new Set<string>();
       const result = await resolved[0].search.search(principal, resolved.map(r => r.binding), query, async (binding, sourceId) => {
         const match = resolved.find(item => item.binding.connectionId === binding.connectionId);
+        if (match?.linear) return match.linear.inspect(sourceId);
         if (!match?.drive) return false;
         accessed.add(binding.connectionId);
         // No results leave this operation before the final audience check.
