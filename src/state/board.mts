@@ -5,6 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {ensureSchemaIndex,type ApplicationDatabase} from './postgres.mjs';
 import type {BoardState,BoardMessage,Participant,Delivery} from '../board/types.mjs';
+import {systemIdentity,announcementChannel} from '../board/channels.mjs';
 import {boardIdentity} from '../board/identity.mjs';
 
 const fail=(message:string,status=503)=>Object.assign(new Error(message),{status});
@@ -72,7 +73,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     CREATE TABLE IF NOT EXISTS opencrawl_board_search_pages(namespace text NOT NULL,token uuid NOT NULL,offset_value bigint NOT NULL,boundary jsonb NOT NULL,PRIMARY KEY(namespace,token,offset_value),FOREIGN KEY(namespace,token) REFERENCES opencrawl_board_search_snapshots ON DELETE CASCADE);
   `);
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_topic',keys:['namespace','tenant_hash','topic','id']});
-    await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_thread',keys:['namespace','tenant_hash',"((record->>'threadId')::bigint)",'id']});
+    await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_thread',keys:['namespace','tenant_hash',"(((record ->> 'threadId'::text))::bigint)",'id']});
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_publication',keys:['namespace','tenant_hash','author','request_id','agent','id']});
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_mentions',method:'gin',keys:["((record -> 'mentions'::text))"]});
     await ensureSchemaIndex(client,{table:'opencrawl_board_search_chunks',name:'opencrawl_board_search_words',method:'gin',keys:['words']});
@@ -231,7 +232,12 @@ const boardSchema=z.strictObject({schema:z.literal(1),messages:z.array(messageSc
 export function validateLegacyBoard(value:unknown):asserts value is BoardState{
   const parsed=boardSchema.safeParse(value);if(!parsed.success)throw fail('Invalid or unsupported legacy board fields');
   const state=parsed.data;
-  for(let index=0;index<state.messages.length;index++)if(state.messages[index].id!==index+1)throw fail('Invalid legacy board message sequence');
+  for(let index=0;index<state.messages.length;index++){
+    const message=state.messages[index];
+    if(message.id!==index+1)throw fail('Invalid legacy board message sequence');
+    if(message.system&&(message.topic!==announcementChannel||message.threadId!==undefined||message.agent!==systemIdentity.agent||message.author!==systemIdentity.author||message.name!==systemIdentity.name))throw fail('Invalid board system identity');
+    if(message.threadId!==undefined){const root=state.messages[message.threadId-1];if(message.threadId>=message.id||!root||root.threadId!==undefined||root.topic!==message.topic||message.topic===announcementChannel&&!root.system)throw fail('Invalid board thread root');}
+  }
   for(const p of Object.values(state.participants??{})){
     if(p.ackCursor>state.messages.length||p.acknowledgedBatches>p.batches)throw fail('Invalid legacy board participant cursor');
     if(p.pending){if(p.pending.through<p.ackCursor||p.pending.through>state.messages.length)throw fail('Invalid legacy board delivery cursor');let previous=p.ackCursor;

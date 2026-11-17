@@ -52,11 +52,12 @@ export async function ensureSchemaIndex(client:PoolClient,{table,name,keys,metho
   const rendered:string[]=[],options:number[]=[],collations:number[]=[],opclasses:string[]=[];
   for(const key of keys){
     const plain=/^([a-z_]+)( DESC)?$/.exec(key),lower=/^lower\(([a-z_]+)\)$/.exec(key),json=/^\(\(([a-z_]+) -> '([-a-z]+)'::text\)\)$/.exec(key);
-    const column=plain?.[1]??lower?.[1]??json?.[1],attribute=column?columns.get(column):undefined;
-    if(!attribute||lower&&attribute.type!=='text'||json&&attribute.type!=='jsonb'||method==='gin'&&plain?.[2])throw new Error('Unsupported schema index key: '+key);
-    const type=lower?'text':json?'jsonb':attribute.type,opclass=classes[type];
+    const jsonInteger=/^\(\(\(([a-z_]+) ->> '([a-zA-Z]+)'::text\)\)::bigint\)$/.exec(key);
+    const column=plain?.[1]??lower?.[1]??json?.[1]??jsonInteger?.[1],attribute=column?columns.get(column):undefined;
+    if(!attribute||lower&&attribute.type!=='text'||(json||jsonInteger)&&attribute.type!=='jsonb'||method==='gin'&&plain?.[2])throw new Error('Unsupported schema index key: '+key);
+    const type=jsonInteger?'bigint':lower?'text':json?'jsonb':attribute.type,opclass=classes[type];
     if(!opclass)throw new Error('Unsupported schema index type: '+type);
-    rendered.push(plain?plain[1]!:key);options.push(plain?.[2]?3:0);collations.push(json?0:attribute.collation);opclasses.push(opclass);
+    rendered.push(plain?plain[1]!:key);options.push(plain?.[2]?3:0);collations.push(json||jsonInteger?0:attribute.collation);opclasses.push(opclass);
   }
   if(predicate&&(!columns.has(predicate.column)||columns.get(predicate.column)?.type!=='text'||predicate.notNull&&!columns.has(predicate.notNull)))throw new Error('Invalid schema index predicate');
   const condition=predicate?predicate.notNull?`((${predicate.column} = '${predicate.equals}'::text) AND (${predicate.notNull} IS NOT NULL))`:`(${predicate.column} = '${predicate.equals}'::text)`:null;

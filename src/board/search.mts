@@ -1,6 +1,7 @@
 import {z} from 'zod';
-import {channelSchema,channelNames} from './channels.mjs';
+import {channelSchema,channelNames,visibleMessage} from './channels.mjs';
 import type {Principal} from '../sessions/types.mjs';
+import type {BoardRepository,BoardSearchInput} from '../state/board.mjs';
 import type {ApplicationState} from '../state/types.mjs';
 import {createHash} from 'node:crypto';
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -13,10 +14,19 @@ export const boardSearchSchema = z.strictObject({
   since: z.iso.datetime({offset: true}).optional(), until: z.iso.datetime({offset: true}).optional(),
   sort: z.enum(['relevance', 'newest']).default('relevance'),
   limit: z.number().int().min(1).max(10).default(5),
-  facets: z.array(z.enum(['topic', 'agent', 'author', 'day'])).max(4).default(['topic', 'agent']),
+  facets: z.array(z.enum(['channel', 'topic', 'agent', 'author', 'day'])).max(5).default(['channel', 'agent']),
   facetSize: z.number().int().min(1).max(8).default(5),
   cursor: text(100).optional().describe('Next page; repeat the same query and filters. Expires after five minutes.'),
 });
+export function searchParameters(args:Omit<z.output<typeof boardSearchSchema>,'workspace'>):BoardSearchInput {
+  const {channels,topics,facets,...rest}=args;
+  return {...rest,topics:channelNames({channels,topics}),facets:[...new Set(facets.map(field=>field==='channel'?'topic':field))]};
+}
+export function searchMessages(result:Awaited<ReturnType<BoardRepository['search']>>,facets:readonly string[]) {
+  const mapped=result.facets?{...result.facets}:undefined;
+  if(mapped&&facets.includes('channel')&&mapped.topic){mapped.channel=mapped.topic;if(!facets.includes('topic'))delete mapped.topic;}
+  return {...result,...mapped?{facets:mapped}:{},messages:result.messages.map(m=>visibleMessage({...m,requestId:''}))};
+}
 export {boardIndexMapping} from '../search/mapping.mjs';
 /** PostgreSQL is authoritative for board text and durable cursor snapshots. */
 export function createBoardSearch({state,now=Date.now}:{state:ApplicationState;now?:()=>number}){
@@ -26,6 +36,6 @@ export function createBoardSearch({state,now=Date.now}:{state:ApplicationState;n
     const {workspace,...args}=boardSearchSchema.parse(input);
     if(workspace!==undefined&&workspace!==principal.tenantId)throw Object.assign(new Error('Workspace scope mismatch'),{status:403});
     if(args.since&&args.until&&Date.parse(args.since)>Date.parse(args.until))throw Object.assign(new Error('since must not be later than until'),{status:400});
-    return state.board.search(createHash('sha256').update(principal.tenantId).digest('hex'),principal.userId,{...args,topics:channelNames(args)},now());
+    return searchMessages(await state.board.search(createHash('sha256').update(principal.tenantId).digest('hex'),principal.userId,searchParameters(args),now()),args.facets);
   }};
 }

@@ -2,7 +2,7 @@ import {test, expect} from '@playwright/test';
 import type {BoardMessage} from '../src/pages/types.js';
 
 const topic = 'café & notes/?';
-const thread = '/diagnostics?view=board&topic=' + encodeURIComponent(topic);
+const thread = '/diagnostics?view=board&channel=' + encodeURIComponent(topic);
 const permalink = (id: number) => thread + '&message=' + id;
 const messages: BoardMessage[] = Array.from({length: 60}, (_, index) => ({id: index + 1, topic, agent: 'example-agent', name: 'codex:example', timestamp: 1_800_000_000_000 + index, text: `Message ${index + 1}\n\nFull message text.`}));
 
@@ -10,7 +10,7 @@ test.beforeEach(async ({page}) => {
   await page.route('**/api/console/board?*', route => {
     const query = new URL(route.request().url()).searchParams;
     const before = Number(query.get('before')) || Infinity;
-    const matching = messages.filter(message => message.id < before && (!query.get('topic') || message.topic === query.get('topic'))).toReversed();
+    const matching = messages.filter(message => message.id < before && (!query.get('channel') || message.topic === query.get('channel'))).toReversed();
     return route.fulfill({json: {messages: matching.slice(0, 20), next: matching.length > 20 ? matching[19]!.id : null, topicSummaries: [{topic, posts: 60, latest: {name: 'codex:example', timestamp: messages[59]!.timestamp}}]}});
   });
 });
@@ -39,23 +39,23 @@ for (const width of [1440, 390]) {
 
 test('opening and reloading an older permalink reads its exact page without walking newer history', async ({page}) => {
   const reads: URLSearchParams[] = [];
-  page.on('request', request => {if (request.url().includes('/api/console/board?') && new URL(request.url()).searchParams.has('topic')) reads.push(new URL(request.url()).searchParams);});
+  page.on('request', request => {if (request.url().includes('/api/console/board?') && new URL(request.url()).searchParams.has('channel')) reads.push(new URL(request.url()).searchParams);});
   await page.goto(permalink(10));
   const post = page.locator('[data-board-anchor="post:10"]');
   await expect(post).toBeFocused();
   expect(reads).toHaveLength(1);
-  expect(reads[0]!.get('topic')).toBe(topic);
+  expect(reads[0]!.get('channel')).toBe(topic);
   expect(reads[0]!.get('before')).toBe('11');
   await page.reload(); await expect(post).toBeFocused();
   await expect(page.getByRole('link', {name: 'Permalink to message #10', exact: true})).toHaveAttribute('href', permalink(10));
 });
 
 test('a missing or wrong-topic message is explicit and invalid IDs do not become cursors', async ({page}) => {
-  await page.goto('/diagnostics?view=board&topic=another-topic&message=10');
-  await expect(page.getByText('Message #10 is unavailable in this topic.', {exact: true})).toBeVisible();
+  await page.goto('/diagnostics?view=board&channel=another-topic&message=10');
+  await expect(page.getByText('Message #10 is unavailable in this channel.', {exact: true})).toBeVisible();
   await expect(page.locator('.oc-board-post')).toHaveCount(0);
   const reads: URLSearchParams[] = [];
-  page.on('request', request => {if (request.url().includes('/api/console/board?') && new URL(request.url()).searchParams.has('topic')) reads.push(new URL(request.url()).searchParams);});
+  page.on('request', request => {if (request.url().includes('/api/console/board?') && new URL(request.url()).searchParams.has('channel')) reads.push(new URL(request.url()).searchParams);});
   for (const id of ['-1', '1.5', '1e3', '9007199254740992', 'NaN']) {
     await page.goto(thread + '&message=' + id);
     await expect(page.locator('.oc-board-post')).toHaveCount(20);
@@ -79,10 +79,10 @@ for (const width of [1440, 390]) {
     await page.route('**/api/console/board?*', route => {
       const query = new URL(route.request().url()).searchParams;
       const mixed = messages.slice(-8).map((post, index) => ({...post, topic: index % 2 ? 'engineering' : 'release', agent: index % 2 ? 'one' : 'two', name: index % 2 ? 'codex:one' : 'codex:two'}));
-      return route.fulfill({json: {messages: mixed.filter(post => !query.get('topic') || post.topic === query.get('topic')).toReversed(), next: null, topicSummaries: ['engineering', 'release'].map(topic => ({topic, posts: 4, latest: {name: 'codex:one', timestamp: mixed.at(-1)!.timestamp}}))}});
+      return route.fulfill({json: {messages: mixed.filter(post => !query.get('channel') || post.topic === query.get('channel')).toReversed(), next: null, topicSummaries: ['engineering', 'release'].map(topic => ({topic, posts: 4, latest: {name: 'codex:one', timestamp: mixed.at(-1)!.timestamp}}))}});
     });
     await page.goto('/diagnostics');
-    await expect(page.getByRole('heading', {name: 'All topics', exact: true})).toBeVisible();
+    await expect(page.getByRole('heading', {name: 'All channels', exact: true})).toBeVisible();
     await expect(page.locator('.oc-board-post')).toHaveCount(8);
     await expect(page.getByText(/Showing \d+ messages/)).toHaveCount(0);
     await expect(page.locator('.oc-board-message-topic')).toHaveCount(8);
@@ -91,7 +91,7 @@ for (const width of [1440, 390]) {
     await page.screenshot({path: info.outputPath(`all-topics-${width}.png`)});
     const openNavigation = async () => {if (width < 800) await page.getByRole('button', {name: 'Open workspace navigation', exact: true}).click();};
     await openNavigation();
-    await page.getByRole('navigation', {name: 'Message board topics'}).getByRole('link', {name: 'engineering', exact: true}).click();
+    await page.getByRole('navigation', {name: 'Message board channels'}).getByRole('link', {name: 'engineering', exact: true}).click();
     await expect(page.getByRole('heading', {name: '# engineering'})).toBeVisible();
     await expect(page.locator('.oc-board-post')).toHaveCount(4);
     await expect(page.locator('.oc-board-message-topic')).toHaveCount(0);
@@ -167,4 +167,28 @@ test('a focused permalink leaves room for long text at the desktop breakpoint', 
   });
   expect(overlaps).toBe(false);
   await page.screenshot({path: info.outputPath('permalink-801.png')});
+});
+
+for(const width of [1440,390])test(`system announcement thread navigation and reply permalink at ${width}px`,async({page},info)=>{
+ await page.setViewportSize({width,height:900});
+ const root:BoardMessage={id:101,topic:'opencrawl',channel:'opencrawl',threadId:101,system:true,agent:'system:opencrawl',name:'opencrawl',timestamp:1_800_000_000_000,text:'An operator announcement'};
+ const reply:BoardMessage={id:102,topic:'opencrawl',channel:'opencrawl',threadId:101,agent:'client',name:'codex:client',timestamp:1_800_000_001_000,text:'Agent thread reply'};
+ await page.route('**/api/console/board?*',route=>{
+  const q=new URL(route.request().url()).searchParams;
+  return route.fulfill({json:{messages:q.has('threadId')?[reply]:[root],...(q.has('threadId')?{threadRoot:root}:{}),next:null,topicSummaries:[],channelSummaries:[{channel:'opencrawl',readOnly:true,posts:2,latest:{name:'codex:client',timestamp:reply.timestamp}}]}});
+ });
+ await page.goto('/diagnostics?view=board&channel=opencrawl');
+ await expect(page.getByText('System announcements. Agents can reply in threads.')).toBeVisible();
+ await expect(page.getByText('Agent thread reply',{exact:true})).toHaveCount(0);
+ let documents=0;page.on('request',r=>{if(r.isNavigationRequest()&&r.frame()===page.mainFrame())documents++;});
+ const link=page.getByRole('link',{name:'View thread',exact:true});await link.focus();await page.keyboard.press('Enter');
+ await expect(page).toHaveURL(/channel=opencrawl&thread=101$/);
+ await expect(page.getByText('An operator announcement',{exact:true})).toBeVisible();await expect(page.getByText('Agent thread reply',{exact:true})).toBeVisible();
+ await page.getByRole('link',{name:'Permalink to message #102',exact:true}).click();await expect(page.locator('[data-board-anchor="post:102"]')).toBeFocused();
+ await page.goBack();await page.goBack();await expect(page.getByText('Agent thread reply',{exact:true})).toHaveCount(0);
+ await page.goForward();await expect(page.getByText('Agent thread reply',{exact:true})).toBeVisible();expect(documents).toBe(0);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.screenshot({path:info.outputPath(`announcement-thread-${width}.png`)});
+ await page.route('**/api/console/board?*',route=>route.fulfill({status:403,json:{error:'Workspace access revoked'}}));
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(page.locator('.oc-board-post')).toHaveCount(0);
 });

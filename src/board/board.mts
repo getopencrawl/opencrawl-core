@@ -4,7 +4,7 @@ import type {createRecentSessions} from '../sessions/recent.mjs';
 import {serviceError} from '../sessions/types.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
-import {boardSearchSchema} from './search.mjs';
+import {boardSearchSchema,searchParameters,searchMessages} from './search.mjs';
 import {createParticipation, resolveMentions, mentionWarning} from './participation.mjs';
 import {announcementChannel, channelSchema, channelName, channelNames, clientName, checkClientPost, threadIdSchema, visibleMessage} from './channels.mjs';
 import {boardIdentity} from './identity.mjs';
@@ -46,7 +46,7 @@ export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=
       const announcements=summaries.find(t=>t.topic===announcementChannel);if(announcements)Object.assign(channelSummaries[0],{posts:announcements.posts,latest:announcements.latest});
       return {topics:summaries.map(t=>t.topic).sort(),topicSummaries:summaries.sort((a,b)=>b.latest.id-a.latest.id).map(({first,...summary})=>summary),channels:channelSummaries.map(c=>c.channel),channelSummaries,messages:messages.slice(0,20).map(visibleMessage),next:messages.length>20?messages[19].id:null,...root?{threadRoot:visibleMessage(root)}:{}};
     });},
-    async search(principal:Principal,input:unknown){const key=scope(principal),{workspace,...args}=boardSearchSchema.parse(input);if(workspace!==undefined&&workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);if(args.since&&args.until&&Date.parse(args.since)>Date.parse(args.until))throw fail('since must not be later than until');const result=await repository.search(key,principal.userId,{...args,topics:channelNames(args)},now());return {...result,messages:result.messages.map(m=>visibleMessage({...m,requestId:''}))};},
+    async search(principal:Principal,input:unknown){const key=scope(principal),{workspace,...args}=boardSearchSchema.parse(input);if(workspace!==undefined&&workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);if(args.since&&args.until&&Date.parse(args.since)>Date.parse(args.until))throw fail('since must not be later than until');const result=await repository.search(key,principal.userId,searchParameters(args),now());return searchMessages(result,args.facets);},
     async fetch(principal: Principal, input: unknown) {
       const key = scope(principal), args = boardFetchSchema.parse(input);
       if (args.workspace !== undefined && args.workspace !== principal.tenantId) throw fail('Workspace scope mismatch', 403);
@@ -116,7 +116,7 @@ export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=
         const accepted:number[]=[],unresolvedMentions:string[]=[],topics=await tx.topics();let head=meta.head;
         for(const post of args.posts){await checkClientPost(tx,post.topic,post.threadId);const duplicate=await tx.publication({userId:principal.userId,agent:agentId,name:agentName,requestId:post.id,registered:Boolean(registered)});
           if(duplicate){if(duplicate.topic!==post.topic||duplicate.text!==post.text||duplicate.threadId!==post.threadId)throw fail('Retry id already used for different content',409);accepted.push(duplicate.id);unresolvedMentions.push(...duplicate.publication?.unresolvedMentions||[]);continue;}
-          if(!topics.some(t=>t.topic===post.topic)&&topics.length>=128)throw fail('Channel limit reached',429);
+          if(!topics.some(t=>t.topic===post.topic)&&topics.filter(t=>t.topic!=='opencrawl').length>=128)throw fail('Channel limit reached',429);
           const resolution=resolveMentions({participants:profiles},post.text),message=await tx.append({timestamp:time,agent:agentId,author:principal.userId,name:agentName,topic:post.topic,text:post.text,requestId:post.id,...post.threadId!==undefined?{threadId:post.threadId}:{},publication:{explicitMentions:[],unresolvedMentions:resolution.unresolvedMentions},...(resolution.mentions.length?{mentions:resolution.mentions}:{})});
           if(!topics.some(t=>t.topic===post.topic))topics.push({topic:post.topic,first:message.id,posts:1,latest:{id:message.id,timestamp:time,name:agentName}});
           unresolvedMentions.push(...resolution.unresolvedMentions);accepted.push(message.id);head=message.id;

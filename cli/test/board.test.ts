@@ -141,3 +141,16 @@ test('bounded monitor notices never truncate the receipt and fetch binds the exa
   expect(JSON.stringify({schemaVersion:1,data:emitted[0]}).length).toBeLessThan(200);
   expect(boardInput('inbox',{session:'s',receipt})).toEqual({session:'s',receipt});
 });
+
+test('channels and root-thread replies use canonical fields, with explicit legacy aliases',()=>{
+ expect(boardInput('subscribe',{session:'s',channel:['build']})).toEqual({session:'s',topics:['build']});
+ expect(boardInput('publish',{session:'s',id:'r',channel:['build'],thread:'42',text:'Reply'})).toEqual({session:'s',id:'r',topic:'build',threadId:42,text:'Reply',mentions:[]});
+ expect(boardInput('thread',{thread:'42',before:'50'})).toEqual({threadId:42,before:50});
+ expect(boardInput('channels',{})).toEqual({after:0});
+ expect(()=>boardInput('reply',{session:'s',channel:['build'],text:'No root'})).toThrow();
+ for(const thread of ['0','-1','1.5','9007199254740992'])expect(()=>boardInput('thread',{thread})).toThrow();
+ expect(()=>boardInput('subscribe',{session:'s',channel:['a'],topic:['b']})).toThrow();
+ const parts=compactDelivery([{id:43,name:'peer',channel:'opencrawl',threadId:42,text:'Reply'}]);
+ expect(parts.map(p=>p.text).join('')).toBe('@peer [opencrawl] [reply to #42] Reply');
+ expect(compactDelivery([{id:42,name:'opencrawl',channel:'opencrawl',threadId:42,system:true,text:'Notice'}]).map(p=>p.text).join('')).toBe('@opencrawl [opencrawl] [system announcement] Notice');
+});

@@ -11,7 +11,7 @@ async function fixture(t,rows=messages){const f=await boardStateFixture(t);await
 test('PostgreSQL ranks complete messages with exact facets and durable query-bound keyset pages',async t=>{
   const f=await fixture(t),args={query:'refresh',limit:2},first=await f.search.search(principal,args);
   assert.equal(first.total,8);assert.equal(first.through,8);assert.deepEqual(first.messages.map(m=>m.id),[8,7]);
-  assert.deepEqual(first.facets.topic.values,[{value:'auth',count:6},{value:'other',count:2}]);assert.equal(first.facets.agent.values[0].name,'codex');assert.ok(!('requestId'in first.messages[0]));
+  assert.deepEqual(first.facets.channel.values,[{value:'auth',count:6},{value:'other',count:2}]);assert.equal(first.facets.agent.values[0].name,'codex');assert.ok(!('requestId'in first.messages[0]));
   await f.make().sync(principal,{agent:'codex',posts:[{id:'growth',topic:'auth',text:'refresh refresh refresh'}]});
   const restarted=createBoardSearch({state:{...f.state,board:createPostgresBoardState(f.database)},now:()=>1});
   let cursor=first.next,all=first.messages.map(m=>m.id);while(cursor){const page=await restarted.search(principal,{...args,cursor});all.push(...page.messages.map(m=>m.id));assert.equal(page.total,8);assert.equal(page.facets,undefined);cursor=page.next;}
@@ -51,7 +51,8 @@ test('legacy import preserves publication aliases, pending deliveries, usage and
   const destination=await boardStateFixture(t);await destination.repository.importLegacy(boardTenant(principal.tenantId),source);
   assert.deepEqual(await destination.repository.exportLegacy(boardTenant(principal.tenantId)),source);
   await destination.repository.importLegacy(boardTenant(principal.tenantId),source);
-  assert.deepEqual((await destination.make().participate(principal,'inbox',{session:'one'})).batch,source.participants[owner.agent].pending);
+  const expected=source.participants[owner.agent].pending;
+  assert.deepEqual((await destination.make().participate(principal,'inbox',{session:'one'})).batch,{...expected,messages:expected.messages.map(m=>({...m,channel:m.topic,threadId:m.threadId??m.id}))});
   const conflict=structuredClone(source);conflict.messages[0].text='changed';
   await assert.rejects(destination.repository.importLegacy(boardTenant(principal.tenantId),conflict));
   assert.deepEqual(await destination.repository.exportLegacy(boardTenant(principal.tenantId)),source);

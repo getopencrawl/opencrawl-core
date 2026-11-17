@@ -66,14 +66,17 @@ export interface DiagnosticSearch {
   connectors?: {state?: string; truncated?: boolean; responses?: SearchResponse[]};
   memories?: SearchResponse & {truncated?: boolean};
 }
-export interface BoardMessage {id: number; timestamp: number; name: string; agent: string; topic: string; text: string}
+export interface BoardMessage {id: number; timestamp: number; name: string; agent: string; topic: string; text: string; channel?: string; threadId?: number; system?: true}
 export interface BoardReport {
   messages: BoardMessage[];
+  threadRoot?: BoardMessage;
+  channels?: string[];
+  channelSummaries?: Array<{channel:string;readOnly:boolean;posts:number;latest:{timestamp:number;name:string}}>;
   topicSummaries: Array<{topic: string; posts: number; latest: {timestamp: number; name: string}}>;
   next: number | null;
 }
 export interface ConsoleDataAdapter {
   usage(signal: AbortSignal): Promise<UsageReport>;
   search(query: string, signal: AbortSignal): Promise<DiagnosticSearch>;
-  board(input: {topic?: string; before?: number}, signal: AbortSignal): Promise<BoardReport>;
+  board(input: {channel?:string; topic?: string; threadId?:number; rootsOnly?:boolean; before?: number}, signal: AbortSignal): Promise<BoardReport>;
 }

@@ -61,7 +61,7 @@ export function createParticipation({scope,repository,now}:{scope(principal:Prin
     const directory=async(tx:BoardReader,after=0,limit=32)=>{
       const page=await tx.directory({after,limit,cutoff:time-retainMs});
       return {...page,agents:page.agents.map(({id:agent,participant:p})=>({agent,name:p.name,task:p.task,harness:p.harness,seen:p.seen,
-        listening:!p.left&&Number(p.lastPoll)>time-aliveMs,left:Boolean(p.left),topics:p.topics,registeredAt:p.registeredAt,lastPoll:p.lastPoll,lastAckAt:p.lastAckAt,
+        listening:!p.left&&Number(p.lastPoll)>time-aliveMs,left:Boolean(p.left),topics:p.topics,channels:p.topics,registeredAt:p.registeredAt,lastPoll:p.lastPoll,lastAckAt:p.lastAckAt,
         acknowledgedThrough:p.ackCursor,pending:p.pending?{receipt:p.pending.receipt,createdAt:p.pending.createdAt,messages:p.pending.count}:null,
         batches:p.batches,acknowledgedBatches:p.acknowledgedBatches,lastDeliveryAt:p.lastDeliveryAt||null,acknowledgedMessages:p.acknowledgedMessages||0}))};
     };
@@ -86,7 +86,7 @@ export function createParticipation({scope,repository,now}:{scope(principal:Prin
         await tx.putParticipant(id,p);
         const presence=(await tx.agents())[id];if(presence)await tx.putAgent(id,{...presence,name:p.name,seen:time});
         return {workspace:principal.tenantId,agent:id,session:args.session,name:p.name||null,task:p.task||null,harness:p.harness,resumed,
-          subscriptions:{mentions:Boolean(p.name),topics:p.topics,channels:p.topics,announcements:true},pollAfterMs:10000,...(operation==='register'?{home:resumed?[]:(await tx.messages({limit:5,descending:true})).reverse().map(({requestId,publication,...m})=>m),agents:(await directory(tx,0,8)).agents}:{})};
+          subscriptions:{mentions:Boolean(p.name),topics:p.topics,channels:p.topics,announcements:true},pollAfterMs:10000,...(operation==='register'?{home:resumed?[]:(await tx.messages({limit:5,descending:true})).reverse().map(visibleMessage),agents:(await directory(tx,0,8)).agents}:{})};
       }
       if(!p)throw fail('Register this session before using the board',404);
       const ownerMissing=p.userId===undefined;p.userId=principal.userId;
@@ -111,7 +111,7 @@ export function createParticipation({scope,repository,now}:{scope(principal:Prin
           return {agent:id,accepted:[duplicate.id],mentions:duplicate.mentions||[],...mentionWarning(duplicate.publication?.unresolvedMentions||[])};
         }
         const {mentions,unresolvedMentions}=resolveMentions({participants:profiles},args.text,args.mentions),topics=await tx.topics();
-        if(!topics.some(t=>t.topic===channel)&&topics.length>=128)throw fail('Channel limit reached',429);
+        if(!topics.some(t=>t.topic===channel)&&topics.filter(t=>t.topic!=='opencrawl').length>=128)throw fail('Channel limit reached',429);
         const message=await tx.append({timestamp:time,agent:id,author:principal.userId,name:p.name,topic:channel,text:args.text,requestId:args.id,...args.threadId!==undefined?{threadId:args.threadId}:{},mentions,publication:{explicitMentions:explicitNames(args.mentions),unresolvedMentions}});p.seen=time;
         result={agent:id,accepted:[message.id],mentions,...mentionWarning(unresolvedMentions)};
       }else if(operation==='inbox'){

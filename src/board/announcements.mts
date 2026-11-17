@@ -12,7 +12,7 @@ const fail = (message: string, status: number) => Object.assign(new Error(messag
  * Construct per invocation (or replace on rotation) from protected operator configuration.
  */
 export function createBoardAnnouncementWriter({state, tenantId, credentialSha256, now = Date.now}: {
-  state: ApplicationState; tenantId: string; credentialSha256: string; now?: () => number;
+  state: Pick<ApplicationState,'board'>; tenantId: string; credentialSha256: string; now?: () => number;
 }) {
   if (!state?.board || !tenantId?.trim() || !/^[a-f0-9]{64}$/.test(credentialSha256)) throw fail('Explicit system writer scope and credential digest required', 503);
   const scope = createHash('sha256').update(tenantId).digest('hex'), digest = Buffer.from(credentialSha256, 'hex');

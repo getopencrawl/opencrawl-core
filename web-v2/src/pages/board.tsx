@@ -6,8 +6,9 @@ import {Link} from '../router.js';
 import type {BoardMessage, BoardReport, ConsoleDataAdapter} from './types.js';
 import {useBoard} from './use-board.js';
 
-export const topicHref = (topic = '') => '/diagnostics?view=board' + (topic ? '&topic=' + encodeURIComponent(topic) : '');
-const messageHref = (topic: string, id: number) => topicHref(topic) + '&message=' + id;
+export const topicHref = (topic = '') => '/diagnostics?view=board' + (topic ? '&channel=' + encodeURIComponent(topic) : '');
+const threadHref = (channel: string, id: number) => topicHref(channel) + '&thread=' + id;
+const messageHref = (topic: string, id: number, threadId?:number) => (threadId&&threadId!==id?threadHref(topic,threadId):topicHref(topic)) + '&message=' + id;
 const day = (timestamp: number) => new Date(timestamp).toLocaleDateString(undefined, {year: 'numeric', month: 'long', day: 'numeric'});
 const time = (timestamp: number) => new Date(timestamp).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'});
 const noCapture = () => {};
@@ -15,15 +16,15 @@ const noCapture = () => {};
 /** Summaries use a scoped reader; opening an older permalink never scans history. */
 export function BoardNavigation({adapter, topic, closeNavigation}: {adapter: Pick<ConsoleDataAdapter, 'board'>; topic: string; closeNavigation: () => void}) {
   const {report, busy, error, retry} = useBoard(adapter, '', true, noCapture);
-  const topics = report?.topicSummaries.map(item => item.topic) ?? [];
+  const topics = report?.channelSummaries?.map(item=>item.channel) ?? ['opencrawl',...(report?.topicSummaries.map(item=>item.topic)??[]).filter(name=>name!=='opencrawl')];
   if (topic && !topics.includes(topic)) topics.push(topic);
   return <>
     <div className="oc-nav-group oc-board-back"><LinkButton variant="quiet" to="/diagnostics?nav=workspace" onClick={closeNavigation}><Icon name="arrow-left"/><span>Back</span></LinkButton></div>
     <div className="oc-nav-group">
-      <Link className={`oc-nav-link${!topic ? ' oc-nav-active' : ''}`} to={topicHref()} aria-current={!topic ? 'page' : undefined} onClick={closeNavigation}><Icon name="overview"/><span>All topics</span></Link>
+      <Link className={`oc-nav-link${!topic ? ' oc-nav-active' : ''}`} to={topicHref()} aria-current={!topic ? 'page' : undefined} onClick={closeNavigation}><Icon name="overview"/><span>All channels</span></Link>
       {topics.map(name => <Link key={name} className={`oc-nav-link${topic === name ? ' oc-nav-active' : ''}`} to={topicHref(name)} aria-current={topic === name ? 'page' : undefined} onClick={closeNavigation}><span className="oc-board-topic-mark" aria-hidden="true">#</span><span>{name}</span></Link>)}
-      {!report && busy && <LoadingState label="Loading topics"/>}
-      {error && <div className="oc-board-navigation-error"><Notice tone="warning">Topics couldn’t update.</Notice><Button variant="quiet" disabled={busy} onClick={() => void retry()}>Try again</Button></div>}
+      {!report && busy && <LoadingState label="Loading channels"/>}
+      {error && <div className="oc-board-navigation-error"><Notice tone="warning">Channels couldn’t update.</Notice><Button variant="quiet" disabled={busy} onClick={() => void retry()}>Try again</Button></div>}
     </div>
   </>;
 }
@@ -44,7 +45,7 @@ function MessageText({text, messages}: {text: string; messages: ReadonlyArray<Bo
     else {
       const id = Number(value.match(/\d+/)?.[0]);
       const referenced = messages.find(message => message.id === id);
-      parts.push(referenced ? <Link key={match.index} to={messageHref(referenced.topic, id)}>{value}</Link> : value);
+      parts.push(referenced ? <Link key={match.index} to={messageHref(referenced.topic, id, referenced.threadId)}>{value}</Link> : value);
     }
     at = match.index + value.length;
   }
@@ -56,14 +57,14 @@ export function messageGroups(messages: ReadonlyArray<BoardMessage>, selected?: 
   const groups: BoardMessage[][] = [];
   for (const message of [...messages].sort((a, b) => a.id - b.id)) {
     const group = groups.at(-1), previous = group?.at(-1);
-    if (previous && previous.agent === message.agent && previous.topic === message.topic && day(previous.timestamp) === day(message.timestamp) && message.timestamp >= previous.timestamp && message.timestamp - previous.timestamp < 300_000 && message.id !== selected) group!.push(message);
+    if (previous && previous.agent === message.agent && previous.topic === message.topic && previous.threadId === message.threadId && previous.system === message.system && day(previous.timestamp) === day(message.timestamp) && message.timestamp >= previous.timestamp && message.timestamp - previous.timestamp < 300_000 && message.id !== selected) group!.push(message);
     else groups.push([message]);
   }
   return groups;
 }
 
-export function BoardContent({report, stream, message}: {report: BoardReport; stream: boolean; message?: number}) {
-  if (!report.messages.length) return <EmptyState title={stream ? 'No workspace messages yet' : 'No messages in this topic yet'}/>;
+export function BoardContent({report, stream, message, inThread=false}: {report: BoardReport; stream: boolean; message?: number; inThread?:boolean}) {
+  if (!report.messages.length) return <EmptyState title={inThread ? 'No replies yet' : stream ? 'No workspace messages yet' : 'No messages in this channel yet'}/>;
   const groups = messageGroups(report.messages, message);
   return <>{groups.map((group, index) => {
     const first = group[0]!, previous = groups[index - 1]?.[0], date = day(first.timestamp);
@@ -72,18 +73,19 @@ export function BoardContent({report, stream, message}: {report: BoardReport; st
       <div className="oc-board-message-group">
         <header className="oc-board-post-header">
           {stream && <Link className="oc-board-message-topic" to={topicHref(first.topic)}># {first.topic}</Link>}
-          <div className="oc-board-author-line"><h3 className={agentIdentityClass(first.agent)}>{first.name || first.agent}</h3><time dateTime={new Date(first.timestamp).toISOString()} title={new Date(first.timestamp).toLocaleString()}>{time(first.timestamp)}</time></div>
+          <div className="oc-board-author-line"><h3 className={agentIdentityClass(first.agent)}>{first.name || first.agent}</h3>{first.system&&<span>System</span>}<time dateTime={new Date(first.timestamp).toISOString()} title={new Date(first.timestamp).toLocaleString()}>{time(first.timestamp)}</time></div>
         </header>
         {group.map((post, offset) => <article key={post.id} className={`oc-board-post${offset ? ' continued' : ''}${message === post.id ? ' selected' : ''}`} data-board-anchor={'post:' + post.id} tabIndex={-1} aria-label={`${post.name || post.agent}, ${time(post.timestamp)}`}>
-          <Link className="oc-board-post-id" to={messageHref(post.topic, post.id)} aria-label={'Permalink to message #' + post.id}>#{post.id}</Link>
+          <Link className="oc-board-post-id" to={messageHref(post.topic, post.id, post.threadId)} aria-label={'Permalink to message #' + post.id}>#{post.id}</Link>
           <p className="oc-board-post-body"><MessageText text={post.text} messages={report.messages}/></p>
+          {!inThread&&<Link className="oc-board-thread-link" to={threadHref(post.topic,post.threadId??post.id)}>View thread</Link>}
         </article>)}
       </div>
     </Fragment>;
   })}</>;
 }
 
-export function BoardInspector({adapter, stream, topic, message}: {adapter: Pick<ConsoleDataAdapter, 'board'>; stream: boolean; topic: string; message?: number}) {
+export function BoardInspector({adapter, stream, topic, message, threadId}: {adapter: Pick<ConsoleDataAdapter, 'board'>; stream: boolean; topic: string; message?: number; threadId?:number}) {
   const root = useRef<HTMLDivElement>(null), located = useRef(false), opened = useRef(false);
   const anchor = useRef<{key: string; top: number} | 'latest' | null>(null);
   const capture = useCallback(() => {
@@ -95,7 +97,7 @@ export function BoardInspector({adapter, stream, topic, message}: {adapter: Pick
     const first = Array.from(viewport.querySelectorAll<HTMLElement>('[data-board-anchor]')).find(element => element.getBoundingClientRect().bottom > edge);
     if (first?.dataset.boardAnchor) anchor.current = {key: first.dataset.boardAnchor, top: first.getBoundingClientRect().top};
   }, [message]);
-  const {report, busy, error, catchingUp, retry, older} = useBoard(adapter, topic, false, capture, message);
+  const {report, busy, error, catchingUp, retry, older} = useBoard(adapter, topic, false, capture, message, threadId);
   useLayoutEffect(() => {
     const restoration = history.scrollRestoration;
     history.scrollRestoration = 'manual';
@@ -128,14 +130,17 @@ export function BoardInspector({adapter, stream, topic, message}: {adapter: Pick
       if (post) viewport.scrollTop += post.getBoundingClientRect().top - saved.top;
     }
   }, [report, error, catchingUp, message]);
-  return <section className="oc-board-conversation" aria-label={topic ? '# ' + topic : 'All topics'}>
+  return <section className="oc-board-conversation" aria-label={topic ? '# ' + topic : 'All channels'}>
     <div className="oc-board-stream" ref={root} tabIndex={0} aria-label="Messages" aria-busy={busy}>
+      {threadId!==undefined&&<LinkButton variant="quiet" to={topicHref(topic)}>Back to channel</LinkButton>}
+      {topic==='opencrawl'&&threadId===undefined&&<div className="oc-board-feedback">System announcements. Agents can reply in threads.</div>}
+      {report?.threadRoot&&<BoardContent report={{...report,messages:[report.threadRoot]}} stream={false} message={message} inThread/>}
       {report && report.next !== null && <div className="oc-board-pagination"><ScrollControl direction="up" aria-disabled={busy} onClick={() => {if (!busy) void older();}}>Load older messages</ScrollControl></div>}
       {!report && busy && <LoadingState label="Loading messages"/>}
       {error && <div className="oc-board-feedback"><Notice tone={report ? 'warning' : 'danger'}>{report ? 'Messages couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}</Notice>{!report && <Button disabled={busy} onClick={() => void retry()}>Try again</Button>}</div>}
       {catchingUp && <div className="oc-board-feedback" role="status">Loading newer messages…</div>}
-      {report && message !== undefined && !report.messages.some(post => post.id === message) && <Notice>Message #{message} is unavailable in this topic.</Notice>}
-      {report && <BoardContent report={report} stream={stream} message={message}/>}
+      {report && message !== undefined && !report.messages.some(post => post.id === message)&&report.threadRoot?.id!==message && <Notice>Message #{message} is unavailable in this channel.</Notice>}
+      {report && <BoardContent report={report} stream={stream} message={message} inThread={threadId!==undefined}/>}
     </div>
   </section>;
 }

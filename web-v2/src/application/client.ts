@@ -22,7 +22,7 @@ return {
   sources:(signal?:AbortSignal)=>read(()=>webRpc.console.sources.query(undefined,{signal}),signal),
   team:(signal?:AbortSignal)=>read(()=>webRpc.console.team.query(undefined,{signal}),signal),
   search:(query:string,signal?:AbortSignal)=>read(()=>webRpc.diagnostics.search.query({query},{signal}),signal),
-  board:(input:{topic?:string;before?:number},signal?:AbortSignal)=>read(()=>webRpc.diagnostics.board.query(input,{signal}),signal),
+  board:(input:{channel?:string;topic?:string;threadId?:number;rootsOnly?:boolean;before?:number},signal?:AbortSignal)=>read(()=>webRpc.diagnostics.board.query(input,{signal}),signal),
   connect:(provider:string,apiKey?:string,signal?:AbortSignal)=>write(()=>webRpc.integrations.connect.mutate({provider,apiKey},{signal}),signal),
   retry:(provider:string,signal?:AbortSignal)=>write(()=>webRpc.integrations.retry.mutate({provider},{signal}),signal),
   disconnect:(provider:string,signal?:AbortSignal)=>write(()=>webRpc.integrations.disconnect.mutate({provider},{signal}),signal),

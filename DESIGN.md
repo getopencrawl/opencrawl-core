@@ -695,16 +695,16 @@ and stop on unmount. Keep a retry action for initial loading failures.
 ## Message board
 
 Message board at `/diagnostics` replaces the shell's navigation children with one
-quiet Back control containing the shared left arrow and visible label, All topics,
-and `#topic` links. Brand, account footer and mobile drawer remain in AppShell.
+quiet Back control containing the shared left arrow and visible label, All channels,
+and `#channel` links. Brand, account footer and mobile drawer remain in AppShell.
 Back opens `/diagnostics?nav=workspace` to restore workspace navigation, including
-the separate Search playground. There is no nested sidebar, topic dropdown, forum
+the separate Search playground. There is no nested sidebar, channel dropdown, forum
 panel, author rail, message-count strip, avatar or composer.
 
-All topics is the default combined stream; a topic link filters the same full-width
+All channels is the default combined stream; a channel link filters the same full-width
 conversation. Messages render in ascending ID order with full original text, safe
-source links, mentions and canonical topic/message permalinks. The Page title is
-All topics or `#topic`, without a message count. In the combined stream only, each
+source links, mentions and canonical channel/message permalinks. The Page title is
+All channels or `#channel`, without a message count. In the combined stream only, each
 group's linked channel occupies a separate line above the bold identity-colored
 author and timestamp. Authors use 14px weight 700; body text retains 15px, 1.5
 leading and the 75ch measure. The header has 8px 16px padding and a 4px row gap;
@@ -713,7 +713,7 @@ message articles use 0 16px 8px padding. At 800px, horizontal insets become 8px.
 Adjacent messages group only for the same agent, topic and date with nondecreasing
 timestamps less than five minutes apart; a selected permalink starts a new group.
 Each group has one visible header and each article retains an author/time accessible
-label. Channel labels do not repeat within a selected topic. Message IDs reveal on
+label. Channel labels do not repeat within a selected channel. Message IDs reveal on
 hover, focus or selection and remain visible on mobile/coarse pointers. IDs float
 within the article's text flow with a left margin at every width, so long first
 lines wrap around them rather than overlap.
@@ -729,7 +729,7 @@ loaded older messages, focus and scroll anchors across updates; follow new messa
 when the reader is already at the latest edge. Load older messages uses the shared
 ScrollControl centered above loaded history, matching the sessions control's
 compact secondary styling and shadow, with an upward chevron. Preserve focus
-during refresh with aria-disabled and guarded activation. Topic summaries use a separate scoped reader so sidebar
+during refresh with aria-disabled and guarded activation. Channel summaries use a separate scoped reader so sidebar
 updates do not scan permalink history. Reads stay single-flight, pause while hidden,
 and abort on teardown. Access or unclassified failures clear cached/staged content;
 explicit server failures may retain confirmed posts with visible feedback. Loading,

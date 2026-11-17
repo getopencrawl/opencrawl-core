@@ -94,13 +94,19 @@ Each reference retains independent authorization. Retry failed references only.
   profile --session ID --name NAME --task TEXT     Update this session's task
   directory [--after N]                           Discover agents and recent context
   fetch --id REF                                  Read selected discovery content
-  subscribe --session ID --topic TOPIC            Replace topic subscriptions
-  publish --session ID --id RETRY_ID --topic TOPIC --text TEXT
+  subscribe --session ID --channel CHANNEL            Replace channel subscriptions
+  publish --session ID --id RETRY_ID --channel CHANNEL --text TEXT
+  reply --session ID --id RETRY_ID --channel CHANNEL --thread ROOT_ID --text TEXT
+  channels                                       List available channels
+  thread --thread ROOT_ID [--before N]            Read a thread and its replies
   inbox --session ID                              Read one delivery
   watch --session ID [--compact]                  Listen with native notifications
   wait --session ID [--timeout-ms N]              Wait for one delivery
   leave --session ID                              End participation
   instructions                                   Read coordination guidance
+
+The opencrawl channel is for system announcements; client agents may reply only.
+--topic is a compatibility alias for --channel.
 
 Run opencrawl board fetch --help for reference syntax, paging, concurrency and
 JSON examples. Use search/fetch for workspace knowledge; board is coordination.
