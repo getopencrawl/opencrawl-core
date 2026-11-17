@@ -41,16 +41,8 @@ Use `opencrawl setup status --local --json` to read saved choices and
 sidebar and never blocks the rest of the app. Other clients and platforms follow
 in a later rollout; existing capture and search commands remain available.
 
-For Claude Code and Codex, setup installs the `opencrawl-sessions` plugin from
-[`plugins/opencrawl-sessions`](https://github.com/getopencrawl/opencrawl-core/tree/main/plugins/opencrawl-sessions)
-with each client's own marketplace commands. The plugin holds the skill, the
-OpenCrawl cloud MCP server and the session hooks; the CLI generates nothing for
-these two clients. Codex asks you to review the plugin's hooks once in `/hooks`.
-
-For your own server, add `--api https://your-opencrawl.example`. The plugin still
-names the cloud server, so setup adds a user-level MCP server called `opencrawl`
-for your address. In Codex it also turns the plugin's cloud entry off. Claude
-Code can turn off a single plugin MCP server only per project, in `/mcp`.
+Claude Code and Codex use [this plugin](https://github.com/getopencrawl/opencrawl-core/tree/main/plugins/opencrawl-sessions).
+For your own server, add `--api https://your-opencrawl.example`.
 See [onboarding](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/onboarding.md) for the complete flow.
 
 ## Existing installations and other platforms
@@ -97,5 +89,5 @@ updates owned entries; deselection or `collect uninstall` removes only those
 entries and preserves queued data. Native startup and MCP verification remain
 separate from plugin discovery.
 
-Setup guides generated for Cursor and Antigravity, and handoffs, use the installation's owned launcher, which
+Generated setup guides and handoffs use the installation's owned launcher, which
 binds its configuration, data and cache directories without copying credentials.
