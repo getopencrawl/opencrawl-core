@@ -731,15 +731,16 @@ button that expands the full list of stats. Keep real zero counts, per-stream
 completion, and measured progress. Use 8px solid status dots without glow and
 unframed provider icons. Keep account/scope details inside Manage, not beneath
 the card title. Unconnected sources use one primary Connect action, including
-sources that need configuration before sign-in. Search and state filters support a growing catalog.
+sources that need configuration before sign-in. Sections are the only grouping;
+there are no duplicate state tabs or toolbar divider. Show search only for catalogs
+of 15 or more connectors, matching onboarding. Hiding search also disables any prior query.
 Shared dialogs retain required setup, sign-in recovery, sync retries and confirmed deletion.
 
 The shared `oc-connector-*` patterns own compact available tiles, 226px connected cards and their
 3/2/1-column grid. Expanding a card never stretches neighboring cards. The same
 32px logos and 16px connector names align within both sections, with 20px side
 insets on desktop and 16px on mobile. Section headings sit 16px above their grids;
-separate sections by 40px on desktop and 32px on mobile. Search and filter controls
-share a vertical center when displayed side by side. The same
+separate sections by 40px on desktop and 32px on mobile. The same
 core component and shared Button, Dialog and Icon primitives serve hosted and
 self-hosted adapters. Imported stats describe ingest progress, not Usage indexed
 document counts. `/sources` and its `/integrations` alias share one page.

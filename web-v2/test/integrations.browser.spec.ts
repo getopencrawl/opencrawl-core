@@ -52,10 +52,31 @@ for(const width of [1440,600,390,320]) test(`available tiles precede connected c
   await expect(cards).toHaveCount(1);
   await expect(cards).toHaveAttribute('aria-label','Example connector 19');
   await page.getByRole('searchbox').fill('');
-  await page.getByRole('tab',{name:'Available 6'}).click();
-  await expect(cards).toHaveCount(6);
+  await expect(cards).toHaveCount(24);
+  await expect(page.getByRole('tablist')).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   expect(await page.locator('.oc-connector-dot').evaluateAll(es=>es.every(e=>getComputedStyle(e).width==='8px'&&getComputedStyle(e).boxShadow==='none'))).toBe(true);
+});
+
+test('small catalogs use only sections and hidden search cannot keep filtering',async({page})=>{
+  await page.clock.install();
+  let items=sources.slice(0,14);
+  await page.route('**/api/console/sources',route=>route.fulfill({json:{items}}));
+  await page.goto('/integrations-fixture');
+  await expect(page.getByRole('article')).toHaveCount(14);
+  await expect(page.getByRole('searchbox')).toHaveCount(0);
+  await expect(page.getByRole('tablist')).toHaveCount(0);
+  await expect(page.getByRole('region',{name:'Available',exact:true})).toBeVisible();
+  await expect(page.getByRole('region',{name:'Connected',exact:true})).toBeVisible();
+  items=sources.slice(0,15);
+  await page.clock.runFor(30_001);
+  await page.getByRole('searchbox',{name:'Search integrations'}).fill('does not exist');
+  await expect(page.getByRole('heading',{name:'No matching integrations'})).toBeVisible();
+  items=sources.slice(0,6);
+  await page.clock.runFor(30_001);
+  await expect(page.getByRole('searchbox')).toHaveCount(0);
+  await expect(page.getByRole('article')).toHaveCount(6);
+  await expect(page.getByRole('heading',{name:'No matching integrations'})).toHaveCount(0);
 });
 
 test('recovery dialogs preserve sign-in, sync and removal actions and member permissions',async({page})=>{
