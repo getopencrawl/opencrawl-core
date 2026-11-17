@@ -1,5 +1,5 @@
 import {test,expect} from 'bun:test';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,realpathSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,realpathSync,statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {spawnSync} from 'node:child_process';
@@ -51,7 +51,13 @@ test('canonical runner preserves literal command arguments and stdin without Nod
    const args=windows?(client==='codex'||hook.shell==='powershell'?['-NoProfile','-NonInteractive','-Command',hook.command]:['/d','/s','/c','"'+hook.command+'"']):['-c',hook.command];
    const result=spawnSync(executable,args,{cwd:client==='antigravity'?root:home,env,input:payload,encoding:'utf8',timeout:10000,windowsVerbatimArguments:windows&&client!=='codex'&&hook.shell!=='powershell'});
    expect({error:result.error?.message,stderr:result.stderr,status:result.status}).toEqual({error:undefined,stderr:'',status:0});
-   expect(JSON.parse(result.stdout)).toEqual({input:payload,args:['literal & $value $(false)','plugin-hook','--root',root,'--action','suggest']});
+   const received=JSON.parse(result.stdout);
+   // PowerShell expands Windows 8.3 directory aliases. Verify filesystem
+   // identity while retaining exact checks for every literal command argument.
+   expect(statSync(received.args[3]).dev).toBe(statSync(root).dev);
+   expect(statSync(received.args[3]).ino).toBe(statSync(root).ino);
+   received.args[3]=root;
+   expect(received).toEqual({input:payload,args:['literal & $value $(false)','plugin-hook','--root',root,'--action','suggest']});
   }
  }finally{rmSync(temporary,{recursive:true,force:true});}
 });
