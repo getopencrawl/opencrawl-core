@@ -2,7 +2,6 @@ import type {OnboardingReceipt, OnboardingSource, OnboardingStatus} from './type
 import {nativeInstallCommand,nativePathCommand} from '../../../src/sessions/cli-installation.mjs';
 
 export type OnboardingStep = 'connect' | 'mcp' | 'verify' | 'session' | 'ready';
-export type PromptStep = Exclude<OnboardingStep, 'ready'>;
 
 export function hasReceipt(value: OnboardingReceipt | null | undefined): boolean {
   return typeof value?.observedAt === 'string' && value.observedAt.trim() !== '' && Number.isFinite(Date.parse(value.observedAt));

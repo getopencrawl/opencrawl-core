@@ -5,9 +5,10 @@ import {serviceError} from '../sessions/types.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {boardSearchSchema,searchParameters,searchMessages} from './search.mjs';
-import {createParticipation, resolveMentions, mentionWarning} from './participation.mjs';
-import {announcementChannel, channelSchema, channelName, channelNames, clientName, checkClientPost, threadIdSchema, visibleMessage} from './channels.mjs';
-import {boardIdentity} from './identity.mjs';
+import {createParticipation} from './participation.mjs';
+import {publishMessage,mentionWarning} from './publication.mjs';
+import {announcementChannel, channelSchema, channelName, channelNames, clientName, threadIdSchema, visibleMessage} from './channels.mjs';
+import {boardIdentity, resolveBoardIdentity} from './identity.mjs';
 import {boardFetchSchema, preview, textPage} from './disclosure.mjs';
 export {boardFetchSchema} from './disclosure.mjs';
 
@@ -19,10 +20,12 @@ export const syncSchema = z.strictObject({
   channels: z.array(channelSchema).max(8).optional(),
   topics: z.array(topic).max(8).optional().describe('Deprecated alias for channels.'),
   after: z.number().int().min(0).optional().describe('Previous cursor for this exact channel selection. Omit to start now; 0 to read history.'),
-  posts: z.array(z.strictObject({id: short(80), channel: channelSchema.optional(), topic: topic.optional().describe('Deprecated alias for channel.'), threadId: threadIdSchema.optional().describe('Root message ID when replying. opencrawl permits client replies only.'), text: z.string().trim().min(1)})).max(3).default([])
-    .describe('Only changes others can act on. Reuse the same id when retrying.'),
-  leave: z.boolean().default(false),
 });
+export const postSchema = z.strictObject({workspace:syncSchema.shape.workspace,agent:syncSchema.shape.agent,
+  posts: z.array(z.strictObject({id: short(80), channel: channelSchema.optional(), topic: topic.optional().describe('Deprecated alias for channel.'), threadId: threadIdSchema.optional().describe('Root message ID when replying. opencrawl permits client replies only.'), text: z.string().trim().min(1)})).min(1).max(3)
+    .describe('Only changes others can act on. Reuse the same id when retrying.')
+});
+export const presenceSchema=syncSchema.omit({after:true}).extend({leave:z.boolean().default(false)});
 export const topicsSchema = z.strictObject({workspace: short(200).optional(), after: z.number().int().min(0).default(0)});
 export const boardReadSchema = z.strictObject({channel: channelSchema.optional(), topic: topic.optional(), threadId: threadIdSchema.optional(), rootsOnly: z.boolean().optional(), before: threadIdSchema.optional()});
 export const threadSchema = z.strictObject({workspace: short(200).optional(), threadId: threadIdSchema, before: threadIdSchema.optional()});
@@ -42,9 +45,11 @@ export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=
       const root=args.threadId!==undefined?await tx.message(args.threadId):null;
       if(args.threadId!==undefined&&(!root||root.threadId!==undefined||(channel&&root.topic!==channel)))throw fail('Thread not found',404);
       const summaries=await tx.topics(),messages=await tx.messages({before:args.before,topic:channel,threadId:args.threadId,rootsOnly:args.threadId===undefined&&args.rootsOnly,limit:21,descending:true});
+      const page=messages.slice(0,20),counts=await tx.replyCounts([...page.filter(m=>m.threadId===undefined).map(m=>m.id),...root?[root.id]:[]]);
+      const present=(m:typeof messages[number])=>({...visibleMessage(m),...m.threadId===undefined?{replyCount:counts[m.id]??0}:{}});
       const channelSummaries=[{channel:announcementChannel,posts:0,latest:{id:0,timestamp:0,name:'opencrawl'},readOnly:true},...summaries.filter(t=>t.topic!==announcementChannel).sort((a,b)=>b.latest.id-a.latest.id).map(({topic,first,...summary})=>({channel:topic,...summary,readOnly:false}))];
       const announcements=summaries.find(t=>t.topic===announcementChannel);if(announcements)Object.assign(channelSummaries[0],{posts:announcements.posts,latest:announcements.latest});
-      return {topics:summaries.map(t=>t.topic).sort(),topicSummaries:summaries.sort((a,b)=>b.latest.id-a.latest.id).map(({first,...summary})=>summary),channels:channelSummaries.map(c=>c.channel),channelSummaries,messages:messages.slice(0,20).map(visibleMessage),next:messages.length>20?messages[19].id:null,...root?{threadRoot:visibleMessage(root)}:{}};
+      return {topics:summaries.map(t=>t.topic).sort(),topicSummaries:summaries.sort((a,b)=>b.latest.id-a.latest.id).map(({first,...summary})=>summary),channels:channelSummaries.map(c=>c.channel),channelSummaries,messages:page.map(present),next:messages.length>20?messages[19].id:null,...root?{threadRoot:present(root)}:{}};
     });},
     async search(principal:Principal,input:unknown){const key=scope(principal),{workspace,...args}=boardSearchSchema.parse(input);if(workspace!==undefined&&workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);if(args.since&&args.until&&Date.parse(args.since)>Date.parse(args.until))throw fail('since must not be later than until');const result=await repository.search(key,principal.userId,searchParameters(args),now());return searchMessages(result,args.facets);},
     async fetch(principal: Principal, input: unknown) {
@@ -100,31 +105,40 @@ export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=
         return {workspace:principal.tenantId,topics,next:after+topics.length<all.length?after+topics.length:null};
       });
     },
+    async post(principal:Principal,input:unknown){
+      const key=scope(principal),args=postSchema.parse(input);clientName(args.agent);
+      if(args.workspace!==undefined&&args.workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
+      return repository.transaction(key,async tx=>{
+        const identity=await resolveBoardIdentity(tx,principal.userId,args.agent),accepted:number[]=[],unresolved:string[]=[];
+        for(const post of args.posts){const message=await publishMessage(tx,identity,{...post,channel:channelName(post)},now());accepted.push(message.id);unresolved.push(...message.publication?.unresolvedMentions??[]);}
+        return {agent:identity.agent,accepted,...mentionWarning(unresolved)};
+      });
+    },
+    async presence(principal:Principal,input:unknown){
+      const key=scope(principal),args=presenceSchema.parse(input),topics=channelNames(args);clientName(args.agent);
+      if(args.workspace!==undefined&&args.workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
+      return repository.transaction(key,async tx=>{
+        const identity=await resolveBoardIdentity(tx,principal.userId,args.agent),time=now(),agents=await tx.agents();
+        for(const [id,a]of Object.entries(agents))if(a.seen<=time-ttl||(identity.registered&&id!==identity.agent&&a.name.toLowerCase()===identity.name.toLowerCase()&&id===boardIdentity(principal.userId,a.name))){await tx.removeAgent(id);delete agents[id];}
+        if(args.leave)await tx.removeAgent(identity.agent);
+        else {if(!agents[identity.agent]&&Object.keys(agents).length>=128)throw fail('Active agent limit reached',429);await tx.putAgent(identity.agent,{name:identity.name,topics,seen:time});}
+        return {agent:identity.agent,...args.leave?{left:true}:{channels:topics,expiresAt:time+ttl}};
+      });
+    },
     async sync(principal:Principal,input:unknown){
-      const key=scope(principal),parsed=syncSchema.parse(input),args={...parsed,topics:channelNames(parsed),posts:parsed.posts.map(p=>({...p,topic:channelName(p)}))};clientName(args.agent);if(args.workspace!==undefined&&args.workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
+      const key=scope(principal),parsed=syncSchema.parse(input),args={...parsed,topics:channelNames(parsed)};clientName(args.agent);if(args.workspace!==undefined&&args.workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
       let sessions:Awaited<ReturnType<ReturnType<typeof createRecentSessions>['list']>>=[],sessionState=recentSessions?'ready':'not_configured';
       if(recentSessions){const controller=new AbortController();let timer:ReturnType<typeof setTimeout>|undefined;
         try{sessions=await Promise.race([recentSessions.list(principal,{signal:controller.signal}),new Promise<never>((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('Session snapshot timeout'));},sessionTimeoutMs);})]);}
         catch(caught){const error=serviceError(caught);if(error.status===403||error.status===401)throw error;sessionState='unavailable';}finally{clearTimeout(timer);}
       }
-      return repository.transaction(key,async tx=>{
-        const meta=await tx.metadata(),time=now(),profiles=await tx.profiles(),registered=Object.entries(profiles).find(([,p])=>p.userId===principal.userId&&p.name.toLowerCase()===args.agent.toLowerCase());
-        const agentId=registered?.[0]??boardIdentity(principal.userId,args.agent),agentName=registered?.[1].name??args.agent,start=args.after??meta.head;
-        if(start>meta.head)throw fail('Cursor exceeds board history');
-        const agents=await tx.agents();for(const [id,a]of Object.entries(agents))if(a.seen<=time-ttl||(registered&&id!==agentId&&a.name.toLowerCase()===agentName.toLowerCase()&&id===boardIdentity(principal.userId,a.name))){await tx.removeAgent(id);delete agents[id];}
-        if(args.leave)await tx.removeAgent(agentId);else{if(!agents[agentId]&&Object.keys(agents).length>=128)throw fail('Active agent limit reached',429);await tx.putAgent(agentId,{name:agentName,topics:args.topics,seen:time});}
-        const accepted:number[]=[],unresolvedMentions:string[]=[],topics=await tx.topics();let head=meta.head;
-        for(const post of args.posts){await checkClientPost(tx,post.topic,post.threadId);const duplicate=await tx.publication({userId:principal.userId,agent:agentId,name:agentName,requestId:post.id,registered:Boolean(registered)});
-          if(duplicate){if(duplicate.topic!==post.topic||duplicate.text!==post.text||duplicate.threadId!==post.threadId)throw fail('Retry id already used for different content',409);accepted.push(duplicate.id);unresolvedMentions.push(...duplicate.publication?.unresolvedMentions||[]);continue;}
-          if(!topics.some(t=>t.topic===post.topic)&&topics.filter(t=>t.topic!=='opencrawl').length>=128)throw fail('Channel limit reached',429);
-          const resolution=resolveMentions({participants:profiles},post.text),message=await tx.append({timestamp:time,agent:agentId,author:principal.userId,name:agentName,topic:post.topic,text:post.text,requestId:post.id,...post.threadId!==undefined?{threadId:post.threadId}:{},publication:{explicitMentions:[],unresolvedMentions:resolution.unresolvedMentions},...(resolution.mentions.length?{mentions:resolution.mentions}:{})});
-          if(!topics.some(t=>t.topic===post.topic))topics.push({topic:post.topic,first:message.id,posts:1,latest:{id:message.id,timestamp:time,name:agentName}});
-          unresolvedMentions.push(...resolution.unresolvedMentions);accepted.push(message.id);head=message.id;
-        }
+      return repository.read(key,async tx=>{
+        const {head}=await tx.metadata(),identity=await resolveBoardIdentity(tx,principal.userId,args.agent),agentId=identity.agent,agentName=identity.name,start=args.after??head;
+        if(start>head)throw fail('Cursor exceeds board history');
         const selected=await tx.unread({after:start,through:head,topics:args.topics,userId:principal.userId,agent:agentId,name:agentName,limit:6}),messages=[];let cursor=head,bytes=0;
         for(const m of selected){const message={id:m.id,ref:'message:'+m.id,timestamp:m.timestamp,name:m.name,topic:m.topic,channel:m.topic,threadId:m.threadId??m.id,...m.system?{system:true}:{},preview:preview(m.text,160)},size=Buffer.byteLength(JSON.stringify(message));if(messages.length>=5||bytes+size>4096){cursor=m.id-1;break;}messages.push(message);bytes+=size;}
-        const output={agent:agentId,cursor,more:cursor<head,accepted,messages,...mentionWarning(unresolvedMentions),recentSessions:sessions,recentSessionsStatus:{state:sessionState,limit:10,order:'lastActivityAt_desc',source:'indexed_capture'}};
-        await tx.addUsage(Buffer.byteLength(JSON.stringify(input)),Buffer.byteLength(JSON.stringify(output)));return output;
+        const output={agent:agentId,cursor,more:cursor<head,messages,recentSessions:sessions,recentSessionsStatus:{state:sessionState,limit:10,order:'lastActivityAt_desc',source:'indexed_capture'}};
+        return output;
       });
     },
   };

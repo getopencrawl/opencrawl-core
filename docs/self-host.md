@@ -25,17 +25,18 @@ unit/regression checks from a clean-server install and real provider verificatio
 
 **Breaking change in core 0.5.0:** Better Auth uses the PostgreSQL application
 database configured by `OPENCRAWL_DATABASE_URL`; SQLite authentication is no
-longer supported. Existing SQLite installations need a separate migration before
-starting the new runtime. Ask your agent to inspect your installation and follow
-the [PostgreSQL application-state upgrade](app-state-migration.md). The runtime
-does not read `identity.sqlite` or fall back to it; `OPENCRAWL_IDENTITY_PATH` is
-only an input to the legacy import tooling. See the [release notes](releases/0.5.0.md).
+longer supported. The runtime does not read `identity.sqlite` or fall back to
+it, and `OPENCRAWL_IDENTITY_PATH` is ignored.
+
+**No upgrade path during alpha:** there is no upgrade or import from an older
+version. Start from an empty install; an installation on an older release keeps
+that release. Startup logs a warning and continues with an empty application
+database if it finds a leftover `identity.sqlite`. See the
+[release notes](releases/0.6.0.md).
 
 The application database is included in Compose and cold backups. Auth, registry,
 board and capture event identities use PostgreSQL. Other product state retains the
 production object-store contracts. Temporal runs session and connector indexing.
-The retired whole-application migration is not required; installations that used
-it must follow the recovery guidance linked above.
 
 ## Configure your installation
 
@@ -45,10 +46,9 @@ or tailnet HTTPS listener in front of port 8092.
 
 Run `./deploy/up.sh` once. It creates `deploy/.env` with random local secrets and
 stops. Fill in the empty configuration fields, then run it again. Startup
-bootstraps a checksum-verified Node runtime for its coordinated upgrade tools;
-you do not need to install Node separately. Keep using this startup script for
-existing installations so upgrades take a matched backup and migrate before
-replacing writers. Choose a fresh `COMPOSE_PROJECT_NAME` for each installation.
+creates the application-state schema in the empty database and verifies it
+before writers start; repeating it on the same installation is a no-op. Choose
+a fresh `COMPOSE_PROJECT_NAME` for each installation.
 
 For a new installation using SQLite FTS5 search, include `--sqlite` on the first
 invocation: `./deploy/up.sh --sqlite --no-airbyte`. The script saves the Compose
@@ -325,8 +325,8 @@ Existing destination data is never overwritten. Verify sign-in, a retained
 session, connector retrieval, and board history after restoring. Do not run the
 original and restored stacks against the same Airbyte connections concurrently.
 
-Use [the coordinated upgrade procedure](upgrades.md) when updating this
-application. Both startup paths invoke it automatically for an existing install.
+There is no upgrade path from older versions during alpha: start from an empty
+install rather than updating an older one in place.
 The application database shares the bundled PostgreSQL server with Temporal,
 using a separate database and restricted login.
 

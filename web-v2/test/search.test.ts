@@ -5,7 +5,6 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {excerpt, highlightedText, safeSourceUrl, searchGroups, searchHit} from '../src/pages/search-model.ts';
 import {SearchReader} from '../src/pages/search-reader.ts';
 import {JsonDisclosure, SearchResults} from '../src/pages/search.tsx';
-import {workspaceSearchDiagnostics} from '../src/reference/search.ts';
 import type {DiagnosticSearch} from '../src/pages/types.ts';
 
 const result = (title: string): DiagnosticSearch => ({sessions: [{scope: 'workspace', response: {hits: {hits: [{_source: {title, text: title}}]}}}]});
@@ -49,13 +48,8 @@ test('groups preserve lower-bound totals, source coverage, truncation and failed
   assert.equal(searchGroups({memories: {}})[0]?.state, 'unknown');
 });
 
-test('the self-host returned window never fabricates a total and preserves an existing source URL', () => {
-  const data = workspaceSearchDiagnostics({results: [{id: 'connectors:one', source: 'connectors', title: 'Page', text: 'Body', url: 'https://example.com/page', excerpt: {start: 0, end: 4, totalChars: 400}}], partial: true, truncated: true, coverage: [{source: 'connectors', state: 'ready', truncated: true}]});
-  assert.equal(data.connectors?.responses?.[0]?.hits?.total, undefined);
-  assert.equal(data.connectors?.responses?.[0]?.hits?.hits?.[0]?._source?.url, 'https://example.com/page');
-  assert.equal(data.connectors?.truncated, true);
-  assert.equal(data.partial, true); assert.equal(data.truncated, true);
-  const hit = data.connectors?.responses?.[0]?.hits?.hits?.[0]; assert.ok(hit);
+test('a hit whose server excerpt is shorter than its source is marked as an excerpt', () => {
+  const hit = {_id: 'connectors:one', _source: {title: 'Page', text: 'Body', url: 'https://example.com/page', excerpt: {start: 0, end: 4, totalChars: 400}}};
   assert.equal(searchHit(hit, 'connectors').serverExcerpt, true);
 });
 

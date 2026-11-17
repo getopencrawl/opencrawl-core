@@ -6,6 +6,7 @@
   },
   "include": [
     "tools/delivery.mts",
+    "tools/validated-tree.mts",
     "tools/package-provenance.mts",
     "tools/package-contents.mts",
     "tools/publish-revision.mts",

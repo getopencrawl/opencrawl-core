@@ -7,11 +7,9 @@ import {pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {gunzipSync} from 'node:zlib';
 import {capturedEventTokens} from '../dist/src/sessions/token-count.mjs';
-import {migrateSessionTokens} from '../dist/src/sessions/token-migration.mjs';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {batchDocuments} from '../dist/src/sessions/indexer.mjs';
 import {createSessionLibrary} from '../dist/src/sessions/library.mjs';
-import {createControls} from '../dist/src/sessions/controls.mjs';
 import {createRealm, realmMapping} from '../dist/src/search/realm.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 
@@ -31,7 +29,7 @@ test('captured tokens count content, not usage, echoes, metadata or opaque media
 });
 
 for (const backend of ['sqlite', 'opensearch']) {
-  test(`${backend}: session token totals and historical metadata backfill`, {skip:backend==='opensearch'&&!process.env.OPENCRAWL_TEST_OPENSEARCH_URL}, async t => {
+  test(`${backend}: session token totals`, {skip:backend==='opensearch'&&!process.env.OPENCRAWL_TEST_OPENSEARCH_URL}, async t => {
     const directory=await mkdtemp(join(tmpdir(),'oc-session-tokens-'));
     const endpoint=backend==='sqlite'?pathToFileURL(join(directory,'search.sqlite')).href.replace('file:','sqlite:'):process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
     const tenantId='tokens-'+randomUUID(), alice={tenantId,userId:'alice'}, bob={tenantId,userId:'bob'};
@@ -59,7 +57,7 @@ for (const backend of ['sqlite', 'opensearch']) {
     }
     const current=await capture(alice,'current');
     await capture(alice,'current','second-install');
-    const old=await capture(alice,'old','device',true);
+    await capture(alice,'old','device',true);
     await capture(bob,'current');
     await realm.refresh(alice);
     const mine=await library.list(alice,{scope:'mine'});
@@ -69,28 +67,5 @@ for (const backend of ['sqlite', 'opensearch']) {
     assert.equal(filtered.sessions.find(s=>s.sessionId==='current').capturedTokens,current.expected,'search includes the entire session, including unmatched tools');
     await library.setVisibility(alice,{harness:'codex',sessionId:'old',visibility:'private'});
     assert.ok((await library.list(bob)).sessions.every(s=>s.sessionId!=='old'));
-    const before=(await collection.mget(alice,old.docs.map(d=>d.id))).docs;
-    const migrate=extra=>migrateSessionTokens({realm,principal:{tenantId},store,prefix,pageSize:2,maxEvents:100,...extra});
-    assert.equal((await migrate({})).events,3);
-    assert.equal((await library.list(alice,{scope:'mine'})).sessions.find(s=>s.sessionId==='old').capturedTokens,null,'dry run does not write');
-    await assert.rejects(migrate({principal:{tenantId:'other'}}),{status:403});
-    await assert.rejects(migrate({principal:{tenantId,captureAccess:'write'}}),{status:403});
-    const first=await migrate({dryRun:false,maxEvents:1});assert.equal(first.events,1);assert.equal(first.complete,false);
-    await realm.refresh(alice);
-    assert.equal((await library.list(alice,{scope:'mine'})).sessions.find(s=>s.sessionId==='old').capturedTokens,null,'partial migration never displays a partial sum');
-    assert.equal((await migrate({dryRun:false,after:first.after})).complete,true);
-    await realm.refresh(alice);
-    assert.equal((await migrate({dryRun:false})).events,0,'retry is idempotent');
-    assert.equal((await library.list(alice,{scope:'mine'})).sessions.find(s=>s.sessionId==='old').capturedTokens,old.expected);
-    const after=(await collection.mget(alice,old.docs.map(d=>d.id))).docs;
-    for(let i=0;i<before.length;i++) {delete after[i]._source.capturedTokens;assert.deepEqual(after[i]._source,before[i]._source,'backfill preserves text, passage layout and privacy');}
-    const tombstone=await capture(alice,'deleted','device',true);
-    await createControls({store,prefix}).update(alice,'sessions','codex','deleted',()=>({visibility:'team',deletedAt:new Date().toISOString()}));
-    await realm.refresh(alice);
-    assert.equal((await migrate({dryRun:false})).skippedDeleted,3);
-    assert.ok((await collection.mget(alice,tombstone.docs.map(d=>d.id))).docs.every(d=>d._source.capturedTokens===undefined));
-    await collection.delete(alice,tombstone.docs.map(d=>d.id));
-    await collection.bulk(alice,[{...tombstone.docs[0],document:{...tombstone.docs[0].document,capturedTokens:2},policy:'session-tokens'}]);
-    assert.equal((await collection.mget(alice,[tombstone.docs[0].id])).docs[0].found,false,'metadata-only writes cannot recreate deleted content');
   });
 }

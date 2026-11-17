@@ -171,8 +171,6 @@ function writeCompose(airbyteAddress='127.0.0.1',workspaceId=state.workspaceId||
   }});
 }
 async function up(){
-  // Upgrade before rewriting persisted credentials or replacing any old writer.
-  run(process.execPath,[join(root,'deploy/upgrade.mjs'),'--installation','dev','--automatic','--installer-pid',String(process.pid)]);
   state=JSON.parse(readFileSync(stateFile,'utf8')) as State;
   state.databasePassword??=secret();save();
   const docker=JSON.parse(run('docker',['info','--format','{{json .}}'],{capture:true})) as {MemTotal:number;NCPU:number};
@@ -213,7 +211,6 @@ async function up(){
   }
   state.airbyteEnabled=airbyteEnabled;state.startedAt=new Date().toISOString();save();
   privateFile(join(stateDir,'login.txt'),`Development only\nURL: ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\n`+(airbyteEnabled?`Airbyte URL: http://localhost:${state.airbytePort}\nAirbyte password: ${state.airbytePassword}\n`:'Airbyte disabled. Resume with ./dev/up --no-airbyte\n'));
-  run(process.execPath,[join(root,'deploy/upgrade.mjs'),'--installation','dev','--record-startup','--installer-pid',String(process.pid)]);
   summary();
   console.log(`\nSign in to ${state.origin}\nEmail: ${state.email}\nPassword: ${state.password}\n\nThese local development credentials are also saved in .opencrawl-dev/login.txt.`);
 }

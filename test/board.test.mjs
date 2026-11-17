@@ -15,9 +15,9 @@ const post = (id, text = 'Taking auth refresh') => ({id, topic: 'auth', text});
 test('read-only browsing is scoped, paginated newest first and never changes the stored board', async t => {
   const f = await fixture(t), board = f.make();
   assert.deepEqual(await board.read(a), {topics: [], topicSummaries: [], channels:['opencrawl'], channelSummaries:[{channel:'opencrawl',posts:0,latest:{id:0,timestamp:0,name:'opencrawl'},readOnly:true}], messages: [], next: null});
-  for (let i = 1; i <= 25; i++) await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [post(String(i))]});
-  await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [{id: 'other', topic: 'deploy', text: '<script>alert(1)</script>\nPlain text'}]});
-  await board.sync(b, {workspace: b.tenantId, agent: 'codex', posts: [post('1', 'Other tenant secret')]});
+  for (let i = 1; i <= 25; i++) await board.post(a, {workspace: a.tenantId, agent: 'codex', posts: [post(String(i))]});
+  await board.post(a, {workspace: a.tenantId, agent: 'codex', posts: [{id: 'other', topic: 'deploy', text: '<script>alert(1)</script>\nPlain text'}]});
+  await board.post(b, {workspace: b.tenantId, agent: 'codex', posts: [post('1', 'Other tenant secret')]});
   const key = 'test/tenants/' + createHash('sha256').update(a.tenantId).digest('hex') + '.json';
   const before = await f.store.readVersion(key);
   const first = await board.read({...a, userId: 'teammate'});
@@ -30,7 +30,7 @@ test('read-only browsing is scoped, paginated newest first and never changes the
   assert.equal(first.next, 7);
   assert.ok(first.messages.every(m => !('requestId' in m) && m.author === 'alice'));
   // A concurrent append cannot shift or duplicate older pages.
-  await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [post('new')]});
+  await board.post(a, {workspace: a.tenantId, agent: 'codex', posts: [post('new')]});
   const stored = await f.store.readVersion(key);
   const second = await board.read(a, {before: first.next});
   assert.deepEqual(second.messages.map(m => m.id), [6, 5, 4, 3, 2, 1]);
@@ -44,7 +44,7 @@ test('read-only browsing is scoped, paginated newest first and never changes the
   assert.equal((await board.read(b)).messages[0].text, 'Other tenant secret');
   assert.deepEqual((await board.read(b)).topicSummaries, [{topic: 'auth', posts: 1, latest: {id: 1, timestamp: 10000000, name: 'codex'}}]);
   assert.deepEqual(await f.store.readVersion(key), stored);
-  assert.notDeepEqual(before, stored); // Only the explicit sync above changed storage.
+  assert.notDeepEqual(before, stored); // Only the explicit post above changed storage.
   for (const principal of [{}, {tenantId: 'a'}, {...a, captureAccess: 'read'}, {...a, captureAccess: null}]) {
     await assert.rejects(board.read(principal), {status: 403});
   }
@@ -57,10 +57,11 @@ test('durable scope, authenticated authors, retries and presence expiration', as
   const f = await fixture(t), board = f.make();
   await assert.rejects(board.sync({}, {workspace: a.tenantId, agent: 'codex'}), /scope/);
   await assert.rejects(board.sync(a, {workspace: a.tenantId, agent: 'codex', tenantId: 'b'}));
-  const first = await board.sync(a, {workspace: a.tenantId, agent: 'codex', topics: ['auth'], posts: [post('1')]});
+  await board.presence(a,{agent:'codex',topics:['auth']});
+  const first = await board.post(a, {workspace: a.tenantId, agent: 'codex',  posts: [post('1')]});
   assert.deepEqual(first.accepted, [1]);
-  assert.deepEqual((await board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [post('1')]})).accepted, [1]);
-  await assert.rejects(board.sync(a, {workspace: a.tenantId, agent: 'codex', posts: [post('1', 'Changed')]}), /different content/);
+  assert.deepEqual((await board.post(a, {workspace: a.tenantId, agent: 'codex', posts: [post('1')]})).accepted, [1]);
+  await assert.rejects(board.post(a, {workspace: a.tenantId, agent: 'codex', posts: [post('1', 'Changed')]}), /different content/);
   assert.deepEqual((await board.topics(b)).topics, []);
   await assert.rejects(board.sync(a, {workspace: b.tenantId, agent: 'forged'}), /scope mismatch/);
   assert.deepEqual((await board.sync(b, {workspace: b.tenantId, agent: 'codex', topics: ['auth'], after: 0})).messages, []);
@@ -76,7 +77,7 @@ test('durable scope, authenticated authors, retries and presence expiration', as
 
 test('discovery exposes bounded previews; selected fetch is read-only, scoped and paginated', async t => {
   const f = await fixture(t), board = f.make(), text = ('Specific reusable finding. ' + 'detail '.repeat(60)).trimEnd();
-  await board.sync(a, {workspace: a.tenantId, agent: 'writer', posts: [post('details', text)]});
+  await board.post(a, {workspace: a.tenantId, agent: 'writer', posts: [post('details', text)]});
   const result = await board.sync(a, {workspace: a.tenantId, agent: 'reader', topics: ['auth'], after: 0});
   assert.equal(result.messages[0].ref, 'message:1');
   assert.ok(result.messages[0].preview.length <= 160);
@@ -95,7 +96,7 @@ test('discovery exposes bounded previews; selected fetch is read-only, scoped an
 
 test('concurrent clients do not lose writes; bounded deltas eventually deliver each message once', async t => {
   const f = await fixture(t), boards = Array.from({length: 6}, () => f.make());
-  await Promise.all(boards.map((board, i) => board.sync(a, {workspace: a.tenantId, agent: 'writer-' + i, posts: [post(String(i), 'x'.repeat(512))]})));
+  await Promise.all(boards.map((board, i) => board.post(a, {workspace: a.tenantId, agent: 'writer-' + i, posts: [post(String(i), 'x'.repeat(512))]})));
   const board = f.make(); let cursor = 0, found = [];
   for (let i = 0; i < 10; i++) {
     const result = await board.sync(a, {workspace: a.tenantId, agent: 'reader', topics: ['auth'], after: cursor});
@@ -128,7 +129,7 @@ test('S3 CAS signs the expected condition, rejects collisions and bounds reads',
 
 test('concurrent transactions allocate contiguous IDs and explicit cursors cannot miss publications',async t=>{
     const f=await fixture(t),board=f.make();
-    await Promise.all(Array.from({length:20},(_,i)=>board.sync({...a,userId:'writer'+i},{agent:'writer',posts:[post(String(i))]})));
+    await Promise.all(Array.from({length:20},(_,i)=>board.post({...a,userId:'writer'+i},{agent:'writer',posts:[post(String(i))]})));
     let cursor=0,ids=[];for(;;){const page=await board.sync(a,{agent:'reader',topics:['auth'],after:cursor});ids.push(...page.messages.map(m=>m.id));cursor=page.cursor;if(!page.more)break;}
     assert.deepEqual(ids,Array.from({length:20},(_,i)=>i+1));assert.equal(cursor,20);
   });
@@ -154,10 +155,13 @@ test('real MCP clients exchange scoped messages and revoked credentials cannot r
   }
   const listedTools = (await clients[0].listTools()).tools;
   assert.ok(listedTools.some(t => t.name === 'board_sync'));
+  const syncTool=listedTools.find(t=>t.name==='board_sync');
+  assert.equal('posts' in syncTool.inputSchema.properties,false);assert.equal('leave' in syncTool.inputSchema.properties,false);
+  assert.equal((await clients[0].callTool({name:'board_sync',arguments:{agent:'reader',posts:[post('forbidden')]}})).isError,true);
   for (const tool of listedTools) {
     assert.equal(typeof tool.title, 'string', `${tool.name} needs a directory display title`);
     assert.ok(tool.title.trim().length > 0);
-    assert.equal(tool.annotations.readOnlyHint, tool.name !== 'board_sync');
+    assert.equal(tool.annotations.readOnlyHint, !['board_post','board_presence'].includes(tool.name));
     assert.equal(tool.annotations.destructiveHint, false);
   }
   const call = async (client, name, args) => {
@@ -166,7 +170,7 @@ test('real MCP clients exchange scoped messages and revoked credentials cannot r
     return JSON.parse(result.content[0].text);
   };
   const registered=await f.make().participate(a,'register',{session:'native-session',name:'codex',task:'Cross-transport identity'});
-  const synced=await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'codex', posts: [post('mcp')]});
+  const synced=await call(clients[0], 'board_post', {workspace: a.tenantId, agent: 'codex', posts: [post('mcp')]});
   assert.equal(synced.agent,registered.agent);
   assert.equal((await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'claude', topics: ['auth'], after: 0})).messages.length, 1);
   assert.equal((await call(clients[0], 'board_fetch', {workspace: a.tenantId, id: 'message:1'})).text, 'Taking auth refresh');
@@ -182,10 +186,10 @@ test('existing boards keep posting, retrying and reading after message 10000', a
   const messages=Array.from({length:10000},(_,i)=>({id:i+1,timestamp:i,agent:'seed',author:'alice',name:'seed',topic:'auth',text:'retained history',requestId:String(i)}));
   assert.ok(await f.store.compareAndSet(key,null,Buffer.from(JSON.stringify({schema:1,messages,agents:{},usage:{calls:0,inputBytes:0,outputBytes:0}}))));
   const args={workspace:a.tenantId,agent:'writer',posts:[post('beyond','Message beyond the old cap')]};
-  assert.deepEqual((await f.make().sync(a,args)).accepted,[10001]);
-  assert.deepEqual((await f.restart().sync(a,args)).accepted,[10001]);
+  assert.deepEqual((await f.make().post(a,args)).accepted,[10001]);
+  assert.deepEqual((await f.restart().post(a,args)).accepted,[10001]);
   const read=await f.make().sync(a,{workspace:a.tenantId,agent:'reader',topics:['auth'],after:9999});
   assert.deepEqual(read.messages.map(m=>m.id),[10000,10001]);
   assert.equal(read.messages[1].preview,'Message beyond the old cap');assert.equal(read.more,false);
-  assert.deepEqual((await f.make().sync(a,{...args,posts:[post('next')]})).accepted,[10002]);
+  assert.deepEqual((await f.make().post(a,{...args,posts:[post('next')]})).accepted,[10002]);
 });

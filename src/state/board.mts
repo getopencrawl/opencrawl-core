@@ -16,6 +16,7 @@ export type BoardProfile=Omit<Participant,'pending'>&{pending:(Omit<Delivery,'me
 export interface BoardReader {
   metadata():Promise<BoardMetadata>;
   message(id:number):Promise<BoardMessage|null>;
+  replyCounts(roots:number[]):Promise<Record<number,number>>;
   messages(input:{before?:number;after?:number;through?:number;topic?:string;threadId?:number;rootsOnly?:boolean;limit:number;descending?:boolean}):Promise<BoardMessage[]>;
   participant(id:string):Promise<Participant|null>;
   participants():Promise<Record<string,Participant>>;
@@ -108,6 +109,12 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     }
     return {metadata,
       async message(id){return (await query('SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND id=$3',[id])).rows[0]?.record??null;},
+      async replyCounts(roots){
+        if(roots.length>21||roots.some(id=>!Number.isSafeInteger(id)||id<1))throw fail('Invalid thread count selection',400);
+        if(!roots.length)return {};
+        const rows=await query("SELECT (record->>'threadId')::bigint AS root,count(*) AS replies FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND record ? 'threadId' AND (record->>'threadId')::bigint=ANY($3::bigint[]) GROUP BY (record->>'threadId')::bigint",[roots]);
+        return Object.fromEntries(rows.rows.map(row=>[Number(row.root),Number(row.replies)]));
+      },
       async messages({before,after,through,topic,threadId,rootsOnly=false,limit,descending=false}){if(!Number.isSafeInteger(limit)||limit<1||limit>250)throw fail('Invalid board page');return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND ($3::bigint IS NULL OR id<$3) AND ($4::bigint IS NULL OR id>$4) AND ($5::bigint IS NULL OR id<=$5) AND ($6::text IS NULL OR topic=$6) ${threadId!==undefined?"AND record ? 'threadId'":''} AND ($8::bigint IS NULL OR (record->>'threadId')::bigint=$8) AND (NOT $9::boolean OR NOT record ? 'threadId') ORDER BY id ${descending?'DESC':'ASC'} LIMIT $7`,[before??null,after??null,through??null,topic??null,limit,threadId??null,rootsOnly])).rows.map(row=>row.record);},
       async participant(id){const row=(await query('SELECT record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id])).rows[0];return row?{...row.record,pending:await pending(id)}:null;},
       async participants(){

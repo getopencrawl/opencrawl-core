@@ -21,6 +21,13 @@ function fixture(count: number) {
 }
 function ids(reader: BoardReader) {return reader.snapshot().report?.messages.map(message => message.id) ?? [];}
 
+test('reply counts refresh without resetting retained channel history',async()=>{
+ const {source,adapter}=fixture(40),reader=new BoardReader(adapter,'release',false);
+ await reader.refresh();await reader.older();const before=ids(reader);
+ source.messages=source.messages.map(message=>({...message,replyCount:message.id===40?3:0}));
+ await reader.refresh();assert.deepEqual(ids(reader),before);assert.equal(reader.snapshot().report?.messages[0]?.replyCount,3);
+});
+
 test('a permalink opens an old message in one scoped read and retains normal pagination and refresh', async () => {
   const {source, adapter} = fixture(5000), reader = new BoardReader(adapter, 'release', false, () => {}, 30);
   await reader.refresh();

@@ -40,7 +40,7 @@ The API binds search and receipt readback to the authenticated user and
 organization. It rejects caller-selected tenant/index parameters. Raw batches
 retain their authenticated authors, and authoritative visibility controls govern
 shared and private reads. Binary attachments stay in S3; OCR and embeddings are
-separate features. See [upgrades](upgrades.md) before replacing a running worker.
+separate features.
 
 ## Hosted deployment
 
@@ -74,8 +74,7 @@ then reapply current resource controls before resuming. Raw storage is never del
 Existing S3 objects, attachment references and document IDs are unchanged. Successful receipts under `<prefix>/_index/<target-hash>/<scope-hash>/batches/` are reused, avoiding unnecessary reindexing. Legacy `index-pending` objects and S3 retry/cursor state are ignored and never written by the new receiver/worker. They may be retired later under the deployment's retention policy; this migration does not delete them.
 
 Deploy the receiver and worker against the same PostgreSQL identity database.
-Existing installations follow the [event identity upgrade](event-identity-migration.md)
-for migration, cutover and rollback. Do not delete the search cluster or connector
+Do not delete the search cluster or connector
 schedules. Keep session reconciliation enabled until the direct-submission cutover below.
 
 ### Direct-submission cutover
@@ -111,9 +110,7 @@ the prior documents exactly. Runs are idempotent and resume from `report.after`.
 
 ## Immutable event-ID activation
 
-See [PostgreSQL event identity upgrade](event-identity-migration.md). It replaces
-legacy whole-session JSON ledgers, migrates failed-upload reservations as well as
-raw history, and provides resumable self-host upgrade and matched backup/restore.
+PostgreSQL event identities replace legacy whole-session JSON ledgers.
 All receivers and workers must use the same database and stable storage namespace.
 
 The older JSON reservation/audit implementation remains available only for

@@ -9,37 +9,9 @@ import type {UsageMember, UsageSource} from './usage-model.ts';
 import type {UsageSection} from '../../../src/application/reports.mjs';
 import {reconcileUsage, usageSectionFailed} from './usage-recovery.ts';
 
-export {count} from './usage-model.ts';
-
-export function date(value: string | number | null | undefined) {
-  if (value == null) return 'Not yet';
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? 'Unknown' : parsed.toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'});
-}
-
 export function useUsage(adapter: ConsoleDataAdapter) {
   const resource = useConsoleResource<UsageReport>(consoleResourceKey(adapter, 'usage'), signal => adapter.usage(signal), {autoRefreshMilliseconds: 60_000, staleMilliseconds: 60_000, reconcile: reconcileUsage});
   return {...resource, refresh: resource.reload};
-}
-
-/** Compact source table retained for existing non-report consumers. */
-export function SourcesSummary({data}: {data: UsageReport}) {
-  if (!data.ingestion) return <Notice tone="warning">Source reporting is unavailable. Refresh to try again.</Notice>;
-  if (!data.ingestion.sources.length) {
-    return <EmptyState title="Connect your first source" description="Give your agents access to your team’s knowledge." actions={<Link to="/sources">Connect a source</Link>}/>;
-  }
-  return (
-    <Table label="Connected source status">
-      <thead><tr><th scope="col">Source</th><th scope="col">Status</th><th scope="col">Imported</th><th scope="col">Indexed</th><th scope="col">Last sync</th></tr></thead>
-      <tbody>{data.ingestion.sources.map(source => (
-        <tr key={source.name}>
-          <th scope="row">{source.name}{source.account && <span className="muted block">{source.account}</span>}</th>
-          <td><StatusBadge tone={source.state === 'synced' ? 'success' : source.state === 'error' ? 'danger' : 'neutral'}>{source.state}</StatusBadge></td>
-          <td>{count(source.records)}</td><td>{count(source.indexed)}</td><td>{date(source.lastSyncedAt)}</td>
-        </tr>
-      ))}</tbody>
-    </Table>
-  );
 }
 
 function SourceCard({source, now}: {source: UsageSource; now: number}) {
