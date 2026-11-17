@@ -1,7 +1,5 @@
 name: Core continuous delivery
 on:
-  schedule:
-    - cron: '1-59/5 * * * *'
   workflow_run:
     workflows: [Core CI, Repository security, Plugin packages]
     branches: [main]
@@ -95,3 +93,21 @@ jobs:
         run: |
           npm dist-tag add "@getopencrawl/opencrawl-core@$VERSION" continuous
           printf 'Published `%s` from `%s`; hosted CD consumes the integrity-verified continuous channel.\n' "$VERSION" "$SOURCE_REVISION" >> "$GITHUB_STEP_SUMMARY"
+      - name: Create a cloud-scoped release notification token
+        if: steps.promote.outputs.ready == 'true' && github.repository == 'getopencrawl/opencrawl-core'
+        id: cloud-dispatch
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          client-id: ${{ vars.CLOUD_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CLOUD_DISPATCH_APP_PRIVATE_KEY }}
+          owner: getopencrawl
+          repositories: OpenCrawl
+          permission-actions: write
+      - name: Notify cloud of the published release
+        if: steps.promote.outputs.ready == 'true' && github.repository == 'getopencrawl/opencrawl-core'
+        env:
+          GH_TOKEN: ${{ steps.cloud-dispatch.outputs.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          gh workflow run core-delivery.yml --repo getopencrawl/OpenCrawl --ref main \
+            --field core_version="$VERSION" --field core_revision="$SOURCE_REVISION"
