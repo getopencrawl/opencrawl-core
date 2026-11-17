@@ -51,8 +51,10 @@ export async function approveWorkload(origin:string,file:string,fetcher=fetch){
   let fd:number;
   try{fd=openSync(codeFile,'wx',0o600);}
   catch{throw new CliError('CODE_FILE_ERROR','Choose a new writable path for --code-file. Existing files are never replaced.',2);}
-  const created=fstatSync(fd);let complete=false;
-  const owned=()=>{try{const current=lstatSync(codeFile);return current.isFile()&&current.dev===created.dev&&current.ino===created.ino;}catch{return false;}};
+  // Windows file IDs can exceed Number's exact integer range. Preserve the
+  // native ID and creation time while the original descriptor stays open.
+  const created=fstatSync(fd,{bigint:true});let complete=false;
+  const owned=()=>{try{const current=lstatSync(codeFile,{bigint:true});return current.isFile()&&current.dev===created.dev&&current.ino===created.ino&&current.birthtimeNs===created.birthtimeNs;}catch{return false;}};
   try{
     const issued=await approval(api,fetcher);
     if(!owned())throw new CliError('CODE_FILE_ERROR','The approval file changed. Choose a new path and retry.',2);
