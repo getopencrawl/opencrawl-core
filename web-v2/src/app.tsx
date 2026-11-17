@@ -2,7 +2,7 @@ import {useEffect, useId, useRef, useState} from 'react';
 import type {KeyboardEvent, ReactNode} from 'react';
 import {NavLink, Route, Routes, useLocation} from './router.tsx';
 import type {NavigationItem, WorkspaceIdentity} from './contracts.ts';
-import {Brand, Button, EmptyState, LinkButton} from './design/components.tsx';
+import {Avatar, Brand, Button, EmptyState, LinkButton, Page} from './design/components.tsx';
 import {Icon} from './design/icons.tsx';
 import {ConsoleDataProvider, useHasConsoleCache} from './data.tsx';
 
@@ -28,7 +28,8 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
   const accountToggle = useRef<HTMLButtonElement>(null);
   const accountPanel = useRef<HTMLDivElement>(null);
   const accountName = workspace.userName?.trim() || workspace.email?.trim() || '';
-  const hasAccountDetails = Boolean((workspace.userName?.trim() && workspace.email?.trim()) || workspace.role?.trim() || footer);
+  const settingsRoutes = routes.filter(route => route.group === 'settings' && route.navigation !== false);
+  const hasAccountDetails = Boolean(settingsRoutes.length || footer);
   const [compact, setCompact] = useState(() => typeof matchMedia !== 'undefined' && matchMedia('(max-width: 800px)').matches);
   const navigationPanel = useRef<HTMLElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -41,7 +42,7 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
     query.addEventListener('change', update); return () => query.removeEventListener('change', update);
   }, []);
   useEffect(() => {
-    document.title = `OpenCrawl: ${current?.label ?? 'Workspace'}`;
+    document.title = `OpenCrawl: ${current?.group === 'settings' ? 'Settings / ' : ''}${current?.label ?? 'Workspace'}`;
     if (previousPath.current === location.pathname) return;
     previousPath.current = location.pathname;
     setMenuOpen(false);
@@ -49,7 +50,7 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
     setAccountOpen(false);
     const frame = requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-page-heading]')?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [location.pathname, current?.label]);
+  }, [location.pathname, current?.label, current?.group]);
   useEffect(() => {
     if (compact && menuOpen) (navigationPanel.current?.querySelector<HTMLAnchorElement>('a[aria-current="page"]') ?? navigationPanel.current?.querySelector<HTMLAnchorElement>('a'))?.focus();
     else if (restoreNavigationFocus.current) {restoreNavigationFocus.current = false; if (compact) toggle.current?.focus();}
@@ -71,7 +72,7 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
     if (event.shiftKey && document.activeElement === first) {event.preventDefault(); last?.focus();}
     else if (!event.shiftKey && document.activeElement === last) {event.preventDefault(); first?.focus();}
   };
-  const identity = <><span className="oc-workspace-icon"><Icon name="workspace" size={20}/></span><span className="oc-account-copy"><strong title={accountName || workspace.name}>{accountName || workspace.name}</strong>{accountName && <span title={workspace.name}>{workspace.name}</span>}</span></>;
+  const identity = <><Avatar name={accountName || workspace.name} src={workspace.avatarUrl}/><span className="oc-account-copy"><strong title={accountName || workspace.name}>{accountName || workspace.name}</strong>{accountName && <span title={workspace.name}>{workspace.name}</span>}</span></>;
   return <div className={`oc-app${menuOpen ? ' oc-menu-open' : ''}`}>
     <a className="oc-skip-link" href="#workspace-content">Skip to content</a>
     <header className="oc-mobile-header" inert={compact && menuOpen}><Brand/><Button ref={toggle} variant="quiet" className="oc-icon-button" aria-label="Open workspace navigation" aria-expanded={menuOpen} aria-controls="workspace-navigation" onClick={() => setMenuOpen(true)}><Icon name="menu"/></Button></header>
@@ -84,7 +85,7 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
       <footer className="oc-account-zone" onKeyDown={event => {if (event.key === 'Escape' && accountPanel.current?.matches(':popover-open')) {event.preventDefault(); event.stopPropagation(); closeAccount();}}}>
         {hasAccountDetails ? <>
           <div ref={accountPanel} id={accountDetailsId} className="oc-account-details" popover="auto" role="group" aria-label="Account details" onToggle={event => setAccountOpen(event.currentTarget.matches(':popover-open'))}>
-            {workspace.userName && workspace.email && <span>{workspace.email}</span>}{workspace.role && <span>{workspace.role}</span>}
+            {settingsRoutes[0] && <LinkButton to={settingsRoutes[0].path} variant="quiet" className="oc-account-settings" onClick={() => {accountPanel.current?.hidePopover(); setAccountOpen(false); if (compact) closeMenu(); if (location.pathname === settingsRoutes[0]?.path) requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-page-heading]')?.focus());}}><Icon name="settings" size={18}/><span>Settings</span><Icon name="chevron-right" size={16}/></LinkButton>}
             {footer && <div className="oc-account-actions">{footer}</div>}
           </div>
           <Button ref={accountToggle} variant="quiet" className="oc-account-trigger" popoverTarget={accountDetailsId} aria-label={`${accountName ? `${accountName}, ` : ''}${workspace.name}. Account menu`} aria-controls={accountDetailsId} aria-expanded={accountOpen}>{identity}<Icon name="chevron-down" size={20}/></Button>
@@ -93,7 +94,14 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
 
     </aside>
     <main id="workspace-content" className="oc-main" tabIndex={-1} inert={compact && menuOpen}>
-      <div className="oc-content">{children ?? <Routes>{routes.map(route => <Route key={route.path} path={route.path} element={route.element}/>)}<Route path="*" element={<EmptyState title="Page not found" description="This page may have moved. Open the workspace home to continue." action={<LinkButton to="/">Open workspace</LinkButton>}/>}/></Routes>}</div>
+      <div className="oc-content">{children ? current?.group === 'settings' ? <SettingsFrame routes={settingsRoutes}>{children}</SettingsFrame> : children : <Routes>{routes.map(route => <Route key={route.path} path={route.path} element={route.group === 'settings' ? <SettingsFrame routes={settingsRoutes}>{route.element}</SettingsFrame> : route.element}/>)}<Route path="*" element={<EmptyState title="Page not found" description="This page may have moved. Open the workspace home to continue." action={<LinkButton to="/">Open workspace</LinkButton>}/>}/></Routes>}</div>
     </main>
   </div>;
+}
+
+function SettingsFrame({routes, children}: {routes: ReadonlyArray<NavigationItem>; children: ReactNode}) {
+  return <Page title="Settings" description="Manage your workspace and access.">
+    <nav className="oc-settings-nav" aria-label="Settings">{routes.map(route => <NavLink key={route.path} to={route.path} end className="oc-settings-link">{route.label}</NavLink>)}</nav>
+    {children}
+  </Page>;
 }

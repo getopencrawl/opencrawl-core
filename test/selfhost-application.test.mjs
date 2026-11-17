@@ -57,6 +57,11 @@ test('OSS first run creates one admin from the setup link; nobody else can sign 
   await f.admin();
   const boot=await (await f.request('/api/console/bootstrap','admin')).json();
   assert.equal(boot.workspace.name,'Self-hosted team');
+  assert.equal(boot.workspace.avatarUrl,undefined);
+  const [adminMembership]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
+  const {adapter}=await f.identity.auth.$context;
+  await adapter.update({model:'user',where:[{field:'id',value:adminMembership.userId}],update:{image:'/avatars/ada.png'}});
+  assert.equal((await (await f.request('/api/console/bootstrap','admin')).json()).workspace.avatarUrl,'/avatars/ada.png');
   assert.deepEqual(boot.invitationPolicy,{delivery:'link',beforeAgentSetup:true});
   assert.deepEqual(boot.onboarding,{completed:false,next:'/onboarding'});
   // Setup is single-use and Better Auth's own sign-up endpoint is not reachable.
