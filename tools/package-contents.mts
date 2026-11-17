@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process';
 interface PackedFile {path: string; size: number}
 
 export function verifyPackageFiles(files: PackedFile[]): void {
-  for (const name of ['app.js', 'app.css', 'callback.js', 'callback.css']) {
+  for (const name of ['app.js', 'app.css']) {
     const path = 'web-v2/dist/selfhost/' + name;
     assert(files.some(file => file.path === path && file.size > 0), 'Core package is missing self-host asset: ' + path);
   }

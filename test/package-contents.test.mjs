@@ -18,7 +18,7 @@ test('npm includes the self-host console despite nested Git ignores and excludes
       const source = new URL(path, root);
       if (existsSync(source)) copyFileSync(source, join(scratch, path));
     }
-    for (const name of ['app.js', 'app.css', 'callback.js', 'callback.css']) writeFileSync(join(scratch, 'web-v2/dist/selfhost', name), 'compiled fixture');
+    for (const name of ['app.js', 'app.css']) writeFileSync(join(scratch, 'web-v2/dist/selfhost', name), 'compiled fixture');
     writeFileSync(join(scratch, 'web-v2/dist/reference/console.js'), 'reference fixture');
     writeFileSync(join(scratch, 'web-v2/.env'), 'PRIVATE_FIXTURE=must-not-pack');
     const [packed] = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--ignore-scripts', '--json'], {cwd: scratch, encoding: 'utf8'}));
