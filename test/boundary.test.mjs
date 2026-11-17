@@ -18,7 +18,6 @@ function checkImports(source, file, root = sourceRoot) {
     if (file.href.endsWith('/sessions/token-count.mts') && specifier === 'gpt-tokenizer/encoding/o200k_base') continue;
     if (file.href.endsWith('/sessions/postgres-identities.mts') && specifier === 'pg') continue;
     if ((file.href.includes('/state/') || file.href.endsWith('/integrations/local-registry.mts') || file.href.endsWith('/identity/better-auth.mts')) && specifier === 'pg') continue;
-    if (file.href.endsWith('/state/identity-migration.mts') && specifier === 'better-auth/db') continue;
     if (file.href.includes('/identity/') && specifier==='jose') continue;
     if (['workos.mts','cli.mts'].some(name=>file.href.endsWith('/identity/'+name)) && specifier==='@workos-inc/node') continue;
     // Self-host identity: Better Auth is confined to its adapter and the self-host auth routes.

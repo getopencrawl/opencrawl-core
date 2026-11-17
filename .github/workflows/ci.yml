@@ -5,8 +5,30 @@ on:
   pull_request:
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 jobs:
+  validation:
+    name: Find exact tested core source
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 3
+    outputs:
+      reuse: ${{ steps.proof.outputs.reuse }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - name: Verify prior validation of the identical merged tree
+        id: proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/validated-tree.mts
   unit:
+    needs: validation
+    if: needs.validation.outputs.reuse != 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
       postgres:
@@ -30,6 +52,8 @@ jobs:
       - name: Verify real Temporal scheduling, retries and replay
         run: OPENCRAWL_TEST_TEMPORAL=1 node --test test/session-temporal.test.mjs test/session-deletion-temporal.test.mjs test/slack-source-temporal.test.mjs test/connector-pagination-temporal.test.mjs
   web:
+    needs: validation
+    if: needs.validation.outputs.reuse != 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
       postgres:
@@ -56,6 +80,8 @@ jobs:
         run: npx --prefix web-v2 playwright install --with-deps chromium
       - run: npm run test:browser --prefix web-v2
   integration:
+    needs: validation
+    if: needs.validation.outputs.reuse != 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
       postgres:
@@ -114,7 +140,7 @@ jobs:
             }
           }
           JS
-          node --test test/session-context.test.mjs test/search-context.test.mjs test/search-adapter-conformance.test.mjs test/session-overlap.test.mjs test/session-object-store.test.mjs test/session-indexer.test.mjs test/session-tokens.test.mjs test/session-projection.test.mjs test/recent-sessions.test.mjs test/library-live.test.mjs test/session-deletion-live.test.mjs test/connector-live.test.mjs test/google-drive.test.mjs test/linear.test.mjs test/connector-write-barrier-live.test.mjs test/board-search-live.test.mjs test/realm-live.test.mjs test/workspace-search-live.test.mjs test/search-quality-live.test.mjs test/memory-live.test.mjs test/memory-projection-live.test.mjs test/sqlite-search.test.mjs
+          node --test test/session-context.test.mjs test/search-context.test.mjs test/search-adapter-conformance.test.mjs test/session-overlap.test.mjs test/session-object-store.test.mjs test/session-indexer.test.mjs test/session-tokens.test.mjs test/session-projection.test.mjs test/recent-sessions.test.mjs test/library-live.test.mjs test/session-deletion-live.test.mjs test/connector-live.test.mjs test/google-drive.test.mjs test/linear.test.mjs test/connector-write-barrier-live.test.mjs test/board-search-live.test.mjs test/realm-live.test.mjs test/workspace-search-live.test.mjs test/search-quality-live.test.mjs test/memory-live.test.mjs test/sqlite-search.test.mjs
       - name: Measure bulk scheduling and verify large documents
         env:
           OPENCRAWL_TEST_OPENSEARCH_URL: http://127.0.0.1:19200
@@ -128,6 +154,8 @@ jobs:
         if: always()
         run: docker rm -f capture-s3-test capture-search-test || true
   cli:
+    needs: validation
+    if: needs.validation.outputs.reuse != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -161,12 +189,34 @@ jobs:
           test "${#tests[@]}" -gt 0
           bun run --cwd cli test "${tests[@]}"
   test:
-    # Preserve the protected check; every runtime and consumer shard must pass.
-    needs: [unit, web, integration, cli]
+    # Preserve the protected check and require every lane or exact prior proof.
+    needs: [validation, unit, web, integration, cli]
     if: always()
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - name: Require all runtime checks
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - name: Require all runtime checks or exact prior validation
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: node -e 'const jobs=JSON.parse(process.env.RESULTS);if(Object.values(jobs).some(j=>j.result!=="success"))process.exit(1)'
+          REUSE: ${{ needs.validation.outputs.reuse }}
+        run: |
+          node --input-type=module <<'JS'
+          import {runtimeChecksPassed} from './tools/validated-tree.mts';
+          if (!runtimeChecksPassed(JSON.parse(process.env.RESULTS), process.env.REUSE === 'true', process.env.GITHUB_EVENT_NAME)) process.exit(1);
+          JS
+      - name: Record the source tree that passed every PR check
+        if: github.event_name == 'pull_request'
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node tools/validated-tree.mts record
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: github.event_name == 'pull_request'
+        with:
+          name: core-validation
+          path: validation.json
+          retention-days: 7

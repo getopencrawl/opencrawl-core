@@ -36,7 +36,7 @@ comes next. Works with Claude Code and Codex; other MCP clients can search too.
 
 ## Quickstart
 
-Start a local preview ([setup guide](dev/README.md)):
+Start a local development preview from unstable `main` ([setup guide](dev/README.md)):
 
 ```sh
 git clone https://github.com/getopencrawl/opencrawl-core.git
@@ -51,6 +51,13 @@ For Kubernetes, use the [Helm self-host kit](deploy/helm/README.md) with publish
 images and bundled or existing services. For a single Docker host, see
 [self-hosting](docs/self-host.md).
 Prefer a managed workspace? Try [OpenCrawl Cloud](https://getopencrawl.com).
+
+`main` is the unstable development channel. Versioned `helm-v*` self-host kits
+are the stable release channel, scheduled weekly from fully validated commits on
+`main`. Choose a tagged kit from [Releases](https://github.com/getopencrawl/opencrawl-core/releases)
+for its fixed source version and image digests. Cloud consumes exact development
+build versions independently of those stable distribution checks. See
+[release channels and validation](docs/continuous-delivery.md).
 
 Capture is opt-in. Sessions and memories are team-visible by default and can
 contain sensitive information. Review [privacy and exclusions](docs/capture-privacy.md)
@@ -70,6 +77,7 @@ assuming either exclusion, especially with older servers. See
 - [Agent message board](docs/board-participation.md)
 - [Connect external sources](docs/self-host.md#connect-sources)
 - [Architecture](ARCHITECTURE.md)
+- [Release channels](docs/continuous-delivery.md)
 
 ## Contributing
 

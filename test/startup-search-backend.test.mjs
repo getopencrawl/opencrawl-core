@@ -12,8 +12,6 @@ function fixture(t){
   t.after(()=>rmSync(root,{recursive:true,force:true}));
   for(const name of ['dev','deploy','bin'])mkdirSync(join(root,name));
   for(const name of ['dev/installer.mts','dev/airbyte-routes.mts','dev/pins.json','deploy/up.sh','deploy/.env.example'])copyFileSync(join(source,name),join(root,name));
-  // Upgrade behavior has its own stateful acceptance suite; this fixture isolates backend selection.
-  writeFileSync(join(root,'deploy/upgrade.mjs'),"import{appendFileSync}from'node:fs';appendFileSync(process.env.TEST_COMMAND_LOG,JSON.stringify(['upgrade',...process.argv.slice(2)])+'\\n');\n");
   writeFileSync(join(root,'dev/up'),'#!/bin/sh\nprintf \"%s\\n\" \"$TEST_NODE_RUNTIME\"\n',{mode:0o755});
   writeFileSync(join(root,'bin/git'),'#!/bin/sh\nprintf \"%040d\\n\" 1\n',{mode:0o755});
   const log=join(root,'calls');
@@ -79,20 +77,19 @@ test('deployment startup refuses to replace an existing OpenSearch profile or co
   assert.equal(readFileSync(path,'utf8'),before);assert.equal(f.log(),calls);
 });
 
-test('deployment builds its shared image once before starting services and records success last',t=>{
+test('deployment builds its shared image once before starting services',t=>{
   const f=fixture(t);assert.equal(f.deploy(['--no-airbyte']).status,0);f.env.TEST_REJECT_SHARED_BUILD='1';
   const result=f.deploy(['--no-airbyte','--scale','worker=2','--no-recreate','app','worker']);assert.equal(result.status,0,result.stderr);
-  assert.deepEqual(f.commands().slice(0,4),[
-    ['upgrade','--automatic'],['compose','build','--build-arg','OPENCRAWL_SOURCE_REVISION='+'0'.repeat(39)+'1','app'],
+  assert.deepEqual(f.commands().slice(0,2),[
+    ['compose','build','--build-arg','OPENCRAWL_SOURCE_REVISION='+'0'.repeat(39)+'1','app'],
     ['compose','up','-d','--no-build','--wait','--wait-timeout','600','--scale','worker=2','--no-recreate','app','worker'],
-    ['upgrade','--record-startup'],
   ]);
 });
 
-test('a failed shared-image build never starts services or records startup',t=>{
+test('a failed shared-image build never starts services',t=>{
   const f=fixture(t);assert.equal(f.deploy([]).status,0);f.env.TEST_FAIL_BUILD='1';
   const result=f.deploy([]);assert.equal(result.status,17,result.stderr);
-  assert.deepEqual(f.commands(),[['upgrade','--automatic'],['compose','build','--build-arg','OPENCRAWL_SOURCE_REVISION='+'0'.repeat(39)+'1','app']]);
+  assert.deepEqual(f.commands(),[['compose','build','--build-arg','OPENCRAWL_SOURCE_REVISION='+'0'.repeat(39)+'1','app']]);
 });
 
 for(const [args,build,flag] of [
@@ -108,7 +105,7 @@ for(const [args,build,flag] of [
   assert.deepEqual(commands.find(args=>args[1]==='up'),['compose','up','-d',flag,'--wait','--wait-timeout','600',...forwarded]);
 });
 
-test('explicit contradictory Compose build flags fail before upgrade or build',t=>{
+test('explicit contradictory Compose build flags fail before any build',t=>{
   const f=fixture(t);assert.equal(f.deploy([]).status,0);
   const result=f.deploy(['--build','--no-build']);assert.notEqual(result.status,0);assert.match(result.stderr,/incompatible/);
   assert.deepEqual(f.commands(),[]);

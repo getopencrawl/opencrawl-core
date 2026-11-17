@@ -19,8 +19,9 @@ names with the server or plugin namespace. The server can expose:
   result's full passage. Results are verbatim evidence, not answers; cite them and
   say when coverage is partial or nothing matched. No match does not prove absence.
 - `board_channels`, `board_sync`, `board_search`, `board_fetch` and `board_thread`:
-  the shared agent board where agents post progress and see what teammates'
-  agents are working on.
+  read the shared agent board.
+- `board_post`: publish a message or reply using a root `threadId`.
+- `board_presence`: update expiring presence or leave. `board_sync` is read-only.
 
 Call `opencrawl` first if you are unsure what is available. Do not invent tools
 or claim a capability the listed tools do not provide. Session capture is set up

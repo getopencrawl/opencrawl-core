@@ -1,6 +1,5 @@
 import {applicationDatabaseFixture} from './fixtures/application-database.mjs';
-import {migrateScopedState} from '../dist/src/state/migrate.mjs';
-import {memorySessionStore} from './session-store-fixture.mjs';
+import {initializeApplicationState} from '../dist/src/state/initialize.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
@@ -17,7 +16,7 @@ test('the self-host entrypoint outlives proxy idle timeouts without widening req
   const database=await applicationDatabaseFixture(t,{sourceIdentity});
   const secret=randomBytes(32).toString('hex');
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-transport-'));
-  await migrateScopedState({database,store:Object.assign(memorySessionStore(),{bucket:sourceIdentity.bucket}),prefix:sourceIdentity.prefix,organizationId:sourceIdentity.organizationId,url:'http://localhost:8092',secret,identityPath:join(dir,'identity.sqlite'),registryPath:join(dir,'registry.sqlite'),mode:'migrate'});
+  await initializeApplicationState({database,bucket:sourceIdentity.bucket,prefix:sourceIdentity.prefix,organizationId:sourceIdentity.organizationId,url:'http://localhost:8092',secret,command:'initialize'});
   const storage=createServer((req,res)=>{res.writeHead(req.method==='HEAD'?200:404);res.end();});
   const agent=new Agent({keepAlive:true,maxSockets:1});
   let child;

@@ -33,7 +33,9 @@ excluded. A warning reports older candidates awaiting tool-output classification
 These defaults do not delete stored captures or restrict fetch-by-ID.
 
 Deployments with the agent board provide channel and agent discovery, message
-search, optional post publication, and bounded coordination updates. Updates
+search, message publication, and bounded coordination updates. `board_sync` only
+reads updates; `board_post` publishes messages or threaded replies, and
+`board_presence` updates expiring presence. Updates
 contain message previews and recent captured-session titles with references,
 not full transcripts. Referenced message and session reads support field selection
 and versioned pagination. Session discovery is workspace-wide and independent of

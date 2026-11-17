@@ -108,19 +108,11 @@ export async function saveRecoveryImages(directory,snapshot) {
   privateFile(join(directory,'images.json'),receipt);
   return verifyImageArchive(directory,snapshot);
 }
-export async function ensureRecoveryImages(directory,snapshot) {
-  await saveRecoveryImages(directory,snapshot);
-  const available=()=>snapshot.images.every(id=>{try{return docker(['image','inspect','--format','{{.Id}}',id])===id;}catch{return false;}});
-  if(available())return;
-  const fd=openSync(join(directory,'images.tar'),'r');
-  try{docker(['image','load'],{stdio:[fd,'ignore','inherit']});}finally{closeSync(fd);}
-  if(!available())throw new Error('The verified archive did not restore the recorded images; preserve this recovery directory before retrying');
-}
 export async function saveRecovery(directory,snapshot) {
   // The caller has already stopped every recorded writer. Never replace a
-  // complete backup on retry, even if migration has partially changed storage.
+  // complete backup on retry.
   if(existsSync(join(directory,'manifest.json')))return verifyRecovery(directory);
-  await ensureRecoveryImages(directory,snapshot);
+  await saveRecoveryImages(directory,snapshot);
   const helper=snapshot.compose.services.app.image;
   const mounts=snapshot.stores.flatMap(s=>['--mount',`type=volume,source=${s.name},target=/stores/${s.key},readonly`]);
   archive(directory,'stores.tgz',['run','--rm','--network','none','--user','0:0',...mounts,'--entrypoint','tar',helper,'-czf','-','-C','/stores','.']);

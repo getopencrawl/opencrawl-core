@@ -2,7 +2,8 @@ import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader} from '../state/board.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
-import {channelSchema,channelName,channelNames,clientName,checkClientPost,threadIdSchema,visibleMessage} from './channels.mjs';
+import {channelSchema,channelName,channelNames,clientName,threadIdSchema,visibleMessage} from './channels.mjs';
+import {publishMessage,mentionWarning} from './publication.mjs';
 import {boardIdentity} from './identity.mjs';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -28,27 +29,6 @@ export const participationSchemas = {
 };
 type Operation = keyof typeof participationSchemas;
 type Command = {[K in Operation]: {operation: K; args: z.output<typeof participationSchemas[K]>}}[Operation];
-
-// Resolve names when posting, so future name reuse cannot redirect old mentions.
-export function resolveMentions(state: {participants?:Record<string,{name:string}>}, body: string, explicit: string[] = []) {
-  const names = new Map(Object.entries(state.participants || {}).map(([id, p]) => [p.name.toLowerCase(), id]));
-  const inline = [...body.matchAll(/(?:^|\s)@([a-zA-Z0-9][a-zA-Z0-9:_.-]*)/g)].map(m => {
-    let candidate = m[1];
-    // Names may contain punctuation: prefer the exact registered name, then
-    // remove sentence punctuation one character at a time, never a name prefix.
-    while (!names.has(candidate.toLowerCase()) && /[.:]$/.test(candidate)) candidate = candidate.slice(0, -1);
-    return candidate;
-  });
-  const missing = explicit.filter(value => !names.has(value.toLowerCase()));
-  if (missing.length) throw fail(`Unknown agent: ${missing.join(', ')}`, 404);
-  return {
-    mentions: [...new Set([...explicit, ...inline].map(value => names.get(value.toLowerCase())).filter((id): id is string => Boolean(id)))],
-    unresolvedMentions: [...new Set(inline.filter(value => !names.has(value.toLowerCase())))],
-  };
-}
-
-export const mentionWarning = (names: string[]) => names.length ? {warning: `Tags not notified (unregistered): ${[...new Set(names)].map(name => '@' + name).join(', ')}.`} : {};
-const explicitNames = (names: string[]) => [...new Set(names.map(name => name.toLowerCase()))].sort();
 
 /** All state transitions and delivery receipts commit in one PostgreSQL transaction. */
 export function createParticipation({scope,repository,now}:{scope(principal:Principal):string;repository:BoardRepository;now():number}) {
@@ -103,17 +83,9 @@ export function createParticipation({scope,repository,now}:{scope(principal:Prin
         result={agent:id,acknowledged:args.receipt,through:p.ackCursor};
       }else if(operation==='publish'){
         if(!p.name)throw fail('Choose a session name and task with board profile before publishing',409);
-        clientName(p.name);const channel=channelName(args);await checkClientPost(tx,channel,args.threadId);
-        const duplicate=await tx.publication({userId:principal.userId,agent:id,name:p.name,requestId:args.id,registered:true});
-        const profiles=await tx.profiles();
-        if(duplicate){const sameRecipients=duplicate.publication?JSON.stringify(duplicate.publication.explicitMentions)===JSON.stringify(explicitNames(args.mentions)):JSON.stringify(duplicate.mentions||[])===JSON.stringify(resolveMentions({participants:profiles},args.text,args.mentions).mentions);
-          if(duplicate.text!==args.text||duplicate.topic!==channel||duplicate.threadId!==args.threadId||!sameRecipients)throw fail('Retry id already used for different content',409);
-          return {agent:id,accepted:[duplicate.id],mentions:duplicate.mentions||[],...mentionWarning(duplicate.publication?.unresolvedMentions||[])};
-        }
-        const {mentions,unresolvedMentions}=resolveMentions({participants:profiles},args.text,args.mentions),topics=await tx.topics();
-        if(!topics.some(t=>t.topic===channel)&&topics.filter(t=>t.topic!=='opencrawl').length>=128)throw fail('Channel limit reached',429);
-        const message=await tx.append({timestamp:time,agent:id,author:principal.userId,name:p.name,topic:channel,text:args.text,requestId:args.id,...args.threadId!==undefined?{threadId:args.threadId}:{},mentions,publication:{explicitMentions:explicitNames(args.mentions),unresolvedMentions}});p.seen=time;
-        result={agent:id,accepted:[message.id],mentions,...mentionWarning(unresolvedMentions)};
+        clientName(p.name);
+        const message=await publishMessage(tx,{userId:principal.userId,agent:id,name:p.name,registered:true},{...args,channel:channelName(args)},time);p.seen=time;
+        result={agent:id,accepted:[message.id],mentions:message.mentions??[],...mentionWarning(message.publication?.unresolvedMentions??[])};
       }else if(operation==='inbox'){
         if(args.receipt&&args.receipt!==p.pending?.receipt)throw fail('Delivery is no longer pending; do not acknowledge another batch',409);
         dirty=ownerMissing||!p.lastPoll||time-p.lastPoll>=60000;if(dirty)p.lastPoll=p.seen=time;
