@@ -21,6 +21,35 @@ test('PostgreSQL ranks complete messages with exact facets and durable query-bou
   f.advance();await assert.rejects(f.search.search(principal,{...args,cursor:first.next}),{status:409});
 });
 
+test('agent facets resolve display names with one bounded tenant-bound lookup',async t=>{
+ // Eight distinct agents produce eight facet rows. Name resolution must be a
+ // single scoped read over those rows, not one accessor.message() per facet.
+ // Measured on the pre-fix code this exact case issued 8 name lookups; after
+ // the bulk lookup it issues 1, independent of facetSize.
+ const rows=Array.from({length:8},(_,i)=>({id:i+1,timestamp:1700000000000+i,topic:'auth',agent:'agent-'+i,author:'alice',name:'codex-'+i,text:'Refresh '+i,requestId:String(i)}));
+ const f=await fixture(t,rows),args={query:'refresh',facets:['agent'],facetSize:8,limit:2};
+ let nameLookups=0;
+ const original=f.database.transaction.bind(f.database);
+ f.database.transaction=async run=>original(async client=>{
+  const query=client.query.bind(client);
+  client.query=async(sql,values)=>{
+   if(/^SELECT (record|id,name) FROM opencrawl_board_messages\b/i.test(String(sql).trim()))nameLookups++;
+   return query(sql,values);
+  };
+  try{return await run(client);}finally{client.query=query;}
+ });
+ try{
+  const first=await f.search.search(principal,args);
+  assert.equal(nameLookups,1,`expected one scoped name lookup for 8 facets, saw ${nameLookups}`);
+  assert.deepEqual(first.facets.agent.values.map(value=>value.name),rows.map(row=>row.name));
+  nameLookups=0;
+  const small=await f.search.search(principal,{...args,facetSize:2});
+  assert.equal(nameLookups,1,`expected one scoped name lookup for 2 facets, saw ${nameLookups}`);
+  assert.equal(small.facets.agent.values.length,2);
+  assert.deepEqual(small.facets.agent.values.map(value=>value.name),['codex-0','codex-1']);
+ }finally{f.database.transaction=original;}
+});
+
 test('scope, date filters and cursor validation fail before releasing data',async t=>{
   const f=await fixture(t);
   for(const who of [{},{userId:'alice'},{...principal,captureAccess:'read'}])await assert.rejects(f.search.search(who,{}),{status:403});

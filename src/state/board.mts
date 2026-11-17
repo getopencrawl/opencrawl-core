@@ -212,7 +212,16 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       if(!cursor){snapshot.total=Number((await client.query(`SELECT count(*) total FROM opencrawl_board_messages m WHERE ${filters}`,values)).rows[0].total);snapshot.facets={};
         for(const field of new Set(args.facets)){const expression=field==='day'?"to_char(to_timestamp(m.stamp/1000.0) AT TIME ZONE 'UTC','YYYY-MM-DD')":'m.'+field;
           const rows=(await client.query(`SELECT ${expression} value,count(*) count${field==='agent'?',min(m.id) first_id':''} FROM opencrawl_board_messages m WHERE ${filters} GROUP BY ${expression} ORDER BY count(*) DESC,${expression} LIMIT $10`,[...values,args.facetSize])).rows;
-          if(field==='agent')for(const row of rows)row.name=(await accessor(client,key).message(Number(row.first_id)))?.name;
+          if(field==='agent'&&rows.length){
+            // Resolve all facet names in one tenant-bound read. The previous
+            // per-row accessor.message() issued up to facetSize sequential
+            // queries inside the search transaction; the name is already a
+            // column of the messages table these facets were aggregated from.
+            const names=new Map<number,string|undefined>();
+            const found=await client.query<{id:number;name:string|null}>('SELECT id,name FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND id = ANY($3::bigint[])',[namespace,key,rows.map(row=>Number(row.first_id))]);
+            for(const row of found.rows)names.set(Number(row.id),row.name??undefined);
+            for(const row of rows)row.name=names.get(Number(row.first_id));
+          }
           snapshot.facets[field]={values:rows.map(row=>({value:row.value,count:Number(row.count),...(field==='agent'?{name:row.name}:{})})),other:snapshot.total-rows.reduce((n,row)=>n+Number(row.count),0)};
         }
         await client.query('DELETE FROM opencrawl_board_search_snapshots WHERE namespace=$1 AND token IN(SELECT token FROM opencrawl_board_search_snapshots WHERE namespace=$1 AND expires<=$2 LIMIT 100)',[namespace,time]);

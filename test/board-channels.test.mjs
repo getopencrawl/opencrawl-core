@@ -105,6 +105,43 @@ test('single-tenant HTTP and MCP expose threads and channels but never the syste
  assert.equal((await request('publish',{session:'s',id:'http-reply',channel:'opencrawl',threadId:root.id,text:'HTTP reply'})).status,200);
 });
 
+test('forged post fields, colliding foreign threads and malformed references fail closed',async t=>{
+ const f=await fixture(t),{board}=f;await register(board);
+ await board.post(alice,{agent:'codex:client',posts:[{id:'root',channel:'general',text:'Local root'}]});
+ await board.post(alice,{agent:'codex:client',posts:[{id:'reply',channel:'general',threadId:1,text:'Local reply'}]});
+
+ // Fields reserved for the internal system writer cannot enter through board.post.
+ for(const forged of [{system:true},{author:'system:opencrawl'},{agent:'system:opencrawl'},{name:'system'}]){
+  const id='forged-'+Object.keys(forged)[0];
+  await assert.rejects(board.post(alice,{agent:'codex:client',posts:[{id,channel:'general',text:'Fake',...forged}]}));
+ }
+ await assert.rejects(board.post(alice,{agent:'system:opencrawl',posts:[{id:'forged-writer',channel:'general',text:'Fake'}]}),{status:403});
+
+ // The same numeric id in another tenant is never used as this tenant's root.
+ await f.repository.importLegacy(boardTenant('team-b'),{schema:1,messages:[
+  {id:1,timestamp:1,agent:'foreign',author:'foreign',name:'Foreign',topic:'general',text:'Foreign root',requestId:'f1'},
+  {id:2,timestamp:2,agent:'foreign',author:'foreign',name:'Foreign',topic:'general',threadId:1,text:'Foreign reply',requestId:'f2'}
+ ],agents:{},usage:{calls:0,inputBytes:0,outputBytes:0}});
+ const thread=await board.thread(alice,{threadId:1});
+ assert.equal(thread.root.text,'Local root');
+ assert.deepEqual(thread.replies.map(message=>message.text),['Local reply']);
+ assert.ok(!JSON.stringify(thread).includes('Foreign'));
+ const foreignThread=await board.thread(outsider,{threadId:1});
+ assert.equal(foreignThread.root.text,'Foreign root');
+ assert.deepEqual(foreignThread.replies.map(message=>message.text),['Foreign reply']);
+
+ // A reply cannot be read through a channel that disagrees with its root.
+ await board.post(alice,{agent:'codex:client',posts:[{id:'eng-root',channel:'engineering',text:'Engineering root'}]});
+ const engineeringRoot=(await board.read(alice,{channel:'engineering',rootsOnly:true})).messages.find(message=>message.text==='Engineering root');
+ assert.ok(engineeringRoot);
+ await assert.rejects(board.read(alice,{threadId:engineeringRoot.id,channel:'opencrawl'}),{status:404});
+
+ // Out-of-range references and non-positive cursors are rejected before any read.
+ await assert.rejects(board.fetch(alice,{id:'message:99999999999999999999'}));
+ await assert.rejects(board.read(alice,{threadId:0}));
+ await assert.rejects(board.thread(alice,{threadId:-1}));
+});
+
 test('thread and channel reads retain final revocation barriers',async t=>{
  const f=await fixture(t);await f.announce('root');let active=true;
  const board=authorizedBoard({state:f.state,admit:async p=>p,authorize:async p=>{if(!active)throw Object.assign(Error('revoked'),{status:403});return p;}});
