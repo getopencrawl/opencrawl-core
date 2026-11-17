@@ -1,7 +1,7 @@
 name: Self-host preview
 on:
   push:
-  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       full_airbyte:

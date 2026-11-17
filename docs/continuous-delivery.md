@@ -8,6 +8,9 @@ Callbacks evaluate the current default-branch revision; the triggering job's
 older revision is never substituted for it. Core CI runs unit, browser, real
 storage/workflow integrations and sharded CLI consumer tests in parallel.
 Every shard is required; distribution publication is a separate gate.
+Protected PRs require `test`, `validate` and `Secret scan`. The full self-host
+installation/upgrade suite runs on main as stable-release candidate validation;
+it no longer runs twice on each feature branch or gates ordinary PR merges.
 
 The private package uses a deterministic version such as
 `0.3.4-cd.123.g0123456789ab`, derived from the source version, main history count
