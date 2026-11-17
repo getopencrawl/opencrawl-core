@@ -41,8 +41,9 @@ export async function ensureByteOrderIndex(client:PoolClient,table:string,index:
 /** Fixed owning-site index declarations, called under the owning schema lock.
  * Existing indexes are checked in catalogs; CREATE INDEX, even IF NOT EXISTS,
  * takes a writer-conflicting lock and belongs only to a missing-index upgrade. */
-export async function ensureSchemaIndex(client:PoolClient,{table,name,keys,method='btree',predicate}:{table:string;name:string;keys:readonly string[];method?:'btree'|'gin';predicate?:{column:string;equals:string;notNull?:string}}){
+export async function ensureSchemaIndex(client:PoolClient,{table,name,keys,method='btree',predicate,jsonKey}:{table:string;name:string;keys:readonly string[];method?:'btree'|'gin';predicate?:{column:string;equals:string;notNull?:string};jsonKey?:{column:string;key:string}}){
   const identifier=/^[a-z_]+$/;
+  if(jsonKey&&(!identifier.test(jsonKey.column)||!/^[-a-zA-Z]+$/.test(jsonKey.key)||predicate))throw new Error('Invalid schema JSON index predicate');
   if(!identifier.test(table)||!identifier.test(name)||!['btree','gin'].includes(method)||!keys.length||keys.length>8||predicate&&(!identifier.test(predicate.column)||!/^[-a-z]+$/.test(predicate.equals)||predicate.notNull&&!identifier.test(predicate.notNull)))throw new Error('Invalid schema index declaration');
   const relation=(await client.query('SELECT oid,relnamespace::regnamespace::text AS schema FROM pg_class WHERE oid=to_regclass($1) AND relkind=\'r\'',[table])).rows[0];
   if(!relation)throw new Error('Missing schema index table: '+table);
@@ -52,14 +53,16 @@ export async function ensureSchemaIndex(client:PoolClient,{table,name,keys,metho
   const rendered:string[]=[],options:number[]=[],collations:number[]=[],opclasses:string[]=[];
   for(const key of keys){
     const plain=/^([a-z_]+)( DESC)?$/.exec(key),lower=/^lower\(([a-z_]+)\)$/.exec(key),json=/^\(\(([a-z_]+) -> '([-a-z]+)'::text\)\)$/.exec(key);
-    const column=plain?.[1]??lower?.[1]??json?.[1],attribute=column?columns.get(column):undefined;
-    if(!attribute||lower&&attribute.type!=='text'||json&&attribute.type!=='jsonb'||method==='gin'&&plain?.[2])throw new Error('Unsupported schema index key: '+key);
-    const type=lower?'text':json?'jsonb':attribute.type,opclass=classes[type];
+    const jsonInteger=/^\(\(\(([a-z_]+) ->> '([a-zA-Z]+)'::text\)\)::bigint\)$/.exec(key);
+    const column=plain?.[1]??lower?.[1]??json?.[1]??jsonInteger?.[1],attribute=column?columns.get(column):undefined;
+    if(!attribute||lower&&attribute.type!=='text'||(json||jsonInteger)&&attribute.type!=='jsonb'||method==='gin'&&plain?.[2])throw new Error('Unsupported schema index key: '+key);
+    const type=jsonInteger?'bigint':lower?'text':json?'jsonb':attribute.type,opclass=classes[type];
     if(!opclass)throw new Error('Unsupported schema index type: '+type);
-    rendered.push(plain?plain[1]!:key);options.push(plain?.[2]?3:0);collations.push(json?0:attribute.collation);opclasses.push(opclass);
+    rendered.push(plain?plain[1]!:key);options.push(plain?.[2]?3:0);collations.push(json||jsonInteger?0:attribute.collation);opclasses.push(opclass);
   }
   if(predicate&&(!columns.has(predicate.column)||columns.get(predicate.column)?.type!=='text'||predicate.notNull&&!columns.has(predicate.notNull)))throw new Error('Invalid schema index predicate');
-  const condition=predicate?predicate.notNull?`((${predicate.column} = '${predicate.equals}'::text) AND (${predicate.notNull} IS NOT NULL))`:`(${predicate.column} = '${predicate.equals}'::text)`:null;
+  if(jsonKey&&columns.get(jsonKey.column)?.type!=='jsonb')throw new Error('Invalid schema JSON index column');
+  const condition=jsonKey?`(${jsonKey.column} ? '${jsonKey.key}'::text)`:predicate?predicate.notNull?`((${predicate.column} = '${predicate.equals}'::text) AND (${predicate.notNull} IS NOT NULL))`:`(${predicate.column} = '${predicate.equals}'::text)`:null;
   const {rows}=await client.query(`SELECT idx.relkind,i.indisvalid,i.indisready,i.indislive,i.indisunique,i.indisexclusion,i.indrelid=$1 AS owns_table,
     i.indnkeyatts,i.indnatts,am.amname,i.indcollation::oid[] AS collations,i.indoption::smallint[] AS options,
     ARRAY(SELECT pg_get_indexdef(i.indexrelid,n,false) FROM generate_series(1,i.indnkeyatts)n) AS keys,
@@ -73,7 +76,7 @@ export async function ensureSchemaIndex(client:PoolClient,{table,name,keys,metho
     await client.query(`CREATE INDEX ${name} ON ${relation.schema}.${table} USING ${method}(${keys.join(',')})${condition?' WHERE '+condition:''}`);
     // Also validate one-time creation: an explicitly reordered search_path must
     // not substitute a same-named operator or function in an expression index.
-    await ensureSchemaIndex(client,{table,name,keys,method,...(predicate?{predicate}:{})});return;
+    await ensureSchemaIndex(client,{table,name,keys,method,...(predicate?{predicate}:{}),...(jsonKey?{jsonKey}:{})});return;
   }
   const found=rows[0];
   if(found.relkind!=='i'||!found.indisvalid||!found.indisready||!found.indislive||found.indisunique||found.indisexclusion||!found.owns_table||!found.default_classes||!found.builtin_expressions||found.amname!==method||found.indnkeyatts!==keys.length||found.indnatts!==keys.length||!isDeepStrictEqual(found.keys,rendered)||!isDeepStrictEqual(found.options,options)||!isDeepStrictEqual(found.collations.map(Number),collations)||!isDeepStrictEqual(found.opclasses,opclasses)||found.predicate!==condition)throw new Error('Existing schema index is incompatible: '+name);

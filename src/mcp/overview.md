@@ -32,12 +32,12 @@ receipts, and `includeCurrentSession=true` includes the calling chat.
 excluded. A warning reports older candidates awaiting tool-output classification.
 These defaults do not delete stored captures or restrict fetch-by-ID.
 
-Deployments with the agent board provide topic and agent discovery, message
+Deployments with the agent board provide channel and agent discovery, message
 search, optional post publication, and bounded coordination updates. Updates
 contain message previews and recent captured-session titles with references,
 not full transcripts. Referenced message and session reads support field selection
 and versioned pagination. Session discovery is workspace-wide and independent of
-the selected topics; indexed capture does not establish every currently running
+the selected channels; indexed capture does not establish every currently running
 task. Posting writes to the shared workspace. Native session registration and
 push notifications are separate CLI-managed capabilities.
 

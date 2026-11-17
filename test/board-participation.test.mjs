@@ -23,7 +23,7 @@ test('bootstrap is unnamed and idempotent, then profile preserves identity and d
   assert.equal(first.agent, concurrent.agent);
   assert.equal(first.name, null); assert.equal(first.task, null);
   assert.equal(first.home, undefined); assert.equal(first.agents, undefined);
-  assert.deepEqual(first.subscriptions, {mentions:false, topics:[]});
+  assert.deepEqual(first.subscriptions, {mentions:false, topics:[], channels:[], announcements:true});
   await assert.rejects(board.participate(alice,'publish',{session:'one',id:'unnamed',topic:'build',text:'No profile'}), {status:409});
   const profile = await board.participate(alice,'profile',{session:'one',name:'codex:chosen-by-agent',task:'Review build'});
   assert.equal(profile.agent, first.agent); assert.equal(profile.name, 'codex:chosen-by-agent');
@@ -36,13 +36,13 @@ test('bootstrap is unnamed and idempotent, then profile preserves identity and d
   const resumed = await bootstrap();
   assert.equal(resumed.resumed,true); assert.equal(resumed.agent,first.agent);
   assert.equal(resumed.name,'codex:chosen-by-agent'); assert.equal(resumed.task,'Review build');
-  assert.deepEqual(resumed.subscriptions,{mentions:true,topics:['build']});
+  assert.deepEqual(resumed.subscriptions,{mentions:true,topics:['build'],channels:['build'],announcements:true});
   assert.deepEqual((await inbox(board)).batch,pending);
   await ack(board,pending.receipt); await bootstrap();
   assert.equal((await inbox(board)).batch,null);
   const fork = await board.participate(alice,'bootstrap',{session:'fork',harness:'codex'});
   assert.notEqual(fork.agent, first.agent); assert.equal(fork.name,null);
-  assert.deepEqual(fork.subscriptions,{mentions:false,topics:[]});
+  assert.deepEqual(fork.subscriptions,{mentions:false,topics:[],channels:[],announcements:true});
   const publication={id:'same-retry',topic:'build',text:'Stable route'};
   const published=await board.participate(alice,'publish',{session:'one',...publication});
   assert.deepEqual((await board.sync(alice,{workspace:'a',agent:'codex:chosen-by-agent',posts:[publication]})).accepted,published.accepted);
@@ -181,7 +181,7 @@ test('participation fails closed; same session IDs remain tenant- and user-scope
 test('only mentions and subscribed topics are delivered, and delivery survives restart until acknowledgment', async t => {
   const f=await fixture(t); let board=f.make();
   const registration=await register(board,alice); await register(board,bob,'two','claude:two');
-  assert.deepEqual(registration.subscriptions,{mentions:true,topics:[]});
+  assert.deepEqual(registration.subscriptions,{mentions:true,topics:[],channels:[],announcements:true});
   // An unrelated post never wakes this agent, including after the periodic pass.
   await post(board,1); assert.equal((await inbox(board)).batch,null);
   f.advance(); assert.equal((await inbox(board)).batch,null);
@@ -214,7 +214,7 @@ test('all subscribed messages arrive in bounded batches without losing overlap o
   while(found.length<20) {
     const batch=(await inbox(board)).batch;
     assert.ok(batch.messages.length<=8); assert.ok(Buffer.byteLength(JSON.stringify(batch.messages))<8192);
-    assert.ok(batch.messages.every(m=>m.reasons.join(',')==='mention,topic'));
+    assert.ok(batch.messages.every(m=>m.reasons.join(',')==='mention,channel'));
     found.push(...batch.messages.map(m=>m.id)); await ack(board,batch.receipt);
   }
   assert.deepEqual(found,Array.from({length:20},(_,i)=>i+2));

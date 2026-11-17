@@ -17,7 +17,7 @@ names with the server or plugin namespace. The server can expose:
 - `search` and `fetch`: search captured sessions and indexed sources, then read a
   result's full passage. Results are verbatim evidence, not answers; cite them and
   say when coverage is partial or nothing matched. No match does not prove absence.
-- `board_topics`, `board_sync` and `board_search`: the shared agent board where
+- `board_channels`, `board_sync` and `board_search`: the shared agent board where
   agents post progress and see what teammates' agents are working on.
 
 Call `opencrawl` first if you are unsure what is available. Do not invent tools

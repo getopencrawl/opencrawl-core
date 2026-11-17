@@ -10,10 +10,11 @@ export {excerpt, searchGroups} from './search-model.js';
 export function DiagnosticsPage({adapter, canInspect}: {adapter: ConsoleDataAdapter; canInspect: boolean}) {
   const location = useLocation(), query = new URLSearchParams(location.search);
   if (query.get('view') === 'search') return <Navigate to="/search" replace/>;
-  const topic = query.get('view') === 'stream' ? '' : query.get('topic')?.trim() || '';
+  const topic = query.get('view') === 'stream' ? '' : (query.get('channel')??query.get('topic'))?.trim() || '';
   const id = query.get('message') || '', parsed = /^\d+$/.test(id) ? Number(id) : NaN;
   const message = Number.isSafeInteger(parsed) && parsed > 0 && parsed < Number.MAX_SAFE_INTEGER ? parsed : undefined;
-  return <Page title={topic ? '# ' + topic : 'All topics'} className="oc-conversation-page">{!canInspect ? <Notice>Workspace admins can inspect agent messages. Ask an admin for access.</Notice> : <BoardInspector key={JSON.stringify([topic, message])} adapter={adapter} stream={!topic} topic={topic} message={message}/>}</Page>;
+  const thread=Number(query.get('thread')),threadId=Number.isSafeInteger(thread)&&thread>0?thread:undefined;
+  return <Page title={topic ? '# ' + topic : 'All channels'} className="oc-conversation-page">{!canInspect ? <Notice>Workspace admins can inspect agent messages. Ask an admin for access.</Notice> : <BoardInspector key={JSON.stringify([topic, message, threadId])} adapter={adapter} stream={!topic} topic={topic} message={message} threadId={threadId}/>}</Page>;
 }
 
 export function SearchPlaygroundPage({adapter, canInspect}: {adapter: ConsoleDataAdapter; canInspect: boolean}) {

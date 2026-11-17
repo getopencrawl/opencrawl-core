@@ -18,8 +18,11 @@ export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {
   try {
       if (route.name === 'debug-board') {
         const json = (status: number, value: unknown) => respond(status, JSON.stringify(value), 'application/json');
-        if ([...url.searchParams.keys()].some(key => !['topic', 'before'].includes(key) || url.searchParams.getAll(key).length !== 1)) return json(400, {error: 'INVALID_QUERY'});
+        if ([...url.searchParams.keys()].some(key => !['channel','topic','threadId','rootsOnly', 'before'].includes(key) || url.searchParams.getAll(key).length !== 1)) return json(400, {error: 'INVALID_QUERY'});
         const input = boardReadSchema.safeParse({
+          ...(url.searchParams.has('channel') ? {channel: url.searchParams.get('channel')} : {}),
+          ...(url.searchParams.has('threadId') ? {threadId: Number(url.searchParams.get('threadId'))} : {}),
+          ...(url.searchParams.has('rootsOnly') ? {rootsOnly: url.searchParams.get('rootsOnly')==='true'?true:url.searchParams.get('rootsOnly')==='false'?false:null} : {}),
           ...(url.searchParams.has('topic') ? {topic: url.searchParams.get('topic')} : {}),
           ...(url.searchParams.has('before') ? {before: Number(url.searchParams.get('before'))} : {}),
         });
