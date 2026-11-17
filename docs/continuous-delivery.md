@@ -42,6 +42,20 @@ together, runs its own protected-branch checks and deploys its checked immutable
 image with drain, rollback and public verification. Core has no dependency on
 that consumer or its infrastructure.
 
+After successful publication, the upstream repository dispatches the hosted
+consumer workflow with the exact package version and full source revision.
+A dedicated GitHub App, installed only on the hosted repository with Actions
+write permission, supplies a short-lived notification token. Its client ID is
+`CLOUD_DISPATCH_APP_CLIENT_ID` and its key is the repository secret
+`CLOUD_DISPATCH_APP_PRIVATE_KEY`. The existing hosted PR app is separate.
+Only the trusted upstream main publication path can use this identity; forks
+and self-host builds do not require it. A notification failure fails the workflow
+visibly; rerunning delivery reuses the immutable publication and retries the
+notification. The consumer rejects mismatched identities, duplicate deployments
+and downgrades. Core check-completion events drive publication, and publication
+drives consumption; neither repository needs a scheduled polling job or an idle
+watcher for this handoff. Stable tagged distribution is unchanged.
+
 CLI changes on main allocate a version above all published CLI artifacts unless
 the committed version is already newer. The same version is used for the build
 and all Linux, macOS and Windows checks. All six packages advance `latest` only
