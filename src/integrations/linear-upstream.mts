@@ -65,7 +65,9 @@ export function linearManifest(): ConnectorManifest {
   }
   transport(defs);
   const spec = object(manifest.spec), sourceSpec = object(spec.connection_specification), properties = object(sourceSpec.properties);
-  delete properties.credentials;
+  // The upstream request budget branches on this marker, without any token fields.
+  properties.credentials = {type: 'object', required: ['auth_type'], additionalProperties: false,
+    properties: {auth_type: {type: 'string', const: 'OAuth2.0'}}};
   spec.connection_specification = {...sourceSpec, required: ['credential_proxy_base_url', 'credential_proxy_api_key', 'connected_account_id', 'user_id'],
     properties: {...properties, credential_proxy_base_url: {type: 'string'}, credential_proxy_api_key: {type: 'string', airbyte_secret: true},
       connected_account_id: {type: 'string'}, user_id: {type: 'string'}}};

@@ -37,12 +37,12 @@ test('real runtime image: full upstream Linear extraction, excluded pages, trans
   });
   await new Promise(resolve=>server.listen(0,'0.0.0.0',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const manifest=connectorManifest('linear'),host=process.platform==='linux'?'127.0.0.1':'host.docker.internal';
-  const config={__injected_declarative_manifest:manifest,credential_proxy_base_url:`http://${host}:${server.address().port}`,credential_proxy_api_key:'fixture-source-capability',connected_account_id:'ca_fixture',user_id:'selfhost:org_fixture:user_fixture',start_date:'1970-01-01T00:00:00Z',num_workers:1,credentials:{auth_type:'OAuth2.0'}};
+  const config={__injected_declarative_manifest:manifest,credential_proxy_base_url:`http://${host}:${server.address().port}`,credential_proxy_api_key:'fixture-source-capability',connected_account_id:'ca_fixture',user_id:'selfhost:org_fixture:user_fixture',start_date:'1970-01-01T00:00:00.000Z',num_workers:1,credentials:{auth_type:'OAuth2.0'}};
   const catalog={streams:LINEAR_STREAMS.map(name=>({stream:{name,json_schema:manifest.schemas[name],supported_sync_modes:['full_refresh',...(linearStream(name).incremental_sync?['incremental']:[])]},sync_mode:linearStream(name).incremental_sync?'incremental':'full_refresh',cursor_field:linearStream(name).incremental_sync?['updatedAt']:[],destination_sync_mode:'append'}))};
   for(const [name,value]of [['config',config],['catalog',catalog]]){await writeFile(join(dir,name+'.json'),JSON.stringify(value));await chmod(join(dir,name+'.json'),0o644);}
   const image=`airbyte/source-declarative-manifest:${pin.version}@${pin.imageSha}`;
   async function read(state=false){
-    const result=await run('docker',['run','--rm',...(process.platform==='linux'?['--network','host']:[]),'-v',`${dir}:/fixture:ro`,image,'read','--config','/fixture/config.json','--catalog','/fixture/catalog.json',...(state?['--state','/fixture/state.json']:[])],{maxBuffer:32*1024*1024,timeout:240000});
+    const result=await run('docker',['run','--rm',...(process.platform==='linux'?['--network','host']:[]),'-v',`${dir}:/fixture:ro`,image,'read','--config','/fixture/config.json','--catalog','/fixture/catalog.json',...(state?['--state','/fixture/state.json']:[])],{maxBuffer:32*1024*1024,timeout:240000}).catch(error=>({stdout:String(error.stdout||''),stderr:String(error.stderr||'')}));
     const messages=result.stdout.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}}),errors=messages.filter(m=>m.type==='TRACE'&&m.trace?.error);
     assert.deepEqual(errors.map(e=>e.trace.error.message),[]);return messages;
   }

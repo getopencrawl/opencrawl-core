@@ -4,12 +4,14 @@ import {searchFilters,searchSort} from '../search/controls.mjs';
 import type {ConnectorBinding, ConnectorPrincipal, ConnectorDocument, DocumentItem, SuppressionIdentity} from './types.mjs';
 import {createRealm} from '../search/realm.mjs';
 import {authorize, digest, documentId, validateBinding} from './scope.mjs';
+import {LINEAR_KINDS} from '../integrations/linear-upstream.mjs';
 
 import {connectorMapping} from '../search/mapping.mjs';
 export {connectorMapping};
 // Atomic comparison at the destination protects against retries and concurrent,
 // out-of-order files. Suppressions persist across source replay.
-export const SEARCHABLE_KINDS = ['message', 'channel', 'file', 'file_chunk', 'meeting', 'transcript', 'page', 'passage', 'database', 'comment', 'commit', 'pull_request', 'issue', 'review', 'issue_comment', 'review_comment', 'commit_comment', 'release', 'project', 'project_update', 'project_milestone', 'project_status', 'user', 'team', 'cycle', 'issue_label', 'workflow_state', 'attachment', 'issue_relation', 'issue_history', 'customer', 'customer_need', 'customer_status', 'customer_tier', 'initiative', 'initiative_to_project'];
+export const SEARCHABLE_KINDS = ['message', 'channel', 'file', 'file_chunk', 'meeting', 'transcript', 'page', 'passage', 'database', 'comment', 'commit', 'pull_request', 'issue', 'review', 'issue_comment', 'review_comment', 'commit_comment', 'release'];
+const linearKinds = Object.values(LINEAR_KINDS);
 
 
 export function createConnectorSearch(options: RealmOptions & {tenantId: string}) {
@@ -54,7 +56,7 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
       // Bound work even when channel visibility filters most candidates.
       while (hits.length < limit && examined < 1000 && more) {
         const result = await request('/_search', {body: JSON.stringify({size: 100, track_total_hits: false,
-          query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: [...byConnection.keys()]}}, {terms: {[f('kind')]: SEARCHABLE_KINDS}}, {term: {[f('deleted')]: false}}, ...searchFilters('connector',filters), ...(id ? [{term:{id}}] : [])], must: [lexicalQuery(query,match)]}},
+          query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: [...byConnection.keys()]}}, {bool: {should: [{terms: {[f('kind')]: SEARCHABLE_KINDS}}, {bool: {filter: [{term: {[f('provider')]: 'linear'}}, {terms: {[f('kind')]: linearKinds}}]}}], minimum_should_match: 1}}, {term: {[f('deleted')]: false}}, ...searchFilters('connector',filters), ...(id ? [{term:{id}}] : [])], must: [lexicalQuery(query,match)]}},
           // Native source IDs can collide across kinds (for example a GitHub
           // issue and review). The envelope ID makes search_after a total order.
           sort: [...searchSort('connector',order),{_score: 'desc'}, {[f('connectionId')]: 'asc'}, {[f('sourceId')]: 'asc'}, {id: 'asc'}], ...(after ? {search_after: after} : {})})});
@@ -62,7 +64,7 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
         if (!Array.isArray(candidates)) throw new Error('Invalid connector search response');
         for (const hit of candidates) {
           const d = hit._source, binding = byConnection.get(d?.connectionId);
-          if (!binding || d.tenantId !== tenantId || d.workspaceId !== binding.workspaceId || d.provider !== binding.provider || !SEARCHABLE_KINDS.includes(d.kind) || d.deleted || hit._id !== documentId(binding, d.kind, d.sourceId)) throw new Error('Search returned an invalid connector scope');
+          if (!binding || d.tenantId !== tenantId || d.workspaceId !== binding.workspaceId || d.provider !== binding.provider || !(SEARCHABLE_KINDS.includes(d.kind) || d.provider === 'linear' && linearKinds.includes(d.kind)) || d.deleted || hit._id !== documentId(binding, d.kind, d.sourceId)) throw new Error('Search returned an invalid connector scope');
         }
         const ids = [...new Set(candidates.filter(hit => hit._source.provider === 'slack').map(hit => documentId(byConnection.get(hit._source.connectionId)!, 'channel', hit._source.channelId!)))];
         const children = candidates.filter(hit => hit._source.parentId);
