@@ -39,8 +39,7 @@ export function ConnectorCard({source, primaryMetric, action, pending = false, b
   const statsId = useId();
   const titleId = useId();
   if (!sourceConnected(source)) return <article className="oc-connector-card oc-connector-available" aria-label={source.name} data-state={source.state}>
-    <ProviderIcon source={source}/>
-    <h3 id={titleId} title={source.name}>{source.name}</h3>
+    <header className="oc-connector-heading"><ProviderIcon source={source}/><h3 id={titleId} title={source.name}>{source.name}</h3></header>
     <Button variant={action === 'Connect' ? 'primary' : 'secondary'} disabled={pending} busy={busy} onClick={onAction} aria-label={`${action} ${source.name}`}>{busy ? 'Connecting…' : action}</Button>
   </article>;
   const status = sourceStatus(source);

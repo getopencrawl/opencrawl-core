@@ -736,6 +736,10 @@ Shared dialogs retain required setup, sign-in recovery, sync retries and confirm
 
 The shared `oc-connector-*` patterns own compact available tiles, 226px connected cards and their
 3/2/1-column grid. Expanding a card never stretches neighboring cards. The same
+32px logos and 16px connector names align within both sections, with 20px side
+insets on desktop and 16px on mobile. Section headings sit 16px above their grids;
+separate sections by 40px on desktop and 32px on mobile. Search and filter controls
+share a vertical center when displayed side by side. The same
 core component and shared Button, Dialog and Icon primitives serve hosted and
 self-hosted adapters. Imported stats describe ingest progress, not Usage indexed
 document counts. `/sources` and its `/integrations` alias share one page.
