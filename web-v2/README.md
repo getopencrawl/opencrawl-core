@@ -20,33 +20,6 @@ checking, inline styles, raw feature controls, duplicate navigation and hard-cod
 internal anchor links. The CSS check restricts colors to canonical tokens and
 feature styling to the shared system. These checks run with the normal test suite.
 
-## Single-tenant console
-
-The included adapter runs against the authenticated core standalone MCP runtime.
-It provides real scoped search, passage fetch and the registered-agent directory.
-It does not invent hosted billing, team or managed-source capabilities. Start the
-core MCP runtime with its documented search configuration, then set separate
-random secrets of at least 32 characters:
-
-```sh
-export OPENCRAWL_MCP_URL=http://127.0.0.1:8093
-export MCP_TOKEN='the existing standalone MCP token'
-export OPENCRAWL_WEB_PASSWORD='a separate strong console password'
-npm run build --prefix web-v2
-npm start --prefix web-v2
-```
-
-The console listens on loopback port 8094. Authenticate as `opencrawl` with the
-console password. Upstream tokens stay server-side. The upstream fixes identity;
-browser requests cannot choose a tenant or proxy target. All data and assets need
-authentication, cross-origin requests are denied and APIs accept bounded inputs.
-For remote use, put an authenticated HTTPS reverse proxy in front and set
-OPENCRAWL_WEB_ORIGIN to its canonical HTTPS origin before exposing HOST beyond
-loopback. Never expose HTTP Basic credentials on an unencrypted public endpoint.
-Keep the upstream token scoped to the intended single-tenant runtime. Replacing
-server configuration requires restart; source content and indexes remain owned
-by the existing core services. The adapter adds no database or persisted secrets.
-
 ## Scoped stale-while-revalidate data
 
 Wrap a multitenant console in `ConsoleDataProvider scopeKey={trustedScopeKey}`.
