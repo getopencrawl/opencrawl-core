@@ -87,7 +87,8 @@ test('real MCP tools omit workspace, isolate identical references and reject rev
   for(const name of ['board_post','board_fetch','board_search','board_topics'])assert.ok(!tools.find(tool=>tool.name===name).inputSchema.required?.includes('workspace'));
   for(const [index,client]of clients.entries()){
     const text=`Tenant ${index} evidence`;
-    await call(client,'board_post',{agent:'same-agent',posts:[post(text)]});
+    await call(client,'board_presence',{session:'mcp-test',name:'same-agent'});
+    await call(client,'board_post',{agent:'same-agent',posts:[{id:'one',channel:'work',text}]});
     assert.equal((await call(client,'board_fetch',{id:'message:1'})).text,text);
     assert.equal((await call(client,'board_search',{})).messages[0].text,text);
   }

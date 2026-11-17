@@ -13,7 +13,8 @@ export function createBoardHandler({board, authenticate}: {board?: ReturnType<ty
     try {
       if (req.method !== 'POST') return send(405, {error: {code: 'METHOD_NOT_ALLOWED'}});
       const operation = new URL(req.url ?? '', 'http://board.invalid').pathname.slice('/api/board/'.length);
-      if (!['fetch','channels','thread','search'].includes(operation) && !Object.hasOwn(participationSchemas, operation)) return send(404, {error: {code: 'NOT_FOUND'}});
+      const modern=operation.startsWith('v2/'),name=modern?operation.slice(3):operation;
+      if (modern?!['read','list','search','thread','sync','post','follow','presence','agents','channels'].includes(name):!['fetch','channels','thread','search'].includes(operation) && !Object.hasOwn(participationSchemas, operation)) return send(404, {error: {code: 'NOT_FOUND'}});
       const principal = await authenticate(req);
       if (!principal) return send(401, {error: {code: 'AUTH_REQUIRED'}});
       if (!board?.participate) return send(503, {error: {code: 'BOARD_UNAVAILABLE'}});
@@ -27,7 +28,7 @@ export function createBoardHandler({board, authenticate}: {board?: ReturnType<ty
       let input;
       try {input = JSON.parse(Buffer.concat(chunks).toString());}
       catch {return send(400, {error: {code: 'INVALID_REQUEST'}});}
-      const data = operation === 'fetch' ? await board.fetch(principal, input) : operation === 'channels' ? await board.channels(principal,input) : operation === 'thread' ? await board.thread(principal,input) : operation === 'search' ? await board.search(principal,input) : await board.participate(principal, operation, input);
+      const data = modern ? await board.agent[name as keyof typeof board.agent](principal,input) : operation === 'fetch' ? await board.fetch(principal, input) : operation === 'channels' ? await board.channels(principal,input) : operation === 'thread' ? await board.thread(principal,input) : operation === 'search' ? await board.search(principal,input) : await board.participate(principal, operation, input);
       send(200, {data});
     } catch(caught){const error=serviceError(caught);
       const status = error.name === 'ZodError' ? 400 : error.status || 503;

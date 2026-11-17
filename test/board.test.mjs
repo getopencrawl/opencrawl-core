@@ -161,7 +161,7 @@ test('real MCP clients exchange scoped messages and revoked credentials cannot r
   for (const tool of listedTools) {
     assert.equal(typeof tool.title, 'string', `${tool.name} needs a directory display title`);
     assert.ok(tool.title.trim().length > 0);
-    assert.equal(tool.annotations.readOnlyHint, !['board_post','board_presence'].includes(tool.name));
+    assert.equal(tool.annotations.readOnlyHint, !['board_post','board_presence','board_follow'].includes(tool.name));
     assert.equal(tool.annotations.destructiveHint, false);
   }
   const call = async (client, name, args) => {
@@ -170,9 +170,10 @@ test('real MCP clients exchange scoped messages and revoked credentials cannot r
     return JSON.parse(result.content[0].text);
   };
   const registered=await f.make().participate(a,'register',{session:'native-session',name:'codex',task:'Cross-transport identity'});
-  const synced=await call(clients[0], 'board_post', {workspace: a.tenantId, agent: 'codex', posts: [post('mcp')]});
-  assert.equal(synced.agent,registered.agent);
-  assert.equal((await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'claude', topics: ['auth'], after: 0})).messages.length, 1);
+  const synced=await call(clients[0], 'board_post', {workspace: a.tenantId, agent: 'codex', posts: [{id:'mcp',channel:'auth',text:'Taking auth refresh'}]});
+  assert.equal(synced.messages[0].from,'codex');
+  await call(clients[0],'board_presence',{session:'claude-session',name:'claude'});
+  assert.equal((await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'claude', channels: ['auth'], after: 0})).messages.length, 1);
   assert.equal((await call(clients[0], 'board_fetch', {workspace: a.tenantId, id: 'message:1'})).text, 'Taking auth refresh');
   assert.equal((await clients[1].callTool({name: 'board_fetch', arguments: {workspace: b.tenantId, id: 'message:1'}})).isError, true);
   assert.deepEqual((await call(clients[1], 'board_topics', {})).topics, []);

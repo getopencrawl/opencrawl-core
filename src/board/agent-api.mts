@@ -1,0 +1,154 @@
+import {z} from 'zod';
+import type {Principal} from '../sessions/types.mjs';
+import type {BoardRepository,BoardReader,BoardTransaction} from '../state/board.mjs';
+import type {BoardMessage} from './types.mjs';
+import {currentSessionSchema} from '../search/context.mjs';
+import {boardIdentity} from './identity.mjs';
+import {channelSchema,channelName,clientName,fail} from './channels.mjs';
+import {publishMessage,mentionWarning} from './publication.mjs';
+import {agentMessage,messageId,messagePage,messageSelection,selectMessage,threadRoot} from './messages.mjs';
+
+const short=z.string().trim().min(1).max(200);
+const workspace=short.optional();
+const identity={currentSession:currentSessionSchema.optional(),session:short.optional(),agent:z.string().trim().min(3).max(80).optional()};
+const pagination={limit:z.number().int().min(1).max(50).default(5),select:messageSelection};
+export const agentReadSchema=z.strictObject({workspace,ids:z.array(messageId).min(1).max(20),select:messageSelection});
+export const agentListSchema=z.strictObject({workspace,...pagination,channels:z.array(channelSchema).max(32).default([]),from:z.array(short).max(32).default([]),
+  query:z.string().trim().max(500).default(''),after:z.number().int().nonnegative().optional(),before:messageId.optional(),thread:messageId.optional(),
+  rootsOnly:z.boolean().default(false),since:z.iso.datetime({offset:true}).optional(),until:z.iso.datetime({offset:true}).optional(),
+  order:z.enum(['oldest','newest','relevance']).default('newest'),cursor:short.optional(),facets:z.array(z.enum(['channel','agent','day'])).max(3).default([])});
+export const agentThreadSchema=z.strictObject({workspace,threadId:messageId,...pagination,after:z.number().int().nonnegative().optional(),before:messageId.optional(),order:z.enum(['oldest','newest']).default('oldest'),cursor:short.optional()});
+export const agentSearchSchema=agentListSchema.extend({order:z.enum(['oldest','newest','relevance']).default('relevance')});
+export const agentSyncSchema=z.strictObject({workspace,...identity,...pagination,channels:z.array(channelSchema).max(32).optional(),after:z.number().int().nonnegative().optional()});
+export const agentPostSchema=z.strictObject({workspace,...identity,posts:z.array(z.strictObject({id:z.string().trim().min(1).max(80),channel:channelSchema.optional(),
+  text:z.string().min(1),replyTo:messageId.optional(),threadId:messageId.optional().describe('Compatibility alias for replyTo.'),mentions:z.array(short).max(32).default([]),follow:z.boolean().default(true)})).min(1).max(20)});
+export const agentFollowSchema=z.strictObject({workspace,...identity,threadId:messageId,following:z.boolean().default(true)});
+export const agentPresenceSchema=z.strictObject({workspace,...identity,name:z.string().trim().min(3).max(80).optional(),task:z.string().trim().max(240).optional(),channels:z.array(channelSchema).max(32).optional(),leave:z.boolean().default(false)});
+export const agentDirectorySchema=z.strictObject({workspace,active:z.boolean().default(true),query:z.string().max(200).default(''),limit:z.number().int().min(1).max(50).default(10),after:z.number().int().nonnegative().default(0)});
+export const agentChannelsSchema=z.strictObject({workspace,limit:z.number().int().min(1).max(50).default(10),after:z.number().int().nonnegative().default(0)});
+type Identity=Pick<z.infer<typeof agentPresenceSchema>,'currentSession'|'session'|'agent'>;
+const activeMs=15*60*1000;
+const validName=/^[a-zA-Z0-9][a-zA-Z0-9:_.-]*$/;
+
+/** The native session is account-bound, never a request-supplied user or tenant. */
+async function resolveIdentity(tx:BoardReader,userId:string,input:Identity){
+  const session=input.currentSession?.sessionId??input.session;
+  if(input.currentSession&&input.session&&input.currentSession.sessionId!==input.session)throw fail('Conflicting session identities');
+  if(session){
+    const id=boardIdentity(userId,session),participant=await tx.participant(id);
+    if(!participant)throw fail('Register the current session before using the board',409);
+    if(participant.userId!==undefined&&participant.userId!==userId)throw fail('Session is not owned by this account',403);
+    if(input.agent&&participant.name.toLowerCase()!==input.agent.replace(/^@/,'').toLowerCase())throw fail('Agent does not match the current session',409);
+    if(!participant.name)throw fail('Set this session name and task with board profile',409);
+    clientName(participant.name);
+    return {agent:id,name:participant.name,userId,registered:true,participant};
+  }
+  if(!input.agent)throw fail('Native session unavailable; supply your registered agent handle',400);
+  clientName(input.agent);
+  const found=await tx.profileByName(input.agent.replace(/^@/,''),userId);
+  if(!found)throw fail('Agent is not registered to this account; use board_presence with session, name and task',409);
+  const participant=(await tx.participant(found.id))!;
+  return {agent:found.id,name:participant.name,userId,registered:true,participant};
+}
+const namesFor=(tx:BoardReader,messages:Array<Pick<BoardMessage,'mentions'|'mentionNames'>>)=>tx.agentNames([...new Set(messages.flatMap(message=>message.mentionNames?[]:message.mentions??[]))]);
+async function followThread(tx:BoardTransaction,id:string,thread:number,following:boolean){
+  const p=await tx.participant(id);if(!p)throw fail('Agent registration not found',409);
+  p.followedThreads=[...new Set([...(p.followedThreads??[]).filter(value=>value!==thread),...following?[thread]:[]])];
+  p.mutedThreads=[...new Set([...(p.mutedThreads??[]).filter(value=>value!==thread),...following?[]:[thread]])];
+  await tx.putParticipant(id,p);
+}
+
+/** One agent contract shared by MCP and /api/board/v2. Legacy HTTP/UI adapters
+ * remain separate so already-running clients can finish during a rolling release. */
+export function createAgentBoard({repository,scope,now}:{repository:BoardRepository;scope(p:Principal):string;now():number}){
+  const checked=(p:Principal,input:{workspace?:string})=>{const key=scope(p);if(input.workspace!==undefined&&input.workspace!==p.tenantId)throw fail('Workspace scope mismatch',403);return key;};
+  async function list(principal:Principal,input:unknown){
+    const args=agentListSchema.parse(input),key=checked(principal,args);
+    if(args.since&&args.until&&Date.parse(args.since)>Date.parse(args.until))throw fail('since must not be later than until');
+    const thread=args.thread===undefined?undefined:await repository.read(key,async tx=>(await threadRoot(tx,args.thread!)).root.id);
+    const result=await repository.search(key,principal.userId,{query:args.query,topics:args.channels,agents:args.from,authors:[],sort:args.order,
+      after:args.after,before:args.before,thread,rootsOnly:args.rootsOnly,since:args.since,until:args.until,limit:args.limit,
+      facets:args.facets.map(field=>field==='channel'?'topic':field),facetSize:5,cursor:args.cursor},now());
+    const names=await repository.read(key,tx=>namesFor(tx,result.messages));
+    return {messages:result.messages.map(message=>selectMessage(agentMessage(message,names),args.select)),next:result.next,
+      ...result.facets?{facets:Object.fromEntries(Object.entries(result.facets).map(([key,value])=>[key==='topic'?'channel':key,value]))}:{}};
+  }
+  return {
+    list,search:(principal:Principal,input:unknown)=>list(principal,agentSearchSchema.parse(input)),
+    async read(principal:Principal,input:unknown){
+      const args=agentReadSchema.parse(input),key=checked(principal,args);
+      return repository.read(key,async tx=>{const rows=await tx.messagesByIds(args.ids),names=await namesFor(tx,rows),messages=[],byId=new Map(rows.map(message=>[message.id,message]));
+        for(const id of args.ids){const message=byId.get(id);if(!message)throw fail(`Message ${id} not found`,404);messages.push(selectMessage(agentMessage(message,names),args.select));}
+        return {messages};
+      });
+    },
+    async thread(principal:Principal,input:unknown){
+      const args=agentThreadSchema.parse(input);
+      return list(principal,{workspace:args.workspace,thread:args.threadId,limit:args.limit,select:args.select,after:args.after,before:args.before,order:args.order,cursor:args.cursor});
+    },
+    async sync(principal:Principal,input:unknown){
+      const args=agentSyncSchema.parse(input),key=checked(principal,args);
+      return repository.read(key,async tx=>{const identity=await resolveIdentity(tx,principal.userId,args),{head}=await tx.metadata(),after=args.after??head;
+        if(after>head)throw fail('Cursor exceeds board history');
+        const rows=await tx.unread({after,through:head,topics:args.channels??identity.participant.topics,mention:identity.agent,userId:principal.userId,agent:identity.agent,name:identity.name,limit:args.limit+1});
+        const names=await namesFor(tx,rows),messages=messagePage(rows.map(m=>selectMessage(agentMessage(m,names),args.select)),args.limit),more=messages.length<rows.length;
+        return {messages,next:more?messages.at(-1)!.id:head,more};
+      });
+    },
+    async post(principal:Principal,input:unknown){
+      const args=agentPostSchema.parse(input),key=checked(principal,args);
+      return repository.transaction(key,async tx=>{const identity=await resolveIdentity(tx,principal.userId,args);if(identity.participant.left)throw fail('Session has left; resume its presence before posting',409);
+        const messages=[],unresolved:string[]=[];
+        for(const post of args.posts){
+          if(post.replyTo!==undefined&&post.threadId!==undefined&&post.replyTo!==post.threadId)throw fail('Conflicting reply targets');
+          const target=post.replyTo??post.threadId,thread=target===undefined?undefined:await threadRoot(tx,target);
+          const channel=channelName({channel:post.channel??thread?.root.topic});
+          if(thread&&thread.root.topic!==channel)throw fail('Reply target belongs to another channel',404);
+          const message=await publishMessage(tx,identity,{id:post.id,channel,text:post.text,threadId:thread?.root.id,replyTo:target,mentions:post.mentions.map(name=>name.replace(/^@/,''))},now());
+          if(post.follow&&!identity.participant.mutedThreads?.includes(message.threadId??message.id))await followThread(tx,identity.agent,message.threadId??message.id,true);
+          messages.push(agentMessage(message));unresolved.push(...message.publication?.unresolvedMentions??[]);
+        }
+        const participant=(await tx.participant(identity.agent))!;participant.seen=now();await tx.putParticipant(identity.agent,participant);
+        return {messages,...mentionWarning(unresolved)};
+      });
+    },
+    async follow(principal:Principal,input:unknown){
+      const args=agentFollowSchema.parse(input),key=checked(principal,args);
+      return repository.transaction(key,async tx=>{const identity=await resolveIdentity(tx,principal.userId,args),{root}=await threadRoot(tx,args.threadId);await followThread(tx,identity.agent,root.id,args.following);return {thread:root.id,following:args.following};});
+    },
+    async presence(principal:Principal,input:unknown){
+      const args=agentPresenceSchema.parse(input),key=checked(principal,args);
+      return repository.transaction(key,async tx=>{
+        const session=args.currentSession?.sessionId??args.session;
+        if(args.currentSession&&args.session&&args.currentSession.sessionId!==args.session)throw fail('Conflicting session identities');
+        const id=session?boardIdentity(principal.userId,session):(await resolveIdentity(tx,principal.userId,args)).agent;
+        let p=await tx.participant(id);const name=args.name??p?.name??args.agent;
+        if(!name||!validName.test(name))throw fail('Supply a valid agent name when registering');clientName(name);
+        const profiles=await tx.profiles();
+        for(const [otherId,other] of Object.entries(profiles))if(otherId!==id&&other.seen<=now()-30*24*3600000){await tx.removeParticipant(otherId);delete profiles[otherId];}
+        if(!p&&Object.keys(profiles).length>=2048)throw fail('Session registry is full',429);
+        if(Object.entries(profiles).some(([otherId,other])=>otherId!==id&&other.name.toLowerCase()===name.toLowerCase()))throw fail('Agent name is already registered',409);
+        if(args.agent&&name.toLowerCase()!==args.agent.replace(/^@/,'').toLowerCase())throw fail('Agent does not match the current session',409);
+        if(p?.name&&p.name!==name)throw fail('Keep the registered name when resuming this session',409);
+        if(!p&&!session)throw fail('A session is required to register');
+        const time=now(),head=(await tx.metadata()).head;
+        p??={userId:principal.userId,name,task:args.task??'',harness:args.currentSession?.harness??'other',registeredAt:time,seen:time,topics:[],ackCursor:head,lastPoll:null,lastAckAt:null,nextHomeAt:time+60000,pending:null,batches:0,acknowledgedBatches:0};
+        if(p.userId!==undefined&&p.userId!==principal.userId)throw fail('Session is not owned by this account',403);
+        Object.assign(p,{userId:principal.userId,name,seen:time,left:args.leave,...args.task!==undefined?{task:args.task}:{},...args.channels?{topics:[...new Set(args.channels)]}:{}});
+        await tx.putParticipant(id,p);
+        // Remove only obsolete presence for this same account-owned identity.
+        await tx.removeAgent(id);await tx.removeAgent(boardIdentity(principal.userId,name));
+        return {name,active:!args.leave,channels:p.topics};
+      });
+    },
+    async agents(principal:Principal,input:unknown){
+      const args=agentDirectorySchema.parse(input),key=checked(principal,args);
+      return repository.read(key,async tx=>{const time=now(),rows=await tx.agentProfiles({after:args.after,limit:args.limit+1,cutoff:time-activeMs,active:args.active,query:args.query});
+        return {agents:rows.slice(0,args.limit).map(p=>({name:p.name,task:p.task,active:!p.left&&p.seen>time-activeMs,listening:!p.left&&Number(p.lastPoll)>time-180000,channels:p.topics})),next:rows.length>args.limit?args.after+args.limit:null};});
+    },
+    async channels(principal:Principal,input:unknown){
+      const args=agentChannelsSchema.parse(input),key=checked(principal,args);
+      return repository.read(key,async tx=>{const topics=await tx.topics(),rows=[{channel:'opencrawl',latest:topics.find(t=>t.topic==='opencrawl')?.latest.id??null,posting:'replies' as const},...topics.filter(t=>t.topic!=='opencrawl').sort((a,b)=>b.latest.id-a.latest.id).map(t=>({channel:t.topic,latest:t.latest.id,posting:'threads-and-replies' as const}))];return {channels:rows.slice(args.after,args.after+args.limit),next:args.after+args.limit<rows.length?args.after+args.limit:null};});
+    },
+  };
+}

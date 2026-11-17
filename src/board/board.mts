@@ -10,6 +10,7 @@ import {publishMessage,mentionWarning} from './publication.mjs';
 import {fail, announcementChannel, channelSchema, channelName, channelNames, clientName, threadIdSchema, visibleMessage} from './channels.mjs';
 import {boardIdentity, resolveBoardIdentity} from './identity.mjs';
 import {boardFetchSchema, preview, textPage} from './disclosure.mjs';
+import {createAgentBoard} from './agent-api.mjs';
 export {boardFetchSchema} from './disclosure.mjs';
 
 const short = (max: number) => z.string().trim().min(1).max(max);
@@ -38,6 +39,7 @@ export function createBoard({state,now=Date.now,recentSessions,sessionTimeoutMs=
   const repository=state.board;
   function scope(principal:Principal){if(!principal||principal.captureAccess!==undefined||typeof principal.tenantId!=='string'||!principal.tenantId||typeof principal.userId!=='string'||!principal.userId)throw fail('Board scope required',403);return hash(principal.tenantId);}
   return {
+    agent:createAgentBoard({repository,scope,now}),
     participate:createParticipation({scope,repository,now}),
     async read(principal:Principal,input:unknown={}){const key=scope(principal),args=boardReadSchema.parse(input);return repository.read(key,async tx=>{
       const channel=args.channel!==undefined||args.topic!==undefined?channelName(args):undefined;

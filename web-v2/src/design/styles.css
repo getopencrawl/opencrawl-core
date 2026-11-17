@@ -418,6 +418,7 @@ img { max-width: 100%; }
   .oc-source-toolbar .oc-tabs { gap:var(--space-4); }
 }
 @media (max-width:600px) {
+  .oc-connector-summary { grid-template-rows:44px minmax(0,1fr) var(--space-16); gap:var(--space-3); }
   .oc-connector-footer .oc-button,.oc-connector-more.oc-button { min-height:44px; }
 }
 @media (prefers-reduced-motion:reduce) {
