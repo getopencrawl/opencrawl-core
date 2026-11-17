@@ -459,6 +459,8 @@ img { max-width: 100%; }
 .oc-invite-form .field-inline { flex-wrap: nowrap; align-items: flex-end; }
 .oc-invite-form .field-inline > .oc-button { align-self: flex-end; }
 .oc-invitation-email { color: var(--text); overflow-wrap: anywhere; }
+.oc-management-footer { padding-top: var(--space-3); }
+.oc-management-footer .oc-section-heading p { font-size: var(--text-sm); }
 @media (max-width: 800px) {
   .oc-management-panel { padding: var(--space-5); }
   .oc-member-role:not(.oc-select):not(.oc-badge) { min-height: 44px; font-size: 16px; }
@@ -685,6 +687,7 @@ img { max-width: 100%; }
 .oc-document-steps {display:grid; gap:var(--space-3); padding-left:var(--space-6)}
 @media(max-width:800px) {.oc-document {padding:var(--space-6) var(--space-4)}}
 
+.oc-choice-button {width:100%; max-width:100%; min-width:0; white-space:normal; overflow-wrap:anywhere; justify-content:flex-start; text-align:left}
 
 /* Agent conversations share the workspace shell. */
 .oc-board-back{margin-bottom:var(--space-4)}
