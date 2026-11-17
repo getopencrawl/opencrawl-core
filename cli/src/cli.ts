@@ -40,6 +40,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   whoami      Verify your saved session or environment token with the service
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
+  context-check  Enable, disable or inspect automatic bounded prompt checks
   mcp         Serve the configured OpenCrawl MCP over stdio
   workload    Connect a cloud organization with one-time admin approval
   fetch       Read the indexed passage behind a search result
@@ -247,6 +248,7 @@ export async function main(args = process.argv.slice(2)) {
   if(args[0]==='workload'){applyDaemonEnvironment(args);return (await import('./workload-enrollment.ts')).workloadCommand(args.slice(1));}
   if(args[0]==='mcp'){applyDaemonEnvironment(args);return (await import('./mcp.ts')).mcpCommand(args.slice(1));}
   if(args[0]==='search-context'){applyDaemonEnvironment(args);return searchContextCommand(args.slice(1));}
+  if(args[0]==='context-check'){applyDaemonEnvironment(args);return (await import('./context-check.ts')).contextCheckCommand(args.slice(1));}
   if (args[0] === 'session' && args[1] === 'start' && !hasLocalFlag(args)) {
     applyDaemonEnvironment(args);
     if(!hasPluginContext()&&readCaptureConfig()?.hookOwnership!=='plugin'){
@@ -417,7 +419,7 @@ if (import.meta.main) {
   // Supervisor profile selection must precede native version delegation.
   try{applyDaemonEnvironment(process.argv.slice(2));}catch(error){process.stderr.write((error instanceof Error?error.message:'Invalid worker environment')+'\n');process.exit(64);}
   // Local inspection cannot delegate to a native child or run an update.
-  const delegated=hasLocalFlag(process.argv.slice(2))||process.argv[2]==='search-context'?undefined:delegateToNewest(process.argv.slice(2));
+  const delegated=hasLocalFlag(process.argv.slice(2))||['search-context','context-check'].includes(process.argv[2]??'')?undefined:delegateToNewest(process.argv.slice(2));
   if(delegated!==undefined)process.exit(delegated);
   // Once a one-use refresh has left, save its response before honoring a
   // cooperative shutdown. The request itself has a bounded deadline.

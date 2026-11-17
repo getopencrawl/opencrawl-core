@@ -2,6 +2,8 @@
 
 Capture coding-agent sessions and search workspace knowledge.
 
+See [optional prompt context](https://github.com/getopencrawl/opencrawl-core/blob/main/cli/docs/context-checks.md).
+
 ## Install
 
 macOS and Linux:

@@ -48,6 +48,7 @@ export function pluginHookFiles(client:PluginClient,binding:PluginHookBinding,pl
  const startup={type:'command',...invocation,command:invocation.command+' '+args(['session','start','--harness',client,'--api',api]),timeout:7,statusMessage:startupMarker};
  const search={type:'command',...invocation,command:invocation.command+' '+args(['search-context','--harness',client,'--api',api]),timeout:2,statusMessage:searchContextMarker};
  const searchMatcher=pluginSearchContextMatcher(client,pluginName);
+ const contextCheck={type:'command',...invocation,command:invocation.command+' '+args(['context-check','hook','--harness',client,'--api',api]),timeout:client==='codex'||client==='claude-code'?45:3,...(client==='codex'||client==='claude-code'?{async:true,statusMessage:'OpenCrawl prompt context'}:{})};
  const capture=(event:string)=>{
   const daemon=client==='claude-code';
   const managed=client==='codex'&&event!=='SessionEnd';
@@ -58,6 +59,8 @@ export function pluginHookFiles(client:PluginClient,binding:PluginHookBinding,pl
   const hooks=Object.fromEntries(DEVIN_HOOK_EVENTS.map(event=>[event,[{hooks:[event==='SessionStart'
    ?{type:'command',command:invocation.command+' '+args(['workload','start','--api',api]),timeout:120}
    :{type:'command',command:capture(event).command,timeout:5}]}]]));
+  hooks.UserPromptSubmit.push({hooks:[contextCheck]});
+  hooks.PostToolUse.push({hooks:[contextCheck]});
   return {[runner]:script,'hooks.json':json(hooks)};
  }
  if(client==='cursor'){
@@ -65,16 +68,19 @@ export function pluginHookFiles(client:PluginClient,binding:PluginHookBinding,pl
   (hooks.preToolUse??=[]).unshift({matcher:searchMatcher,command:search.command,timeout:search.timeout});
   hooks.sessionStart.unshift({command:startup.command,timeout:startup.timeout});
   hooks.postToolUse.unshift({command:startup.command+' --after-tool',timeout:startup.timeout});
+  for(const event of ['beforeSubmitPrompt','postToolUse','postToolUseFailure'])(hooks[event]??=[]).push({command:contextCheck.command,timeout:contextCheck.timeout});
   return {[runner]:script,'hooks/hooks.json':json({version:1,hooks})};
  }
  if(client==='antigravity'){
   const entry=(event:string)=>{const hook=capture(event);return {type:hook.type,command:hook.command,timeout:hook.timeout};};
   return {[runner]:script,'hooks.json':json({[pluginName+'-startup']:{SessionStart:[{type:startup.type,command:startup.command,timeout:startup.timeout}],PreToolUse:[{matcher:searchMatcher,hooks:[{type:search.type,command:search.command,timeout:search.timeout}]}]},
-   [pluginName+'-capture']:{SessionStart:[entry('SessionStart')],PostToolUse:[{matcher:'*',hooks:[entry('PostToolUse')]}],PostInvocation:[entry('PostInvocation')],Stop:[entry('Stop')]}})};
+   [pluginName+'-capture']:{SessionStart:[entry('SessionStart')],PostToolUse:[{matcher:'*',hooks:[entry('PostToolUse')]}],PostInvocation:[entry('PostInvocation')],Stop:[entry('Stop')]},
+   [pluginName+'-context']:{PreInvocation:[contextCheck]}})};
  }
  const events=client==='claude-code'?['SessionStart','UserPromptSubmit','Stop','SessionEnd']
   :['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SubagentStop','SessionEnd'];
  const hooks:Record<string,unknown[]>=Object.fromEntries(events.map(event=>[event,[{hooks:event==='SessionStart'?[startup,capture(event)]:[capture(event)]}]]));
  (hooks.PreToolUse??=[]).push({matcher:searchMatcher,hooks:[search]});
+ (hooks.UserPromptSubmit??=[]).push({hooks:[contextCheck]});
  return {[runner]:script,'hooks/hooks.json':json({hooks})};
 }

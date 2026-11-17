@@ -33,11 +33,14 @@ test('all four native plugin formats include synchronous startup and supported c
   }else if(client==='claude-code'){expect(Object.keys(hooks).sort()).toEqual(['PreToolUse','SessionEnd','SessionStart','Stop','UserPromptSubmit']);expect(hooks.SessionEnd[0]).toMatchObject({async:true,timeout:120});expect(start[1].command).not.toContain('--managed');}
   else if(client==='cursor'){
    expect(JSON.parse(files['hooks/hooks.json']).version).toBe(1);
-   expect(hooks.stop[0].command).toContain('$CURSOR_PLUGIN_ROOT/');expect(hooks.postToolUseFailure).toHaveLength(1);expect(hooks.preCompact).toHaveLength(1);
-   expect(hooks.postToolUse).toHaveLength(2);expect(hooks.postToolUse[0].command).toBe(start[0].command+' --after-tool');
+   expect(hooks.stop[0].command).toContain('$CURSOR_PLUGIN_ROOT/');expect(hooks.postToolUseFailure).toHaveLength(2);expect(hooks.preCompact).toHaveLength(1);
+   expect(hooks.postToolUse).toHaveLength(3);expect(hooks.postToolUse[0].command).toBe(start[0].command+' --after-tool');
    expect(hooks.postToolUse[0].timeout).toBe(7);expect(hooks.postToolUse[0].async).toBeUndefined();expect(hooks.postToolUse[1].command).toContain('collect hook');
   }
-  else for(const [event,rows] of Object.entries(hooks))if(event!=='PreToolUse')expect(rows.at(-1)!.command).toContain('--event '+event);
+  else for(const [event,rows] of Object.entries(hooks))if(!['PreToolUse','PreInvocation'].includes(event))expect(rows.at(-1)!.command).toContain('--event '+event);
+  const checks=Object.values(hooks).flat().filter(hook=>hook.command.includes('context-check hook'));
+  expect(checks).toHaveLength(client==='cursor'?3:1);
+  for(const check of checks){expect(check.async).toBe(client==='codex'||client==='claude-code'?true:undefined);expect(check.timeout).toBe(client==='codex'||client==='claude-code'?45:3);}
   const search=hooks[client==='cursor'?'preToolUse':'PreToolUse'].find(hook=>hook.command.includes('search-context'))!;
   expect(search).toBeDefined();expect(search.timeout).toBe(2);expect(search.async).toBeUndefined();
   expect(search.command).toContain('search-context --harness '+client);
