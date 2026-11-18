@@ -10,5 +10,5 @@ export function useOnboardingResource<T>(read: (signal: AbortSignal) => Promise<
     catch(error){if(timeout.aborted&&!signal.aborted)throw Object.assign(Error('This check took too long. Try again.'),{status:503});throw error;}
   },{autoRefreshMilliseconds:options.interval,staleMilliseconds:options.interval??30_000,initial:options.initial,enabled:options.enabled});
   useEffect(()=>{const online=()=>{if(options.enabled!==false&&document.visibilityState==='visible')void resource.reload();};window.addEventListener('online',online);return()=>window.removeEventListener('online',online);},[resource.reload,options.enabled]);
-  return {data:resource.data??undefined,error:resource.error||null,loading:resource.loading,reload:resource.reload,replace:resource.replaceData};
+  return {data:resource.data??undefined,error:resource.error||null,loading:resource.loading,reload:resource.reload,readFresh:resource.readFresh,replace:resource.replaceData};
 }

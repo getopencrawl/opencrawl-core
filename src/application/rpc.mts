@@ -7,7 +7,8 @@ import type {Bootstrap, TeamReport, SourceCard} from './types.mjs';
 import {MAX_SEARCH_PAGE} from './search-page.mjs';
 import type {UsageReport, DiagnosticSearch, BoardReport, OnboardingStatus, OnboardingSource, InvitationList, LibraryContract} from './types.mjs';
 
-export interface WebContext {usageSections?: boolean; invoke<T>(path: string, method?: 'GET' | 'POST', input?: object): Promise<T>}
+import {maxReloadReportBytes, type ConsoleReloadCache} from './console-reload.mjs';
+export interface WebContext {reload?: {cache: ConsoleReloadCache; tenant: string; scope: string}; usageSections?: boolean; invoke<T>(path: string, method?: 'GET' | 'POST', input?: object): Promise<T>}
 export const webRpc = initTRPC.context<WebContext>().create({errorFormatter: ({shape}) => ({...shape,
   message:shape.data.code === 'INTERNAL_SERVER_ERROR' ? 'This information is temporarily unavailable. Try again.' : shape.message,
   data: {...shape.data, stack: undefined}})});
@@ -86,11 +87,25 @@ export async function handleProductRpc<R extends AnyRouter>(req: IncomingMessage
   // Never stream procedure results ahead of the batch's final authorization barrier.
   headers.set('accept','application/json');
   const request = new Request(url,{method:req.method,headers,...req.method==='POST'?{body:Buffer.concat(chunks).toString('utf8')}:{}});
-  const response = await fetchRequestHandler({endpoint:'/api/trpc',req:request,router,createContext:()=>({...context,usageSections:req.headers['x-opencrawl-usage-sections']==='1'}),maxBatchSize:8,allowBatching:true,allowMethodOverride:true});
+  const binding = context.reload;
+  const operation = url.pathname.slice('/api/trpc/'.length);
+  const remember = !url.searchParams.has('batch') && binding?.cache.begin(binding.tenant, binding.scope, operation);
+  // The internal HTTP method distinguishes writes from tRPC's POST transport.
+  const invoke: WebContext['invoke'] = async <T,>(path: string, method?: 'GET' | 'POST', input?: object) => {
+    const write = binding && method === 'POST' && path !== '/api/debug/search'
+      && !/^\/api\/console\/library\/(sessions|memories)\/(list|read)$/.test(path);
+    if (write) binding.cache.invalidate(binding.tenant);
+    try {return await context.invoke<T>(path, method, input);}
+    finally {if (write) binding.cache.invalidate(binding.tenant);}
+  };
+  const response = await fetchRequestHandler({endpoint:'/api/trpc',req:request,router,createContext:()=>({...context,invoke,usageSections:req.headers['x-opencrawl-usage-sections']==='1'}),maxBatchSize:8,allowBatching:true,allowMethodOverride:true});
   const body = await response.text();
   if (!await revalidate()) {
+    if (binding) binding.cache.invalidate(binding.tenant);
     const error={error:{message:'Workspace access changed. Sign in again.',code:-32003,data:{code:'FORBIDDEN',httpStatus:403}}};
     return {status:403,body:JSON.stringify(url.searchParams.get('batch')==='1'?url.pathname.slice('/api/trpc/'.length).split(',').map(()=>error):error)};
   }
+  if (remember && response.status === 200) remember(body.length <= maxReloadReportBytes + 64 ? JSON.parse(body).result?.data : undefined);
+  if (binding && [401,402,403,404,409].includes(response.status)) binding.cache.invalidate(binding.tenant);
   return {status:response.status,body};
 }

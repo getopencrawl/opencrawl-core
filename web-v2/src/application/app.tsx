@@ -1,6 +1,6 @@
-import {Component, useCallback, useEffect, useRef, useState, useMemo} from 'react';
+import {Component, useEffect, useRef, useState, useMemo} from 'react';
 import type {ErrorInfo, ReactNode} from 'react';
-import {ConsoleDataProvider, useConsoleQueryClient, AppRouter, AppShell, FocusedFrame, AgentOnboarding, SourcesOnboarding, InviteOnboarding, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, Page, LinkButton, Icon, Navigate, Routes, Route, useLocation, useNavigate} from '../index.ts';
+import {ConsoleDataProvider, consoleResourceKey, useConsoleQueryClient, AppRouter, AppShell, FocusedFrame, AgentOnboarding, SourcesOnboarding, InviteOnboarding, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, Page, LinkButton, Icon, Navigate, Routes, Route, useLocation, useNavigate} from '../index.ts';
 import type {ConsoleDataAdapter, NavigationItem, OnboardingAdapter} from '../index.ts';
 import type {Bootstrap, ProductApi} from './api.ts';
 import {SourcesPage} from './sources.tsx';
@@ -10,6 +10,13 @@ import {BoardNavigation} from '../pages/board.tsx';
 import {SearchPlaygroundPage} from '../pages/diagnostics.tsx';
 import {DocumentFrame, ProductDocument, readBrowserDocument} from './documents.tsx';
 
+import {useAdmission} from './admission.ts';
+import type {ConsoleReload} from '../../../src/application/console-reload.mjs';
+
+function readReload<B extends Bootstrap>(): ConsoleReload<B> | undefined {
+  const element = document.getElementById('opencrawl-reload');
+  return element ? JSON.parse(element.textContent || 'null') ?? undefined : undefined;
+}
 export interface ConsoleRoute extends NavigationItem {pending?: (feedback?: ReactNode) => ReactNode}
 export function PendingPage({title, description, className, bodyClassName, children}: {title: string; description?: string; className?: string; bodyClassName?: string; children?: ReactNode}) {
   return <Page title={title} description={description} className={className} bodyClassName={bodyClassName}>{children ?? <LoadingState label={`Loading ${title.toLowerCase()}`} />}</Page>;
@@ -20,6 +27,7 @@ export interface ConsoleExtensions<B extends Bootstrap> {
   routes?: (context: ConsoleExtensionContext<B>) => ConsoleRoute[];
   decorateRoute?: (route: ConsoleRoute, data: B) => ConsoleRoute;
   teamFooter?: ReactNode;
+  reloadKeys?: Record<string, readonly unknown[]>;
 }
 function WorkspaceInvalidation() {
   const cache=useConsoleQueryClient();
@@ -47,38 +55,27 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     ...(api.saveCredential ? {saveCredential: (id: string, value: string, signal: AbortSignal) => api.saveCredential!(id, value, signal)} : {}),
     invitations: api.onboardingInvitations, invite: api.onboardingInvite, finish: api.finishOnboarding,
   }), [api]);
-  const [data,setData] = useState<B | null>(null), [error,setError] = useState('');
-  const [initialIntegrationsNav, setInitialIntegrationsNav] = useState(() => document.getElementById('root')?.hasAttribute('data-integrations-nav') === true);
-  const [attempt,setAttempt] = useState(0);
-  const accessEpoch=useRef(0),blocked=useRef(false);
-  const invalidateAccess=useCallback((failure:unknown)=>{accessEpoch.current++;blocked.current=true;setInitialIntegrationsNav(false);setData(null);setError(failure instanceof Error?failure.message:typeof failure==='string'?failure:'Your workspace access changed. Sign in again.');},[]);
   const navigate = useNavigate(), location = useLocation();
-  const refresh = useCallback(async () => {const epoch=accessEpoch.current;const next = await api.bootstrap();if(epoch!==accessEpoch.current||blocked.current)throw new Error('Your workspace access changed. Sign in again.');setData(next);return next;},[api]);
+  const [initialIntegrationsNav, setInitialIntegrationsNav] = useState(() => document.getElementById('root')?.hasAttribute('data-integrations-nav') === true);
+  const [snapshot, setSnapshot] = useState(readReload<B>);
+  const {data, error, accessDenied, refresh, retry, rename, invalidateAccess: deny} = useAdmission(api, snapshot?.bootstrap, location.pathname === '/setup');
+  const invalidateAccess = (failure: unknown) => {setSnapshot(undefined); deny(failure);};
   useEffect(() => {
-    const controller=new AbortController();let active=false,loaded=false;blocked.current=false;const epoch=++accessEpoch.current;
-    const load=async()=>{
-      if(active||blocked.current||document.visibilityState==='hidden')return;active=true;
-      try {const next=await api.bootstrap(controller.signal);if(!controller.signal.aborted&&epoch===accessEpoch.current&&!blocked.current){loaded=true;setData(next);setError('');}}
-      catch(failure){
-        if(controller.signal.aborted)return;
-        const denied = failure instanceof Error && 'status' in failure && [401,402,403].includes(Number(failure.status));
-        if(denied)setInitialIntegrationsNav(false);
-        if(!loaded || denied){setData(null);setError(failure instanceof Error?failure.message:'Your workspace could not load.');}
-      }
-      finally{active=false;}
-    };
-    const focus=()=>{if(document.visibilityState==='visible')void load();};
-    const denied=(event:Event)=>invalidateAccess(event instanceof CustomEvent?event.detail:undefined);
-    void load();const timer=window.setInterval(focus,60_000);
-    window.addEventListener('focus',focus);document.addEventListener('visibilitychange',focus);window.addEventListener('opencrawl:access-denied',denied);
-    return()=>{controller.abort();clearInterval(timer);window.removeEventListener('focus',focus);document.removeEventListener('visibilitychange',focus);window.removeEventListener('opencrawl:access-denied',denied);};
-  },[attempt,invalidateAccess,api]);
+    setSnapshot(undefined);
+    document.getElementById('opencrawl-reload')?.remove();
+  }, []);
+  useEffect(() => {if (accessDenied) setInitialIntegrationsNav(false);}, [accessDenied]);
+  const reportKeys: Record<string, readonly unknown[]> = {
+    'console.team': consoleResourceKey(api.team), 'console.sources': consoleResourceKey(api.sources),
+    'console.usage': consoleResourceKey(dataAdapter, 'usage'),
+    'console.usageHighlights': consoleResourceKey(dataAdapter, 'usage-highlights'),
+    'console.usageDetails': consoleResourceKey(dataAdapter, 'usage-details'), ...extensions?.reloadKeys,
+  };
+  const seeds = data && data.cacheScope === snapshot?.bootstrap.cacheScope
+    ? Object.entries(snapshot.reports).flatMap(([name, value]) => reportKeys[name] ? [{key:reportKeys[name], data:value}] : []) : [];
   const activated = async (signal: AbortSignal) => {
-    const epoch = accessEpoch.current;
-    const next = await api.bootstrap(signal);
-    if (signal.aborted || epoch !== accessEpoch.current || blocked.current) return;
-    // Commit admission and navigation together before the initiating page unmounts.
-    setData(next); navigate(next.setup || next.onboarding.completed ? '/' : next.onboarding.next);
+    const next = await refresh();
+    if (!signal.aborted) navigate(next.setup || next.onboarding.completed ? '/' : next.onboarding.next);
   };
   const onboarding = location.pathname.startsWith('/onboarding');
   const boardQuery = new URLSearchParams(location.search);
@@ -86,16 +83,16 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   const boardTopic = boardQuery.get('view') === 'stream' ? '' : (boardQuery.get('channel')??boardQuery.get('topic'))?.trim() || '';
   const machineSetup = data ? Boolean(data.setup) : document.getElementById('root')?.dataset.setupMode !== 'guided';
   const routes: ConsoleRoute[] = [
-    ...(machineSetup ? [{path:'/setup',label:'Setup',icon:'terminal' as const,element:data?.setup ? <SetupPage api={api} initial={data}/> : null,pending:(feedback?:ReactNode)=><PendingPage title="Setup">{feedback}</PendingPage>}] : []),
+    ...(machineSetup ? [{path:'/setup',label:'Setup',icon:'terminal' as const,element:data?.setup ? <SetupPage status={data.setup} error={error}/> : null,pending:(feedback?:ReactNode)=><PendingPage title="Setup">{feedback}</PendingPage>}] : []),
     {path:'/',label:'Usage',icon:'usage',element:<UsagePage adapter={dataAdapter} reportScope={data?.splitUsage ? data.cacheScope : undefined} setupPrompt={data?.setup ? undefined : data?.setupPrompt}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them.">{feedback}</PendingPage>},
-    {path:'/sources',label:'Integrations',icon:'sources',navigation:data ? data.workspace.role === 'admin' : initialIntegrationsNav,element:<SourcesPage adapter={api} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
+    {path:'/sources',label:'Integrations',icon:'sources',navigation:data ? data.workspace.role === 'admin' : initialIntegrationsNav && !accessDenied,element:<SourcesPage adapter={api} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
     {path:'/diagnostics',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All channels'}>{feedback}</PendingPage>},
     {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
     {path:'/agent-setup',label:'Agent setup',icon:'terminal',navigation:!machineSetup,element:data?.setup ? <Navigate to="/setup" replace/> : data ? <AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
-    {path:'/settings/team',label:'Team',icon:'team',group:'settings',element:<TeamPage embedded adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={name => setData(current => current ? {...current, workspace: {...current.workspace, name}} : current)}/>,pending:feedback => <TeamLoadingPage embedded>{feedback}</TeamLoadingPage>},
+    {path:'/settings/team',label:'Team',icon:'team',group:'settings',element:<TeamPage embedded adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={rename}/>,pending:feedback => <TeamLoadingPage embedded>{feedback}</TeamLoadingPage>},
     ...(extensions?.routes?.({data, activated}) ?? []),
     {path:'/settings',label:'Settings',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
     {path:'/team',label:'Team',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
@@ -104,8 +101,8 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/_/debug',label:'Diagnostics',navigation:false,element:<Navigate to={'/diagnostics' + location.search} replace/>},
   ];
   if (!data) {
-    const feedback = error ? <div className="stack"><Notice tone="danger">{error}</Notice><div className="action-row"><Button onClick={() => setAttempt(value => value + 1)}>Try again</Button><LinkButton to="/auth/login" reloadDocument>Sign in</LinkButton></div></div> : undefined;
-    if (onboarding) return <FocusedFrame footer={<SignOut/>}>{feedback ?? <LoadingState label="Loading your workspace"/>}</FocusedFrame>;
+    const feedback = error ? <div className="stack"><Notice tone="danger">{error}</Notice><div className="action-row"><Button onClick={retry}>Try again</Button><LinkButton to="/auth/login" reloadDocument>Sign in</LinkButton></div></div> : undefined;
+    if (onboarding) return <FocusedFrame footer={<SignOut/>}>{feedback ?? <Page title="Set up OpenCrawl"><LoadingState label="Loading your workspace"/></Page>}</FocusedFrame>;
     const route = routes.find(item => item.path === location.pathname);
     return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
   }
@@ -118,7 +115,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     <Route path="/onboarding/invite" element={<InviteOnboarding adapter={onboardingAdapter} canInvite={data.canInvite} invitationDelivery={data.invitationPolicy?.delivery} returnToAgent={Boolean(data.invitationPolicy?.beforeAgentSetup && !data.onboarding.completed && data.onboarding.next === '/onboarding')} onComplete={async path => {await refresh();navigate(path);}}/>}/>
   </Routes></FocusedFrame></ConsoleDataProvider>;
   const shown = extensions?.decorateRoute ? routes.map(route => extensions.decorateRoute!(route, data)) : routes;
-  return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board channels' : undefined} navigation={boardNavigation ? closeNavigation => <BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/> : undefined}/></ConsoleDataProvider>;
+  return <ConsoleDataProvider scopeKey={data.cacheScope} initial={seeds} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board channels' : undefined} navigation={boardNavigation ? closeNavigation => <BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/> : undefined}/></ConsoleDataProvider>;
 }
 /** Members finish their personal setup without entering workspace administration. */
 function FinishMemberOnboarding({api,onComplete}:{api:Pick<ProductApi,'finishOnboarding'>;onComplete:()=>Promise<void>}) {

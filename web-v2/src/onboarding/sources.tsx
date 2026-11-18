@@ -56,9 +56,8 @@ export function SourcesOnboarding({adapter, initialSources, authorize = url => w
       const result = await adapter.connectSource(item.id, apiKey ? {apiKey} : {}, controller.signal);
       if (!mounted.current) return;
       if (result.redirectUrl) {authorize(oauthDestination(result.redirectUrl)); return;}
-      const refreshed = await adapter.sources(controller.signal);
+      const refreshed = await resource.readFresh();
       if (!mounted.current) return;
-      resource.replace(refreshed);
       setAnnouncement(refreshed.items.some(source => source.id === item.id && isSourceConnected(source)) ? `${item.name} connected. Next is available.` : `${item.name} connection is still being checked.`);
     } catch (failure) {
       if (!mounted.current) return;
@@ -81,9 +80,9 @@ export function SourcesOnboarding({adapter, initialSources, authorize = url => w
     setSaving(true); setSetupError('');
     try {
       await adapter.saveCredential(credentialId, value, controller.signal);
-      const refreshed = await adapter.sources(controller.signal);
+      const refreshed = await resource.readFresh();
       if (!mounted.current) return;
-      resource.replace(refreshed); setSetupSource(null);
+      setSetupSource(null);
       setAnnouncement(`${item.setup?.credential?.name ?? 'Connector'} key saved.`);
       const unlocked = refreshed.items.find(source => source.id === item.id);
       if (unlocked && !unlocked.setup) choose(unlocked);

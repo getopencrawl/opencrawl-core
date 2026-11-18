@@ -7,10 +7,12 @@ const terminalLabel = 'Run in Terminal on the Mac you want to connect';
 
 for(const viewport of [{width:1280,height:800},{width:390,height:844}])test(`incomplete CLI setup permits navigation and history at ${viewport.width}px`,async({page})=>{
   await page.setViewportSize(viewport);
-  await page.route('**/api/console/bootstrap',route=>route.fulfill({json:bootstrap}));
+  let reads = 0;
+  await page.route('**/api/console/bootstrap',route=>{reads++;return route.fulfill({json:bootstrap});});
   await page.goto('/setup?full-app');
   await expect(page.getByRole('heading',{name:'Setup',exact:true})).toBeVisible();
   await expect(page.getByRole('textbox',{name:terminalLabel,exact:true})).toHaveValue(installer);
+  expect(reads).toBe(1);
   let documents=0;page.on('request',request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame())documents++;});
   if(viewport.width<600)await page.getByRole('button',{name:'Open workspace navigation'}).click();
   await page.getByRole('navigation',{name:'Workspace navigation'}).getByRole('link',{name:'Sessions',exact:true}).click();

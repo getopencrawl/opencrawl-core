@@ -85,3 +85,11 @@ test('shared web assets and HTML-producing source do not contain separator dots'
     assert.deepEqual(inspectUiText(relative(root, file), await readFile(file, 'utf8')), [], file);
   }
 });
+
+
+test('feature code routes network reads through the shared data layer', () => {
+  for (const read of ['fetch', 'window.fetch', 'globalThis.fetch']) {
+    assert.ok(inspectSource('src/new-page.tsx', read + "('/api/example')").some(item => item.rule === 'console-data-reads'));
+  }
+  assert.deepEqual(inspectSource('src/application/transport.ts', "fetch('/api/example')"), []);
+});

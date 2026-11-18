@@ -560,3 +560,26 @@ test('self-host context suggestions use the operator extension behind real local
   const e={id:'154224e0-b6be-4de4-9110-9d3b9da60c03',at:new Date().toISOString(),harness:'codex',stage:'observed',eventKey:'a'.repeat(64),sessionHash:'b'.repeat(64)};
   const report=await send('/api/context/suggestions/events',{events:[e]});assert.equal(report.status,200);assert.deepEqual((await report.json()).data.accepted,[e.id]);assert.equal(observed.length,1);assert.equal(observed[0].p.tenantId,org);
 });
+
+test('self-host reload bootstraps the last authorized Team read only for the same signed-in session', async t => {
+  const app = await fixture(t, {cliSetup:true});
+  await app.admin();
+  const rpc = async name => {
+    const response = await app.request('/api/trpc/console.' + name,'admin',{method:'POST',headers:{origin:app.origin,'content-type':'application/json'},body:'{}'});
+    assert.equal(response.status,200);
+    return (await response.json()).result.data;
+  };
+  await rpc('bootstrap');
+  await rpc('team');
+  const page = await app.request('/settings/team','admin');
+  assert.equal(page.headers.get('cache-control'),'no-store');
+  const text = await page.text();
+  const seed = JSON.parse(text.match(/<script id="opencrawl-reload" type="application\/json">(.*?)<\/script>/s)[1]);
+  assert.equal(seed.reports['console.team'].members[0].email,'ada@example.com');
+  await app.join('other','other@example.test');
+  const other = await app.request('/settings/team','other');
+  assert.doesNotMatch(await other.text(),/opencrawl-reload|ada@example.com/);
+  const loggedOut = await app.request('/settings/team');
+  assert.equal(loggedOut.status,303);
+  assert.doesNotMatch(await loggedOut.text(),/opencrawl-reload|ada@example.com/);
+});

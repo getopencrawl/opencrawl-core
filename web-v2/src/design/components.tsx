@@ -150,7 +150,7 @@ export function EmptyState({title, description, action, actions}: {title: string
   return <div className="oc-empty"><h3>{title}</h3>{description && <p>{description}</p>}{(action || actions) && <div className="actions">{action || actions}</div>}</div>;
 }
 export function LoadingState({label = 'Loading workspace…'}: {label?: string}) {
-  return <div className="oc-loading" role="status" aria-live="polite"><span className="sr-only">{label}</span><span/><span/><span/></div>;
+  return <span className="oc-loading sr-only" role="status">{label}</span>;
 }
 export function Table({label, children, className = ''}: {label: string; children: ReactNode; className?: string}) {
   const ref = useRef<HTMLDivElement>(null);

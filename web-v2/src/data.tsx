@@ -6,7 +6,7 @@ export function responseStatus(error: unknown): number | undefined {
   return typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number' ? error.status : undefined;
 }
 export const accessFailure = (error: unknown) => [401, 402, 403].includes(responseStatus(error) ?? 0);
-const transient = (error: unknown) => {const status = responseStatus(error); return status !== undefined && status >= 500 && status < 600;};
+const transient = (error: unknown) => {const status = responseStatus(error); return status === 408 || status === 429 || status !== undefined && status >= 500 && status < 600;};
 const message = (error: unknown) => error instanceof Error ? error.message : 'This information could not update. Try again.';
 const owners = new WeakMap<object, number>();
 let nextOwner = 0;
@@ -28,14 +28,19 @@ export function createConsoleQueryClient(onAccessFailure?: (error: unknown) => v
 }
 
 /** One memory-only cache per trusted runtime scope. Replace the provider on identity changes. */
-export function ConsoleDataProvider({scopeKey, children, onAccessFailure}: {scopeKey: string; children: ReactNode; onAccessFailure?: (error: unknown) => void}) {
-  return <ScopedCache key={scopeKey} onAccessFailure={onAccessFailure}>{children}</ScopedCache>;
+export interface ConsoleSeed {key: readonly unknown[]; data: unknown}
+export function ConsoleDataProvider({scopeKey, children, onAccessFailure, initial}: {scopeKey: string; initial?: readonly ConsoleSeed[]; children: ReactNode; onAccessFailure?: (error: unknown) => void}) {
+  return <ScopedCache key={scopeKey} initial={initial} onAccessFailure={onAccessFailure}>{children}</ScopedCache>;
 }
-function ScopedCache({children, onAccessFailure}: {children: ReactNode; onAccessFailure?: (error: unknown) => void}) {
+function ScopedCache({children, onAccessFailure, initial}: {initial?: readonly ConsoleSeed[]; children: ReactNode; onAccessFailure?: (error: unknown) => void}) {
   const handler = useRef(onAccessFailure); handler.current = onAccessFailure;
   const [denied, setDenied] = useState('');
   const deny = useCallback((error: unknown) => {setDenied(message(error)); handler.current?.(error);}, []);
-  const [client] = useState(() => createConsoleQueryClient(deny));
+  const [client] = useState(() => {
+    const cache = createConsoleQueryClient(deny);
+    for (const seed of initial ?? []) cache.setQueryData(seed.key, seed.data, {updatedAt: 1});
+    return cache;
+  });
   useEffect(() => {
     const focus = () => {if (document.visibilityState === 'visible') void client.refetchQueries({type:'active',predicate:shouldRefresh},{cancelRefetch:false});};
     const visibility = () => {if (document.visibilityState === 'hidden') void client.cancelQueries();else focus();};
@@ -70,11 +75,16 @@ export function useConsoleResource<T>(key: readonly unknown[], read: (signal: Ab
   useEffect(() => {if (paused) void client.cancelQueries({queryKey: stableKey, exact: true});}, [client, paused, stableKey]);
   // Query cancellation is shared: a prefetch and mounted page never duplicate a read.
   const reload = useCallback(async () => {setInvalidated(''); await query.refetch({cancelRefetch: false});}, [query.refetch]);
+  const readFresh = useCallback(async () => {
+    const next = await query.refetch({cancelRefetch: true, throwOnError: true});
+    if (next.data === undefined) throw new Error('The updated report could not be confirmed.');
+    return next.data;
+  }, [query.refetch]);
   const invalidate = useCallback((reason = 'Your workspace access changed. Sign in again.') => {
     setInvalidated(reason); void client.cancelQueries({queryKey: stableKey, exact: true}); client.removeQueries({queryKey: stableKey, exact: true});
   }, [client, stableKey]);
   const updateData = useCallback((change: (current: T) => T) => {client.setQueryData<T>(stableKey, current => current === undefined ? undefined : change(current));}, [client, stableKey]);
   const replaceData = useCallback((value: T) => {setInvalidated('');client.setQueryData<T>(stableKey,value);}, [client,stableKey]);
   const data = invalidated || query.error && !transient(query.error) ? null : query.data ?? null;
-  return {data, error: invalidated || (query.error ? message(query.error) : ''), loading: data === null && query.isLoading, refreshing: query.isFetching && data !== null, reload, invalidate, updateData, replaceData};
+  return {data, error: invalidated || (query.error ? message(query.error) : ''), loading: data === null && query.isLoading, refreshing: query.isFetching && data !== null, reload, readFresh, invalidate, updateData, replaceData};
 }

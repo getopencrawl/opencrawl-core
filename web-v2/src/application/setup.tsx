@@ -1,7 +1,7 @@
-import {useEffect, useState} from 'react';
+import {useState} from 'react';
 import {Button, CopyField, Dialog, Icon, Notice, Page, Section, StatusBadge} from '../design/components.tsx';
 import {nativeInstallCommand} from '../../../src/sessions/cli-installation.mjs';
-import type {Bootstrap, ProductApi} from './api.ts';
+import type {Bootstrap} from './api.ts';
 
 const clientNames = {'claude-code':'Claude Code', codex:'Codex', cursor:'Cursor', antigravity:'Antigravity', 'grok-bot':'Grok Bot', devin:'Devin', 'claude-desktop':'Claude Desktop', chatgpt:'ChatGPT'};
 
@@ -76,28 +76,8 @@ function MachineRow({installation}: {installation: Installation}) {
 }
 
 /** Setup is a progress page. Choices and continuation live in the CLI. */
-export function SetupPage({api, initial}: {api: Pick<ProductApi, 'bootstrap'>; initial: Bootstrap}) {
-  const [status, setStatus] = useState(initial.setup);
+export function SetupPage({status, error}: {status: NonNullable<Bootstrap['setup']>; error: string}) {
   const [adding, setAdding] = useState(false);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    const controller = new AbortController();
-    let active = false;
-    const refresh = async () => {
-      if (active || document.visibilityState === 'hidden') return;
-      active = true;
-      try {
-        const next = await api.bootstrap(controller.signal);
-        if (!controller.signal.aborted) {setStatus(next.setup); setError('');}
-      } catch (failure) {
-        if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Progress could not refresh.');
-      } finally {active = false;}
-    };
-    setStatus(initial.setup);
-    void refresh();
-    const timer = window.setInterval(() => {void refresh();}, 3000);
-    return () => {controller.abort(); clearInterval(timer);};
-  }, [api, initial.cacheScope]);
   const installations = status?.installations ?? [];
   return <Page title="Setup" description="Connect a new machine or check setup on an existing one."
     actions={installations.length > 0 && <Button variant="primary" onClick={() => setAdding(true)}><Icon name="plus" size={16}/>Add machine</Button>}>

@@ -30,6 +30,7 @@ import {createGuidedOnboarding} from '../application/onboarding.mjs';
 import {smallJson} from '../application/http.mjs';
 import {createConsoleApi,consoleDocument,consolePages} from '../application/console.mjs';
 import {productRoute,type Route} from '../application/routes.mjs';
+import {createConsoleReloadCache} from '../application/console-reload.mjs';
 import {productRouter,handleProductRpc,rpcError} from '../application/rpc.mjs';
 import {usageServices} from '../application/usage.mjs';
 import {valueReports} from '../application/value-report.mjs';
@@ -82,6 +83,7 @@ export function selfhostApplication({settings,store,boardState,setupState,eventI
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
 }:SelfhostApplicationOptions) {
+  const reloadCache = createConsoleReloadCache();
   const directory=identity.directory;
   const replicas = createReplicasConnections({store,prefix,tenantId:settings.organizationId,
     verify:workloadIdentity?.verify ?? createReplicasVerifier({audience:settings.url,key:workloadIdentityKey}),
@@ -231,7 +233,9 @@ export function selfhostApplication({settings,store,boardState,setupState,eventI
           if(!setup&&!target.pathname.startsWith('/onboarding')&&!hasCompletedOnboarding(progress))return redirect(await guided.next(principal));
           // An admin can invite teammates while connecting their own agent. Other setup and workspace gates remain receipt-based.
           if(!setup&&target.pathname.startsWith('/onboarding/')&&!(target.pathname==='/onboarding/invite'&&isAdmin(member))&&!hasCompletedOnboarding(progress)&&!(progress&&deriveOnboarding(progress).complete))return redirect('/onboarding');
-          return reply(200,consoleDocument(undefined, {machineSetup: Boolean(setup), showIntegrations: isAdmin(member)}),'text/html; charset=utf-8');
+          const reload = await reloadCache.forDocument(principal.tenantId, cacheScope, target.pathname, revalidate);
+          if (reload === false) return reply(403, 'Workspace access changed. Sign in again.');
+          return reply(200, consoleDocument(undefined, {machineSetup: Boolean(setup), showIntegrations:isAdmin(member), reload}), 'text/html; charset=utf-8');
         }
         if(guided.handles(selected.name))return guided.handle(request,{route:selected,principal,identity:{user},member,respond:reply});
         if(selected.name==='/api/onboarding')return reply(200,JSON.stringify({data:{...await onboarding.read(principal),displayName:user.firstName?.trim()||null}}),'application/json');
@@ -255,7 +259,7 @@ export function selfhostApplication({settings,store,boardState,setupState,eventI
         return reply(404,'Not found');
       };
       if(route.name==='web-rpc'){
-        const result=await handleProductRpc(req,url,productRouter,{invoke:async<T,>(path:string,method:'GET'|'POST'='GET',input?:object):Promise<T>=>{
+        const result=await handleProductRpc(req,url,productRouter,{reload:{cache:reloadCache,tenant:principal.tenantId,scope:cacheScope},invoke:async<T,>(path:string,method:'GET'|'POST'='GET',input?:object):Promise<T>=>{
           const target=new URL(path,settings.url),selected=productRoute(method,target.pathname);
           if(!selected||selected.status||selected.name==='web-rpc')throw rpcError(400,'Unknown web operation.');
           const request=Object.assign(Readable.from(input===undefined?[]:[Buffer.from(JSON.stringify(input))]),{url:path,method,headers:{origin:settings.url}}) as IncomingMessage;

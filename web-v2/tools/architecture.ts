@@ -54,6 +54,10 @@ export function inspectSource(file: string, text: string): ArchitectureViolation
   const report = (node: ts.Node, rule: string, message: string) => violations.push({file, line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1, rule, message});
   const visit = (node: ts.Node) => {
     if (node.kind === ts.SyntaxKind.AnyKeyword) report(node, 'strict-types', 'Use a concrete type or narrow unknown; explicit any is forbidden.');
+    if (file !== 'src/application/transport.ts' && ts.isCallExpression(node)
+        && ['fetch', 'window.fetch', 'globalThis.fetch'].includes(node.expression.getText(source))) {
+      report(node, 'console-data-reads', 'Use a scoped SWR hook for display reads and the product transport for writes.');
+    }
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tag = node.tagName.getText(source);
       if (tag === 'h1' && !isDesignFile(file) && !file.startsWith('src/onboarding/')) report(node, 'shared-page-heading', 'Use Page or PageHeader for workspace titles. Onboarding retains its focused presentation.');
