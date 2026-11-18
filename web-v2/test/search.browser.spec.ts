@@ -17,7 +17,7 @@ const result: DiagnosticSearch = {
   connectors: {responses: [{hits: {hits: [{_id: 'release', _source: {provider: 'notion', kind: 'page', title: 'Release notes', url: 'https://example.com/notes', text: 'The onboarding release notes are ready for review.'}}]}}]},
 };
 
-for (const width of [390, 1280]) {
+for (const width of [390, 801, 1280, 1920]) {
   test(`playground pages real queries and shows the source title link at ${width}px`, async ({page}, info) => {
     await page.setViewportSize({width, height: 900});
     const calls: Array<{query: string; page: number}> = [];
@@ -26,12 +26,26 @@ for (const width of [390, 1280]) {
       calls.push(input);
       return route.fulfill({json: diagnosticPage(result, input.page)});
     });
+    const edges = (element: Element) => {
+      const {left, right} = element.getBoundingClientRect();
+      return {left, right};
+    };
+    await page.goto('/sessions');
+    const libraryEdges = await page.locator('main .query-form').evaluate(edges);
     await page.goto('/search');
-    await expect(page.getByRole('region', {name: 'Inspect search', exact: true})).toHaveCSS('border-top-width', '1px');
+    const inspector = page.getByRole('region', {name: 'Inspect search', exact: true});
+    await expect(inspector).toHaveCSS('border-top-width', '0px');
+    const form = inspector.locator('form');
+    expect(await form.evaluate(edges)).toEqual(libraryEdges);
+    const header = page.locator('main .oc-page-header');
+    await expect(header).toHaveCSS('border-bottom-width', '1px');
+    const headerBottom = await header.evaluate(element => element.getBoundingClientRect().bottom);
+    expect(await form.evaluate(element => element.getBoundingClientRect().top) - headerBottom).toBe(32);
     const field = page.getByRole('searchbox', {name: 'Search query'});
     await field.fill('onboarding'); await field.press('Enter');
     const hits = page.locator('.oc-search-hit');
     await expect(hits).toHaveCount(25);
+    expect(await page.locator('.oc-search-group').first().evaluate(edges)).toEqual(libraryEdges);
     await expect(hits.first().getByRole('link')).toHaveAttribute('href', /\/sessions\?user=user&harness=codex&id=workspace-0/);
     await expect(page.getByRole('link', {name: 'Release notes', exact: true})).toHaveAttribute('href', 'https://example.com/notes');
     await expect(hits.first().locator('mark')).toHaveText('onboarding');

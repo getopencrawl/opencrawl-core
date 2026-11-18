@@ -96,10 +96,9 @@ export function SearchResults({result: response, query, onPage, focusSummary = f
       {!groups.length && <Notice tone="warning">The response did not include search coverage. Try the query again.</Notice>}
       {groups.length > 0 && !returned && page === 1 && !partial && <EmptyState title="No matching items" description="Try another query, or check the connected sources and captured sessions."/>}
       {groups.filter(group => group.hits.length || group.warnings.length).map(group => (
-        <Section key={group.id} className="oc-search-group" title={`${group.label} (${group.hits.length})`}>
-          {group.total !== undefined && (group.total > group.hits.length || group.totalRelation === 'gte') && (
-            <p className="oc-search-coverage">Showing {group.hits.length.toLocaleString()} of {group.totalRelation === 'gte' ? 'at least ' : ''}{group.total.toLocaleString()} reported matches.</p>
-          )}
+        <Section key={group.id} className="oc-search-group" title={`${group.label} (${group.hits.length})`}
+          description={group.total !== undefined && (group.total > group.hits.length || group.totalRelation === 'gte')
+            ? `Showing ${group.hits.length.toLocaleString()} of ${group.totalRelation === 'gte' ? 'at least ' : ''}${group.total.toLocaleString()} reported matches.` : undefined}>
           {group.warnings.length > 0 && <Notice tone="warning">{group.warnings.join(' ')}</Notice>}
           <div>{group.hits.map((hit, index) => <SearchHit key={`${hit._id || 'item'}:${index}`} hit={hit} query={query} source={group.id}/>)}</div>
         </Section>
@@ -134,7 +133,7 @@ export function SearchInspector({adapter}: {adapter: Pick<ConsoleDataAdapter, 's
   const busy = snapshot.state === 'loading';
   useEffect(() => () => reader.suspend(), [reader]);
   return (
-    <Section className="oc-search-inspector" aria-label="Inspect search">
+    <section className="oc-search-inspector" aria-label="Inspect search">
       <form className="query-form" onSubmit={event => {event.preventDefault(); run(query);}}>
         <Field label="Search query">
           <Input ref={input} type="search" value={query} onChange={event => setQuery(event.target.value)} maxLength={4000} required placeholder="Search your workspace"/>
@@ -149,6 +148,6 @@ export function SearchInspector({adapter}: {adapter: Pick<ConsoleDataAdapter, 's
       {snapshot.state === 'canceled' && <p role="status" className="muted">Query canceled.</p>}
       {busy && <LoadingState label="Running query"/>}
       {snapshot.result && <SearchResults key={snapshot.query} result={snapshot.result} query={snapshot.query} focusSummary={paging.current} onPage={page => {paging.current = true; void reader.search(snapshot.query, page);}}/>}
-    </Section>
+    </section>
   );
 }

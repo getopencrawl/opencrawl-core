@@ -886,6 +886,10 @@ retains the unchanged capture and keyboard-scrollable raw text.
 Search playground is a separate administrative inspection route at `/search`.
 The legacy `/diagnostics?view=search` URL redirects there. Its Page leads directly
 to the existing SearchInspector query form without an introductory paragraph.
+Align the query row and source sections to both edges of the centered workspace
+frame, as on Sessions. The header divider and shared 32px body inset lead
+directly into the field. Each source heading pairs its name with reported
+coverage above the list; snippets keep their readable measure inside that grid.
 Queries use the actual scoped adapter and SearchReader, not local sample filtering.
 Source-specific result rows use real titles, provider/harness, kind/role, available
 channel/session/path context and valid timestamps. Show the linked title first, followed by a quiet source trail and a compact
