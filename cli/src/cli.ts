@@ -38,6 +38,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   verify-installation  Prove a selected client's fresh session is searchable
   login       Sign in with a browser approval and device code
   logout      Remove this deployment's credentials from this machine
+  memories    Scan, verify or import your memory files from another client
   whoami      Verify your saved session or environment token with the service
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
@@ -189,7 +190,7 @@ function organizationRequired(api: string, value: unknown) {
 }
 
 export async function identity(api: string, fetcher = fetch, initialToken?: string): Promise<{
-  user: {id: string; email: string | null}; workspace?: {id: string; name: string | null};
+  credential?: 'workspace-identity'; user: {id: string; email: string | null}; workspace?: {id: string; name: string | null};
 }> {
   let token = initialToken ?? await accessToken(api, undefined, fetcher);
   let result = await jsonRequest(`${api}/api/cli/me`, {headers: {authorization: `Bearer ${token}`}}, fetcher);
@@ -207,12 +208,13 @@ export async function identity(api: string, fetcher = fetch, initialToken?: stri
   const user = {id: result.body.data.user.id, email: typeof result.body.data.user.email === 'string' ? result.body.data.user.email : null};
   // Display only the workspace resolved by the server; older deployments may
   // omit it, and a missing display name does not invalidate a verified ID.
+  const scope = result.body.data.credential==='workspace-identity'||result.body.data.workload ? {credential:'workspace-identity' as const} : {};
   const workspace: unknown = result.body.data.workspace;
   if (workspace && typeof workspace === 'object' && 'id' in workspace && typeof workspace.id === 'string' && workspace.id.trim()
     && 'name' in workspace && (typeof workspace.name === 'string' || workspace.name === null)) {
-    return {user, workspace: {id: workspace.id, name: workspace.name}};
+    return {...scope, user, workspace: {id: workspace.id, name: workspace.name}};
   }
-  return {user};
+  return {...scope,user};
 }
 
 export async function loginIdentity(api:string,options:{organizationId?:string;noBrowser?:boolean;signal?:AbortSignal;onDevice?:(approval:{url:string;code:string;expiresIn:number;canOpenBrowser:boolean})=>void|Promise<void>}={}) {
@@ -281,6 +283,14 @@ export async function main(args = process.argv.slice(2)) {
   const emit = (data: unknown, human: string) => process.stdout.write(json ? JSON.stringify({schemaVersion: 1, data}) + '\n' : human + '\n');
   try {
     applyDaemonEnvironment(args);
+    if(args[0]==='memories'){
+      // A local import must not trigger capture, hook installation or a history upload.
+      informational=true;
+      const {personalMemoryCommand}=await import('./personal-memory-command.ts');
+      const result=await personalMemoryCommand(args.slice(1),identity);
+      emit(result.data,result.human);
+      return result.exit;
+    }
     if(!args.length&&process.stdin.isTTY&&process.stderr.isTTY&&!workspaceIdentityEnabled()){
       const {needsFirstRunSetup}=await import('./setup/first-run.ts');
       if(await needsFirstRunSetup(process.env.OPENCRAWL_API_URL))args=['setup'];

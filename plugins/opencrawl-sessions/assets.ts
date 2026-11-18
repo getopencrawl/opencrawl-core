@@ -1,3 +1,4 @@
+import memorySkill from './shared/skills/oc-import-memories/SKILL.md' with {type:'text'};
 import privacyPolicy from './shared/skills/oc-incognito/agents/openai.yaml' with {type:'text'};
 import privacySkill0 from './shared/skills/oc-incognito/SKILL.md' with {type:'text'};
 import privacySkill1 from './shared/skills/oc-private/SKILL.md' with {type:'text'};
@@ -40,7 +41,8 @@ export const hookAssets:Record<string,Record<string,string>>={
 };
 export const knowledgeSkill=asset9;
 
-export const sharedAssets={'skills/oc-incognito/agents/openai.yaml':privacyPolicy,'skills/oc-private/agents/openai.yaml':privacyPolicy,'skills/opencrawl-private/agents/openai.yaml':privacyPolicy,'skills/oc-readonly/agents/openai.yaml':privacyPolicy,'skills/oc-incognito/SKILL.md':privacySkill0,'skills/oc-private/SKILL.md':privacySkill1,'skills/opencrawl-private/SKILL.md':privacySkill2,'skills/oc-readonly/SKILL.md':privacySkill3,'scripts/opencrawl-hook.sh':sh,'scripts/opencrawl-hook.cmd':cmd,'scripts/opencrawl-hook.ps1':ps1,'skills/opencrawl/SKILL.md':knowledgeSkill,'skills/opencrawl-setup/SKILL.md':setupSkill};
+export const importMemorySkill=memorySkill;
+export const sharedAssets={'skills/oc-import-memories/SKILL.md':memorySkill,'skills/oc-incognito/agents/openai.yaml':privacyPolicy,'skills/oc-private/agents/openai.yaml':privacyPolicy,'skills/opencrawl-private/agents/openai.yaml':privacyPolicy,'skills/oc-readonly/agents/openai.yaml':privacyPolicy,'skills/oc-incognito/SKILL.md':privacySkill0,'skills/oc-private/SKILL.md':privacySkill1,'skills/opencrawl-private/SKILL.md':privacySkill2,'skills/oc-readonly/SKILL.md':privacySkill3,'scripts/opencrawl-hook.sh':sh,'scripts/opencrawl-hook.cmd':cmd,'scripts/opencrawl-hook.ps1':ps1,'skills/opencrawl/SKILL.md':knowledgeSkill,'skills/opencrawl-setup/SKILL.md':setupSkill};
 
 export const manifests={"claude-code":{path:".claude-plugin/plugin.json",value:manifest0},"codex":{path:".codex-plugin/plugin.json",value:manifest1},"cursor":{path:".cursor-plugin/plugin.json",value:manifest2},"antigravity":{path:"plugin.json",value:manifest3},"devin":{path:".devin-plugin/plugin.json",value:manifest4}};
 export const extraAssets={readme,cursorRule,devinGuide};

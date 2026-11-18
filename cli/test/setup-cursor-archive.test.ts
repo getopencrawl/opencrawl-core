@@ -73,7 +73,7 @@ test('Cursor offers use the same native version requirement as the archive insta
 test('Cursor selection installs the pinned archive offline, binds both MCP files and resumes on current capture',()=>fixture(async f=>{
  const inventory=setupInventory({...f.options,api,platform:'darwin'});
  expect(inventory.find(row=>row.id==='cursor')).toMatchObject({detected:true,plugin:true,forward:true});
- expect(entry.version).toBe('0.2.0');
+ expect(entry.version).toBe('0.2.1');
  const first=await f.install(),row=first.results[0]!;
  expect(row).toMatchObject({client:'cursor',status:'prepared',captureAvailable:true,daemonHandoff:true,source:{ref:entry.ref,version:entry.version}});
  expect(first.humanTasks.map(task=>task.kind)).toEqual(['restart','mcp_auth']);
@@ -81,6 +81,7 @@ test('Cursor selection installs the pinned archive offline, binds both MCP files
  expect(read(join(f.dir,'.opencrawl-binding.json'))).toEqual({schemaVersion:1,api,client:'cursor',owner:f.owner,installationId,configHome:f.configHome,captureMode:'hook'});
  expect(read(join(f.dir,'.cursor-plugin/plugin.json'))).toMatchObject({name:setupPluginIdentity(api).name,hooks:'./hooks/hooks.json',mcpServers:'./mcp.json'});
  for(const alias of ['oc-incognito','oc-private','opencrawl-private','oc-readonly'])expect(readFileSync(join(f.dir,'skills',alias,'SKILL.md'),'utf8')).toContain('MUST NOT communicate with other agents');
+ expect(readFileSync(join(f.dir,'skills/oc-import-memories/SKILL.md'),'utf8')).toContain('name: oc-import-memories');
  const binary=join(f.dir,'bin','opencrawl-hook'),initial=statSync(binary);
  if(process.platform!=='win32')expect(initial.mode&0o777).toBe(0o755);
  expect(existsSync(join(f.root,'hooks.json'))).toBe(false);
