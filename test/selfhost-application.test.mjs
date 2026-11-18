@@ -51,7 +51,15 @@ async function fixture(t,options={}){
 
 test('CLI setup leaves authenticated pages and console operations open before any agent receipt',async t=>{
   const f=await fixture(t,{cliSetup:true});await f.admin();
-  for(const path of ['/','/setup','/sessions','/sources','/settings/team'])assert.equal((await f.request(path,'admin')).status,200,path);
+  for(const path of ['/','/setup','/sessions','/sources','/settings/team']){
+    const page=await f.request(path,'admin');
+    assert.equal(page.status,200,path);
+    assert.match(await page.text(),/data-integrations-nav/);
+  }
+  await f.join('member','member@example.com');
+  const memberPage=await f.request('/sessions','member');
+  assert.equal(memberPage.status,200);
+  assert.doesNotMatch(await memberPage.text(),/data-integrations-nav/);
   const bootstrap=await (await f.request('/api/console/bootstrap','admin')).json();
   assert.deepEqual(bootstrap.setup.installations,[]);assert.equal(bootstrap.setup.firstWin,null);
   assert.equal(bootstrap.onboarding.completed,false);

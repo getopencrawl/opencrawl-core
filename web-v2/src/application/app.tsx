@@ -48,9 +48,10 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     invitations: api.onboardingInvitations, invite: api.onboardingInvite, finish: api.finishOnboarding,
   }), [api]);
   const [data,setData] = useState<B | null>(null), [error,setError] = useState('');
+  const [initialIntegrationsNav, setInitialIntegrationsNav] = useState(() => document.getElementById('root')?.hasAttribute('data-integrations-nav') === true);
   const [attempt,setAttempt] = useState(0);
   const accessEpoch=useRef(0),blocked=useRef(false);
-  const invalidateAccess=useCallback((failure:unknown)=>{accessEpoch.current++;blocked.current=true;setData(null);setError(failure instanceof Error?failure.message:typeof failure==='string'?failure:'Your workspace access changed. Sign in again.');},[]);
+  const invalidateAccess=useCallback((failure:unknown)=>{accessEpoch.current++;blocked.current=true;setInitialIntegrationsNav(false);setData(null);setError(failure instanceof Error?failure.message:typeof failure==='string'?failure:'Your workspace access changed. Sign in again.');},[]);
   const navigate = useNavigate(), location = useLocation();
   const refresh = useCallback(async () => {const epoch=accessEpoch.current;const next = await api.bootstrap();if(epoch!==accessEpoch.current||blocked.current)throw new Error('Your workspace access changed. Sign in again.');setData(next);return next;},[api]);
   useEffect(() => {
@@ -58,7 +59,12 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     const load=async()=>{
       if(active||blocked.current||document.visibilityState==='hidden')return;active=true;
       try {const next=await api.bootstrap(controller.signal);if(!controller.signal.aborted&&epoch===accessEpoch.current&&!blocked.current){loaded=true;setData(next);setError('');}}
-      catch(failure){if(!controller.signal.aborted && (!loaded || failure instanceof Error && 'status' in failure && [401,402,403].includes(Number(failure.status)))){setData(null);setError(failure instanceof Error?failure.message:'Your workspace could not load.');}}
+      catch(failure){
+        if(controller.signal.aborted)return;
+        const denied = failure instanceof Error && 'status' in failure && [401,402,403].includes(Number(failure.status));
+        if(denied)setInitialIntegrationsNav(false);
+        if(!loaded || denied){setData(null);setError(failure instanceof Error?failure.message:'Your workspace could not load.');}
+      }
       finally{active=false;}
     };
     const focus=()=>{if(document.visibilityState==='visible')void load();};
@@ -84,7 +90,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/',label:'Usage',icon:'usage',element:<UsagePage adapter={dataAdapter} reportScope={data?.splitUsage ? data.cacheScope : undefined} setupPrompt={data?.setup ? undefined : data?.setupPrompt}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them.">{feedback}</PendingPage>},
-    {path:'/sources',label:'Integrations',icon:'sources',navigation:data?.workspace.role === 'admin',element:<SourcesPage adapter={api} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
+    {path:'/sources',label:'Integrations',icon:'sources',navigation:data ? data.workspace.role === 'admin' : initialIntegrationsNav,element:<SourcesPage adapter={api} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
     {path:'/diagnostics',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All channels'}>{feedback}</PendingPage>},
     {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},

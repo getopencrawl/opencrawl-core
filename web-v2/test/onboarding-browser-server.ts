@@ -96,7 +96,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       return;
     } catch {res.writeHead(404).end(); return;}
   }
-  res.writeHead(200, {'content-type': 'text/html', 'cache-control': 'no-store'}).end(document);
+  const page = url.searchParams.get('role') === 'admin' ? document.replace('<div id="root">', '<div id="root" data-integrations-nav>') : document;
+  res.writeHead(200, {'content-type': 'text/html', 'cache-control': 'no-store'}).end(page);
 }
 const server = createServer((req, res) => {void handle(req, res).catch(error => {console.error(String(error)); res.writeHead(500).end('Fixture error');});});
 server.listen(Number(process.env.ONBOARDING_TEST_PORT || 43179), '127.0.0.1');

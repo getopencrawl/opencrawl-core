@@ -31,12 +31,17 @@ for(const width of [1280,390])test(`members never load Integrations, including a
     await expect(page.getByRole('heading',{name:'Integrations',exact:true})).toHaveCount(0);
   }
   expect(reads).toBe(0);
-  role='admin';await page.goto('/sources?full-app');
+  role='admin';await page.goto('/sources?full-app&role=admin');
   await expect(page.getByText('No integrations available')).toBeVisible();
   expect(reads).toBe(1);
   role='member';await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText('No integrations available')).toHaveCount(0);
+  const integrations = page.locator('#workspace-navigation a[href="/sources"]');
+  await expect(integrations).toHaveCount(0);
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('opencrawl:access-denied', {detail:'Workspace access changed'})));
+  await expect(page.getByText('Workspace access changed', {exact:true})).toBeVisible();
+  await expect(integrations).toHaveCount(0);
   expect(reads).toBe(1);
 });
 

@@ -81,7 +81,7 @@ test('existing machines stay compact, disclose checks, and can add another machi
   await expect(details).toBeVisible();
 });
 
-test('Setup occupies the first sidebar row before bootstrap and through retry', async ({page}) => {
+test('Setup and Integrations keep their sidebar positions before bootstrap and through retry', async ({page}) => {
   let release = () => {};
   const pending = new Promise<void>(resolve => {release = resolve;});
   let fail = true;
@@ -90,7 +90,10 @@ test('Setup occupies the first sidebar row before bootstrap and through retry', 
     await route.fulfill(fail ? {status:503, json:{error:'Workspace unavailable'}} : {json:bootstrap});
   });
   try {
-    await page.goto('/setup?full-app');
+    await page.goto('/setup?full-app&role=admin');
+    const integrations = page.getByRole('link', {name:'Integrations', exact:true});
+    await expect(integrations).toBeVisible();
+    const position = await integrations.boundingBox();
     const first = page.getByRole('navigation', {name:'Workspace navigation'}).getByRole('link').first();
     await expect(first).toHaveText('Setup');
     await expect(first).toHaveAttribute('aria-current', 'page');
@@ -99,10 +102,12 @@ test('Setup occupies the first sidebar row before bootstrap and through retry', 
     release();
     await expect(page.getByRole('alert')).toBeVisible();
     await expect(first).toHaveText('Setup');
+    expect(await integrations.boundingBox()).toEqual(position);
     fail = false;
     await page.getByRole('button', {name:'Try again'}).click();
     await expect(page.getByRole('textbox', {name:terminalLabel})).toHaveValue(installer);
     await expect(first).toHaveText('Setup');
     expect((await first.boundingBox())?.y).toBe(top?.y);
+    expect(await integrations.boundingBox()).toEqual(position);
   } finally {release();}
 });
