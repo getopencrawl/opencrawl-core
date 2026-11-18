@@ -7,8 +7,12 @@ export function linearId(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !uuid.test(value)) throw new Error('Invalid Linear identity');
 }
 type Row = Record<string, unknown>;
-interface GraphError {extensions?: {code?: string}; path?: Array<string | number>}
+interface GraphError {message?: string; extensions?: {code?: string}; path?: Array<string | number>}
 interface GraphResponse<T> {data?: T; errors?: GraphError[]}
+// Linear returns INPUT_ERROR for some archived/deleted singular resources.
+// Only its exact missing-entity response is a denial; other input errors still fail.
+const missingResource = (error: GraphError, field: string) => error.extensions?.code === 'ENTITY_NOT_FOUND' ||
+  error.extensions?.code === 'INPUT_ERROR' && error.message === 'Entity not found: ' + field[0].toUpperCase() + field.slice(1);
 const row = (value: unknown): Row => value && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
 const name = (value: unknown) => typeof value === 'string' ? value : '';
 export interface LinearContext {title?: string; url?: string; lines: string[]}
@@ -113,7 +117,7 @@ export function createLinearAccess({tenantId, connectionId, workspaceId, request
     let after: string | null = null;
     for (let page = 0; page < 1000; page++) {
       const response = await request<GraphResponse<{issue: Row}>>({endpoint: LINEAR_API, method: 'POST', headers: {'Content-Type': 'application/json'}, body: {query: `query OpenCrawlHistoryAccess($id: String!, $after: String) { issue(id: $id) { ${issueFields} history(first: 250, after: $after, includeArchived: true) { nodes { id } pageInfo { hasNextPage endCursor } } } }`, variables: {id: issueId, after}}});
-      if (response.status === 200 && response.data.errors?.length && response.data.errors.every(e => e.extensions?.code === 'ENTITY_NOT_FOUND' && e.path?.[0] === 'issue')) return new Map();
+      if (response.status === 200 && response.data.errors?.length && response.data.errors.every(e => missingResource(e, 'issue') && e.path?.[0] === 'issue')) return new Map();
       if (response.status !== 200 || response.data.errors?.length || !response.data.data) throw new Error('Linear history access failed');
       const data = response.data.data;
       if (!publicIssue(data.issue)) return new Map();
@@ -150,7 +154,10 @@ export function createLinearAccess({tenantId, connectionId, workspaceId, request
       if (response.data.errors?.length) {
         // A deleted non-null singular field can null the entire batch. Retry only
         // unaffected aliases so one deletion cannot silently discard valid records.
-        if (response.data.errors.every(e => e.extensions?.code === 'ENTITY_NOT_FOUND')) {
+        if (response.data.errors.every(e => {
+          const alias = e.path?.[0], item = typeof alias === 'string' && /^r\d+$/.test(alias) ? batch[Number(alias.slice(1))] : undefined;
+          return Boolean(item && missingResource(e, fields[item.kind].query));
+        })) {
           const missing=new Set(response.data.errors.map(e=>e.path?.[0]));
           if([...missing].some(alias=>typeof alias!=='string'||!/^r\d+$/.test(alias)||Number(alias.slice(1))>=batch.length))throw new Error('Unattributed Linear access failure');
           const remaining=batch.filter((_,i)=>!missing.has('r'+i));

@@ -113,6 +113,22 @@ test('private, restricted, foreign, deleted and ambiguous resources fail closed 
   f.state.organization=uuid(999);await assert.rejects(f.access.inspect('issue:'+issueId),/workspace changed/);
 });
 
+test('Linear INPUT_ERROR for a missing initiative link excludes only that link; other input failures remain errors',async()=>{
+  const f=fixture(),present=linearResourceId('initiative_to_projects',f.state.rows.initiative_to_projects),missing='initiative_to_project:'+uuid(900);
+  let error={message:'Entity not found: InitiativeToProject',extensions:{code:'INPUT_ERROR'}};
+  const access=createLinearAccess({tenantId,connectionId,workspaceId,request:async input=>{
+    const variables=input.body.variables||{},alias=Object.keys(variables).find(k=>variables[k]===uuid(900));
+    if(alias)return {status:200,data:{data:null,errors:[{...error,path:['r'+alias.slice(2)]}]}};
+    return f.request(input);
+  }});
+  assert.deepEqual([...await access.describeMany([missing,present])].map(([id])=>id),[present]);
+  for(const invalid of [
+    {message:'Invalid query argument',extensions:{code:'INPUT_ERROR'}},
+    {message:'Entity not found: Project',extensions:{code:'INPUT_ERROR'}},
+    {message:'Entity not found: InitiativeToProject',extensions:{code:'INTERNAL_SERVER_ERROR'}},
+  ]){error=invalid;await assert.rejects(access.describeMany([missing,present]),/Linear access failed/);}
+});
+
 test('project permission reads fit Linear complexity limits without truncating team visibility',async()=>{
   const f=fixture(),ids=[];
   for(let i=0;i<12;i++){const id=uuid(300+i);f.state.rows['project'+i]={...f.state.rows.projects,id};ids.push('project:'+id);}
