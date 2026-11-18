@@ -37,7 +37,7 @@ export interface ConsoleServices {
   library: null | ((principal: Principal, operation: string, input: unknown) => Promise<unknown>);
   libraryFailure: (error: unknown) => {status: number; message: string};
 }
-const LIBRARY = /^\/api\/console\/library\/((?:sessions|memories)\/(?:list|read|visibility|delete))$/;
+const LIBRARY = /^\/api\/console\/library\/((?:sessions|memories)\/(?:list|read|visibility|delete)|recording\/(?:status|change))$/;
 export const consolePages = new Set(['/', '/setup', '/usage', '/sessions', '/memories', '/sources', '/integrations', '/data', '/diagnostics', '/settings', '/settings/team', '/agent-setup', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
 export function consoleRoute(method: string, path: string) {
   if (['/api/console/bootstrap','/api/console/sources','/api/console/usage','/api/console/usage/highlights','/api/console/usage/details','/api/console/team'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};

@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
 import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, ScrollControl} from '../design/components.js';
+import {RecordingControl} from './recording-control.js';
 import {Markdown} from '../design/markdown.js';
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate, useSearchParams} from '../router.js';
@@ -102,7 +103,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     next.set('participant', person.id); next.set('participantName', personName(person));
     return '/sessions?' + next.toString();
   };
-  return <Page title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them." bodyClassName="oc-library">
+  return <Page title="Sessions" actions={<RecordingControl key={consoleResourceKey(adapter).join(':')} adapter={adapter}/>} description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them." bodyClassName="oc-library">
     {removal.error && !removing && <Notice tone="danger">{removal.error}</Notice>}
     {visibilityChange.error && <Notice tone="danger">{visibilityChange.error}</Notice>}
     <form className="query-form" role="search" onSubmit={event => {event.preventDefault(); update({q: draft.trim()});}}>

@@ -26,6 +26,7 @@
     "./setup/http": "./dist/src/setup/http.mjs",
     "./setup/mcp": "./dist/src/setup/mcp.mjs",
     "./state/setup": "./dist/src/state/setup.mjs",
+    "./state/recording": "./dist/src/state/recording.mjs",
     "./onboarding/status": "./dist/src/onboarding-status.mjs",
     "./connectors/search": "./dist/src/connectors/search.mjs",
     "./connectors/scope": "./dist/src/connectors/scope.mjs",

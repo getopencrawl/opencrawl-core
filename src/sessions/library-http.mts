@@ -8,6 +8,7 @@ import {sessionScope} from './event-identity.mjs';
 import type {createSessionLibrary} from './library.mjs';
 import type {createMemoryLibrary} from '../memories/library.mjs';
 import {fail} from '../errors.mjs';
+import type {RecordingPolicy} from './recording.mjs';
 
 const harness = z.enum(SESSION_HARNESSES);
 // Memory files exist only for harnesses that keep them on disk.
@@ -17,6 +18,8 @@ const path = z.string().min(4).max(2048);
 const visibility = z.enum(['team', 'private']);
 const scope = z.enum(['all', 'mine']).default('all');
 export const libraryOperations = {
+  'recording/status':z.strictObject({}),
+  'recording/change':z.strictObject({mode:z.enum(['hour','indefinite','resume']),revision:z.string().max(40),subject:z.string().max(160)}),
   'sessions/list': z.strictObject({scope, participant: z.string().refine(validParticipant).optional(), query: z.string().max(500).default(''), limit: z.number().int().min(1).max(500).default(50)}),
   'sessions/read': z.strictObject({userId: id, harness, sessionId: id, cursor: z.string().max(2048).nullish(), limit: z.number().int().min(1).max(200).default(100)}),
   'sessions/visibility': z.strictObject({harness, sessionId: id, visibility}),
@@ -31,13 +34,24 @@ export const isLibraryOperation = (value: string): value is LibraryOperation => 
 
 /** One validated entry point for every runtime. The runtime authenticates and
  * supplies the principal; owner checks and visibility live in the libraries. */
-export function createLibraryApi({sessions, memories}: {sessions?: ReturnType<typeof createSessionLibrary> | null; memories?: ReturnType<typeof createMemoryLibrary> | null}) {
+export function createLibraryApi({sessions, memories, recording}: {sessions?: ReturnType<typeof createSessionLibrary> | null; memories?: ReturnType<typeof createMemoryLibrary> | null; recording?: RecordingPolicy}) {
   return async (principal: Principal, operation: string, input: unknown) => {
-    sessionScope(principal);
+    const subject=sessionScope(principal);
     if (principal.captureAccess !== undefined) fail(403, 'Capture credentials cannot manage sessions or memories');
     if (!isLibraryOperation(operation)) fail(404, 'Unknown operation');
     const parsed = libraryOperations[operation].safeParse(input ?? {});
     if (!parsed.success) fail(400, 'Invalid request');
+    if(operation==='recording/status'||operation==='recording/change'){
+      if(!recording && operation==='recording/status')return {available:false};
+      if(!recording)fail(503,'Recording controls are unavailable');
+      if(operation==='recording/change'){
+        const change=libraryOperations['recording/change'].parse(parsed.data);
+        if(change.subject!==subject)fail(409,'Your workspace or account changed. Reload the page to update recording.');
+        return {...await recording.change(principal,change.mode,change.revision),subject};
+      }
+      const {revision,paused,until}=await recording.read(principal);
+      return {revision,paused,until,subject};
+    }
     const [resource, action] = operation.split('/') as ['sessions' | 'memories', string];
     const library = resource === 'sessions' ? sessions : memories;
     if (!library) fail(503, resource === 'sessions' ? 'Session storage is not configured' : 'Memory storage is not configured');
@@ -50,7 +64,7 @@ export function createLibraryApi({sessions, memories}: {sessions?: ReturnType<ty
 }
 /** Status and safe message for an operation failure. Unclassified failures never expose details. */
 export function libraryFailure(caught: unknown) {
-  const error = serviceError(caught), status = [400, 403, 404, 413].includes(error.status ?? 0) ? error.status! : 503;
+  const error = serviceError(caught), status = [400, 403, 404, 409, 413].includes(error.status ?? 0) ? error.status! : 503;
   return {status, message: status === 503 ? 'Sessions and memories are temporarily unavailable. Try again.' : error.message};
 }
 
@@ -64,6 +78,7 @@ export function createLibraryHandler({api, authenticate}: {api: ReturnType<typeo
       const principal = await authenticate(req);
       if (!principal) return send(401, {error: {code: 'AUTH_REQUIRED'}});
       const operation = new URL(req.url ?? '', 'http://library').pathname.replace(/^\/api\/library\//, '');
+      if(operation==='recording/change')return send(403,{error:{code:'BROWSER_SESSION_REQUIRED'}});
       const chunks: Buffer[] = []; let size = 0;
       for await (const chunk of req) {size += chunk.length; if (size > 16384) return send(413, {error: {code: 'REQUEST_TOO_LARGE'}}); chunks.push(Buffer.from(chunk));}
       let input: unknown; try {input = chunks.length ? parseJson<unknown>(Buffer.concat(chunks)) : {};} catch {return send(400, {error: {code: 'INVALID_JSON'}});}

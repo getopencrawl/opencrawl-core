@@ -14,12 +14,14 @@ import {selfhostApplication} from './application.mjs';
 import {createLocalIdentity} from '../identity/better-auth.mjs';
 import {sessionStorage} from '../sessions/storage.mjs';
 import {createDrainableServer} from '../application/request-lifecycle.mjs';
+import {createRecordingPolicy} from '../state/recording.mjs';
 import {createSetupState} from '../state/setup.mjs';
 export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const contextSuggestions=await loadContextSuggestions(env.OPENCRAWL_CONTEXT_SUGGESTIONS_MODULE);
   const settings=selfhostSettings(env),{store,prefix}=sessionStorage(env);
   await store.checkAccess();
   const {database,state:boardState}=await selfhostState(env);
+  const recording=createRecordingPolicy(database);await recording.ready();
   const setupState=createSetupState(database);await setupState.ready();
   const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
   const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,database,organizationId:settings.organizationId});
@@ -30,7 +32,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const indexing=sessionIndexingScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',sourceId:source.sourceId,generation:source.generation,mode:'workflow'});
   const scheduleSessionDeletion=sessionDeletionScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1',sourceId:'sessions-'+settings.organizationId+'-v1'});
   const replicasImport=createReplicasImport({database,schedule:indexing.scheduleReplicasImport,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:indexing.schedule}).putBatch});
-  const {server,shutdown}=createDrainableServer(selfhostApplication({contextSuggestions,settings,store,boardState,setupState,eventIdentities,prefix,identity,...services,replicasImport,scheduleSessionDeletion,scheduleSessionIndexing:indexing.schedule}),{analytics:{async close(){services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close(),indexing.close()]);}}});
+  const {server,shutdown}=createDrainableServer(selfhostApplication({contextSuggestions,settings,store,boardState,setupState,recording,eventIdentities,prefix,identity,...services,replicasImport,scheduleSessionDeletion,scheduleSessionIndexing:indexing.schedule}),{analytics:{async close(){services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close(),indexing.close()]);}}});
   server.requestTimeout=60000;server.headersTimeout=10000;
   // Keep idle upstream sockets longer than Caddy's default two minutes.
   // Header/request deadlines still bound slow clients independently.

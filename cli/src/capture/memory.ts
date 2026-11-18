@@ -4,7 +4,8 @@ import {join,relative,resolve,sep,isAbsolute} from 'node:path';
 import {homedir,hostname} from 'node:os';
 import {createHash} from 'node:crypto';
 import {atomicJson,withSessionLock} from '../session.ts';
-import {captureDir,readCaptureConfig,refreshCaptureIdentity,request,type CaptureConfig} from './runtime.ts';
+import {captureDir,readCaptureConfig,captureIdentity,request,type CaptureConfig} from './runtime.ts';
+import {allowedTime} from './recording.ts';
 import {type Harness} from './parse.ts';
 
 export const MEMORY_INTERVAL_MS=6*60*60*1000;
@@ -113,12 +114,14 @@ export async function refreshMemories({signal,now=Date.now}: {signal?:AbortSigna
   if(!memoryHarnesses(config).some(h=>memoryDue(state(config,h),now())))return;
   try {await withSessionLock('capture:memories',async()=>{
     check(signal);
-    await refreshCaptureIdentity(config,undefined,signal);
+    const {recording}=await captureIdentity(config,undefined,signal);
+    if(recording?.paused)return;
     for(const harness of memoryHarnesses(config)) {
       check(signal);let prior=state(config,harness);if(!memoryDue(prior,now()))continue;
       try {
         const inventory=await discoverMemories(config,harness,prior,signal);check(signal);
         if(inventory.incomplete){atomicJson(statePath(config,harness),{...prior,missing:inventory.missing,retryAt:now()+RETRY_MS,error:'MEMORY_ROOT_MISSING'});continue;}
+        inventory.files=inventory.files.filter(file=>allowedTime(recording,file.modifiedAt));
         const contentHash=hash(JSON.stringify(inventory.files));
         if(prior.contentHash!==contentHash&&(inventory.files.length>0||prior.contentHash!==undefined)) {
           const generation=Math.max(now(),(prior.generation??0)+1);
@@ -131,7 +134,7 @@ export async function refreshMemories({signal,now=Date.now}: {signal?:AbortSigna
             check(signal);const current=readCaptureConfig();
             if(!current||current.disabled||excluded(current)||current.api!==config.api||current.installationId!==config.installationId||
               current.owner.tenantId!==config.owner.tenantId||current.owner.userId!==config.owner.userId)throw new Error('MEMORY_ENROLLMENT_CHANGED');
-            return request(config.api,'/api/sessions/memories',{method:'POST',headers:{'content-type':'application/json'},body,signal});
+            return request(config.api,'/api/sessions/memories',{method:'POST',headers:{'content-type':'application/json',...recording&&{'x-opencrawl-recording':recording.revision}},body,signal});
           },20_000,signal);
           check(signal);
           if(receipt.stored!==true||receipt.snapshotId!==hash(body)||receipt.generation!==generation)throw new Error('MEMORY_RECEIPT_INVALID');

@@ -14,6 +14,7 @@ import {createMemoryIngest,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
 import {createControls} from './controls.mjs';
 import {sessionWriteBarrier, sessionWriteStore} from './write-barrier.mjs';
 import {fail} from '../errors.mjs';
+import type {RecordingPolicy} from './recording.mjs';
 export {digest,sessionScope,auditSessionEventIdentities,auditSessionEventSource} from './event-identity.mjs';
 
 const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
@@ -23,6 +24,8 @@ export const sessionDeletionVersion = 1;
 export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const MAX_STORED_BATCH_BYTES = MAX_BATCH_BYTES + 1024 * 1024;
 const decompressBatch = promisify(gunzip);
+type WriteGate = <T>(write:()=>Promise<T>)=>Promise<T>;
+const directWrite:WriteGate = write=>write();
 
 export function createSessionIngest({store, eventIdentities, prefix = 'capture-v1', scheduleIndexing=undefined, onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
@@ -31,8 +34,8 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
   const exists = (key: string, maxBytes: number) => store.has ? store.has(key, {maxBytes}) : store.get(key, {maxBytes}).then(Boolean);
   const controls = createControls({store, prefix});
   return {
-    async putMemorySnapshot(principal: Principal,snapshot: MemorySnapshot) {
-      const receipt=await createMemoryIngest({store,prefix,scheduleIndexing}).putSnapshot(principal,snapshot);
+    async putMemorySnapshot(principal: Principal,snapshot: MemorySnapshot, gate:WriteGate=directWrite) {
+      const receipt=await gate(()=>createMemoryIngest({store,prefix,scheduleIndexing}).putSnapshot(principal,snapshot));
       if(onMemoryStored)await onMemoryStored(principal,{harness:snapshot.harness,files:receipt.files,snapshotId:receipt.snapshotId});
       return receipt;
     },
@@ -49,7 +52,7 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
       } catch (error) {if ((await barrier.inspect()).closed) return {sha256: hash, size: bytes.length, discarded: 'session_deleted'}; throw error;}
       return {sha256: hash, size: bytes.length};
     },
-    async putBatch(principal: Principal, batch: SessionBatch) {
+    async putBatch(principal: Principal, batch: SessionBatch, gate:WriteGate=directWrite) {
       const keyPrefix = scope(principal);
       let serialized;
       try {serialized = JSON.stringify(batch);} catch {fail(400, 'Invalid capture JSON');}
@@ -82,6 +85,7 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
       const writes = sessionWriteStore(store, prefix, principal, batch.harness, batch.sessionId);
       const attachmentKeys = new Map<string, string>();
       try {
+      const {key,batchId}=await gate(async()=>{
       for (const hash of attachments) {
         const scoped = `${keyPrefix}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/attachments/${hash}`, legacy = `${keyPrefix}/attachments/${hash}`;
         if (await exists(scoped, MAX_ATTACHMENT_BYTES)) attachmentKeys.set(hash, scoped);
@@ -105,6 +109,8 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
       }
       // The immutable write is retried safely if durable dispatch failed. Never
       // acknowledge a configured handoff before Temporal accepted this object.
+      return {key,batchId};
+      });
       if (scheduleIndexing) await scheduleIndexing(key);
       if (onStored) await onStored(principal, batch);
       return {batchId, eventCount: batch.events.length, stored: true};
@@ -137,7 +143,7 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
 }
 
 /** Shared HTTP protocol for hosted OAuth and single-tenant deployments. */
-export function createCaptureHandler({ingest, authenticate, search=undefined, credentials=undefined}: {ingest: ReturnType<typeof createSessionIngest>; authenticate: Authenticate; search?: SearchAdapter | null; credentials?: ReturnType<typeof createCaptureCredentials>}): HttpHandler {
+export function createCaptureHandler({ingest, authenticate, recording, search=undefined, credentials=undefined}: {ingest: ReturnType<typeof createSessionIngest>; authenticate: Authenticate; recording?: RecordingPolicy; search?: SearchAdapter | null; credentials?: ReturnType<typeof createCaptureCredentials>}): HttpHandler {
   if (typeof authenticate !== 'function') throw new Error('Authentication adapter required');
   return async (req, res) => {
     const send = (status: number, data: Record<string, unknown>) => {res.writeHead(status, {'content-type':'application/json', 'cache-control':'no-store'});res.end(JSON.stringify({schemaVersion:1, ...data}));};
@@ -154,14 +160,42 @@ export function createCaptureHandler({ingest, authenticate, search=undefined, cr
       if (!principal) fail(401, 'Authentication required');
       const url = new URL(req.url ?? '', 'http://capture');
       if(principal.captureAccess==='write' && !(
-        req.method==='GET' && url.pathname==='/api/sessions/identity' ||
+        req.method==='GET' && ['/api/sessions/identity','/api/sessions/recording'].includes(url.pathname) ||
+        req.method==='HEAD' && url.pathname==='/api/sessions/recording' ||
         req.method==='POST' && url.pathname==='/api/sessions/batches' ||
         req.method==='POST' && url.pathname==='/api/sessions/memories' ||
         req.method==='PUT' && /^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(url.pathname))) return send(403,{error:{code:'CAPTURE_WRITE_ONLY'}});
       if(credentials && req.method==='POST' && url.pathname==='/api/sessions/credentials') return await privateResult(200,{data:await credentials.issue(principal)});
       const credential=/^\/api\/sessions\/credentials\/([a-f0-9]{64})$/.exec(url.pathname);
       if(credentials && req.method==='DELETE' && credential) return send(200,{data:await credentials.revoke(principal,credential[1])});
-      if (req.method === 'GET' && url.pathname === '/api/sessions/identity') return await privateResult(200, {data:{principal,capabilities:{batchEncodings:['gzip'],harnesses:SESSION_HARNESSES}}});
+      const header=req.headers['x-opencrawl-recording'], revision=typeof header==='string'?header:undefined;
+      if (req.method === 'GET' && url.pathname === '/api/sessions/identity') {
+        const policy=await recording?.read(principal,revision);
+        if(policy?.paused && !revision) return send(423,{error:{code:'RECORDING_PAUSED'}});
+        if(policy && policy.revision!=='0' && !revision) return send(426,{error:{code:'RECORDING_CLIENT_UPGRADE_REQUIRED'}});
+        return await privateResult(200,{data:{principal,capabilities:{batchEncodings:['gzip'],harnesses:SESSION_HARNESSES},...policy && {recording:policy}}});
+      }
+      if(req.method==='GET'&&url.pathname==='/api/sessions/recording'&&recording&&revision){
+        const abort=new AbortController();
+        const close=()=>abort.abort();
+        res.once('close',close);
+        try{
+          if(!res.destroyed)await recording.wait(principal,revision,abort.signal);
+          if(!res.destroyed)return await privateResult(200,{data:await recording.read(principal)});
+          return;
+        }finally{res.off('close',close);}
+      }
+      const admit=async()=>{
+        if(!recording)return;
+        const policy=await recording.read(principal);
+        if(policy.paused)fail(423,'Recording is paused');
+        if((revision??'0')!==policy.revision)fail(412,'Refresh recording permission');
+      };
+      if(req.method==='HEAD'&&url.pathname==='/api/sessions/recording'){
+        if(!recording || !revision)return send(412,{error:{code:'RECORDING_PERMISSION_UNAVAILABLE'}});
+        await admit();res.writeHead(204,{'cache-control':'no-store'});res.end();return;
+      }
+      const write=<T,>(times:readonly unknown[],run:()=>Promise<T>)=>recording ? recording.capture(principal,revision,times,run) : run();
       if(req.method==='GET' && url.pathname==='/api/sessions/search') {
         if(!search)return send(503,{error:{code:'SEARCH_NOT_CONFIGURED'}});
         return await privateResult(200,{data:await search.search(principal,{query:url.searchParams.get('q')??'',limit:Number(url.searchParams.get('limit')??20)})});
@@ -169,18 +203,23 @@ export function createCaptureHandler({ingest, authenticate, search=undefined, cr
       const attachment = /^\/api\/sessions\/attachments\/([a-f0-9]{64})$/.exec(url.pathname);
       if (attachment && req.method === 'PUT') {
         const session = {harness: url.searchParams.get('harness') ?? '', installationId: url.searchParams.get('installationId') ?? '', sessionId: url.searchParams.get('sessionId') ?? ''};
+        await admit();
         const bytes=await readBody(req,MAX_ATTACHMENT_BYTES);await revalidate();
-        return send(200, {data:await ingest.putAttachment(principal, attachment[1], bytes, session)});
+        return send(200,{data:await write([req.headers['x-opencrawl-event-time']],()=>ingest.putAttachment(principal,attachment[1]!,bytes,session))});
       }
       if (url.pathname === '/api/sessions/batches' && req.method === 'POST') {
+        await admit();
         let batch; try {batch = parseJson<SessionBatch>(await readBatchBody(req));} catch(caught){const e=serviceError(caught);if(e.status)throw e;fail(400,'Invalid JSON');}
         await revalidate();
-        return send(200, {data:await ingest.putBatch(principal,batch)});
+        if(!Array.isArray(batch?.events)||batch.events.length>1000)fail(400,'Invalid events');
+        return send(200,{data:await ingest.putBatch(principal,batch,run=>write(batch.events.map(e=>e?.timestamp),run))});
       }
       if (url.pathname === '/api/sessions/memories' && req.method === 'POST') {
+        await admit();
         let snapshot;try{snapshot=parseJson<MemorySnapshot>(await readBody(req,MAX_MEMORY_BYTES));}catch(caught){const e=serviceError(caught);if(e.status)throw e;fail(400,'Invalid memory JSON');}
         await revalidate();
-        return send(200,{data:await ingest.putMemorySnapshot(principal,snapshot)});
+        if(!Array.isArray(snapshot?.files)||snapshot.files.length>4096)fail(400,'Invalid memory snapshot');
+        return send(200,{data:await ingest.putMemorySnapshot(principal,snapshot,run=>write(snapshot.files.map(f=>f?.modifiedAt),run))});
       }
       if (url.pathname === '/api/sessions/batches' && req.method === 'GET') {
         const batch = await ingest.getBatch(principal, Object.fromEntries(url.searchParams));
